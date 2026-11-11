@@ -156,13 +156,13 @@ Without it every later task would invent its own key rule, which is the drift D1
 - **Interface.** One field, `WorkflowSecrets`, a map from a secret's name to a
   `config.ProjectSecret` under the yaml key `workflow_secrets`, validated through
   `config.ValidateWorkflowSecrets` beside `ValidateProjectSecrets`'s call
-  (`localcfg.go:1605`), and dropped by `localcfg/shared.go:79`'s publish path the way
+  (`localcfg.go:1631`), and dropped by `localcfg/shared.go:79`'s publish path the way
   `ProjectSecrets` is. Strict decoding already refuses an unknown field, so a misplaced block is an
   error rather than a silent ignore.
 - **The cross-block half of the key rule is this task's, because this is where `Providers` is
   visible.** W0's `ValidateWorkflowSecrets(secrets)` holds the name-only rules; the two that read the
   operator's configured providers are checked **here**, beside the `ValidateWorkflowSecrets` call in
-  `validate()` (`localcfg.go:1605`), where `lc.Providers` and `lc.ClaudeAccounts` are in hand: a key
+  `validate()` (`localcfg.go:1631`), where `lc.Providers` and `lc.ClaudeAccounts` are in hand: a key
   that is a configured provider's own `secret:` (`config.ProviderBySecret`) or the conventional name
   `config.ReservedProviderSecret` derives from the provider map, refused for the same reason
   `CheckWorkflowProviderSecrets` refuses them in a repository's own workflow. The shape to copy is
@@ -251,7 +251,7 @@ The one function every reader of the decision shares (F3), plus the container th
   one**, for three reasons. The issue asks for a gate "like `project_secrets.<name>.allow_data_to`"
   (spec.md), and that list's writer is this flag: leaving the new block out would give the operator
   one mechanism with two spellings, one of them hand-edited. The registry row's Owner decides the
-  writer (`settings_set.go:44`: a row a family owns is refused by the generic path so that two paths
+  writer (`settings_set.go:45`: a row a family owns is refused by the generic path so that two paths
   cannot write one key), and `workflow_secrets.*.allow_data_to`'s Owner is `secrets` (W0) — so with
   the flag refusing as well, the key would have no command writer at all and each refusal would point
   at the other path. And the security work is already there rather than new: naming one more

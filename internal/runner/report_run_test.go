@@ -61,6 +61,12 @@ func TestReportCarriesWhatTheRunTolerated(t *testing.T) {
 // round as a whole is not one the mode let through: the pull request's own
 // body names no tolerated finding for it, and the table would claim a decision
 // Decide did not make.
+//
+// The blocking finding is the security class, which is what keeps the run a
+// draft now that the stop accepts what a spent round left (the owner's ruling
+// of 2026-11-08): a catastrophic finding is the one no mode accepts at its stop,
+// and a round carrying one is still the round the report must not render as let
+// through.
 func TestReportCarriesNoToleratedForARoundTheModeBlocked(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: startup\nagent:\n", 1)
 	h := newHarness(t, cfg, nil)
@@ -73,7 +79,7 @@ func TestReportCarriesNoToleratedForARoundTheModeBlocked(t *testing.T) {
 	// through, which is the round Decide blocks whatever it tolerated.
 	mixed := reviewScored("changes",
 		map[string]any{"summary": "unbounded retry loop", "likelihood": 2, "impact": 2, "fix_cost": 1, "class": "correctness"},
-		map[string]any{"summary": "no bound on the cache", "likelihood": 4, "impact": 4, "fix_cost": 2, "class": "correctness"},
+		map[string]any{"summary": "no bound on the cache", "likelihood": 4, "impact": 4, "fix_cost": 2, "class": "security"},
 	)
 	rec, err := h.run(t, implement("feature"), mixed, fix, mixed)
 	if err != nil {

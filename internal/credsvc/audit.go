@@ -27,6 +27,15 @@ import (
 // and not the header's (auth.go's verifyJob), so the run's own claim is
 // recorded beside the verified one rather than instead of it.
 //
+// Two more name the slip a call was admitted under and the launcher that asked
+// for it (slip and owner, DS1.6, R5): a credential served under a grant is
+// served under a named grant, and an operator reading the line has to be able
+// to say which one — and who asked for it — without a second log. Both are set
+// only on a line about a call the service VERIFIED a slip for, which is why a
+// refusal answered before that (the pairing, the stop switches, a slip the call
+// presented and the record refused) carries neither: the field is a fact the
+// service had, and it writes no fact it did not.
+//
 // "And nothing else" is a claim about what the auditor adds: the handler
 // renders its own time, level and message, and NewAuditor takes the handler
 // rather than a logger so that nothing the service's logger carries — an attr
@@ -165,6 +174,34 @@ const (
 	// bitbucket.Provider makes and no other. Its credential and its tier rule
 	// are PurposeGit's, from the same bundle entry.
 	PurposeBitbucketAPI = "bitbucket-api"
+	// PurposeSlipGrant is a launcher's request for a run's grant (DS1.3, D1937):
+	// the call that writes the slip a run's credentials hang on. Its line names
+	// the verified launcher and NO run, no job and no credential — the call is
+	// the launcher's own act, made before the run exists, and the slip it writes
+	// holds names rather than a value. It is the second purpose whose caller is
+	// not a run (callerWithoutJobPurpose).
+	//
+	// A grant that GRANTS writes no line: StatusOK requires a credential
+	// (checked), and a grant issues none — it writes a record. What records a
+	// grant is the service's own line naming the slip it wrote, which is also
+	// where the launcher and the run it named are read back.
+	PurposeSlipGrant = "slip_grant"
+	// PurposeSlipClaim is a run's claim of its slip (DS1.3, D1941): the run's
+	// first call, which presents the identity and the job account the slip binds
+	// and is answered the claim secret it must present on every call after.
+	//
+	// Its line is an ordinary job-class one — the run, its repository, the job
+	// the run reported and the verified account — because the claim's whole
+	// admission is that verified identity. Every refusal a claim answers after
+	// it is recorded with this purpose, the presented claim secret included: a
+	// line names the field that was wrong and never what the call sent, so the
+	// one value of this act that is a credential reaches no line.
+	//
+	// A claim that CLAIMS writes no line, for the grant's reason: the act is one
+	// a StatusOK line cannot record, because what it answers is a secret and not
+	// a credential of the cascade. The service's own line carries it, and that
+	// line is where the execution name the claim reported is recorded (F7).
+	PurposeSlipClaim = "slip_claim"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
@@ -172,7 +209,7 @@ const (
 func ValidPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
-		PurposeGit, PurposeBitbucketAPI:
+		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim:
 		return true
 	}
 	return false
@@ -199,8 +236,10 @@ func credentialWithoutTier(purpose string) bool {
 }
 
 // callerWithoutJobPurpose reports whether a line records a caller's act rather
-// than a run's: a verifier's, and a read mint's — whose callers are a person or
-// the coordinator (BB5). All of them hold no run
+// than a run's: a verifier's, a read mint's — whose callers are a person or
+// the coordinator (BB5) — and a slip GRANT's, whose caller is a launcher and
+// holds no run identity either, because the run it names does not exist yet
+// (DS1.3, D1937). All of them hold no run
 // identity and are not a job of this installation, so the Caller-without-Job
 // rule and the StatusOK line's "a run and a job, or neither" rule are relaxed
 // for them and for no other purpose — a job purpose that dropped its job is
@@ -208,7 +247,7 @@ func credentialWithoutTier(purpose string) bool {
 // pins for the shape BB4 adds.
 func callerWithoutJobPurpose(purpose string) bool {
 	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
-		purpose == PurposeGitHubRead
+		purpose == PurposeGitHubRead || purpose == PurposeSlipGrant
 }
 
 // repositoryOnlyPurpose reports whether a line names a repository and no run:
@@ -302,6 +341,21 @@ type AuditEvent struct {
 	Purpose string
 	// Status is what happened: StatusOK, or the refusal's status.
 	Status string
+	// Slip is the id of the slip the call was admitted under, and Owner is the
+	// launcher that asked for the grant — the verified `sub` the record holds
+	// (DS1.1). They are set together or not at all, and only on a line about a
+	// call the service verified a slip for (DS1.6): a line that named one
+	// without the other would be a grant with no one who asked for it, or an
+	// owner with no grant.
+	//
+	// They are filled in by the AUDITOR and not by the caller (Write), because
+	// the writers of this service's lines are the code that answers a call
+	// (cascade.go) and the code that verified the slip is the code that
+	// dispatched it (server.go): the call's own context is where the verified
+	// binding travels, so every line written for that call carries it and no
+	// line written for another can.
+	Slip  string
+	Owner string
 }
 
 // Audit completes an event with the identity the service verified: the run,
@@ -461,7 +515,17 @@ func (r auditRefusal) Error() string {
 // terminal shows it rather than handing the control on to whatever reads the
 // log. The name in its own spelling is the identity's, and it is not this
 // line's to carry.
+//
+// The slip a call was admitted under is read from the call's own context and
+// not from the event (slipBinding, server.go): the code that verifies a slip is
+// not the code that answers the call, and every writer of a line for that call
+// already holds its context — so the two fields cannot be forgotten by one
+// writer and set by another, and a line for a call that carried no slip (or one
+// the service refused before it verified the slip) carries neither.
 func (a *Auditor) Write(ctx context.Context, ev AuditEvent) error {
+	if b, ok := callSlipOf(ctx); ok {
+		ev.Slip, ev.Owner = b.id, b.owner
+	}
 	ev, bad := a.checked(ev)
 	if bad.field != "" {
 		// One line saying the act was refused, naming the field and the class
@@ -486,6 +550,8 @@ func (a *Auditor) Write(ctx context.Context, ev AuditEvent) error {
 		slog.String("purpose", safetext.OneLine(ev.Purpose)),
 		slog.String("tier", safetext.OneLine(ev.Tier)),
 		slog.String("status", safetext.OneLine(ev.Status)),
+		slog.String("slip", safetext.OneLine(ev.Slip)),
+		slog.String("owner", safetext.OneLine(ev.Owner)),
 	)
 }
 
@@ -588,6 +654,20 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 		return AuditEvent{}, auditRefusal{"credential", refusalMissing}
 	case ev.Tier != "" && !ValidTier(ev.Tier):
 		return AuditEvent{}, auditRefusal{"tier", refusalUnknown}
+	case ev.Slip != "" && !printableHeaderValue(ev.Slip, maxSlipIDBytes):
+		// A slip id is what this service mints and reads back (DS1.1): one
+		// header value, at most maxSlipIDBytes of it. The value is never a
+		// caller's text — it comes off a record this service wrote — so this is
+		// a shape check on the service's own value rather than a fence.
+		return AuditEvent{}, auditRefusal{"slip", refusalMalformed}
+	case ev.Owner != "" && !validSlipOwner(ev.Owner):
+		return AuditEvent{}, auditRefusal{"owner", refusalMalformed}
+	case (ev.Slip == "") != (ev.Owner == ""):
+		// The pair is one fact: the grant and the launcher that asked for it.
+		// A line that named one without the other would be a grant nobody
+		// asked for, and a reader would take the missing half for a call the
+		// service served without one.
+		return AuditEvent{}, auditRefusal{"slip", refusalMissing}
 	}
 	// A line that says a credential was used names the whole act; a refusal
 	// carries only what was known when it was refused. A person's or the
@@ -631,7 +711,28 @@ func (a *Auditor) redact(ev AuditEvent) AuditEvent {
 	ev.Tier = a.scrub(ev.Tier)
 	ev.Purpose = a.scrub(ev.Purpose)
 	ev.Status = a.scrub(ev.Status)
+	ev.Slip = a.scrub(ev.Slip)
+	ev.Owner = a.scrub(ev.Owner)
 	return ev
+}
+
+// validSlipOwner reports whether s is the owner a slip records: the launcher's
+// own `sub`, digits only and at most maxLauncherSubDigits of them. It is the
+// rule auth.go's launcherSub holds a token's claim to (DS1.2), spelled here
+// because the value a line carries is the one this service wrote into the
+// record — never a caller's text — and a field of a line is held to its rule
+// whatever its provenance. TestSlipOwnerIsTheLauncherRule keeps the two
+// spellings of the same rule from drifting.
+func validSlipOwner(s string) bool {
+	if s == "" || len(s) > maxLauncherSubDigits {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // validAccount reports whether s is an account this line may name: the

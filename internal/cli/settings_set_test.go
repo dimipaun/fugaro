@@ -1292,7 +1292,7 @@ func TestSettingsSetConcreteWildcardKeyWrites(t *testing.T) {
 	}
 	settingsNoBackup(t, path)
 
-	if _, _, err := execute(t, "settings", "set", "workflows.web.commands.test", "go test -race ./...", "--layer", "repo", "--yes"); err != nil {
+	if _, _, err := execute(t, "settings", "set", "workflows.web.commands.test", "go test -race ./...", "--layer", "repo", "--yes", "--executable-changes"); err != nil {
 		t.Fatalf("writing a concrete spelling of a wildcard row was refused: %v", err)
 	}
 	cfg, ps := config.Parse([]byte(readFileString(t, path)))
@@ -1403,6 +1403,39 @@ func TestSettingsSetWritesBudgetModeAndPerDayUsd(t *testing.T) {
 		if !settingsGenericKey(key) {
 			t.Errorf("settingsGenericKey(%q) = false, and it is a row of the same block", key)
 		}
+	}
+}
+
+// TestSettingsSetWritesTheBakeSwitch: the switch that tells a run's finalize
+// step whether to bake the project's images (D1901) is a scalar of the project
+// layer, so the generic path writes it, and what it writes is the project config
+// the publisher reads the value out of. The map beside it is the opposite case:
+// its entry is checked against the repository and the catalog, which needs the
+// family's own command, so `settings set` refuses it and names that command
+// (D1906).
+func TestSettingsSetWritesTheBakeSwitch(t *testing.T) {
+	_, path := settingsWriteHome(t)
+	out, _, err := execute(t, "settings", "set", "bake_repos", "false", "--layer", "local", "--yes")
+	if err != nil {
+		t.Fatalf("settings set refused the bake switch: %v\n%s", err, out)
+	}
+	lc, err := localcfg.Parse([]byte(readFileString(t, path)))
+	if err != nil {
+		t.Fatalf("the file the write produced does not read back: %v", err)
+	}
+	if lc.BakeRepos == nil || *lc.BakeRepos {
+		t.Errorf("the written bake_repos is %v, want a written false (absent means true)", lc.BakeRepos)
+	}
+
+	// The map is not a generic scalar: the write is refused with the command
+	// that does check its entry, and the file keeps the switch it just took.
+	before := readFileString(t, path)
+	_, _, err = execute(t, "settings", "set", "image_map", "x", "--layer", "local", "--yes")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image map") {
+		t.Fatalf("settings set on the map: exit %d, err %v", ExitCode(err), err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("a refused map write still changed the config")
 	}
 }
 
@@ -1539,7 +1572,7 @@ func TestSettingsSetAddEntryMapMember(t *testing.T) {
 	}
 	settingsNoBackup(t, path)
 
-	out, _, err := execute(t, "settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test -race -run {id} ./...", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test -race -run {id} ./...", "--layer", "repo", "--yes", "--executable-changes")
 	if err != nil {
 		t.Fatalf("writing one member of a mapping was refused: %v\n%s", err, out)
 	}

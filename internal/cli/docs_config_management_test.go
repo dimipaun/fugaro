@@ -100,17 +100,42 @@ const (
 // added to the registry and not to the allowlist widens the gap the audit is
 // about rather than narrowing it, and with CB1 of docs/catalog-build-context/,
 // whose image_catalog.entries.*.source.context row is the image catalog's own.
-// This branch moved it to 390 with the six concrete spellings of
+// This moved it to 390 with the six concrete spellings of
 // stages.*.claude_account, one per config.RunStages name (settings_stages_test.go),
-// which are the whole of the growth: planning.decoupling's two rows
+// which were the whole of the growth then: planning.decoupling's two rows
 // (registry.go:301, and the layer row at :543) are already on main.
-// DS3.1 of docs/secrets-brokering/dynamic-delivery/ moved it to 393 with the
+//
+// This branch moved both figures with the image setup skill's two rows: the
+// bake switch, which IS7 asks through the setup wizard and writes through this
+// path, is a named key and takes the named count with it; the repo-to-image map
+// is one row too, and its owner is the `image map` family -- `fugaro image map
+// set` is the command that writes it (D1906) -- so it widens the registry and
+// not the allowlist, exactly as a key the registry carries and this list does
+// not. The two rows are visible in internal/settings/registry.go, and the
+// document's own sentence names the split.
+//
+// This branch's IS9 moved the registry's figure once more, by one row and not
+// the allowlist's: `image_catalog.entries.*.services` is the catalog entry's
+// own list of the services its image provides (D1904), and the leaf a person
+// sets with the generic path like every other catalog member, so it is one row
+// the registry carries and this list does not.
+//
+// The triage stage moved this figure twice: its two rows (docs/post-review-
+// triage, T-TR5) are the derived `stages.triage.claude_account`, which the
+// named list carries, and the `agent.triage` switch the `agent.` prefix
+// reaches, and the switch's own carrier in the local project config is the
+// third -- the top-level `triage` the publisher copies into the policy node
+// (D1854), whose owner is the `project` family because `fugaro project policy
+// publish` is what carries it. That last row is the one this paragraph adds:
+// the registry has one row more and the allowlist has not.
+//
+// DS3.1 of docs/secrets-brokering/dynamic-delivery/ moved it to 401 with the
 // three pools.* rows a pool's owner, its roster and its legacy-open marker
 // need; the generic writer carries none of them, so the gap the audit is about
 // widened by exactly those three.
 const (
-	cfmRegistryRows   = 393
-	cfmAllowlistNamed = 94
+	cfmRegistryRows   = 401
+	cfmAllowlistNamed = 96
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
@@ -121,7 +146,7 @@ func TestDocsConfigManagementIsWritten(t *testing.T) {
 	}
 	readme := flattenDoc(readDoc(t, cfmReadme))
 	for _, want := range []string{
-		"**Status: a design, and nothing is built.**",
+		"**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.**",
 		// The owner's ruling, so the index cannot drift into a paraphrase of it.
 		"not to touch any of the configuration files by hand, be it repo, project, or local level",
 		"we should have management commands in Fugaro just like with settings",
@@ -137,7 +162,7 @@ func TestDocsConfigManagementIsWritten(t *testing.T) {
 	}
 	spec := flattenDoc(readDoc(t, cfmSpec))
 	for _, want := range []string{
-		"**Status: a design, and nothing is built.**",
+		"**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.**",
 		// Which document wins when the two disagree, because the spec is the
 		// one a reader meets first and the reconciliation is the one that is
 		// checked against the tree.
@@ -152,7 +177,7 @@ func TestDocsConfigManagementIsWritten(t *testing.T) {
 	// plan reads as fourteen independent tasks, which is the one thing it is not.
 	plan := flattenDoc(readDoc(t, cfmPlan))
 	for _, want := range []string{
-		"**Status: plan only; nothing is implemented; no task approved.**",
+		"**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.**",
 		"**G0 → G1 → G2 → G3 → G4 → G5 → G6 → G7 → G8 → G9 → G10 → G11 → G12 → G13.**",
 		// The slot, and why it is that one: the owner asked for this design
 		// built behind managed mode.

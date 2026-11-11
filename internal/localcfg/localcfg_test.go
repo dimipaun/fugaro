@@ -1743,42 +1743,48 @@ func TestLocalcfgDecodesTheAccountChoiceBlockStrictly(t *testing.T) {
 }
 
 // TestAccountChoiceKeysRefuseTheProjectsAnthropicKey: the account-choice keys
-// ask a run's stages to choose an account, and the project's own Anthropic API
-// key is not one. config.ValidClaudeAccountRef admits the sentinel, because a
-// profile's claude_accounts entry may name it, and these two keys are the
-// second reader of that value — so without a refusal of its own the key fell
-// through to the defined-account lookup and was refused with "define it as
-// claude_accounts: {anthropic-api-key--project: {allow_data_to: [owner/name]}}",
-// the one entry config.ValidateClaudeAccounts refuses: one refusal naming what
-// the other forbids, and no move the operator can make.
+// ask a run's stages to choose an account, and neither of the account axis's
+// non-account values is one — the sentinel this test is named after (the
+// project's own Anthropic API key) and the provider key AK6a added beside it.
+// config.ValidClaudeAccountRef admits both, because a profile's
+// claude_accounts entry may name either, and these two keys are the second
+// reader of those values — so without a refusal of its own each fell through to
+// the defined-account lookup and was refused with "define it as claude_accounts:
+// {anthropic-api-key--project: {allow_data_to: [owner/name]}}", the one entry
+// config.ValidateClaudeAccounts refuses: one refusal naming what the other
+// forbids, and no move the operator can make.
 //
 // What the test pins is the remedy. The sentence names the key the operator
-// edits and tells them to drop it, and it names no claude_accounts entry.
+// edits and tells them to drop it, and it names no claude_accounts entry. Both
+// values are read in one loop because the rule is one rule
+// (config.NonAccountChoiceMessage answers them together).
 //
-// Mutation (run, restore): drop the sentinel's arm in choiceRefProblem — both
-// keys go back to the lookup's sentence and both subtests go red.
+// Mutation (run, restore): drop the AxisNonAccountValue arm in choiceRefProblem
+// — both keys go back to the lookup's sentence and every subtest goes red.
 func TestAccountChoiceKeysRefuseTheProjectsAnthropicKey(t *testing.T) {
-	for _, tc := range []struct{ name, yaml, key string }{
-		{"the project default", "default_claude_account: " + config.AnthropicKeyAccount + "\n", "default_claude_account"},
-		{"a stage's own", "stages:\n  review:\n    claude_account: " + config.AnthropicKeyAccount + "\n", "stages.review.claude_account"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := Parse([]byte(sample + tc.yaml))
-			if err == nil {
-				t.Fatalf("a config naming %s for %s was accepted: no job mounts the project's own key as a Claude account", config.AnthropicKeyAccount, tc.key)
-			}
-			for _, banned := range []string{"claude_accounts", "allow_data_to"} {
-				if strings.Contains(err.Error(), banned) {
-					t.Errorf("the refusal names %q: %v — the account lookup's sentence prescribes claude_accounts: {%s: {allow_data_to: [owner/name]}}, an entry config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err, config.AnthropicKeyAccount)
+	for _, value := range []string{config.AnthropicKeyAccount, config.ProviderKeyAccount} {
+		for _, tc := range []struct{ name, yaml, key string }{
+			{"the project default", "default_claude_account: " + value + "\n", "default_claude_account"},
+			{"a stage's own", "stages:\n  review:\n    claude_account: " + value + "\n", "stages.review.claude_account"},
+		} {
+			t.Run(value+"/"+tc.name, func(t *testing.T) {
+				_, err := Parse([]byte(sample + tc.yaml))
+				if err == nil {
+					t.Fatalf("a config naming %s for %s was accepted: no job mounts this value as a Claude account", value, tc.key)
 				}
-			}
-			if !strings.Contains(err.Error(), tc.key) {
-				t.Errorf("the refusal does not name the key the operator edits (%s): %v", tc.key, err)
-			}
-			if !strings.Contains(err.Error(), "drop the key") {
-				t.Errorf("the refusal does not name the move that works (dropping the key): %v", err)
-			}
-		})
+				for _, banned := range []string{"claude_accounts", "allow_data_to"} {
+					if strings.Contains(err.Error(), banned) {
+						t.Errorf("the refusal names %q: %v — the account lookup's sentence prescribes claude_accounts: {%s: {allow_data_to: [owner/name]}}, an entry config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err, value)
+					}
+				}
+				if !strings.Contains(err.Error(), tc.key) {
+					t.Errorf("the refusal does not name the key the operator edits (%s): %v", tc.key, err)
+				}
+				if !strings.Contains(err.Error(), "drop the key") {
+					t.Errorf("the refusal does not name the move that works (dropping the key): %v", err)
+				}
+			})
+		}
 	}
 }
 
@@ -2030,6 +2036,244 @@ func TestImageCatalogNotInShared(t *testing.T) {
 	}
 	if c.ImageCatalog == nil {
 		t.Error("Shared/MergeShared cleared the local catalog")
+	}
+}
+
+// imageMapYAML is the map and the bake switch as `fugaro image map set` and
+// `fugaro settings set` write them, on the sample's own repository, mapped to
+// the catalog fixture's own entry name.
+const imageMapYAML = `image_map:
+  acme/web: universal
+bake_repos: false
+`
+
+// TestLocalConfigImageMapAndBakeSwitchDecode: the two keys the node's members
+// are read from (D1901, D1906) are this file's own, strict decoding carries
+// them, and the switch is a pointer so a written false is told from silence.
+func TestLocalConfigImageMapAndBakeSwitchDecode(t *testing.T) {
+	c, err := Parse([]byte(sample + imageMapYAML))
+	if err != nil {
+		t.Fatalf("a config carrying the map and the switch: %v", err)
+	}
+	if got := c.ImageMap["acme/web"]; got != "universal" {
+		t.Errorf("image_map = %v, want the entry the file names for acme/web", c.ImageMap)
+	}
+	if c.BakeRepos == nil {
+		t.Fatal("BakeRepos = nil, want the written false: an absent key and a written true are one statement, and only a written false says anything")
+	}
+	if *c.BakeRepos {
+		t.Errorf("BakeRepos = %v, want false", *c.BakeRepos)
+	}
+}
+
+// TestLocalConfigImageMapHeldToTheNodesRule: the map is copied into the policy
+// node, so this loader holds it to the node's own pair of rules — the key is a
+// repository name in the canonical form a --repo is looked up by, and the value
+// is a catalog entry name. A file this loader accepted while the node refused
+// it would be a mapping that never reaches a run.
+func TestLocalConfigImageMapHeldToTheNodesRule(t *testing.T) {
+	for _, tc := range []struct{ name, yaml, wants string }{
+		{"a key that is not a repository name", "image_map:\n  acme: universal\n", "an image_map key is a repository name"},
+		{"a key in another case", "image_map:\n  Acme/Web: universal\n", "an image_map key is a repository name"},
+		{"a value that is not an entry name", "image_map:\n  acme/web: Universal\n", config.CatalogNameMessage},
+		{"a value that is empty", "image_map:\n  acme/web: \"\"\n", config.CatalogNameMessage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(sample + tc.yaml))
+			if err == nil {
+				t.Fatalf("%s was accepted, and the node refuses it", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wants) {
+				t.Errorf("the refusal = %v, want it to name %q", err, tc.wants)
+			}
+		})
+	}
+	// And the empty map is not one of them: a written map with no entry is how
+	// a published mapping is taken away on purpose (ImageMapEffective).
+	if _, err := Parse([]byte(sample + "image_map: {}\n")); err != nil {
+		t.Errorf("a written empty map was refused: %v", err)
+	}
+	// The key of that refusal is this file's own text, and the check it failed
+	// is exactly the one a key of any character fails: it is printed escaped,
+	// the way every other name this loader refuses is, so a direction mark
+	// cannot reorder the line it appears on.
+	const bidi = "\u202e" // RIGHT-TO-LEFT OVERRIDE
+	_, err := Parse([]byte(sample + "image_map:\n  \"acme/" + bidi + "app\": universal\n"))
+	if err == nil {
+		t.Fatal("a key carrying a direction mark was accepted")
+	}
+	if strings.Contains(err.Error(), bidi) {
+		t.Errorf("the refusal prints the key's direction mark raw: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), `image_map.acme/\u202eapp`) {
+		t.Errorf("the refusal does not name the key escaped: %q", err.Error())
+	}
+}
+
+// TestLocalConfigImageMapKeepsThePublishedOneWhenSilent: the keep rule the
+// catalog has, for the catalog's reason (D1906). A machine whose file says
+// nothing about the map must not publish a node that unmaps every repository —
+// every job would fall back to the default entry — while a written empty map is
+// how a published one is taken away on purpose, and a project that maps nothing
+// at either end publishes no member at all.
+func TestLocalConfigImageMapKeepsThePublishedOneWhenSilent(t *testing.T) {
+	published := map[string]string{"acme/web": "universal"}
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.ImageMapEffective(published); !reflect.DeepEqual(got, published) {
+		t.Errorf("a silent config takes %v, want the published map", got)
+	}
+	if got := silent.ImageMapEffective(nil); got != nil {
+		t.Errorf("a silent config beside a node with no map takes %v, want nothing published", got)
+	}
+	stated, err := Parse([]byte(sample + imageMapYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stated.ImageMapEffective(published); !reflect.DeepEqual(got, stated.ImageMap) {
+		t.Errorf("a config that states a map takes %v, want its own", got)
+	}
+	empty, err := Parse([]byte(sample + "image_map: {}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := empty.ImageMapEffective(published); got != nil {
+		t.Errorf("a written empty map takes %v, want none: it is how a published map is removed on purpose", got)
+	}
+}
+
+// TestLocalConfigBakeSwitchKeepsThePublishedOneWhenSilent: the switch's own
+// keep rule. A machine whose config predates the key must not publish a node
+// that turns baking off for the project, and a written true and a written false
+// are both this machine's answer and both win over the node's.
+func TestLocalConfigBakeSwitchKeepsThePublishedOneWhenSilent(t *testing.T) {
+	yes, no := true, false
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.BakeReposEffective(&no); got != &no {
+		t.Errorf("a silent config takes %v, want the published switch", got)
+	}
+	if got := silent.BakeReposEffective(nil); got != nil {
+		t.Errorf("a silent config beside a node with no switch takes %v, want nothing published", got)
+	}
+	stated, err := Parse([]byte(sample + "bake_repos: false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stated.BakeReposEffective(&yes); got != stated.BakeRepos || *got {
+		t.Errorf("a config that writes false takes %v, want its own false", got)
+	}
+	on, err := Parse([]byte(sample + "bake_repos: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := on.BakeReposEffective(&no); got != on.BakeRepos || !*got {
+		t.Errorf("a config that writes true takes %v, want its own true", got)
+	}
+}
+
+// TestLocalConfigTriageKeepsThePublishedSwitchWhenSilent: the triage switch's
+// keep rule (D1854), which is the bake switch's with a sharper cost on the
+// wrong reading: a machine whose config predates the key must not publish a
+// node that turns the stage back on for every run of the project, and a written
+// false is this machine's own answer and wins over the node's. A written true
+// is an answer too — the node carries what the file states — and it is the one
+// value that changes nothing for a reader (absent and true are one statement,
+// config.Agent.TriageOn).
+func TestLocalConfigTriageKeepsThePublishedSwitchWhenSilent(t *testing.T) {
+	yes, no := true, false
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.TriageEffective(&no); got != &no {
+		t.Errorf("a silent config takes %v, want the published switch", got)
+	}
+	if got := silent.TriageEffective(nil); got != nil {
+		t.Errorf("a silent config beside a node that states no switch takes %v, want nothing published", got)
+	}
+	off, err := Parse([]byte(sample + "triage: false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := off.TriageEffective(&yes); got != off.Triage || *got {
+		t.Errorf("a config that writes false takes %v, want its own false: the switch only ever moves down", got)
+	}
+	on, err := Parse([]byte(sample + "triage: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := on.TriageEffective(&no); got != on.Triage || !*got {
+		t.Errorf("a config that writes true takes %v, want its own true", got)
+	}
+	// The key is modelled, so a value that is not a switch is refused where it
+	// is written rather than published half-read.
+	if _, err := Parse([]byte(sample + "triage: nope\n")); err == nil {
+		t.Error("a local config whose triage is a word was accepted")
+	}
+}
+
+// TestImageMapAndBakeSwitchNotInShared: the map and the switch are the owner's
+// and travel the catalog's way, one step stronger: the map decides what code
+// each repository's jobs execute, so a launcher who could write it into the
+// runs bucket's shared file would be choosing what every teammate's runs run,
+// and one who could write the switch could turn baking off for everyone from
+// one file. internal/cli's ParseShared refuses both keys besides.
+func TestImageMapAndBakeSwitchNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + imageMapYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.ImageMap != nil {
+			t.Errorf("%s: image_map = %v", name, got.ImageMap)
+		}
+		if got.BakeRepos != nil {
+			t.Errorf("%s: bake_repos = %v", name, got.BakeRepos)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, key := range []string{"image_map", "bake_repos"} {
+			if strings.Contains(string(out), key) {
+				t.Errorf("%s: output carries %s:\n%s", name, key, out)
+			}
+		}
+	}
+	if c.ImageMap == nil || c.BakeRepos == nil {
+		t.Error("Shared/MergeShared cleared the local map or the local switch")
+	}
+}
+
+// TestTriageSwitchNotInShared: the triage switch is the owner's for the floor's
+// reason (D1854): the stage decides which of a review round's findings hold a
+// pull request back, so a launcher who could write the switch into the runs
+// bucket's shared file would be waving every teammate's runs past them.
+// internal/cli's ParseShared refuses the key besides.
+func TestTriageSwitchNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + "triage: false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.Triage != nil {
+			t.Errorf("%s: triage = %v, want it dropped: a launcher may not write the project's switch", name, got.Triage)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "triage") {
+			t.Errorf("%s: the marshalled config carries the switch:\n%s", name, out)
+		}
+	}
+	if c.Triage == nil || *c.Triage {
+		t.Error("Shared/MergeShared cleared the local switch on the config it was given")
 	}
 }
 

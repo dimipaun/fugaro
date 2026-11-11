@@ -1,6 +1,6 @@
 # `fugaro models`: managing a project's models with one command
 
-**Status: design approved; the tasks queue behind CLI 0.14.1 (0.15.0).** D780–D783 were answered on 2026-10-30 (D783 against the recommendation); D784–D795 were answered on 2026-10-31, all as recommended. The plan is written to the answers.
+**Status as of 2026-11-10: done; see [docs/status.md](../status.md) for the current table.** D780–D783 were answered on 2026-10-30 (D783 against the recommendation); D784–D795 were answered on 2026-10-31, all as recommended. The plan is written to the answers.
 
 **Asked by:** the owner, 2026-10-30: "we should have fugaro commands to manage the models".
 **Reconciled against** `origin/main` at `2d849e802` and the 15 pull requests open on 2026-10-30.

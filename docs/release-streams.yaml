@@ -20,10 +20,12 @@ streams:
   - name: cli
     theme: animals
     # Badger is 0.10, Camel 0.11, and one name per minor after that.
-    names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose, Narwhal, Ocelot, Panda, Quokka, Rhino, Sloth]
-    # The last CLI release, v0.11.3 "Camel three"; 0.12.0 "Dolphin" is next.
-    current: "0.21.0"
-    next: Sloth
+    names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose, Narwhal, Ocelot, Panda, Quokka, Rhino, Sloth, Tapir, Uakari, Vole, Wombat, Xerus, Yak]
+    # The last CLI release, v0.21.2 "Rhino two"; 0.22.0 "Sloth" is next (the
+    # field below stays at the version main carries: a hotfix is cut from its
+    # own branch and is never merged back).
+    current: "0.22.0"
+    next: Tapir
     tag_prefix: v
 
   - name: console

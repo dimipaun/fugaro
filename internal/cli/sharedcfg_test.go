@@ -710,3 +710,85 @@ func TestSharedConfigRefusesOrchestrator(t *testing.T) {
 		}
 	}
 }
+
+// TestSharedConfigRefusesEveryForbiddenSection: the list is the fence, and a
+// name dropped from it is a section the commands would read from a file any
+// launcher with objectAdmin on the runs bucket can write. Each name is put in
+// front of the reader here, so the check is the list's own and cannot be kept
+// by the handful of tests that pin one key each -- the ones this release added
+// (`image_map`, `bake_repos`) included.
+func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
+	seen := map[string]bool{}
+	for _, k := range sharedForbidden {
+		if seen[k] {
+			t.Errorf("sharedForbidden names %s twice", k)
+		}
+		seen[k] = true
+		t.Run(k, func(t *testing.T) {
+			// The value is a flow mapping rather than a section's own shape:
+			// the refusal is on the key, before the file is parsed, so
+			// nothing about the value can keep the check from firing.
+			_, err := ParseShared([]byte(validShared()+k+": {}\n"), sharedAnchor)
+			if err == nil {
+				t.Fatalf("a published shared config carrying %s: was accepted: the commands would read a section the converge never writes", k)
+			}
+			for _, want := range []string{k, "never published", "fugaro update"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+		})
+	}
+	// The keys this release added are in it: the map decides which image each
+	// repository's jobs execute (D1906) and the switch decides whether a
+	// repository is baked at all (D1901), so a launcher who could write either
+	// into the shared file would be choosing what code every teammate's runs
+	// run -- the catalog's own reason, one step out -- and the triage switch
+	// decides which of a review round's findings hold a pull request back
+	// (D1854), which is the floor's reason one level down.
+	for _, k := range []string{"image_map", "bake_repos", "triage"} {
+		if !slices.Contains(sharedForbidden, k) {
+			t.Errorf("sharedForbidden does not name %s, so a published %s would be read", k, k)
+		}
+	}
+}
+
+// TestSharedNeverPublishedCatchesTheDecodedSections: the second net, on the
+// values the commands use rather than on the file's keys. ParseShared refuses
+// every one of these keys before it parses, so no file reaches this check
+// carrying one -- which is exactly why it needs a test of its own: the branch
+// is unreachable from a document, and a field dropped from it would leave every
+// test green while a config built another way (a merge, a decoder that mapped a
+// key onto a field) published a section the converge never writes.
+func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
+	for _, tc := range []struct{ name, yaml string }{
+		{"image_map", "image_map:\n    acme/app: tools\n"},
+		{"bake_repos", "bake_repos: false\n"},
+		{"triage", "triage: false\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := localcfg.Parse([]byte(validShared() + tc.yaml))
+			if err != nil {
+				t.Fatalf("the fixture does not read back: %v", err)
+			}
+			if !sharedNeverPublished(c) {
+				t.Errorf("a decoded config carrying %s: is called publishable, so a shared file could carry the section", tc.name)
+			}
+			// And the file it came from is refused by name, which is the net a
+			// document meets first.
+			_, err = ParseShared([]byte(validShared()+tc.yaml), sharedAnchor)
+			if err == nil || !strings.Contains(err.Error(), tc.name) {
+				t.Errorf("ParseShared on %s: = %v, want the key named", tc.name, err)
+			}
+		})
+	}
+	// The control: the file every other test in this file parses carries none
+	// of the forbidden sections, so the predicate is not simply always true.
+	c, err := localcfg.Parse([]byte(validShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sharedNeverPublished(c) {
+		t.Error("a shared config carrying none of the forbidden sections is called unpublishable")
+	}
+}

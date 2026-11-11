@@ -213,6 +213,18 @@ func Generate() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rules: template is not JSON: %w", err)
 	}
+	// The workspace family's nodes are part of this document and not a document
+	// of their own (workspace.go): a database carries one rules document, and
+	// the workspace's own project's database is an installation's, so the record,
+	// the admitted-token hashes, the meter and the rollup are denied here, beside
+	// the budget family's own nodes.
+	family, err := workspaceRules()
+	if err != nil {
+		return nil, err
+	}
+	if err := mergeWorkspaceRules(root, family); err != nil {
+		return nil, err
+	}
 	var out bytes.Buffer
 	if err := root.render(&out, 0, nil); err != nil {
 		return nil, err

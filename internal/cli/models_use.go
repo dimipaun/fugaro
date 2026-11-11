@@ -195,7 +195,7 @@ func modelsUseFile(ctx context.Context, repo, project string) (string, error) {
 			return filepath.Join(root, "fugaro.yaml"), nil
 		}
 	}
-	return settingsRepoFile(ctx, repo, project)
+	return settingsRepoFile(ctx, "", repo, project)
 }
 
 // modelsUseCheck is the launch's own judgement of one pin, made before the file

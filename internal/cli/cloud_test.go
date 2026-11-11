@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -50,6 +51,10 @@ type cloudFixture struct {
 	// secret_manager endpoint, which is every other cloudFixture -- and
 	// deliberately so for the test that proves a command needs none.
 	sm *gcpfake.Secrets
+	// db is the budget database a rig that submits a billable build points its
+	// installation at (buildBudgetWorld): nil for a rig that only reads, and
+	// the fake a test changes a cap or a counter on afterwards.
+	db *gcpfake.RTDB
 }
 
 // newCloudFixture writes a local config whose endpoints point at the Run and
@@ -391,6 +396,41 @@ func TestJobWorkflowRefusesInsteadOfPanicking(t *testing.T) {
 	}
 	if v, ok := jobWorkflow("web", "acme-personal"); !ok || v != "web_acme-personal" {
 		t.Fatalf("jobWorkflow(web, acme-personal) = %q, %v", v, ok)
+	}
+}
+
+// TestNoCheckoutProviderHelperDoesNotPanic is F3: the provider a launch reads
+// *because* there is no checkout cannot come from a checkout's config, and
+// the form the tree had — repoProvider's `return co.Git.Provider` fallback —
+// dereferences a nil *config.Config for a repository the local config does not
+// name. The local config is the one source that answers without a checkout
+// (localRepoProvider), and the composition keeps its old meaning: a local
+// entry's provider wins, and a checkout's fills in when the local entry names
+// none.
+//
+// Mutation (run, restore): have launching without a checkout read
+// repoProvider(repo, co) with the nil co — a repository the local config does
+// not name panics the process instead of answering "".
+func TestNoCheckoutProviderHelperDoesNotPanic(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	if got := env.localRepoProvider("acme/unknown"); got != "" {
+		t.Errorf("localRepoProvider of a repository the local config does not name = %q, want \"\"", got)
+	}
+	if got := env.localRepoProvider("acme/app"); got != "github" {
+		t.Errorf("localRepoProvider(acme/app) = %q, want github", got)
+	}
+	if got := env.repoProvider("acme/unknown", nil); got != "" {
+		t.Errorf("repoProvider of an unnamed repository with no checkout = %q, want \"\"", got)
+	}
+	co := &config.Config{Git: config.Git{Provider: "bitbucket"}}
+	if got := env.repoProvider("acme/app", co); got != "github" {
+		t.Errorf("repoProvider(acme/app) = %q, want the local entry's github", got)
+	}
+	// The local entry names no provider: the checkout's own answers.
+	env.lc.Repos["acme/app"] = localcfg.Repo{Provider: ""}
+	if got := env.repoProvider("acme/app", co); got != "bitbucket" {
+		t.Errorf("repoProvider with a local entry naming no provider = %q, want the checkout's bitbucket", got)
 	}
 }
 

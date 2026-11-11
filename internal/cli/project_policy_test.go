@@ -3547,6 +3547,52 @@ func TestPublishKeepsReviewFloorTheConfigIsSilentAbout(t *testing.T) {
 	}
 }
 
+// TestPublishKeepsTheTriageSwitchTheConfigIsSilentAbout is the same finding one
+// key over (D1854): the switch is what decides whether a review round's
+// findings are judged at all, so a publish from a machine whose config says
+// nothing about it — a second machine's file, one written before the key
+// existed — must not be the publish that turns the judge back on for every run
+// of the project. The member is a pointer on both sides, so the answer that
+// matters is the written false: nothing in the diff above mentions the member
+// when the second publish runs, because the value does not change, and a
+// project that states neither answer is the case where the node carries no
+// member at all.
+func TestPublishKeepsTheTriageSwitchTheConfigIsSilentAbout(t *testing.T) {
+	f := newProjectFixture(t, "triage: false\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.Triage == nil || *p.Triage {
+		t.Fatalf("Triage = %v, want the written false the config states", p.Triage)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"triage":false`) {
+		t.Errorf("the node does not carry the switch:\n%s", raw)
+	}
+
+	rewriteProjectConfig(t, f, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if p.Triage == nil || *p.Triage {
+		t.Errorf("the second publish turned the triage stage back on: Triage = %v, want the false the node held", p.Triage)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"triage":false`) {
+		t.Errorf("the second publish dropped the member:\n%s", raw)
+	}
+
+	g := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if raw := nodeJSON(t, g, projectpolicy.PathShared()); strings.Contains(raw, "triage") {
+		t.Errorf("a project that states no triage answer published one:\n%s", raw)
+	}
+	if p := publishedPolicy(t, g); p.Triage != nil {
+		t.Errorf("Triage = %v, want nil", p.Triage)
+	}
+}
+
 // TestPublishDropsReviewFloorOnPurpose: `review_floor: {}` is how the owner
 // takes a published floor away. Silence about the key keeps the node's floor
 // (the test above), so the written empty object is the spelling that has to

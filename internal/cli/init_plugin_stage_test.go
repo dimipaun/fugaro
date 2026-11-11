@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 const settingsWithOthers = `{
@@ -58,30 +59,45 @@ func runPlugin(t *testing.T, e *initEngine) *initflow.Result {
 	return res
 }
 
-// The wiring is confirmed first (declined: nothing is written, the one-line
-// command that does it is left for the user), shows the diff, and merges only
-// the plugin's two entries into the file, pinned to the binary's tag.
+// The wiring merges only after the owner's own confirmation (T7: a person at
+// the terminal, nothing typed), and a coding agent's session asks nothing at
+// all: the stage is LocalUnderAgent (U1), so the loop applies it there and the
+// write — this machine's own file — is made with nothing read off stdin. It
+// shows the diff, and merges only the plugin's two entries into the file,
+// pinned to the binary's tag.
 func TestWiringStageConfirmsAndMergesOnly(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	settings := wiringCheckout(t, settingsWithOthers)
 	fakeTerminal(t)
 
-	// Declined at the prompt (or anything but yes).
-	e, out := stageEngine(t, "n\n", nil)
+	// A coding agent's session asks nothing and writes the pin: "y" on stdin
+	// would be a confirmation nobody is there to give, and no `fugaro
+	// update-skills` is left behind.
+	e, _ := stageEngine(t, "y\n", nil)
+	t.Setenv(agentMarkers[0], "1")
 	res := runPlugin(t, e)
 	got, _ := os.ReadFile(settings)
-	if string(got) != settingsWithOthers || stateOf(res, "plugin") != initflow.NeedsYou || len(res.Left) != 1 || !strings.HasSuffix(res.Left[0].Text, "update-skills") {
-		t.Fatalf("declined: stages %+v left %v\n%s", res.Stages, res.Left, got)
+	if stateOf(res, "plugin") != initflow.Changed || len(res.Left) != 0 || !strings.Contains(string(got), `"ref": "v0.2.0"`) {
+		t.Fatalf("agent session: stages %+v left %v\n%s", res.Stages, res.Left, got)
 	}
-	if !strings.Contains(out.String(), "Write this to") || !strings.Contains(out.String(), `+    "fugaro": {`) && !strings.Contains(out.String(), `"fugaro"`) {
-		t.Errorf("the diff was not shown before the question:\n%s", out.String())
+	t.Setenv(agentMarkers[0], "")
+	// The checks below read the file as it was before that write.
+	if err := os.WriteFile(settings, []byte(settingsWithOthers), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	// Confirmed.
-	e, out = stageEngine(t, "y\n", nil)
+	// Confirmed: the person is at their terminal, so nothing is typed at all
+	// — "n" on stdin would decline the step if anything were read.
+	e, out := stageEngine(t, "n\n", nil)
 	res = runPlugin(t, e)
 	if stateOf(res, "plugin") != initflow.Changed || len(res.Left) != 0 {
 		t.Fatalf("stages %+v left %v", res.Stages, res.Left)
+	}
+	// The diff of the file it would write is on the screen before the write:
+	// the added marketplace entry is its own line, at the file's own
+	// indentation under the diff's marker.
+	if !strings.Contains(out.String(), "+ "+`    "fugaro": {`) {
+		t.Errorf("the diff was not shown before the write:\n%s", out.String())
 	}
 	var m map[string]json.RawMessage
 	data, _ := os.ReadFile(settings)
@@ -241,3 +257,135 @@ func TestWiringStageUnreadableConfigIsUnknown(t *testing.T) {
 }
 
 func make1MiB() []byte { return []byte(strings.Repeat("#", maxFugaroYAML+2)) }
+
+// A subdirectory of a checkout is the checkout: the stage reads the working
+// directory the command was typed in and walks up to the one .git is in
+// (pluginwire.Locate), so the checkout's own .claude/settings.json is the file
+// that gets the pin and nothing is written on the way there. The step that
+// moved into this stage ran in whatever directory the command was typed in
+// (U1 of docs/plugin-user-scope/implementation-plan.md), and this is the
+// assertion that the place it writes is the checkout's and not the caller's.
+// Its one residue: the walk stops at $HOME, so a checkout above the user's own
+// home directory is out of reach (reconciliation.md F12).
+func TestWiringStageWiresTheCheckoutFromASubdirectory(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	dir := repoCheckout(t, githubOrigin, "")
+	settings := filepath.Join(dir, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(settingsWithOthers), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(dir, "src", "deep", "down")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+
+	e, out := stageEngine(t, "", &initOptions{yes: true})
+	res := runPlugin(t, e)
+	if stateOf(res, "plugin") != initflow.Changed {
+		t.Fatalf("from a subdirectory: %+v\n%s", res.Stages, out)
+	}
+	got, _ := os.ReadFile(settings)
+	if !strings.Contains(string(got), `"ref": "v0.2.0"`) {
+		t.Errorf("the checkout's own settings were not wired from a subdirectory:\n%s", got)
+	}
+	for _, p := range []string{filepath.Join(sub, ".claude"), filepath.Join(dir, "src", ".claude")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s was made: the stage writes the checkout's own settings file and nothing between it and the caller", p)
+		}
+	}
+}
+
+// A linked worktree is a checkout of its own, and the stage wires that one:
+// .git is a file there rather than a directory, which the walk stops on all the
+// same (os.Lstat), so the file that gets the pin is the worktree's own and the
+// checkout it was made from is left alone (reconciliation.md F14).
+func TestWiringStageWiresALinkedWorktree(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	main := repoCheckout(t, githubOrigin, "")
+	linked := filepath.Join(t.TempDir(), "scratch")
+	testutil.Git(t, main, "worktree", "add", "--quiet", linked)
+	if fi, err := os.Lstat(filepath.Join(linked, ".git")); err != nil || fi.IsDir() {
+		t.Fatalf("the fixture is not a linked worktree: %v %v", fi, err)
+	}
+	t.Chdir(linked)
+
+	e, out := stageEngine(t, "", &initOptions{yes: true})
+	res := runPlugin(t, e)
+	if stateOf(res, "plugin") != initflow.Changed {
+		t.Fatalf("in a linked worktree: %+v\n%s", res.Stages, out)
+	}
+	got, err := os.ReadFile(filepath.Join(linked, ".claude", "settings.json"))
+	if err != nil || !strings.Contains(string(got), `"ref": "v0.2.0"`) {
+		t.Errorf("the worktree's own settings were not wired (err %v):\n%s", err, got)
+	}
+	if _, err := os.Stat(filepath.Join(main, ".claude", "settings.json")); err == nil {
+		t.Errorf("the pin was written in the checkout the worktree was made from, which this command is not in")
+	}
+}
+
+// The plan-only view says what the run will do about the install half. Since U1
+// the stage installs the plugin into the user's own Claude Code, and a plan that
+// read only the wiring half reported the stage as done — "No changes" — in the
+// very states the run installs it: the pin already this release's with nothing
+// installed, the pin current with Claude Code's own record behind (#1836c), and
+// a wiring half that is skipped where the install half is not (the plugin is
+// one per machine, the wiring is per checkout). The last case is the other
+// direction, so the plan does not become a stage that always has something to
+// do: a checkout at this release, installed, is done and says so.
+func TestPluginStagePlanOnlySaysTheInstallRuns(t *testing.T) {
+	const (
+		installedAtThisRelease = `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`
+		installedBehind        = `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.0"}]}}`
+	)
+	for _, tc := range []struct {
+		name string
+		// noOrigin leaves the checkout without a remote, which is the wiring
+		// half's own skip (the install half is the machine's, not the
+		// checkout's); installed is what Claude Code records as installed.
+		noOrigin  bool
+		installed string
+		want      initflow.State
+		wantSay   string
+	}{
+		{name: "the pin is this release's and nothing is installed", want: initflow.Todo,
+			wantSay: "installs the plugin in Claude Code"},
+		{name: "the pin is this release's and Claude Code's plugin is behind", installed: installedBehind,
+			want: initflow.Todo, wantSay: "Claude Code's own plugin is behind"},
+		{name: "the wiring half is skipped and the install half is not", noOrigin: true,
+			want: initflow.Todo, wantSay: "installs the plugin in Claude Code"},
+		{name: "the pin and the installed plugin are this release's", installed: installedAtThisRelease,
+			want: initflow.Done, wantSay: "No changes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			releaseBuild(t, "0.5.1")
+			cfg := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+			dir := repoCheckout(t, githubOrigin, "")
+			t.Chdir(dir)
+			checkoutFile(t, filepath.Join(dir, ".claude", "settings.json"), wiredAt("v0.5.1"))
+			if tc.noOrigin {
+				testutil.Git(t, dir, "remote", "remove", "origin")
+			}
+			if tc.installed != "" {
+				checkoutFile(t, filepath.Join(cfg, "plugins", "installed_plugins.json"), tc.installed)
+			}
+
+			e, out := stageEngine(t, "", &initOptions{planOnly: true})
+			res := runPlugin(t, e)
+			if res.Failed != nil {
+				t.Fatalf("the plan-only run failed: %+v\n%s", res.Failed, out)
+			}
+			st := res.Stages[0]
+			if st.State != tc.want {
+				t.Errorf("a plan-only run shows the plugin stage as %q, want %q: the plan has to say what the run will do about the install half, which is a step of this stage (U1)\n%s", st.State, tc.want, out)
+			}
+			if !strings.Contains(st.Detail, tc.wantSay) {
+				t.Errorf("the plan says %q, which does not say %q\n%s", st.Detail, tc.wantSay, out)
+			}
+		})
+	}
+}

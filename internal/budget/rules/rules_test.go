@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 const goldenPath = "testdata/rules.golden.json"
@@ -1731,9 +1732,18 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 // lease family", whose addition is likewise its own node and nothing under it
 // (isNamedAddition).
 //
+// One rule already there is allowed to change, and it is named: the outcome's
+// status validator gains the run status 'unreviewed' (isNamedRuleChange,
+// docs/binary-allow-rule's NV0, D994). It is the one change of that shape here
+// because it is what keeps the database true about a status a release adds:
+// every other path stays as it was, and the widening is exact — the one clause
+// and nothing else.
+//
 // Hand mutation this fails on: editing any existing rule (a loosened bound, a
-// dropped conjunct) while adding the new nodes, or dropping the new node from
-// the template (the addition check below).
+// dropped conjunct) while adding the new nodes, widening the outcome's status
+// validator by anything but that one clause (a second word, a bound instead of
+// an equality), or dropping the new node from the template (the addition check
+// below).
 func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 	raw, err := os.ReadFile("testdata/rules.generation3.json")
 	if err != nil {
@@ -1764,6 +1774,9 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 			continue
 		}
 		if !maps.Equal(want, got) {
+			if isNamedRuleChange(p, want, got) {
+				continue
+			}
 			t.Errorf("/%s changed:\n  was %v\n  now %v", p, want, got)
 		}
 	}
@@ -1786,14 +1799,132 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 	}
 }
 
+// outcomeStatusPath is the one existing rule this branch changes, spelled as
+// generatedPaths spells it (the model slug, not the document's $slug variable).
+const outcomeStatusPath = "outcomes/$day/" + slugForPath + "/$run/status"
+
+// unreviewedClause is the one disjunct the widening adds to that rule, with the
+// spacing the template writes it in.
+const unreviewedClause = " || newData.val() == 'unreviewed'"
+
+// TestOutcomeRuleAcceptsEveryRunStatus: the outcome's status validator accepts
+// every status a run ends with, and nothing else. The set is a literal
+// in the template, because the template is a document and not Go, and
+// internal/budget builds its own copy of it from runstore.Statuses; this is the
+// pin that holds the two spellings together, and it has to live here: the
+// package that derives the set cannot import this one (internal/budget's own
+// emulator tests import it, so the import would cycle — MaxEntryTokens is
+// duplicated for that same reason and pinned the same way).
+//
+// Both directions matter. A missing word is a rule that refuses the outcome a
+// run of this release writes, which the dashboard shows as an infrastructure
+// error for a status that is not one; a word nobody writes is a database
+// allowed to carry a status no reader switches on.
+//
+// Hand mutation this fails on: dropping a word from the template's validator
+// (the first loop), or adding one to the template that no record carries (the
+// second).
+func TestOutcomeRuleAcceptsEveryRunStatus(t *testing.T) {
+	attrs, ok := generatedPaths(t)[outcomeStatusPath]
+	if !ok {
+		t.Fatalf("the template generates no rule at /%s: the outcome's status is unvalidated", outcomeStatusPath)
+	}
+	rule, ok := attrs[".validate"].(string)
+	if !ok {
+		t.Fatalf("the rule at /%s carries no .validate: %v", outcomeStatusPath, attrs)
+	}
+	for _, s := range runstore.Statuses {
+		// A run writes its outcome as it ends, so the vocabulary is the terminal
+		// statuses — running is the one word an outcome never carries, and the
+		// one this rule must refuse (internal/budget's outcomeStatuses reads the
+		// same predicate).
+		if s.Terminal() {
+			if !strings.Contains(rule, "newData.val() == '"+string(s)+"'") {
+				t.Errorf("the outcome's status validator does not accept %q, a status a run record ends with: the rules refuse that run's outcome, and it shows as an infrastructure error it is not", s)
+			}
+			continue
+		}
+		if strings.Contains(rule, "newData.val() == '"+string(s)+"'") {
+			t.Errorf("the outcome's status validator accepts %q, which no run has ended with: a run writes its outcome as it ends, and an outcome the rules refuse leaves it with no figure at all", s)
+		}
+	}
+	for _, m := range outcomeStatusWords.FindAllStringSubmatch(rule, -1) {
+		if m[1] == outcomeStatusNone || slices.ContainsFunc(runstore.Statuses, func(s runstore.Status) bool { return string(s) == m[1] }) {
+			continue
+		}
+		t.Errorf("the outcome's status validator accepts %q, which is no run status: the rules would let the database carry a word no reader switches on", m[1])
+	}
+}
+
+// outcomeStatusWords finds the statuses the outcome's validator compares
+// against, in the template's own spelling.
+var outcomeStatusWords = regexp.MustCompile(`newData\.val\(\) == '([^']*)'`)
+
+// outcomeStatusNone is the status of a run with no outcome at all, which no
+// record writes and the rules accept all the same; internal/budget's
+// outcomeStatuses carries it beside runstore.Statuses, which is why it is
+// exempt from the second loop rather than missing from it.
+const outcomeStatusNone = "none"
+
+// isNamedRuleChange reports whether the change to the rule at p — from want
+// (generation 3) to got (what this branch generates) — is this branch's own and
+// nothing besides: the outcome's status validator gains the run status
+// 'unreviewed', the label of a run that finished and pushed with no review
+// verdict (docs/binary-allow-rule/implementation-plan.md's NV0, D994).
+//
+// The rule is what a client writes through, so the word a run's own record now
+// carries is refused by a document that does not spell it: internal/budget's
+// Finish would file the outcome as an infrastructure error — a fault that never
+// happened, on the page a person reads to see what their runs did. Widening the
+// validator is what stops that, and it is deliberately not a rules generation:
+// RulesVersion moves for a change that opens a family to a client or moves what
+// one may reach (internal/projectpolicy/version.go's generation-4 note), while
+// this admits one more value under a `.write` that does not move. `fugaro
+// update` carries it — its rules stage redeploys a document infra.SameJSON
+// reports as different, whatever the marker says (internal/infra's DB.Plan) —
+// and doctor's policy-rules-skew already reports the installation that has not
+// run it yet.
+//
+// The check is exact: the one path, the `.validate` attribute of it alone, and
+// removing that one clause from the new string leaving the generation-3 one
+// byte for byte.
+func isNamedRuleChange(p string, want, got map[string]any) bool {
+	if p != outcomeStatusPath || len(want) != len(got) {
+		return false
+	}
+	if !maps.Equal(withoutValidate(want), withoutValidate(got)) {
+		return false
+	}
+	ws, wok := want[".validate"].(string)
+	gs, gok := got[".validate"].(string)
+	if !wok || !gok {
+		return false
+	}
+	return strings.Contains(gs, unreviewedClause) && strings.Replace(gs, unreviewedClause, "", 1) == ws
+}
+
+// withoutValidate is m without its `.validate`, so the attributes beside it are
+// compared on their own: isNamedRuleChange allows the validator to move and
+// nothing else about the rule.
+func withoutValidate(m map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range m {
+		if k != ".validate" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // isNamedAddition reports whether p is one of the paths a rules change of this
 // branch is allowed to add: the credentials family (C1.3), the coordinator's
 // subtree (coordinator plan task P3, D195), the hosted MCP server's own
 // (docs/mcp-server/implementation-plan.md's M3, D922), the build lease's
-// (docs/no-prompt-policy/implementation-plan.md's T8, D1543, F22), or the
+// (docs/no-prompt-policy/implementation-plan.md's T8, D1543, F22), the
 // stateless orchestrator's (docs/stateless-orchestrator/implementation-plan.md's
-// O2, D1220). Anything else that appears in the document is a rules change
-// nobody asked for.
+// O2, D1220) or the workspace family's (docs/workspaces/implementation-plan.md's
+// W3, workspace.go). Anything else that appears in the document is a rules
+// change nobody asked for.
 //
 // They are equalities and not prefixes, for the reason isNewCredsPath gives
 // below: P3 adds the family's own node and nothing under it, so a path *under*
@@ -1806,7 +1937,44 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 // hidden one level down — and one a `USER` read at the top would otherwise make
 // look legitimate.
 func isNamedAddition(p string) bool {
-	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth || p == PathBuildLeases || p == PathOrchestrator
+	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
+		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p)
+}
+
+// isNewWorkspacePath reports whether p is one of the paths the workspace family
+// adds (docs/workspaces/implementation-plan.md W3, workspace.go): the record and
+// its four children, the admitted-token hashes, and the meter and the rollup by
+// month. Like the credentials family's, every one of them is an equality and
+// not a prefix — a path *under* `workspaces/$name` that is not named here is a
+// rule hidden under the record, which is the shape a client's read of it takes,
+// and it belongs in this test as a diff a reviewer reads rather than as a match
+// this function waves through.
+//
+// The paths are the family's whole output, so a node added to
+// workspace.json.tmpl without being named here fails this test — which is the
+// point: the workspace's database is the one whose readers are its own service
+// and the owner's CLI, and a rule that reached a client there would be a leak
+// with a public address.
+func isNewWorkspacePath(p string) bool {
+	for _, node := range []string{
+		WorkspaceRecordPath,
+		WorkspaceRecordPath + "/$name",
+		WorkspaceRecordPath + "/$name/version",
+		WorkspaceRecordPath + "/$name/name",
+		WorkspaceRecordPath + "/$name/members",
+		WorkspaceRecordPath + "/$name/cap",
+		WorkspaceTokenPath,
+		WorkspaceTokenPath + "/$hash",
+		WorkspaceMeterPath,
+		WorkspaceMeterPath + "/$month",
+		WorkspaceRollupPath,
+		WorkspaceRollupPath + "/$month",
+	} {
+		if p == node {
+			return true
+		}
+	}
+	return false
 }
 
 // isNewCredsPath reports whether p is one of the three things C1.3 adds: the

@@ -1,6 +1,6 @@
 # Implementation plan: management commands for every configuration
 
-**Status: plan only; nothing is implemented; no task approved.** Fourteen tasks, **G0–G13**, each with
+**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.** Fourteen tasks, **G0–G13**, each with
 its files, its interface, its **red step** and its named tests. Every task is written against the tree
 of 2026-11-03 and every citation in it was resolved while writing. **Nothing here starts until the owner
 answers the decisions in [reconciliation.md](reconciliation.md) §4** — the tasks name the decision each
@@ -96,12 +96,12 @@ landed.
 
 ## G0. The generic writer's wildcard rows and the two budget keys (D1160, D1161, D1179). **SEC**
 
-- **Interface.** `settingsGenericKeys` (`internal/cli/settings_set.go:88`) gains the wildcard rows this
+- **Interface.** `settingsGenericKeys` (`internal/cli/settings_set.go:96`) gains the wildcard rows this
   design manages, **and the two budget keys D1179 gives the generic path** (`budget.mode`,
   `budget.per_day_usd`) — the two whose rows default to the generic owner while the allowlist refuses
-  them on purpose (F13), with the list's own comment (`:71`) rewritten beside them;
-  `settingsWriteLookup` (`:488`) and `settingsPatternMatch` (`:511`) are **reused unchanged**, and the
-  literal `*` refusal (`:463`) stays. A concrete key of a row the allowlist does not carry keeps today's
+  them on purpose (F13), with the list's own comment (`:78`) rewritten beside them;
+  `settingsWriteLookup` (`:526`) and `settingsPatternMatch` (`:549`) are **reused unchanged**, and the
+  literal `*` refusal (`:501`) stays. A concrete key of a row the allowlist does not carry keeps today's
   refusal, whose sentence names the nearest keys.
 - **Decided here, and tested:** writing one concrete key into a block the document does not hold
   **creates the block** (D1161's stated cost), and the created block is refused when its key may not be
@@ -118,16 +118,16 @@ landed.
 
 ## G1. `--add-entry` and `--remove-entry` (D1162, D1163, D1167). **SEC**
 
-- **Interface.** Two flags on `settingsWriteOptions` (`internal/cli/settings_set.go:234`) beside `--add`
-  and `--remove`, dispatched in the same switch (`:1597`) to `yamledit.UpsertSeqItemByKey` /
+- **Interface.** Two flags on `settingsWriteOptions` (`internal/cli/settings_set.go:261`) beside `--add`
+  and `--remove`, dispatched in the same switch (`:1646`) to `yamledit.UpsertSeqItemByKey` /
   `RemoveSeqItemByKey` (`internal/yamledit/yamledit.go:294`, `:351`) for an object list, and to a
   map-member write for a map. **One entry per invocation** (D1167); the entry's key field is the row's
   own, decided per block in this task's table and pinned by its tests.
 - **The classification.** An entry write goes through `settingsTypedWrite`
-  (`internal/cli/settings_set.go:1425`) unchanged, so adding a `secrets` member or an `allow_data_to`
+  (`internal/cli/settings_set.go:1684`) unchanged, so adding a `secrets` member or an `allow_data_to`
   value is a widening and takes the typed name (D1165).
 - **Red step.** `TestSettingsSetAddEntryMapMember` and `TestSettingsSetAddEntryObjectListEntry` — each
-  fails today with the *a key with a `*` is a map entry* refusal (`:463`). Then
+  fails today with the *a key with a `*` is a map entry* refusal (`:501`). Then
   `TestSettingsSetRemoveEntryTakesOneOfADuplicateKey`, `TestSettingsSetAddEntryRefusesTwoEntries` and
   `TestSettingsSetAddEntrySecretsMemberIsATypedWidening`.
 - **Files (≤6).** `internal/cli/settings_set.go`, `internal/cli/settings_write.go` (the entry's
@@ -137,7 +137,7 @@ landed.
 
 ## G2. The settings-write document's entry members (D1164, D1166)
 
-- **Interface.** `settingsWriteDocVersion` (`internal/cli/settings_set.go:1896`) and the schema's const
+- **Interface.** `settingsWriteDocVersion` (`internal/cli/settings_set.go:2276`) and the schema's const
   (`schemas/settings-write.schema.json:20`) **stay at `1`**, and the entry write's members are **added as
   optional ones**: `operation`, the entry's key field and the members the entry carries. Every version-1
   member keeps its name and its meaning, so the console's edit — which pins version 1
@@ -173,11 +173,11 @@ landed.
 ## G4. The project layer file's entries (D1175). **SEC**
 
 - **Interface.** Every entry of `<config home>/fugaro/projects/<name>.layer.yaml`
-  (`internal/localcfg/localcfg.go:1120`) — `profiles.*`, `defaults.*` (agent, git, rigor) and `ab.*` —
+  (`internal/localcfg/localcfg.go:1146`) — `profiles.*`, `defaults.*` (agent, git, rigor) and `ab.*` —
   written through G0 and G1 against `layerRows` (`internal/settings/registry.go:411`), with
   `config publish`'s reserved-key and executable-key refusals (`internal/cli/config_publish.go:309`)
   applied to the edit's own document. The layer's `--layer project` write keeps ending with
-  `next: fugaro update` (`internal/cli/settings_set.go:1728`).
+  `next: fugaro update` (`internal/cli/settings_set.go:2067`).
 - **Red step.** `TestSettingsSetLayerProfileEntryWritesTheLayerFile` and
   `TestSettingsSetLayerAbEntryWritesTheLayerFile` — each fails today with a refusal naming the generic
   allowlist. Then `TestSettingsSetLayerRefusesAReservedKey` and
@@ -212,8 +212,12 @@ landed.
   folder's plan inherits its rules and does not restate them.
 - **Red step.** `TestRigorSetRefusesAModeBelowTheResolvedOne` and `TestRigorSetRefusesHotfix` — each
   fails today because the command does not exist — then `TestRigorSetWritesTheLocalProjectConfig`.
-- **Files (≤8).** a new `internal/cli/rigor.go`, its test, `internal/settings/registry.go` (rows only),
-  and the pin tests for the rigor design's own docs.
+- **Files (≤8).** `internal/cli/rigor.go` (the `fugaro rigor` group: **whichever of this task and G7
+  lands first creates it**, and the other adds its own subcommand to
+  it — both winning folders state that one sentence, and none may write "the group exists by then";
+  the settings plan's S7 designed `fugaro rigor floor` too and is closed as G7's duplicate,
+  2026-11-10), its test, `internal/settings/registry.go` (rows only), and the pin tests for the rigor
+  design's own docs.
 - **SEC.** It writes the rigor mode — the depth and the cost every review of a run of this repository is
   held to — through the write path, and where it lowers a floor its gate row refuses it as a `Typed`
   step (D1180).
@@ -226,8 +230,10 @@ landed.
 - **Red step.** `TestRigorFloorRemovalTakesTheProjectNameTyped` — a `--yes` on a removal is **refused**
   with the typed prompt, which fails today because the command does not exist — then
   `TestRigorFloorRefusesAnAgentSession` and `TestRigorFloorAddsAnEntryWithoutTheTypedForm`.
-- **Files (≤6).** `internal/cli/rigor.go` (shared with G6), its own test file, and the local-config
-  editor call.
+- **Files (≤6).** `internal/cli/rigor.go` (the group of G6 above: whichever of G6 and this task lands
+  first creates it; **G7 and the settings design's S7 were the same command**, `fugaro rigor floor`,
+  and the owner settled that overlap on 2026-11-10 — **this task builds it and S7 is closed as its
+  duplicate**), its own test file, and the local-config editor call.
 - **SEC**: it is the one command here whose step is never admitted under the gate, and its refusal is
   the reason.
 
@@ -288,7 +294,7 @@ landed.
 ## G12. The registry's owner column (D1178, D1179)
 
 - **Interface.** The settings read resolves an owner through a **table of its own** instead of
-  `settingsFamilyCommands` (`internal/cli/settings_set.go:46`), which answers the write's refusal and
+  `settingsFamilyCommands` (`internal/cli/settings_set.go:47`), which answers the write's refusal and
   cannot be widened without refusing `max_parallel` and `update_check` (F11); the read's table names
   `fugaro settings set` for the default owner, and a command that exists or a sentence naming
   `fugaro setup` / `fugaro update` for every family. D1179's other half — the two budget keys the

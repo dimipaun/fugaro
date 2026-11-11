@@ -115,6 +115,6 @@ func newOrchestratorCmd() *cobra.Command {
 			"waits on a person) are confirmed at a real terminal with the project's\n" +
 			"name typed, never by --yes: a session that has none writes nothing.",
 	}
-	cmd.AddCommand(newOrchestratorStateCmd(), newOrchestratorEventsCmd(), newOrchestratorPatchCmd())
+	cmd.AddCommand(newOrchestratorStateCmd(), newOrchestratorEventsCmd(), newOrchestratorPatchCmd(), newOrchestratorRunCmd())
 	return cmd
 }

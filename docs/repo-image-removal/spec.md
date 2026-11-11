@@ -284,10 +284,10 @@ No compatibility, in the shape the tree already uses for a removed key.
   for `rebuild`), and its mutual-exclusion clauses (`:306`) shrink to the pairs that survive
   (`image_name` with `needs`); `schemas/project-layer.schema.json:265` loses the same keys (`:338` for
   `rebuild`). **`schemas/settings.schema.json` loses the removed keys' own member rows** — the
-  twenty-one at `schemas/settings.schema.json:832` through `:1181` (`:1145` is
+  twenty-one at `schemas/settings.schema.json:838` through `:1187` (`:1151` is
   `workflows.*.image.setup`), beside their rows in `internal/settings/registry.go:229`, without which
   `fugaro settings set` would still offer a key the config refuses — **and keeps `base_images` and the
-  flattened `image_catalog.*` rows untouched** (`schemas/settings.schema.json:547`), as
+  flattened `image_catalog.*` rows untouched** (`schemas/settings.schema.json:550`), as
   `image_name`/`needs` keep their members (D1196).
 - **The goldens and the fixtures**: the **50** files under `testdata/` that carry one of the three
   keys — `grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/` — are the removal's own
@@ -319,6 +319,15 @@ so its row changes with it, and the plan carries the amended rows:
 | `fugaro image check` | **no row, and it never had one.** What is left of the command is `--job --catalog`, a job's own mode — the entrypoint the installation's catalog check job runs, not a command a session runs. The gate's set is the seven commands of §3.1, and a container's entrypoint is not one of them |
 | `fugaro image status`, `render`, `gate`, `record`, `promote`, `migrate` | **no row**: the commands do not exist (and `migrate` is not written at all, §3.2) |
 | `fugaro update --repo <r> --retire` | **never admitted.** A retirement is a delete, and D1026's rule that a `Typed` step is never admitted settles it twice over: the gate's first rule refuses a delete, and the typed confirmation is a step no plan gate may carry |
+
+**`fugaro image build`'s derived arm is unjudged, and that is deliberate.** `--workflow`, or a
+checkout with no catalog, is the part of this command the table above writes no row for: nothing of
+the gate's judges, admits or records it, no session is refused for it, and what bounds it is the
+budget lease the command takes from the project's budget database immediately before each submission
+(D1543). The policy that removed the confirmation is where that comes from: a build is the one thing
+it puts under the budget alone — no confirmation, no session refused for being unable to answer, the
+caps the only spending limit — so a session the gate has no document for submits its build like any
+other ([docs/no-prompt-policy/spec.md](../no-prompt-policy/spec.md), rules 2 and 4).
 
 **A Typed step is never admitted (D1026), and a retirement is never admitted** — not for a managed
 project, not for any flag, and not by inheritance from any other row. The row set is the

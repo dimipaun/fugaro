@@ -234,7 +234,7 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		q := questionFor("--gcp-project")
 		def, alt, why := projectIDSuggestions(ctx, s.name, s.fromCheckout, o.door == updateDoor.name)
 		s.a.asked = append(s.a.asked, q.label)
-		v, err := r.promptChoice(q.label, def, alt, why, func(v string) error {
+		v, err := r.promptChoice(valueSpec{what: q.what, flag: q.flag}, def, alt, why, func(v string) error {
 			if !infra.ValidProjectID(v) {
 				return errors.New("a project ID is 6 to 30 of a-z, 0-9 and '-', starting with a letter")
 			}
@@ -248,7 +248,7 @@ func (s *wizardStage) ask(ctx context.Context) error {
 	if o.cloud.region == "" {
 		q := questionFor("--region")
 		s.a.asked = append(s.a.asked, q.label)
-		v, err := r.prompt(q.label, defaultRegion, func(v string) error {
+		v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, defaultRegion, func(v string) error {
 			if !regionRE.MatchString(v) {
 				return errors.New("a region looks like us-east5 or europe-west4")
 			}
@@ -284,7 +284,8 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		return s.answer(err)
 	}
 	if s.name == "" && !o.configOnly {
-		def, label := suggestName(ctx), questionFor("--name").label+" (permanent"
+		q := questionFor("--name")
+		def, label := suggestName(ctx), q.what+" (permanent"
 		switch _, _, ok := originOwner(ctx); {
 		case s.fromCheckout != "":
 			// No default: the file may be a clone's, so the name is typed.
@@ -296,7 +297,7 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		}
 		label += ")"
 		s.a.asked = append(s.a.asked, label)
-		v, err := r.prompt(label, def, func(v string) error {
+		v, err := r.prompt(valueSpec{what: label, flag: q.flag}, def, func(v string) error {
 			if !config.ProjectNameRE.MatchString(v) {
 				return errors.New("a project name is 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 			}
@@ -306,6 +307,18 @@ func (s *wizardStage) ask(ctx context.Context) error {
 			return s.answer(err)
 		}
 		o.name = v
+	}
+	// The bake question (IS7, D1901) is asked after the name and before the
+	// billing one: it is about the project the answers above settled rather
+	// than about an input, and it is asked only on a run that creates the
+	// installation — a run on an installation that is already there keeps the
+	// answer the project's own and takes it from its flag or from the
+	// published node, never from this machine (askBake, setup.go).
+	if err := s.askBake(); err != nil {
+		// The question's own no-answer stops the phase here, as the three above
+		// do: the billing question below is not reached, and the rerun resumes
+		// at this one (s.answer).
+		return s.answer(err)
 	}
 	// The billing question is the last of the wizard's questions (W4.3): it is
 	// about the GCP project the answers above settled, and it is asked only

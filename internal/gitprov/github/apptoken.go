@@ -175,6 +175,35 @@ var reviewTokenPermissions = map[string]string{
 // write anything, and the set's own test holds it to exactly these three.
 func ReviewTokenPermissions() map[string]string { return maps.Clone(reviewTokenPermissions) }
 
+// personReadTokenPermissions is what the credentials service's PERSON read mint
+// asks for (D915 of docs/run-without-checkout/implementation-plan.md, task A0):
+// the reads that route's callers make and no value carrying a write anywhere.
+//
+// It is the coordinator's two plus one, and both halves are load-bearing. The
+// route is one route, so the set has to reach the read `fugaro coordinator show`
+// makes with a person's token as well as the one it was extended for: a pull
+// request is read one at a time (pull_requests: read), and metadata: read is
+// what GitHub requires of any request at all. contents: read is the file read
+// the route serves since A0 -- a repository's own fugaro.yaml at a ref, through
+// gitprov.ContentsReader -- and without it GitHub refuses that read, which is
+// exactly what the person read mint did before this set existed.
+//
+// It is a set of its own rather than coordinatorTokenPermissions widened, and
+// that is the whole point of the two pins around the two: the coordinator mints
+// with that constant, it opens no file, and a permission asked for and never
+// used is reach a stolen token would have for nothing. The mint asks for what
+// the App holds; a set the App is not granted fails at GitHub, which is a
+// refusal the operator reads, not a silent narrowing.
+var personReadTokenPermissions = map[string]string{
+	"contents": "read", "pull_requests": "read", "metadata": "read",
+}
+
+// PersonReadTokenPermissions are the permissions of the credentials service's
+// person read mint (githubread.go), a copy the caller may keep: the read-only
+// set that route asks with. Nothing here asks to write anything, and the set's
+// own test holds it to exactly these three.
+func PersonReadTokenPermissions() map[string]string { return maps.Clone(personReadTokenPermissions) }
+
 // GitUsername is the HTTPS username git uses with an installation token.
 const GitUsername = gitUsername
 

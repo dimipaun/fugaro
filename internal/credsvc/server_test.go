@@ -603,6 +603,7 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		Now:    func() time.Time { return f.now },
 		DB:     s.nodes,
 		Probes: s.probes,
+		Slips:  testSlips(t),
 		// The audit lines are written as the JSON objects they are (C1.13), so
 		// a test that reads one reads it the way an operator's tooling does.
 		// They go to the fixture's own audit buffer and NOT to the service's

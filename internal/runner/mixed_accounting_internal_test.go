@@ -159,10 +159,15 @@ func pinnedAgent(coder, l2, l3 string) config.Agent {
 
 // TestResolveMixedStagesFollowsRungFour is the runner's half of the owner's
 // ruling of 2026-11-05 (docs/design/mixed-credentials.md §11): the project's
-// default_claude_account opts an api-key run into the mix for the two stages of
+// default_claude_account opts an api-key run into the mix for the stages of
 // the allow-list, under the conditions the launch's mixedStageAccount applies —
 // an Anthropic model on that stage, a coder a provider route this repository
 // may use, and a mode the run resolves as enforce — and under no other.
+//
+// The allow-list is config.MixedAccountStages and it is not spelled here: the
+// triage that weighs a review round's findings joined it in T-TR5 (D1851), and
+// it runs level 2's model (stageLevel, routing.go), so the fixtures that pin
+// level 2 pin the triage stage's model too.
 //
 // The runner has to make the same judgement the launch did: it reads the
 // published node the launch read the local config *from*, and a rung the launch
@@ -183,7 +188,7 @@ func TestResolveMixedStagesFollowsRungFour(t *testing.T) {
 			name:  "the default names the mix's account",
 			agent: pinnedAgent("vendor/model-a", claude, claude), mode: policy.ModeEnforce,
 			def:  "team-a",
-			want: map[string]string{"review": "team-a", "adversarial": "team-a"},
+			want: map[string]string{"review": "team-a", "adversarial": "team-a", "triage": "team-a"},
 		},
 		{
 			name:  "a stage whose own model is not Anthropic takes no account",
@@ -212,8 +217,14 @@ func TestResolveMixedStagesFollowsRungFour(t *testing.T) {
 		{
 			name:  "rung 2 is served as written and wins over the default",
 			agent: pinnedAgent("vendor/model-a", claude, vendor), mode: policy.ModeEnforce,
-			def: "team-a", stages: map[string]string{"review": "team-b"},
-			want: map[string]string{"review": "team-b"},
+			// The triage stage runs level 2's model too (stageLevel, D1848),
+			// so a fixture naming review alone would leave the default to
+			// serve it beside review's own account: that is the second
+			// credential the one-account rule refuses, and not the precedence
+			// this case is about. Both stages the default would reach are
+			// named here, which is the config the precedence is read on.
+			def: "team-a", stages: map[string]string{"review": "team-b", "triage": "team-b"},
+			want: map[string]string{"review": "team-b", "triage": "team-b"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

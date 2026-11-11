@@ -1099,22 +1099,23 @@ func TestChecklistHasCheck49(t *testing.T) {
 
 	// Step 3 is not the job environment alone, and step 8's `git diff --
 	// fugaro.yaml` FACT rests on knowing that. `fugaro update --repo`'s
-	// repository stage ends by OFFERING the checkout's gcp_project: line —
+	// repository stage ends by WRITING the checkout's gcp_project: line —
 	// init_repo_stage.go:163, Apply's `s.anchor(ctx, env, s.e.r.o.planOnly)`,
 	// where the --plan-only run plans the same line and writes nothing (:143) —
-	// through the anchor at init_fugaroyaml.go:243, the [y/N] prompt at :220
-	// and the write at :230; --yes takes that prompt without asking. The check
-	// runs `update --repo` in that checkout TWICE (step 3 and step 8), so the
-	// section has to say which answer it wants and step 8 has to have a revert:
-	// without both, "this is a confirmation that it is unchanged" is a
+	// through the anchor at init_fugaroyaml.go:218 and the write at :248. The
+	// [y/N] the line used to be behind is gone (T7, docs/no-prompt-policy): a
+	// person at the terminal is asked nothing, --yes writes the same way (:230),
+	// and `fugaro update --ask` is the one flag that puts the question back. The
+	// check runs `update --repo` in that checkout TWICE (step 3 and step 8), so
+	// the section has to say what puts the line back and step 8 has to have the
+	// revert: without both, "this is a confirmation that it is unchanged" is a
 	// confirmation of an edit the check itself made, and the FACT above fails
 	// on the operator's own checkout.
 	chk49MustContain(t, chk49Step(t, section, "### 3."), "step 3", []string{
-		"`update --repo` also offers the checkout's own `gcp_project:` line",
+		"`update --repo` also writes the checkout's own `gcp_project:` line",
 		"`internal/cli/init_repo_stage.go` → `internal/cli/init_fugaroyaml.go`",
-		"Write this to <path>? [y/N]:",
-		"asks `Write this to <path>? [y/N]:` (`internal/cli/init_fugaroyaml.go`)",
-		"step 8 runs the same command and asks the same question a second time",
+		"the `Write this to <path>? [y/N]:` confirmation this line used to be behind",
+		"**step 8 runs the same command and then puts the file back.**",
 	})
 
 	// The citations the review found drifted. Asserted ABSENT rather than
@@ -2270,7 +2271,7 @@ var chk49Citations = []chkCitation{
 	{"internal/cli/image_refresh_steps.go", "func (r *initRun) refreshCloneJobs"},
 	{"internal/cli/upgrade.go", "what fugaro update-skills does"},
 	{"internal/cli/init_repo_stage.go", "s.anchor(ctx, env, s.e.r.o.planOnly)"},
-	{"internal/cli/init_fugaroyaml.go", "\"Write this to %s? [y/N]: \""},
+	{"internal/cli/init_fugaroyaml.go", "writeFileAtomic"},
 	{"internal/cli/init_fugaroyaml.go", "func (s *repositoryStage) anchor"},
 	{"internal/projectpolicy/match.go", "func Canonical(provider, repo string)"},
 	{"internal/cli/project_cmd.go", "func allowSourcesOf"},

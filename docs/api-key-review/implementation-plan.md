@@ -1,9 +1,12 @@
 # The api-key review path — implementation plan
 
-**Status: AK1–AK5 are implemented on `main`, and no task past AK5 is started; D1410–D1429 are answered
+**Status: AK1–AK5 and AK6a are implemented on `main` (AK6a merged as #2147, `03c2a22c`), AK6b is
+written and in review, and no further task is started; D1410–D1429 are answered
 2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax"), except the two
 the security review added — AK9 and AK10, which are written and not approved, and **AK10's approval is
-a precondition of AK6b's release** (§6 item 11).** AK4 lets the
+a precondition of AK6b's release** (§6 item 11), whose guard — `fugaro creds set`'s refusal of a bundle
+the deployed service cannot read — **is MC6 of `docs/model-crafts`'s to write since 2026-11-10, with its
+Depends on named in item 11**.** AK4 lets the
 review class's one credential be the project's own Anthropic API key: a policy naming the sentinel is
 publishable and the credentials service serves it, and **AK5 deploys the route** (its own section and
 **§6.8** — a profile naming the sentinel gets the job whose account segment is the sentinel, mounting
@@ -19,6 +22,15 @@ tier and `.claude/rules/credentials-service.md` require — so item 6 is **open 
 landed under it rather than past it, and stands for **AK6a**, **AK6b** and **AK7** too. **E7's gate is
 lifted**, item 7's own accounting: its second half reached the tree on 2026-11-08, so `fugaro review`
 admits a launch, though **no live installation has been measured** against it.
+
+**Reconciled with `docs/model-crafts` on 2026-11-10** (that folder's **D1638** and **F26**, and §6
+item 12 below): the owner ruled that **api-key-review is NOT superseded by model-crafts; model-crafts
+builds on it**. **AK1–AK7 stay exactly as planned here** — nothing in this folder is re-scoped, and
+**AK6a is merged**, which is what the other package builds on. Model-crafts' **MC5** and **MC6**
+**extend what AK6a, AK6b and AK7 build and never replace it**, are **held until AK6b and AK7 have
+merged**, and re-decide no axis value, no bundle field, no forwarding rule and no model path.
+**AK9 and AK10 are folded into MC6**: they stay written and not approved here, and their files and
+tests are that task's to write, because MC6 already writes the credentials service's own files.
 
 **The reconciliation with `docs/cloud-senior-review/implementation-plan.md` §6.7 is done, on
 2026-11-09** (§1's own paragraph, and §6 items 9 and 10): **§6.7's reading was right and this plan's
@@ -48,7 +60,7 @@ a slice the owner does not want is simply not started.
 | --- | --- | --- | --- |
 | **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
 | **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This was code for a launch E7 refused when it was written; the flip of 2026-11-08 admits it** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy` + `internal/localcfg`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
-| **L3** | **AK6a**, **AK6b**, **AK7** | the OpenRouter half: the provider key gets its own value on the account axis, so a profile can publish it and a policy admit it (**F15**, §6 item 9), the bundle holds the key and the service forwards to the provider's endpoint (**F15**, **F16**, **F24**, **D1418**), and the review run's model path reaches it (**F22**) | **No file is written by two of the three** — AK6a is `internal/config`, `internal/projectpolicy`, `internal/localcfg`, `internal/infra`, `internal/cli`, `internal/task`, `schemas/task.schema.json`, `deploy/terraform/gcp/modules/project/variables.tf` (the `job.account` validation) and the **three** `internal/credsvc` rows §2 books for it (`review.go`, `review_test.go` — the two CSR17's sketch named and AK6's six-file list did not — and `sharedjobs_test.go`, the deployer-and-service agreement test); AK6b is the rest of `internal/credsvc`, `internal/creds` and `schemas/creds-bundle.schema.json`; AK7 is `internal/runner` and nothing else, because the provider's base URL never leaves the bundle (**D1418**) — and AK6a is first because AK6b's offer rule matches the axis value AK6a defines (§2 books all of them) — and **AK10, off the levels, rides with AK6b in one release** (§6 item 11) |
+| **L3** | **AK6a**, **AK6b**, **AK7** | the OpenRouter half: the provider key gets its own value on the account axis, so a profile can publish it and a policy admit it (**F15**, §6 item 9), the bundle holds the key and the service forwards to the provider's endpoint (**F15**, **F16**, **F24**, **D1418**), and the review run's model path reaches it (**F22**) | **No file is written by two of the three** — AK6a is `internal/config`, `internal/projectpolicy`, `internal/localcfg`, `internal/infra`, `internal/cli`, `internal/task`, `schemas/task.schema.json`, `deploy/terraform/gcp/modules/project/variables.tf` (the `job.account` validation) and the **three** `internal/credsvc` rows §2 books for it (`review.go`, `review_test.go` — the two CSR17's sketch named and AK6's six-file list did not — and `sharedjobs_test.go`, the deployer-and-service agreement test); AK6b is the rest of `internal/credsvc`, `internal/creds` and `schemas/creds-bundle.schema.json`; AK7 is `internal/runner` and nothing else, because the provider's base URL never leaves the bundle (**D1418**) — and AK6a is first because AK6b's offer rule matches the axis value AK6a defines (§2 books all of them) — and **AK10, off the levels, rides with AK6b in one release** (§6 item 11) — carried since 2026-11-10 by **MC6 of `docs/model-crafts`**, whose Depends on is MC5 and this folder's AK6b and AK7 merged, so the release that ships AK6b waits on MC6's chain |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
 
 **The critical path is `AK1 → AK4 → AK5 → AK6a → AK6b → AK7 → AK8`**, and it is the shortest chain the
@@ -59,10 +71,15 @@ holding and serving that key, AK7 is the runner's path to it, and AK8 measures t
 result on a real installation. **AK2 and AK3 are off the critical path** — AK2 is documentation and
 AK3 is the record — and either may land at any point in L1 without moving it. **AK9 and AK10 are off
 it too**: they are the security review's two findings (a wording pair that says a review job's account
-is a Claude account, and the credential write that can outrun the service that reads it), and **neither
+is a Claude account, and the credential write that can outrun the service that reads it), and **since
+2026-11-10 both are folded into `docs/model-crafts`'s MC6** (§6 item 12), which carries their files
+and keeps them written and unapproved; **neither
 blocks a cloud task from starting** — but **AK10 is a release precondition of AK6b** (§6 item 11): the
 two land in one release, AK6b's commit first and the guard after it, and **that release waits on the
-owner's approval of AK10**, which is written and not approved. **The OpenRouter half of the critical path carries one more gate, and no
+owner's approval of AK10**, which is written and not approved — **and on MC6 itself, the task that
+carries the guard since the fold: MC6's Depends on is MC5 and this folder's AK6b and AK7 merged, and
+MC5 follows `docs/model-crafts`'s MC1–MC3, so the release that first ships AK6b's provider entry waits
+on that chain and not on AK10's approval alone** (§6 item 11). **The OpenRouter half of the critical path carries one more gate, and no
 task holds it: Check 50** (§6 item 10) — the live check the tree's own tier-C refusal names, which the
 owner has not run — so AK6a, AK6b and AK7 may all land and be unit-tested while a review **served** by
 a provider key is still refused, and §5's step C may not be run before it.
@@ -86,7 +103,7 @@ which credential serves a review call. A provider key riding the sentinel
 `config.AnthropicKeyAccount` would be a second credential under a value an installation already
 spells, carrying the Anthropic key's admissions and its meaning, and `offeredToReview` matching by
 name **and** tier would have to offer two credentials where the class's whole rule is exactly one with
-no fallback. So the provider key gets a value of its own (**AK6a**, 24 files — AK4's and AK5's readers
+no fallback. So the provider key gets a value of its own (**AK6a**, 26 files — AK4's and AK5's readers
 for a second value, which is what §6.7's "6–8" estimate was short of) and the service half is
 **AK6b** (9 files). §6.7 is amended to say so in the same pass (§6 item 9).
 
@@ -133,6 +150,8 @@ could touch).
 | `internal/cli/run.go` | L2 | AK5, then AK6a (the second axis value) |
 | `internal/cli/project_job.go` | L2 | AK5 (the sentinel's own job), then AK6a |
 | `internal/cli/project_job_test.go` | L2 | AK5 (the same), then AK6a |
+| `internal/cli/settings_set.go` | L2 | AK6a (the stage-account write path's reading of an axis value that is no account) |
+| `internal/cli/settings_stages_test.go` | L2 | AK6a (the same) |
 | `internal/credsvc/sharedjobs_test.go` | L2 | AK4, then AK5, then AK6a (the agreement test gains the value) |
 | `internal/infra/projectjobs.go` | L2 | AK4 (the sentinel's refusal), then AK5, then AK6a |
 | `internal/infra/projectjobs_test.go` | L2 | AK4 (the same), then AK5, then AK6a |
@@ -150,7 +169,8 @@ could touch).
 | `internal/creds/select.go` | L3 | AK6b (the tier-C candidate the provider key is offered as) |
 | `internal/creds/select_test.go` | L3 | AK6b (the same) |
 | `internal/runner/agentenv.go` | L3 | AK7 |
-| `internal/runner/agentenv_test.go` | L3 | AK7 |
+| `internal/runner/agentenv_test.go` | L3 | AK7 (booked; no change — the class is unreachable from its package) |
+| `internal/runner/runner.go` | L3 | AK7 (the effort's call site, restored by the task's own review) |
 | `docs/gcp-live-checklist.md` | L4 | AK8 |
 | `internal/credsvc/auth.go` | — | AK9 (the two refusals that say Claude account) |
 | `internal/credsvc/auth_test.go` | — | AK9 (the same) |
@@ -170,7 +190,12 @@ could touch).
 
 **A row with `—` in the Level column is a task that is on no level**, which §1 says of AK9 and AK10:
 they are off the levels and off the critical path, so their files are booked here only so that a later
-task knows they are taken.
+task knows they are taken. **As of 2026-11-10 the rows that name AK9 and AK10 are written by MC6 of
+`docs/model-crafts`** (§6 item 12, that folder's D1638 and F26): the two tasks are folded into it, so
+the `—` rows above are its writers now, booked here to keep this folder's inventory of them complete
+and to say that no task here writes them. **MC6's Depends on is MC5 and this folder's AK6b and AK7
+merged** (§6 item 11), which is the chain the release that first ships AK6b's provider entry then waits
+on beside the owner's approval of AK10.
 
 `internal/credsvc/cascade.go` is booked twice across two levels — AK4's candidate list and AK6b's tier
 map — and `internal/runner/routing.go` with `internal/runner/routing_internal_test.go` twice within
@@ -190,7 +215,22 @@ test (the same: AK4's prose says the sentinel is not deployable, AK5 makes it de
 `internal/credsvc/sharedjobs_test.go` (AK4's agreement test gains the axis value). AK5 also books
 `internal/cli/project_job.go` and its test, which no task booked and which the placement it makes is
 unreachable without: the account axis is resolved there, so a sentinel the launcher cannot place on
-its own job is a sentinel the deployer deploys and no launch reaches. A task that needs a file another
+its own job is a sentinel the deployer deploys and no launch reaches. **AK6a books
+`internal/cli/settings_set.go` and `internal/cli/settings_stages_test.go` on the same terms**, and it
+is the same accident twice: `settingsStageAccountRule` (#2123, which landed the day this table was
+last amended and after it) is the write path's own reading of a `stages.<s>.claude_account` value, and
+its sentinel arm was added for AK4/AK5's value alone — so a second axis value that
+`config.ValidClaudeAccountRef` admits falls through to the declared-account lookup, whose sentence
+prescribes `fugaro accounts add <value>`, which `config.ValidateClaudeAccounts` refuses. **AK7 books
+`internal/runner/runner.go` on the same terms, and the task's own review is what found it** (its
+section carries the amendment, 2026-11-10): CSR18's `runner.go` call-site clause was dropped on the
+premise that `agentenv.go` held the only call site of the provider question, and it does not —
+`reviewEffort` asks the same question to decide whether a stage takes a reasoning effort, so without
+the file this task's own stage is launched as a provider's only half-way (`MAX_THINKING_TOKENS=0`
+beside a `CLAUDE_CODE_EFFORT_LEVEL` that is a no-op). Its neighbour row is the mirror image:
+`internal/runner/agentenv_test.go` is booked and takes **no** change, because the class is unreachable
+from its package — `runner_test`'s harness builds local runs — and the class's `agentenv.go` half is
+pinned from `internal/runner/routing_internal_test.go` instead. A task that needs a file another
 **level** holds adds itself to this table in the same commit.
 
 ## 3. The tasks
@@ -530,20 +570,23 @@ the right one and this plan's six-file AK6 was the loser** (§1's own paragraph,
 provider key needs **its own value on the account axis**, because that value is the admission unit
 and the pairing — not the cascade's selector — fixes which credential serves a review call.
 
-**Files (24):** `internal/config/claude_accounts.go` and its test, `internal/config/project_secrets.go`
+**Files (26):** `internal/config/claude_accounts.go` and its test, `internal/config/project_secrets.go`
 and its test, `internal/projectpolicy/accounts.go` and its test, `internal/projectpolicy/policy.go`,
 `internal/projectpolicy/stage_accounts_test.go`, `internal/localcfg/localcfg.go` and its test,
 `internal/infra/projectjobs.go` and its test, `internal/cli/project_job.go` and its test,
-`internal/cli/run.go`, `internal/task/task.go` and its test, `schemas/task.schema.json` and
-`schemas/schemas_test.go`, `deploy/terraform/gcp/modules/project/variables.tf`, `docs/project-layer.md`,
+`internal/cli/run.go`, `internal/cli/settings_set.go` and `internal/cli/settings_stages_test.go` (both
+§2's preamble books for AK6a: #2123's stage-account write rule), `internal/task/task.go` and its test,
+`schemas/task.schema.json` and `schemas/schemas_test.go`,
+`deploy/terraform/gcp/modules/project/variables.tf`, `docs/project-layer.md`,
 and `internal/credsvc/review.go`, `internal/credsvc/review_test.go` and
-`internal/credsvc/sharedjobs_test.go`. **All twenty-four are rows §2 already books at L2** — the axis's
-readers AK4 and AK5 built, which is what its preamble means by `then AK6a` — and two of them,
-`internal/credsvc/review.go` and `internal/credsvc/review_test.go` (the pairing's own type and its
-offer rule), are the files §6.7's CSR17 booked and this plan's AK6 did not: that is the disagreement
-the reconciliation settled in CSR17's favour. The third `internal/credsvc` row,
-`sharedjobs_test.go`, was already booked and needs only the new value in its assertion. **No new secret, no new resource, no new grant:** the value is
-an axis value, and the credential it names is AK6b's bundle key.
+`internal/credsvc/sharedjobs_test.go`. **All twenty-four of the axis's readers are rows §2 already
+books at L2** — the readers AK4 and AK5 built, which is what its preamble means by `then AK6a` — and
+two of them, `internal/credsvc/review.go` and `internal/credsvc/review_test.go` (the pairing's own
+type and its offer rule), are the files §6.7's CSR17 booked and this plan's AK6 did not: that is the
+disagreement the reconciliation settled in CSR17's favour. The third `internal/credsvc` row,
+`sharedjobs_test.go`, was already booked and needs only the new value in its assertion. **No new
+secret, no new resource, no new grant:** the value is an axis value, and the credential it names is
+AK6b's bundle key.
 
 **Interfaces:** the account axis gains **a second value of its own** beside
 `config.AnthropicKeyAccount` — a constant in `internal/config/claude_accounts.go`, called here the
@@ -609,7 +652,11 @@ all in the Anthropic-key slice", which leaves the provider endpoint to this half
 can be too old to read, so **the release that first ships the entry carries the guard against the
 write** — `fugaro creds set` refuses a bundle whose newest key the release of the service that **serves**
 the document predates — and **no release ships one without the other**. AK10 is **written and not approved**,
-so **this half cannot be released until the owner approves it**. **The other half of §6.7's CSR17**,
+so **this half cannot be released until the owner approves it** — **and the guard is MC6 of
+`docs/model-crafts`'s to write since 2026-11-10** (§6 items 11 and 12), **whose Depends on is MC5 and
+this folder's AK6b and AK7 merged**, so the release this half waits on is one that also carries MC6,
+and it comes after MC5, which is held until AK6b and AK7 merge and follows that folder's MC1–MC3.
+**The other half of §6.7's CSR17**,
 and the half whose six-file list this plan already had: it is
 that list — `bundle.go` and its test, `cascade.go`, `forward.go` and its test and the bundle schema —
 plus `internal/credsvc/cascade_test.go` (the tier map's own test, which the six named no test for) and
@@ -686,20 +733,43 @@ carries moves", and with **D1418** both are the bundle's — the service builds 
 the document it holds, so the gateway's upstream kind does not move and no task writes that file; and
 CSR18's `internal/runner/runner.go` call-site clause is dropped too, because the one call site
 `agentenv.go` already has is the call site. `internal/runner/agentenv_test.go`, which CSR18 booked and
-this plan had not, is kept.
+this plan had not, is kept. **Amended 2026-11-10: the second of those two clauses is restored by this
+task's own review — the next paragraph, §2's AK7 rows, and §6 item 9.**
 
-**Files (4):** `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`,
-`internal/runner/agentenv.go`, `internal/runner/agentenv_test.go`. **No file outside
-`internal/runner`**: with **D1418** the provider's base URL and auth shape never leave the service's
-bundle, so the runner names no provider endpoint and no host — the property §7's third attack question
-answers.
+**Amended 2026-11-10, by AK7's own change and the review of it** (§2's AK7 rows and the paragraph after
+its table): **the dropped `internal/runner/runner.go` call-site clause is restored.** Its premise — "the
+one call site `agentenv.go` already has is the call site" — was wrong, and the review of this task's
+change is what found it: `reviewEffort` asks the same *is this stage a provider's?* question, to decide
+whether to merge `CLAUDE_CODE_EFFORT_LEVEL` into the stage's pins, and it asked only the stage's own
+route. Left that way, this task's own run is launched as a provider's only half-way — the stage's
+`MAX_THINKING_TOKENS=0` turns its thinking off while an effort variable beside it looks applied and is a
+no-op (G5, D725) — and `reviewFacts` records a reasoning level the calls never ran at. Both places now
+ask one question of one predicate (`stageServedByProvider`, `agentenv.go`), which is this task's to
+write, since the pairing it admits is what makes the second answer differ from the first. **And
+`internal/runner/agentenv_test.go` takes no change**: it is booked here and in §2, and the class cannot
+be reached from it — its harness builds **local** runs (`Deps.Local: true`,
+`internal/runner/runner_test.go:213`), while a review class run's identity is the platform's own report
+of the execution *and* the job's account segment, which a local run has neither of, so
+`reviewClassRun()` fails closed. The class's `agentenv.go` half is pinned from
+`internal/runner/routing_internal_test.go` (package `runner`), where every other test of the class
+lives; the row stays so that a later task knows the file is taken and why it is quiet.
+
+**Files (5, one of them unchanged):** `internal/runner/routing.go`,
+`internal/runner/routing_internal_test.go`, `internal/runner/agentenv.go`, `internal/runner/runner.go`
+(the restored clause above), and `internal/runner/agentenv_test.go`, booked and unchanged (above).
+**No file outside `internal/runner`**: with **D1418** the provider's base URL and auth shape never leave
+the service's bundle, so the runner names no provider endpoint and no host — the property §7's third
+attack question answers.
 
 **Interfaces:** `checkReviewClassModelPath` stops refusing the provider-served pairing: the class takes
 the provider-key account as a pairing it admits (AK6a's value), and the call the service then forwards
 is the provider's, which the runner names no part of — `internal/runner/agentenv.go`'s gateway
 variables carry what a provider's model list needs and no host. The pins and the allow-list are
 unchanged: the review is still held to the project policy's `budget.allowed_models` (**D1425**), and
-`agentenv.go` is the only file here that writes an environment.
+`agentenv.go` is the only file here that writes an environment. **The one amendment to that, same date:**
+the *effort* the pins take for a review level is dropped for a provider-served stage, like a route's —
+the restored `runner.go` clause — so the stage is not given a reasoning level it does not run at; the
+model pins and the allow-list are the unchanged ones this paragraph means.
 
 **Tests and command:**
 `GOFLAGS=-p=2 go test ./internal/runner/ -run 'TestReviewRunOnAProviderKeyReachesTheProvider|TestReviewRunIsStillHeldToTheAllowList|TestReviewRunIsServedByTheProjectsAnthropicKey' -count=1`
@@ -748,7 +818,9 @@ register.
 
 ### AK9 — the tree's own sentences stop saying a review is served by a Claude account (SEC)
 
-**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows). **Depends on:**
+**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows); **folded into
+MC6 of `docs/model-crafts` on 2026-11-10** (§6 item 12, that folder's D1638 and F26), so this task stays
+written and not approved here and the files below are that task's to write. **Depends on:**
 nothing; it was found by the security review of the merged AK4 and AK5 (§7, **F25**).
 
 **Files (11):** `internal/credsvc/auth.go`, `internal/credsvc/auth_test.go`, `internal/credsvc/server.go`,
@@ -821,7 +893,10 @@ what was refused is a security-relevant inaccuracy rather than a wording prefere
 
 ### AK10 — the credential write refuses a bundle the deployed service cannot read (SEC)
 
-**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows), and **a release
+**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows), **folded into
+MC6 of `docs/model-crafts` on 2026-11-10** (§6 item 12, that folder's D1638 and F26: written and not
+approved here, its guard and its files are that task's to write, and that task lands after AK6b's own
+commit, which the guard's own ordering requires), and **a release
 precondition of AK6b** (§6 item 11, condition 8 of the review): it lands in the same release as AK6b
 and **after** AK6b's own commit, because the guard judges a document only a CLI carrying the provider
 entry can write — its own `TestCredsSetWritesWhenTheServiceIsNewer` loads the written bundle through
@@ -1042,7 +1117,8 @@ alike. **Item 7's gate is lifted** — E7's second half reached the tree on 2026
 launch is admitted where it was refused, though no live installation has been measured against it.
 **Item 3's approval covered the tasks that existed on 2026-11-07: AK9 and AK10 are written and not
 approved.** **Item 9 records the reconciliation of 2026-11-09, item 10 a gate no task carried, which
-that reconciliation found, and item 11 the release precondition AK6b cannot ship without.**
+that reconciliation found, item 11 the release precondition AK6b cannot ship without, and item 12 the
+reconciliation with `docs/model-crafts` of 2026-11-10 and the fold of AK9 and AK10 into its MC6.**
 
 1. **D1410 answered: both slices** — the plan is about all three (reconciliation §9.1).
 2. **D1421 answered: after 0.20.0** — the release for AK8 and for any release note.
@@ -1116,13 +1192,18 @@ that reconciliation found, and item 11 the release precondition AK6b cannot ship
    selector fixes which credential serves a review call, and `offeredToReview` matches by name **and**
    tier, so a provider key riding the sentinel would carry the Anthropic key's own admissions and force
    the class to offer two credentials where its rule is exactly one with no fallback. **AK6 is
-   therefore two tasks**: **AK6a** (the second axis value — 24 files, and **`internal/credsvc/review.go`
+   therefore two tasks**: **AK6a** (the second axis value — 26 files, and **`internal/credsvc/review.go`
    among them, the file §6.7 booked and this plan did not**) and **AK6b** (the service's document, its
    offer and its forward — 9 files). **AK7 is amended** to CSR18 minus two clauses: `internal/gateway/gateway.go`
    is dropped (its own condition was "if the upstream kind or the auth shape moves", and with D1418
    both are the bundle's, so nothing moves) and `internal/runner/runner.go`'s call site with it, while
-   `internal/runner/agentenv_test.go` is kept. **§2 books every file of both tasks, drops the
-   conditional gateway row, and says which L2 rows AK6a re-enters**, and **§6.7 itself is amended in
+   `internal/runner/agentenv_test.go` is kept. **On 2026-11-10, by AK7's own review, the dropped
+   `runner.go` clause is restored and `internal/runner/runner.go` is in AK7's files**: the premise it
+   was dropped on ("the one call site `agentenv.go` already has") is false — `reviewEffort` asks the
+   same question of a stage, so the class's stage was launched as a provider's only half-way; AK7's
+   section and §2's AK7 rows carry that fifth file and the reason
+   `internal/runner/agentenv_test.go` stays quiet. **§2 books every file of both tasks and of AK7, drops
+   the conditional gateway row, and says which L2 rows AK6a re-enters**, and **§6.7 itself is amended in
    the same pass** — CSR17 and CSR18 now point at AK6a, AK6b and AK7 rather than at this plan's old
    AK6, and CSR17's "**Files (sketched, 6–8)**" is corrected: it covered the service half only and was
    short of the axis's own readers.
@@ -1151,9 +1232,33 @@ that reconciliation found, and item 11 the release precondition AK6b cannot ship
     may not be released without it, and AK10 lands in the
     same release, after AK6b's own commit** (the guard's own test loads the write it judges through
     `credsvc.ParseBundle`, so the field lands first; the guarantee is at the release, not the commit).
-    **AK10 is written and not approved** (item 3), and that has a consequence this plan states
-    rather than hides: **the OpenRouter half's release waits on the owner's approval of AK10.** AK10's
-    own section carries the same requirement from its side, and §1's L3 row says so beside AK6b.
+    **The task that carries that guard since the fold of 2026-11-10 is MC6 of `docs/model-crafts`**
+    (item 12) — **and MC6's Depends on is MC5 plus this folder's AK6b and AK7 merged** — so the release
+    that first ships AK6b's provider entry is one that also carries MC6, and it waits on MC6's own
+    chain: MC5 is held until AK6b and AK7 have merged and is itself downstream of that folder's
+    MC1–MC3. **That is what the fold leaves, and this plan states it rather than leaving the guard
+    unscheduled:** AK6b's release waits on MC6's prerequisites as well as on the owner's approval of
+    AK10, which the fold did not give. **AK10 is written and not approved** (item 3), and that has a
+    consequence this plan states rather than hides: **the OpenRouter half's release waits on the
+    owner's approval of AK10.** AK10's own section carries the same requirement from its side, and
+    §1's L3 row says so beside AK6b.
+12. **The reconciliation with `docs/model-crafts` is done, 2026-11-10** (that folder's **D1638** and
+    **F26**), and it re-scopes nothing here: the owner ruled that **api-key-review is NOT superseded
+    by model-crafts; model-crafts builds on it**, so **AK1–AK7 stay as planned** — this folder keeps
+    its tasks, its levels and its critical path — and model-crafts' **MC5** and **MC6** are the ones
+    that change: they **extend what AK6a, AK6b and AK7 build and never replace it**, they read the
+    files they share with them as merged (`internal/runner/routing.go`, `internal/credsvc/cascade.go`,
+    `internal/creds/select.go`), and they are **held until AK6b and AK7 have merged**, which that
+    folder's plan now says in its levels, its critical path and its shared-files table. **AK9 and
+    AK10 are folded into MC6**: both stay written and **not approved** here, the fold approves nothing
+    and unapproves nothing, and their files are MC6's to write. **The two consequences this item
+    states rather than hides:** AK9's sentences and AK10's guard are written in a task of another
+    folder, so this folder's §2 rows that name them are its writers now; and **item 11's
+    precondition travels with AK10** — the release that first ships AK6b's provider entry is one that
+    also carries the guard, which MC6 carries, and MC6 lands after AK6b's own commit **and after MC5,
+    the other half of its Depends on**, which is itself downstream of that folder's MC1–MC3 (item 11).
+    That is the reading the fold leaves. What AK6a's own merge did for the other package is recorded there: the
+    provider key's axis value is merged (`03c2a22c`, #2147).
 
 **One answer leaves work that no gate and no task carries yet, and it is named here so it is not
 lost:** **D1413** settles *that* the key wins when the owner asks for it explicitly, and **the
@@ -1236,5 +1341,8 @@ project and a real provider is not measured anywhere in this folder, and the rev
 rather than a running service. **It is also not the independent review item 6 asks for** — the file
 says so in its own last section — so **item 6 stays open for AK4 and AK5** and for AK6a, AK6b and
 AK7. **AK9 and AK10 are written and not approved** (item 3); **AK9 blocks no task**, and **AK10 blocks
-no task from starting but gates AK6b's release** (§6 item 11) — both are off the levels and off the
-critical path (§1, §2).
+no task from starting but gates AK6b's release** (§6 item 11) — **and the task that carries that guard
+now is MC6 of `docs/model-crafts`, whose Depends on is MC5 and this folder's AK6b and AK7 merged**
+(items 11 and 12); both are off the levels and off the
+critical path (§1, §2), and **both are folded into `docs/model-crafts`'s MC6 as of 2026-11-10**
+(§6 item 12), which writes their files and tests while they stay written and unapproved here.

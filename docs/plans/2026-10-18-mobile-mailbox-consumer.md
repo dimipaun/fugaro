@@ -101,7 +101,7 @@ that owns it.
 edited, and each edit is small and named: `internal/cli/root.go`, by **one line** (T5's
 `newMailboxCmd()` in the `root.AddCommand` list, §5); and **`internal/localcfg`**, where T2 adds the
 **keychain item name** — a field on the existing config struct (`localcfg.go`'s `Config`, beside
-`Watch`, `localcfg.go:143`) with its validation, **and its layered merge** in `localcfg/shared.go`
+`Watch`, `localcfg.go:144`) with its validation, **and its layered merge** in `localcfg/shared.go`
 (the `if out.Watch == nil { out.Watch = published.Watch }` precedent at `shared.go:115`, which a new
 block must join or a shared config's item name would be silently dropped). Two generated and
 hand-written documents follow the command: `website/content/cli-reference.md` (regenerated) and

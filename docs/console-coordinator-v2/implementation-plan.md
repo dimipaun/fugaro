@@ -1,6 +1,6 @@
 # Implementation plan
 
-**Status: design approved 2026-10-31, every decision answered as recommended; the CLI tasks C0-C4 queue for 0.15.0 and the console tasks K1-K5 for 0.117.0; the INPUT BOX of the terminal waits for the coordinator front door (P7/P8) and its own independent security review; the read-only transcript pane ships first (D827).** The owner's answers to
+**Status as of 2026-11-10: done except the owner's Check C0 (profiling); see [docs/status.md](../status.md) for the current table.** The owner's answers to
 [reconciliation.md](reconciliation.md)'s decisions are turned into tasks here without a second design
 pass. The CLI tasks would ship in **0.15.0** (the release after `v0.14.0`) and the console tasks in
 **0.117.0** (after `console-v0.116.0`). Every task is droppable on its own: none of them is a

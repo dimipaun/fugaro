@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/task"
+	cloudbuild "google.golang.org/api/cloudbuild/v1"
 )
 
 // This file is in package gcp_test, not package gcp with the rest of the
@@ -441,5 +442,192 @@ func TestCatalogRecordStepFailsWhenTheUploadFails(t *testing.T) {
 	}
 	if strings.Contains(out, "recorded ") {
 		t.Fatalf("the step reported the record %s although the upload failed:\n%s", key, out)
+	}
+}
+
+// recordPrebuiltSpec is one smoke-only run of the prebuilt entry "node22", as
+// catalog_test.go's catalogPrebuiltSpec builds it: the record step rendered
+// below is the one that spec produces. It names none of a build's own inputs
+// — checkPrebuilt refuses a spec that does — so the record such a run writes
+// is the same thirteen keys with the build's fields empty.
+func recordPrebuiltSpec(t *testing.T) gcp.CatalogBuildSpec {
+	t.Helper()
+	slug, err := task.Slug("bitbucket", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gcp.CatalogBuildSpec{
+		Entry: "node22", Slug: slug,
+		Prebuilt:       "docker.io/library/node:22",
+		ServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		MachineType:    "E2_HIGHCPU_8",
+		Bucket:         "gs://fugaro-runs-proj-1234",
+		Selftest:       []byte(`{"tools_only":true,"tools":"critical"}`),
+	}
+}
+
+// recordPrebuiltStep is the record step of the smoke-only request for spec,
+// with the request it came from.
+func recordPrebuiltStep(t *testing.T, spec gcp.CatalogBuildSpec) (*cloudbuild.Build, *cloudbuild.BuildStep) {
+	t.Helper()
+	b, err := gcp.CatalogBuildRequest("proj-1234", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range b.Steps {
+		if st.Id == catalogRecordStepID {
+			return b, st
+		}
+	}
+	t.Fatalf("the smoke-only request has no %s step: %v", catalogRecordStepID, b.Steps)
+	return nil, nil
+}
+
+// recordStepEnv is the environment Cloud Build hands the step: the step's own
+// env, with a ${_VAR} in a value resolved to the substitution the same request
+// carries (which is what Cloud Build does to a step's env, and what makes a
+// value the request does not substitute fail here rather than reach the script
+// as a literal).
+func recordStepEnv(t *testing.T, b *cloudbuild.Build, st *cloudbuild.BuildStep) []string {
+	t.Helper()
+	sub := regexp.MustCompile(`\$\{(_[A-Z0-9_]+)\}`)
+	env := make([]string, 0, len(st.Env))
+	for _, kv := range st.Env {
+		env = append(env, sub.ReplaceAllStringFunc(kv, func(m string) string {
+			name := strings.TrimSuffix(strings.TrimPrefix(m, "${"), "}")
+			v, ok := b.Substitutions[name]
+			if !ok {
+				t.Fatalf("the %s step's env names %s, which the request does not substitute: %q", st.Id, m, kv)
+			}
+			return v
+		}))
+	}
+	return env
+}
+
+// recordPrebuiltUpload runs the record step of a smoke-only run in full — the
+// whole script, not a part cut out of it — with everything it reads faked, and
+// returns the payload its curl uploaded and the script's output.
+//
+// The files in front of the record are what the smoke step wrote, at
+// /workspace paths a test cannot create, so cat is faked: it answers the two
+// a smoke writes and fails the script on any other path. That is what makes
+// "a smoke-only run reads no base digest" a statement about the run rather
+// than about the text of the branch it would have read one in — this test is
+// the only one that reaches that branch at all, and a mistake in it (a base
+// read that is not guarded, an unset variable read as a digest) would
+// otherwise fail first in Cloud Build, after the build was billed.
+func recordPrebuiltUpload(t *testing.T, b *cloudbuild.Build, st *cloudbuild.BuildStep) (string, string) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("the record step runs bash, which this machine has not: %v", err)
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, script string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("cat", `#!/bin/sh
+case "$1" in
+  /workspace/out/image-digest) printf '%s\n' '`+recordImageDigest+`' ;;
+  /workspace/out/built-at) printf '%s\n' '`+recordBuiltAt+`' ;;
+  *) echo "the record step read $*" >&2; exit 1 ;;
+esac
+`)
+	write("gcloud", `#!/bin/sh
+case "$*" in
+  "auth print-access-token"|"auth print-access-token --quiet") ;;
+  *) echo "the record step ran gcloud $*" >&2; exit 1 ;;
+esac
+printf '%s' '`+fakeToken+`'
+`)
+	write("curl", `#!/bin/sh
+printf '%s\n' "$@" > "$CURL_ARGS"
+for a in "$@"; do
+  case "$a" in
+    @*) [ -f "${a#@}" ] || { echo "the upload's file ${a#@} is not there" >&2; exit 26; }
+        cp "${a#@}" "$CURL_PAYLOAD" ;;
+  esac
+done
+exit 0
+`)
+	argsFile, payloadFile := filepath.Join(dir, "curl-args"), filepath.Join(dir, "curl-payload")
+	if len(st.Args) != 2 || st.Args[0] != "-c" {
+		t.Fatalf("the %s step is not a bash -c script: %v", st.Id, st.Args)
+	}
+	cmd := exec.Command(bash, "-c", strings.ReplaceAll(st.Args[1], "$$", "$"))
+	cmd.Env = append(recordStepEnv(t, b, st),
+		"PATH="+bin+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+		"CURL_ARGS="+argsFile, "CURL_PAYLOAD="+payloadFile,
+		// Cloud Build's own, which is in no request's substitutions.
+		"BUILD_ID="+recordBuildID,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the record step of a smoke-only run failed: %v\n%s", err, out)
+	}
+	payload, err := os.ReadFile(payloadFile)
+	if err != nil {
+		t.Fatalf("the step's curl uploaded nothing: %v\n%s", err, out)
+	}
+	return string(payload), string(out)
+}
+
+// TestCatalogRecordStepWritesAPrebuiltEntrysRecord: a smoke-only run writes
+// the record the doctor reads through the same step, the same key and the same
+// thirteen keys a build's run writes, with the fields only a build has empty.
+// That is the whole of what a prebuilt entry has to say for itself — there is
+// no image of this installation's to inspect and no definition to compare — so
+// the two things that carry the answer are the reference the entry names and
+// the digest the smoke resolved, and both come out of the step's own run here.
+//
+// The step's environment is the request's own, so this also pins that the
+// smoke-only run's record step carries the marker its script branches on: the
+// run is the branch, and a request that lost the marker would take the build's
+// branch and read a base digest nothing wrote.
+func TestCatalogRecordStepWritesAPrebuiltEntrysRecord(t *testing.T) {
+	spec := recordPrebuiltSpec(t)
+	b, st := recordPrebuiltStep(t, spec)
+	if !slices.Contains(st.Env, "PREBUILT=1") {
+		t.Fatalf("the smoke-only run's record step carries no PREBUILT marker: %q", st.Env)
+	}
+	if slices.ContainsFunc(b.Steps, func(st *cloudbuild.BuildStep) bool { return st.Id == "build" }) {
+		t.Fatalf("the smoke-only request has a build step: %v", b.Steps)
+	}
+	payload, out := recordPrebuiltUpload(t, b, st)
+	at, err := time.Parse(time.RFC3339, recordBuiltAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := gcp.CatalogRecordKey(spec.Slug, spec.Entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got imagecheck.CatalogRecordState
+	strictDecode(t, payload, &got)
+	want := imagecheck.CatalogRecordState{
+		Version: imagecheck.CatalogRecordVersion, Entry: spec.Entry,
+		Image: spec.Prebuilt, ImageDigest: recordImageDigest,
+		BuildID: recordBuildID, BuiltAt: at,
+	}
+	if got != want {
+		t.Fatalf("the record a smoke-only run writes decodes to\n%+v\nwant\n%+v\nfrom %s", got, want, payload)
+	}
+	// The reader that turns the record into what the doctor says about it
+	// accepts this one too, version and all: the doctor has no other source of
+	// truth for a prebuilt entry, so a record its own reader rejected would
+	// leave "never smoked" and "smoked and recorded" the same answer.
+	if _, err := imagecheck.ParseCatalogRecordState([]byte(payload)); err != nil {
+		t.Fatalf("the doctor's own reader does not accept the record a smoke-only run writes: %v\n%s", err, payload)
+	}
+	if !strings.Contains(out, "recorded "+key) {
+		t.Errorf("the step did not report the record it wrote:\n%s", out)
 	}
 }

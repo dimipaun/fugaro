@@ -12,6 +12,7 @@ package credsvc
 // The service accounts here are names and never tokens.
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 const (
@@ -255,6 +257,66 @@ func TestReviewPairingMayNameTheProjectsAnthropicKey(t *testing.T) {
 			t.Errorf("the call was built for %q, want %q: the project's key goes to Anthropic's own endpoint or nowhere", urls[0], want)
 		}
 	})
+}
+
+// TestReviewRowsCarryEachAxisValueOfItsOwn is AK6a's half of this file: a
+// review row's Account is the axis value the job it names was deployed under,
+// and the axis's two non-account values are two values with two rows — one
+// credential each, which is what the pairing looks a caller up under and what
+// the offer rule then matches by name and tier.
+//
+// The rows are derived over the published policy alone (ReviewJobAccountsFor
+// reads config.ProjectJobAccounts), so nothing here needs a bundle entry: the
+// provider key's own credential is AK6b's bundle key, and until it exists a
+// caller paired with this value is offered nothing at all (offeredToReview
+// answers it by name and tier, one credential, no fallback) — the fail-closed
+// state, not a second credential borrowed from the sentinel.
+//
+// Mutation (run, restore): let the provider key ride config.AnthropicKeyAccount
+// — the value is the admission unit, so both rows are derived over the
+// sentinel's variant account segment and the two collapse into one
+// (slices.Compact); and the profile's own list then holds the same value twice,
+// which is the state that makes a repository admitted to one credential the one
+// the other's job is not the one for.
+func TestReviewRowsCarryEachAxisValueOfItsOwn(t *testing.T) {
+	doc := `{
+		"version": 4,
+		"budget": ` + testBudgetDoc + `,
+		"allow_repos": ["` + testRepo + `"],
+		"accounts": {
+			"` + config.AnthropicKeyAccount + `": {"allow_repos": ["` + testRepo + `"]},
+			"` + config.ProviderKeyAccount + `": {"allow_repos": ["` + testRepo + `"]}
+		},
+		"profiles": {"` + projectpolicy.DefaultProfileName + `": {"provider": "github", "cpu": 2, "memory": "8Gi", "timeout_class": "6h",
+			"allow_repos": ["` + testRepo + `"],
+			"claude_accounts": ["` + config.AnthropicKeyAccount + `", "` + config.ProviderKeyAccount + `"]}},
+		"credentials": {"fallback": "auto"}
+	}`
+	p := decodeTestPolicy(t, doc)
+	got := ReviewJobAccountsFor(p, testFirebase)
+	// The want is written out rather than derived through the function under
+	// test's own helper, so that a value mapped onto the other's account
+	// segment shows up as the collapse it is: the two rows would be one.
+	want := []ReviewJobAccount{
+		{
+			// The profile's own no-account job, which every profile keeps and
+			// whose row the admissions spell as the default account.
+			Email:   serviceAccountEmail(ReviewServiceAccountID(projectpolicy.DefaultProfileName, "github", config.DefaultClaudeAccount), testFirebase),
+			Account: config.DefaultClaudeAccount,
+		},
+		{
+			Email:   serviceAccountEmail(ReviewServiceAccountID(projectpolicy.DefaultProfileName, "github", config.AnthropicKeyAccount), testFirebase),
+			Account: config.AnthropicKeyAccount,
+		},
+		{
+			Email:   serviceAccountEmail(ReviewServiceAccountID(projectpolicy.DefaultProfileName, "github", config.ProviderKeyAccount), testFirebase),
+			Account: config.ProviderKeyAccount,
+		},
+	}
+	slices.SortFunc(want, func(a, b ReviewJobAccount) int { return cmp.Compare(a.Email, b.Email) })
+	if !slices.Equal(got, want) {
+		t.Fatalf("ReviewJobAccountsFor = %v, want one row per axis value, %v", got, want)
+	}
 }
 
 // TestReviewAccountIsRefusedTheModelPathForAnotherAccount: the pairing is the

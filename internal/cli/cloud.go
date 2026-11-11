@@ -818,16 +818,28 @@ func (e *cloudEnv) localRepo(repo string) (localcfg.Repo, bool) {
 	return e.lc.RepoFor(repo)
 }
 
+// localRepoProvider is the git provider kind the local config's entry for
+// repo names, and "" when it names none or has no entry for repo.
+//
+// It is the half of repoProvider and repoSlug that needs no checkout, which
+// is what a caller deciding anything *because* there is no checkout must read:
+// the checkout's own fugaro.yaml is not there to fill a gap in, and reading it
+// through repoProvider's fallback would dereference a nil *config.Config for a
+// repository the local config does not name (reconciliation F3).
+func (e *cloudEnv) localRepoProvider(repo string) string {
+	if r, ok := e.localRepo(repo); ok {
+		return r.Provider
+	}
+	return ""
+}
+
 // repoSlug is repo's storage slug. Its git provider kind comes from the
 // local config's entry for repo and from the checkout's fugaro.yaml (only
 // when the checkout's origin is repo; see checkoutOf). Either may be
 // missing, but when both are set they must agree: the slug depends on it.
 // It never comes from the origin host.
 func (e *cloudEnv) repoSlug(repo string, checkout func() *config.Config) (string, error) {
-	local := ""
-	if r, ok := e.localRepo(repo); ok {
-		local = r.Provider
-	}
+	local := e.localRepoProvider(repo)
 	fromCheckout := ""
 	if c := checkout(); c != nil {
 		fromCheckout = c.Git.Provider
@@ -903,9 +915,49 @@ func refuseSharedCheckout(ctx context.Context, repo string) error {
 	return nil
 }
 
+// noCheckoutKey is the context key withoutCheckout installs.
+type noCheckoutKey struct{}
+
+// withoutCheckout is the resolution a caller has no checkout for: the
+// daemon's launches (orchestrator_launcher), which resolve a plan for an
+// item's repository while running in whatever directory its unit was started
+// in — the operator's own checkout of that repository, of something else, or
+// of nothing at all.
+//
+// It is installed once, by Launch, and it has to cover the whole launch: every
+// read of the working directory's checkout on that path goes through
+// checkoutRoot — the plan's ref and file (run_ref.go, run.go), the project
+// layer (run_layer.go), the gates, the job a clone workflow selects
+// (project_job.go), the docker tag's rule (catalogDockerAsk) and the
+// credentials-service pair (launchFileConfig) — so a switch around part of it
+// is a launch whose pieces disagree: gates that judged the repository with no
+// checkout, deciding on the job and the rules of the checkout the directory
+// happened to hold. Marked whole, the launch is the one `fugaro run` makes from
+// outside a checkout: the ref is the base branch the layers resolve, the
+// workflow and the recipe come from the local config and the catalog, and what
+// cannot be answered without a checkout is refused rather than guessed
+// (project_job.go's profiles refusal).
+//
+// What a daemon must never do is take the branch a person left checked out as
+// the ref of an approved item: that ref is not what the approval's digest
+// covers, and it moves under the daemon when the person switches branches.
+func withoutCheckout(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noCheckoutKey{}, true)
+}
+
+// checkoutless reports whether ctx carries withoutCheckout.
+func checkoutless(ctx context.Context) bool {
+	on, _ := ctx.Value(noCheckoutKey{}).(bool)
+	return on
+}
+
 // checkoutRoot is the working directory's checkout root when its origin is
-// repo, and "" otherwise.
+// repo, and "" otherwise. It is "" for every resolution marked withoutCheckout
+// as well: such a caller has no checkout to read, whatever directory it is in.
 func checkoutRoot(ctx context.Context, repo string) string {
+	if checkoutless(ctx) {
+		return ""
+	}
 	origin, err := originRepo(ctx)
 	if err != nil {
 		return ""
@@ -1055,6 +1107,15 @@ func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.P
 	root := checkoutRoot(ctx, repo)
 	if root == "" {
 		return nil, nil
+	}
+	// The launch's own answer first, where this launch resolved one: a launch
+	// whose working tree cannot give a fugaro.yaml is judged by the document at
+	// the ref its run checks out, and every reader of that launch — the gates
+	// it passed, the job it runs on, its recipe and its layer — has to see that
+	// same document (withLaunchDocument). Before the cache, because a reader
+	// that ran before that resolution left it holding "no document".
+	if d, ok := launchDocumentOf(ctx); ok && d.root == root {
+		return d.cfg, d.problems
 	}
 	cache, _ := ctx.Value(checkoutParseCacheKey{}).(*checkoutParseCache)
 	if cache != nil {

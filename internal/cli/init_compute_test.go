@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -306,6 +309,52 @@ func equalJSON(a, b any) bool {
 	x, _ := json.Marshal(a)
 	y, _ := json.Marshal(b)
 	return string(x) == string(y)
+}
+
+// TestComputeStageRefusesInAnAgentSession: the compute step is the owner's own
+// (D1555), and the fence on it is the session's and not the class's. A coding
+// agent's session is refused before anything of the compute root is touched —
+// no tfvars, no init, no plan, no apply — and what it reads is the session's
+// own refusal beside the command it would run itself (Left: `fugaro setup
+// --provision-batch`), never a question it could answer.
+//
+// The marker is what refuses and not the missing terminal: the same session
+// with a terminal on its stdin is refused too (the stage's own arm), which is
+// the half a session whose stdin happens to be a tty would otherwise walk past.
+func TestComputeStageRefusesInAnAgentSession(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		terminal bool
+	}{
+		{"no terminal", false},
+		{"a terminal", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := computeRig(t)
+			s := newComputeStage(rigEngine(t, r, &initOptions{door: updateDoor.name, provisionBatch: true}))
+			if tc.terminal {
+				fakeTerminal(t)
+			} else {
+				noTerminal(t)
+			}
+			agentSession(t)
+			_, err := s.Apply(context.Background(), initflow.Env{Interactive: true})
+			var ae *initflow.AgentError
+			if !errors.As(err, &ae) {
+				t.Fatalf("a coding agent's session applied the compute step: %v", err)
+			}
+			if !strings.Contains(err.Error(), "CLAUDECODE") {
+				t.Errorf("the refusal does not name the marker: %v", err)
+			}
+			if calls := computeCalls(t, r); len(calls) != 0 {
+				t.Fatalf("a coding agent's session reached the compute root: %q", calls)
+			}
+			left := s.Left()
+			if len(left.Commands) != 1 || !strings.Contains(left.Commands[0], "--provision-batch") {
+				t.Errorf("the step the session is refused does not name the owner's own command: %+v", left)
+			}
+		})
+	}
 }
 
 // --yes never covers it: it is not a stage --yes is allowed to reach, so a

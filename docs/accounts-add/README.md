@@ -1,6 +1,6 @@
 # `fugaro accounts add`: one command for a named Claude token
 
-**Status: design approved; decisions answered.** The owner answered every question in
+**Status as of 2026-11-10: done except the owner's checks LC1 to LC4; see [docs/status.md](../status.md) for the current table.** The owner answered every question in
 [reconciliation.md](reconciliation.md) §4 on 2026-10-31: **D860, D861, D864, D865, D866, D867, D869
 and D870 as recommended; D862 changed to the design's alternative (a)** — `--claude` gives the login
 the owner's **own terminal** and then asks for **one paste** at the hidden prompt, so there is no pty

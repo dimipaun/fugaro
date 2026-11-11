@@ -49,7 +49,11 @@ func noClaudeOnPath(t *testing.T) {
 
 // checkoutEngine is the converge's engine over the rig's checkout: the
 // command and output the loop's stages print through, the run's flags, and a
-// local config for the lines that name the project.
+// local config for the lines that name the project. That config is the
+// project's own and lists the repository the rig checks out — the plugin
+// stage reads it to tell a checkout of the project's from one it may not wire
+// (authState), and a project on a real installation knows the repositories its
+// runs are started in.
 func checkoutEngine(t *testing.T, o *initOptions) (*initEngine, *syncBuf) {
 	t.Helper()
 	if o == nil {
@@ -64,8 +68,9 @@ func checkoutEngine(t *testing.T, o *initOptions) (*initEngine, *syncBuf) {
 	cmd.SetErr(&syncBuf{})
 	cmd.SetIn(strings.NewReader(""))
 	return &initEngine{
-		r:  &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd},
-		lc: &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5"},
+		r: &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd},
+		lc: &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5",
+			Repos: map[string]localcfg.Repo{"acme/app": {Provider: "github"}}},
 	}, out
 }
 
@@ -92,10 +97,34 @@ func stageOutcome(t *testing.T, e *initEngine, st initflow.Stage) *initflow.Resu
 	return res
 }
 
+// updateStages runs the stages named, in the order given, through the loop:
+// the two whose steps are `fugaro upgrade`'s are the plugin stage (the pin and
+// the plugin in Claude Code) and the checkout stage (the job images), and a
+// test that drives one alone cannot see what the other answers with — the
+// run's left-for-you accounting is the loop's, not a stage's.
+func updateStages(t *testing.T, e *initEngine, names ...string) *initflow.Result {
+	t.Helper()
+	stages := initStages(e)
+	var sel []initflow.Stage
+	for _, n := range names {
+		st, ok := stageNamed(stages, n)
+		if !ok {
+			t.Fatalf("fugaro update registers no %s stage: %v", n, namesOf(stages))
+		}
+		sel = append(sel, st)
+	}
+	res, err := initflow.Run(t.Context(), sel, e.options())
+	if err != nil {
+		t.Fatalf("the loop: %v", err)
+	}
+	return res
+}
+
 // A checkout whose plugin pin and installed plugin predate this binary, and
 // whose repository is behind this release's base image: `fugaro update` runs
 // fugaro upgrade's own steps for it, so all three move — the pin to this
-// release's tag, the plugin in Claude Code, and the job images through the
+// release's tag and the plugin in Claude Code through the plugin stage, which
+// took the two over (U1), and the job images through the checkout stage's
 // refresh.
 func TestUpdateRunsPinPluginAndImages(t *testing.T) {
 	_, root := upgradeRig(t)
@@ -112,9 +141,12 @@ func TestUpdateRunsPinPluginAndImages(t *testing.T) {
 	ran := fakeSteps(t, "", nil)
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
-	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	res := updateStages(t, e, initflow.Plugin, checkoutStageName)
 	if res.Failed != nil || len(res.Left) != 0 {
-		t.Fatalf("the checkout stage did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+		t.Fatalf("the run did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+	}
+	if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
+		t.Errorf("the plugin stage is %q, want %q: the pin and the plugin are its steps (U1)\n%s", got, initflow.Changed, out)
 	}
 	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin != pluginwire.OK {
 		t.Errorf("the pin was not moved to this release: %+v\n%s", r, out)
@@ -132,6 +164,63 @@ func TestUpdateRunsPinPluginAndImages(t *testing.T) {
 	if strings.Contains(out.String(), "not in a checkout") {
 		t.Errorf("the stage treated its own checkout as none:\n%s", out)
 	}
+}
+
+// The run that moves the checkout runs its cloud half even where the cloud
+// step's own check reads a finished one. That is the state a full converge
+// leaves behind: the images stage pins THIS release's base in the local config
+// before the checkout stage is checked, and the cloud step's check reads
+// fugaro.yaml and the local config and never a build record (cloudCheck, U9)
+// — while the job images are built FROM that base and are exactly what a run
+// taking the checkout to this release moves. The plugin stage is where the
+// checkout stage reads that this run is such a one (initEngine.checkoutBehind),
+// and where it reads that it is not: a checkout already at this release writes
+// nothing and builds nothing, which is what keeps the one command safe to run
+// twice.
+func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
+	t.Run("a checkout behind this release", func(t *testing.T) {
+		r, root := upgradeRig(t)
+		settings := filepath.Join(root, ".claude", "settings.json")
+		checkoutFile(t, settings, wiredAt("v0.5.0"))
+		// The images stage's own write, in the converge this run is part of.
+		r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+		f := testutil.NewClaudePluginFake(t, "[]", "[]")
+		f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
+		useFakeClaude(t, f)
+		ran := fakeSteps(t, "", nil)
+
+		e, out := checkoutEngine(t, &initOptions{yes: true})
+		res := updateStages(t, e, initflow.Plugin, checkoutStageName)
+		if res.Failed != nil || len(res.Left) != 0 {
+			t.Fatalf("the run did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+		}
+		if want := []string{"base", "check job", "builds"}; !slices.Equal(*ran, want) {
+			t.Errorf("the run that moves the checkout did not refresh its job images: steps %q, want %q\n%s", *ran, want, out)
+		}
+	})
+
+	t.Run("a checkout already at this release", func(t *testing.T) {
+		r, root := upgradeRig(t)
+		settings := filepath.Join(root, ".claude", "settings.json")
+		checkoutFile(t, settings, wiredAt("v0.5.1"))
+		checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
+			`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
+		r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+		useFakeClaude(t, testutil.NewClaudePluginFake(t, "[]", "[]"))
+		ran := fakeSteps(t, "", nil)
+
+		e, out := checkoutEngine(t, &initOptions{yes: true})
+		res := updateStages(t, e, initflow.Plugin, checkoutStageName)
+		if res.Failed != nil || len(res.Left) != 0 {
+			t.Fatalf("a current checkout was not done: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+		}
+		if got := stateOf(res, checkoutStageName); got != initflow.Done {
+			t.Errorf("the checkout stage is %q on a checkout already at this release, want %q\n%s", got, initflow.Done, out)
+		}
+		if len(*ran) != 0 {
+			t.Errorf("a checkout already at this release refreshed its job images: %q\n%s", *ran, out)
+		}
+	})
 }
 
 // The billable build is not covered by the run's one confirmation: the review
@@ -231,30 +320,31 @@ func agentCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]string)
 
 // The local steps are the ones a marker leaves alone: through the loop the
 // converge drives (never a direct Apply — the loop's own agent gate is what
-// the stage answers with LocalUnderAgent), the pin moves and the plugin is
-// installed in the user's own Claude Code, exactly as fugaro upgrade --local
-// does in the same session. The cloud half is the step this session leaves for
-// the user (TestUpdateAgentSessionLeavesTheCloudStepForTheUser), so the run
-// exits 1: its local half is done and the checkout is not.
+// the stages answer with LocalUnderAgent), the plugin stage moves the pin and
+// installs the plugin in the user's own Claude Code, exactly as fugaro upgrade
+// --local does in the same session. The cloud half is then the step this
+// session leaves for the user
+// (TestUpdateAgentSessionLeavesTheCloudStepForTheUser), so the run exits 1:
+// its local half is done and the checkout is not.
 func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 	settings, f, _ := agentCheckout(t)
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
-	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	res := updateStages(t, e, initflow.Plugin, checkoutStageName)
 	if res.Failed != nil {
-		t.Fatalf("the checkout stage failed in an agent's session: %+v\n%s", res.Failed, out)
+		t.Fatalf("the run failed in an agent's session: %+v\n%s", res.Failed, out)
 	}
-	if len(res.Left) != 1 || res.ExitCode() != 1 {
-		t.Fatalf("an agent's session reported the checkout done with the images untouched: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
-	}
-	if got := stateOf(res, checkoutStageName); got != initflow.Changed {
-		t.Fatalf("the stage is %q in an agent's session, want %q\n%s", got, initflow.Changed, out)
+	if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
+		t.Fatalf("the plugin stage is %q in an agent's session, want %q\n%s", got, initflow.Changed, out)
 	}
 	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin != pluginwire.OK {
 		t.Errorf("the pin was not moved in an agent's session: %+v\n%s", r, out)
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in an agent's session\n%s", out)
+	}
+	if len(res.Left) != 1 || res.ExitCode() != 1 {
+		t.Fatalf("an agent's session reported the checkout done with the images untouched: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 }
 
@@ -263,12 +353,12 @@ func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 // through the same loop. That refusal is a step left for the user, not a stage
 // that skipped half of itself and reported the checkout done.
 func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
-	_, _, ran := agentCheckout(t)
+	settings, f, ran := agentCheckout(t)
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
-	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	res := updateStages(t, e, initflow.Plugin, checkoutStageName)
 	if res.Failed != nil {
-		t.Fatalf("the checkout stage failed: %+v\n%s", res.Failed, out)
+		t.Fatalf("the run failed: %+v\n%s", res.Failed, out)
 	}
 	if len(*ran) != 0 || strings.Contains(out.String(), "fugaro image refresh of") {
 		t.Fatalf("an agent session reached the cloud: steps %q\n%s", *ran, out)
@@ -279,10 +369,12 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 	if len(res.Left) != 1 || res.ExitCode() != 1 {
 		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
-	// The local half really ran, so this is not a stage that refused
-	// everything and looked right by saying nothing.
-	if stateOf(res, checkoutStageName) != initflow.Changed || !strings.Contains(out.String(), "pin: done") {
-		t.Errorf("the stage's local steps did not run in an agent's session:\n%s", out)
+	// The local half really ran, so this is not a run that refused everything
+	// and looked right by saying nothing: the plugin stage is the one that
+	// writes on this machine, and the checkout stage's cloud step is parked.
+	if stateOf(res, string(initflow.Plugin)) != initflow.Changed ||
+		pluginwire.Status(settings, "0.5.1", "").Pin != pluginwire.OK || len(f.Changes(t)) == 0 {
+		t.Errorf("the local steps did not run in an agent's session:\n%s", out)
 	}
 }
 
@@ -307,62 +399,72 @@ func agentUpdateCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]s
 	checkoutFile(t, settings, wiredAt("v0.1.0"))
 	noClaudeOnPath(t)
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	useFakeClaude(t, f)
 	ran := fakeSteps(t, "", nil)
 	t.Setenv("CLAUDECODE", "1")
 	return settings, f, ran
 }
 
-// TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout: the stage ORDER,
-// which is what makes the checkout's local steps a thing a session reaches only
-// when everything before them is done. The plugin stage runs BEFORE the
-// checkout stage on the same checkout and the same pin, it is not
-// LocalUnderAgent, so under a marker it is left for the user (`fugaro
-// update-skills`) and the loop stops there: the checkout stage is blocked and
-// its local writes never happen. One stage at a time cannot see that — the
-// checkout stage alone runs its local half, which is what the tests above pin —
-// so this one drives the whole converge the way `fugaro update` does and reads
-// the two stages' lines out of the result.
+// TestUpdateAgentSessionRunsThePluginBeforeTheCheckout: the stage ORDER,
+// through the whole converge the way `fugaro update` runs it. The plugin stage
+// runs BEFORE the repository stage and the checkout stage, on the same checkout
+// and the same pin, and it is LocalUnderAgent since U1 of
+// docs/plugin-user-scope/implementation-plan.md (D941): a coding agent's
+// session applies it — the pin and the plugin in Claude Code are this machine's
+// own writes, and the install is the step that clears the staleness line every
+// command prints — so the stages behind it are reached. Before U1 the plugin
+// stage was left whole for the user (`fugaro update-skills`), the loop stopped
+// there, and the checkout stage behind it was blocked with every local write
+// unmade; one stage at a time cannot see that, which is why this test drives the
+// whole converge and reads the stages' lines out of the result.
 //
-// It is the failure the `--yes` help used to promise the other way round ("the
-// writes on this machine's own files ... the plugin in Claude Code"): in a
-// session whose plugin is stale, an update writes nothing at all. The help says
-// what happens now; making the plugin stage run under the marker is a product
-// decision of its own, not a wording fix.
-func TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout(t *testing.T) {
+// The cloud half is still the step this session leaves for the user, which is
+// what the run's exit says (TestUpdateAgentSessionLeavesTheCloudStepForTheUser
+// is the same fact read off the checkout stage alone).
+func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 	settings, f, ran := agentUpdateCheckout(t)
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
 	var res convergeJSON
-	if uerr := json.Unmarshal([]byte(out), &res); uerr != nil {
+	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
 		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
 	}
 	if err == nil {
-		t.Errorf("the run reported success with the plugin and the checkout both unmoved:\n%s", out)
+		t.Errorf("the run reported success with the checkout's cloud half parked:\n%s", out)
 	}
-	if got, want := res.state(initflow.Plugin), "needs-you"; got != want {
-		t.Errorf("the plugin stage is %q under the marker, want %q:\n%s", got, want, out)
+	if got, want := res.state(initflow.Plugin), "changed"; got != want {
+		t.Errorf("the plugin stage is %q under the marker, want %q: its writes are on this machine, which is what LocalUnderAgent is for\n%s", got, want, out)
 	}
-	leftPlugin := false
+	if r := pluginwire.Status(settings, "0.2.0", ""); r.Pin != pluginwire.OK {
+		t.Errorf("the pin was not moved in a coding agent's session: %+v\n%s", r, out)
+	}
+	if len(f.Changes(t)) == 0 {
+		t.Errorf("the plugin was not installed in Claude Code in a coding agent's session:\n%s", out)
+	}
+	// The plugin step is not handed back to the user: its own route is the
+	// command a session that left it would name.
 	for _, l := range res.Left {
-		if l["stage"] == initflow.Plugin && strings.Contains(l["text"], selfCommand()+" update-skills") {
-			leftPlugin = true
+		if l["stage"] == initflow.Plugin {
+			t.Errorf("the plugin step is left for the user (%q), want it applied in a coding agent's session\n%s", l["text"], out)
 		}
 	}
-	if !leftPlugin {
-		t.Errorf("the run does not leave the plugin wiring for the user:\n%s", out)
+	// The stage behind it is reached, and it is the checkout whose cloud half
+	// this session may not take: its own line is done with what this session
+	// may do, the images are not built, and the run is not done — the parked
+	// step is what the exit code and left_for_you say (the loop's applied: a
+	// stage that left a step for the user is done, not finished).
+	if got := res.state(initflow.Checkout); got != "done" {
+		t.Errorf("the checkout stage is %q, want %q: the plugin stage applied, so nothing before it stops the run\n%s", got, "done", out)
 	}
-	if got, want := res.state(initflow.Checkout), "blocked"; got != want {
-		t.Errorf("the checkout stage is %q, want %q:\n%s", got, want, out)
+	left := false
+	for _, l := range res.Left {
+		if l["stage"] == initflow.Checkout && strings.Contains(l["text"], "terminal window") {
+			left = true
+		}
 	}
-	if detail := res.stageDetail(t, initflow.Checkout); !strings.Contains(detail, "waits for "+initflow.Plugin) {
-		t.Errorf("the checkout stage does not say what it waits for: %q", detail)
-	}
-	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin == pluginwire.OK {
-		t.Errorf("the pin moved in a session whose plugin stage never ran: %+v\n%s", r, out)
-	}
-	if len(f.Changes(t)) != 0 {
-		t.Errorf("the plugin was installed in Claude Code in a session that stopped at the plugin stage:\n%s", out)
+	if !left {
+		t.Errorf("the checkout's parked cloud half is not left for the user:\n%s", out)
 	}
 	if len(*ran) != 0 {
 		t.Errorf("the session reached the cloud: steps %q\n%s", *ran, out)
@@ -383,7 +485,7 @@ func TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout(t *testing.T) {
 // reports the checkout changed with exit 0 — which is what the loop's
 // left-for-you accounting is here for. The two tests above fail with it too.
 func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
-	settings, f, ran := agentCheckout(t)
+	settings, _, ran := agentCheckout(t)
 	root := filepath.Dir(filepath.Dir(settings))
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
@@ -408,25 +510,15 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 		t.Errorf("the left-for-you names %q, want %q (the parked step's own two commands, as its refusal words them)", l.Commands, want)
 	}
 
-	// The second run of the session: the pin is current, no cloud step is
-	// reached, and the step the session may not take is still left for the
-	// user. The stage's check says so (it does not read the parked step as
-	// done), the plan's line keeps naming it, and the JSON carries it.
-	//
-	// Claude Code's own record of the plugin is written here first, so that
-	// the parked step is the ONLY step of the second run's plan: with the
-	// plugin step undone too, an apply that reported the checkout unfinished
-	// for that reason would pass this test as well, and the arm it is here
-	// for (the stage's check reading a plan whose one step is parked) would
-	// never be reached.
-	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
-		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
-	// And what Claude Code answers the marketplace list with, which the fake
-	// only moves when the add call runs: the step reads that list before it
-	// decides, so a list that still lacks the marketplace — or holds it at
-	// another ref than this release's tag — is a change to make on every run.
-	// The first run left it pinned to this release, as the step does.
-	f.Write(t, "marketplaces.json", ourMarketAt("v0.5.1"))
+	// The second run of the session: nothing local is left to do — the pin and
+	// the plugin in Claude Code are the plugin stage's halves now (U1), and
+	// they are this release's, as a session that reached that stage leaves them
+	// — no cloud step is reached, and the step the session may not take is
+	// still left for the user. The stage's check says so (it does not read the
+	// parked step as done), the plan's line keeps naming it, and the JSON
+	// carries it. The pin and the plugin are the plugin stage's halves (U1), so
+	// the step this stage's plan drops and names is the cloud one.
+	checkoutFile(t, settings, wiredAt("v0.5.1"))
 	*ran = nil
 	e2, out2 := checkoutEngine(t, &initOptions{yes: true})
 	res2 := stageOutcome(t, e2, checkoutStageOf(t, e2))
@@ -436,13 +528,13 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	if len(*ran) != 0 {
 		t.Errorf("the second run reached the cloud: steps %q\n%s", *ran, out2)
 	}
-	if !strings.Contains(out2.String(), "pin: current") {
-		t.Errorf("the second run did not find the pin already moved:\n%s", out2)
-	}
-	if !strings.Contains(out2.String(), "plugin: current") {
-		t.Errorf("the second run's plugin step is not current, so the parked cloud step is not the only step its plan holds:\n%s", out2)
-	}
 	if !strings.Contains(out2.String(), "skipped here: cloud") {
+		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
+	}
+	// The plan view's row is one clause (report.Brief) and the reason is whole
+	// in the log, so what is read here is the run's own block under it: the
+	// step it leaves is the checkout's cloud half, named in words.
+	if !strings.Contains(out2.String(), "the checkout's cloud half") {
 		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
 	}
 	b, err := res2.JSON()
@@ -454,26 +546,30 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	}
 }
 
-// The no-terminal gate is about the cloud half's typed confirmations, and a
-// coding agent's session is not that case: the pin and the plugin are this
-// machine's files, which is the whole of what LocalUnderAgent says the stage
-// does there. A gate that answered the marker's no-terminal run with needs-you
-// left the checkout unmoved, and its own comment said the opposite.
+// The no-terminal refusal is about a step somebody has to confirm at a
+// terminal, and a coding agent's session is not that case: the pin and the
+// plugin are this machine's files, which is the whole of what LocalUnderAgent
+// says the two stages that write them do there. A gate that answered the
+// marker's no-terminal run with needs-you left the checkout unmoved, and the
+// run's own account of it said the opposite — the failure F13 describes, where
+// the step that clears the staleness line every command prints is the one left
+// behind.
 //
-// Mutation (run, restore): drop `u.agent == ""` from Apply's gate and this
-// test fails: the stage answers needs-you, and neither the pin nor the plugin
-// moves.
+// Mutation (run, restore): drop `u.agent == ""` from the checkout Apply's gate
+// or the plugin stage's own marker arm and this test fails on that stage: it
+// answers needs-you, and the pin, the plugin or the cloud half's own line does
+// not move.
 func TestUpdateLocalStepsRunInAgentSessionWithoutAYes(t *testing.T) {
 	settings, f, ran := agentCheckout(t)
 	noTerminal(t)
 
 	e, out := checkoutEngine(t, &initOptions{})
-	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	res := updateStages(t, e, initflow.Plugin, checkoutStageName)
 	if res.Failed != nil {
-		t.Fatalf("the checkout stage failed in an agent's session: %+v\n%s", res.Failed, out)
+		t.Fatalf("the run failed in an agent's session: %+v\n%s", res.Failed, out)
 	}
-	if got := stateOf(res, checkoutStageName); got != initflow.Changed {
-		t.Fatalf("the stage is %q in an agent's session with no terminal and no --yes, want %q\n%s", got, initflow.Changed, out)
+	if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
+		t.Fatalf("the plugin stage is %q in an agent's session with no terminal and no --yes, want %q\n%s", got, initflow.Changed, out)
 	}
 	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin != pluginwire.OK {
 		t.Errorf("the pin was not moved in an agent's session: %+v\n%s", r, out)
@@ -630,9 +726,9 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 	ran := fakeSteps(t, "", nil)
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
-	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	res := updateStages(t, e, initflow.Plugin, checkoutStageName)
 	if res.Failed != nil || len(res.Left) != 0 {
-		t.Fatalf("the checkout stage did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+		t.Fatalf("the run did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
 	}
 	if got := string(upgradeRead(t, settings)); got != wiredAt("v0.5.0") {
 		t.Errorf("the pin moved in another project's checkout:\n%s", got)
@@ -640,10 +736,11 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 	if len(*ran) != 0 {
 		t.Errorf("the refresh ran in another project's checkout: %q\n%s", *ran, out)
 	}
-	for _, step := range []string{"pin", "cloud"} {
-		if !strings.Contains(out.String(), step+": skipped: this checkout's fugaro.yaml names another project") {
-			t.Errorf("the %s step was not skipped by name:\n%s", step, out)
-		}
+	// The cloud half is the line this checkout stage still prints; the wiring
+	// half is not written at all, and the install half is the plugin stage's
+	// own step line.
+	if !strings.Contains(out.String(), "cloud: skipped: this checkout's fugaro.yaml names another project") {
+		t.Errorf("the cloud step was not skipped by name:\n%s", out)
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed: it is the same plugin for every project\n%s", out)
@@ -651,9 +748,14 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 }
 
 // A checkout with no origin remote has no repository for the refresh to work
-// on: the cloud step is skipped — the pin and the plugin still move, which is
-// where this differs from fugaro upgrade, whose cloud step fails the same read
-// because there the refresh was asked for by name.
+// on: the cloud step is skipped, which is where this differs from fugaro
+// upgrade, whose cloud step fails the same read because there the refresh was
+// asked for by name. The pin is skipped with it — the plugin stage reads the
+// same origin to tell a checkout of this project's from one it may not wire,
+// and a checkout with no origin is not one (U1: the wiring half's gate is the
+// step's own now, so it gates the pin exactly as it gates the settings) —
+// while the plugin in Claude Code, which is the same one for every repository,
+// is still installed.
 func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
 	_, root := upgradeRig(t)
 	settings := filepath.Join(root, ".claude", "settings.json")
@@ -670,9 +772,9 @@ func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
 	ran := fakeSteps(t, "", nil)
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
-	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	res := updateStages(t, e, initflow.Plugin, checkoutStageName)
 	if res.Failed != nil || len(res.Left) != 0 {
-		t.Fatalf("the checkout stage did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+		t.Fatalf("the run did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
 	}
 	if !strings.Contains(out.String(), "cloud: skipped: this checkout has no origin repository to refresh") {
 		t.Errorf("the cloud step was not skipped by name:\n%s", out)
@@ -680,8 +782,8 @@ func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
 	if len(*ran) != 0 {
 		t.Errorf("the refresh ran in a checkout with no repository to refresh: %q\n%s", *ran, out)
 	}
-	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin != pluginwire.OK {
-		t.Errorf("the pin was not moved in a checkout with no origin: %+v\n%s", r, out)
+	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin != pluginwire.Outdated {
+		t.Errorf("the pin moved in a checkout with no origin (its fugaro.yaml makes it one Fugaro's to run in, and its origin is what says it is this project's): %+v\n%s", r, out)
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in a checkout with no origin\n%s", out)
@@ -746,6 +848,56 @@ func TestUpdateSkipsWithoutAReleaseOrAFugaroCheckout(t *testing.T) {
 	})
 }
 
+// TestUpdateRecognisesACheckoutByItsFugaroYAML (U1, D941/F15): what makes a
+// checkout one of Fugaro's is its fugaro.yaml, and only that. The second
+// disjunct — a .claude/settings.json whose marketplace entry an older fugaro
+// wired — is gone with the step that wrote it (the plugin step, which the
+// plugin stage runs now): a repository that never opted in has no such file and
+// is still a Fugaro checkout, while a checkout whose only mark is the wiring an
+// older release left behind is one Fugaro is not set up in.
+//
+// The wiring's own words go with it: the skip names the file that is missing
+// rather than a settings file the reader cannot see in front of them.
+func TestUpdateRecognisesACheckoutByItsFugaroYAML(t *testing.T) {
+	// The checkout Fugaro is set up in, with nothing ever wired into it: this
+	// stage's one step is still this checkout's to run.
+	t.Run("a fugaro.yaml and no wiring is a checkout", func(t *testing.T) {
+		_, root := upgradeRig(t)
+		if _, err := os.Stat(filepath.Join(root, ".claude", "settings.json")); !os.IsNotExist(err) {
+			t.Fatalf("the fixture is wired, so it proves nothing about a repository that never opted in: %v", err)
+		}
+		e, _ := checkoutEngine(t, &initOptions{yes: true})
+		status, err := checkoutStageOf(t, e).Check(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.State == initflow.Skipped && strings.Contains(status.Detail, "not a Fugaro checkout") {
+			t.Errorf("a checkout whose fugaro.yaml is right there was read as none: %+v", status)
+		}
+	})
+
+	// The wiring alone, with no fugaro.yaml: the pin in it is a leftover no
+	// release writes any more, and it is not what makes a checkout one.
+	t.Run("wiring alone is not a checkout", func(t *testing.T) {
+		_, root := upgradeRig(t)
+		if err := os.Remove(filepath.Join(root, "fugaro.yaml")); err != nil {
+			t.Fatal(err)
+		}
+		checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
+		e, _ := checkoutEngine(t, &initOptions{yes: true})
+		status, err := checkoutStageOf(t, e).Check(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.State != initflow.Skipped || !strings.Contains(status.Detail, "not a Fugaro checkout") {
+			t.Fatalf("a checkout whose only mark is the wiring an older fugaro wrote is not this run's: %+v", status)
+		}
+		if strings.Contains(status.Detail, "settings.json") {
+			t.Errorf("the skip names a settings file the reader cannot see in front of them: %q", status.Detail)
+		}
+	})
+}
+
 // The steps the checkout stage calls are fugaro upgrade's own, and fugaro
 // upgrade still runs them: the stage added a caller, not a copy.
 func TestUpgradeStillWorks(t *testing.T) {
@@ -761,147 +913,158 @@ func TestUpgradeStillWorks(t *testing.T) {
 }
 
 // The checkout stage's cloud half is the refresh's step 4, where a billable
-// build is asked for one build at a time. Under fugaro update the loop's
-// steps are stubbed (there is no GCP project in a test), so this drives that
-// very step the way the stage does, at a terminal and without --yes: two
-// stale workflows are two questions, and a question answered with something
-// other than the project's name submits no build at all. One confirmation
-// for several billable builds is one confirmation too few, and the check
-// reads it as the user having approved builds nobody asked about.
+// build used to be asked for one build at a time. It asks nothing now (T4):
+// the builds are bounded by the lease each one takes from the project's budget,
+// so every stale workflow is submitted with no terminal, no --yes and nobody
+// asked — under fugaro update the loop's steps are stubbed (there is no GCP
+// project in a test), and this drives that very step the way the stage does.
 //
-// Mutation (run, restore): ask once, before the loop over the workflows,
-// and this test fails: two billable builds, one question.
-func TestUpdateAsksBeforeEachBillableBuild(t *testing.T) {
-	t.Run("one confirmation per billable build", func(t *testing.T) {
-		useVersion(t, "0.5.1")
-		r := newAnchorModeRig(t, refreshYAML, true)
-		fb := useFakeBuilder(t)
-		e, tg := buildTarget(t, r)
-		p := &refreshPlan{workflows: []string{"app", "api"}}
-		putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
-		putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
-		out := atTerminal(t, e, initProjectName+"\n"+initProjectName+"\n")
-		if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
-			t.Fatalf("%v\n%s", err, out.String())
-		}
-		if len(fb.specs) != 2 {
-			t.Fatalf("built %+v, want both stale workflows", fb.specs)
-		}
-		if got := strings.Count(out.String(), "Type "+initProjectName+" to confirm"); got != 2 {
-			t.Errorf("two billable builds were asked for %d time(s), want one confirmation each:\n%s", got, out.String())
-		}
-	})
-
-	// The answer to the FIRST question decides the first build alone: a
-	// wrong name stops the run there, with nothing submitted, which is what
-	// "answering no runs no build" has to mean for a user who said no.
-	t.Run("a wrong name runs no build", func(t *testing.T) {
-		useVersion(t, "0.5.1")
-		r := newAnchorModeRig(t, refreshYAML, true)
-		fb := useFakeBuilder(t)
-		e, tg := buildTarget(t, r)
-		p := &refreshPlan{workflows: []string{"app", "api"}}
-		putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
-		putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
-		out := atTerminal(t, e, "nope\n")
-		err := e.r.refreshBuilds(t.Context(), p, tg)
-		if err == nil || !strings.Contains(err.Error(), "not confirmed") {
-			t.Fatalf("a declined build was not a refusal: %v\n%s", err, out.String())
-		}
-		if len(fb.specs) != 0 {
-			t.Errorf("a declined build submitted %+v", fb.specs)
-		}
-	})
-}
-
-// TestUpdateRunsNoBuildWhenTheBuildIsDeclined is that same decline with the
-// stage in front of it: a terminal, no --yes, an answer that is not the
-// project's name, and the build nobody approved is never submitted. Nothing
-// above the refresh may confirm it instead — the run's own confirmation covers
-// the ordinary steps, and a billable build is not one of them.
-//
-// Mutation (run, restore): hand the refresh --yes (ro.yes = u.o.yes, dropped,
-// or the stage's own env.Yes) and this test fails: a build is submitted with
-// nobody asked.
-func TestUpdateRunsNoBuildWhenTheBuildIsDeclined(t *testing.T) {
-	r, root := upgradeRig(t)
-	checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
-	f := testutil.NewClaudePluginFake(t, "[]", "[]")
-	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
-	useFakeClaude(t, f)
-	// The base this release pins, already recorded, and two workflows whose
-	// records name an older one: the refresh's step 2 has nothing to pin, so
-	// the step this test is about is step 4's question.
-	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+// Mutation (run, restore): put a confirmation back in front of the build loop
+// (confirmBuild, or one typed question for the whole loop), and this test
+// fails: nothing is typed and no terminal is there, so no build runs.
+func TestUpdateBuildsEveryStaleWorkflowWithNoAnswer(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFakeBuilder(t)
+	e, tg := buildTarget(t, r)
+	p := &refreshPlan{workflows: []string{"app", "api"}}
 	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
 	putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
-	fb := useFakeBuilder(t)
-	// Steps 2 and 3 are stubbed (the registry and the Cloud Run Admin API are
-	// not what this test is about) and step 3's target is the rig's own
-	// workflows; step 4 is the refresh's, question and all.
-	real := newRefreshSteps
-	newRefreshSteps = func(run *initRun, e *initEngine, p *refreshPlan) refreshSteps {
-		s := real(run, e, p)
-		s.base = func(context.Context) error { return nil }
-		s.checkJob = func(context.Context, *refreshTarget) error { return nil }
-		s.reload = func(context.Context) (*refreshTarget, error) {
-			return &refreshTarget{lc: p.lc, cfg: p.cfg, spec: infra.RepoSpec{Name: p.repo, Slug: p.slug,
-				RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
-				Workflows: map[string]infra.WorkflowSpec{"app": {}, "api": {}}}}, nil
+	out := atTerminal(t, e, "")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 2 {
+		t.Fatalf("built %+v, want both stale workflows", fb.specs)
+	}
+	for _, asked := range []string{"Type ", "⚠ CONFIRM", "[y/N]", "real terminal"} {
+		if strings.Contains(out.String(), asked) {
+			t.Errorf("a build asked %q, which no session is refused for answering:\n%s", asked, out.String())
 		}
-		return s
-	}
-	t.Cleanup(func() { newRefreshSteps = real })
-
-	e, refreshOut := checkoutEngine(t, &initOptions{})
-	out := atTerminal(t, e, "not the project's name\n")
-	res := stageOutcome(t, e, checkoutStageOf(t, e))
-	if res.Failed == nil || !strings.Contains(res.Failed.Error, "not confirmed") {
-		t.Fatalf("a declined build did not stop the checkout: %+v\n%s%s", res, out, refreshOut)
-	}
-	// The refresh's own writer is the stage's: the refresh's run is given what
-	// the stage's steps print through (refreshOptions.out), which atTerminal
-	// hands a buffer of its own, and the question the step asks is the
-	// refresh's. Without seeing it asked, a run that never reached step 4
-	// would pass this test too.
-	if !strings.Contains(out.String(), "Type aurora to confirm") {
-		t.Fatalf("the stage reached the build without asking for it:\n%s", out)
-	}
-	if len(fb.specs) != 0 || strings.Contains(out.String(), "is done") {
-		t.Errorf("a declined build ran: %+v\n%s", fb.specs, out)
 	}
 }
 
-// TestUpdateCheckoutBuildConfirmationIsNeverDrawnOver: the same build
-// confirmation, with the converge's own reporter drawing the step in flight.
-// The cloud step is fugaro image refresh run as a command of its own
-// (runImageRefresh -> newInitRun), and that run printed and asked where its own
-// command said — a stream that draws nothing — while the spinner redrew the
-// checkout step over it every 100ms (G1). A billable build's confirmation is
-// the one line in this step a person has to be able to read, and the name typed
-// under it.
+// TestUpdateBuildsTheStaleWorkflowsWhenNobodyIsAsked is that same step with
+// the stage in front of it: a terminal with nothing typed at it, no --yes, and
+// the stale workflows' builds are submitted all the same. Nothing above the
+// refresh may be what submits them instead — the run's own confirmation covers
+// the ordinary steps, and a billable build is not one of them.
+//
+// The second row is the installation whose owner never ran `fugaro update
+// --firebase-project`, whose config therefore carries no budget block and whose
+// builds take no lease at all (image_build_lease.go): they are submitted
+// uncounted, with the one line that says so, because what this stage runs IS
+// `fugaro update`'s checkout half — a build it could not run without the
+// backend would leave every stale image of such an installation unbuilt and
+// send its owner to an operator step the one upgrade command is not allowed to
+// need (HARD RULE).
+//
+// Mutation (run, restore): give the refresh's build loop a confirmation again
+// (confirmBuild, or the stage's own env.Yes standing in for one) and this test
+// fails: nothing is typed, so no build runs. Let the backend-less row's build
+// lease its cost (drop openBuildLease's early return) and that row fails
+// instead, on the checkout's own error: it stops naming the flag to pass.
+func TestUpdateBuildsTheStaleWorkflowsWhenNobodyIsAsked(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		backend bool
+	}{
+		{"with a budget backend", true},
+		{"with no budget backend", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, root := upgradeRig(t)
+			if tc.backend {
+				buildBudgetForRig(t, r.initRig)
+			}
+			checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
+			f := testutil.NewClaudePluginFake(t, "[]", "[]")
+			f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
+			useFakeClaude(t, f)
+			// The base this release pins, already recorded, and two workflows whose
+			// records name an older one: the refresh's step 2 has nothing to pin, so
+			// the step this test is about is step 4's builds.
+			r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+			putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
+			putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
+			fb := useFakeBuilder(t)
+			// Steps 2 and 3 are stubbed (the registry and the Cloud Run Admin API are
+			// not what this test is about) and step 3's target is the rig's own
+			// workflows; step 4 is the refresh's own.
+			real := newRefreshSteps
+			newRefreshSteps = func(run *initRun, e *initEngine, p *refreshPlan) refreshSteps {
+				s := real(run, e, p)
+				s.base = func(context.Context) error { return nil }
+				s.checkJob = func(context.Context, *refreshTarget) error { return nil }
+				s.reload = func(context.Context) (*refreshTarget, error) {
+					return &refreshTarget{lc: p.lc, cfg: p.cfg, spec: infra.RepoSpec{Name: p.repo, Slug: p.slug,
+						RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
+						Workflows: map[string]infra.WorkflowSpec{"app": {}, "api": {}}}}, nil
+				}
+				return s
+			}
+			t.Cleanup(func() { newRefreshSteps = real })
+
+			e, refreshOut := checkoutEngine(t, &initOptions{})
+			out := atTerminal(t, e, "")
+			// The way `fugaro update` runs it: the plugin stage first, whose
+			// stale pin is what says this run is taking the checkout to this
+			// release, and the checkout stage behind it — the cloud half's own
+			// check reads the local config and a build record never, so the
+			// plugin stage is where the run's reach of the images is read
+			// (initEngine.checkoutBehind).
+			res := updateStages(t, e, initflow.Plugin, checkoutStageName)
+			if res.Failed != nil {
+				t.Fatalf("the run stopped with nothing typed: %+v\n%s%s", res, out, refreshOut)
+			}
+			if len(fb.specs) != 2 {
+				t.Fatalf("built %+v, want both stale workflows", fb.specs)
+			}
+			for _, asked := range []string{"Type ", "⚠ CONFIRM", "real terminal"} {
+				if strings.Contains(out.String(), asked) {
+					t.Errorf("a build asked %q, which nothing is waiting to answer:\n%s", asked, out)
+				}
+			}
+			// An installation with no backend says so, once per build; the one
+			// that has a backend says nothing about a missing one.
+			said := strings.Contains(out.String()+refreshOut.String(), "has no Firebase budget backend")
+			if said != !tc.backend {
+				t.Errorf("the note about a missing budget backend was printed %v, and this installation has a budget backend: %v\n%s%s", said, tc.backend, out, refreshOut)
+			}
+		})
+	}
+}
+
+// TestUpdateCheckoutBuildLinesAreNeverDrawnOver: the same build step, with the
+// converge's own reporter drawing the step in flight. The cloud step is fugaro
+// image refresh run as a command of its own (runImageRefresh -> newInitRun), and
+// that run printed where its own command said — a stream that draws nothing —
+// while the spinner redrew the checkout step over it every 100ms (G1). What a
+// build says about itself is the one line in this step a person has to be able
+// to read, and the lease and the submission print it.
 //
 // Mutation (run, restore): drop the stage's writer from the refresh's options
-// (refreshOptions.out), and this test fails on the frame drawn over the banner
-// and on the redraws over the prompt being answered.
-func TestUpdateCheckoutBuildConfirmationIsNeverDrawnOver(t *testing.T) {
+// (refreshOptions.out), and this test fails: the build's own lines went to a
+// stream the stage never draws on.
+func TestUpdateCheckoutBuildLinesAreNeverDrawnOver(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	clearAgentMarkers(t)
 	fakeTerminal(t)
 	writerAsTerminal(t)
 	r, root := upgradeRig(t)
+	buildBudgetForRig(t, r.initRig)
 	checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
 	useFakeClaude(t, f)
 	// One workflow whose record names an older base: step 2 has nothing to pin
-	// and step 4 has one build to ask about.
+	// and step 4 has one build to run.
 	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
 	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
 	putWorkflowRecordFrom("api", "0.5.1", pinnedRef("base", "0.5.1"))
 	fb := useFakeBuilder(t)
-	// Steps 2 and 3 are stubbed, as in the declined-build test above: the
-	// registry and the Cloud Run Admin API are not what this test is about.
+	// Steps 2 and 3 are stubbed, as in the test above: the registry and the
+	// Cloud Run Admin API are not what this test is about.
 	real := newRefreshSteps
 	newRefreshSteps = func(run *initRun, e *initEngine, p *refreshPlan) refreshSteps {
 		s := real(run, e, p)
@@ -924,13 +1087,17 @@ func TestUpdateCheckoutBuildConfirmationIsNeverDrawnOver(t *testing.T) {
 	e.r.w = runWriter{r: e.r, out: out}
 	step := e.r.rep.Step(checkoutStageName)
 	st := checkoutStageOf(t, e)
-	answerAQuestionMidStage(t, e.r, out, "⚠ CONFIRM (project "+initProjectName+", GCP project ", func() error {
-		_, err := st.Apply(context.Background(), initflow.Env{Interactive: true})
-		return err
-	})
+	if _, err := st.Apply(context.Background(), initflow.Env{Interactive: true}); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
 	step.Done("")
 	if len(fb.specs) != 1 {
-		t.Errorf("the confirmed build submitted %+v, want the one build that was asked about", fb.specs)
+		t.Errorf("the build submitted %+v, want the one stale workflow", fb.specs)
+	}
+	// The build's own line is what the run said it does before it did it, and
+	// the stage's stream is where a person reads the step.
+	if !strings.Contains(out.String(), "submits a Cloud Build for acme/app/app") {
+		t.Errorf("the step's stream carries nothing of the build it submitted:\n%s", out)
 	}
 }
 
