@@ -53,7 +53,7 @@ None.
 | Block | Use |
 | --- | --- |
 | **D490–D519** | D490–D506 written and answered 2026-10-27; D507–D519 reserved and unused. Above the Bitbucket workspace-token work's D460–D489, on `main` and in every open PR |
-| **D2070–D2089** | Taken 2026-11-10 for the later slices (reconciliation §10), above D2069, the highest number reserved in any open pull request (#2285's D2030–D2069; `main`'s highest is D2019): D2070–D2080 written and **OPEN**; D2081–D2089 reserved and unused |
+| **D2070–D2089** | Taken 2026-11-10 for the later slices (reconciliation §10), above D2069, the highest number written or reserved on `main` or in any open pull request that day (outer-loop-escalation's D2030–D2069, #2285, merged since as `280a0c379`): D2070–D2080 written and **OPEN**; D2081–D2089 reserved and unused |
 | **Checks 190–199** | 190–192 assigned by the plan (owner-run): 190 is written by B0.4 and **was run by the owner on 2026-10-30 (B0.5) — the >32 MiB push failed with a 413 — and its result is recorded in the register (B0.6)**; 191–192 are **written** by B1.11 (`scripts/live-checks/check191.sh`, one script, `--after-flip` for 192) and **not run** — 191 runs on the released 0.21.0 — the first tag that carries the proxy — and 192 after the flip (191's first attempt, 2026-11-10, found the sandbox repository off the credentials-service switch, and the script now stops there, `6e319b650`; the register still reads NOT RUN); **193–197 assigned 2026-11-10** to S2–S5 (written by B2.5, B3.6, B4.1, B4.7, B5.5; run by the owner); 198–199 reserved and unused. Above Checks 180–189 |
 
 ## Related
