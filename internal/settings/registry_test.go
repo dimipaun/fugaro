@@ -213,11 +213,28 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 	families := []string{
 		"settings set", "models", "rigor", "rigor floor", "accounts", "secrets",
 		"config", "budget", "project", "setup", "update", "workspace",
+		// The four keys a checkout's `fugaro.yaml` is opened with, which
+		// `fugaro config init` writes and no edit lands on (D1178): the token is
+		// this table's, and the read's own map is where it becomes the command's
+		// name (settingsOwnerCommands).
+		"config init",
+		// The keys of the machine's own config that no command edits — the
+		// Issues section's two nudge thresholds (G12): the token names the file
+		// they are stated in, as `config` and `config init` name theirs, and the
+		// read's map names `fugaro update`, which writes it.
+		"config local",
 		// The image map's own family (D1906): the key is the project's image
 		// policy per repository and `fugaro image map set` is what writes it, so
 		// the row names that command rather than `fugaro project`, which writes
 		// the project's other policy keys and not this one.
 		"image map",
+		// The six orchestrator ceilings (G12): the block is stated in the
+		// machine's own config and `fugaro project policy publish` is what
+		// carries it to the node, and the token is this block's own rather than
+		// `project` — that one is a family of settingsFamilyCommands, so naming
+		// it would refuse the six keys by name of `fugaro project` and print a
+		// bare command for keys no subcommand of it edits.
+		"project policy",
 		// The clone URLs' family, the image map's twin: an entry is keyed by a
 		// canonical repository name and its value is held to the node's own
 		// rule, so `fugaro project clone-url` is where the two are checked
