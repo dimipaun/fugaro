@@ -167,6 +167,7 @@ var exemptListings = map[string]exemptListing{
 	"recipes validate":     {"a listing: the verdict for a recipe file, as a table or a document", true},
 	"review show":          {"a listing: a review run's verdict artifact and its markdown", true},
 	"runs ls":              {"a listing: the runs with their status, stage, cost and PR, table or document", true},
+	"runs show":            {"a listing: one run's chain and what is left of its limits, table or document", true},
 	"runs stats":           {"a listing: run records aggregated by the person who started each run", true},
 	"runs summary":         {"a listing: the window's run count and spend, without reading a run object", true},
 	"seats":                {"a listing: the estimate a subscription's seat rule would count, table or document", true},

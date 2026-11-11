@@ -342,6 +342,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro restore":             {args: []string{"proj-2", "root"}},
 	"fugaro review show":         {args: []string{"run-1"}},
 	"fugaro run":                 {args: []string{"do something"}},
+	"fugaro runs show":           {args: []string{"run-1"}},
 	"fugaro secrets rm":          {args: []string{"NAME"}},
 	"fugaro secrets set":         {args: []string{"NAME"}},
 	// The rigor write reaches its own edit through the layer file the seed writes:
