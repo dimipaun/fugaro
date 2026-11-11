@@ -235,11 +235,11 @@ func (r *run) recordAccountStageCost(stage string, claudeUSD float64) {
 // total, so adding this stage's report beside the ledger's would break that
 // sum for exactly the mixed runs that have both arms (P11, P12).
 func (r *run) recordAgentModelTokens(res agent.Result) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.gw != nil {
 		return
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	for model, u := range res.ModelUsage {
 		// Claude Code reports a stage's cache creations as one count where the
 		// gateway's usage has a 5m write and a 1h write: with no gateway there
