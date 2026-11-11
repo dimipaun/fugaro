@@ -346,6 +346,135 @@ func TestDoctorBatchReportsAMissingImageFamily(t *testing.T) {
 	}
 }
 
+// TestDoctorBatchComparesTheRecordedSocketGID is step 2's comparison as its
+// own case (plan 2026-10-19-compute-backend.md Task 10): the generation the
+// preload image family serves carries the socket's gid as its own
+// socket-gid label, so the number the installation recorded in
+// batch.socket_gid is checked against the image a run boots and not trusted.
+// Every rebuild re-reads that gid off the builder VM and labels a new
+// generation with it, so a recorded value the image has moved past is a Docker
+// run whose --group-add names a gid the image no longer has.
+//
+// The three cases the plan names, and the three readings they have to keep
+// apart: a recorded gid the image has moved past (refused), a recorded gid the
+// image carries (passes), and a recorded ZERO (not refused) -- zero means this
+// installation recorded no socket at all, which is Task 7's launch refusal's
+// shape and not this gate's, and refusing the whole installation over it would
+// be this gate deciding a question the config already answers.
+//
+// Mutation (drop the comparison and trust batch.socket_gid; refuse a recorded
+// zero): the mismatch case stops failing, or the zero case starts to.
+func TestDoctorBatchComparesTheRecordedSocketGID(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		recorded string
+		label    string
+		want     bool
+	}{
+		{"a recorded gid the image has moved past", "989", "1000", false},
+		{"a recorded gid the image carries", "989", "989", true},
+		{"a recorded zero", "0", "1000", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			block := strings.Replace(batchBlock, "socket_gid: 989", "socket_gid: "+tc.recorded, 1)
+			// The family's label is the generation's, so it is placed rather
+			// than provisioned: the step above writes the one this fixture's
+			// block records.
+			f.compute.AddImageFamilyLabels(batchPreloadFamily, map[string]string{infra.SocketGIDLabel: tc.label})
+			batchProvisionedWithout(t, r, f, batchStepFamily)
+			r.withBatchSelected(t, f, block, batchLists)
+
+			c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-image-family")
+			if !ok {
+				t.Fatal("doctor reports no batch-image-family check")
+			}
+			if c.OK != tc.want {
+				t.Fatalf("with batch.socket_gid %s against %s=%s, the check = %+v, want ok=%v", tc.recorded, infra.SocketGIDLabel, tc.label, c, tc.want)
+			}
+			if tc.want {
+				return
+			}
+			if c.Severity != "" {
+				t.Errorf("the mismatch has severity %q: an installation that selects the backend is refused for it, so it takes doctor's own hard failure", c.Severity)
+			}
+			for _, want := range []string{tc.recorded, tc.label, infra.SocketGIDLabel, "unable to open the socket"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("the mismatch does not name %q: %s", want, c.Problem)
+				}
+			}
+		})
+	}
+}
+
+// TestDoctorBatchSaysPropagatingForAPolicyItCannotRead is step 3 (plan
+// 2026-10-19-compute-backend.md Task 10): a doctor run against an installation
+// whose apply has just finished can see a binding that is not readable yet
+// (Check 57a measured it), so a refused policy read is reported as a grant that
+// may still be propagating and NOT as a missing one. The two are
+// indistinguishable from here -- a 403 is what both produce -- and reporting
+// the second sends an operator to re-provision an installation that is
+// correctly provisioned.
+//
+// This is the plan's red step: a check that reports a missing grant for a
+// binding that exists but is not readable yet fails here, on the assertion that
+// the message says propagating and on the three phrases a missing-grant finding
+// carries.
+//
+// Mutation (report a denied read as a missing grant): the assertions below
+// fail.
+func TestDoctorBatchSaysPropagatingForAPolicyItCannotRead(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   string
+	}{
+		{"the launchers' conditioned grant", "batch-launcher-iam"},
+		{"the run accounts' two project roles", "batch-run-account-roles"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			batchProvisioned(t, r, f)
+			// The policy is written -- batchProvisioned wrote it -- and the
+			// read of it is refused: the shape a binding written moments ago
+			// produces.
+			r.crm.DenyPolicy("proj-1234")
+			r.withBatchSelected(t, f, batchBlock, batchLists)
+
+			o := r.runDoctorJSON(t)
+			c, ok := doctorCheckByID(o.Checks, tc.id)
+			if !ok {
+				t.Fatalf("doctor reports no %s check", tc.id)
+			}
+			if c.OK {
+				t.Fatalf("%s reads ok for a policy it could not read: %+v", tc.id, c)
+			}
+			if c.Severity != "" {
+				t.Errorf("%s has severity %q: an installation that selects the backend is refused for it", tc.id, c.Severity)
+			}
+			for _, want := range []string{"propagating", "57a", "§8.1 task 9"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("%s does not say %q: %s", tc.id, want, c.Problem)
+				}
+			}
+			for _, missing := range []string{"do not hold", "without the compute module's condition", "not one of this installation's run accounts"} {
+				if strings.Contains(c.Problem, missing) {
+					t.Errorf("%s reports a missing grant for a policy it could not read (%q): %s", tc.id, missing, c.Problem)
+				}
+			}
+			// Doctor IS refused, and that is the gate working: an installation
+			// that selects the name is refused for a check that could not be
+			// made (batchSeverity's hard failure for the selection), so the
+			// operator fixes the credential and reruns -- which is what the
+			// propagating sentence above sends them to do. What must not
+			// happen, and the assertion above is about, is this being reported
+			// as a grant the installation is missing.
+			if o.OK {
+				t.Errorf("%s reads ok and doctor passes for a policy it could not read", tc.id)
+			}
+		})
+	}
+}
+
 // TestDoctorBatchReportsANetworkOrSubnetworkThatIsNotThere: both names are
 // sent explicitly because Batch refuses a no-external-IP job without them
 // (Check 57a, §1.7), and a name that is recorded and absent is a run that
