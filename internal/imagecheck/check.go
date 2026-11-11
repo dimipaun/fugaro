@@ -340,10 +340,10 @@ type CatalogInputs struct {
 // does.
 type CatalogInputsFingerprint struct {
 	DefinitionSHA256 string `json:"definition_sha256"`
-	// ContextSHA256 is the context's own identity, so the back-off counts the
-	// same build twice for what it is: a failed build of one context is not
-	// the failure of another, and a context that moved and moved back is the
-	// inputs the last build already ran with.
+	// ContextSHA256 is the context's own identity, so the back-off tells one
+	// build's inputs from another's: a failed build of one context is not the
+	// failure of a build of another, and a context that moved and moved back
+	// is the inputs the last build already ran with.
 	ContextSHA256 string `json:"context_sha256,omitempty"`
 	BaseRef       string `json:"base_ref"`
 	BaseDigest    string `json:"base_digest"`
