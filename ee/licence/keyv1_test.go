@@ -301,8 +301,11 @@ func TestNoClaimIsReadBeforeTheSignatureVerifies(t *testing.T) {
 // TestHigherPolicyVersionIsRefusedNotFree holds the spec's section 4 rule: a key
 // of a version this build does not read is refused with the upgrade message and
 // never falls back to Free. The refusal is the version's alone and is reached
-// before the claim set is decoded, which is why the payload below carries a
-// field only a later version would have.
+// before the claim set is decoded: the payload below carries a claim this build
+// cannot decode at all -- `seats` retyped to a string, which is a version 2 the
+// spec's "a field never changes meaning, retyping bumps the version" allows --
+// so a verifier that decoded the claim set first answers the claim refusal here
+// instead of the upgrade message.
 func TestHigherPolicyVersionIsRefusedNotFree(t *testing.T) {
 	fixture := newFixtureKey(t, fixtureV1KeyID)
 
@@ -313,7 +316,7 @@ func TestHigherPolicyVersionIsRefusedNotFree(t *testing.T) {
 		"workspace_id":   firebaseProjectV1,
 		"organisation":   "example.com",
 		"tier":           TierEnterprise,
-		"seats":          50,
+		"seats":          "fifty",
 		"issued_at":      atV1(0),
 		"paid_through":   atV1(365),
 		"grace_days":     30,
@@ -939,9 +942,18 @@ func generateVectorsV1(t *testing.T) vectorFileV1 {
 	unknownTier.Tier = "unlimited"
 	refuse("a tier this verifier does not know", sign(unknownTier), "claims")
 
+	// The version 2 payload carries a claim this build cannot decode at all --
+	// `seats` retyped to a string, which is what a version bump allows -- so
+	// this is the vector that says the version is read before the claim set is:
+	// a verifier that decoded first would answer `claims` here.
 	newer := base()
 	newer.V = 2
-	refuse("a key of a version this build does not read", sign(newer), "newer-version")
+	newerSpelled, err := json.Marshal(newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newerPayload := append(bytes.TrimSuffix(newerSpelled, []byte("}")), []byte(`,"seats":"fifty"}`)...)
+	refuse("a key of a version this build does not read", fixture.signRawV1(t, newerPayload), "newer-version")
 
 	foreign := base()
 	foreign.KID = "licence-someone-elses-key-v1"
