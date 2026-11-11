@@ -477,12 +477,21 @@ func applyArchive(s *State, op ArchiveOp, a Actor) error {
 }
 
 // applyDecisionAdd writes a question. Adding one takes no class — the daemon
-// and its agents ask people things, and a person reads them — with one
-// exception: the breaker's own prefix is the daemon's, because a decision
-// carrying it stops every spawn on the node until a person resolves it
-// (BreakerOpen, which the plan refuses over). A read of the state cannot tell
-// who wrote a decision, so the class has to be settled here or the pause is
-// anyone's to raise (D1241 leaves the node writable by whoever holds the
+// and its agents ask people things, and a person reads them — with two
+// exceptions, both names rather than questions:
+//
+//   - the breaker's own prefix is the daemon's, because a decision carrying it
+//     stops every spawn on the node until a person resolves it (BreakerOpen,
+//     which the plan refuses over);
+//   - the call ledger's prefix is the daemon's, because every reader that shows
+//     a person the decisions reads a record carrying it as the loop's own
+//     bookkeeping and leaves it out of what it prints and out of what it caches
+//     (DecisionCallID, and Summarize, which filters it) — so a question written
+//     under that name by anyone else would be a question nobody is shown.
+//
+// A read of the state cannot tell who wrote a decision, so the class has to be
+// settled here: the pause would be anyone's to raise and a real question
+// anyone's to hide (D1241 leaves the node writable by whoever holds the
 // person's credential, which is what makes the class the fence rather than the
 // credential).
 func applyDecisionAdd(s *State, op DecisionOp, a Actor) error {
@@ -491,6 +500,9 @@ func applyDecisionAdd(s *State, op DecisionOp, a Actor) error {
 	}
 	if a.Class != Daemon && strings.HasPrefix(op.ID, BreakerDecisionID+"-") {
 		return fmt.Errorf("%w: a %s actor asked the breaker's question in %q, and the pause it carries is the daemon's to raise", ErrActorNotAllowed, a.Class, safetext.OneLine(op.ID))
+	}
+	if a.Class != Daemon && strings.HasPrefix(op.ID, DecisionCallID) {
+		return fmt.Errorf("%w: a %s actor asked a question under %q, and a decision named for the call ledger is one no reader shows", ErrActorNotAllowed, a.Class, safetext.OneLine(op.ID))
 	}
 	question := cleanText(op.Question, MaxQuestionRunes)
 	if question == "" {

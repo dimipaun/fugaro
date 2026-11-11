@@ -51,7 +51,10 @@ func safe(s string) string { return neutralize(cleanText(s, MaxBriefRunes)) }
 // in the document and are counted there, which is where the caps read them.
 //
 // The name is defined beside the reader that filters it and the writer imports
-// it, so the filter and the record cannot drift apart.
+// it, so the filter and the record cannot drift apart — and it is reserved in
+// code and not by convention: a decision whose id carries it is the daemon's to
+// write (applyDecisionAdd refuses it from every other class), because a name a
+// reader hides is a name nothing else may use.
 const DecisionCallID = "decide-call-"
 
 // Summarize is the state as a person or a session reads it: the goal, the work

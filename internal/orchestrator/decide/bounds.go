@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
@@ -108,6 +109,14 @@ func (b Bounds) Allow(s orchestrator.State, now time.Time) error {
 // not the summary.
 const callRecordPrefix = orchestrator.DecisionCallID
 
+// ErrNoRoom is a decision call refused because the state cannot hold the call's
+// own record: the document is at — or a record away from — the size this
+// release reads (MaxStateBytes), and the record is what makes a call countable,
+// so a call it cannot count is one the caps cannot bound. Nothing was attempted
+// and nothing was spent, which is why it is a refusal and not a failure, the
+// same as the caps' own.
+var ErrNoRoom = errors.New("decide: the state has no room for the call's own record")
+
 // recordCall is s with the record of one call in it: the decision the loop asks
 // itself and closes in the same patch, which is what makes Allow count calls
 // rather than questions.
@@ -121,16 +130,23 @@ const callRecordPrefix = orchestrator.DecisionCallID
 // Resolved, it is un-evictable only while the caps still count it
 // (countedDecision), and it leaves the document with the window.
 //
-// What it costs is bounded by the caps, but not by one day of them: the caps
-// count calendar days while this record is un-evictable for the rolling window
-// retention keeps it over (orchestrator.Retain), so a window straddling
-// midnight holds two days' tails at once — up to twice CallsPerDay records,
-// which at the ~194 bytes one measures is ~15 KiB of the 16 KiB the document is
-// allowed (MaxStateBytes) before a single work item, fact or question is in it.
+// The ledger is kept to what the caps count, and no further, because nothing
+// else would keep it: retention is the daemon's own sweep and nothing in this
+// tree calls it (orchestrator.Retain), and the caps read the calendar day
+// (orchestrator.DecisionCalls) while retention protects a rolling 24 hours — so
+// yesterday's records stay in the document for a day after no cap can count
+// them, and two days of them are ~15 KiB of the 16 KiB the document is allowed.
+// A daemon at that point can decide nothing (this call's own record is refused)
+// and a person can write nothing either (every write over the cap is refused
+// with ErrTooLarge), with nothing in the loop able to bring the node back under.
+// So dropStaleCallRecords takes them out here, and a record that still does not
+// fit is a refusal the runner raises before the child starts (ErrNoRoom).
+//
 // That is the price of the count living in the document, and the reason this
 // ledger wants the node the spec's own logical shape gives it: a `decisions`
 // subcollection, so frequent updates touch small documents.
 func recordCall(s orchestrator.State, itemID string, at time.Time) (orchestrator.State, error) {
+	s = dropStaleCallRecords(s, at)
 	id := freeCallID(s)
 	p := orchestrator.Patch{BaseRev: s.Rev, Ops: []orchestrator.Op{
 		{Op: orchestrator.OpDecisionAdd, Decision: &orchestrator.DecisionOp{
@@ -143,7 +159,59 @@ func recordCall(s orchestrator.State, itemID string, at time.Time) (orchestrator
 			Answer: "counted",
 		}},
 	}}
-	return orchestrator.Apply(s, p, orchestrator.Actor{Class: orchestrator.Daemon, Name: ActorName, Now: at})
+	recorded, err := orchestrator.Apply(s, p, orchestrator.Actor{Class: orchestrator.Daemon, Name: ActorName, Now: at})
+	if err != nil {
+		// The only thing that can fail here is the document's own size: the
+		// patch is this package's, its id is one this state does not carry, and
+		// Apply refuses a state over the cap both before and after a patch —
+		// which is the case the ledger has to answer for, and answers by not
+		// spending the call at all.
+		if errors.Is(err, orchestrator.ErrTooLarge) {
+			return orchestrator.State{}, fmt.Errorf("%w: %s", ErrNoRoom, safetext.OneLine(err.Error()))
+		}
+		return orchestrator.State{}, err
+	}
+	return recorded, nil
+}
+
+// dropStaleCallRecords is s without the ledger's own records that no cap counts
+// any more: a record stamped before the UTC day the call is made in is one
+// DecisionCalls ignores — it reads the day and the hour now falls in, and the
+// hour is inside the day — so keeping it costs the document bytes nothing
+// reads. What it may drop is only ever this package's own bookkeeping: a record
+// carrying the ledger's prefix, resolved, and outside the window the caps read.
+// A question a person or a session asked is untouched whatever its age, and so
+// is any decision one of those was waiting on.
+//
+// It cannot lower a count, which is the one direction a cap must never move:
+// everything it drops is a record DecisionCalls already ignores at at. The
+// caller reads the state it commits from the result, so the document the caps
+// count is the document this hands back.
+func dropStaleCallRecords(s orchestrator.State, at time.Time) orchestrator.State {
+	day := at.UTC().Truncate(24 * time.Hour)
+	stale := func(d orchestrator.Decision) bool {
+		return d.Resolved() && strings.HasPrefix(d.ID, callRecordPrefix) && d.At.UTC().Before(day)
+	}
+	any := false
+	for _, d := range s.Decisions {
+		if stale(d) {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return s
+	}
+	s = s.Clone()
+	kept := make([]orchestrator.Decision, 0, len(s.Decisions))
+	for _, d := range s.Decisions {
+		if stale(d) {
+			continue
+		}
+		kept = append(kept, d)
+	}
+	s.Decisions = kept
+	return s
 }
 
 // freeCallID is the first name of the record's own family this state does not

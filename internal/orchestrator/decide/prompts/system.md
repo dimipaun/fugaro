@@ -35,9 +35,10 @@ they are written:
 - `fact_delete` — `{"op":"fact_delete","fact":{"key":"ci-flake"}}` drops one. A
   delete carries no `value`.
 - `decision_add` — `{"op":"decision_add","decision":{"id":"ask-ci-flake","question":"Which of the two should this wait for?","waiting_on":"person"}}`
-  asks a question. `id` is yours to choose (letters, digits, `-`, `_`),
-  `question` is what you are asking, and `waiting_on` is who has to answer:
-  `person`, `session` or `daemon`.
+  asks a question. `id` is yours to choose (letters, digits, `-`, `_`) — but
+  not one beginning `decide-call-`, which names the loop's own ledger of its
+  calls and is refused — `question` is what you are asking, and `waiting_on` is
+  who has to answer: `person`, `session` or `daemon`.
 - `work_item_upsert` — `{"op":"work_item_upsert","work_item":{"id":"wi-1","title":"a shorter title"}}`
   changes what a work item says. `id` is the item, and the fields you may
   write are `title`, `repo`, `recipe`, `rigor_tier`, `brief`, `depends_on`

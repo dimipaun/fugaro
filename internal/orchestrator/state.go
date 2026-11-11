@@ -512,7 +512,7 @@ func AttemptsUnder(s State, itemID string, approvalAt time.Time) int {
 // both is the safe direction — it stops calls, never starts one.
 func DecisionCalls(s State, now time.Time) Counters {
 	now = now.UTC()
-	hour, day := now.Truncate(time.Hour), now.Truncate(24*time.Hour)
+	hour, day := now.Truncate(time.Hour), dayStart(now)
 	var c Counters
 	for _, d := range s.Decisions {
 		at := d.At.UTC()
@@ -752,11 +752,22 @@ func retainDecisions(decisions []Decision, now time.Time) []Decision {
 // countedDecision reports whether DecisionCalls counts a decision at now,
 // which is what makes it un-evictable: the count is derived from the
 // decisions the document carries, so losing one inside the window would lower
-// it. The window is RetentionWindow, the longest one a cap counts over, which
-// covers the hour and the day both with room to spare.
+// it.
+//
+// The window is the one DecisionCalls reads and nothing wider: the day now
+// falls in, whose start is the boundary that function truncates to (the hour
+// is inside it, both being truncations of the same now). RetentionWindow is
+// the safe direction and the wasteful one — it is the spawn caps' rolling day,
+// so a decision made yesterday evening would still be un-evictable hours after
+// no cap counts it, and retention, unable to drop a day of the call ledger,
+// would drop a person's facts to make room for the loop's bookkeeping instead.
+// What this protects is exactly what an eviction could move a count by.
 func countedDecision(d Decision, now time.Time) bool {
-	return d.Resolved() && now.Sub(d.At) < RetentionWindow
+	return d.Resolved() && !d.At.UTC().Before(dayStart(now))
 }
+
+// dayStart is the boundary DecisionCalls reads the day's count from.
+func dayStart(now time.Time) time.Time { return now.UTC().Truncate(24 * time.Hour) }
 
 // retainFacts keeps the facts whose keys sort first past keptFacts. A fact has
 // no age to sort by — the document keeps none, a fact being durable by

@@ -67,11 +67,40 @@ func TestHourlyAndDailyCapsStopCalls(t *testing.T) {
 	if !errors.Is(err, decide.ErrCallCap) {
 		t.Fatalf("a call under the cap ended as %v", err)
 	}
-	if d.Outcome != orchestrator.CycleEmpty {
-		t.Errorf("a refused call is a cycle that ended %q, want %q", d.Outcome, orchestrator.CycleEmpty)
+	// A refusal, not a cycle that achieved nothing: the outcome is left unset,
+	// which the breaker neither counts nor clears (orchestrator.Breaker), so a
+	// daemon held back by its own cap is not a daemon that is spinning.
+	if d.Outcome != "" {
+		t.Errorf("a refused call ended the cycle as %q, and the breaker reads that as a cycle that achieved nothing", d.Outcome)
 	}
 	if calls := testutil.FakeClaudeCalls(t, bin); len(calls) != 0 {
 		t.Errorf("the runner started %d calls under a cap", len(calls))
+	}
+}
+
+// TestACapRefusalDoesNotTripTheBreaker is the other half of "a refusal and not
+// a failure" (ErrCallCap): the caps are 6 an hour and 40 a day, so a daemon
+// that reaches one is a daemon whose bound is working. Reading each refusal as
+// a cycle that ended with nothing done reaches the breaker's threshold in three
+// of them, and the trip pauses every spawn on the node and asks a person what
+// to do about a loop that is behaving.
+func TestACapRefusalDoesNotTripTheBreaker(t *testing.T) {
+	now := mustNow(t)
+	hour := theState(t, func(s *orchestrator.State) { s.Decisions = decisionsAt(now, 6, 5*time.Minute) })
+	bin := testutil.FakeClaude(t, `{"calls":[{"structured":`+theAnswer+`}]}`)
+	r := &decide.Runner{Agent: decide.Claude{Bin: bin}, Now: testNow, Models: testModels()}
+	b := &orchestrator.Breaker{}
+	for i := range orchestrator.BreakerThreshold {
+		d, err := r.Decide(context.Background(), decide.Request{State: hour, ItemID: "wi-1"})
+		if !errors.Is(err, decide.ErrCallCap) {
+			t.Fatalf("refusal %d ended as %v, not ErrCallCap", i+1, err)
+		}
+		if b.Observe(d.Outcome) {
+			t.Fatalf("refusal %d was the cycle that reached the breaker's threshold", i+1)
+		}
+	}
+	if b.Tripped() {
+		t.Error("three cap refusals in a row tripped the breaker, and the pause it raises stops every spawn until a person answers")
 	}
 }
 
@@ -116,8 +145,8 @@ func TestEveryCallCountsSoTheSeventhIsRefused(t *testing.T) {
 	if !errors.Is(err, decide.ErrCallCap) {
 		t.Fatalf("the seventh call ended as %v, not ErrCallCap", err)
 	}
-	if d.Outcome != orchestrator.CycleEmpty {
-		t.Errorf("the refused call ended the cycle as %q, want %q", d.Outcome, orchestrator.CycleEmpty)
+	if d.Outcome != "" {
+		t.Errorf("the refused call ended the cycle as %q, and the breaker reads that as a cycle that achieved nothing", d.Outcome)
 	}
 	if calls := testutil.FakeClaudeCalls(t, bin); len(calls) != 6 {
 		t.Errorf("the runner started %d calls, want 6: the seventh spends nothing", len(calls))
@@ -248,4 +277,115 @@ func TestTheCallRecordIsNotAQuestionInTheSummary(t *testing.T) {
 	if !strings.Contains(summary, "ci-flake") {
 		t.Errorf("the call records pushed the facts out of the summary:\n%s", summary)
 	}
+}
+
+func TestTheLedgerKeepsOnlyTheCallsTheCapsCount(t *testing.T) {
+	// The ledger is the count, and the document that holds it is capped at
+	// MaxStateBytes with nothing in this tree calling retention
+	// (orchestrator.Retain): a day's calls plus the day before's would be ~15
+	// KiB, and a node at that point can neither decide nor be written to — every
+	// write over the cap is refused, a person's approve included. So the record
+	// that goes in takes out the ledger's own records the caps have stopped
+	// counting: a call stamped before the day the new one is made in is one
+	// DecisionCalls already ignores.
+	now := mustNow(t)
+	yesterday := now.Add(-25 * time.Hour)
+	state := theState(t, func(s *orchestrator.State) {
+		// A question somebody asked, and the answer to it, from the same
+		// yesterday: what the ledger may take out is its own bookkeeping and
+		// never a person's.
+		answered := yesterday.Add(time.Minute)
+		s.Decisions = []orchestrator.Decision{{
+			ID: "ask-yesterday", Question: "Which of the two should this wait for?",
+			WaitingOn: orchestrator.OnPerson, At: yesterday,
+			Answer: "the second", By: orchestrator.Person, ResolvedAt: &answered,
+		}}
+	})
+	for range 3 {
+		next, err := decide.RecordCall(state, "wi-1", yesterday)
+		if err != nil {
+			t.Fatalf("yesterday's record ended as %v", err)
+		}
+		state = next
+	}
+	if got := len(state.Decisions); got != 4 {
+		t.Fatalf("the ledger carries %d decisions, want 4: %+v", got, state.Decisions)
+	}
+	before := orchestrator.DecisionCalls(state, now)
+
+	next, err := decide.RecordCall(state, "wi-1", now)
+	if err != nil {
+		t.Fatalf("the call's record ended as %v", err)
+	}
+	for _, d := range next.Decisions {
+		if strings.HasPrefix(d.ID, orchestrator.DecisionCallID) && d.At.UTC().Before(now.UTC().Truncate(24*time.Hour)) {
+			t.Errorf("the ledger kept %s from before the day the caps count", d.ID)
+		}
+	}
+	if got := len(next.Decisions); got != 2 {
+		t.Fatalf("the ledger carries %d decisions, want 2 — today's call and the person's question: %+v", got, next.Decisions)
+	}
+	if _, ok := next.Decision("ask-yesterday"); !ok {
+		t.Error("the ledger dropped a question a person asked and answered, which is not its own bookkeeping")
+	}
+	// The one direction a cap must never move: dropping a record the count
+	// reads would raise the allowance a cycle has left.
+	if got, want := orchestrator.DecisionCalls(next, now), before; got.DecisionsDay != want.DecisionsDay+1 || got.DecisionsHour != want.DecisionsHour+1 {
+		t.Errorf("the new record moved the counts to %+v from %+v", got, want)
+	}
+	if _, err := orchestrator.EncodeState(next); err != nil {
+		t.Errorf("the state the ledger produced is not one this release writes: %v", err)
+	}
+}
+
+func TestACallTheDocumentCannotHoldIsRefused(t *testing.T) {
+	// A record the document cannot take is a call the caps cannot count, and a
+	// call they cannot count is spending past every bound the loop has. So it
+	// is refused before the child starts — nothing is spent — and it is a
+	// refusal rather than a failure: the outcome is unset, so the breaker does
+	// not read the node's own size as a loop that achieved nothing.
+	now := mustNow(t)
+	full := theState(t, nil)
+	for i := range orchestrator.MaxFacts {
+		full.Facts[fmt.Sprintf("fact-%02d", i)] = orchestrator.Fact{
+			Value: strings.Repeat("v", orchestrator.MaxFactValueRunes), By: orchestrator.Daemon,
+		}
+	}
+	if !orchestrator.OverCap(full) {
+		t.Fatalf("the state this test built is %d bytes and inside the cap, so nothing here is full", len(mustEncode(t, full)))
+	}
+
+	if _, err := decide.RecordCall(full, "wi-1", now); !errors.Is(err, decide.ErrNoRoom) {
+		t.Fatalf("a record for a document with no room ended as %v, not ErrNoRoom", err)
+	}
+
+	bin := testutil.FakeClaude(t, `{"calls":[{"structured":`+theAnswer+`}]}`)
+	r := &decide.Runner{Agent: decide.Claude{Bin: bin}, Now: testNow, Models: testModels()}
+	d, err := r.Decide(context.Background(), decide.Request{State: full, ItemID: "wi-1"})
+	if !errors.Is(err, decide.ErrNoRoom) {
+		t.Fatalf("the call ended as %v, not ErrNoRoom", err)
+	}
+	if calls := testutil.FakeClaudeCalls(t, bin); len(calls) != 0 {
+		t.Errorf("the runner started %d calls the caps cannot count", len(calls))
+	}
+	if d.Next.Rev != 0 || d.Next.AgentID != "" {
+		t.Errorf("a call that was never made handed back %+v", d.Next)
+	}
+	if d.Outcome != "" {
+		t.Errorf("a call that was never made ended the cycle as %q", d.Outcome)
+	}
+	if (&orchestrator.Breaker{}).Observe(d.Outcome) {
+		t.Error("the ledger's own size was read as a cycle that reached the breaker's threshold")
+	}
+}
+
+// mustEncode is the state as this release writes it, for a test that needs the
+// size of one.
+func mustEncode(t *testing.T, s orchestrator.State) []byte {
+	t.Helper()
+	raw, err := orchestrator.EncodeState(s)
+	if err != nil {
+		t.Fatalf("the state this test built is not one this release writes: %v", err)
+	}
+	return raw
 }

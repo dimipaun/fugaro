@@ -87,10 +87,11 @@ type Request struct {
 // made, and the money is spent whatever the model answered.
 //
 // A call that was never made spends nothing and records nothing, and there
-// Next is the zero State: the caps refused it, or the state carries no such
-// item, or the call could not be built. There is nothing to commit, and a
-// caller that writes it anyway is refused by the state's own validator
-// (orchestrator.EncodeState) rather than erasing a node.
+// Next is the zero State: the caps refused it, the state had no room for its
+// own record, the state carries no such item, or the call could not be built.
+// There is nothing to commit, and a caller that writes it anyway is refused by
+// the state's own validator (orchestrator.EncodeState) rather than erasing a
+// node.
 type Decision struct {
 	Class     sensitivity.Class
 	Model     string
@@ -105,6 +106,11 @@ type Decision struct {
 	// Outcome is how this cycle ended, in O6's vocabulary: progress for a
 	// decision that landed, empty or failed for one that did not. It is the
 	// tick's own summary of itself, which is what the breaker counts (G10).
+	//
+	// A call that was never made — a cap refused it, the state had no room for
+	// its record — leaves it unset, which the breaker reads as neither a
+	// failure nor progress: a refusal is not a cycle that achieved nothing, and
+	// counting it would stop the loop over a bound that is working.
 	Outcome orchestrator.CycleOutcome
 	// At is the server time the call was made at, and the stamp the patch's
 	// actor carries: every stamp in the document comes from the database's
@@ -191,7 +197,13 @@ func (r *Runner) Decide(ctx context.Context, req Request) (Decision, error) {
 	d := Decision{Class: class, Model: model, ItemID: req.ItemID, At: now}
 
 	if err := bounds.Allow(req.State, now); err != nil {
-		d.Outcome = orchestrator.CycleEmpty
+		// A cap is a refusal and not a failure (ErrCallCap): nothing was
+		// attempted and nothing was spent. The outcome is left unset for that
+		// reason — the breaker counts the cycles that ended with nothing done
+		// (orchestrator.Breaker.Observe), and a daemon held back by its own
+		// bound is not one that is spinning: three refusals in a row would
+		// pause every spawn and ask a person what to do about a cap that is
+		// doing its job.
 		return d, err
 	}
 	brief, err := NewBrief(req.State, req.ItemID, req.Failure)
@@ -211,7 +223,11 @@ func (r *Runner) Decide(ctx context.Context, req Request) (Decision, error) {
 	// it, and a return added later cannot forget it.
 	recorded, err := recordCall(req.State, req.ItemID, now)
 	if err != nil {
-		d.Outcome = orchestrator.CycleEmpty
+		// A record that cannot be written is a call the caps cannot count, so
+		// the call is not made: the child is never started and nothing is
+		// spent. Unset rather than empty, for the reason the cap above is: the
+		// call never happened, and the breaker must not read the ledger's own
+		// size as a loop that achieved nothing.
 		return d, err
 	}
 	d.Next = recorded
