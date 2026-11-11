@@ -308,24 +308,26 @@ func announceSettingsWrite(cmd *cobra.Command, managed bool, what string) error 
 //
 // The flow collection this cannot take away either is the entry itself being a
 // member of a flow mapping — project_secrets: { bitbucket-token: { ... } }, the
-// whole-file line that page teaches — and no edit of this program reaches one:
-// the refusal is modelsSpliceRefusal's, the one place a file the editor cannot
-// splice is explained (D790), with the path of the entry it could not write.
+// whole-file line that page teaches — and no edit of this program reaches one.
+// The entry is not even there to take away, so taking it away answers with the
+// bytes unchanged and no error, and the refusal the operator reads comes from
+// the write that follows; that is why every step below, the removal included,
+// means the same thing by its error (workspaceEditResult).
 func settingsRewriteList(old []byte, block, name string, values []string, proxy bool) ([]byte, error) {
+	path := block + "." + name
 	next, err := yamledit.RemoveKeyWithOptions(old, []string{block, name}, yamledit.RemoveOptions{DropEmptyParents: true})
-	if err != nil {
-		if refusal, ok := modelsSpliceRefusal(block+"."+name, err); ok {
-			return nil, refusal
-		}
+	if next, err = workspaceEditResult(path, next, err); err != nil {
 		return nil, err
 	}
 	for _, v := range values {
-		if next, err = yamledit.AddListItem(next, []string{block, name, "allow_data_to"}, v); err != nil {
+		added, addErr := yamledit.AddListItem(next, []string{block, name, "allow_data_to"}, v)
+		if next, err = workspaceEditResult(path, added, addErr); err != nil {
 			return nil, err
 		}
 	}
 	if proxy {
-		if next, err = yamledit.SetScalar(next, []string{block, name, "proxy"}, "true"); err != nil {
+		scaled, setErr := yamledit.SetScalar(next, []string{block, name, "proxy"}, "true")
+		if next, err = workspaceEditResult(path, scaled, setErr); err != nil {
 			return nil, err
 		}
 	}

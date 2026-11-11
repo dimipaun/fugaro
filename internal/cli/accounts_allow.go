@@ -172,6 +172,15 @@ func runAccountsAllowList(cmd *cobra.Command, name string, repos []string, allow
 		next, err = accountsAllowEdit(shaped, name, edits, allow)
 	}
 	if err != nil {
+		// An entry the block does not hold inside a flow collection is the
+		// shape that gets here: the rewrite above found nothing to write again,
+		// so it left the bytes as they are and the edit answered with the
+		// editor's own sentence. The editor refuses for the file's shape and
+		// this program says so in its own words, the ones the models writes
+		// print (modelsSpliceRefusal, D790), under the entry to write by hand.
+		if refusal, ok := modelsSpliceRefusal("claude_accounts."+name, err); ok {
+			return refusal
+		}
 		return userErr("claude_accounts.%s.allow_data_to: %v", pluginwire.Printable(name), err)
 	}
 	// Read the edit back strictly before it is written: a file this Fugaro

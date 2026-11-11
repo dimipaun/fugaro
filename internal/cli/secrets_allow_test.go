@@ -350,3 +350,41 @@ func TestSecretsDenyRefusesTheShapeNoEditCanReach(t *testing.T) {
 		t.Errorf("the refusal wrote the config:\n%s", after)
 	}
 }
+
+// TestSecretsAllowRefusesTheFlowBlockThatCannotHoldTheEntry: the same obstacle
+// with the entry absent — an empty flow mapping, and the whole-file line
+// docs/git-providers.md teaches with a name the block does not hold. The rewrite
+// then has nothing to write again (an absent key is no error to take away), the
+// entry is not among the values it writes, and the refusal comes from the write
+// that follows; it is the family's sentence all the same, because the obstacle
+// is the file's shape and no run of this program reaches a member of a flow
+// mapping. Nothing is written.
+func TestSecretsAllowRefusesTheFlowBlockThatCannotHoldTheEntry(t *testing.T) {
+	cases := map[string]struct{ shape, name string }{
+		"an empty flow block":                {"project_secrets: {}\n", "bitbucket-token"},
+		"a flow block holding another entry": {"project_secrets: { bitbucket-token: { allow_data_to: [\"acme/app\"] } }\n", "claude-oauth-token"},
+	}
+	for label, tc := range cases {
+		t.Run(label, func(t *testing.T) {
+			secretsRmFugaro(t)
+			secretsFixture(t)
+			projectSecretFixture(t, tc.shape)
+			path := os.Getenv("FUGARO_CONFIG")
+			noTerminal(t)
+			before := readFileString(t, path)
+
+			_, _, err := execute(t, "secrets", "allow", tc.name, "acme/web")
+			if err == nil {
+				t.Fatal("an entry inside a flow mapping was written")
+			}
+			for _, want := range []string{tc.name + " cannot be changed by one edit", "block style", "wrote nothing"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not carry %q:\n%v", want, err)
+				}
+			}
+			if after := readFileString(t, path); after != before {
+				t.Errorf("the refusal wrote the config:\n%s", after)
+			}
+		})
+	}
+}

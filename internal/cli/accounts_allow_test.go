@@ -294,3 +294,35 @@ func TestAccountsAllowNoChangePrintsNoNextLine(t *testing.T) {
 		t.Errorf("a run with nothing to write wrote the config:\n%s", after)
 	}
 }
+
+// TestAccountsAllowRefusesAnEntryTheFlowBlockCannotHold: the shape whose entry
+// is absent from a flow collection — an empty block, or the whole-file line
+// docs/git-providers.md teaches with a name the block does not hold. There is
+// nothing to write again, so the rewrite leaves the bytes as they are, and the
+// edit that follows refuses in the editor's words; the operator reads the
+// family's sentence instead (modelsSpliceRefusal), under the name of the entry
+// the file has to hold in block style, and the file is left byte-identical.
+func TestAccountsAllowRefusesAnEntryTheFlowBlockCannotHold(t *testing.T) {
+	for label, shape := range map[string]string{
+		"an empty flow block":                  "claude_accounts: {}\n",
+		"a flow block holding another account": "claude_accounts: { team-a: { allow_data_to: [owner/repo-a] } }\n",
+	} {
+		t.Run(label, func(t *testing.T) {
+			_, path := settingsWriteHomeWith(t, shape)
+			before := accountsAllowBytes(t, path)
+
+			_, _, err := execute(t, "accounts", "allow", "team-b", "owner/repo-x")
+			if err == nil {
+				t.Fatal("an account inside a flow mapping was declared")
+			}
+			for _, want := range []string{"claude_accounts.team-b cannot be changed by one edit", "block style", "wrote nothing"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not carry %q:\n%v", want, err)
+				}
+			}
+			if after := accountsAllowBytes(t, path); string(after) != string(before) {
+				t.Errorf("the refusal wrote the config:\n%s", after)
+			}
+		})
+	}
+}
