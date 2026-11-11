@@ -346,6 +346,30 @@ var jsonCases = map[string]jsonCase{
 			return []string{"project", "policy", "show"}
 		},
 	},
+	"project profile ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			newBudgetFixture(t, "")
+			return []string{"project", "profile", "ls"}
+		},
+	},
+	"project profile show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The world's own config defines no profiles, and the read refuses a
+			// name it has none of rather than printing an empty document, so
+			// this run needs the block a project with a profile carries.
+			modelsWriteHomeWith(t, projectProfileExtra)
+			return []string{"project", "profile", "show"}
+		},
+	},
+	"project routing show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			newBudgetFixture(t, "")
+			return []string{"project", "routing", "show"}
+		},
+	},
 	"project show": {
 		reads: true,
 		run: func(t *testing.T) []string {

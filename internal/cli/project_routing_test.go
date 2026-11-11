@@ -198,7 +198,10 @@ func TestProjectRoutingRefusesSilenceThatTurnsTheCascadeOff(t *testing.T) {
 	}
 
 	// The remedy the refusal names is the write that says it on purpose, and
-	// it is the switch that stays in the file rather than the omission.
+	// it is the switch that stays in the file rather than the omission. The
+	// cascade config is selected again first: the route fixture above moved
+	// FUGARO_CONFIG to its own home.
+	_, path = modelsWriteHomeWith(t, projectRoutingExtra+projectRoutingCascade)
 	if _, _, err := execute(t, "project", "routing", "set", "claude", "--via", "direct"); err != nil {
 		t.Fatalf("the remedy the refusal names does not work: %v", err)
 	}
