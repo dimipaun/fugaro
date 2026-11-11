@@ -15,7 +15,22 @@ on the one condition the gate carries, **that this plan is merged first**. The t
 **unbuilt**: approval is permission to start, and nothing below is a claim that anything
 exists. **Amended 2026-10-30: P7.1 is built** (P7.1a's wiring and P7.1b's guard and ad-ID
 walk) and **P7.2–P7.5 are not**; the sentence above is the state of 2026-10-22, kept as
-written. **This document replaces the earlier draft on `PR #693`** — a branch 151 commits behind
+written. **Amended 2026-11-11 (Task P7.2): P7.2 is built, and P7.3–P7.5 are not.** The
+statement the app shows and the `/privacy/` URL it carries are in
+`mobile/src/telemetry/notice.js`, put through `shared/url`'s validator rather than handed
+to a link opener, and `mobile/src/app/root.js` renders both as the shell's third child
+(`SHELL.NOTICE`) — the app has no settings screen, so the shell is the sentence's only
+surface. **The owner's ruling of 2026-10-30 (D731) landed between P7.1b and this task:
+it supersedes D255** — crash reports on by default and opt-out, Analytics dropped from
+the app — **and orders P7.2 and §7.4 amended before they are built.** That amendment is
+task **T0.1**'s (`docs/review-levels-ab-jobmax/implementation-plan.md`) and the build is
+task **T3.1**'s, so the statement P7.2 shipped is **the half both rulings leave
+standing**: the facts this page's live text already states and no ruling moves, with **no
+claim about how collection is turned off in either direction** — not D255's *"no switch
+inside the app"*, which the ruling removes, and not an opt-out control, which the build
+does not have yet. The two D255 clauses are pinned **absent** in
+`mobile/src/telemetry/notice.test.js`, and the store labels and the website's paragraph
+(P7.4) are unbuilt with the switch. **This document replaces the earlier draft on `PR #693`** — a branch 151 commits behind
 `main`, superseded rather than merged — which asked for **D193–D200** and **checks 111–113**,
 numbers the coordinator and the wizard-and-website work had already taken. **This plan takes
 D253–D260 and checks 120–122 instead**, and §2 shows the reading that chose them.
@@ -52,7 +67,7 @@ date and the same condition.
 **Three things this document deliberately does not claim.**
 
 - **It is not an implementation.** The gate is passed (above), and the tasks below are
-  **approved and unbuilt** — **amended 2026-10-30: P7.1 is built, P7.2–P7.5 are not.** Each is still **gated on the decision rows its "Depends on" line
+  **approved and unbuilt** — **amended 2026-11-11: P7.1 and P7.2 are built, P7.3–P7.5 are not** (P7.2's statement is the half both D255 and D731 leave standing, and D731 orders this plan's §6, §7.4 and P7.2 amended — see the note at the top and T0.1). Each is still **gated on the decision rows its "Depends on" line
   names** — every one of them is answered — exactly as Phase 6's tasks were gated on D160–D173
   before the owner answered them.
 - **It is not built, and no test here holds a behaviour.** Nothing this plan *adds* exists:
@@ -78,7 +93,14 @@ date and the same condition.
   it, and the store labels and the website's privacy paragraph. **Amended
   2026-10-31: `shared/telemetry-consent/`, named here in the first version of
   this sentence, is dropped — §6 removes it with the consent gate D255's answer
-  dropped, so it is nothing a task builds.**
+  dropped, so it is nothing a task builds. Amended 2026-11-11 (Task P7.2):
+  `mobile/src/telemetry/` is in the tree** — `notice.js` and `notice.test.js`,
+  the statement the app shows and the `/privacy/` URL it puts through
+  `shared/url`'s validator, rendered by `mobile/src/app/root.js`. **What is
+  still to come is P7.3's event module and its scan, P7.4's labels and
+  paragraph, and — under the owner's ruling of 2026-10-30 (D731), which
+  supersedes D255 and orders this plan's §6, §7.4 and P7.2 amended — the
+  amended statement and the opt-out switch, which are T0.1's and T3.1's.**
 - **It runs no live step and it holds no secret.** The Firebase project is created by the
   owner, the native config files are delivered by EAS from the owner's own secrets, and **no
   agent creates a Firebase project, runs `eas build`, `eas secret:create` or `eas submit`, or
@@ -1055,6 +1077,16 @@ app's source carries **no** `telemetry.consent` key, no stored choice, no toggle
 what proves it, with a planted call as its control.
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.** It is the only place a
 link leaves the app, and it is the task that must not grow a switch back.
+**Amended 2026-11-11 (Task P7.2, as it was built):** the statement ships as **the half
+both D255 and D731 leave standing** — the page's facts that no ruling moves, with **no
+claim about how collection is turned off in either direction** — because the owner's
+ruling of 2026-10-30 (**D731**) supersedes D255 (crash reports on by default and opt-out;
+Analytics dropped from the app) and **orders this section and §7.4 amended before they are
+built**. That rewrite is task **T0.1**'s
+(`docs/review-levels-ab-jobmax/implementation-plan.md`), the opt-out switch and the one
+admitted collection call site are task **T3.1**'s, and the two clauses **this section's
+Verification names as D255's facts** (*there is no switch*, *uninstalling stops them*) are
+pinned **absent** in `mobile/src/telemetry/notice.test.js` until they are rewritten here.
 
 ### Task P7.3: The allow-list, the redaction rule, and the scan
 
