@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -803,6 +804,13 @@ func TestAnAuthorizationWithNoScopeNeverHoldsRoadmapWrite(t *testing.T) {
 // resolveIdentity the resource server reads them with — and the answer is the
 // client's own error, with the state it sent unaltered.
 //
+// Every way of not being an operator is here, because the two that are not a
+// launcher asking are the ones a wrong reading of the branch would let through:
+// a person on neither list, and a server whose lists are not there at all. A
+// check written as "a launcher may not" reads the same on the launcher case and
+// admits both. The lists that cannot be read are the installation's fault, and
+// they are the one answer here that is not the client's error.
+//
 // The control is an operator of the same installation asking for the same
 // scope: it is answered, so the refusal above is about who is asking and not
 // about the scope being unobtainable. It is also the second of the two tests
@@ -811,20 +819,69 @@ func TestAnAuthorizationWithNoScopeNeverHoldsRoadmapWrite(t *testing.T) {
 func TestALauncherCannotObtainRoadmapWrite(t *testing.T) {
 	cfg := testConfig()
 	cfg.Limits = Limits{Scopes: slices.Clone(ScopeVocabulary)}
-	ts := newTestServerOver(t, cfg, func() time.Time { return testNow }, nil, WithRoster(rosterOf(testLists())))
 
-	clientID, _ := ts.register(t, "an operator's client", testClientRedirect)
-	q := authorizeQuery(clientID, testClientRedirect)
-	q.Set("scope", ScopeTasksRead+" "+ScopeRoadmapWrite)
-	binding, number := ts.startFlow(t, q)
-	rec := ts.approve(t, binding, number)
-	if got := oauthErrorOf(t, rec, redirectHost(testClientRedirect)); got != "access_denied" {
-		t.Errorf("a launcher asking for %q was answered %q; want access_denied: the scope is one only an operator may hold, and the refusal belongs at the endpoint that would mint the code (D2121)", ScopeRoadmapWrite, got)
-	}
-	for key := range ts.store.objects(t) {
-		if strings.HasPrefix(key, codePrefix) {
-			t.Errorf("%s is a code written for a scope the person who approved it may not hold: the refusal comes before the code is issued", key)
-		}
+	// Who may not hold the scope, four ways. The first is this file's own
+	// identity, a launcher of the installation — the entry the member lists
+	// admit at every other door — and the point of the other two is that the
+	// rule is "an operator" and not "not a launcher": a person on neither list
+	// and a server built with no lists at all are refused by the same branch,
+	// and a build that read a missing roster as "no role worth refusing"
+	// would hand a code holding roadmap:write to whoever asked. The last is the
+	// other side of the same distinction: lists that cannot be read are the
+	// installation's fault and not the person's, and they are answered as a
+	// page (authorize's own 500) rather than as an approval that was refused.
+	for _, tc := range []struct {
+		what       string
+		opts       []ServerOption
+		wantStatus int
+	}{
+		{
+			"a launcher of this installation",
+			[]ServerOption{WithRoster(rosterOf(testLists()))},
+			http.StatusFound,
+		},
+		{
+			"a person on neither of the installation's lists",
+			[]ServerOption{WithRoster(rosterOf(Members{Launchers: []string{"user:somebody-else@example.com"}}))},
+			http.StatusFound,
+		},
+		{
+			"a server built with no member lists at all",
+			[]ServerOption{WithRoster(nil)},
+			http.StatusFound,
+		},
+		{
+			"member lists this installation cannot read",
+			[]ServerOption{WithRoster(rosterFunc(func(context.Context) (Members, error) {
+				return Members{}, errors.New("the installation's published state is not readable")
+			}))},
+			http.StatusInternalServerError,
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			ts := newTestServerOver(t, cfg, func() time.Time { return testNow }, nil, tc.opts...)
+			clientID, _ := ts.register(t, "an operator's client", testClientRedirect)
+			q := authorizeQuery(clientID, testClientRedirect)
+			q.Set("scope", ScopeTasksRead+" "+ScopeRoadmapWrite)
+			binding, number := ts.startFlow(t, q)
+			rec := ts.approve(t, binding, number)
+
+			if tc.wantStatus == http.StatusInternalServerError {
+				if rec.Code != http.StatusInternalServerError {
+					t.Fatalf("a request for %q over member lists that cannot be read answered %d (%s); want 500: the person is not the one who broke, and an approval refused for the installation's fault would send them back to try the same thing again", ScopeRoadmapWrite, rec.Code, strings.TrimSpace(rec.Body.String()))
+				}
+				if body := rec.Body.String(); !strings.Contains(body, "could not be checked against this installation's member lists") {
+					t.Errorf("the page says %q; want it to name what could not be checked, so the operator reading it can tell a roster that is missing from a scope that is withheld", body)
+				}
+			} else if got := oauthErrorOf(t, rec, redirectHost(testClientRedirect)); got != "access_denied" {
+				t.Errorf("a launcher asking for %q was answered %q; want access_denied: the scope is one only an operator may hold, and the refusal belongs at the endpoint that would mint the code (D2121)", ScopeRoadmapWrite, got)
+			}
+			for key := range ts.store.objects(t) {
+				if strings.HasPrefix(key, codePrefix) {
+					t.Errorf("%s is a code written for a scope the person who approved it may not hold: the refusal comes before the code is issued", key)
+				}
+			}
+		})
 	}
 
 	// The same request, by an operator of the same installation: answered, and
