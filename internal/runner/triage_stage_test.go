@@ -330,6 +330,85 @@ func TestTriageFailureIsRecordedAndHarmless(t *testing.T) {
 	}
 }
 
+// TestTriageWorkingDirectoryFailureIsRecordedAndHarmless: the judge is asked
+// from a directory that holds nothing of the run, and a run that cannot make
+// one does not ask the judge from the checkout instead — the round is recorded
+// as failed with the fail-safe placement, the same record a round whose answer
+// could not be read leaves (D1846), and the run goes on: the fix round is still
+// bought and the round after it is judged as usual.
+func TestTriageWorkingDirectoryFailureIsRecordedAndHarmless(t *testing.T) {
+	orig, had := os.LookupEnv("TMPDIR")
+	t.Cleanup(func() {
+		if had {
+			os.Setenv("TMPDIR", orig)
+			return
+		}
+		os.Unsetenv("TMPDIR")
+	})
+	// MkdirTemp reads TMPDIR on every call, so the window is the round's own:
+	// it opens as the review step answers — the review stage's own call is
+	// behind it — and closes at the fix step, which is the next call the run
+	// makes. The run's only other MkdirTemp is writeStampHooks', at bootstrap,
+	// before the window opens.
+	missing := filepath.Join(t.TempDir(), "not-a-directory")
+	reviewWithoutTemp := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := reviewScored("changes", blockingFinding())(t, ctx, req)
+		if err == nil {
+			if err := os.Setenv("TMPDIR", missing); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return res, err
+	}
+	fixWithTemp := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if had {
+			if err := os.Setenv("TMPDIR", orig); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.Unsetenv("TMPDIR"); err != nil {
+			t.Fatal(err)
+		}
+		return fixStep(t, ctx, req)
+	}
+	h := newHarness(t, startupCfg(t, 2, ""), nil)
+	rec, err := h.run(t,
+		implement("feature"),
+		reviewWithoutTemp,
+		fixWithTemp,
+		review("ship", 0),
+		triageStep("defer"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, want a run the round with no working directory did not end", rec)
+	}
+	if n := countStage(rec, "fix"); n != 1 {
+		t.Errorf("%d fix stages, want the round's fix bought as it always was", n)
+	}
+	if n := len(triageCalls(h.agent.calls)); n != 1 {
+		t.Errorf("%d judge calls, want the round that had a working directory alone: a run with nowhere to ask the judge does not ask it from the checkout", n)
+	}
+	tr := rec.Triage
+	if tr == nil || len(tr.Rounds) != 2 {
+		t.Fatalf("the record's triage block = %+v, want the failed round kept beside the one that answered", tr)
+	}
+	failed := tr.Rounds[0]
+	if !failed.Failed || failed.Round != 1 || failed.Level != policy.LevelL2 {
+		t.Errorf("the failed round = %+v, want round 1 of the senior level marked failed", failed)
+	}
+	if len(failed.Entries) != 1 {
+		t.Fatalf("the failed round's entries = %+v, want the table's placement for the finding it read", failed.Entries)
+	}
+	if e := failed.Entries[0]; e.Verdict != runstore.VerdictBlock || e.Source != runstore.TriageSourceFailSafe {
+		t.Errorf("the failed round's entry = %+v, want a block the table placed and not a round with no entries at all", e)
+	}
+	if second := tr.Rounds[1]; second.Failed {
+		t.Errorf("the second round = %+v, want the round whose judge had a directory to be asked from", second)
+	}
+}
+
 // TestTriageStageFailureEndsTheRun: a judge call the run could not make — a
 // model the gateway refused for the stage, a cancel, a halt, a spent budget —
 // is a stage failure like every other one, and the loop that called the judge

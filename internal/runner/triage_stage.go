@@ -28,14 +28,25 @@ import (
 // TriageSchema is passed to claude --json-schema for the triage stage, and it
 // is schemas/triage.schema.json's shape: one entry per finding the brief
 // numbered, each naming its index, echoing its key, and answering one of the
-// two words with a one-line why.
+// two words with a one-line why. It is a Go constant rather than the published
+// file because the flag takes the schema inline and the job image carries no
+// schemas/ directory; schemas_test.go's TestTriageSchemaMatchesTheDocument
+// holds the two to one shape, member names and bounds included.
+//
+// Every constraint the document states is stated here, because a shape looser
+// than the reader is a judge answering a document the run refuses as a whole:
+// the round is recorded failed and every finding the mode's table blocks blocks
+// (D1846). A reason the judge wrapped onto a second line is the case in point —
+// the reader refuses it rather than folding it (checkLine) — so the one-line
+// rule is stated where the model can read it, and not only where it is
+// enforced.
 //
 // It is not internal/triage's reader (Decode), which is stricter in the five
 // ways its own doc states: the model is constrained by this schema as it
 // decodes, and what comes back is still untrusted data read by that reader, so
 // the two agreeing on the shape is what keeps a well-formed answer from being
 // refused for a spelling the model was never shown.
-const TriageSchema = `{"type":"object","properties":{"version":{"type":"integer","const":1},"findings":{"type":"array","items":{"type":"object","properties":{"index":{"type":"integer","minimum":0},"key":{"type":"string","pattern":"^[0-9a-f]{16,64}$"},"verdict":{"type":"string","enum":["block","defer"]},"reason":{"type":"string","minLength":1,"maxLength":200},"group":{"type":"string","maxLength":200}},"required":["index","key","verdict","reason"]}}},"required":["version","findings"]}`
+const TriageSchema = `{"type":"object","additionalProperties":false,"required":["version","findings"],"properties":{"version":{"const":1},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["index","key","verdict","reason"],"properties":{"index":{"type":"integer","minimum":0},"key":{"type":"string","pattern":"^[0-9a-f]{16,64}$"},"verdict":{"enum":["block","defer"]},"reason":{"type":"string","minLength":1,"maxLength":200,"pattern":"^[^\\r\\n]+$"},"group":{"type":"string","maxLength":200,"pattern":"^[^\\r\\n]*$"}}}}}}`
 
 // triageOn reports whether this run judges its review rounds at all. Three
 // answers have to agree, and each of them is a gate the plan pins with a test:
@@ -114,7 +125,7 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 	if err != nil {
 		r.d.Log.Warn("the triage stage's own working directory could not be made; the round is recorded as failed",
 			"round", round, "err", r.redact(err.Error()))
-		r.recordTriage(ctx, round, level, triage.Outcome{}, false)
+		r.recordTriage(ctx, round, level, triage.Apply(mode, in, triage.Verdict{}, false), false)
 		return true
 	}
 	defer os.RemoveAll(dir)
