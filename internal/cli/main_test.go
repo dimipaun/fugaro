@@ -43,6 +43,12 @@ var testConfigRoot string
 // TestATestNeverWritesTheDeveloperStateHome fails on.
 var testStateRoot string
 
+// repoImagesOffShipped is what repoImagesOff held when TestMain took over
+// (image.go): D1900's ruling as the CLI ships it. TestMain opens that door for
+// every other test, and TestRepoImageRefreshIsDisabled asserts this instead —
+// a build that stopped answering the notice would otherwise pass the suite.
+var repoImagesOffShipped bool
+
 // TestMain closes the ways a test could reach real Google through a
 // gs:// bucket_url or an unfaked client: no application default
 // credentials (a file that doesn't exist), no metadata server, and every
@@ -135,6 +141,11 @@ func TestMain(m *testing.M) {
 	// ruling keeps the code -- drive it with the door open, exactly as they did
 	// before the ruling. TestRepoImageRefreshIsDisabled is the test of the
 	// ruling itself, and it turns it on again for its own run.
+	//
+	// What the package ships is read before it is opened, because a suite that
+	// only ever clears the door would pass just as happily on a build that had
+	// stopped answering the notice: that test asserts the value kept here.
+	repoImagesOffShipped = repoImagesOff
 	repoImagesOff = false
 	// Neither shipped gate needs a seam any more: managedDeployerShipped is
 	// true as of 0.10.0 and batchProvisionShipped as of 0.9.5, so the managed

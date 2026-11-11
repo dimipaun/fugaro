@@ -877,6 +877,9 @@ func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 // moving a checkout: clone workflow's job onto it -- are part of the same
 // answer: the command is what is disabled, not the work underneath it.
 func TestRepoImageRefreshIsDisabled(t *testing.T) {
+	if !repoImagesOffShipped {
+		t.Error("the CLI ships with repo-level images disabled (D1900): the notice is the release's behaviour, not a switch this test sets")
+	}
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	noProjectLayerBucket(t)
