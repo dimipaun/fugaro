@@ -570,6 +570,13 @@ step_job() {
 # alone (internal/gitprov/providers/providers.go), the launch is what puts it on
 # a repository's job (internal/cli/run.go's credentialsServiceLaunchEnv), and
 # the address it writes is the credential_service.url of the config in force.
+# The variable and the record are held to each other in BOTH directions: the
+# section's expectation is the variable present on a switched-on repository's own
+# job and absent on every other — a shared project job, and any job of a
+# repository the record does not call switched on — so a repository job that
+# carries it while the record says otherwise is the job and the record having
+# moved apart, and PASSing it would state the opposite of what the same sentence
+# read off the spec.
 step_job_env() {
   local answer envs mounts refs appkey url
   answer=$(reader job <"$SCRATCH/job.json")
@@ -594,7 +601,11 @@ step_job_env() {
     return 0
   fi
   if [ -z "$CFG_URL" ]; then
-    fact job-env PASS "the job $JOB is the repository's own job, and the config in force records no credentials service (credentials_service.url is absent), so the launch hands no job an address: FUGARO_CREDENTIALS_SERVICE_URL is $url on it — which is what a repository whose root has not been re-applied with the switch on reads — and FUGARO_GITHUB_APP_PRIVATE_KEY is $appkey there"
+    if [ "$url" = present ]; then
+      fact job-env FAIL "the config in force records no credentials service (credentials_service.url is absent), so the launch hands no job an address, and the repository's own job $JOB carries FUGARO_CREDENTIALS_SERVICE_URL: the variable is what opens the github provider keyless, so this job's runner mints at a service the config in force does not name, and the job and the record it is launched from have moved apart. Point FUGARO_CONFIG at the config this installation was applied with, or re-apply the root from the config in force ('fugaro update --repo' in a checkout of $REPO) so the job reads what the config records"
+    else
+      fact job-env PASS "the job $JOB is the repository's own job, and the config in force records no credentials service (credentials_service.url is absent), so the launch hands no job an address: its environment does not carry FUGARO_CREDENTIALS_SERVICE_URL, which is byte for byte the job of a repository whose root has not been re-applied with the switch on — it reads the key (FUGARO_GITHUB_APP_PRIVATE_KEY is $appkey there) and mints in-job exactly as before, and the mint below is made as the job's own account calls it, which the service admits on the account and not on the variable"
+    fi
     return 0
   fi
   if [ "$CFG_READY" = yes ]; then
@@ -605,7 +616,11 @@ step_job_env() {
     fi
     return 0
   fi
-  fact job-env PASS "the job $JOB is the repository's own job, FUGARO_CREDENTIALS_SERVICE_URL is $url on it and FUGARO_GITHUB_APP_PRIVATE_KEY is $appkey in its environment: the config in force records this repository as NOT (yet) applied with the service on (credentials_service_ready reads $CFG_READY), which is byte for byte the job of a repository whose root has not been re-applied with the switch on — it reads the key and mints in-job exactly as before, and the mint below is made as the job's own account calls it, which the service admits on the account and not on the variable"
+  if [ "$url" = present ]; then
+    fact job-env FAIL "the config in force records $REPO's root as NOT (yet) applied with the service on (credentials_service_ready reads $CFG_READY), and the repository's own job $JOB carries FUGARO_CREDENTIALS_SERVICE_URL: the variable is what opens the github provider keyless, so this job's runner mints at the service while the config in force — the one the launch reads — records the repository as not switched on. The job and the record it is launched from have moved apart: turn the switch on, or re-apply the root ('fugaro update --repo' in a checkout of $REPO) so the job reads what the config records"
+  else
+    fact job-env PASS "the job $JOB is the repository's own job and its environment does not carry FUGARO_CREDENTIALS_SERVICE_URL, while the config in force records this repository as NOT (yet) applied with the service on (credentials_service_ready reads $CFG_READY): byte for byte the job of a repository whose root has not been re-applied with the switch on — it reads the key (FUGARO_GITHUB_APP_PRIVATE_KEY is $appkey in its environment) and mints in-job exactly as before, and the mint below is made as the job's own account calls it, which the service admits on the account and not on the variable"
+  fi
 }
 
 # step_app_key is the first claim: the job holds no App key. Three reads, in the
@@ -869,7 +884,7 @@ step_mint() {
     fact mint FAIL "the mint answered 200 for $REPO ($MINT_REPO, the canonical spelling of the run's own repository) and its expiry is '$MINT_EXPIRES', inside the hour: $MINT_IN_HOUR — GitHub's installation tokens live an hour and the service mints them with that expiry, so a token outside it is the service's own expiry being wrong. The token is in a shell variable and is not printed"
     return 0
   fi
-  fact mint PASS "the mint answered 200 for the calling account $JOBSA and the run identity of $SLUG (uid r~$SLUG~$RUN): repository $MINT_REPO, the service's canonical spelling of the run's OWN repository $REPO — the caller named nothing (the request has no repository field to fill in) and the account and the identity decided it — expires $MINT_EXPIRES, inside the hour: $MINT_IN_HOUR. The token is in a shell variable, is never printed, and is used for three reads and one probe below and for no write"
+  fact mint PASS "the mint answered 200 for the calling account $JOBSA and the run identity of $SLUG (uid r~$SLUG~$RUN): repository $MINT_REPO, the service's canonical spelling of the run's OWN repository $REPO — the caller named nothing (the request has no repository field to fill in) and the account and the identity decided it — expires $MINT_EXPIRES, inside the hour: $MINT_IN_HOUR. The token is in a shell variable, is never printed, and is used for two reads and one probe below and for no write"
 }
 
 # step_reach reads the token's reach AT GITHUB, which is the only place it can be
@@ -1204,7 +1219,7 @@ print_plan() {
   say "  [network] gcloud auth print-identity-token --impersonate-service-account=$JOBSA --audiences=$SVCURL --include-email (the caller's ID token)"
   say "  [network] gcloud iam service-accounts sign-jwt as $SIGNER, and the custom token traded at accounts:signInWithCustomToken with $FB's restricted web API key (the run identity)"
   say "  [network, WRITES] the mint: POST $SVCURL$MINT with both identities, which MINTS a real GitHub installation token for $REPO and creates a Firebase Auth user (uid r~$SLUG~<run>)"
-  say "  [network] three read-only GitHub calls with that token: the installation's repository list, a contents read and one probe against a workflow name that does not exist"
+  say "  [network] two read-only GitHub calls with that token — the installation's repository list and a contents read — and one probe against a workflow name that does not exist, which is a POST GitHub refuses"
   say "  [network] two more run identities and two more calls: the pairing refusal ($OTHER_SLUG's run identity with $JOB's own account) and a caller that is no job account ($SIGNER)"
   say "  [network] the service's own log, read for the two runs' audit lines"
   say "and its Cleanup (from the exit trap, and the last step) would run:"

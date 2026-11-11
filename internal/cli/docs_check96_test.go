@@ -411,6 +411,23 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		t.Errorf("scripts/live-checks/check96.sh's `cmd_jobs` no longer reports how many jobs of its own the repository has (%q): without the count the shell cannot tell a repository with none from one with several, and the two are the fallback and the stop", strings.TrimSpace(body))
 	}
 
+	// The URL gate is held in BOTH directions, which is what the section's
+	// expectation below says: the variable is what opens the github provider
+	// keyless, so a repository job that carries it while the config in force
+	// records the repository as NOT switched on — or names no credentials
+	// service at all — is the job and the record having moved apart. A row that
+	// tested only the switched-on direction PASSed that state while its own
+	// sentence said the job "mints in-job exactly as before", which is false of
+	// a job that carries the variable.
+	// Mutation (run and restored): either FAIL folded back into its PASS branch
+	// (`if [ "$url" = NEVERMATCHES ]`, which leaves both sentences in the
+	// function and only makes them unreachable) → this test FAILs on the pin,
+	// and the two cases below FAIL with the row PASSing a job that mints at the
+	// service.
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "step_job_env() {"); !strings.Contains(body, "present ]; then\n    fact job-env FAIL \"the config in force records $REPO's root as NOT") || !strings.Contains(body, "present ]; then\n      fact job-env FAIL \"the config in force records no credentials service") || !strings.Contains(body, "does not carry FUGARO_CREDENTIALS_SERVICE_URL") {
+		t.Errorf("scripts/live-checks/check96.sh's `step_job_env` no longer holds the URL to the config in both directions (%q): the section's expectation is the variable present on a switched-on repository's own job and absent on every other, and a row that only tested the switched-on direction would PASS a job that mints at the service while the config in force records the repository as not switched on", strings.TrimSpace(body))
+	}
+
 	// The wiring, held to the code as well: the keyless provider is opened only
 	// when the job's environment names the service, and the launch is what puts
 	// that name on a repository job — so the check's expected answers are read

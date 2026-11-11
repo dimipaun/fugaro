@@ -449,7 +449,8 @@ JSON
 
 # write_config dir [SERVICE_URL] — the installation's own config file. An empty
 # argument leaves the credentials_service block out entirely, which is a
-# repository whose root has not been applied with the service on.
+# repository whose root has not been applied with the service on; READY=no
+# leaves the per-repository switch out of every entry instead.
 write_config() { # dir
   local dir=$1 url=${2-$SERVICE_URL}
   {
@@ -463,11 +464,19 @@ write_config() { # dir
     # Four spaces, which is what fugaro itself writes: localcfg.Config.Marshal
     # is yaml.Marshal (yaml.v3's default indent), and a check that only finds a
     # repository at two spaces finds none of them in a real config.
-    printf 'repos:\n    %s:\n        provider: github\n        workflows:\n            - default\n' "$SANDBOX_REPO"
-    if [ "${READY:-yes}" = yes ]; then
-      printf '        credentials_service_ready: true\n'
-    fi
-    printf '    %s:\n        provider: github\n        workflows:\n            - default\n' "$OTHER_REPO"
+    #
+    # Both repositories carry the switch on the default fixture: the check reads
+    # whichever one it is given, and a repository whose record says off while its
+    # job carries the service's address is a divergence the job-env row reports
+    # rather than a healthy installation.
+    printf 'repos:\n'
+    local repo
+    for repo in "$SANDBOX_REPO" "$OTHER_REPO"; do
+      printf '    %s:\n        provider: github\n        workflows:\n            - default\n' "$repo"
+      if [ "${READY:-yes}" = yes ]; then
+        printf '        credentials_service_ready: true\n'
+      fi
+    done
   } >"$dir/state/fugaro.yaml"
 }
 
@@ -882,6 +891,104 @@ test_a_job_that_has_no_service_url_while_the_config_records_one_is_a_fail() {
   expect_contains "$out" "FACT mint: PASS — " "the URL is missing: the mint is still measured"
 }
 
+# `credentials_service_ready` is a *bool (localcfg.Repo), so what the config
+# records is a boolean and not the one spelling this suite's fixture happens to
+# write. `True` is as true as `true` (yaml.v3 resolves it), and a reader that
+# knew only the lower-case word read it as `no` — the fail-safe direction of the
+# wrong half, which passes exactly the job the row above exists to fail.
+test_the_switch_written_True_is_the_switch_on() {
+  setup_case switchtrue
+  JOB_URL=no write_job "$dir"
+  sed -i 's/^        credentials_service_ready: true$/        credentials_service_ready: True/' "$dir/state/fugaro.yaml"
+  if ! grep -q 'credentials_service_ready: True' "$dir/state/fugaro.yaml"; then
+    fail "the switch written True: the fixture is not the one this case is about (the sed found no lower-case true to rewrite)"
+  fi
+  run96
+  expect_status "$status" 1 "the switch written True"
+  expect_contains "$out" "FACT job-env: FAIL — " "the switch written True: the row"
+  expect_contains "$out" "carries no FUGARO_CREDENTIALS_SERVICE_URL" "the switch written True: what it found"
+}
+
+# A switch that is no boolean at all is neither on nor off, and reading it as
+# off is what would pass a job whose root is switched on: the read stops.
+test_a_switch_that_is_not_a_boolean_stops_the_read() {
+  setup_case switchnotbool
+  JOB_URL=no write_job "$dir"
+  sed -i 's/^        credentials_service_ready: true$/        credentials_service_ready: maybe/' "$dir/state/fugaro.yaml"
+  run96
+  expect_status "$status" 2 "a switch that is not a boolean"
+  expect_contains "$out" "is not a boolean" "a switch that is not a boolean: the reader says why"
+  expect_contains "$out" "FACT job-env: FAIL — not reached" "a switch that is not a boolean: the row is not reached"
+  expect_absent "$out" "FACT job-env: PASS" "a switch that is not a boolean: no PASS for a switch it could not read"
+}
+
+# An entry written on one line (yaml's flow style) carries the switch inside the
+# entry rather than on a line under it, so the reader finds no record at all and
+# `repo_ready` reads `unset` for a repository the config does record — the same
+# false PASS the four-space fix closed for the indentation. fugaro's own writer
+# never emits that shape (yaml.Marshal writes one key per line), so the document
+# is refused rather than read.
+test_a_repos_entry_written_on_one_line_stops_the_read() {
+  setup_case flowstyle
+  JOB_URL=no write_job "$dir"
+  sed -i '/^repos:/,$d' "$dir/state/fugaro.yaml"
+  printf 'repos:\n    %s: {provider: github, workflows: [default], credentials_service_ready: true}\n    %s: {provider: github, workflows: [default]}\n' \
+    "$SANDBOX_REPO" "$OTHER_REPO" >>"$dir/state/fugaro.yaml"
+  if ! grep -q "{provider: github" "$dir/state/fugaro.yaml"; then
+    fail "an entry on one line: the fixture is not the one this case is about (the rewrite found no repos block to replace)"
+  fi
+  run96
+  expect_status "$status" 2 "an entry on one line"
+  expect_contains "$out" "on one line" "an entry on one line: the reader says why"
+  expect_contains "$out" "FACT job-env: FAIL — not reached" "an entry on one line: the row is not reached"
+  expect_absent "$out" "FACT job-env: PASS" "an entry on one line: no PASS for a switch it could not read"
+}
+
+# And the other half of the switch: the variable is what opens the github
+# provider keyless (internal/gitprov/providers/providers.go), so a repository job
+# that carries it while the config in force records the repository as NOT
+# switched on is the job and the record having moved apart. The row used to PASS
+# that state while saying, in the same sentence, that the job "mints in-job
+# exactly as before" — which is false of a job that carries the variable, and
+# the spec says the variable is absent on every job of a repository whose root
+# has not been re-applied with the switch on.
+test_a_url_on_a_job_the_config_records_as_off_is_a_fail() {
+  setup_case offwithurl
+  READY=no write_config "$dir"
+  if grep -q 'credentials_service_ready' "$dir/state/fugaro.yaml"; then
+    fail "the config records the repository as off: the fixture still carries the switch"
+  fi
+  run96
+  expect_status "$status" 1 "the config records the repository as off"
+  expect_contains "$out" "FACT job-env: FAIL — " "the config records the repository as off: the row"
+  expect_contains "$out" "have moved apart" "the config records the repository as off: what it found"
+  expect_contains "$out" "fugaro update --repo" "the config records the repository as off: the operator's next step"
+}
+
+# The same, one step further: a config that names no credentials service at all.
+test_a_url_on_a_job_while_the_config_records_no_service_is_a_fail() {
+  setup_case noservice
+  write_config "$dir" ""
+  run96
+  expect_status "$status" 1 "the config records no service"
+  expect_contains "$out" "FACT job-env: FAIL — " "the config records no service: the row"
+  expect_contains "$out" "credentials_service.url is absent" "the config records no service: what it found"
+}
+
+# The benign half of the same pair, so the two FAILs above cannot be satisfied
+# by failing every not-switched-on repository: a job of a repository the config
+# records as off, with no address on it, is the expected state.
+test_a_job_of_a_repository_the_config_records_as_off_is_a_pass() {
+  setup_case offnourl
+  READY=no write_config "$dir"
+  JOB_URL=no write_job "$dir"
+  run96
+  expect_status "$status" 0 "a job of an unswitched repository with no URL"
+  expect_contains "$out" "FACT job-env: PASS — " "a job of an unswitched repository with no URL: the row"
+  expect_contains "$out" "does not carry FUGARO_CREDENTIALS_SERVICE_URL" "a job of an unswitched repository with no URL: what it found"
+  expect_contains "$out" "mints in-job exactly as before" "a job of an unswitched repository with no URL: what that state is"
+}
+
 test_the_drop_landed_is_a_pass() {
   setup_case landed
   printf 'var ServiceHeldSecretNames = []string{"github-app-key"}\n' >"$dir/state/providers.go"
@@ -1286,6 +1393,12 @@ t test_a_repository_with_one_job_too_few_stops
 t test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none
 t test_the_shared_project_job_with_the_url_is_a_fail
 t test_a_job_that_has_no_service_url_while_the_config_records_one_is_a_fail
+t test_the_switch_written_True_is_the_switch_on
+t test_a_switch_that_is_not_a_boolean_stops_the_read
+t test_a_repos_entry_written_on_one_line_stops_the_read
+t test_a_url_on_a_job_the_config_records_as_off_is_a_fail
+t test_a_url_on_a_job_while_the_config_records_no_service_is_a_fail
+t test_a_job_of_a_repository_the_config_records_as_off_is_a_pass
 t test_the_drop_landed_is_a_pass
 t test_the_drop_without_the_code_is_a_fail
 t test_the_switch_hook_may_only_name_the_file_it_reads
