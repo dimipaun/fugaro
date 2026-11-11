@@ -99,7 +99,7 @@ landed.
 - **Interface.** `settingsGenericKeys` (`internal/cli/settings_set.go:105`) gains the wildcard rows this
   design manages, **and the two budget keys D1179 gives the generic path** (`budget.mode`,
   `budget.per_day_usd`) — the two whose rows default to the generic owner while the allowlist refuses
-  them on purpose (F13), with the list's own comment (`:78`) rewritten beside them;
+  them on purpose (F13), with the list's own comment (`:87`) rewritten beside them;
   `settingsWriteLookup` (`:526`) and `settingsPatternMatch` (`:549`) are **reused unchanged**, and the
   literal `*` refusal (`:501`) stays. A concrete key of a row the allowlist does not carry keeps today's
   refusal, whose sentence names the nearest keys.

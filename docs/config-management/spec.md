@@ -55,7 +55,7 @@ makes the command unusable by a person, which is the whole point of the ruling.
 
 **What changes is the allowlist and not the resolver.** The wildcard loop is already bounded to rows
 `settingsGenericKeys` names by name (`internal/cli/settings_set.go:560`), which is how
-`stages.*.claude_account` (`:120`) is reachable and why `workflows.*` is not; the literal `*` spelling
+`stages.*.claude_account` (`:129`) is reachable and why `workflows.*` is not; the literal `*` spelling
 keeps its own refusal (`:501`). So the task is to decide, row by row, which wildcard blocks the generic
 path carries — the same decision `settingsGenericKeys` is for at every other row — and the resolver
 needs no change at all.

@@ -105,9 +105,9 @@ what the guard at the end of this section re-runs.
   which is the shape F13's two rows are read through. D1178 decides what the read resolves an owner
   through instead of widening a map that answers a second question.
 - **F12 — a concrete key reaches a wildcard row only when the allowlist names that row.**
-  `settingsWriteLookup` (`internal/cli/settings_set.go:560`) matches `settingsPatternMatch` (`:574`)
+  `settingsWriteLookup` (`internal/cli/settings_set.go:560`) matches `settingsPatternMatch` (`:583`)
   across the registry's wildcard rows, bounded to the rows `settingsGenericKeys` carries by name — which
-  is how `stages.*.claude_account` (`:120`) is reachable, and why a wildcard row the allowlist does not
+  is how `stages.*.claude_account` (`:129`) is reachable, and why a wildcard row the allowlist does not
   carry stays unreachable however it is spelled. The literal `*` spelling keeps its own refusal
   (`internal/cli/settings_set.go:535`). **D1161 is the decision that widens the named rows**: to a
   repository's `workflows.*` (`internal/settings/registry.go:223`, the row this finding was written
@@ -216,7 +216,7 @@ rather than its conclusion.
   `workflows.*`, the layer's `profiles.*` and `ab.*` — and each concrete spelling resolves through the
   resolver that exists (`internal/cli/settings_set.go:560`). The row keeps the key as written,
   which is the path the edit lands on, and the registry spelling is what the allowlist is asked about —
-  the shape `stages.*.claude_account` (`:119`) already has.
+  the shape `stages.*.claude_account` (`:129`) already has.
   Cost of the alternative: requiring the literal `*` needs no decision and makes the command unusable by
   a person, which is the ruling's whole subject. Cost of the recommendation: a wildcard row in the
   allowlist is a key whose *set* of concrete spellings nothing enumerates — a person who writes a
