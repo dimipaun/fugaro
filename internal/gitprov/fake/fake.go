@@ -818,10 +818,12 @@ func (p *Provider) MarkReady(_ context.Context, number int, expectedHeadSHA stri
 }
 
 // Merge implements gitprov.Provider: the head is checked the same way and the
-// PR becomes merged only when it is the one asked for. There is no bypass to
-// model — the fake merges what a real host would merge at the head it was
-// given — and no credential: the gate is the caller's, and the mint that
-// would refuse an unbound merge is the real adapter's (E16, D2049).
+// PR becomes merged only when it is the one asked for. A draft is refused, for
+// ApplyReady's reason — a host will not merge one, so a test must notice a
+// merge that skipped readying — and there is no bypass to model: the fake
+// merges what a real host would merge at the head it was given. There is no
+// credential either: the gate is the caller's, and the mint that would refuse
+// an unbound merge is the real adapter's (E16, D2049).
 func (p *Provider) Merge(_ context.Context, number int, expectedHeadSHA string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -839,6 +841,12 @@ func (p *Provider) Merge(_ context.Context, number int, expectedHeadSHA string) 
 	}
 	if err := p.checkHeadLocked(st, expectedHeadSHA); err != nil {
 		return err
+	}
+	if st.Draft {
+		// GitHub refuses to merge a draft, and the ladder's order is
+		// MarkReady and then Merge: a test that merges without readying would
+		// be passing a sequence the real host rejects.
+		return fmt.Errorf("fake provider: Merge on PR #%d, which is still a draft", number)
 	}
 	st.State = gitprov.PRMerged
 	return nil

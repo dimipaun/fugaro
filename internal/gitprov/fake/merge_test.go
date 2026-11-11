@@ -3,6 +3,7 @@ package fake
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -16,11 +17,13 @@ const (
 	headTwo = "2222222222222222222222222222222222222222"
 )
 
-// withPR is a fake holding one open pull request at headOne.
-func withPR(t *testing.T) *Provider {
+// withPR is a fake holding one open pull request at headOne. A pull request
+// that is not a draft is what a merge takes (a host refuses to merge a draft,
+// and the ladder readies before it merges), so the draft flag is the caller's.
+func withPR(t *testing.T, draft bool) *Provider {
 	t.Helper()
 	p := &Provider{}
-	if _, err := p.EnsurePR(context.Background(), gitprov.PRSpec{Branch: "fugaro/x", Title: "T", Draft: true}); err != nil {
+	if _, err := p.EnsurePR(context.Background(), gitprov.PRSpec{Branch: "fugaro/x", Title: "T", Draft: draft}); err != nil {
 		t.Fatal(err)
 	}
 	p.State.PRs[0].Head = headOne
@@ -33,7 +36,7 @@ func withPR(t *testing.T) *Provider {
 // the merge must not happen and the state must still be open.
 func TestFakeMergeRefusesOnHeadChange(t *testing.T) {
 	ctx := context.Background()
-	p := withPR(t)
+	p := withPR(t, false)
 	err := p.Merge(ctx, 1, headTwo)
 	if !errors.Is(err, gitprov.ErrHeadMoved) {
 		t.Fatalf("Merge at a moved head = %v, want ErrHeadMoved", err)
@@ -57,7 +60,7 @@ func TestFakeMergeRefusesOnHeadChange(t *testing.T) {
 
 func TestFakeMarkReadyRefusesOnHeadChange(t *testing.T) {
 	ctx := context.Background()
-	p := withPR(t)
+	p := withPR(t, true)
 	err := p.MarkReady(ctx, 1, headTwo)
 	if !errors.Is(err, gitprov.ErrHeadMoved) {
 		t.Fatalf("MarkReady at a moved head = %v, want ErrHeadMoved", err)
@@ -96,6 +99,24 @@ func TestFakeHeadBoundCallWithoutAHeadRefuses(t *testing.T) {
 	}
 }
 
+// TestFakeMergeRefusesAStalledDraft keeps the fake's merge honest about the
+// order the ladder runs in (D2041): a host will not merge a draft, so a merge
+// that skipped MarkReady must fail here rather than pass a sequence the real
+// provider rejects.
+func TestFakeMergeRefusesAStalledDraft(t *testing.T) {
+	ctx := context.Background()
+	p := withPR(t, true)
+	if err := p.Merge(ctx, 1, headOne); err == nil || !strings.Contains(err.Error(), "still a draft") {
+		t.Fatalf("Merge on a draft = %v; want a refusal naming the draft", err)
+	}
+	if err := p.MarkReady(ctx, 1, headOne); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Merge(ctx, 1, headOne); err != nil {
+		t.Fatalf("Merge after MarkReady = %v", err)
+	}
+}
+
 // TestFakeHeadBoundCallRefusesAClosedOrMergedPR keeps the two write calls on
 // the same footing as every other write: a pull request that is not open is
 // never written.
@@ -108,7 +129,7 @@ func TestFakeHeadBoundCallRefusesAClosedOrMergedPR(t *testing.T) {
 		{"Merge", func(p *Provider) error { return p.Merge(ctx, 1, headOne) }},
 		{"MarkReady", func(p *Provider) error { return p.MarkReady(ctx, 1, headOne) }},
 	} {
-		p := withPR(t)
+		p := withPR(t, false)
 		p.State.PRs[0].State = gitprov.PRClosed
 		if err := c.call(p); !errors.Is(err, gitprov.ErrPRNotOpen) {
 			t.Errorf("%s on a closed pull request = %v, want ErrPRNotOpen", c.name, err)
@@ -123,7 +144,7 @@ func TestFakeHeadBoundCallRefusesAClosedOrMergedPR(t *testing.T) {
 // has ChecksState rather than a boolean.
 func TestFakeChecksReadsTheState(t *testing.T) {
 	ctx := context.Background()
-	p := withPR(t)
+	p := withPR(t, false)
 	p.State.Checks = map[string][]gitprov.CheckRun{
 		headOne: {{Status: "completed", Conclusion: "success"}},
 	}
