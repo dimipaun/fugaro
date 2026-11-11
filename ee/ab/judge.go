@@ -24,6 +24,7 @@ const RecipeName = "ab-judge"
 // only when ee/register hands it over (recipe.RegisterStepKind and
 // recipe.RegisterCatalogRecipe), so an untagged build refuses the recipe at
 // its `ab_judge` step with D522's capability statement rather than running it.
+//
 //go:embed recipe/ab-judge.yaml
 var recipeYAML []byte
 

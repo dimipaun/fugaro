@@ -962,6 +962,14 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		if err := attachUpload(ctx, env, spec, s.Prefix(), o.attach, caps); err != nil {
 			return launchResult{}, err
 		}
+		// The manifest a mode: evaluate launch leaves for its own recipe's step
+		// (A5.2), by the same rule as the attachments above: after every
+		// refusal this launcher can make and before createTask, so a refused
+		// launch stores nothing and starts nothing, and a task that names a
+		// manifest is a task whose manifest is in the bucket.
+		if err := writeRecipeManifest(ctx, env, o, slug, spec, s, warn); err != nil {
+			return launchResult{}, err
+		}
 	}
 	if o.retry == "" {
 		if err := createTask(ctx, s, spec); err != nil {
