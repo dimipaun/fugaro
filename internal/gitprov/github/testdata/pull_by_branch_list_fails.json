@@ -1,0 +1,5 @@
+[
+  {"method": "GET", "path": "/repos/acme/web/installation", "status": 200, "response": {"id": 777}},
+  {"method": "POST", "path": "/app/installations/777/access_tokens", "status": 201, "response": {"token": "ghs_fixture_token_1", "expires_at": "2026-09-27T11:00:00Z"}},
+  {"method": "GET", "path": "/repos/acme/web/pulls?head=acme:fugaro/20260927-101500-abcd&state=all&per_page=1&sort=created&direction=desc", "auth": "Bearer ghs_fixture_token_1", "status": 500, "response": {"message": "Server Error"}}
+]

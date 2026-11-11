@@ -300,6 +300,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro creds set":            {args: []string{"NAME"}},
 	"fugaro diagnose":             {args: []string{"run-1"}},
 	"fugaro exec":                 {args: []string{"--bucket", "file:///nonexistent"}},
+	"fugaro followups":            {args: []string{"run-1"}},
 	"fugaro image add":            {args: []string{"base"}},
 	"fugaro image gate":           {args: []string{"--record", "r", "--slug", "s", "--bucket", "file:///nonexistent"}},
 	"fugaro image git-credential": {args: []string{"--out", "git-cred"}},
@@ -427,10 +428,10 @@ var closedStdinNoFixture = map[string]string{
 	// takes no argument and its bare run is the whole command: it lists the
 	// node the fixture's database holds (none) and the cached briefs of the
 	// machine it runs on, which this harness does not fixture.
-	"fugaro orchestrator ls":        "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
-	"fugaro orchestrator state":     "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
-	"fugaro orchestrator events":    "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
-	"fugaro orchestrator patch":     "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
+	"fugaro orchestrator ls":     "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
+	"fugaro orchestrator state":  "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
+	"fugaro orchestrator events": "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
+	"fugaro orchestrator patch":  "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
 	// The login unit's three commands read this machine's own home and nothing
 	// else, and this world's home has no unit: install is refused before its
 	// typed confirmation (a unit runs code at every login, and the word install
@@ -447,6 +448,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro project policy publish": "refuses before its ask: the deployed rules here carry no policy marker",
 	"fugaro project policy show":    "prints that this installation has published no policy",
 	"fugaro project repos ls":       "prints the no-project-config refusal",
+	"fugaro project repos set":      "prints the no-project-config refusal: this world selects no project, and the selection is read before either of the command's two shapes is",
 	"fugaro project show":           "prints the no-project-config refusal",
 	"fugaro project sync":           "refuses before its write: the deployed rules this world serves carry no policy marker",
 	"fugaro reaper":                 "prints the no-project-config refusal",

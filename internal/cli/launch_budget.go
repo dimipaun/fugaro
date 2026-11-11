@@ -1017,3 +1017,61 @@ func (e *cloudEnv) tokenSigner(ctx context.Context) (token.Signer, error) {
 	}
 	return s, nil
 }
+
+// pairHeadroomCaps is D573's margin: a pair is sampled only when the day has
+// this many per-run caps left, in observe and enforce mode alike. Five
+// because the day's own cap is the project's guardrail and a sampled pair
+// spends two of it beside the runs the owner asked for.
+const pairHeadroomCaps = 5
+
+// pairBudgetPrecheck judges whether a sampled pair fits the budget, and
+// answers "" when it does or the reason it does not. It is D566's pair
+// pre-check — batchBudgetPrecheck with n = 2, one read-only lease of both
+// arms' headroom before either starts — followed by D573's margin: the day
+// must have pairHeadroomCaps per-run caps left, read through
+// budget.ReadDailyHeadroom, which leases nothing.
+//
+// Every answer but "" is a pair not sampled, never a launch refused: the
+// champion goes on alone and on the single pre-check every launch makes
+// (D554). An unreadable database is a reason too, for the same reason — and
+// --no-budget-check is one as well, because D573 never samples beside a
+// skipped check.
+//
+// Its own notes print to warn, once for the pair, exactly as a batch's do:
+// the champion's single pre-check is skipped below (skipBudget), so this is
+// the launch's one budget reading.
+func (e *cloudEnv) pairBudgetPrecheck(ctx context.Context, slug string, spec *task.Spec, warn io.Writer) string {
+	on, err := budgetBackendOn(e.lc)
+	if err != nil {
+		return oneLine(err.Error())
+	}
+	if !on {
+		return "the project has no budget backend, so a pair has no headroom to be judged against"
+	}
+	if e.noBudgetCheck {
+		return "the launch skips the budget pre-check (--no-budget-check), and a pair is never sampled beside a skipped pre-check"
+	}
+	if err := e.batchBudgetPrecheck(ctx, slug, spec.Repo, 2, warn); err != nil {
+		return oneLine(err.Error())
+	}
+	db, err := newBudgetClient(ctx, e.lc.Budget.RTDBURL, e.lc.Endpoints.NoAuth)
+	if err != nil {
+		return oneLine(err.Error())
+	}
+	capped := true
+	if c := checkoutConfig(ctx, spec.Repo); c != nil && c.Agent.Auth == "oauth" {
+		capped = false
+	}
+	h, err := budget.ReadDailyHeadroom(ctx, db, budget.PrecheckInput{Project: e.lc.Name, Slug: slug, Capped: capped, Now: time.Now()})
+	if err != nil {
+		return "the day's headroom could not be read: " + oneLine(err.Error())
+	}
+	if !h.Capped {
+		return "the project has no per-run cap and daily cap to measure a margin of"
+	}
+	if margin := budget.Micros(pairHeadroomCaps) * h.PerRun; h.Remaining < margin {
+		return fmt.Sprintf("the day has %s left and a pair is sampled only with %s (five per-run caps of %s) left",
+			money(h.Remaining), money(margin), money(h.PerRun))
+	}
+	return ""
+}

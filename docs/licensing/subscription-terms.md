@@ -9,7 +9,7 @@ and off by default. It is not an offer, and nobody has agreed to it: the Licenso
 and notice address were filled in by the owner on 2026-10-30. These are the "Fugaro Subscription Terms" that the
 business licence in [`ee/LICENSE`](../../ee/LICENSE), [`console/LICENSE.md`](../../console/LICENSE.md)
 and [`mobile/LICENSE.md`](../../mobile/LICENSE.md) refers to as published "at https://fugaro.dev/legal/subscription-terms";
-the text is in force only once the owner publishes it
+the text is published at that address (live on 2026-11-11)
 ([implementation plan, L4.3](implementation-plan.md#l43--publish-the-subscription-terms-owner-run-after-counsel)).
 
 **How to read it.** Parts A to G are the agreement text, as counsel wrote it, with Markdown for

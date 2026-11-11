@@ -153,6 +153,15 @@ const (
 // family's, and a row claiming a family is refused before the allowlist is
 // asked — the same shape as the two rows above it.
 //
+// The model-crafts work (MC5) moved both figures once more, by one row each,
+// and the figures below are the tree's: the pools' subscription switch
+// `subscription_spread` (F22, D1622, D1636) is a widening direction the owner
+// answers at their own terminal, so the generic path is its owner and the
+// named list carries it; the pools' own `pools.*` rows are the `accounts`
+// family's and were already counted here. The registry's figure is one row
+// longer and the allowlist's one key wider, so the gap the audit is about does
+// not move.
+//
 // The image rate (docs/vision-model, V2) moved it by one more, and this one
 // did move the gap: `model_prices.*.image_tokens` belongs to the `models`
 // family and so is refused by a family command like the rows above, but the
@@ -168,8 +177,8 @@ const (
 // (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
 // list does not.
 const (
-	cfmRegistryRows   = 409
-	cfmAllowlistNamed = 96
+	cfmRegistryRows   = 410
+	cfmAllowlistNamed = 101
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
