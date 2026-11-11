@@ -553,12 +553,18 @@ export function createVoiceSession({
         await settle();
         return refuse(SESSION_CODES.START_FAILED);
       }
-      if (generation !== mine) return refuse(SESSION_CODES.START_FAILED);
       // The other end of the window `native.start()` opened: the session can end
       // while the microphone is being opened, and the teardown that ended it
       // stopped a screen that had not finished starting -- so the microphone it
       // went on to open is closed here, after the start it raced, and the caller
       // is told the session did not start.
+      //
+      // This is asked *before* the per-session fence below, and a session that
+      // was replaced in this window is the same microphone: §8's "Tap to resume"
+      // can begin the next session while this call is still inside the screen, so
+      // the start this call goes on to finish opens a microphone for a session it
+      // no longer holds. The fence is what stops this call driving that session;
+      // it is not a licence to leave the microphone it opened for it.
       if (OVER.includes(current.state)) {
         await closeTheMicrophone(SESSION_CODES.END_FAILED);
         await settle();
@@ -570,8 +576,14 @@ export function createVoiceSession({
       if (PAUSED.includes(current.state)) {
         closeTheMicrophone(SESSION_CODES.PAUSE_FAILED);
         await settle();
+        if (generation !== mine) return refuse(SESSION_CODES.START_FAILED);
         return apply({ type: 'started' });
       }
+      // The session can also have been replaced with nothing in its way -- the
+      // next one running -- and then the fence is all that is left to check: the
+      // machine is driven for the session this call still holds, and for no
+      // other.
+      if (generation !== mine) return refuse(SESSION_CODES.START_FAILED);
       return apply({ type: 'started' });
     },
 

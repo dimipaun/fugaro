@@ -777,6 +777,44 @@ test('a start the caller abandoned does not open the microphone for the session 
   assert.equal(h.audioIn.running(), true, 'and the microphone that is open is the running session’s');
 });
 
+test('a start abandoned with the microphone opening closes it for the session that replaced it', async () => {
+  // The other half of that fence, and the one the fence cannot cover on its own:
+  // there the abandoned call's `native.start()` never answered, so it had no
+  // microphone to open; here it is the *screen* start that is still in flight when
+  // the session ends, and the start it goes on to finish opens a microphone for a
+  // session this call no longer holds. A session that is over or paused is not
+  // listening, whoever opened the microphone -- F24 is a call transcribed and
+  // sent, and the session that would send it is the one the paused screen holds.
+  const first = gate();
+  const second = gate();
+  const opening = gate();
+  const h = harness({ holdFirstStart: first, holdStart: second, holdScreenStart: opening });
+
+  const abandoned = h.session.start();
+  await settle();
+  first.open();
+  await settle();
+  assert.equal(h.session.state().state, 'starting');
+  assert.equal(h.audioIn.running(), false, 'nothing is capturing while the screen start is held');
+
+  // The session this call belongs to ends, and §8's "Tap to resume" begins the
+  // next one in its place -- while the first call is still inside the screen.
+  await h.session.hangUp();
+  assert.equal(h.session.state().state, 'ended');
+  const replaced = h.session.start();
+  await settle();
+  // The replacement is paused before it reaches its own screen call, so the
+  // microphone the abandoned start is about to open is the only one there is.
+  await h.session.dispatch({ type: 'routeChanged', route: 'speaker', unsafe: true });
+  second.open();
+  assert.equal((await replaced).ok, false, 'the machine refuses a `started` for a session that is paused');
+  assert.equal(h.session.state().state, 'paused_route');
+
+  opening.open();
+  assert.deepEqual(await abandoned, { ok: false, code: SESSION_CODES.START_FAILED, field: null });
+  assert.equal(h.audioIn.running(), false, 'the microphone the abandoned start opened is closed again');
+});
+
 test('a teardown that fails is on the snapshot whichever way the session ended', async () => {
   // §8's timeout reaches `ended` on its own, and the machine takes no event for a
   // session that is already over -- so the teardown failure has to be this
