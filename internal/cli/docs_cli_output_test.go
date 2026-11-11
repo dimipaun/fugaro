@@ -157,25 +157,25 @@ func TestDocsCliOutputLogPathMatchesTheDirectoryRule(t *testing.T) {
 	}
 }
 
-// docsPluginHeading is the plugin section's heading tail, which the number the
-// section carries sits in front of. The tail rather than the whole heading: the
-// number is what this test reads out of the document and compares its citations
-// against, so writing it here as well would be the same defect one line up.
+// docsPluginHeading is the plugin's heading with the number left off: the
+// number is what the test below reads out of the document and holds the
+// citations to, so writing it here as well would put the same drift one line up
+// from where it is checked.
 const docsPluginHeading = " Claude Code plugin (`plugin/`)"
 
 // TestDocsCliOutputPluginCitationsNameItsSection: every citation inside the
 // document that sends a reader to the plugin names the number the plugin's
 // heading carries.
 //
-// The section that follows the new §9.2 was §9.2 itself until this commit wrote
-// the output contract above it, and three citations keep sending readers to the
-// plugin by that number — the `plugin` stage row of the converge's stage table,
-// the plugin artifact row and the `working` skill's follow-up part — so after a
-// renumbering the design of record says the plugin is stated where the run's
-// output is. Each is pinned with the words that make it that citation, so a
-// citation renumbered by hand is caught in its own sentence, and the document
-// is required to carry it once: a stale copy left beside the new one is the
-// same contradiction.
+// The plugin and this contract swapped numbers in one commit (§9.2 was the
+// plugin's, and the section is now §9.3), and three citations inside the
+// document went on sending readers to the plugin by the old number — the
+// `plugin` stage row of the converge's stage table, the plugin artifact row and
+// the `working` skill's follow-up part — so the design of record said the
+// plugin was stated where the run's output is. Each is pinned with the words
+// that make it that citation, so one renumbered by hand is caught in its own
+// sentence, and the document has to carry it once: a stale copy left beside the
+// new one is the same contradiction.
 func TestDocsCliOutputPluginCitationsNameItsSection(t *testing.T) {
 	doc := readDoc(t, docsCliOutputDoc)
 	section := docsPluginSection(t, doc)
@@ -202,7 +202,7 @@ func TestDocsCliOutputPluginCitationsNameItsSection(t *testing.T) {
 
 // docsPluginSection reads the number out of the plugin's heading — "9.3" in
 // `### 9.3 Claude Code plugin (`plugin/`)` — and fails the test if the heading
-// is gone, since every citation below is checked against it.
+// is gone, since every citation it checks is measured against this.
 func docsPluginSection(t *testing.T, doc string) string {
 	t.Helper()
 	at := strings.Index(doc, docsPluginHeading)
