@@ -407,6 +407,36 @@ func TestEveryOpThePromptShowsIsOneThisReleaseReads(t *testing.T) {
 	}
 }
 
+func TestEveryOpThePromptOffersLandsForThisAgent(t *testing.T) {
+	// A prompt that offers an op this class can never make is worse than one
+	// that offers none: the model asks for it, Apply refuses the whole answer,
+	// and the cycle fails. Every example in the prompt is therefore applied
+	// for real, one after another, as the class this runner applies under —
+	// which is the check that caught `decision_resolve`, an op no decision
+	// agent can land whatever it waits on.
+	state := theState(t, nil)
+	now := mustNow(t)
+	ops := 0
+	for _, example := range jsonExamples(decide.Prompt) {
+		answer, err := decide.ParseAnswer(json.RawMessage(
+			`{"reasoning":"the prompt's own example","ops":[` + example + `]}`))
+		if err != nil {
+			t.Fatalf("the prompt shows %s, which this release refuses: %v", example, err)
+		}
+		next, err := orchestrator.Apply(state, answer.Patch(state.Rev), orchestrator.Actor{
+			Class: orchestrator.DecisionAgent, Name: decide.ActorName, Now: now,
+		})
+		if err != nil {
+			t.Errorf("the prompt offers %s and this agent may not make it: %v", example, err)
+			continue
+		}
+		state, ops = next, ops+1
+	}
+	if ops == 0 {
+		t.Fatal("no op in the prompt landed, so this test proves nothing")
+	}
+}
+
 // jsonExamples are the JSON objects the prompt shows between backticks: what a
 // model copies out of the prompt is what has to parse.
 func jsonExamples(prompt string) []string {
