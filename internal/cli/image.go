@@ -352,7 +352,12 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	// line alone; a run whose log could not be opened keeps printing it where
 	// it always did (G5, G8).
 	w := streamOut(sr.rep, sr.log, cmd.ErrOrStderr())
-	fmt.Fprintf(w, "fugaro: %s\n", cloudBuildBanner(repo, name, lc.Build.MachineType, rs.BuildServiceAccountEmail, rs.RegistryPath))
+	// The banner is not that progress but the line T4 left where the typed
+	// confirmation stood: what this command is about to bill for, said before it
+	// submits. So the screen keeps it whatever session is running, and the log
+	// keeps it beside everything else the run said (D1352), which is sayThrough:
+	// a person's own line, with the spinner taken down around the write (G1).
+	fmt.Fprintf(sayThrough(sr.rep, cmd.ErrOrStderr()), "fugaro: %s\n", cloudBuildBanner(repo, name, lc.Build.MachineType, rs.BuildServiceAccountEmail, rs.RegistryPath))
 	// Writes the repository's copy of the project layer only now, after the
 	// lease above: like the converge's own buildImages/submitAndWait, a build
 	// this command does not submit — refused by a cap, unpriceable — must
