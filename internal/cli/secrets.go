@@ -981,7 +981,7 @@ func secretsPolicyAddRepos(old []byte, block, name string, repos []string) ([]by
 		if yamledit.ReasonOf(err) != yamledit.ReasonFlowCollection {
 			return nil, err
 		}
-		return secretsPolicyRewriteEntry(old, block, name, entry, add)
+		return settingsRewriteList(old, block, name, append(slices.Clone(entry.AllowDataTo), add...), entry.Proxy)
 	}
 	return next, nil
 }
@@ -993,8 +993,13 @@ func secretsPolicyAddRepos(old []byte, block, name string, repos []string) ([]by
 // order the operator gave the list survive, and a repository the list does not
 // name is left alone (the command says "no change" rather than rewriting).
 //
-// The flow list AddListItem refuses is no obstacle here — a member of a flow
-// sequence can be taken out in place — so there is no rewrite half. An entry
+// A flow sequence is the one shape it refuses — the item of one is not a splice
+// this package makes, in either direction, which is why the addition above
+// carries the same second half — and it is the shape docs/git-providers.md
+// teaches for this entry. The entry is then written again in the block style
+// this program writes a list in, with the repositories the file already names
+// and its switch, and the removals are made there: the reformatting is not the
+// edit, it is what makes the edit possible, and the diff shows both. An entry
 // whose last repository goes is left with an empty allow_data_to, which is the
 // state the operator asked for: the value is mounted nowhere, and the entry
 // stays for the day they name a repository again.
@@ -1013,34 +1018,25 @@ func secretsPolicyRemoveRepos(old []byte, block, name string, repos []string) ([
 	if len(drop) == 0 {
 		return old, nil
 	}
-	next := old
-	for _, repo := range drop {
-		if next, err = yamledit.RemoveListItem(next, []string{block, name, "allow_data_to"}, repo); err != nil {
-			return nil, err
-		}
+	next, err := secretsPolicyRemoveList(old, block, name, drop)
+	if yamledit.ReasonOf(err) != yamledit.ReasonFlowCollection {
+		return next, err
 	}
-	return next, nil
-}
-
-// secretsPolicyRewriteEntry writes project_secrets.NAME again with add added to
-// its allow_data_to: the entry's own repositories first, in the order the file
-// had them, then the flag's, and proxy written back only when the entry carried
-// it. The entry is taken away and written whole because a member cannot be
-// spliced into a flow sequence — the one edit yamledit refuses — and the values
-// come from the parsed entry rather than from the flag, so a repository the
-// entry already named is not lost with the shape it was spelled in.
-func secretsPolicyRewriteEntry(old []byte, block, name string, entry config.ProjectSecret, add []string) ([]byte, error) {
-	next, err := yamledit.RemoveKeyWithOptions(old, []string{block, name}, yamledit.RemoveOptions{DropEmptyParents: true})
+	shaped, err := settingsRewriteList(old, block, name, entry.AllowDataTo, entry.Proxy)
 	if err != nil {
 		return nil, err
 	}
-	for _, repo := range append(slices.Clone(entry.AllowDataTo), add...) {
-		if next, err = yamledit.AddListItem(next, []string{block, name, "allow_data_to"}, repo); err != nil {
-			return nil, err
-		}
-	}
-	if entry.Proxy {
-		if next, err = yamledit.SetScalar(next, []string{block, name, "proxy"}, "true"); err != nil {
+	return secretsPolicyRemoveList(shaped, block, name, drop)
+}
+
+// secretsPolicyRemoveList is the removal itself, one repository at a time, and
+// is run twice by secretsPolicyRemoveRepos: once on the bytes as they are, and,
+// where those hold a flow list, once on the same entry written in block style.
+func secretsPolicyRemoveList(old []byte, block, name string, repos []string) ([]byte, error) {
+	next := old
+	var err error
+	for _, repo := range repos {
+		if next, err = yamledit.RemoveListItem(next, []string{block, name, "allow_data_to"}, repo); err != nil {
 			return nil, err
 		}
 	}

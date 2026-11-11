@@ -292,12 +292,15 @@ func TestSecretsDenyReachesAFlowStyleEntry(t *testing.T) {
 			if got := secretsPolicyEntry(t, path, "bitbucket-token").AllowDataTo; len(got) != 0 {
 				t.Errorf("allow_data_to = %v, want no repository left", got)
 			}
+			// The entry's own bytes: the fixture's other blocks are flow by
+			// construction, so the shape is read from this block alone.
 			after := readFileString(t, path)
-			if strings.Contains(after, "[") {
+			entry := after[strings.Index(after, "project_secrets:"):]
+			if strings.Contains(entry, "[") {
 				t.Errorf("the list is still written in the flow style the removal cannot splice into:\n%s", after)
 			}
 			for _, want := range []string{"bitbucket-token", "allow_data_to"} {
-				if !strings.Contains(after, want) {
+				if !strings.Contains(entry, want) {
 					t.Errorf("the entry lost its %s: an empty list is not a removed entry\n%s", want, after)
 				}
 			}
@@ -319,12 +322,13 @@ func TestSecretsDenyReachesAFlowStyleEntry(t *testing.T) {
 	}
 }
 
-// TestSecretsDenyRefusesTheShapeNoEditCanReach: an entry written as one flow
-// mapping inside a flow mapping — the whole-file shape docs/git-providers.md
-// teaches for the Bitbucket allow-list — is the one the editor cannot write at
-// all: it refuses a member of a flow mapping, for both directions. The run says
-// which shape it cannot write and what to write instead, rather than relaying
-// the editor's own sentence, and writes nothing.
+// TestSecretsDenyRefusesTheShapeNoEditCanReach: an entry written inside a flow
+// mapping — the whole-file shape docs/git-providers.md teaches for the Bitbucket
+// allow-list — is the one the editor cannot write at all, in either direction:
+// it refuses a member of a flow mapping. The run says which entry could not be
+// written and what to write instead (modelsSpliceRefusal, the one place a file
+// the editor cannot splice is explained), rather than relaying the editor's own
+// sentence, and writes nothing.
 func TestSecretsDenyRefusesTheShapeNoEditCanReach(t *testing.T) {
 	secretsRmFugaro(t)
 	secretsFixture(t)
@@ -337,7 +341,7 @@ func TestSecretsDenyRefusesTheShapeNoEditCanReach(t *testing.T) {
 	if err == nil {
 		t.Fatal("a member of a flow mapping was edited")
 	}
-	for _, want := range []string{"flow mapping", "block mapping", "nothing was written"} {
+	for _, want := range []string{"project_secrets.bitbucket-token cannot be changed by one edit", "block style", "wrote nothing"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not carry %q:\n%v", want, err)
 		}

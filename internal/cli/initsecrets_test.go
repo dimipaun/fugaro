@@ -1605,11 +1605,11 @@ func TestUpdateRepoReadsTheAllowListFromTheNode(t *testing.T) {
 		if strings.Contains(joined, "secrets set bitbucket-token") {
 			t.Fatalf("the machine was handed a command that stores the repository's own copy of a name the node makes project-wide:\n%s", joined)
 		}
-		if !strings.Contains(joined, "fugaro update") {
-			t.Fatalf("the run leaves no line that stores the project's copy:\n%s", joined)
-		}
-		if !strings.Contains(joined, "secrets set claude-oauth-token") {
-			t.Errorf("the name only this machine's local config covers lost its own command:\n%s", joined)
+		// The token is the only name left, and the run's own door is the whole
+		// of the line: the other wanted name has a project version, so it is
+		// not left at all.
+		if len(left) != 1 || left[0] != "fugaro update" {
+			t.Fatalf("left = %v, want the run's own door alone:\n%s", left, joined)
 		}
 	})
 

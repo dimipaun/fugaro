@@ -291,3 +291,43 @@ func announceSettingsWrite(cmd *cobra.Command, managed bool, what string) error 
 	}
 	return nil
 }
+
+// settingsRewriteList writes one allow-list entry again in the block style this
+// program writes a list in — values under allow_data_to, and the Bitbucket
+// token's proxy written back only when the entry carried it — and is the second
+// half of every edit of the two lists that share it: `project_secrets`/
+// `workflow_secrets` and `claude_accounts`.
+//
+// The entry is taken away whole rather than edited in place because a member
+// cannot be spliced into a flow collection, which is the one shape the editor's
+// item operations refuse (yamledit.ReasonFlowCollection) and the shape
+// docs/git-providers.md teaches the operator to write the Bitbucket allow-list
+// in. The values come from the parsed entry rather than from the command line,
+// so a repository the entry already named is not lost with the shape it was
+// spelled in, and the caller's own diff shows the reformatting beside the edit.
+//
+// The flow collection this cannot take away either is the entry itself being a
+// member of a flow mapping — project_secrets: { bitbucket-token: { ... } }, the
+// whole-file line that page teaches — and no edit of this program reaches one:
+// the refusal is modelsSpliceRefusal's, the one place a file the editor cannot
+// splice is explained (D790), with the path of the entry it could not write.
+func settingsRewriteList(old []byte, block, name string, values []string, proxy bool) ([]byte, error) {
+	next, err := yamledit.RemoveKeyWithOptions(old, []string{block, name}, yamledit.RemoveOptions{DropEmptyParents: true})
+	if err != nil {
+		if refusal, ok := modelsSpliceRefusal(block+"."+name, err); ok {
+			return nil, refusal
+		}
+		return nil, err
+	}
+	for _, v := range values {
+		if next, err = yamledit.AddListItem(next, []string{block, name, "allow_data_to"}, v); err != nil {
+			return nil, err
+		}
+	}
+	if proxy {
+		if next, err = yamledit.SetScalar(next, []string{block, name, "proxy"}, "true"); err != nil {
+			return nil, err
+		}
+	}
+	return next, nil
+}

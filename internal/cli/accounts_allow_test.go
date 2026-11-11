@@ -245,7 +245,9 @@ func TestAccountsAllowAndDenyReachAFlowStyleList(t *testing.T) {
 	if got := accountsAllowLoad(t, path).ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, []string{"owner/repo-a", "owner/repo-b"}) {
 		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the entry's own repository and the one the run named", got)
 	}
-	if after := string(accountsAllowBytes(t, path)); strings.Contains(after, "[") {
+	// The block's own bytes: the fixture's other blocks are flow by
+	// construction, so the shape is read from this block alone.
+	if after := string(accountsAllowBytes(t, path)); strings.Contains(after[strings.Index(after, "claude_accounts:"):], "[") {
 		t.Errorf("the list is still written in the flow style the edit cannot splice into:\n%s", after)
 	}
 
@@ -257,7 +259,7 @@ func TestAccountsAllowAndDenyReachAFlowStyleList(t *testing.T) {
 	}
 	after := string(accountsAllowBytes(t, path))
 	for _, want := range []string{"team-a", "allow_data_to"} {
-		if !strings.Contains(after, want) {
+		if !strings.Contains(after[strings.Index(after, "claude_accounts:"):], want) {
 			t.Errorf("the account lost its %s: an empty list is not a removed account (that is `accounts rm`)\n%s", want, after)
 		}
 	}

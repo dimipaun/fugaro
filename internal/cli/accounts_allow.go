@@ -147,17 +147,32 @@ func runAccountsAllowList(cmd *cobra.Command, name string, repos []string, allow
 	// deny removes each one, so the list the file ends up with is the list it
 	// held plus or minus exactly what was named. A repository the list already
 	// names is left alone by either direction (yamledit's own rule), which is
-	// what makes a re-run a no-op rather than a second entry.
-	next := old
+	// what makes a re-run a no-op rather than a second entry — and what keeps
+	// the second half of this edit, the rewrite of a flow list below, out of a
+	// run that has nothing to write.
+	held := lc.ClaudeAccounts[name].AllowDataTo
+	var edits []string
 	for _, repo := range repos {
-		if allow {
-			next, err = yamledit.AddListItem(next, []string{"claude_accounts", name, "allow_data_to"}, repo)
-		} else {
-			next, err = yamledit.RemoveListItem(next, []string{"claude_accounts", name, "allow_data_to"}, repo)
+		if slices.Contains(held, repo) != allow {
+			edits = append(edits, repo)
 		}
-		if err != nil {
-			return userErr("claude_accounts.%s.allow_data_to: %v", pluginwire.Printable(name), err)
+	}
+	next, err := accountsAllowEdit(old, name, edits, allow)
+	if yamledit.ReasonOf(err) == yamledit.ReasonFlowCollection {
+		// A flow sequence is the one shape both directions refuse — an
+		// allow_data_to the operator wrote as [owner/name] is one, and this
+		// pair is what makes the removal direction reachable on it. The entry
+		// has this one field, so it is written again in the block style this
+		// program writes a list in, with the repositories it holds, and the
+		// edit is made there; the diff shows the reformatting beside it.
+		shaped, shapeErr := settingsRewriteList(old, "claude_accounts", name, held, false)
+		if shapeErr != nil {
+			return shapeErr
 		}
+		next, err = accountsAllowEdit(shaped, name, edits, allow)
+	}
+	if err != nil {
+		return userErr("claude_accounts.%s.allow_data_to: %v", pluginwire.Printable(name), err)
 	}
 	// Read the edit back strictly before it is written: a file this Fugaro
 	// cannot read is a file the next command of the owner's would refuse, and
@@ -185,8 +200,28 @@ func runAccountsAllowList(cmd *cobra.Command, name string, repos []string, allow
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
+	workspaceHandoff(cmd, old, next)
 	return nil
+}
+
+// accountsAllowEdit adds each repository to the account's allow_data_to, or
+// removes each one, and is run twice by runAccountsAllowList: once on the bytes
+// as they are, and, where those hold a flow list, once on the same entry
+// written in block style.
+func accountsAllowEdit(old []byte, name string, repos []string, allow bool) ([]byte, error) {
+	next := old
+	var err error
+	for _, repo := range repos {
+		if allow {
+			next, err = yamledit.AddListItem(next, []string{"claude_accounts", name, "allow_data_to"}, repo)
+		} else {
+			next, err = yamledit.RemoveListItem(next, []string{"claude_accounts", name, "allow_data_to"}, repo)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return next, nil
 }
 
 // accountsDenySubsetRule is the rule a removal can break and an addition

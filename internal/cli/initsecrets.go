@@ -651,10 +651,24 @@ func (s *secretsStage) Left() initflow.Left {
 	for _, name := range needs {
 		// The scope the command stores to is projectScopeLocal's, which is the
 		// scope `secrets set` itself decides: the line below is that command,
-		// and the node this stage read is update --repo's, not `secrets set`'s,
-		// so a line spelled from the node-aware projectScope would name a
-		// command that stores somewhere other than the container this stage
-		// would have written to.
+		// and the node this stage read is update --repo's, not `secrets set`'s.
+		//
+		// A name only the node makes project-wide is the one place the two
+		// answers disagree, and `secrets set` cannot store that copy on this
+		// machine at all: with no entry of the local config's own,
+		// projectWideAccepted refuses it --project-wide, and its bare form
+		// writes the repository's own copy -- the copy that then wins over the
+		// project's from then on, which is the flip find() refuses to prompt a
+		// covered name for. The line left for it is the run's own door instead:
+		// at a terminal that door's prompt is take's, which stores the value in
+		// the container this stage's own decision picks.
+		if s.projectScope(name) && !s.projectScopeLocal(name) {
+			door := selfCommand() + " " + s.e.r.o.doorName()
+			if !slices.Contains(cmds, door) {
+				cmds = append(cmds, door)
+			}
+			continue
+		}
 		set := selfCommand() + " secrets set " + quoteWord(name)
 		if !s.projectScopeLocal(name) {
 			set += " --repo " + quoteWord(s.tg.repo)
