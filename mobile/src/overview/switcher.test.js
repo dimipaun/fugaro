@@ -244,6 +244,59 @@ test('only a switch is a switch: agent text, other commands and refusals pass th
   assert.equal((await switcher.switchTo('switch to phone')).code, SWITCH_CODES.NOT_A_ROUTE);
 });
 
+test('a result that is not the app’s own switch is refused clause by clause', async () => {
+  // The results above come out of the real router, and every one of them is
+  // refused by more than one clause of the guard at once -- agent text is the
+  // wrong route *and* has no command *and* is forwarded, so the guard could lose
+  // any one of its three clauses and this file would still be green. What the
+  // guard is for is the caller that hands over the wrong result (the screens
+  // route their own transcripts and pass the results on: `text/input.js`,
+  // `voice/dialogue.js`), so each result here differs from a real switch in
+  // exactly one field and no clause is carried by another.
+  const trace = [];
+  const { store, registry } = makeStore({ trace });
+  await store.add(LAPTOP);
+  await store.add(PHONE);
+  const switcher = createSwitcher({ store });
+  await store.switchTo('laptop');
+  registry.add('laptop', () => {});
+
+  const real = Object.freeze({
+    ok: true,
+    route: ROUTE.APP_COMMAND,
+    forwarded: false,
+    command: COMMAND.SWITCH_PROJECT,
+    project: Object.freeze({ id: 'phone', spokenName: 'phone' }),
+  });
+  // The control: this one switches, so the three refusals below are about the
+  // clause each one breaks and not about a hand-built result as such.
+  const switched = await switcher.switchTo({ ...real });
+  assert.equal(switched.ok, true);
+  assert.equal(switched.account.id, 'phone');
+  await store.switchTo('laptop');
+  registry.add('laptop', () => {});
+  trace.length = 0;
+
+  const forgeries = [
+    // Agent text wearing the switch command: the case the header's paragraph is
+    // about, and the one clause nothing else would catch.
+    ['an app command that is forwarded', { ...real, forwarded: true }],
+    ['a command that is another screen’s', { ...real, command: COMMAND.WHATS_PENDING }],
+    ['a route that is not the app’s', { ...real, route: ROUTE.AGENT_TEXT }],
+  ];
+  for (const [why, result] of forgeries) {
+    const refused = await switcher.switchTo(result);
+    assert.equal(refused.ok, false, why);
+    assert.equal(refused.code, SWITCH_CODES.NOT_A_SWITCH, why);
+    assert.equal(refused.field, 'command', why);
+    assert.equal(store.current(), 'laptop', why);
+  }
+  // A refused result is refused before the store is reached at all: nothing was
+  // opened, closed or stopped, and the open account kept its listeners.
+  assert.deepEqual(trace, [], 'nothing was opened, closed or stopped');
+  assert.equal(registry.liveCount('laptop'), 1);
+});
+
 test('“what project am I on” answers from the store, and says so when nothing is open', async () => {
   const { store } = makeStore();
   await store.add(LAPTOP);

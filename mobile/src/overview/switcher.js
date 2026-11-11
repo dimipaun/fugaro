@@ -33,9 +33,11 @@
 // **A switch is spoken, not typed, and the difference is not a formality.** The
 // router requires the wake word (D164), so an utterance that is not the app's
 // is agent text and never reaches here; and this module never forwards
-// anything. `routeUtterance`'s `forwarded: false` on an app command is asserted
-// in the test below, because a switch that left the app would be a sentence
-// about an installation sent to an agent.
+// anything. Neither is left to the router: `switchTo`'s guard refuses every
+// result that is not the app's own switch command with `forwarded: false`, and
+// `switcher.test.js` hands it one field of a real switch at a time, so each
+// clause of that guard is load-bearing on its own -- a switch that left the app
+// would be a sentence about an installation sent to an agent.
 //
 // **Where the account ids come from.** D114: the list is the owner's, and the
 // id is the label the owner typed when they paired the installation (`P6.8`'s
