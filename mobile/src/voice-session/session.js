@@ -22,14 +22,16 @@
 // mean "native's `end()` resolved".
 //
 // **What it must not own.** P3.5's switch, queue, offline refusal and lease.
-// The session calls `screen.start()`, `screen.stop()`, `screen.lease()`,
-// `screen.releaseLease()` and asks `screen.state()` for the snapshot a render
-// uses; it never calls the mailbox client, never reads a credential, and
-// imports nothing outside this directory -- the module's own scan holds the
-// last one (`index.test.js`, F24), and the reason is the phone call this
-// feature exists for: while the phone is locked the secure store is unreadable,
-// so a resume path that reached a credential would fail on exactly the
-// interruption it is for.
+// The session calls `screen.start()`, `screen.stop()`, `screen.lease()` and
+// `screen.releaseLease()`, tells the screen the one fact about itself the screen
+// cannot derive -- that the session is paused or over, which is `screen.setHeld`,
+// and the queue is still the screen's to keep -- and asks `screen.state()` for
+// the snapshot a render uses; it never calls the mailbox client, never reads a
+// credential, and imports nothing outside this directory -- the module's own
+// scan holds the last one (`index.test.js`, F24), and the reason is the phone
+// call this feature exists for: while the phone is locked the secure store is
+// unreadable, so a resume path that reached a credential would fail on exactly
+// the interruption it is for.
 //
 // **No timer and no clock.** §8's three minutes is a `tick` the *caller*
 // injects, exactly as the machine's clock is: this file starts nothing, and the
@@ -80,7 +82,11 @@
 //     microphone is followed there too -- and so is one that arrives while the
 //     session is `starting`, where the microphone an abandoned `start()` opened
 //     for it is the one being captured from -- so no path leaves one open in a
-//     pause.
+//     pause. That same close is what holds P3.5's queue: the stop cancels the
+//     utterance in flight, and the cancel reports itself as an `utterance`
+//     event, which is a boundary the queue would otherwise drain on -- so the
+//     hold goes on before the stop is asked for, and comes off on the resume
+//     (`screen.setHeld`, and `commit` where it is set).
 //   * **A port call is not a transition.** `native.start()`, `native.setMuted()`
 //     and the screen's own start answer when they answer, and the session can
 //     move while they do. What those windows forbid is applying something
@@ -231,9 +237,9 @@ export function createVoiceSession({
   if (
     screen === null ||
     typeof screen !== 'object' ||
-    ['start', 'stop', 'state', 'lease', 'releaseLease'].some((name) => typeof screen[name] !== 'function')
+    ['start', 'stop', 'state', 'lease', 'releaseLease', 'setHeld'].some((name) => typeof screen[name] !== 'function')
   ) {
-    throw new TypeError("screen is P3.5's voice screen: start, stop, state, lease and releaseLease");
+    throw new TypeError("screen is P3.5's voice screen: start, stop, state, lease, releaseLease and setHeld");
   }
   // Both halves of the pair are required and neither is a convenience: they are
   // what the machine and P3.5's screen read, and a caller with a flag of its own
@@ -499,11 +505,18 @@ export function createVoiceSession({
     } else if (begun && PAUSED.includes(before) && LIVE.includes(after)) openTheMicrophone();
   }
 
-  /** Adopt a state the machine answered with: the lease, the push, the pause,
-   * and the teardown. */
+  /** Adopt a state the machine answered with: the queue's hold, the lease, the
+   * push, the pause, and the teardown. */
   function commit(state) {
     const before = current.state;
     current = state;
+    // §4's two paused states are "mic closed, playback paused" and a session
+    // that is over is not one to speak from, so the queue is held in exactly
+    // those four and drained again outside them. It is set here, before the
+    // pause's own close asks for the stop: the stop cancels the utterance in
+    // flight, and that cancel is an `utterance` event P3.5's queue would read
+    // as a boundary -- so a hold set after it would be a hold set too late.
+    screen.setHeld(PAUSED.includes(current.state) || OVER.includes(current.state));
     if (current.state === 'ended') giveBackTheLease();
     push();
     followThePause(before, current.state);

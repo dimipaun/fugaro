@@ -474,6 +474,74 @@ test('a route pause stops the utterance in flight and closes the microphone (§6
   assert.equal(h.audioIn.running(), true);
 });
 
+test('a pause does not speak the queued update, and the resume that ends it does', async () => {
+  const h = harness();
+  await h.session.start();
+  h.screen.setDigest({ severity: SEVERITY.failed });
+  h.screen.offer({ text: 'a run failed', severity: SEVERITY.failed });
+  h.screen.offer({ text: 'another run failed', severity: SEVERITY.failed });
+  assert.deepEqual(h.tts.spoken(), ['a run failed'], 'the first is playing and the second waits for its boundary');
+
+  await h.session.dispatch({ type: 'interruptionBegan', source: INTERRUPTION_SOURCES.CALL });
+  assert.equal(h.session.state().state, 'paused_interruption');
+  // §4's paused states are "mic closed, playback paused", and the stop that
+  // pauses them **cancels the utterance in flight** -- whose own `utterance`
+  // event is a boundary P3.5's queue would drain on. The queue is the
+  // session's to hold: nothing else is said into the call.
+  assert.deepEqual(h.tts.interrupted(), ['a run failed'], 'the utterance in flight is the one the pause cancelled');
+  assert.deepEqual(h.tts.spoken(), ['a run failed'], 'and the pause speaks nothing else');
+  assert.equal(h.screen.queued().length, 1, 'the queued update is still queued');
+
+  // The call ends, and that resume is a boundary like any other: the queue goes
+  // out on it, in order.
+  await h.session.dispatch({ type: 'interruptionEnded', shouldResume: true });
+  assert.equal(h.session.state().state, 'listening');
+  assert.deepEqual(h.tts.spoken(), ['a run failed', 'another run failed'], 'the resume is where it goes out');
+  assert.equal(h.screen.queued().length, 0);
+});
+
+test('an unsafe route speaks nothing out of the loudspeaker, however much is queued (§6.3)', async () => {
+  const h = harness();
+  await h.session.start();
+  h.screen.setDigest({ severity: SEVERITY.kill });
+  h.screen.offer({ text: 'the nightly build failed', severity: SEVERITY.kill });
+  h.screen.offer({ text: 'and so did the deploy', severity: SEVERITY.kill });
+  assert.deepEqual(h.tts.spoken(), ['the nightly build failed']);
+
+  await h.session.dispatch({ type: 'routeChanged', route: 'speaker', unsafe: true });
+  assert.equal(h.session.state().state, 'paused_route');
+  // §6.3: the app "must not continue speaking through the loudspeaker
+  // unexpectedly", and check 116's sentence is "nothing comes out of the
+  // loudspeaker" -- which the next update in the queue is the one thing left
+  // that could break.
+  assert.deepEqual(h.tts.interrupted(), ['the nightly build failed']);
+  assert.deepEqual(h.tts.spoken(), ['the nightly build failed'], 'the route pause speaks nothing');
+  assert.equal(h.screen.queued().length, 1, 'and the update is still queued');
+});
+
+test('an ended session speaks nothing out of the queue it left behind', async () => {
+  const h = harness();
+  await h.session.start();
+  h.screen.setDigest({ severity: SEVERITY.failed });
+  h.screen.offer({ text: 'a run failed', severity: SEVERITY.failed });
+  h.screen.offer({ text: 'a second run failed', severity: SEVERITY.failed });
+
+  await h.session.hangUp();
+  assert.equal(h.session.state().state, 'ended');
+  assert.equal(h.session.state().endReason, 'hangup');
+  // The teardown's stop cancels the utterance in flight exactly as a pause's
+  // does, and the session it belonged to is over: a phone nobody is listening
+  // to does not read the queue out.
+  assert.deepEqual(h.tts.interrupted(), ['a run failed']);
+  assert.deepEqual(h.tts.spoken(), ['a run failed'], 'the ended session speaks nothing');
+  assert.equal(h.screen.queued().length, 1, 'nothing is dropped with it');
+
+  // The next session is a boundary it may go out on, so the hold loses nothing.
+  await h.session.start();
+  assert.deepEqual(h.tts.spoken(), ['a run failed', 'a second run failed']);
+  assert.equal(h.screen.queued().length, 0);
+});
+
 test("the machine's `ended` gives the lease back, exactly once", async () => {
   const h = harness();
   // The lease, taken the way the app takes it: P3.5's own `takeLease`, with the
@@ -1232,6 +1300,7 @@ test('a port, a screen or a value that cannot be used is a wiring bug, and it th
     ['a machine without its first state', { ...good(), machine: { reduce: machine.reduce } }],
     ['a screen without its teardown', { ...good(), screen: { ...h.screen, stop: undefined } }],
     ['a screen without the lease', { ...good(), screen: { ...h.screen, releaseLease: null } }],
+    ['a screen that cannot hold the queue', { ...good(), screen: { ...h.screen, setHeld: null } }],
     ['a pipeline that is not the pipeline', { ...good(), pipeline: {} }],
     ['a port without updateStatus', { ...good(), native: { ...h.native, updateStatus: null } }],
     ['a port without its mute', { ...good(), native: { ...h.native, setMuted: null } }],
