@@ -1,10 +1,10 @@
 # Implementation plan: the console dependency graph (part B)
 
-**Status as of 2026-11-10: in progress, 19/32 merged; see [docs/status.md](../status.md) for the current table.** Each task needs the owner's explicit go, by name; answering a decision approved none, and the one exception is stated below (B5). This plan builds spec section 2 ([spec.md](spec.md)) as amended by [reconciliation.md](reconciliation.md); the reconciliation wins. It shares **no task** with [implementation-plan-output.md](implementation-plan-output.md) (D1350); the few **files** both plans touch are sequenced by the cross-plan table in [README.md](README.md). **The orchestrator slice (B4) and the endpoint slice (B5) are both written.** B4's dependency is on `main`: `docs/stateless-orchestrator/` has O0-O8, O10, O17 and O18 merged (O9 and O12 are open drafts), and **CG4 merged on 2026-11-10**, so of B4 only CG5 and CG6 are left. **B5 is approved: the owner asked for CG13 by name on 2026-11-11**, which waives D1358's "only if a measurement shows" condition, and the endpoint is split into **CG13a, CG13b and CG13c**. The folder's task count is 32 because of that split — 15 in part A, **17 here** — and the merged count does not move with it: CG13 was one of the eleven left, and it is three of the thirteen now.
+**Status as of 2026-11-10: in progress, 24/32 merged; see [docs/status.md](../status.md) for the current table.** Each task needs the owner's explicit go, by name; answering a decision approved none, and the one exception is stated below (B5). This plan builds spec section 2 ([spec.md](spec.md)) as amended by [reconciliation.md](reconciliation.md); the reconciliation wins. It shares **no task** with [implementation-plan-output.md](implementation-plan-output.md) (D1350); the few **files** both plans touch are sequenced by the cross-plan table in [README.md](README.md). **The orchestrator slice (B4) and the endpoint slice (B5) are both written.** B4's dependency is on `main`: `docs/stateless-orchestrator/` has O0-O8, O10, O17 and O18 merged (O9 and O12 are open drafts), and **CG4 and CG6 merged on 2026-11-10** (#2207 and #2205), so of B4 only CG5 is left. **B5 is approved: the owner asked for CG13 by name on 2026-11-11**, which waives D1358's "only if a measurement shows" condition, and the endpoint is split into **CG13a, CG13b and CG13c**. The folder's task count is 32 because of that split — 15 in part A, **17 here** — and the merged count does not move with it: CG13 was one of the six tasks left, and it is three of the eight now.
 
 **The owner's answers that shaped it (2026-11-06, all the recommendation):** D1356 keep the plan scope and add `fugaro graph --json` with a coordinator scope that needs no checkout, source-qualified task keys, dedupe only within one namespace, orchestrator scopes when built; D1357 the CLI reads the `orchestrator/` RTDB subtree directly plus the coordinator view; D1358 local orchestrators are found through the daemon's RTDB node and its local cache file, no PID registry and no HTTP endpoint in the first slice; D1359 the trust rules apply if the endpoint is built later; D1360 `graph --watch --json` prints whole snapshots with `stream_id`, a rising `seq` within one child, `source_state` and a periodic keep-alive; D1361 `fugaro graph` and `fugaro orchestrator ls`; D1362 `fugaro graph` lives in `ee/` through `RegisterCommand`, the daemon and `orchestrator ls` stay core.
 
-**Rulings of 2026-11-06 (reconciliation section 3a, all the recommendation):** T1 the orchestrator scopes (CG4-CG6) wait for the stateless plan's reader, so the first graph slice is the coordinator scope only; T2 the CLI reads `orchestrator/` with the person's credential and CG6 is a pin test, no new grant (viewer-role coverage cannot be checked by a rules test: it is the owner-run **Check 314**, only when B4 is scheduled; UNVERIFIED until then); T3 a CLI without the `ee` tag keeps the plan scope and gets a core stub (CG3s). **Assumption still open (not ruled):** T4(a) the reporter decides colour itself (part A). **T5 is ruled (2026-11-06, the recommendation) and amended on 2026-11-11:** a local scope's read and its watch stream the daemon's RTDB node and fall back to polling its cache file, except that **where a live endpoint exists they prefer it**, with the node and the cache as the fallback for a daemon that predates it or is not running (CG13c; reconciliation section 3a). **Reading of D1356:** the plan scope stays what it is today, the console's existing `plan.status` read; `fugaro graph` carries the coordinator scope now and the orchestrator and local scopes later. The coordinator view has **no dependency edges** (F17), so the coordinator scope draws nodes grouped by release; edges come with the orchestrator scopes' `depends_on`.
+**Rulings of 2026-11-06 (reconciliation section 3a, all the recommendation):** T1 the orchestrator scopes (CG4-CG6) wait for the stateless plan's reader, so the first graph slice is the coordinator scope only; T2 the CLI reads `orchestrator/` with the person's credential and CG6 is a pin test, no new grant (viewer-role coverage cannot be checked by a rules test: it is the owner-run **Check 314**, and B4 is scheduled — CG4 and CG6 merged on 2026-11-10 — so the check is the owner's to run; UNVERIFIED until then); T3 a CLI without the `ee` tag keeps the plan scope and gets a core stub (CG3s). **Assumption still open (not ruled):** T4(a) the reporter decides colour itself (part A). **T5 is ruled (2026-11-06, the recommendation) and amended on 2026-11-11:** a local scope's read and its watch stream the daemon's RTDB node and fall back to polling its cache file, except that **where a live endpoint exists they prefer it**, with the node and the cache as the fallback for a daemon that predates it or is not running (CG13c; reconciliation section 3a). **Reading of D1356:** the plan scope stays what it is today, the console's existing `plan.status` read; `fugaro graph` carries the coordinator scope now and the orchestrator and local scopes later. The coordinator view has **no dependency edges** (F17), so the coordinator scope draws nodes grouped by release; edges come with the orchestrator scopes' `depends_on`.
 
 ## Conventions every task follows
 
@@ -31,7 +31,7 @@
 - **B1 One-shot graph (ships useful alone):** CG3s core stub, CG1 document, CG2 coordinator source, CG3 `fugaro graph --json`, CG8 contract.
 - **B2 Console, one-shot:** CG9a, CG10.
 - **B3 Live:** CG7 snapshot stream, CG9b, CG11.
-- **B4 Orchestrator scopes (schedulable: its dependency is on `main`):** CG5, CG6 (CG4 merged on 2026-11-10).
+- **B4 Orchestrator scopes (schedulable: its dependency is on `main`):** CG5 (CG4 and CG6 merged on 2026-11-10).
 - **B5 Local endpoint (approved 2026-11-11):** CG13a, CG13b, CG13c.
 - **Owner-run:** CG12.
 
@@ -150,12 +150,12 @@
 
 ### CG4. `fugaro orchestrator ls --json` (B4; merged 2026-11-10, #2207)
 
-**Decisions:** D1361, D1358. **Depends on:** **the stateless-orchestrator plan's state schema and reader (O0, merged on `main` on 2026-11-07, and O2 on 2026-11-08, both in `docs/stateless-orchestrator/implementation-plan.md`) and its `fugaro orchestrator` group (O5's `internal/cli/orchestrator_cmd.go` and O8's `run`, both merged)**. **Reviewer:** standard. **Merged on `main` on 2026-11-10, #2207**: `internal/cli/orchestrator_ls.go` and `internal/orchestrator/list.go` are it, so B4's remaining tasks are CG5 and CG6.
+**Decisions:** D1361, D1358. **Depends on:** **the stateless-orchestrator plan's state schema and reader (O0, merged on `main` on 2026-11-07, and O2 on 2026-11-08, both in `docs/stateless-orchestrator/implementation-plan.md`) and its `fugaro orchestrator` group (O5's `internal/cli/orchestrator_cmd.go` and O8's `run`, both merged)**. **Reviewer:** standard. **Merged on `main` on 2026-11-10, #2207**: `internal/cli/orchestrator_ls.go` and `internal/orchestrator/list.go` are it, so B4's remaining task is CG5 (CG6 merged the same day, its own section below).
 
 - **Files (max 4):** `internal/cli/orchestrator_ls.go` (new), `internal/cli/orchestrator_ls_test.go` (new), the cache reader in `internal/orchestrator/` (that plan's package), `console/docs/json-contract.md` **not here** (a later CG8 amendment).
 - **Interfaces:** lists the orchestrators whose RTDB node exists (central and local, with `kind`, `project`, `lease_holder`, `updated_at`) and the local daemon's cache file(s) under `$XDG_CACHE_HOME/fugaro/orchestrator/<id>.json` (found through `localcfg.UserDir(..., DirCache)`), with the cache's freshness stamp; no PID registry, no port (D1358).
 - **Tests:** `TestOrchestratorLsListsNodesAndCaches`, `TestOrchestratorLsStaleCacheIsMarked`, `TestOrchestratorLsJSONVersioned`.
-- **Command (when scheduled):** `go test ./internal/cli/ -run 'TestOrchestratorLs' -count=1`
+- **Command:** `go test ./internal/cli/ -run 'TestOrchestratorLs' -count=1`
 - **Red step:** `fugaro orchestrator ls` is an unknown subcommand of the group.
 - **Commit:** `cli: fugaro orchestrator ls`
 
@@ -166,17 +166,17 @@
 - **Files (max 4):** `ee/graph/source_orchestrator.go` (new), `ee/graph/source_orchestrator_test.go` (new), `ee/graph/cli/graph.go` (**after CG7 and CG3**), `ee/graph/stream.go` (**after CG7**; both are later-level edits).
 - **Interfaces:** `orchestrator:<id>` reads that node (tasks, `depends_on` as edges, status as state); `local:<id>` reads the cache file and, when watching, the node, polling the cache when the node is unreachable (T5(a); **amended 2026-11-11: CG13c puts a live endpoint ahead of both**, so this order is what a machine whose daemon predates the endpoint, or is not running it, reads); `all` becomes the union with source-qualified keys.
 - **Tests:** `TestOrchestratorTasksAndEdges`, `TestLocalScopeFallsBackToTheCache`, `TestUnknownOrchestratorIsRefused`, `TestDependsOnEdgesStayInsideOneOrchestrator`.
-- **Command (when scheduled):** `go test ./ee/graph/... -run 'Orchestrator|LocalScope' -count=1`
+- **Command:** `go test ./ee/graph/... -run 'Orchestrator|LocalScope' -count=1`
 - **Red step:** `graph --source orchestrator:<id>` is refused with "no orchestrator is installed in this build" (CG3's honest refusal).
 - **Commit:** `ee/graph: the orchestrator and local scopes`
 
-### CG6. A rules test: `orchestrator/` is unreadable and unwritable by every run and token identity (B4, SEC)
+### CG6. A rules test: `orchestrator/` is unreadable and unwritable by every run and token identity (B4, SEC; merged 2026-11-10, #2205)
 
-**Findings:** T2. **Depends on:** the stateless plan's rules task for `orchestrator/` (**O2**, merged on `main` on 2026-11-08, #1945, `5053cbce`). **Reviewer: `opus + mandatory independent review`.**
+**Findings:** T2. **Depends on:** the stateless plan's rules task for `orchestrator/` (**O2**, merged on `main` on 2026-11-08, #1945, `5053cbce`). **Reviewer: `opus + mandatory independent review`.** **Merged on `main` on 2026-11-10, #2205**: `internal/budget/rules/orchestrator_test.go` and the cases this task adds to `internal/budget/rules/emulator_orchestrator_test.go` are it, and the pin holds on the rules document as it ships.
 
 - **Files (max 2):** `internal/budget/rules/orchestrator_test.go` (new, modelled on `coordinator_test.go`), `internal/budget/rules/emulator_orchestrator_test.go` (**created by the stateless plan's O2**; this task adds cases to it, tag `firebase`).
 - **Tests:** `TestOrchestratorNodeIsDeniedToRunAndTokenIdentities`, `TestNoClientWriteUnderOrchestrator`.
-- **Command (when scheduled):** `go test ./internal/budget/rules/ -run 'Orchestrator' -count=1` (and the `firebase`-tagged emulator run, owner or CI as that plan says).
+- **Command:** `go test ./internal/budget/rules/ -run 'Orchestrator' -count=1` (and the `firebase`-tagged emulator run, owner or CI as that plan says).
 - **Red step:** the new cases fail on a rules document that grants a run identity a read of `orchestrator/`.
 - **Mutation:** add a read for a run identity: the first fails. **This is a pin, not a grant (T2(a)).** It cannot check IAM: whether `roles/firebasedatabase.viewer` covers `orchestrator/` is **UNVERIFIED** and is the owner-run **Check 314** below.
 - **Commit:** `rules: pin that no run or token identity touches orchestrator/`
@@ -232,8 +232,8 @@
 | Check | Measures | Who | What the owner types |
 | --- | --- | --- | --- |
 | **312** | The console's Graph against a real project: the scope dropdown, no checkout, live updates, a stale source, and a hard-killed console leaving no orphan `fugaro graph` child | the owner | open the signed console on a project with the coordinator on; `kill -9` the console; `pgrep -fl 'fugaro graph'` a minute later |
-| **313** | CG13's endpoint on a real machine: the registry file's mode and nonce, liveness by handshake plus lock rather than a pid, and a crash, a reboot and a pid reuse | the owner | start a daemon (`fugaro orchestrator run`) and note its project's id; `ls -l "$XDG_STATE_HOME/fugaro/run"`; read `fugaro graph --source local:<id>` once; `kill -9 <pid>`; read the scope again (it must read the node, remove the dead file and never touch a live process that has taken the pid); `ps -o pid,command` until another process holds that pid and read the scope once more; reboot, start a daemon again and repeat |
-| **314** | Only when B4 is scheduled: a person credential with `roles/firebasedatabase.viewer` reads an `orchestrator/` node (T2: UNVERIFIED today) | the owner | named when the orchestrator slice is scheduled |
+| **313** | CG13's endpoint on a real machine: the registry file's mode and nonce, liveness by handshake plus lock rather than a pid, and a crash, a reboot and a pid reuse | the owner | start a daemon (`fugaro orchestrator run`) and note its project's id; `ls -l "${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/run"` (the state directory `localcfg.UserDir` resolves: `$XDG_STATE_HOME` where it is set, `~/.local/state` where it is not, which is the default on macOS — the bare variable would expand to `/fugaro/run`); read `fugaro graph --source local:<id>` once; `kill -9 <pid>`; read the scope again (it must read the node, remove the dead file and never touch a live process that has taken the pid); `ps -o pid,command` until another process holds that pid and read the scope once more; reboot, start a daemon again and repeat |
+| **314** | B4 is scheduled (CG4 and CG6 merged on 2026-11-10): a person credential with `roles/firebasedatabase.viewer` reads an `orchestrator/` node (T2: UNVERIFIED today) | the owner | `fugaro orchestrator ls` against the project's database (CG4's read of that node) |
 
 ## Release actions
 
@@ -241,7 +241,7 @@ None of CG1-CG11 needs a post-deploy step: `fugaro graph` reads what the existin
 
 ## Parallel execution
 
-**Edges:** CG3s depends on nothing; CG2, CG8 depend on CG1; CG3 on CG1, CG2; CG7 on CG3; CG9a on CG3, CG8; CG10 on CG9a (not on CG9b: it never edits `entry.ts`); CG9b on CG7, CG9a; CG11 on CG9b, CG10; CG4 on the stateless plan (merged 2026-11-10); CG5 on CG4, CG3, CG7; CG6 on the stateless plan; CG13a on CG5 and the daemon; CG13b on CG13a; CG13c on CG13a, CG13b, CG5.
+**Edges:** CG3s depends on nothing; CG2, CG8 depend on CG1; CG3 on CG1, CG2; CG7 on CG3; CG9a on CG3, CG8; CG10 on CG9a (not on CG9b: it never edits `entry.ts`); CG9b on CG7, CG9a; CG11 on CG9b, CG10; CG4 on the stateless plan (merged 2026-11-10); CG5 on CG4, CG3, CG7; CG6 on the stateless plan (merged 2026-11-10); CG13a on CG5 and the daemon; CG13b on CG13a; CG13c on CG13a, CG13b, CG5.
 
 | Level | Tasks (concurrent) |
 | --- | --- |
@@ -251,7 +251,7 @@ None of CG1-CG11 needs a post-deploy step: `fugaro graph` reads what the existin
 | L3 | CG7, CG9a |
 | L4 | CG10, CG9b |
 | L5 | CG11 |
-| B4 (schedulable: its dependency is on `main`; CG4 merged 2026-11-10) | CG5, CG6 (independent of each other) |
+| B4 (schedulable: its dependency is on `main`; CG4 and CG6 merged 2026-11-10) | CG5 |
 | B5 (approved 2026-11-11) | CG13a, then CG13b, then CG13c (each after CG5; CG13c last) |
 
 **Critical path** (CG3s is off it): CG1 → CG2 → CG3 → CG7 → CG9b → CG11 (then CG12, owner-run). Sequential by nature: the document before its sources and the command; the command before the stream and the console read; `spawn.ts` and `ipc.ts` take one writer per level (CG9a, then CG9b); `graph.ts` one (CG10, then CG11). **B5 hangs off the same path once CG5 has landed:** CG13a → CG13b → CG13c, then Check 313 (owner-run) — the slice is built on top of the local scope, not in front of it.

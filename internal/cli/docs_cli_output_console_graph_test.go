@@ -186,7 +186,7 @@ var cocgStatusRE = regexp.MustCompile(`(?m)^\*\*Status as of 2026-11-10: [^*]*\*
 // current. The index, the reconciliation and the two plans carry the same line,
 // so a document that dropped it would leave a reader taking an in-progress plan
 // for one nobody may build from.
-const cocgStatusLine = "**Status as of 2026-11-10: in progress, 19/32 merged; see [docs/status.md](../status.md) for the current table.**"
+const cocgStatusLine = "**Status as of 2026-11-10: in progress, 24/32 merged; see [docs/status.md](../status.md) for the current table.**"
 
 // TestDocsCliOutputConsoleGraphStatusLines: the folder's status is stated in
 // one line in every document but the owner's spec, and the line names the

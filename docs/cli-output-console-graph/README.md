@@ -1,6 +1,6 @@
 # CLI output cleanup and the console dependency graph: the documents
 
-**Status as of 2026-11-10: in progress, 19/32 merged; see [docs/status.md](../status.md) for the current table.**
+**Status as of 2026-11-10: in progress, 24/32 merged; see [docs/status.md](../status.md) for the current table.**
 
 **Spec owner: Dimi Paun. Date: 2026-11-06.** Checked against `origin/main` at `57f7d871f`.
 
@@ -11,7 +11,7 @@ The owner's spec, "Fugaro: CLI Output Cleanup and Console Dependency Graph", is 
 | [spec.md](spec.md) | The owner's spec, **verbatim**, committed alone in its own first commit. |
 | [reconciliation.md](reconciliation.md) | Findings **F1-F30** (Wrong / Exists / Gap / Rule / Open), the headline table, decisions **D1350-D1362** with the owner's answers of 2026-11-06, the tensions **T1-T6** (all ruled on 2026-11-06; **T5 amended 2026-11-11**, T4 open), the smallest slices, the checks, UNVERIFIED. **Where it disagrees with `spec.md`, it wins.** |
 | [implementation-plan-output.md](implementation-plan-output.md) | Part A: the reporter, the log sink, the flag, the converge family and the other commands. Tasks **CL1-CL12**, levels L0-L5, critical path, shared-files table. Nothing in it is approved. |
-| [implementation-plan-graph.md](implementation-plan-graph.md) | Part B: `fugaro graph`, the snapshot stream, the console's scope dropdown; the orchestrator slice (B4: CG4 merged on 2026-11-10, CG5 and CG6 schedulable) and the endpoint slice (B5: **CG13a, CG13b and CG13c, approved 2026-11-11**). Tasks **CG1-CG13c**, levels L0-L5 plus B4 and B5, critical path, shared-files table. Nothing else in it is approved. |
+| [implementation-plan-graph.md](implementation-plan-graph.md) | Part B: `fugaro graph`, the snapshot stream, the console's scope dropdown; the orchestrator slice (B4: CG4 and CG6 merged on 2026-11-10, CG5 what is left of it) and the endpoint slice (B5: **CG13a, CG13b and CG13c, approved 2026-11-11**). Tasks **CG1-CG13c**, levels L0-L5 plus B4 and B5, critical path, shared-files table. Nothing else in it is approved. |
 
 ## Typos fixed in `spec.md`
 
@@ -20,7 +20,7 @@ None. The file is byte-identical to the text received (`cmp` against the Downloa
 ## Numbers this work holds
 
 - Decisions **D1350-D1369**: D1350-D1362 written and answered, **D1363-D1369 reserved and unused**.
-- Checks **310-314**: 310 and 311 are part A's, 312 and 313 part B's (313 is CG13's, ruled 2026-11-11 and owner-run), 314 is the viewer-role read check (T2, owner-run, only when the orchestrator slice is scheduled); none is written into `docs/gcp-live-checklist.md`.
+- Checks **310-314**: 310 and 311 are part A's, 312 and 313 part B's (313 is CG13's, ruled 2026-11-11 and owner-run), 314 is the viewer-role read check (T2, owner-run; B4 is scheduled — CG4 and CG6 merged on 2026-11-10 — so it is the owner's to run); none is written into `docs/gcp-live-checklist.md`.
 - Findings **F1-F30**; tasks **CL1-CL12** and **CG1-CG13c** (CG13 split into CG13a, CG13b and CG13c on 2026-11-11, when the owner asked for it; this folder's own prefixes, and `O0-O19` and `CSR` belong to other plans).
 - Read above everything on `origin/main` and in the open pull requests: open #1772 (`docs/image-env`) takes D1310-D1329, which overlaps `docs/stateless-orchestrator`'s D1320-D1349. That overlap is not this work's to fix; it is why this block starts above D1349.
 
@@ -30,7 +30,7 @@ None. The file is byte-identical to the text received (`cmp` against the Downloa
 
 ## Waiting on the owner
 
-Tensions **T1 to T6** (reconciliation section 3a) were all ruled on 2026-11-06, each the recommendation, and **T5 was amended on 2026-11-11** (the local watch puts the endpoint ahead of the node and the cache). Each task still needs the owner's explicit go. The graph plan's orchestrator slice waited on `docs/stateless-orchestrator/`, which is now on `main` (O0-O8, O10, O17 and O18 merged; O9 and O12 open drafts), so CG4 merged on 2026-11-10 and CG5 and CG6 are schedulable. **The endpoint slice is no longer conditional: the owner asked for CG13 on 2026-11-11**, which waives D1358's "only if a measurement shows" and replaces its "NOT approved". When both plans run at once, `docs/design/v1.md` has two writers (CL11 and CG3): sequence them.
+Tensions **T1 to T6** (reconciliation section 3a) were all ruled on 2026-11-06, each the recommendation, and **T5 was amended on 2026-11-11** (the local watch puts the endpoint ahead of the node and the cache). Each task still needs the owner's explicit go. The graph plan's orchestrator slice waited on `docs/stateless-orchestrator/`, which is now on `main` (O0-O8, O10, O17 and O18 merged; O9 and O12 open drafts), so CG4 and CG6 merged on 2026-11-10 and CG5 is what is left of B4. **The endpoint slice is no longer conditional: the owner asked for CG13 on 2026-11-11**, which waives D1358's "only if a measurement shows" and replaces its "NOT approved". When both plans run at once, `docs/design/v1.md` has two writers (CL11 and CG3): sequence them.
 
 ## Cross-plan shared files, in the order they are written
 
