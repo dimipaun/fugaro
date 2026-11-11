@@ -46,21 +46,20 @@ repository actually has against it.
 **Added 2026-11-11: the roadmap record, parts P9a–P9g, written and not started.** At the owner's
 request the plan gained the parts that make the coordinator's record carry plans, releases and
 cross-plan edges — what the console dependency graph's GV3.1, GV3.2 and GV4.1 wait on: **P9a** the
-record's shape and reader (plans, releases, assignments, edges), **P9b** its compare-and-set writers
-behind a store fenced to the roadmap subtree, **P9c** `fugaro coordinator roadmap publish` (a plan
-pushed from any checkout, its repository kept as provenance only), **P9d** the front door's
-`roadmap:write` scope and tools, dormant, **P9e** those tools served and the front door's database
-role, **P9f** the CLI's front-door login and the `roadmap` commands, **P9g** `SECURITY.md` and the
-website on what that role reaches. The owner answered **D2110–D2123** the same day — every write
-through the front door's `roadmap:write` scope (D2110, not the recommendation), the push model with
-no repository read (D2111, changed the same day), releases stored in the record (D2113, not the
-recommendation), **a database-wide write role on the front door's account (D2118, not the
-recommendation: it reverses the MCP plan's D922/H3 for the roadmap path, and the plan says what that
-reaches)**, the front door's wiring written by the MCP plan as its **M12** (D2119), the rest as
-recommended. **D2124–D2126** are open in the plan: whether to keep D2118's database-wide role or take
-the path-scoped claim grant, where the 30-day prune runs, and whether M12 carries the paired-device
-delivery. **D2110–D2129** is the block reserved for them; D2127–D2129 are unused. With them the plan
-has 16 parts.
+record's shape and reader (plans, releases, assignments, edges), **P9b** its compare-and-set writers,
+**P9c** `fugaro coordinator roadmap publish` (a plan pushed from any checkout, its repository kept as
+provenance only), **P9d** the front door's `roadmap:write` scope and tools, dormant, **P9e** those
+tools served, their queue and the non-public apply job that applies it as the coordinator's account,
+**P9f** the CLI's front-door login and the `roadmap` commands, **P9g** `SECURITY.md` and the website
+on the queue and the job. The owner answered **D2110–D2126** the same day — every write through the
+front door's `roadmap:write` scope (D2110, not the recommendation), the push model with no repository
+read (D2111, changed the same day), releases stored in the record (D2113, not the recommendation),
+**the front door holding no database write: its requests are queued and applied by the apply job
+(D2118, first answered with a database-wide role and then, after its blast radius was read under
+D2124, back to the recommendation)**, the front door's wiring and the paired-phone delivery written by
+the MCP plan as its **M12** and **M12b** (D2119, D2126), the rest as recommended. **D2127** was answered
+the same day too: M12b binds the phone's approval by number matching, the recommendation. **D2110–D2129** is the block reserved for them; D2128–D2129 are
+unused. With them the plan has 16 parts.
 
 | File | What it is |
 | --- | --- |

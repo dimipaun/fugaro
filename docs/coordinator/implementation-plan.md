@@ -935,112 +935,58 @@ tasks consume them by name. Like P6–P8 since the re-plan of 2026-11-07, they l
 `main`, reached only through `ee/register` (D435). **None of them is approved**: §11's gate passed
 for P0–P6, and each of these needs the owner's explicit go, by name.
 
-**The decisions: D2110–D2117 answered by the owner on 2026-11-11; D2118–D2123 answered the same day; D2124–D2126 open.** They are taken
+**The decisions: D2110–D2127 answered by the owner on 2026-11-11.** They are taken
 from the block **D2110–D2129**, reserved by this work above **D2109**, the highest number written
 or reserved on `main` and in any open pull request on 2026-11-11 (`docs/account-aliases/README.md`
-reserves D2090–D2109); **D2127–D2129** stay reserved and unused. Each was written recommendation
+reserves D2090–D2109); **D2128–D2129** stay reserved and unused. Each was written recommendation
 first, and the column "Answer" says whether the owner took it.
 
 | Decision | The question | Recommendation as written | Answer (owner, 2026-11-11) | Blocks |
 | --- | --- | --- | --- | --- |
-| **D2110** | Who may write the roadmap record, and through what? | (A) the caller's own database role, as P4's report path writes; rules unchanged. (B) a rules write grant to the signed-in reader. (C) the MCP front door with a `roadmap:write` scope. | **(C), not the recommendation: a front-door `roadmap:write` scope.** Every person-written change to the record — a move, an edge, a release — goes through the MCP front door under that scope, and never through a person's own database role. **This amends the MCP plan's D927** (the scope vocabulary): `roadmap:write` joins it, as D1227 added `state:read` and `state:write`. **The consequences, which the parts below carry rather than paper over:** (1) the front door is **off on every installation** (D934) and **no binary links it** (`ee/coordinator/mcpauth/server_test.go`'s `TestNoBinaryLinksTheFrontDoorYet`), and the task that would mount it on a binary **was not written** — so the write half cannot be served until that task exists (**D2119**, answered the same day: the MCP plan's **M12**); (2) the front door's account holds **no database write** — D922's answer, amended by H3, is "no database admin on the public service" — so how its writes reach the database was a new question (**D2118**, answered the same day: a database-wide role on that account, reversing D922/H3 for this path); (3) the CLI and the console, which reach nothing but through the CLI, need a bearer token holding the scope (**D2122**); (4) who may be granted the scope is the MCP plan's lists question again (**D2121**). | P9b, P9d, P9e, P9f, GV3.1 |
+| **D2110** | Who may write the roadmap record, and through what? | (A) the caller's own database role, as P4's report path writes; rules unchanged. (B) a rules write grant to the signed-in reader. (C) the MCP front door with a `roadmap:write` scope. | **(C), not the recommendation: a front-door `roadmap:write` scope.** Every person-written change to the record — a move, an edge, a release — goes through the MCP front door under that scope, and never through a person's own database role. **This amends the MCP plan's D927** (the scope vocabulary): `roadmap:write` joins it, as D1227 added `state:read` and `state:write`. **The consequences, which the parts below carry rather than paper over:** (1) the front door is **off on every installation** (D934) and **no binary links it** (`ee/coordinator/mcpauth/server_test.go`'s `TestNoBinaryLinksTheFrontDoorYet`), and the task that would mount it on a binary **was not written** — so the write half cannot be served until that task exists (**D2119**, answered the same day: the MCP plan's **M12**); (2) the front door's account holds **no database write** — D922's answer, amended by H3, is "no database admin on the public service" — so how its writes reach the database was a new question (**D2118**, answered the same day, finally: a queue the front door writes and a non-public apply job running as the coordinator's account; D922/H3 stands); (3) the CLI and the console, which reach nothing but through the CLI, need a bearer token holding the scope (**D2122**); (4) who may be granted the scope is the MCP plan's lists question again (**D2121**). | P9b, P9d, P9e, P9f, GV3.1 |
 | **D2111** | Who populates the record's tasks from the plan files? | (A) the sweep, from each repository's default branch, through P2's token with `contents: read` added. (B) an admin-run refresh from a checkout. | **First answered (A), then changed the same day (2026-11-11) to a PUSH MODEL WITH NO REPOSITORY — closest to (B), but through the front door and not as an admin.** The roadmap record is **project-level** and works with no particular repository: a project has many, and which one the coordinator should read is not a question it can answer. **Plans, releases and cross-plan edges are all written through the `roadmap:write` scope (D2110) by whoever holds it, from any checkout of any repository**: `fugaro coordinator roadmap publish` (P9c) reads the plan's graph artifact in the current checkout and writes the plan document. Each plan document carries its source — repository, path, commit — **as provenance only, never as a dependency**, and **nothing reads a repository on the coordinator's behalf**: no sweep read, no `contents: read` on P2's token, no Bitbucket path. | P9c |
 | **D2112** | Where do cross-plan and cross-stream edges come from? | (A) the record itself, written by a command. (B) a schema-4 artifact field. | **(A), the recommendation**, written through the front door (D2110). | P9a, P9b, P9d |
 | **D2113** | Does the record store releases and streams? | (A) no document of their own; checked against `docs/release-streams.yaml`. (B) mirror the catalogue into the record. | **Neither as written: releases are stored in the record, as documents of their own, and are NOT checked against `docs/release-streams.yaml`**, which exists only in the Fugaro repository itself; a watched repository without such a file must work. A release is `id`, `stream`, `name`, `state` and `order`, written through the same `roadmap:write` scope; a move into a release the record calls finished is refused by the record's own state. Whether the Fugaro repository's catalogue may seed them is **D2120**. | P9a, P9b, P9d |
 | **D2114** | What is a task's release before anybody moves it? | (A) the plan's own `version`, read and marked "from the plan", never written. (B) the refresh seeds an assignment. | **Follows from D2113; the reading this plan takes is (A)'s, with one change it forces.** A task with no assignment is **unassigned**: nothing is written into the record for it, and the graph draws it in its stream's **unassigned** lane, with the plan's own `version` shown beside it as text marked "from the plan". It is **not** placed in a release box, because a stored release carries a name and no version, so the plan's `0.24` cannot be matched to a release without inventing a rule — and a watched repository's plans may name versions no release carries. `--expect` for an unassigned task is the word `none`, not the plan's value. | P9a, P9b, GV4.1 |
-| **D2115** | What happens to an assignment or an edge whose task leaves every plan? | (A) kept and shown `dangling`, pruned 30 days later. | **(A), the recommendation.** Under D2111's push model a task leaves every plan when a publish drops it or an unpublish removes its plan, and where the prune runs is **D2125** (open: recommended, the front door, lazily). | P9a, P9c |
+| **D2115** | What happens to an assignment or an edge whose task leaves every plan? | (A) kept and shown `dangling`, pruned 30 days later. | **(A), the recommendation.** Under D2111's push model a task leaves every plan when a publish drops it or an unpublish removes its plan, and the prune runs lazily inside publish and unpublish, applied by the apply job (D2125, answered). | P9a, P9c |
 | **D2116** | The record's size bounds. | (A) 200 plan documents per repository, 1,000 tasks and 256 KiB per plan document, 2,000 cross-plan edges per project, titles of 200 characters and reasons of 500. | **(A), the recommendation.** A bound for releases was not in the question; **D2120** proposes one. | P9a, P9b, P9c |
 | **D2117** | Where does the console read the record? | (A) `fugaro graph`'s coordinator scope. | **(A), the recommendation.** The read stays a database read through the person's own credential (`roles/firebasedatabase.viewer`), as §6.22 reads today; only the writes go through the front door. | GV4.1 |
 
-**The decisions D2110's, D2111's and D2113's answers raised (D2118–D2123): answered by the owner on
-2026-11-11.** Each was written recommendation first; the column "Answer" says whether the owner took
-it. **D2118 is the one answered against the recommendation, and it reverses an answered decision of
-another folder (D922, as amended by finding H3)** — the subsection after this table says exactly what
-that costs, and the declined option stays in the "Recommendation as written" cell.
+**The decisions D2110's, D2111's and D2113's answers raised (D2118–D2123), and the ones those raised
+(D2124–D2126): all answered by the owner on 2026-11-11.** Each was written recommendation first;
+the column "Answer" says whether the owner took it. **D2118 was answered twice**: first with a
+database write role on the front door's account (against the recommendation), and then, once the
+owner had read that role's blast radius under D2124, **back to the original recommendation — the
+queue and a non-public apply job**. So D922/H3 stands: the public service holds no database write.
 
 | Decision | The question | Recommendation as written | Answer (owner, 2026-11-11) | Blocks |
 | --- | --- | --- | --- | --- |
-| **D2118** | The front door's account may not hold a database write (D922, H3: "no database admin on the public service"), and the subtree's rules are `.write: false` to every client. How does a `roadmap:write` call reach the record? | **(A), declined:** the front door applies nothing itself; it writes a request into its own D935 store and a non-public apply job, running as the coordinator's account, applies it. (B) a database write role on the front door's account. (C) the person-written documents in the front door's bucket. | **(B), not the recommendation: a database write role on the front door's account.** The front door's `roadmap:write` tools call P9b's writers themselves, synchronously, as the front door's own account `mcp_server`. **This reverses D922/H3 for the roadmap path** — "the public service holds no `firebasedatabase.admin` over anything … only the viewer" (`docs/mcp-server/reconciliation.md` §4a, "D922 — amended (finding H3)") — and that section now carries a dated amendment saying so. There is no apply job and no request queue. What the role is, what it reaches and what has to change: the subsection below. | P9b, P9d, P9e, P9g |
+| **D2118** | The front door's account may not hold a database write (D922, H3: "no database admin on the public service"), and the subtree's rules are `.write: false` to every client. How does a `roadmap:write` call reach the record? | **(A)** the front door applies nothing itself; it queues the request and a non-public apply job, running as the coordinator's account, applies it. (B) a database write role on the front door's account. (C) the person-written documents in the front door's bucket. | **(A), the recommendation — in the end.** The owner first answered (B); under D2124 he read what that role would reach (below) and went back to (A). **The front door holds no database write, and D922/H3 is unchanged.** The queue, the apply job and what each may do are P9e. | P9b, P9d, P9e, P9g |
 | **D2119** | No task mounts the MCP front door on a binary: the MCP plan's M7 and M8 and the stateless plan's O16b all wait on that task, and the MCP README says no task of that plan carries it. P9e waits on it too. Who writes it? | (A) the MCP plan writes it, as a task of its own. (B) this plan writes it. | **(A), the recommendation — the owner's ruling of 2026-11-11.** It is **M12** in `docs/mcp-server/implementation-plan.md`: the front door mounted on a binary, dormant until enabled. M7's and M8's unserved halves, the stateless plan's O16b and this plan's P9e all depend on it. | P9e, P9f, GV3.1, GV3.2 |
 | **D2120** | Releases' bounds, and may a repository's `docs/release-streams.yaml` seed them? | **(A) At most 200 releases per project and 32 streams**, a release `id` of `^[a-z0-9][a-z0-9.-]{0,39}$` and a `name` of 64 characters; a stream name of `^[a-z0-9][a-z0-9-]{0,31}$`. **Seeding is an optional flag of the publish** — `fugaro coordinator roadmap publish --releases <file>` (P9c), for a repository that carries such a catalogue, writing one release per catalogue line through the same scope and skipping any that exists — **never automatic**, so a repository without the file loses nothing and the file is not a second source after the import. | **(A), the recommendation.** | P9a, P9c |
 | **D2121** | Which of the front door's identities may hold `roadmap:write`? | **(A) An operator only** (D933's operator list), and **never by default**: `roadmap:write` is not in `DefaultScopes` (the stateless plan's O16a sets that list to `tasks:read, tasks:write`), so a sign-in that names no scope never holds it, and a paired phone's approval page names it in words when it is asked for. A launcher asking for it is refused. | **(A), the recommendation.** | P9d |
 | **D2122** | How does the CLI — and so the console, which reaches nothing but through the CLI — get a bearer token holding `roadmap:write`? No client of the front door exists in the tree. | **(A) A CLI client of the front door**: `fugaro coordinator login --scope roadmap:write` runs the authorization-code flow with PKCE M5 serves, on a loopback redirect, as a client registered for the installation; the refresh token is kept in the operating system's keychain and never in a file; the console spawns the CLI, which presents it. It is part **P9f**. | **(A), the recommendation.** | P9f, GV3.1 |
 | **D2123** | Under the push model a plan id is a project-wide name (D2111), so two repositories can publish a plan of the same id. What does a publish do when the stored document's provenance names another repository? | **(A) Refuse it**, naming the repository the stored plan came from, unless the publish says `--replace-source`; a publish from the same repository replaces as usual. Provenance stays provenance — nothing reads it — but a silent overwrite of another repository's plan is the one place it is worth a sentence. | **(A), the recommendation.** | P9b, P9c |
+| **D2124** | Confirm D2118 against the one path-scoped alternative: a database-wide IAM role on the public service, or a rules grant on `coordinator/project/roadmap` reached by a custom-token claim the front door mints for itself? | (B) the claim-scoped rules grant. (A) keep D2118's database-wide role. | **Neither: the owner went back to D2118's original recommendation, the queue and the apply job**, after seeing the role's blast radius. No database role on the front door, no custom-token claim, no rules change. | P9b, P9e, P9g |
+| **D2125** | With no apply job and no sweep in the roadmap's path, where does D2115's 30-day prune of dangling assignments and edges run? | (A) lazily inside publish and unpublish, at most 100 deletions per call. | **(A), the recommendation — run by the apply job** when it applies a publish or an unpublish request, as the coordinator's account; the front door deletes nothing. | P9b, P9e |
+| **D2126** | M12 owes M5b's delivery of a sign-in flow to the paired device (a QR of the flow's binding on the launcher's page, the phone reading it), which touches the mobile app and the console. Does M12 carry it? | (A) a task of its own, M12b; M12 refuses to enable a door that lacks it. | **(A), the recommendation.** M12b is in `docs/mcp-server/implementation-plan.md`. | M12, P9e |
 
-#### D2118's consequence: the role, its reach, and what changes
+**Considered and declined on 2026-11-11: a database write role on the front door.** Recorded so a
+later reader finds it priced rather than lost. The role would have been a custom one holding
+`firebasedatabase.instances.get` and `.update` on the `mcp_server` account. Realtime Database IAM has
+no path-level scope (`SECURITY.md`, the credentials service's paragraph), so it would have reached
+the whole database — the policy, the stop switches, the devices and pairing nodes, spend, outcomes,
+the credentials service's nodes — from the one service that answers the internet, with the front
+door's own code as the only fence. The path-scoped alternative (a rules grant reached by a claim the
+front door mints) would have reversed D923 and been forgeable by any launcher. The owner declined
+both and kept the queue.
 
-**The role.** A custom role of the installation's Firebase project — named here
-`fugaroFrontDoorDatabase` — holding exactly **`firebasedatabase.instances.get` and
-`firebasedatabase.instances.update`**, bound to the front door's own account `mcp_server` and to no
-other, with no condition. It is the shape `.claude/rules/credentials-service.md` already fixes for the
-credentials service's `fugaroCredentialsDatabase`, and for the same reason: the two **data**
-permissions and nothing of the instance's lifecycle, so neither `roles/firebasedatabase.admin` (which
-could delete the database) nor `roles/firebasedatabase.viewer` (which cannot write). It **replaces**
-the get-only role the stateless plan's O16b planned for the same account (D2020 (a)) — one role per
-account, not two — so O16b's `TestFrontDoorStateRoleHoldsNoDatabaseWrite` cannot stand as written, and
-that plan carries a dated note saying so. **UNVERIFIED**: that `instances.update` alone admits a REST
-data write through an OAuth access token is what the credentials service's role relies on, and it is
-read here from `SECURITY.md` rather than measured for this account; the owner check in §9 measures it.
+**The decision these answers raised (D2127), answered by the owner on 2026-11-11: number matching,
+the recommendation.**
 
-**It is not path-scoped, and cannot be made so by IAM.** `SECURITY.md` says it already, of the
-credentials service: Realtime Database IAM **has no path-level scope** — a binding is per instance and
-reaches the whole database, and a condition would be a fence that looks like one and is not. **So the
-grant is database-wide.** An identity holding it is outside the rules, which bind clients only.
-**A path-scoped write is possible, but only by not using IAM at all**: the front door could sign in
-to the database with a custom token carrying a claim that a rules grant on
-`coordinator/project/roadmap` admits, and hold no database role. That fence is real at the database
-— but D923's answer is that the coordinator mints no custom token of its own, and any principal that
-can sign as a service account of the project (every launcher, through the token minter; the M7 note
-on `internal/infra/tokensigners.go`) could mint the same claim and write the roadmap directly. It is
-**D2124**, open, for the owner to confirm the answer against.
-
-**What the front door's account can reach with it — the blast radius, stated.** Read and write of the
-**whole installation database**: `config/policy` (the published policy, its allow-lists and its
-model routes), `config/kill` (the stop switches, including the one that would stop a misbehaving
-front door), `config/admin/devices` and the pairing nodes (so a compromised front door could add a
-paired device, and a paired device approves front-door sign-ins: the reach feeds itself), `spend`
-(the budget's counters and leases), `outcomes` (a run's write-once outcome, which the credentials
-service's identity check reads first), `creds` (the credentials service's marks and leases),
-`orchestrator`, the whole of `coordinator/`, and the `mcpauth` tripwire node. Not: the instance's
-lifecycle, Secret Manager, or any other project's database. **Before this answer** the account already
-held the launcher's permissions on every project job, `run.jobs.runWithOverrides` included (the
-owner's ruling of 2026-11-09, an accepted v1 risk), `roles/storage.objectAdmin` on its own record
-store, and — once O16b lands — a whole-database read; a compromise could already start any command
-with a job's credentials. **What this adds** is the ability to change the installation's own controls
-(policy, stop switches, devices, spend) without starting anything, from a service that answers the
-internet.
-
-**What fences it, honestly.** The code, and only the code: the front door's database client is a
-store that refuses every path outside `coordinator/project/roadmap` before a request is made — the
-same kind of fence as the subtree check in `ee/coordinator/state.go` (D194), narrower — and a guard test
-holds that no file of the front door's packages opens a database client any other way. That is a fence
-against a bug, not against a compromised revision, and the pull request that adds the role says so.
-**A mutation test that the front door cannot read or write outside the roadmap subtree is achievable at the
-code layer and not at the database layer**: under the IAM role, an emulator or rules test cannot
-show it, because IAM bypasses the rules; under D2124's alternative it can.
-
-**What must change, and in which part.**
-- **P9b**: the writers' identity is the front door's account; the fenced store and its guard test; the
-  IAM test asserts that `mcp_server` holds exactly the custom role's two permissions, not `admin`, no
-  condition, and that no job account holds any database role.
-- **P9e**: the role, its binding and the golden plans; there is no apply job.
-- **P9g** (new, docs): `SECURITY.md` — the front door's section says today that the public service
-  holds only the viewer, which stops being true — regenerated into `website/content/security.md`,
-  and `docs/mcp-server/spec.md` §8's statement of the same, in the release that turns the role on.
-- **§7's security table**: P9b's and P9e's rows name the reversal.
-- **The rules tests** stay: they show that no *client* writes a roadmap node, which is still true;
-  they say nothing about `mcp_server`, and the plan does not pretend they do.
-- **Reviewer tier**: every part that writes, grants or documents the role is opus + mandatory
-  independent review, level 3 in the run.
-
-**The new open decisions these answers raise (D2124–D2126).** Written recommendation first; the parts
-are written to the owner's answers above, and to these recommendations where a part needs one.
-
-| Decision | The question | Recommendation | The alternative, and its cost | Blocks |
+| Decision | The question | Recommendation | Answer (owner, 2026-11-11), and the alternative as written | Blocks |
 | --- | --- | --- | --- | --- |
-| **D2124** | Confirm D2118 against the one path-scoped alternative: a database-wide IAM role on the public service, or a rules grant on `coordinator/project/roadmap` reached by a custom-token claim the front door mints for itself? | **(B) the claim-scoped rules grant**, which this plan recommends asking the owner to confirm against D2118's answer: the front door holds no database role; a compromise reaches the roadmap and nothing else; the fence is the rules, testable on the emulator. Its cost is real: it reverses D923's "the coordinator mints no custom token", and any launcher able to sign as a project service account could write the roadmap directly, skipping the operator-only scope (D2121). | **(A) keep D2118 as answered** — the IAM role, database-wide, fenced in code only; this is what the parts are written to until the owner says otherwise. | P9b, P9e, P9g |
-| **D2125** | With no apply job and no sweep in the roadmap's path, where does D2115's 30-day prune of dangling assignments and edges run? | **(A) In the front door, lazily**: every `roadmap:write` call that publishes or unpublishes a plan also deletes, through the same fenced store, the dangling items older than 30 days — at most 100 per call — so no schedule exists and a record nobody writes to does not grow. | **(B) A scheduled job of its own**: a schedule, a job and a grant for a few deletes. **(C) The coordinator's sweep (P5)**: opt-in and off by default, and it would make the sweep a roadmap writer again, which D2111's answer removed. | P9b, P9e |
-| **D2126** | M12 owes M5b's delivery of a sign-in flow to the paired device (a QR of the flow's binding on the launcher's page, the phone reading it), which touches the mobile app and the console. Does M12 carry it? | **(A) No: a task of its own, M12b**, in the MCP plan, and M12 refuses to enable a front door whose installation has not got it, so the door is mounted dormant and cannot be switched on half-built. | **(B) M12 carries it**: one task across the Go server, the console and the mobile app. | M12, P9e |
+| **D2127** | M12b delivers a sign-in flow to the paired phone, and finding M-a admits two ways to bind the approval to the sign-in in front of the person: a **QR** of the flow's binding on the launcher's page that the phone scans, or **number matching** (the page and the phone show the same short number and the person confirms they agree). Which does M12b build? | **(A) Number matching.** It needs no new dependency (a QR encoder for the page and a camera scanner in the app would be two, which the repository adds only with the owner's go), it works when the launcher's page is on another machine, and the phone already shows the client marked unverified and the redirect host (M-a). | **(A), the recommendation — number matching** (owner, 2026-11-11). The alternative as written: **(B) QR**: proves the phone is in front of the page, which number matching proves only through the person; costs a Go QR encoder and a mobile scanner dependency, each to be approved. | M12b |
 
 ---
 
@@ -1110,13 +1056,13 @@ rule; the review confirms the strict decode and the sanitising.
 
 ---
 
-### P9b — The roadmap writers: compare-and-set, the refusals, and the front door's fenced store (D2110, D2118)
+### P9b — The roadmap writers: compare-and-set, the refusals, and the identity that applies them (D2110, D2118)
 
 **Scope.** The writer library over P9a's shape, and the database half of the fence. It is called by
-one thing: the front door's `roadmap:write` tools (P9d, served by P9e), running as the front door's
-own account `mcp_server` with the database role D2118's answer gives it. No CLI command and no
-person's credential calls it: D2110's and D2111's answers are that every change — a published plan,
-a move, an edge, a release — reaches the record only through the front door.
+one thing: the **apply job** (P9e), a non-public job running as the coordinator's account, applying
+the requests the front door's `roadmap:write` tools queue (D2118 as finally answered). No CLI command,
+no person's credential and not the front door calls it: every change — a published plan, a move, an
+edge, a release — reaches the record only through the front door's queue and the apply job.
 
 - **The plan document's publish and unpublish**: read, compare, and put on the document's own ETag;
   an unchanged document writes nothing and moves no ETag (P5's idempotency); a publish carrying
@@ -1136,19 +1082,16 @@ a move, an edge, a release — reaches the record only through the front door.
   D2112), an endpoint no plan document carries, an edge that closes a cycle across the record and
   the plan documents (a cycle is a refusal, not a render), and a write past D2116's bounds.
 
-**The fence, after D2118.** The rules do not change: `.write: false` stays on the whole subtree,
-and three client identities are shown unable to write any roadmap node — the signed-in reader (the
-phone's and the console's claim), a project token and a run's token. **The writer is not a client**:
-the front door's account holds a database-wide role (D2118, and its consequence above), so the only
-fence between it and the rest of the database is **the store it writes through** — a store over
-`internal/rtdb` that refuses every path outside `coordinator/project/roadmap`, for reads as well as
-writes, before any request is made. A guard test walks the front door's packages and refuses any
-other construction of a database client there. No job's account holds a database role, and the front
-door's holds the custom role's two permissions and nothing more.
+**The fence.** The rules do not change: `.write: false` stays on the whole subtree, and three client
+identities are shown unable to write any roadmap node — the signed-in reader (the phone's and the
+console's claim), a project token and a run's token. The one writer is the coordinator's account,
+which already holds the database role (D194) and is reachable from no network; its code reaches the
+database only through `Store`, whose subtree check keeps it under `coordinator/` (P3). **The front
+door's account holds no database write** (D922/H3, unchanged), and no job's account holds a database
+role.
 
-**Interfaces.** The writers as methods of a roadmap store whose only paths are under
-`coordinator/project/roadmap` (`ErrOutsideRoadmap` for any other), taking an `Actor` (the front
-door's verified principal, which becomes `by` on every document); `ErrMoveStale`, `ErrUnknownTask`,
+**Interfaces.** The writers as `Store` methods taking an `Actor` (the verified principal the front
+door recorded on the queued request, which becomes `by` on every document); `ErrMoveStale`, `ErrUnknownTask`,
 `ErrUnknownRelease`, `ErrReleaseFinished`, `ErrEdgeRefused` (with the reason) and
 `ErrRoadmapTooLarge`, each a sentence naming what to change.
 
@@ -1156,8 +1099,7 @@ door's verified principal, which becomes `by` on every document); `ErrMoveStale`
 `internal/budget/rules/coordinator_test.go` and `internal/budget/rules/emulator_coordinator_test.go`
 (the three identities at each roadmap node); `internal/infra/firebase_test.go` (the Firebase root's
 admin members are the budget admins, the history account and the coordinator's account, never a
-job's account; and the front door's account holds the custom role's `get` and `update` and nothing
-else). `SECURITY.md` is P9g's, not this part's.
+job's account and never the front door's). `SECURITY.md` is P9g's, not this part's.
 
 **Tests.** `TestMoveRefusesAStaleExpectAndMovesNothing`, `TestMoveLostRaceIsReComparedNotRetriedBlind`
 (a second writer between the read and the put), `TestMoveRecordsPrevSoTheInverseRestores` (a move and
@@ -1166,34 +1108,29 @@ its inverse leave the document as it was but for `by` and `at`), `TestMoveRefuse
 `TestReleaseInUseIsNotDeleted`, `TestEdgeRefusesSelfInPlanAndCycle`, `TestRoadmapBoundsAreEnforced`,
 `TestPublishUnchangedWritesNothing`, `TestPublishWithAStaleExpectIsRefused`, `TestRoadmapNodesAreWrittenByNoClient` (the generated rules),
 the emulator's three identities refused a write at each node, and
-`TestNoJobAccountHoldsTheDatabase`, `TestFrontDoorHoldsOnlyTheRoadmapRole`,
-`TestRoadmapStoreRefusesEveryPathOutsideRoadmap` (a read and a write of `config/kill/global`,
-`config/policy/shared` and `coordinator/repos/x` are each refused before a request is made), and
-`TestFrontDoorOpensNoOtherDatabaseClient` (the guard walk).
+`TestNoJobAccountHoldsTheDatabase` and `TestFrontDoorHoldsNoDatabaseWrite`, and
+`TestPruneDeletesAtMostOneHundredDanglingItems` (D2125).
 
 **Red step.** `TestMoveLostRaceIsReComparedNotRetriedBlind` fails when the move is built on `Write`
 — the mutation that makes this a compare-and-set test rather than a round trip. Then, in a scratch
 tree: add `.write: "USER"` under the roadmap node of `internal/budget/rules/rules.json.tmpl`, and both
-rules tests must fail; grant a job's account the admin role, or the front door's account `admin`
-instead of the custom role, and the IAM tests must fail; widen the roadmap store's prefix to
-`coordinator/` and `TestRoadmapStoreRefusesEveryPathOutsideRoadmap` must fail — **the mutation
-that proves the code fence; no database-layer mutation can, because IAM bypasses the rules (D2124).**
+rules tests must fail; grant a job's account, or the front door's, a database role in the Firebase
+root, and the IAM tests must fail.
 
 **Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./ee/coordinator/
 ./internal/budget/rules/ ./internal/infra/ -run 'Roadmap|Move|Release|Edge|Publish|Coordinator|NoJobAccount'
 -count=1`; the emulator half under the `firebase` tag (`go test -tags firebase
 ./internal/budget/rules/ -run Coordinator -count=1`), which CI's firebase job runs.
 
-**Depends on.** P9a; D2110, D2112–D2114, D2116, D2118, D2120 (answered); **D2124** and **D2125**
-(open).
+**Depends on.** P9a; D2110, D2112–D2114, D2116, D2118, D2120, D2124 and D2125 (answered).
 
 **Reviewer tier.** **SECURITY-SENSITIVE** — **opus + mandatory independent review**, and the run asks
 for **level 3 in the run** (`--review-levels`), never a separate local reviewer.
 **Security-sensitive.** **Yes — the writers into the subtree the rules keep every client out of.**
 The pull request body must state: that the rules are unchanged; which identities were shown unable
-to write; that the writer is the front door's account under a database-wide role (D2118) and that
-the roadmap store is the only fence, with its mutation; why the move does not retry blind; and the
-bounds.
+to write; that the one writer is the coordinator's account through the apply job and the front
+door holds no database write (D2118, D922/H3); why the move does not retry blind; the prune's
+bound; and the size bounds.
 
 **Commit.** `coordinator: the roadmap writers, compare-and-set, and the identities kept out`
 
@@ -1257,7 +1194,7 @@ document. Mutations: let the command call P9b's writer with the person's credent
 'PlanStatus|PlanID' -count=1`.
 
 **Depends on.** P9d (the publish tool) and P9f (the login and the `roadmap` group); D2111 (answered);
-D2120, D2122 and D2123 (answered); **D2125** (open: the prune rides on publish). It builds against a
+D2120, D2122, D2123 and D2125 (answered). It builds against a
 fake front door; it writes a real record only once **P9e** serves the tools.
 
 **Reviewer tier.** **SECURITY-SENSITIVE** — **opus + mandatory independent review**, level 3 in the
@@ -1292,16 +1229,18 @@ calls**, so nothing is served. In `ee/coordinator/mcpauth/`:
   `roadmap_need` and `roadmap_unneed` (`task`, `needs`, `reason`), `roadmap_release_set` (`id`,
   `stream`, `name`, `state`, `order`, `expect`). The handlers
   validate the arguments with P9a's shape checks and D2116's and D2120's bounds, read the record to
-  refuse a stale `expect` at once, and call P9b's writers through the roadmap store (D2118's answer: synchronously, as the front
-  door's own account), so the answer is the outcome itself. D2125's lazy prune rides on the publish
-  and unpublish tools. The answer is the request's id and what it asked for,
+  refuse a stale `expect` at once, and **queue** the request (P9e): the answer is the request's id, never a database path. A seventh
+  tool, `roadmap_request` (`id`), reads one request's outcome back — `applied`, `refused` with the
+  reason and the current value, or `failed` — for the caller that queued it. The front door writes
+  nothing to the database (D2118, D922/H3). The answer is the request's id and what it asked for,
   and never a database path (the MCP spec's §9: the node layout stays private).
 - **Dormant, and licensed.** The package is business-licensed (`ee/`, `.claude/rules/ee.md`); the front
   door is off on every installation (D934), and nothing outside the package's own tests calls the
   registration function, so `TestNoBinaryLinksTheFrontDoorYet` still holds.
 
-**Interfaces.** `ScopeRoadmapWrite = "roadmap:write"`; the six catalogue rows; `RegisterRoadmapTools(reg,
-store)`, taking P9b's roadmap store and nothing that can reach another path.
+**Interfaces.** `ScopeRoadmapWrite = "roadmap:write"`; the seven catalogue rows; `type RoadmapQueue
+interface` (submit one request, read one request's outcome) — **no database write method**;
+`RegisterRoadmapTools(reg, queue, reader)`.
 
 **Files (at most 7).** `ee/coordinator/mcpauth/limits.go`, `ee/coordinator/mcpauth/limits_test.go`,
 `ee/coordinator/mcpauth/authorize.go` and `ee/coordinator/mcpauth/authorize_test.go` (the operator
@@ -1315,8 +1254,8 @@ its test in `ee/coordinator/mcpauth/`.
 `TestARunTokenOrAProjectTokenIsNotAFrontDoorToken` (a database custom token of the RUN or TOKEN shape
 presented as a bearer is refused before any scope is read), `TestATaskScopeTokenCannotReachTheRoadmapTools`
 and `TestAStateScopeTokenCannotReachTheRoadmapTools`, `TestRoadmapToolsMapToRoadmapWrite`,
-`TestRoadmapToolsRefuseAStaleExpectBeforeWriting`, `TestRoadmapToolsTakeOnlyTheRoadmapStore`
-(reflective: no other database handle reaches a handler), `TestARoadmapAnswerNamesNoDatabasePath`, `TestATokenMintedBeforeTheRoadmapScopeStillServes`
+`TestRoadmapToolsRefuseAStaleExpectBeforeQueueing`, `TestRoadmapQueueHasNoDatabaseWriteMethod`
+(reflective), `TestARequestOutcomeIsReadOnlyByItsCaller`, `TestARoadmapAnswerNamesNoDatabasePath`, `TestATokenMintedBeforeTheRoadmapScopeStillServes`
 (the HARD RULE's converge test: a stored record holding today's scopes is served unchanged), and
 `TestNoBinaryLinksTheFrontDoorYet` unchanged.
 
@@ -1330,8 +1269,7 @@ Mutation: drop the operator check, and both launcher tests must fail.
 ./internal/eeboundary/ -count=1`.
 
 **Depends on.** P9a, P9b; M7 (built); the stateless plan's **O16a** (it edits the same three files and
-sets `DefaultScopes`; this part serializes after it); D2110, D2118 and D2121 (answered); **D2125**
-(open: the prune).
+sets `DefaultScopes`; this part serializes after it); D2110, D2118 and D2121 (answered).
 
 **Reviewer tier.** **SECURITY-SENSITIVE** — **opus + mandatory independent review**, **level 3 in the
 run** (`--review-levels`). **Security-sensitive.** **Yes — a write scope on a public authorization
@@ -1345,71 +1283,109 @@ what a paired phone is shown; and that nothing is served.
 
 ---
 
-### P9e — The roadmap tools served, and the front door's database role (D2118, D2119) — WAITS on M12
+### P9e — The roadmap tools served, the queue and the apply job (D2118, D2119, D2125) — WAITS on M12
 
 **Waits on, and the trigger for each.** (1) **M12** in `docs/mcp-server/implementation-plan.md`, the
-front door mounted on a binary — the owner's ruling of 2026-11-11 (D2119) put it in that plan; **until
-it lands this part cannot be built to a served door, and neither can GV3.1's or GV3.2's live half.**
-(2) P9d merged. (3) **D2124** confirmed or left as answered, because it decides whether this part
-grants a role at all.
+front door mounted on a binary — the owner's ruling of 2026-11-11 (D2119); M12 in turn enables a door
+only once **M12b** has landed (D2126). **Until M12 lands this part cannot be built to a served door,
+and neither can GV3.1's or GV3.2's live half.** (2) P9d merged.
 
-**What can be named now, to D2118 as answered.** The custom role `fugaroFrontDoorDatabase` (exactly
-`firebasedatabase.instances.get` and `firebasedatabase.instances.update`, no condition) in the
-Firebase project the database lives in, bound to the `mcp_server` account alone, under the same
-`var.mcp_server` switch as the rest of the front door, in a file of
-`deploy/terraform/gcp/modules/installation/` beside the front door's store — never in the
-coordinator's own file, which pins how many times it names that account. It **replaces** the get-only
-role O16b planned for the same account: whichever of O16b and this part lands second removes the
-other's binding, and O16b's no-write test is rewritten to "exactly get and update". A `grantRules` row
-in `internal/infra/tf/cover.go` added on purpose (`.claude/rules/terraform.md`), naming the reversal
-of D922; the golden plans regenerated by `scripts/gen-golden-plans.sh`; P9d's tools registered beside
-M8's in the file M12 names; the release's notes under `docs/releases/` (`### For operators`: "run
-`fugaro update`", and that the managed plan gate asks its own typed confirmation for an IAM grant).
-**There is no apply job and no request queue** (D2118 declined them). D2125's prune runs inside the
-publish and unpublish tools.
+**The queue: its store and its retention.** A bucket of its own, `fugaro-roadmap-queue-<project>`,
+created under the same `var.mcp_server` switch as the front door — **not** the D935 record store,
+whose IAM names the front door's account alone and must keep doing so. Uniform bucket-level access,
+public access prevention enforced, and exactly two bindings: the front door's account
+`roles/storage.objectCreator` and `roles/storage.objectViewer` (it writes a request and reads its
+outcome; it cannot overwrite or delete either), and the coordinator's account
+`roles/storage.objectAdmin`. One object per request, named by the request's id, holding the
+verified principal, the tool, its arguments and the `expect` the tool already checked; its outcome is a
+second object beside it. **Retention: seven days**, by a lifecycle rule on the bucket, so a request
+and its outcome are deleted whatever happens to the job; the project viewers' convenience bindings
+are stripped with `internal/infra.RemoveProjectViewers`, as the D935 store's are.
 
-**Tests named now.** `TestFrontDoorRoleIsExactlyGetAndUpdate` (from the plan, not the code),
-`TestFrontDoorRoleIsNeverAdmin`, `TestFrontDoorRoleHasNoCondition` (a condition would be a fence that is
-not one: `SECURITY.md`), `TestCoverAdmitsTheFrontDoorRoleOnPurpose`, `TestServedRoadmapToolsUseTheRoadmapStore`,
-and `TestUpdateConvergesAnInstallationAtThePreviousRelease` (the HARD RULE's converge test: an
-installation with the front door on at the release before converges in one `fugaro update`, a second
-writes nothing, and O16b's binding, if present, is replaced rather than left beside the new one).
+**The apply job: its identity, its trigger, what it may write.**
+- **Identity:** the coordinator's account (`fugaro-coordinator`, P5), which already holds the
+  database role and the subtree check (D194, P3) and is not reachable from any network. The front
+  door's account holds **no database write** (D922/H3).
+- **Trigger:** the front door starts one execution of the job (`fugaro coordinator roadmap apply`)
+  after it queues a request, through **one** grant — `run.jobs.run` on that job alone, no overrides
+  (the execution reads the queue itself, so nothing a caller sends rides on the execution). A
+  Scheduler entry every 5 minutes, `retry_count = 0`, applies anything a failed start left. Two
+  executions at once are harmless: each claims a request by writing its outcome object with a
+  generation precondition of zero, and the loser skips it, so **a request is applied at most once**.
+- **What it may write:** the roadmap's nodes, through P9b's writers and nothing else (asserted on its
+  dependency list), and the outcome objects; it reads the record and the queue. It reads no
+  repository (D2111).
+- **Validation:** each request is applied by P9b's compare-and-set rules, so `expect` is checked
+  **again** at apply time, a lost ETag race is re-read and re-compared, and every refusal P9b names
+  (unknown task or release, a finished release, a cycle, a bound) is applied here as there.
+- **What is reported back:** the outcome object — `applied` (with the new version), `refused` (the
+  error's sentence and the value the record holds now, so the caller can re-read and try again), or
+  `failed` (the database could not be reached; the job tries a request at most 3 times across
+  executions and then writes `failed`, so nothing stays pending past its retention). The front door's
+  `roadmap_request` tool reads it; the CLI waits for it (P9f).
+- **The prune (D2125):** when the job applies a publish or an unpublish request, it also deletes, as
+  the coordinator's account, at most 100 assignments and edges that have been `dangling` for 30 days.
 
-**Runs in flight.** The role is the front door's; no run holds it, and a run in flight reads and
-writes exactly what it did.
+**Files and Terraform.** The apply command and its test in `ee/coordinator/cli/`, the queue reader and
+writer in `ee/coordinator/` and the front door's `RoadmapQueue` in `ee/coordinator/mcpauth/`; in
+`deploy/terraform/gcp/modules/installation/`, beside the coordinator's job: the queue bucket and its
+two bindings, the apply job, its schedule, and the front door's `run.jobs.run` on that job; a
+`grantRules` row in `internal/infra/tf/cover.go` added on purpose (`.claude/rules/terraform.md`); the
+golden plans regenerated by `scripts/gen-golden-plans.sh`; P9d's tools registered beside M8's in the
+file M12 names; the release's notes under `docs/releases/` (`### For operators`: "run `fugaro
+update`", and that the managed plan gate asks its own typed confirmation for an IAM grant).
+
+**Tests named now.** `TestFrontDoorHoldsNoDatabaseWrite` (still, after this part),
+`TestApplyJobIsNotPublic` (no invoker binding), `TestFrontDoorMayRunOnlyTheApplyJob` (and without
+overrides), `TestQueueBucketHasExactlyTwoMembers`, `TestTheD935StoreKeepsItsOneMember`,
+`TestApplyRechecksExpectAtApplyTime`, `TestARequestIsAppliedAtMostOnce` (two executions, one
+request), `TestAFailedRequestIsReportedAfterThreeAttempts`, `TestQueueRetentionIsSevenDays`,
+`TestApplyWritesOnlyTheRoadmap` (dependency list), `TestApplyPrunesAtMostOneHundred`, and
+`TestUpdateConvergesAnInstallationAtThePreviousRelease` (the HARD RULE's converge test: an
+installation with the front door on at the release before converges in one `fugaro update`, and a
+second writes nothing).
+
+**No conflict with the stateless plan's O16b.** O16b gives the front door's account a get-only
+database role (D2020 (a)); this part gives that account no database role at all, and the writer is
+the coordinator's account. The two land in either order.
+
+**Runs in flight.** The job, the bucket and the grant are the front door's and the coordinator's; no
+run holds them, and a run in flight reads and writes exactly what it did.
 
 **Reviewer tier.** **SECURITY-SENSITIVE** — **opus + mandatory independent review**, level 3 in the
-run. **Security-sensitive.** **Yes — a database-wide read and write on the one service that answers
-the internet, reversing D922/H3 for this path.** The pull request body must state the role, that it is
-database-wide, the blast radius in D2118's consequence above, and that the code is the only fence.
+run. **Security-sensitive.** **Yes — the path by which a request from outside reaches the database.**
+The pull request body must state: the front door still holds no database write; the queue's two
+bindings and its retention; the one `run.jobs.run` grant and that it carries no override; that each
+request is re-checked and applied at most once; and what the apply job may write.
 
-**Commit.** `coordinator: the roadmap tools served, and the front door's database role (P9e)`
+**Commit.** `coordinator: the roadmap tools served, queued and applied by a job that is not public (P9e)`
 
 ---
 
-### P9g — `SECURITY.md` and the website say what the front door's database role reaches (D2118)
+### P9g — `SECURITY.md` and the website describe the roadmap queue and its apply job (D2118)
 
-**Scope.** Docs only, and it lands with P9e or right after it, in the same release. the section of `SECURITY.md`
-on the hosted MCP front door says today that the public service holds only the database
-viewer; after P9e it holds a database-wide read and write, and the section says so in the words
-D2118's consequence uses: the role, that IAM cannot scope it, what it reaches, and that the fence is
-the front door's own code. `website/content/security.md` is regenerated from it with `go run
-./internal/clidoc` (`.claude/rules/credentials-service.md`), and `docs/mcp-server/spec.md` §8's
-statement of the public service's database reach gets a dated amendment note.
+**Scope.** Docs only, landing with P9e or right after it, in the same release. The section of
+`SECURITY.md` on the hosted MCP front door **keeps saying that the public service holds only the
+database viewer** — it still does — and gains what is new: the roadmap queue bucket and its two
+members, that the front door may start the apply job and nothing else of it, and that the apply job
+runs as the coordinator's account, re-checks each request and writes only the roadmap.
+`website/content/security.md` is regenerated from it with `go run ./internal/clidoc`
+(`.claude/rules/credentials-service.md`), and `docs/mcp-server/spec.md` §8 gets a dated note naming
+the queue beside the D935 store.
 
 **Files (at most 3).** `SECURITY.md`, `website/content/security.md` (generated), `docs/mcp-server/spec.md`.
 
-**Tests.** The existing `TestDocsWebsiteSecurity*` drift tests, the MCP folder's docs tests, and the
-website's `npm run check` for the page.
+**Tests.** The existing website-security drift tests, the MCP folder's docs tests, and the website's
+`npm run check` for the page.
 
 **Verification.** `go test ./internal/cli/ -run Docs -count=1`; `cd website && npm run check`.
 
-**Depends on.** P9e (the sentence describes what P9e grants); D2118 (answered), D2124 (open).
+**Depends on.** P9e (the text describes what P9e builds); D2118 and D2124 (answered).
 
 **Reviewer tier.** **SECURITY-SENSITIVE** — **opus + mandatory independent review**, level 3 in the
 run: it is the document a reader trusts about who can write what. **Security-sensitive.** Yes.
 
-**Commit.** `docs(security): the front door's database role, and what it reaches (P9g)`
+**Commit.** `docs(security): the roadmap queue and its apply job (P9g)`
 
 ---
 
@@ -1420,8 +1396,9 @@ roadmap:write` runs the authorization-code flow with PKCE that M5 serves, on a l
 with the installation's front-door URL read from its outputs; the refresh token is kept in the
 operating system's keychain and never in a file, and `fugaro coordinator logout` deletes it. The
 `roadmap` group's writes are calls to P9d's tools with that token: `need` and `unneed`, and
-`releases set`. The group is created here; `publish` (P9c) and GV3.1's `move` join it. Each prints what the front door accepted and then the
-outcome it reads back; each refuses with one sentence when no token is held (naming `fugaro
+`releases set`. The group is created here; `publish` (P9c) and GV3.1's `move` join it. Each prints the request id the front door
+queued, then waits up to 60 seconds for its outcome (`roadmap_request`, P9e) and prints it; past
+that it prints the id as `pending`, and `fugaro coordinator roadmap request <id>` reads it later; each refuses with one sentence when no token is held (naming `fugaro
 coordinator login`) and when the front door is off.
 
 **Interfaces.** The subcommands and their `--json` documents; a new §6 section of
@@ -1490,7 +1467,8 @@ P7(was blocked: D196, answered) ── P8(was blocked: D197, answered)
 console tasks they unblock.** With P9a–P9g the plan has **16 parts**, **13 of them SECURITY-SENSITIVE**
 (P9b–P9g join §7's five; P9a is careful). Every write — a published plan, a move, an edge, a release
 — goes through the front door's `roadmap:write` scope (D2110, D2111) and is written by the front
-door's own account under a database-wide role (D2118), so the write half waits on **the MCP plan's
+door's queue and applied by a non-public job as the coordinator's account (D2118), so the write
+half waits on **the MCP plan's
 M12, the front door mounted on a binary (D2119)**. The edges, from each part's
 **Depends on**, with the console's two consumers (`docs/console-dependency-graph/implementation-plan.md`)
 and the external predecessors beside them:
@@ -1498,7 +1476,7 @@ and the external predecessors beside them:
 ```
 P3, P4 (built) ── P9a ── P9b ── P9d ── P9f ── P9c
                      O16a (stateless plan) ── P9d
-                    M12 (MCP plan, D2119) ── P9e ── P9g ←── P9d; D2124 confirmed
+        M12b ── M12 (MCP plan, D2119, D2126) ── P9e ── P9g ←── P9d
                                       P9f ── GV3.1 ── GV3.2        (live only once P9e serves)
                      P9a ── GV4.1 (with GV2.3; real data once P9c publishes through a served P9e)
 ```
@@ -1510,12 +1488,13 @@ P3, P4 (built) ── P9a ── P9b ── P9d ── P9f ── P9c
 | R2 | P9d | the scope and the tools over P9b, dormant; after the stateless plan's O16a, which edits the same three files |
 | R3 | P9f | the CLI's login and the `roadmap` group, against a fake front door |
 | R4 | P9c, GV3.1 (console plan) | both join P9f's group; their command files are disjoint |
-| blocked | P9e, then P9g | P9e waits on the MCP plan's M12 (D2119) and on D2124; P9g documents what P9e grants; nothing written above them is served until P9e lands |
+| blocked | P9e, then P9g | P9e waits on the MCP plan's M12, which waits on M12b (D2119, D2126); P9g documents what P9e builds; nothing written above them is served until P9e lands |
 
 **The critical path is M12 (MCP plan) → P9e**, because every write is served only through it, and
-M12 itself waits on its own D2126; inside this plan it is **P9a → P9b → P9d → P9f → P9c**, five parts, and the console's
+M12 itself waits on M12b (D2126); inside this plan it is **P9a → P9b → P9d → P9f → P9c**, five parts, and the console's
 write is **… → P9f → GV3.1 → GV3.2**. GV4.1 can be built at R1 and shows real data once a plan has
-been published through a served door. The decisions are the other wait: D2124–D2126 are open.
+been published through a served door. No decision of these parts is open: D2127 (M12b's binding)
+was answered number matching on 2026-11-11.
 
 **Shared files** (every file more than one of these tasks writes):
 
@@ -1537,11 +1516,11 @@ been published through a served door. The decisions are the other wait: D2124–
 | **P5** | the job runs as that write identity | what its code writes against what its account may write; its GitHub credential is P2's set; no unbounded retry |
 | **P7** | the first request-serving type, and the front door's tenant | which types were added and which stayed refused; the typed confirmation still fires; the ID token's audience and its check; every invoker member is a person |
 | **P8** | the only inbound request, carrying text somebody else wrote | what authenticates a caller; which tools write; the data boundary and its test; the override cap; no answer is markup |
-| **P9b** | the writers, and the only fence on a database-wide role (added 2026-11-11) | the rules are unchanged and no client writes a roadmap node; the writer is the front door's account under D2118's database-wide role, **reversing D922/H3 for this path**; the roadmap store refuses every path outside `coordinator/project/roadmap` and its mutation fails the test; no other database client in the front door's packages; the move re-compares after a lost race; the bounds |
+| **P9b** | the writers into the subtree no client writes (added 2026-11-11) | the rules are unchanged and no client writes a roadmap node; the one writer is the coordinator's account through the apply job; the front door holds no database write (D922/H3); the move re-compares after a lost race; the prune's bound; the size bounds |
 | **P9c** | files from a checkout sent to a write scope | the walk's confinement; only the artifact leaves the checkout; the provenance is never read back; the command holds no database writer |
 | **P9d** | a write scope on a public authorization server | the vocabulary before and after; `roadmap:write` is not a default; only an operator holds it (D2121); what a paired phone's approval shows; a run or project token is not a front-door token; nothing is served |
-| **P9e** | a database-wide read and write on the service that answers the internet | the role is exactly `instances.get` and `instances.update`, never `admin`, no condition, bound to `mcp_server` alone; it replaces O16b's get-only role rather than adding a second; the blast radius in D2118's consequence; that the code is the only fence |
-| **P9g** | the security document readers trust | it states the role, that IAM cannot scope it, what it reaches, and that the fence is code; the website page is regenerated, not edited |
+| **P9e** | the path by which a request from outside reaches the database | the front door holds no database write; the queue bucket's two members and seven-day retention; the D935 store keeps its one member; the one `run.jobs.run` grant, without overrides; each request re-checked and applied at most once; what the apply job writes |
+| **P9g** | the security document readers trust | it still says the public service holds only the database viewer; it describes the queue and the apply job exactly; the website page is regenerated, not edited |
 | **P9f** | a credential the CLI now holds, and the console's write path | PKCE and a loopback redirect; the refresh token never in a file; the command holds no database writer |
 
 An independent review means **a reviewer who did not write the change, on a different model (this
@@ -1614,7 +1593,7 @@ Each check below is **owner-run, on a real project, by the owner** unless it is 
 | a per-person invoker grant, and its removal | P7 | owner | offboarding is the launcher-list edit finding #5 describes |
 | a non-Claude MCP client against the front door | P8 | owner | Q16(A)'s departure, from the outside, by a client this repository does not ship |
 | the console's project view with the CSP intact | P6 | **runner** | the console suite, not a live check |
-| a roadmap write through the front door, and the identities it refuses | P9d, P9e | owner | an operator's `roadmap:write` move lands synchronously; a launcher cannot obtain the scope; a signed-in reader's and a run's direct database writes are refused; and **whether `instances.update` alone admits the front door's REST write** (D2118's UNVERIFIED) (added 2026-11-11) |
+| a roadmap write through the front door, and the identities it refuses | P9d, P9e | owner | an operator's `roadmap:write` move is queued, applied by the apply job within its start time and reported back; a launcher cannot obtain the scope; a signed-in reader's and a run's direct database writes are refused; the front door's account has no database write (added 2026-11-11) |
 | a plan published from a checkout of a second repository | P9c, P9e | owner | the plan document carries that repository as provenance, a re-publish writes nothing, and a same-id plan from another repository is refused without `--replace-source` (added 2026-11-11) |
 
 ## 10. The numbers this plan would hold
@@ -1634,9 +1613,10 @@ Each check below is **owner-run, on a real project, by the owner** unless it is 
   requests that day. **D2110–D2117** are written in §5 (the tables before P9a) and **answered by the
   owner on 2026-11-11** — D2110 (C) and D2113 against the recommendation, D2111 changed the same day
   to the push model, the other five as recommended; **D2118–D2123** are written there and **answered
-  the same day** — D2118 (B) against the recommendation, reversing D922/H3 for the roadmap path, the
-  other five as recommended; **D2124–D2126** are written there and **open**; **D2127–D2129** are
-  reserved and unused.
+  the same day** — D2118 first (B), then back to the recommendation (A) under D2124 — and
+  **D2124–D2126** likewise, D2124 by returning to D2118's recommendation and D2125 and D2126 as
+  recommended; **D2127** is written there and **answered** the same day (number matching, the
+  recommendation); **D2128–D2129** are reserved and unused.
 - **Check numbers: none claimed**, for the reason in §9. The part that ships a check takes the
   number free at its own merge, which is the register's rule and not this plan's.
 - **No Go code exists in this work yet.** The only Go it has added is the folder's own guard —

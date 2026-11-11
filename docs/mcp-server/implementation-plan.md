@@ -321,8 +321,10 @@ and the four read tools — and the sentence "the coordinator mints nothing" sta
 **Of §2's levels, L5 is the deferred slice's and L6 loses its spawn half; every other row and every
 other edge above stands as written.**
 
-**Added 2026-11-11, the owner's ruling (the coordinator plan's D2119): M12.** The front door mounted on
-a binary is a task of this plan, **M12**, with the edges **M12 ← M5b, M6, M7, M8, M10** and, in other
+**Added 2026-11-11, the owner's rulings (the coordinator plan's D2119 and D2126): M12 and M12b.** The
+front door mounted on a binary is a task of this plan, **M12**, and the delivery of a sign-in flow to
+the paired phone is **M12b**, with the edges **M12b ← M5b, M6**, **M12 ← M5b, M6, M7, M8, M10, M12b**
+and, in other
 plans, **O16b ← M12** and **P9e ← M12**. It is a level of its own after L6's read half (**L7**), on the
 critical path of everything served: no task above is reachable by a caller until it lands. M12 edits
 `ee/coordinator/service.go` (after M4, M5 and M7), `ee/coordinator/mcpauth/server_test.go` and
@@ -1288,21 +1290,58 @@ mounts this package on a binary", and no task of this plan carried it. **The own
   (never from one machine's local config), `TestOnlyExactUserEntriesAdmit`,
   `TestRegistrationIsRateLimitedPerSource`, `TestRegistrationsExpireAndAreSwept`,
   `TestReadToolsServeOnlyTheProjectsRepositories`, `TestTheDoorRefusesToEnableWithoutTheDeviceDelivery`
-  (D2126's recommendation: an enabled door with no delivery of a flow to the paired device refuses to
-  start, so a half-built door cannot be switched on), and
+  (D2126, answered: an enabled door whose installation has not got M12b's delivery refuses to start,
+  so a half-built door cannot be switched on), and
   `TestUpdateConvergesAnInstallationAtThePreviousRelease` (the HARD RULE's converge test, with the flag
   off: one `fugaro update` adds the variable and changes nothing served).
 - **SEC:** **yes, mandatory** — it is the change that makes every earlier task of this plan reachable.
   Reviewer: **opus + mandatory independent review, level 3 in the run.**
-- **Depends on:** M5b, M6, M7, M8, M10 (all built), and the coordinator plan's open **D2126** (whether
-  M5b's delivery of a flow to the paired device — a QR of the flow's binding on the launcher's page,
-  the phone reading it — is this task or a task of its own, recommended **M12b**). **H1's residual risk
+- **Depends on:** M5b, M6, M7, M8, M10 (all built), and **M12b** — the owner answered the coordinator
+  plan's D2126 on 2026-11-11: the delivery of a sign-in flow to the paired phone is a task of its own,
+  and M12 refuses to enable a door that lacks it. M12 may be built before M12b lands; it cannot be
+  switched on until M12b has. **H1's residual risk
   is unchanged by it**: the approval is proved by the ID token and by no device key, as the owner
   accepted (spec.md §3, §8).
 - **What waits on it:** M7's roster half and M8's serving (both built and unserved), the stateless
   plan's **O16b**, and the coordinator plan's **P9e** (its roadmap tools, and through them the console
   graph's GV3.1 and GV3.2).
 - **Commit:** `coordinator: the MCP front door mounted on the service, dormant until enabled (M12)`
+
+### M12b — The sign-in flow delivered to the paired phone (the owner's ruling of 2026-11-11)
+
+**Why it exists.** M5b built the endpoint's half of the paired-device approval — the approving act as
+a shape of its own, the ID token spent once, a family that ages — and nothing delivers a pending flow
+to the device: no launcher's page shows what to compare and no phone reads the flow. M12 refuses to
+enable a door without it (the coordinator plan's D2126, answered 2026-11-11). **It touches the
+console and the mobile app as well as the Go server**, so it follows `.claude/rules/console.md` and
+`.claude/rules/mobile.md` beside this plan's rules.
+
+- **Files (8):** in `ee/coordinator/mcpauth/`, a new pending-flows file and its test (`GET` the flows
+  awaiting this identity's approval, authenticated by the device's ID token through M6's verifier; a
+  flow is listed with its client **marked unverified**, its redirect host and its binding) and
+  `ee/coordinator/mcpauth/authorize.go` with `ee/coordinator/mcpauth/authorize_test.go` (the
+  launcher's page shows the binding the phone must match); in `mobile/`, the approval screen and its
+  test (it lists the pending flows, shows the client, the host and the binding, and posts M5b's
+  single-use approval); in `console/`, the place the console's `fugaro coordinator login` child (P9f
+  of the coordinator plan) shows the binding to the person, and its test.
+- **Interface:** the binding is **number matching** — the coordinator plan's **D2127**, answered by the
+  owner on 2026-11-11 as recommended: the launcher's page and the phone show the same short number,
+  derived from the flow's binding, and the person confirms on the phone that they agree before the
+  phone posts the approval. No QR is rendered or scanned, so neither side gains a dependency. The
+  approve POST is M5b's, unchanged.
+- **Red step:** `TestAPendingFlowIsListedOnlyToItsOwnIdentity` — a flow started by one identity is
+  absent from another identity's list; it fails because there is no list.
+- **Tests:** `TestAPendingFlowIsListedOnlyToItsOwnIdentity`, `TestThePendingListMarksTheClientUnverified`,
+  `TestTheBindingOnThePageAndThePhoneAgree`, `TestAnApprovedOrExpiredFlowLeavesTheList`,
+  `TestThePendingListIsNeverAGetWithAnIDTokenInTheURL` (M-a: the token travels in a header), the
+  mobile screen's tests (the client name rendered as text, never a link) and the console's (the
+  binding rendered as text, the spawn row exact).
+- **SEC:** **yes, mandatory** — it is the half of M-a the endpoint could not do alone. Reviewer:
+  **opus + mandatory independent review, level 3 in the run.** **H1's residual risk is unchanged**:
+  the approval is still proved by the ID token and no device key, as the owner accepted.
+- **Depends on:** M5b, M6 (built); the coordinator plan's **D2127** (answered 2026-11-11: number
+  matching); P9f of the coordinator plan for the console's half only.
+- **Commit:** `coordinator: the sign-in flow delivered to the paired phone (M12b)`
 
 ## 4. The shared-files table
 
@@ -1442,12 +1481,11 @@ here is small enough to pull forward.
   its tools and their serving are the coordinator plan's P9d and P9e
   (`docs/coordinator/implementation-plan.md`), and P9e waits, like M8's tools and the stateless
   plan's O16b, on the task that mounts this front door on a binary — which the owner ruled on
-  2026-11-11 (that plan's D2119) is this plan's **M12**. **And the owner answered that plan's D2118
-  the same day with a database write role on this front door's account** — a custom role of
-  `firebasedatabase.instances.get` and `.update`, database-wide because Realtime Database IAM has no
-  path scope — **which reverses D922/H3 for the roadmap path**; [reconciliation.md](reconciliation.md)
-  §4a carries the amendment beside D922's, and the coordinator plan's P9e and P9g carry the grant and
-  the `SECURITY.md` text.
+  2026-11-11 (that plan's D2119) is this plan's **M12**. The front door's account still holds **no database
+  write**: the owner considered a database-wide write role on 2026-11-11 (that plan's D2118 (B)) and
+  declined it after seeing its blast radius, so the roadmap's writes are queued by the front door and
+  applied by a non-public job running as the coordinator's account (that plan's P9e), and D922/H3
+  stands.
 - **The central-orchestrator plan.** D196 answered that the coordinator's service is its own; the
   orchestrator reaches it as a client like any other, and this plan adds nothing to it.
 - **The stateless-orchestrator spec** (open as **#1682**, not on `main` when this was written). Its
