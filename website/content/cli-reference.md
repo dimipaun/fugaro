@@ -3211,11 +3211,19 @@ no reference every `pending` issue is visited, and the ones already
 filed or set aside are skipped.
 
 The post is built once and printed as it is: the title, the body, and
-the sha256 of the exact bytes. A run without --ask files nothing. --ask
-asks at your own terminal after showing the preview and files exactly
-those bytes; a coding agent's session and a pipe never file, because
-a confirmation nobody can answer is a refusal and never a silent
-proceed.
+the sha256 of the exact bytes. A run without --ask files nothing and
+uploads nothing. --ask asks at your own terminal after showing the
+preview and files exactly those bytes; a coding agent's session and a
+pipe never file, because a confirmation nobody can answer is a refusal
+and never a silent proceed.
+
+--ask uploads this machine's own pending issues first, exactly as
+`issue sync` does, and files the project's own record of a numbered
+issue: the store is the truth once an issue is uploaded. The filing is
+made under a claim on that record, so two people filing one issue at
+the same moment file it once; a claim another submitter holds is
+refused with who holds it and until when, and a record that changed
+after the preview was shown is refused rather than filed unseen.
 
 Filing needs GitHub's own `gh` with an account on github.com. Where it
 is missing, or has no account there, the install command or `gh auth
