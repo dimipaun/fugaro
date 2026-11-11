@@ -135,7 +135,7 @@ writes it with the ETag and generation guards, and since **D1012/M3** the whole 
 `internal/cli/project_policy_managed.go` judges the node the publish *would* write against the node
 it replaces, member by member, plus the catch-all `policyUnjudgedRefusal`, and hands its answer to
 `initflow.CanConfirmManaged`. The migration stage `initflow.Policy` (`internal/cli/init_stages.go`,
-`policyMigrateStage`, `internal/cli/init_policy_migrate.go:694`) is what `fugaro update` runs and is
+`policyMigrateStage`, `internal/cli/init_policy_migrate.go:711`) is what `fugaro update` runs and is
 **not** where this key is published. So this design's publish half is a **member of
 `buildProjectPolicy`'s node build**, seen by that gate like every other member — which is also why
 D986's answer (the policy node only) is the one that composes with M3 rather than fighting it: a

@@ -109,6 +109,55 @@ defaults:
 	}
 }
 
+// TestSetsStopFractionReadsTheKeyAndNotItsValue: the layer's half of the
+// stop-rule skew gate asks whether the text writes
+// defaults.agent.review_stop_fraction, because a runner older than the release
+// that reads it decodes the layer with KnownFields and refuses the key whatever
+// it holds — the layer's key reaches every repository of the project, so a gate
+// that let one through deploys a layer whose repositories all die at bootstrap
+// (SetsSecurity's own case).
+//
+// The null is the case SetsDefault cannot answer: it reads the resolved value's
+// shape, and a key written null is a key that asks for the default and sets
+// nothing, so it answers false — which for this gate is the one wrong answer.
+// The key is also nested under defaults.agent rather than top-level like
+// security: and jobs:, so the walk is the one SetsRigor's is, one level deeper.
+func TestSetsStopFractionReadsTheKeyAndNotItsValue(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"a share", "defaults: { agent: { review_stop_fraction: 0.5 } }\n", true},
+		{"the default", "defaults: { agent: { review_stop_fraction: 0 } }\n", true},
+		{"null", "defaults: { agent: { review_stop_fraction: null } }\n", true},
+		{"the tilde", "defaults: { agent: { review_stop_fraction: ~ } }\n", true},
+		{"nothing after the colon", "defaults:\n  agent:\n    review_stop_fraction:\n", true},
+		{"a sibling key of the same block", "defaults: { agent: { review_rounds: 3 } }\n", false},
+		{"an empty agent block", "defaults: { agent: {} }\n", false},
+		{"no defaults at all", "profiles: { p: { commands: { build: make, test: make test } } }\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := mustLayer(t, layerHead+tc.body)
+			if got := l.SetsStopFraction(); got != tc.want {
+				t.Errorf("SetsStopFraction = %v, want %v for %q", got, tc.want, strings.TrimSpace(tc.body))
+			}
+		})
+	}
+	if (*ProjectLayer)(nil).SetsStopFraction() {
+		t.Error("SetsStopFraction = true for no layer at all")
+	}
+	// The premise of the predicate: the null the gate has to count is the one
+	// value the resolved-value reader answers false for, so a gate built on
+	// SetsDefault would converge the layer onto an image that refuses it.
+	null := mustLayer(t, layerHead+"defaults: { agent: { review_stop_fraction: null } }\n")
+	if null.SetsDefault("agent.review_stop_fraction") {
+		t.Error("SetsDefault is true for the null, so this predicate has nothing to add: keep one of the two, not both")
+	}
+	if !null.SetsStopFraction() {
+		t.Error("SetsStopFraction is false for the null, and an older runner refuses that key")
+	}
+}
+
 // TestProfileCheckout pins that a profile may set checkout: (scope
 // InProfile|InRepo, design generic-tool.md §2, G3): it decodes onto
 // Profile.Checkout rather than failing the strict decode as an unknown
@@ -163,6 +212,52 @@ func TestProfileArtifactKeys(t *testing.T) {
 	}
 	if got := res.SourceOf("workflows.default.commands.render"); got != SourceProfile("p") {
 		t.Errorf("SourceOf(workflows.default.commands.render) = %q, want %q", got, SourceProfile("p"))
+	}
+}
+
+// planningLayer turns the dependency-breaking pass off for the whole project:
+// defaults.planning is a key the project layer may set (D1813).
+const planningLayer = `version: 1
+project: acme
+gcp_project: acme-fugaro
+defaults:
+  git:
+    provider: github
+  planning:
+    decoupling: false
+profiles:
+  p:
+    commands: { build: make, test: make test }
+default_profile: p
+`
+
+// TestPlanningDecouplingRepoOverridesProject: planning.decoupling is a
+// preference and not a bound, so it follows the ordinary rule — the narrowest
+// layer that sets it decides — and a repository may turn the pass back on
+// where its project turned it off, as it may turn it off where the project
+// left it on (D1813). The project layer would otherwise be a floor, which is
+// what the rigor mode is and why a per-task switch was refused.
+func TestPlanningDecouplingRepoOverridesProject(t *testing.T) {
+	c, res, ps := Resolve([]byte(minimalRepo), mustLayer(t, planningLayer))
+	if len(ps) > 0 {
+		t.Fatalf("resolve problems: %v", ps)
+	}
+	if c.Planning.DecouplingOn() {
+		t.Error("the project layer wrote decoupling: false and the resolved config kept the pass on")
+	}
+	if got := res.SourceOf("planning.decoupling"); got != SourceProject {
+		t.Errorf("SourceOf(planning.decoupling) = %q, want %q", got, SourceProject)
+	}
+
+	c, res, ps = Resolve([]byte(minimalRepo+"planning:\n  decoupling: true\n"), mustLayer(t, planningLayer))
+	if len(ps) > 0 {
+		t.Fatalf("resolve problems: %v", ps)
+	}
+	if !c.Planning.DecouplingOn() {
+		t.Error("the repository wrote decoupling: true and the project's false won")
+	}
+	if got := res.SourceOf("planning.decoupling"); got != SourceRepo {
+		t.Errorf("SourceOf(planning.decoupling) = %q, want %q", got, SourceRepo)
 	}
 }
 
@@ -358,6 +453,8 @@ func TestParseProjectLayerRefusesMore(t *testing.T) {
 		{"review rounds", agent("    review_rounds: 11\n"), "defaults.agent.review_rounds: must be between 1 and 10"},
 		{"first-line review", agent("    first_line_review: maybe\n"), "defaults.agent.first_line_review: must be one of"},
 		{"first-line rounds", agent("    first_line_rounds: 99\n"), "defaults.agent.first_line_rounds: must be between"},
+		{"a NaN stop fraction", agent("    review_stop_fraction: .nan\n"), "defaults.agent.review_stop_fraction: must be greater than 0 and at most 1"},
+		{"a stop fraction above the budget", agent("    review_stop_fraction: 1.5\n"), "defaults.agent.review_stop_fraction: must be greater than 0 and at most 1"},
 		{"a recipe", agent("    recipe: Bad_Recipe\n"), "defaults.agent.recipe: must be a recipe name"},
 		{"a negative budget", agent("    max_budget_usd: -1\n"), "defaults.agent.max_budget_usd: must be a finite number"},
 		{"a NaN budget", agent("    max_budget_usd: .nan\n"), "defaults.agent.max_budget_usd: must be a finite number"},

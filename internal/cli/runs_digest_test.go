@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,7 +29,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/digest"
+	"github.com/dimipaun/fugaro/internal/installrec"
+	"github.com/dimipaun/fugaro/internal/issueresolve"
+	"github.com/dimipaun/fugaro/internal/issues"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -102,7 +109,8 @@ func TestRunsDigestWritesPeriodFile(t *testing.T) {
 	body := digestReport(t, dir, "2026-10-25")
 	for _, want := range []string{
 		"# Run digest: 2026-10-25",
-		"20261025-120000-abcd",
+		// The run table names the period's runs by their short IDs (D1706).
+		"| `abcd` | succeeded |",
 		"## Summary",
 		`"period":"2026-10-25"`,
 		`"end":"2026-10-25"`,
@@ -194,10 +202,13 @@ func TestRunsDigestOneRepositoryOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runs digest: %v (%s)", err, errOut)
 	}
-	if !strings.Contains(out, "20261025-120000-abcd") {
+	// The two seeded IDs end alike, so the run the table read shows its four
+	// characters; a report that wrongly read the other repository's record
+	// would extend both endings through the dash to tell the rows apart.
+	if !strings.Contains(out, "| `abcd` | succeeded |") {
 		t.Errorf("the report leaves out this repository's own run:\n%s", out)
 	}
-	if strings.Contains(out, "20261025-120001-abcd") {
+	if strings.Contains(out, "-abcd`") {
 		t.Errorf("the report reads a record of another repository:\n%s", out)
 	}
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
@@ -344,7 +355,7 @@ func TestRunsDigestSkipsMalformedReport(t *testing.T) {
 		t.Errorf("the index lost the report beside it:\n%s", index)
 	}
 	// The report being written is written, whatever the folder held.
-	if !strings.Contains(digestReport(t, dir, "2026-10-25"), "20261025-120000-abcd") {
+	if !strings.Contains(digestReport(t, dir, "2026-10-25"), "| `abcd` | succeeded |") {
 		t.Error("the report being written is missing its own run")
 	}
 }
@@ -514,10 +525,13 @@ func TestRunsDigestWarnsTruncatedListing(t *testing.T) {
 	if !strings.Contains(out, `"runs":2`) {
 		t.Errorf("the report is not over the newest runs of the bound:\n%s", out)
 	}
-	if strings.Contains(out, "20261025-100000-abcd") {
+	// The three seeded IDs end alike, so the endings the table shows are the
+	// ones its own rows need to tell each other apart: the newest two need ten
+	// characters, and the run off the bound would show the oldest one's.
+	if strings.Contains(out, "`00000-abcd`") {
 		t.Errorf("the report reads a run past the bound, so the cap does not keep the newest:\n%s", out)
 	}
-	if !strings.Contains(out, "20261025-120000-abcd") {
+	if !strings.Contains(out, "| `20000-abcd` | succeeded |") {
 		t.Errorf("the report leaves out the newest run:\n%s", out)
 	}
 
@@ -767,4 +781,480 @@ func TestRunsDigestSkippedNameIsOneLine(t *testing.T) {
 // listing is one line of text.
 func digestControl(r rune) bool {
 	return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)
+}
+
+// seedDigestIssue uploads one issue into the fixture project's shared store,
+// under the run stem and summary given, and answers the upload. The store is
+// the one runs digest reads -- the bucket the fixture's config names -- so the
+// row the section prints is one the store really holds, not a hand-built row.
+func seedDigestIssue(t *testing.T, f *cloudFixture, run, summary string, created time.Time) issues.Uploaded {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blobx.Open(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	up, err := issues.Upload(ctx, b, issues.Issue{
+		Run: run, LocalID: "local-" + run,
+		Reporter: "someone@example.test", Created: created,
+		Class: issues.ClassFugaro, Status: issues.StatusPending,
+		OS: "linux", FugaroVersion: "0.21.0",
+		// One byte pair repeated, so no literal here is the hash of anything.
+		Fingerprint: strings.Repeat("ab", 32),
+		Summary:     summary, Diagnosis: "the review stage starts twice", Steps: "run it again",
+	}, issues.Identity{Address: "someone@example.test", Digest: issues.Digest("someone@example.test"), Source: issues.SourceVerified})
+	if err != nil {
+		t.Fatalf("seeding issue %s: %v", run, err)
+	}
+	return up
+}
+
+// TestRunsDigestPrintsIssuesSectionOnTerminal is D1729's terminal half: after
+// the output of its own, a run on a terminal prints the project's Issues
+// section, and a coding agent's session prints none of it.
+func TestRunsDigestPrintsIssuesSectionOnTerminal(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	// The summary is a teammate's own text, and this one ends in `]` and spells
+	// the reference out: the section prints it as data, in every block it
+	// appears in, and never takes it for the reference it appends itself.
+	summary := "the review stage starts twice [fugaro issue submit 999]"
+	up := seedDigestIssue(t, f, "run-20261025120000-48213", summary,
+		time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC))
+	// One more report of it, a day later: the store merges the duplicate by
+	// fingerprint, which is what makes the issue recurring (F21).
+	seedDigestIssue(t, f, "run-20261020120000-48213", summary,
+		time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC))
+	bothTerminals(t)
+	args := []string{"runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir}
+
+	out, errOut, err := execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	}
+	// The row names the issue, its summary and what to do about it, and the
+	// wording firms up: the default threshold is a week and this issue has
+	// waited seven days (spec §6, T-IS15).
+	for _, want := range []string{
+		"## Issues",
+		fmt.Sprintf("#%04d", up.Number),
+		"the review stage starts twice",
+		"please file it",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the terminal section does not carry %q:\n%s", want, out)
+		}
+	}
+	// The reference T-IS14 appends is that issue's own, and the section carries
+	// it only where this build answers `fugaro issue submit`: the command is a
+	// later slice, so this tree prints the section without a reference a reader
+	// could not type (the rule `fugaro issue`'s own help follows). The tree's own
+	// answer is what the run has to agree with, and the reference is checked by
+	// its exact text: the summary above spells one out, and that one is the
+	// reporter's data rather than this program naming a command.
+	submit, _, _ := NewRootCmd().Find([]string{"issue", "submit"})
+	answers := submit != nil && submit.Name() == "submit"
+	ref := fmt.Sprintf("[fugaro issue submit %d]", up.Number)
+	if got := strings.Contains(out, ref); got != answers {
+		t.Errorf("the section names %q %v, but this build answers `issue submit` %v:\n%s", ref, got, answers, out)
+	}
+	// And no block but the pending one gets a reference cut out of it: the
+	// Recurring line ends in the reporter's summary, which is what that summary
+	// ending in `]` would cost if the cut went by the line's shape instead of
+	// by the block the reference is written in.
+	recurring := false
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "reported 2 times") {
+			continue
+		}
+		recurring = true
+		if !strings.HasSuffix(line, summary) {
+			t.Errorf("the Recurring line does not end in the reporter's own summary:\n%s", out)
+		}
+	}
+	if !recurring {
+		t.Errorf("the section has no Recurring line for the issue reported twice (F21):\n%s", out)
+	}
+	// And the reader behind that answer, on paths whose existence does not
+	// change when a later slice arrives: this build's own `runs digest` is
+	// answered, and a name it never had is not. A reader that answered the same
+	// thing for both would strip the reference in a build that has the command,
+	// which no test above could tell before that command lands.
+	if root := NewRootCmd(); !digestAnswersCommand(root, "runs", "digest") || digestAnswersCommand(root, "runs", "no-such-command") {
+		t.Error("the command reader does not tell a path this build answers from one it does not")
+	}
+	// A build that does answer it prints the reference T-IS14 writes: the seam
+	// stands in for the tree T-IS7 registers the command in.
+	oldAnswers := digestAnswersCommand
+	digestAnswersCommand = func(*cobra.Command, ...string) bool { return true }
+	t.Cleanup(func() { digestAnswersCommand = oldAnswers })
+	out, errOut, err = execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest in a build that answers issue submit: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, ref) {
+		t.Errorf("a build that answers the command printed no %q:\n%s", ref, out)
+	}
+	// After the digest's own output, which is what "after runs digest" means.
+	if wrote := strings.Index(out, "wrote "); wrote < 0 || wrote > strings.Index(out, "## Issues") {
+		t.Errorf("the section is not printed after the report the command wrote:\n%s", out)
+	}
+	// And the report itself is untouched: the section is the terminal's own
+	// (D1729).
+	if body := digestReport(t, dir, "2026-10-25"); strings.Contains(body, "## Issues") {
+		t.Errorf("the committed report carries the Issues section:\n%s", body)
+	}
+
+	// The wording is this machine's own setting (T-IS15): a threshold of 30
+	// days reads the same issue as merely waiting.
+	f.appendConfig(t, "issues: { nudge_after_days: 30 }\n")
+	out, errOut, err = execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest with a nudge threshold of its own: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "waiting 7 days") || strings.Contains(out, "please file it") {
+		t.Errorf("a threshold of 30 days did not change the wording:\n%s", out)
+	}
+
+	t.Setenv("CLAUDECODE", "1")
+	out, errOut, err = execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest in an agent session: %v (%s)", err, errOut)
+	}
+	if strings.Contains(out, "## Issues") {
+		t.Errorf("a coding agent's session printed the Issues section:\n%s", out)
+	}
+}
+
+// TestRunsDigestFileUnchangedByIssues is D1729's other half: the section is
+// printed to a person's terminal and written nowhere, so a report and an index
+// regenerated with issues in the project are byte for byte the ones the same
+// run wrote without them, and a run whose output is not a terminal prints no
+// section at all.
+func TestRunsDigestFileUnchangedByIssues(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	args := []string{"runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir}
+
+	if _, errOut, err := execute(t, args...); err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	}
+	report, index := digestReport(t, dir, "2026-10-25"), digestIndex(t, dir)
+	// Two runs of the same period write the same bytes (G3), which is what
+	// makes the comparisons below a statement about the section and nothing
+	// else.
+	if _, errOut, err := execute(t, args...); err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	} else if got := digestReport(t, dir, "2026-10-25"); got != report {
+		t.Fatal("a second run of the same report wrote different bytes")
+	}
+	seedDigestIssue(t, f, "run-20261025120000-48213", "the review stage starts twice",
+		time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC))
+	// The section is a person's terminal's own, and the harness's streams here
+	// are buffers: this run is a caller reading the output -- a redirect, a CI
+	// step, the console's pipe -- and prints none of the section. The run right
+	// after it is the same command, the same project and the same issue with
+	// only the terminal given, so neither assertion passes for another reason.
+	out, errOut, err := execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest with an issue in the project: %v (%s)", err, errOut)
+	}
+	if strings.Contains(out, "## Issues") {
+		t.Errorf("a run whose output is not a terminal printed the Issues section:\n%s", out)
+	}
+	bothTerminals(t)
+	out, errOut, err = execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest on a terminal with an issue in the project: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "## Issues") {
+		t.Errorf("the run with an issue printed no Issues section, so this test proves nothing:\n%s", out)
+	}
+	if got := digestReport(t, dir, "2026-10-25"); got != report {
+		t.Errorf("an issue in the project changed the report:\n%s", got)
+	}
+	if got := digestIndex(t, dir); !bytes.Equal(got, index) {
+		t.Errorf("an issue in the project changed the index:\n%s", got)
+	}
+}
+
+// TestRunsDigestOmitsSectionOnReadFailure: the section is a read of the
+// project's shared store, and a read that fails costs one line on stderr. The
+// report is already written and stays a success: a store nobody can reach must
+// not take the daily report down with it.
+func TestRunsDigestOmitsSectionOnReadFailure(t *testing.T) {
+	digestCheckout(t)
+	newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	bothTerminals(t)
+	old := digestIssuesRows
+	digestIssuesRows = func(context.Context, *blobx.Bucket) ([]issues.SharedRow, error) {
+		return nil, errors.New("the store could not be listed")
+	}
+	t.Cleanup(func() { digestIssuesRows = old })
+
+	out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir)
+	if err != nil {
+		t.Fatalf("a shared store that cannot be read failed the report: %v", err)
+	}
+	if strings.Contains(out, "## Issues") {
+		t.Errorf("the section was printed although the store could not be read:\n%s", out)
+	}
+	// One line about the section, and it names the cause: the other line
+	// stderr carries is the project header every command prints.
+	var reported []string
+	for _, line := range strings.Split(strings.TrimSuffix(errOut, "\n"), "\n") {
+		if strings.Contains(line, "Issues section") {
+			reported = append(reported, line)
+		}
+	}
+	if len(reported) != 1 || !strings.Contains(reported[0], "the store could not be listed") {
+		t.Errorf("the read failure printed %v, want one line naming the failure:\n%s", reported, errOut)
+	}
+	if !strings.Contains(digestReport(t, dir, "2026-10-25"), "# Run digest") {
+		t.Error("the report was not written")
+	}
+}
+
+// digestIndex reads the index the command regenerated.
+func digestIndex(t *testing.T, dir string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "README.md"))
+	if err != nil {
+		t.Fatalf("the command regenerated no index: %v", err)
+	}
+	return data
+}
+
+// digestInstalledRecord writes the installation record the report's window is
+// read from, as the update door writes it (T-RU2, F17): one object in the runs
+// bucket, beside the project marker.
+func digestInstalledRecord(t *testing.T, f *cloudFixture, release, previous string) {
+	t.Helper()
+	path := filepath.Join(f.dir, "runs", filepath.FromSlash(installrec.Object))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(installrec.Record{Format: installrec.Format, Release: release, PreviousRelease: previous})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedDigestFiledIssue uploads one issue and files it on GitHub, so a report's
+// retried pass has a record to ask about: `submitted`, linked to the GitHub
+// issue the pass builds its one request from (F28).
+func seedDigestFiledIssue(t *testing.T, f *cloudFixture, run, summary string, github int) issues.Uploaded {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blobx.Open(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	at := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
+	up, err := uploadAsReporter(ctx, b, issues.Issue{
+		Run: run, LocalID: "local-" + run,
+		Reporter: "ana@example.test", Created: at,
+		Class: issues.ClassFugaro, Status: issues.StatusPending,
+		OS: "linux", FugaroVersion: "0.21.1",
+		// One byte pair repeated, so no literal here is the hash of anything,
+		// and a pair of its own so this issue is not the occurrence of another.
+		Fingerprint: strings.Repeat("cd", 32),
+		Summary:     summary, Diagnosis: "the review stage starts twice", Steps: "run it again",
+	})
+	if err != nil {
+		t.Fatalf("seeding issue %s: %v", run, err)
+	}
+	claim, err := issues.Claim(ctx, b, up.Number, "user:ana@example.test", at)
+	if err != nil {
+		t.Fatalf("claiming issue %d: %v", up.Number, err)
+	}
+	url := fmt.Sprintf("https://github.com/dimipaun/fugaro/issues/%d", github)
+	if err := issues.RecordSubmitted(ctx, b, claim, url, at); err != nil {
+		t.Fatalf("filing issue %d: %v", up.Number, err)
+	}
+	return up
+}
+
+// digestSharedIssue is one issue as the project's shared store holds it, which
+// is what the section and every later command read.
+func digestSharedIssue(t *testing.T, f *cloudFixture, number int) issues.Issue {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blobx.Open(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	rows, err := issues.ListShared(ctx, b)
+	if err != nil {
+		t.Fatalf("listing the shared store: %v", err)
+	}
+	for _, r := range rows {
+		if r.Number == number {
+			return r.Issue
+		}
+	}
+	t.Fatalf("the shared store holds no issue %d", number)
+	return issues.Issue{}
+}
+
+// digestAnswer is GitHub as the tests of this command say it is: one answer for
+// every issue a retried pass asks about, the numbers it asked about, and how
+// many times the pass was wired at all -- a pass that never ran is wired none.
+type digestAnswer struct {
+	state issueresolve.State
+	asked []int
+	built int
+}
+
+func (a *digestAnswer) Fetch(_ context.Context, number int) (issueresolve.State, error) {
+	a.asked = append(a.asked, number)
+	return a.state, nil
+}
+
+// digestGitHub answers the report's retried pass for GitHub, so a test reads
+// what a pass does without reaching the network.
+func digestGitHub(t *testing.T, state issueresolve.State) *digestAnswer {
+	t.Helper()
+	fake := &digestAnswer{state: state}
+	old := digestResolveDeps
+	digestResolveDeps = func(cmd *cobra.Command, env *cloudEnv) issues.ResolveDeps {
+		fake.built++
+		deps := old(cmd, env)
+		deps.Reader = fake
+		return deps
+	}
+	t.Cleanup(func() { digestResolveDeps = old })
+	return fake
+}
+
+// TestRunsDigestRetriesResolveOnTerminal is the report's half of the retry
+// (F19, D1754): where the section prints, the report runs the pass `fugaro
+// update` runs -- so a machine that updated while GitHub was unreachable, or
+// that has not updated at all, meets the fix here -- and the section then lists
+// what the installation fixed.
+func TestRunsDigestRetriesResolveOnTerminal(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	releaseBuild(t, "0.22.0")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	up := seedDigestFiledIssue(t, f, "run-20261025120000-48213", "the review stage starts twice", 4242)
+	digestInstalledRecord(t, f, "0.22.0", "0.21.1")
+	github := digestGitHub(t, issueresolve.ClosedCompleted{Milestone: "0.22.0"})
+	bothTerminals(t)
+
+	out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir)
+	if err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	}
+	// The pass ran: the record the update would have marked is marked, with the
+	// release that shipped the fix and not the version that was installed.
+	got := digestSharedIssue(t, f, up.Number)
+	if got.Status != issues.StatusResolved || got.ResolvedIn != "0.22.0" {
+		t.Errorf("issue %d is %q in %q after the report, want resolved in 0.22.0", up.Number, got.Status, got.ResolvedIn)
+	}
+	// It asked GitHub about the issue the record links to, which is the number
+	// the request is built from (F28), and it asked no other.
+	if len(github.asked) != 1 || github.asked[0] != 4242 {
+		t.Errorf("the pass asked GitHub about %v, want the one issue of the record (4242)", github.asked)
+	}
+	for _, want := range []string{
+		"## Issues",
+		"Resolved since the last update:",
+		fmt.Sprintf("#%04d", up.Number),
+		"fixed in 0.22.0",
+		"hit by ana",
+		"the review stage starts twice",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the section does not carry %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRunsDigestAgentSessionDoesNotResolve: the section is the job's and a
+// person's terminal's, so a coding agent's session runs no pass and writes
+// nothing (F13, F16d): the record stays where it was and no section is printed.
+func TestRunsDigestAgentSessionDoesNotResolve(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	releaseBuild(t, "0.22.0")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	up := seedDigestFiledIssue(t, f, "run-20261025120000-48213", "the review stage starts twice", 4242)
+	digestInstalledRecord(t, f, "0.22.0", "0.21.1")
+	// GitHub says the issue is fixed, so a pass that ran would mark it: the
+	// assertions below are about the pass not running and not about what it
+	// would have found.
+	github := digestGitHub(t, issueresolve.ClosedCompleted{Milestone: "0.22.0"})
+	bothTerminals(t)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir)
+	if err != nil {
+		t.Fatalf("runs digest in an agent session: %v (%s)", err, errOut)
+	}
+	if strings.Contains(out, "## Issues") {
+		t.Errorf("a coding agent's session printed the Issues section:\n%s", out)
+	}
+	if github.built != 0 || len(github.asked) != 0 {
+		t.Errorf("a coding agent's session wired the resolver %d times and asked %v", github.built, github.asked)
+	}
+	if got := digestSharedIssue(t, f, up.Number); got.Status != issues.StatusSubmitted {
+		t.Errorf("a coding agent's session left issue %d %q, want it still submitted", up.Number, got.Status)
+	}
+}
+
+// TestRunsDigestFileUnchangedWithResolved: the Resolved list is part of the
+// terminal section and of nothing else. A report and an index regenerated with
+// a fixed issue, its hit-by line and an installation record in the project are
+// byte for byte the ones the same run wrote before any of that was there (F13).
+func TestRunsDigestFileUnchangedWithResolved(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	releaseBuild(t, "0.22.0")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	args := []string{"runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir}
+	if _, errOut, err := execute(t, args...); err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	}
+	report, index := digestReport(t, dir, "2026-10-25"), digestIndex(t, dir)
+
+	up := seedDigestFiledIssue(t, f, "run-20261025120000-48213", "the review stage starts twice", 4242)
+	digestInstalledRecord(t, f, "0.22.0", "0.21.1")
+	digestGitHub(t, issueresolve.ClosedCompleted{Milestone: "0.22.0"})
+	bothTerminals(t)
+	out, errOut, err := execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest with a fixed issue: %v (%s)", err, errOut)
+	}
+	// The run really printed the list, so the comparisons below are about the
+	// section and nothing else.
+	if !strings.Contains(out, "## Issues") || !strings.Contains(out, fmt.Sprintf("#%04d", up.Number)) {
+		t.Fatalf("the run with a fixed issue printed no Resolved list, so this test proves nothing:\n%s", out)
+	}
+	if got := digestReport(t, dir, "2026-10-25"); got != report {
+		t.Errorf("a fixed issue changed the report:\n%s", got)
+	}
+	if got := digestIndex(t, dir); !bytes.Equal(got, index) {
+		t.Errorf("a fixed issue changed the index:\n%s", got)
+	}
 }

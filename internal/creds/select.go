@@ -23,6 +23,14 @@ const (
 	// so that a state node or a policy a later release writes reads as a tier
 	// here and not as a name, and so that a caller offering one is refused
 	// rather than quietly served by something else.
+	//
+	// Since AK6b a bundle really can hold such a credential: the project's
+	// provider key is in the document, and the credentials service offers it to
+	// the one review caller whose pairing names it (internal/credsvc, F15,
+	// D1418). So this is no longer a tier no credential can be offered at —
+	// what keeps the route unserved is checkCandidates' refusal below and not
+	// the absence of a credential, which is why a call offered one is answered
+	// a typed refusal naming Check 50 rather than served by another tier.
 	TierC Tier = "c"
 )
 

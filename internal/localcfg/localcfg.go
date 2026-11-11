@@ -35,6 +35,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // ConfigVersion is the version of the local config this release writes, and
@@ -294,6 +295,53 @@ type Config struct {
 	// does not write the key at all is a machine whose file has nothing to say
 	// about the catalog and must not empty the node's.
 	ImageCatalog *config.Catalog `yaml:"image_catalog,omitempty"`
+	// ImageMap is the project's repo-to-image map (D1906): the catalog entry
+	// each of the project's repositories runs, keyed by the repository's
+	// canonical name. It is written here — by `fugaro image map set`, which is
+	// the map's own command, and never by hand in fugaro.yaml — and
+	// `fugaro update`'s policy stage publishes it into the policy node, where
+	// the runner reads it. It travels the catalog's way and for its reason: the
+	// map decides which image a job executes, so a launcher who could write it
+	// into the runs bucket's shared config would be choosing what code every
+	// teammate's runs run. Shared nils it and ParseShared refuses the key.
+	//
+	// A nil map is a file that says nothing about the map, which keeps the
+	// node's (ImageMapEffective); a written map with no entry is how a
+	// published one is taken away on purpose.
+	ImageMap map[string]string `yaml:"image_map,omitempty"`
+	// BakeRepos is whether a repository is baked into the image its job runs
+	// (D1901), the setup wizard's question, answered yes when it is asked with
+	// nothing else. It is the owner's policy like the map above and reaches a
+	// run the same way (the policy node), so Shared nils it and ParseShared
+	// refuses the key: a launcher who could turn baking off for everyone would
+	// be deciding that every teammate's jobs clone.
+	//
+	// It is a pointer because absent is yes: an absent key and a written true
+	// are one statement, and only a written false has anything to say
+	// (BakeReposEffective).
+	BakeRepos *bool `yaml:"bake_repos,omitempty"`
+	// Triage is whether a review round's findings are judged by the triage
+	// stage at all (D1854, D1851): the stage weighs the findings the table
+	// would have blocked (D1848), so turning it off is the looser direction and
+	// the key here is the switch's second home beside a repository's own
+	// fugaro.yaml `agent.triage`. This key is the owner's answer for the whole
+	// project — the one a repository may not turn back on — and `fugaro update`'s
+	// policy stage publishes it into the published policy node, where the runner
+	// reads it. It travels the bake switch's way and for the floor's reason: the
+	// judgement decides which findings hold a pull request back, so a launcher
+	// who could write the switch into the runs bucket's shared file would be
+	// waving every teammate's runs past a finding the owner meant to block.
+	// Shared nils it and ParseShared refuses the key.
+	//
+	// A repository may turn the stage off for itself (config.Agent.Triage, read
+	// from the base branch) and may never turn it back on under a node that
+	// turned it off: the two answers merge tighter-only (policy.Merge), so off
+	// stands wherever it is written and on is the state of saying nothing.
+	//
+	// An absent key is a machine whose file has nothing to say about the stage
+	// and must not turn it back on for the project (TriageEffective); a written
+	// false is the switch.
+	Triage *bool `yaml:"triage,omitempty"`
 	// Orchestrator is the owner's block of the orchestrator daemon's own
 	// guardrails (D1239, D1234): how many runs it may have running at once, how
 	// many it launches in one batch, the rate it may spawn at, and the model
@@ -636,14 +684,15 @@ func (c *Config) choiceRefProblem(name string) string {
 	if name == config.DefaultClaudeAccount {
 		return ""
 	}
-	// The project's own Anthropic API key is the other value
-	// config.ValidClaudeAccountRef admits and this key cannot take: it names no
-	// account of any run's, so a key choosing a run's account cannot name it.
-	// The refusal has to stand ahead of the lookup below, whose sentence would
-	// send the operator to a claude_accounts entry that this file's own
-	// ValidateClaudeAccounts refuses — a remedy nobody can carry out.
-	if name == config.AnthropicKeyAccount {
-		return config.AnthropicKeyAccountChoiceMessage
+	// The account axis's non-account values are the others
+	// config.ValidClaudeAccountRef admits and this key cannot take: they name
+	// no account of any run's, so a key choosing a run's account cannot name
+	// either. The refusal has to stand ahead of the lookup below, whose
+	// sentence would send the operator to a claude_accounts entry that this
+	// file's own ValidateClaudeAccounts refuses — a remedy nobody can carry
+	// out.
+	if config.AxisNonAccountValue(name) {
+		return config.NonAccountChoiceMessage(name)
 	}
 	if _, ok := c.ClaudeAccounts[name]; ok {
 		return ""
@@ -1916,6 +1965,61 @@ func (c *Config) ImageCatalogEffective(published *config.Catalog) *config.Catalo
 	return effective
 }
 
+// ImageMapEffective is the keep rule for the repo-to-image map, stated here
+// beside the field for the catalog's reason (D1906): this file's map when it
+// writes one — a written map with no entry included, which is how a published
+// one is taken away on purpose — and the published node's otherwise.
+//
+// A nil answer is the whole of the answer, as it is for the catalog: the
+// publisher omits the key when the effective map names no entry, so a project
+// that maps nothing has a node byte for byte what it had before the key
+// existed. The two halves cannot be one field for the same reason: "this file
+// says nothing" must keep the node's map, and "this file says nothing is
+// mapped" must take it away.
+func (c *Config) ImageMapEffective(published map[string]string) map[string]string {
+	effective := published
+	if c.ImageMap != nil {
+		effective = c.ImageMap
+	}
+	if len(effective) == 0 {
+		return nil
+	}
+	return effective
+}
+
+// BakeReposEffective is the keep rule for the bake switch (D1901): this file's
+// answer when it writes one, and the published node's otherwise — so a machine
+// whose config predates the key does not publish a node that turns baking off
+// for the project. A written true and an absent member are the same statement
+// to every reader (projectpolicy.Policy.BakesRepos), so the answer is a
+// pointer and the publisher writes what it is given, omitting the member when
+// the answer is nil.
+func (c *Config) BakeReposEffective(published *bool) *bool {
+	if c.BakeRepos != nil {
+		return c.BakeRepos
+	}
+	return published
+}
+
+// TriageEffective is the keep rule for the triage switch, stated here beside
+// the field for the verifier list's and the catalog's reason (D1854): this
+// file's answer when it writes one, and the published node's otherwise — so a
+// machine whose config predates the key does not publish a node that turns the
+// judge back on for every run of the project. The cost of the other reading is
+// the floor's: a machine whose config says nothing about the stage would be
+// undoing a decision the owner made.
+//
+// The answer is a pointer for the bake switch's reason: absent and true are one
+// statement to every reader (config.Agent.TriageOn reads an absent key as on in
+// the two modes that triage at all), so only a written false has anything to
+// say and the publisher omits the member when the answer is nil.
+func (c *Config) TriageEffective(published *bool) *bool {
+	if c.Triage != nil {
+		return c.Triage
+	}
+	return published
+}
+
 // OrchestratorEffective is the keep rule for the orchestrator block, stated
 // here beside the field for the verifier list's and the catalog's reason
 // (D1239, D1234): this file's block when it writes one that sets a key, and the
@@ -2310,6 +2414,29 @@ func (c *Config) validate() error {
 	if c.ImageCatalog != nil {
 		for _, p := range config.ValidateCatalog("image_catalog", *c.ImageCatalog) {
 			bad("%v", p)
+		}
+	}
+	// The repo-to-image map is held to the node's own rule here (D1906), the
+	// way the catalog is: it is copied into the policy node, and a key or a
+	// name this file accepted while the node refused it would be a mapping that
+	// never reaches a run — while one the node accepted and this file refused
+	// would never reach it at all. The two rules are stated once each and are
+	// the same pair the node's decoder applies: the key is a repository name in
+	// the canonical form a --repo is looked up by (task.CanonicalRepo, which
+	// the node's own check calls), and the value is a catalog entry name
+	// (config.ValidCatalogName, the rule an entry's name and a workflow's
+	// image_name are held to).
+	for _, repo := range slices.Sorted(maps.Keys(c.ImageMap)) {
+		// The key is this file's own text, and one that failed the check above
+		// is exactly a key that may carry anything: it is escaped into the
+		// field path, the way workflow_secrets' names are, so a control or
+		// bidi character reaches the operator as \uXXXX and not as itself.
+		at := "image_map." + pluginwire.Printable(repo)
+		if canon, err := task.CanonicalRepo(repo); err != nil || canon != repo {
+			bad("%s: an image_map key is a repository name, as acme/app: it is the name a job's own repository is looked up by, and one in another case is a key no lookup reaches", at)
+		}
+		if !config.ValidCatalogName(c.ImageMap[repo]) {
+			bad("%s: %s", at, config.CatalogNameMessage)
 		}
 	}
 	// The orchestrator block is held to the node's own rule here, the way the

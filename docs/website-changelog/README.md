@@ -1,6 +1,6 @@
 # Website change log
 
-**Status: plan only; nothing is implemented; no task approved.** The owner answered D1640–D1643 on
+**Status as of 2026-11-10: in progress, 3/4 merged; see [docs/status.md](../status.md) for the current table.** The owner answered D1640–D1643 on
 2026-11-07 (all as recommended; D1641 amended after review, amendment confirmed); D1644–D1646 and D1648 were answered as recommended the same day. No decision is open.
 
 **Spec owner:** Dimi Paun, received 2026-11-07. **Reserved numbers:** D1640–D1659, Checks 430–439.

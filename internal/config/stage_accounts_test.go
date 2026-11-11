@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -14,7 +15,7 @@ import (
 // absent: no account could apply to them, so naming one is refused rather than
 // silently never applying.
 func TestRunStagesAreTheModelCallingStages(t *testing.T) {
-	want := []string{"plan", "implement", "review_first", "review", "adversarial", "fix"}
+	want := []string{"plan", "implement", "review_first", "review", "adversarial", "triage", "fix"}
 	if len(RunStages) != len(want) {
 		t.Fatalf("RunStages = %v, want %v", RunStages, want)
 	}
@@ -56,9 +57,9 @@ func TestCheckStageAccountMixIsTheB0Ruling(t *testing.T) {
 		{name: "api-key, review alone", auth: "api-key", stages: map[string]string{"review": "acme-overflow"}},
 		{name: "api-key, no stage account", auth: "api-key", stages: nil},
 		{name: "api-key, the coder's stage refused", auth: "api-key", stages: map[string]string{"implement": "acme-overflow"},
-			want: [][]string{{"stages.implement.claude_account", "would never be used", "review and adversarial"}}},
+			want: [][]string{{"stages.implement.claude_account", "would never be used", "review, adversarial and triage"}}},
 		{name: "api-key, review_first refused", auth: "api-key", stages: map[string]string{"review_first": "acme-overflow"},
-			want: [][]string{{"stages.review_first.claude_account", "review and adversarial"}}},
+			want: [][]string{{"stages.review_first.claude_account", "review, adversarial and triage"}}},
 		{name: "api-key, fix refused", auth: "api-key", stages: map[string]string{"fix": "acme-overflow"},
 			want: [][]string{{"stages.fix.claude_account"}}},
 		{name: "api-key, plan refused", auth: "api-key", stages: map[string]string{"plan": "acme-overflow"},
@@ -209,5 +210,133 @@ func TestCheckMixBudgetIsTheModeClause(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPoolServingPathsPlacesEveryMemberOnItsOwnPath pins D1634's reading: an
+// OAuth or Anthropic-key member is served by the credentials service, an
+// OpenRouter or Vertex member by the run's own gateway, a pool of one kind is a
+// list one path can walk, and a pool of two kinds is one that can only fail
+// over at a stage boundary (F7). The built-in vertex is placed without being
+// defined, which is what makes it usable as a pool's last member (D1624).
+func TestPoolServingPathsPlacesEveryMemberOnItsOwnPath(t *testing.T) {
+	creds := []Credential{
+		{Name: "acme-oauth", Type: CredentialTypeClaudeOAuth},
+		{Name: "acme-key", Type: CredentialTypeAnthropic},
+		{Name: "acme-router", Type: CredentialTypeOpenRouter},
+	}
+	for _, tc := range []struct {
+		name   string
+		member []string
+		paths  []string
+	}{
+		{"the service's own two types", []string{"acme-oauth", "acme-key"}, []string{CredentialPathCredsvc}},
+		{"a gateway member alone", []string{"acme-router"}, []string{CredentialPathRunner}},
+		{"the built-in vertex", []string{"vertex"}, []string{CredentialPathRunner}},
+		{"one of each", []string{"acme-oauth", "acme-router"}, []string{CredentialPathCredsvc, CredentialPathRunner}},
+		{"a repeat is one path", []string{"acme-oauth", "acme-oauth", "acme-key"}, []string{CredentialPathCredsvc}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			paths, unplaced := PoolServingPaths(Pool{Name: "p", Members: tc.member}, creds)
+			if len(unplaced) != 0 {
+				t.Fatalf("members %v were not placed: %v", tc.member, unplaced)
+			}
+			if len(paths) != len(tc.paths) {
+				t.Fatalf("paths = %v, want %v", paths, tc.paths)
+			}
+			for i, want := range tc.paths {
+				if paths[i] != want {
+					t.Fatalf("paths = %v, want %v", paths, tc.paths)
+				}
+			}
+		})
+	}
+}
+
+// TestCredentialServingPathPlacesOnlyTheTypesThatShip pins the other half: a
+// type neither path serves is "" rather than a guess, so a caller that places
+// credentials refuses it instead of sending it somewhere it could not be
+// served.
+func TestCredentialServingPathPlacesOnlyTheTypesThatShip(t *testing.T) {
+	for _, tc := range []struct{ typ, want string }{
+		{CredentialTypeClaudeOAuth, CredentialPathCredsvc},
+		{CredentialTypeAnthropic, CredentialPathCredsvc},
+		{CredentialTypeOpenRouter, CredentialPathRunner},
+		{CredentialTypeVertex, CredentialPathRunner},
+		{CredentialTypeOpenAI, ""},
+		{CredentialTypeCodexOAuth, ""},
+		{"", ""},
+		{"someone's-own", ""},
+	} {
+		if got := CredentialServingPath(tc.typ); got != tc.want {
+			t.Errorf("CredentialServingPath(%q) = %q, want %q", tc.typ, got, tc.want)
+		}
+	}
+}
+
+// TestPoolServingPathsNamesTheMemberNothingServes pins the third answer: a
+// member whose credential type no path serves is reported by name, because the
+// sentence a caller prints has to say WHICH member it could not place.
+func TestPoolServingPathsNamesTheMemberNothingServes(t *testing.T) {
+	creds := []Credential{
+		{Name: "acme-oauth", Type: CredentialTypeClaudeOAuth},
+		{Name: "acme-future", Type: CredentialTypeOpenAI},
+	}
+	paths, unplaced := PoolServingPaths(Pool{Name: "p", Members: []string{"acme-oauth", "acme-future"}}, creds)
+	if len(paths) != 1 || paths[0] != CredentialPathCredsvc {
+		t.Fatalf("paths = %v, want the one member it could place", paths)
+	}
+	if len(unplaced) != 1 || unplaced[0] != "acme-future" {
+		t.Fatalf("unplaced = %v, want [acme-future]", unplaced)
+	}
+}
+
+// TestAccountStagesAReleasedImageKnowsIsRunStagesMinusThisReleases: the
+// vocabulary a published policy node's claude_account_stages may name and
+// still be readable by every job image that reads it. A node's reader refuses
+// the *whole* node when one of those names is not a stage of its own run
+// (projectpolicy, through CheckStageSegment), and a reader is an image:
+// `fugaro update` rebuilds the images behind its own confirmation, so an
+// installation can still be running one built before this release — an
+// in-flight run included. The list is what this release's publisher holds its
+// entries back to, so a name added to RunStages and not to the field's own
+// vocabulary is held back by construction rather than by whoever remembers.
+//
+// The six names are written out because they are a fact about a tag — the last
+// release, 0.22.0 "Sloth", whose reader has them and no triage — and not about
+// this tree. internal/cli's TestPublishHoldsBackAStageTheReleaseBehindCannotRead
+// is the second reader of the same list, and the two have to name one set for
+// the hold-back to be complete.
+func TestAccountStagesAReleasedImageKnowsIsRunStagesMinusThisReleases(t *testing.T) {
+	released := []string{"plan", "implement", "review_first", "review", "adversarial", "fix"}
+	if !slices.Equal(AccountStagesAReleasedImageKnows, released) {
+		t.Fatalf("AccountStagesAReleasedImageKnows = %v, want %v: it is the vocabulary of the release the field runs, and a name moved in or out of it is a release decision", AccountStagesAReleasedImageKnows, released)
+	}
+	// Every name of the released vocabulary is still a stage of this run: one
+	// dropped from RunStages and left here would hold nothing back and would
+	// read as a stage no release ever had.
+	for _, stage := range AccountStagesAReleasedImageKnows {
+		if !IsRunStage(stage) {
+			t.Errorf("AccountStagesAReleasedImageKnows names %q, which is not a stage of a run", stage)
+		}
+	}
+	// What is held back is exactly what this release added and nothing else:
+	// the vocabulary is derived, so a stage landing in RunStages is held back
+	// by the same change that adds it.
+	for _, stage := range RunStages {
+		want := !slices.Contains(released, stage)
+		if got := AccountStageHeldBack(stage); got != want {
+			t.Errorf("AccountStageHeldBack(%q) = %v, want %v", stage, got, want)
+		}
+	}
+	if !AccountStageHeldBack("triage") {
+		t.Error("AccountStageHeldBack(triage) = false: no released image has the stage, so a node naming it is refused whole by the image in the field")
+	}
+	// A name that is no stage of a run at all is not "held back": it never
+	// reaches the node, and CheckStageSegment is what refuses it.
+	for _, stage := range []string{"bootstrap", "finalize", ""} {
+		if AccountStageHeldBack(stage) {
+			t.Errorf("AccountStageHeldBack(%q) = true: only a stage of a run can be held back from the node", stage)
+		}
 	}
 }

@@ -456,10 +456,10 @@ var censusOutputNames = []string{
 	// same under each: `npm ci` writes a tree nobody reviews from a lockfile
 	// that already pins it.
 	"node_modules",
-	// .gitignore's /deploy/terraform/**/.terraform/: terraform's provider tree,
-	// ignored at whatever depth the module that ran init sits. The match is the
-	// whole segment, so the committed .terraform.lock.hcl beside it stays
-	// repository text.
+	// .gitignore's /deploy/terraform/**/.terraform/ and the same pattern over
+	// ee/keyservice/terraform: terraform's provider tree, ignored at whatever
+	// depth the module that ran init sits. The match is the whole segment, so
+	// the committed .terraform.lock.hcl beside it stays repository text.
 	".terraform",
 	// deploy/sandbox/.gitignore's junit.xml: a test runner's report, which
 	// records the names of the tests it ran -- the console's test-results/
@@ -486,9 +486,10 @@ var censusOutputNames = []string{
 // .gitignore patterns behind them are an ending, a beginning, or both sides of
 // a stem, and a marker in the name covers all three without a fourth shape.
 var censusOutputMarkers = []string{
-	// .gitignore's /deploy/terraform/**/*.tfstate and *.tfstate.*: a local
-	// terraform run's state, which records the resource values that were
-	// applied, at a path the `**/` puts wherever the module that wrote it sits.
+	// .gitignore's /deploy/terraform/**/*.tfstate and *.tfstate.*, and the same
+	// two patterns over ee/keyservice/terraform: a local terraform run's state,
+	// which records the resource values that were applied, at a path the `**/`
+	// puts wherever the module that wrote it sits.
 	".tfstate",
 	// .gitignore's *.swp: the editor's copy of the file being edited, which
 	// carries that file's text -- a live file's mentions included.
@@ -1007,6 +1008,12 @@ var censusIgnored = []struct {
 	{".gitignore", "/deploy/terraform/**/.terraform/", "deploy/terraform/prod/.terraform/providers/registry.terraform.io/hashicorp/google/6.0.0/linux_amd64/terraform-provider-google", false},
 	{".gitignore", "/deploy/terraform/**/*.tfstate", "deploy/terraform/prod/terraform.tfstate", false},
 	{".gitignore", "/deploy/terraform/**/*.tfstate.*", "deploy/terraform/prod/terraform.tfstate.backup", false},
+	// The key service's own roots, which are the second tree a local init can be
+	// run in (S3.5): the same provider tree and the same state file, written
+	// under ee/ instead.
+	{".gitignore", "/ee/keyservice/terraform/**/.terraform/", "ee/keyservice/terraform/keyring/.terraform/providers/registry.terraform.io/hashicorp/google/8.4.0/linux_amd64/terraform-provider-google", false},
+	{".gitignore", "/ee/keyservice/terraform/**/*.tfstate", "ee/keyservice/terraform/keyring/terraform.tfstate", false},
+	{".gitignore", "/ee/keyservice/terraform/**/*.tfstate.*", "ee/keyservice/terraform/keyring/terraform.tfstate.backup", false},
 	{".gitignore", "*.swp", "internal/cli/.init.go.swp", false},
 	{".gitignore", "/docs/website/redesign/current/*.jpg", "docs/website/redesign/current/home.jpg", false},
 	{".gitignore", "/docs/website/redesign/after/*.jpg", "docs/website/redesign/after/home.jpg", false},

@@ -1,7 +1,6 @@
 # An image's `ENV` reaching a run: implementation plan
 
-**Status: IE1 is implemented (this branch, not merged); IE2, IE3 and IE4 are planned and not
-implemented.** Four tasks, **IE1–IE4**, each with its
+**Status as of 2026-11-10: done except the owner's Check 291; see [docs/status.md](../status.md) for the current table.** Four tasks, **IE1–IE4**, each with its
 files (IE2's is the longest at eight, because a change to the reserved list is a change to its
 schema mirror too), its interfaces, its named tests, its **red step**,
 its **mutation**, its **reviewer tier**, what it depends on, its command and its commit. Written against
@@ -102,7 +101,7 @@ and IE2 says so, `docs/repo-image-removal/**`,
   entry's own name and nothing else** — it is `config.ValidateCatalog`-checked operator text, so it is
   a name, not a reference, a URL or a digest, and the runner never parses it. **It is written for every
   job whose image the catalog chose**, prebuilt and built alike (`CatalogImageEntry` reads the entry
-  back out of a prebuilt reference, `internal/backend/gcp/catalog.go:141-159`), and for no other job:
+  back out of a prebuilt reference, `internal/backend/gcp/catalog.go:168-192`), and for no other job:
   a repository-built job and `checkout: clone`'s base image carry the key **empty** (the owner's choice of 2026-11-06 after the security review of IE1: a key the job sets overrides a derived image's own `ENV`, an absent one does not, so a repository Dockerfile could otherwise forge the stamp), which is the fail-closed direction D1371 asks for; IE2 reads an empty stamp as unstamped. It is a new name under a reserved prefix, so no existing
   field changes meaning and the agent's own environment never sees it (D1372). **As landed** (2026-11-06,
   this branch): the constant is `runner.ImageEntryEnv`, aliased `infra.ImageEntryEnv` and assigned in

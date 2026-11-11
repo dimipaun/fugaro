@@ -165,7 +165,7 @@ func TestAnAgentSessionWritesNoGrantsNode(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the roles step wrote nothing and still reported a converged run:\n%s", all)
 	}
-	if !strings.Contains(all, agentMarkers[0]+" is set") || !strings.Contains(all, "your own terminal window") {
+	if !strings.Contains(all, "a coding agent's session") || !strings.Contains(all, "your own terminal window") {
 		t.Errorf("the refusal is not the session's own:\n%s", all)
 	}
 	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
@@ -192,11 +192,10 @@ func TestADeclinedRunMigratesNoNode(t *testing.T) {
 	// The plan has changes, so the run reaches its confirmation instead of
 	// reporting an installation that already matches.
 	updating(t, r)
-	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	all := accessOut(out, errOut, err)
-	if err == nil || !strings.Contains(all, "not confirmed") {
-		t.Fatalf("a run whose confirmation was declined did not stop: %v\n%s", err, all)
+	if err == nil || !strings.Contains(all, "real terminal") {
+		t.Fatalf("a run whose confirmation was not given did not stop: %v\n%s", err, all)
 	}
 	if calls := subcommands(r.calls(t)); slices.Contains(calls, "apply") {
 		t.Errorf("a declined run applied the installation: %q\n%s", calls, all)
@@ -460,11 +459,10 @@ func TestADeclinedRunLandsNoFlagList(t *testing.T) {
 	// The plan has changes, so the run reaches its confirmation instead of
 	// reporting an installation that already matches.
 	updating(t, r)
-	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update", "--operator", "user:new@example.com")
 	all := accessOut(out, errOut, err)
-	if err == nil || !strings.Contains(all, "not confirmed") {
-		t.Fatalf("a run whose confirmation was declined did not stop: %v\n%s", err, all)
+	if err == nil || !strings.Contains(all, "real terminal") {
+		t.Fatalf("a run whose confirmation was not given did not stop: %v\n%s", err, all)
 	}
 	if calls := subcommands(r.calls(t)); slices.Contains(calls, "apply") {
 		t.Errorf("a declined run applied the installation: %q\n%s", calls, all)
@@ -685,19 +683,19 @@ func TestRevokeIsNotUndoneByAStaleDerive(t *testing.T) {
 	}
 }
 
-// TestAGrantTheInstallationNeverHeldIsNotCoveredByYes: the grants node is what
-// an installation's roles are, and the one write it takes outside a run (a hand
+// TestAGrantTheInstallationNeverHeldNamesItself: the grants node is what an
+// installation's roles are, and the one write it takes outside a run (a hand
 // edit, `fugaro user`'s own door) is a grant nobody at this terminal made
 // (update_access.go's heldAccess). The review screen does not list that member,
-// so a plan granting them is not covered — and `--yes`, which an operator
-// passes for the plan the review announced, is not an answer to this one: the
-// step asks for the project's name typed at a real terminal, and a run that
-// cannot type it applies nothing.
+// so a plan granting them is not covered: the step names the grant in its own
+// banner and then takes the confirmation every step takes (confirmNow, T7) —
+// nothing is typed, --yes or a person at the terminal answers it, and a run
+// with neither applies nothing.
 //
 // The control is the same plan and the same node with the installation's own
 // outputs holding the member: the run was told about them, and the same command
-// applies the same plan.
-func TestAGrantTheInstallationNeverHeldIsNotCoveredByYes(t *testing.T) {
+// applies the same plan with no banner about it.
+func TestAGrantTheInstallationNeverHeldNamesItself(t *testing.T) {
 	const held, extra = "user:ops@example.com", "user:new@example.com"
 	node := accessNodeDoc(projectGrant(held, accesslib.RoleOperator), projectGrant(extra, accesslib.RoleOperator))
 	t.Run("the node added a member", func(t *testing.T) {
@@ -708,20 +706,34 @@ func TestAGrantTheInstallationNeverHeldIsNotCoveredByYes(t *testing.T) {
 		fakeTerminal(t)
 		out, errOut, err := executeStdin(t, "", "update", "--yes")
 		all := accessOut(out, errOut, err)
-		if err == nil || !strings.Contains(all, "not confirmed") {
-			t.Fatalf("a plan granting a member the review did not announce was confirmed by --yes: %v\n%s", err, all)
+		if err != nil {
+			t.Fatalf("a plan granting a member the review did not announce failed under --yes: %v\n%s", err, all)
 		}
-		if calls := subcommands(r.calls(t)); slices.Contains(calls, "apply") {
-			t.Errorf("a run whose grant was not confirmed applied the installation: %q\n%s", calls, all)
+		if len(r.ran(t, "apply")) == 0 {
+			t.Errorf("the run applied nothing:\n%s", all)
 		}
 		if !strings.Contains(all, "the grants node holds "+extra+", who this installation's own outputs do not") {
 			t.Errorf("the run does not say which member the installation's outputs do not hold:\n%s", all)
 		}
 		if !strings.Contains(all, "granting "+extra+", which the review did not announce") {
-			t.Errorf("the step does not ask about the grant itself:\n%s", all)
+			t.Errorf("the step does not name the grant itself:\n%s", all)
 		}
-		if !strings.Contains(all, "--yes does not confirm this one") {
-			t.Errorf("the run does not say --yes is not an answer here:\n%s", all)
+		if strings.Contains(all, "Type ") {
+			t.Errorf("the step asked for something to be typed:\n%s", all)
+		}
+	})
+	t.Run("no terminal and no --yes", func(t *testing.T) {
+		r, db := accessRig(t, nil, nil, []string{held}, nil)
+		db.Set(accesslib.PathNode, node)
+		updating(t, r)
+		r.setPlanAt(t, "installation", grantChange("runs_launcher", extra, "roles/storage.objectUser", "create"))
+		out, errOut, err := executeStdin(t, "", "update")
+		all := accessOut(out, errOut, err)
+		if err == nil || !strings.Contains(all, "real terminal") {
+			t.Fatalf("a plan granting a member the review did not announce was confirmed with no terminal and no --yes: %v\n%s", err, all)
+		}
+		if calls := subcommands(r.calls(t)); slices.Contains(calls, "apply") {
+			t.Errorf("a run whose grant was not confirmed applied the installation: %q\n%s", calls, all)
 		}
 	})
 	t.Run("the installation held the member", func(t *testing.T) {

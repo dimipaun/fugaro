@@ -430,17 +430,26 @@ func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slu
 // entry unjudged here. So is an entry's build record that is there and could
 // not be read or parsed: only an absent one is the "no build has built it"
 // warning below (catalogEntryRecord). An entry that is a prebuilt image has
-// nothing to build.
+// nothing to build, and what it is judged on instead is the smoke of the
+// reference it names (prebuiltSmokeChecks).
 func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, cat *config.Catalog, catUnknown bool) []doctorCheck {
 	var out []doctorCheck
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 		e, ok := workflowCatalogEntry(cat, catUnknown, slug, cfg.Workflows[name], catalog.Backend(env.lc.Backend()))
-		// Only an entry this machine read the catalog for, and only one a
-		// Fugaro build writes: an entry with no source kind is the unknown
-		// catalog's (workflowCatalogEntry — the unread line says such a
-		// workflow is not judged here), and a prebuilt image has nothing to
-		// build.
-		if !ok || (e.Source.Kind != config.SourceDockerfile && e.Source.Kind != config.SourceInline) {
+		if !ok {
+			continue
+		}
+		// A prebuilt entry is never built, so what says whether its image is
+		// one a job can start on is the smoke of it (F10/IS11), judged on the
+		// record that run writes.
+		if e.Source.Kind == config.SourceImage {
+			out = append(out, prebuiltSmokeChecks(ctx, env, rb, slug, name, e)...)
+			continue
+		}
+		// Only an entry a Fugaro build writes: an entry with no source kind is
+		// the unknown catalog's (workflowCatalogEntry — the unread line says
+		// such a workflow is not judged here).
+		if e.Source.Kind != config.SourceDockerfile && e.Source.Kind != config.SourceInline {
 			continue
 		}
 		slugs := catalogEntrySlugs(ctx, env, slug, e)
@@ -491,6 +500,47 @@ func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, sl
 			Fix:     "the daily image check rebuilds it; to do it now: fugaro image build " + e.Name})
 	}
 	return out
+}
+
+// prebuiltSmokeChecks judges a workflow whose entry is a prebuilt image: the
+// reference the entry names is what its jobs start on, and the only thing that
+// says the image meets the runtime contract is the smoke-only run of it
+// (F10/IS11). That run is the one writer of the entry's record, and a Cloud
+// Build stops at a failed step, so a record that is absent is both states at
+// once — the reference was never smoked, or its smoke failed — and there is
+// nothing else the difference could be read from. The sentence says so rather
+// than claiming which one it was, and the fix is the run itself: the smoke
+// fails loudly when the image is not one a job can start on.
+func prebuiltSmokeChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug, workflow string, e config.Entry) []doctorCheck {
+	slugs := catalogEntrySlugs(ctx, env, slug, e)
+	if len(slugs) == 0 {
+		// The record lives under the slug of the repository the run was
+		// submitted as, so an entry this machine cannot place has no place to
+		// look (catalogEntryRecord, and the built entry's own arm above).
+		return nil
+	}
+	rec, err := catalogEntryRecord(ctx, rb, slugs, e.Name)
+	if err != nil {
+		// A record that is there and unreadable is not a reference nobody
+		// smoked: what cannot be read says nothing (catalogEntryRecord).
+		return nil
+	}
+	const id = "image-catalog-"
+	if rec == nil {
+		return []doctorCheck{{ID: id + workflow, Severity: "warning",
+			Problem: fmt.Sprintf("workflow %s runs the project image catalog's entry %s, the prebuilt image %s, and no smoke of that reference has been recorded: either it was never smoked or its smoke failed, and its jobs start on an image nothing has checked against the runtime contract", workflow, e.Name, e.Source.Image),
+			Fix:     "fugaro image build " + e.Name + " smokes it in Cloud Build, which fails there if the image is not one a job can start on"}}
+	}
+	if rec.Image == e.Source.Image {
+		return nil
+	}
+	tested := rec.Image
+	if tested == "" {
+		tested = "no reference at all"
+	}
+	return []doctorCheck{{ID: id + workflow, Severity: "warning",
+		Problem: fmt.Sprintf("workflow %s runs the project image catalog's entry %s, the prebuilt image %s, and the last smoke of the entry tested %s: the reference its jobs start on has not been smoked", workflow, e.Name, e.Source.Image, tested),
+		Fix:     "fugaro image build " + e.Name + " smokes the reference the entry names now"}}
 }
 
 // workflowCatalogEntry is the catalog entry the workflow w runs, and whether

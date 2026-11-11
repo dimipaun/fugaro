@@ -47,7 +47,7 @@ not exist. Recording them here so the next reader does not repeat them.
 | --- | --- |
 | A **Fugaro project** (§2, §4) | Defined: *"one GCP project, plus (from M9) one Firebase project … its repositories; its people lists …; one local config"* (`docs/design/v1.md`). The spec's "one coordinator per Fugaro project, deployed into that project's Firebase/GCP project" is therefore well-formed — and it is the same object the repo calls an **installation** (`docs/design/v1.md`). |
 | **Cloud Run service, scale-to-zero** (§4) | **No Cloud Run *service* exists anywhere.** Every workload is `google_cloud_run_v2_job` (history `modules/installation/history.tf:70`; project jobs `modules/project/job.tf:10`; workflow jobs `modules/workflow/job.tf:4`; repo check `modules/repo/check.tf:16`). The type is not even in the plan allowlist (`internal/infra/tf/cover.go:22`). See **#2**. |
-| **Provisioning: "part of project init's existing Terraform"** (§4) | `fugaro init` applies the **installation** root (`internal/cli/init.go`'s `installRoot`, the function that plans and applies it), behind one interactive confirmation that covers a plan only if every resource type is allowlisted (`internal/infra/tf/cover.go:22 allowedTypes`, `:128 grantRules`) and every grant is in `grantRules`; anything else gets its own typed confirmation (`internal/cli/init_review.go:77 runCovers`, `:127 notCovered`). See **#3**. |
+| **Provisioning: "part of project init's existing Terraform"** (§4) | `fugaro init` applies the **installation** root (`internal/cli/init.go`'s `installRoot`, the function that plans and applies it), behind one interactive confirmation that covers a plan only if every resource type is allowlisted (`internal/infra/tf/cover.go:22 allowedTypes`, `:154 grantRules`) and every grant is in `grantRules`; anything else gets its own typed confirmation (`internal/cli/init_review.go:77 runCovers`, `:147 notCovered`). See **#3**. |
 | **Access: "whoever can reach the project's coordinator is in the project; no extra permission model in v1"** (§4) | The opposite is the standing design: the compute module **refuses** `allUsers`, `allAuthenticatedUsers` and `domain:` members (`deploy/terraform/gcp/modules/compute/variables.tf:122,144`), launchers are per-person IAM members on one job (`modules/project/iam.tf:7`), and `SECURITY.md:40` puts the trust boundary at the repository and the task source, never at network reach. See **#4**. |
 | **Store: Firestore; "Firestore and RTDB are already available"** (§5) | True, both exist — and they are **two different stores with two different jobs**. RTDB is the budget/policy/kill/registry/mailbox store (`internal/budget/model.go:1-2`); Firestore holds `spendDaily` history only (`internal/firestore/client.go` package doc, `internal/budget/rollover.go:48 SpendCollection`). See **#6**. |
 | **"Firestore's real-time listeners drive live updates in the console"** (§5) | Wrong twice: the Firestore client has no listeners (hand-written REST: `Get`, `Patch`, `Delete`, `Query`, `GetDatabase`, `CreateDatabase`), and the console renderer's CSP is `connect-src 'none'` (`console/src/main/protocol.ts:132`) — it never talks to the network at all. See **#7**. |
@@ -92,7 +92,7 @@ for `google_cloud_run_v2_service` over `deploy/` returns nothing, and the string
 **absent from the plan allowlist** `internal/infra/tf/cover.go:22 allowedTypes` — whose own
 comment says *"TestAllowedTypesCoverTheModules fails when a module adds a type that is not
 listed here, so adding one is a decision, not an accident."* The grant table beside it
-(`cover.go:128 grantRules`) is likewise an allowlist, and a `*_iam_member` type is not even
+(`cover.go:154 grantRules`) is likewise an allowlist, and a `*_iam_member` type is not even
 present for a service.
 *Consequence:* the coordinator would be **the first request-serving workload in Fugaro**.
 It needs a new allowlisted type, a new grant row, and a decision about which `fugaro init`
@@ -128,8 +128,10 @@ Terraform" is ambiguous in a way that matters: the coordinator belongs to the
 **installation** root, beside the history job and the scheduler jobs.
 The gate: `init`'s one confirmation covers a plan only when every resource type is in
 `allowedTypes` and every grant is in `grantRules` (`internal/cli/init_review.go:77
-runCovers`, `:127 notCovered`); anything outside gets its own typed confirmation, and a
-coding agent is refused outright (`:143-144`, `&initflow.AgentError`). A Cloud Run service
+runCovers`, `:146 notCovered`); anything outside is not covered, so the step is the
+person's own to take or to leave, with the banner in front of them — there is no typed
+name to ask for any more (T7) — and a coding agent is refused outright (`:200`,
+`&initflow.AgentError`). A Cloud Run service
 is outside the allowlist, so it would be **uncovered** — which is the mechanism working as
 designed, not a defect. → **Q1**, **Q10**.
 
@@ -176,9 +178,9 @@ It holds `config/caps/*`, `config/policy/*`, `config/kill/*`, `config/admin`,
 and the mailbox. No one file lists the whole tree: the path constants for `runs/`, `spend/`
 and `outcomes/` are `internal/budget/model.go:55,57,81`; the four top-level nodes a rollover
 moves are `internal/budget/rollover.go:342`; the policy and admin nodes are described in
-`internal/budget/rules/rules.go:44-51`; the agents registry is read at
+`internal/budget/rules/rules.go:53-62`; the agents registry is read at
 `internal/budget/sweep.go:121`; and the mailbox is a rules macro rather than a package
-constant (`internal/budget/rules/rules.go:375-398`).
+constant (`internal/budget/rules/rules.go:579`).
 Firestore: `internal/firestore/client.go` package doc — *"a small REST client for Cloud
 Firestore (native mode), built for the spend history"* — and the one collection is
 `spendDaily` (`internal/budget/rollover.go:48 SpendCollection`).
@@ -289,7 +291,7 @@ read-only. → **Q2**, **Q13**.
 Present: the RTDB run registry `runs/<slug>/<run>/*` (`internal/budget/model.go:30-86`),
 the live counters `agents/<slug>/<run>` and `outcomes/<day>/*`, the mailbox
 (`internal/budget/rules/rules.json.tmpl:193-231`, `inbox`/`outbox`/`heartbeat`, macros
-`MAILBOX`/`CONSUMER` at `internal/budget/rules/rules.go:375-398`), `fugaro watch`,
+`MAILBOX`/`CONSUMER` at `internal/budget/rules/rules.go:579-586`), `fugaro watch`,
 `fugaro runs ls`, `fugaro logs`, `fugaro diagnose`. Per-person money: Firestore
 `spendDaily.byPerson{<requested_by>}`, read by `fugaro report --by person`
 (`internal/cli/report.go:499`).
@@ -454,10 +456,10 @@ Today's model configuration is per **slot**: `agent.model` and
 routing switch `routing.claude: {via: direct|openrouter|auto, models: [...]}`
 (`internal/config/routing.go:42-61`, values at `:14-24`, validated by `CheckRouting` at
 `:98`). A published project policy can carry `providers`, `model_prices` and `routing`
-(`internal/projectpolicy/policy.go:128-134`, `Policy{... Providers, Prices, Routing}`).
+(`internal/projectpolicy/policy.go:129-135`, `Policy{... Providers, Prices, Routing}`).
 There is no "tier" concept, and no place a coordinator's two tiers would be written: the
 policy's `budget` block carries `Mode`, `PerRunUSD`, `AllowedModels`, `MaxRunTokens`
-(`internal/projectpolicy/policy.go:192`), which is a run's ceiling, not a service's slots.
+(`internal/projectpolicy/policy.go:193`), which is a run's ceiling, not a service's slots.
 *Consequence:* a two-tier config needs a new key — most naturally two named slots in the
 published policy, matching the `agent.models` shape rather than inventing a third. → **Q9**.
 
@@ -486,7 +488,7 @@ token, *"revoked when the runner finalises the run (and by `fx` as a backstop)"*
 (`docs/credentials-service/reconciliation.md:174`).
 A long-lived coordinator has no run: no `fs`, no `fr`, and an `fx` it cannot honour. And the
 RTDB rules gate `spend/` and `runs/` on the `RUN` macro
-(`internal/budget/rules/rules.go:396`, `internal/budget/rules/rules.json.tmpl:28-33`), so no non-run identity may
+(`internal/budget/rules/rules.go:592`, `internal/budget/rules/rules.json.tmpl:28-33`), so no non-run identity may
 write the counters.
 The spec says the cap is a **token** cap that *"counts toward the project's existing spend
 caps"*. The repo caps **dollars** (`DailyMicros` at `internal/budget/model.go:151,164` — the
@@ -640,7 +642,7 @@ not lost:
 ### Q2 — Who may call the coordinator, and what is the caller's identity?
 **Changes spec §4 (the "no extra permission model in v1" line) and §7.**
 - **(A) Recommended — Cloud Run IAM invoker with per-person IAM members, exactly as a launcher is granted today, plus a small `fugaro` command that mints the Google ID token so nobody types `gcloud auth print-identity-token`.** It is the only model the repository already validates (`modules/compute/variables.tf:122,144`) and it makes offboarding the launcher-list edit that already exists (finding **#5**). It also reuses the credentials service's own answer for a service's front door (D135, `docs/credentials-service/reconciliation.md:175`). Cost: every developer becomes an IAM member on one more resource, and the ID-token plumbing does not exist yet (finding **#4**).
-- **(B) Firebase Auth ID token as the caller identity, checked in the app, with IAM invoker as a second fence.** Reuses the identity world the phone already plans (D111, `docs/mobile/reconciliation.md`) and the `mu` user claim the rules already understand (`internal/budget/rules/rules.go:362`). Cost: Firebase Auth is a *plan*, not a build, and it puts an authorisation decision in application code rather than in IAM.
+- **(B) Firebase Auth ID token as the caller identity, checked in the app, with IAM invoker as a second fence.** Reuses the identity world the phone already plans (D111, `docs/mobile/reconciliation.md`) and the `mu` user claim the rules already understand (`internal/budget/rules/rules.go:529`). Cost: Firebase Auth is a *plan*, not a build, and it puts an authorisation decision in application code rather than in IAM.
 - **(C) A public URL with an application-level shared secret.** **Refused as written**: `allUsers` and `allAuthenticatedUsers` are refused everywhere in this repository (`modules/compute/variables.tf:122`), and a shared secret has no per-person revocation. Listed only so the refusal is on the record.
 *Consequence:* v1's "no extra permission model" is replaced by "the project's existing IAM members list", and the access list (launchers / operators / budget admins) has to be said explicitly — today they are three different things (`internal/infra/firebase.go:117-120`).
 
@@ -704,7 +706,7 @@ not lost:
 
 ### Q9 — How is a two-tier model configuration expressed, and what does the coordinator's provider consent say?
 **Changes spec §8.**
-- **(A) Recommended — two named slots in the published project policy, in the shape `agent.models` already uses, and an explicit `allow_data_to` naming every repository the coordinator may read.** The policy already carries `providers`, `model_prices` and `routing` (`internal/projectpolicy/policy.go:128-134`), so a slot pair is an addition rather than a new concept; and `allow_data_to` is the gate that has to be widened deliberately (finding **#24**).
+- **(A) Recommended — two named slots in the published project policy, in the shape `agent.models` already uses, and an explicit `allow_data_to` naming every repository the coordinator may read.** The policy already carries `providers`, `model_prices` and `routing` (`internal/projectpolicy/policy.go:129-135`), so a slot pair is an addition rather than a new concept; and `allow_data_to` is the gate that has to be widened deliberately (finding **#24**).
 - **(B) Two workflow profiles in the project layer, one per tier.** Reuses `profiles:` (`internal/projectpolicy/profiles.go:31`) but means the coordinator's model choice is expressed as a job profile, which it is not.
 - **(C) A per-installation setting outside the policy.** Cost: it is invisible to every run and to `fugaro doctor`, and the policy is where every other project-wide model decision lives.
 *Consequence:* under (A), `allow_data_to: ["*"]` for the coordinator's provider is an explicit, visible owner-level statement that every repository's text may go to that provider.
@@ -795,7 +797,7 @@ rewritten to it rather than to the answer above.
 | U2 | **The permissions the GitHub App has actually been granted on GitHub.** `tokenPermissions` is what a *run asks for* (`internal/gitprov/github/apptoken.go`'s `tokenPermissions`); GitHub caps it at the App's own grant, which is configured in GitHub's UI. | Only the owner can read the App's settings. It decides whether Q3's option (A) works at all: the App must already have `pull_requests: read`. |
 | U3 | **Whether an installation token with `repositories` omitted is acceptable in this design.** `tokenSource.Token` always posts one repository (`internal/gitprov/github/apptoken.go`). | A read of GitHub's API documentation, or one owner-run experiment. It decides whether a project-wide reader is N tokens or one. |
 | U4 | **The real cost of a reasoning-tier call at the spec's scale.** The arithmetic in finding **#26** is arithmetic from the shipped price catalog, not a measurement. | `fugaro report` and `fugaro budget preview` measure runs, not a service. Only running one would settle it. |
-| U5 | **Whether the RTDB rules can express a read grant for a coordinator's own state without widening anything else.** The template's macros are `TOKEN`, `RUN`, `USER`, `MAILBOX`, `CONSUMER` (`internal/budget/rules/rules.go:375-398`). | The rules have an emulator and a golden file (`internal/budget/rules/testdata/rules.golden.json`), so this is answerable by writing the change — but it is a change, and none is proposed here. |
+| U5 | **Whether the RTDB rules can express a read grant for a coordinator's own state without widening anything else.** The template's macros are `TOKEN`, `RUN`, `USER`, `MAILBOX`, `CONSUMER` (`internal/budget/rules/rules.go:565-592`). | The rules have an emulator and a golden file (`internal/budget/rules/testdata/rules.golden.json`), so this is answerable by writing the change — but it is a change, and none is proposed here. |
 | U6 | **What `docs/design/always-on-orchestrator.md` (PR #632) finally rules.** It is an open draft and it asks Q1–Q7 rather than deciding. | Reading it at the commit it merges with. Q10's option (A) depends on its answers. |
 | U7 | **What PR #634 (the console styling design) settles.** It is open and not on `main`; `docs/design/console-styling.md` does not exist locally. | Reading the merged file. It adds a `SERVED_FILES` entry and a Phase 6, and it does not change the CSP — so it should not affect Q8, but that is a claim about a draft. |
 
@@ -818,7 +820,7 @@ the README and for whatever plan follows.
 | **Front agent** | The mobile design's P5.4: the phone's conversational agent. | `docs/mobile/implementation-plan.md`, under **Task P5.4**. Distinct from both of the above. |
 | **Summarising agent** | The mobile design's agent beside the orchestrator, which condenses task events into spoken updates. | `docs/mobile/spec.md`, on *"**Summarising agent** sits beside the orchestrator"*. The nearest existing thing to a "coordinator" in the mobile design, and not the same. |
 | **Run** | One execution of a coding agent in a fresh Cloud Run container, ending in a pull request. | `internal/runstore/`, `internal/backend/`. The unit every budget cap is keyed to. |
-| **Launcher / operator / budget admin** | The three people lists. Launchers start runs; operators hold the run bucket and the preload account; budget admins may write the database. | `internal/infra/firebase.go:117-120`; `internal/localcfg/localcfg.go:360-365`. Q2's answer is that callers are per-person IAM members on the coordinator, as a launcher is granted today, so the access list has to be said explicitly. |
+| **Launcher / operator / budget admin** | The three people lists. Launchers start runs; operators hold the run bucket and the preload account; budget admins may write the database. | `internal/infra/firebase.go:117-120`; `internal/localcfg/localcfg.go:386-391`. Q2's answer is that callers are per-person IAM members on the coordinator, as a launcher is granted today, so the access list has to be said explicitly. |
 | **Project job** | A **shared** Cloud Run job one repository's workflow can run in another's name, created by the `project` Terraform module. | `deploy/terraform/gcp/modules/project/job.tf:10`; `SECURITY.md:93`. **Not** the coordinator, and **not** "the project's job". |
 
 ---

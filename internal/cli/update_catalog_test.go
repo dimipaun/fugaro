@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -208,8 +207,8 @@ func TestUpdatePreviewNamesTheCatalogArmsSecondApply(t *testing.T) {
 			if !strings.Contains(out, "Review: project "+initProjectName) {
 				t.Fatalf("the run showed no review screen to read:\n%s", out)
 			}
-			if !regexp.MustCompile(`(?m)^\s+\[will do\]\s+installation-2\b`).MatchString(out) {
-				t.Errorf("the preview does not report installation-2 as work this run will do, so the second apply that deploys the catalog check job is not the one the user's confirmation covers:\n%s", out)
+			if row := planRowOf(out, "installation-2"); !strings.Contains(row, "will do") {
+				t.Errorf("the preview does not report installation-2 as work this run will do (its row is %q), so the second apply that deploys the catalog check job is not the one the user's confirmation covers:\n%s", row, out)
 			}
 			if !strings.Contains(out, "  installation-2: Terraform apply of the installation root again") {
 				t.Errorf("the review screen omits installation-2, the stage whose apply deploys the catalog check job:\n%s", out)
@@ -250,8 +249,8 @@ func TestUpdateDeploysTheCatalogCheckJobFromAFlaggedBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a catalog project whose base image the run names itself does not converge with `fugaro update` alone (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
 	}
-	if !regexp.MustCompile(`(?m)^\s+\[will do\]\s+installation-2\b`).MatchString(out) {
-		t.Errorf("the preview reports installation-2 as skipped, though the run records the flag's base image after the first apply and applies the root again with it:\n%s", out)
+	if row := planRowOf(out, "installation-2"); !strings.Contains(row, "will do") {
+		t.Errorf("the preview reports installation-2 as skipped (its row is %q), though the run records the flag's base image after the first apply and applies the root again with it:\n%s", row, out)
 	}
 	if !strings.Contains(out, "  installation-2: Terraform apply of the installation root again") {
 		t.Errorf("the review screen omits installation-2, so the apply that deploys the catalog check job is not one the user's confirmation named:\n%s", out)
@@ -271,7 +270,8 @@ func TestUpdateDeploysTheCatalogCheckJobFromAFlaggedBase(t *testing.T) {
 // TestUpdateSaysWhenItCannotPinTheCatalogBase: a run that cannot pin the base
 // image — a development build here, and any run that does not name base — has
 // to say so. The catalog is the user's, its entries are buildable, and nothing
-// deploys the check job that builds them: reporting [skipped] without a word
+// deploys the check job that builds them: reporting the stage as skipped
+// without a word
 // about the base image would be an update that exits 0 in the issue's state.
 func TestUpdateSaysWhenItCannotPinTheCatalogBase(t *testing.T) {
 	r := catalogUpdateRigAt(t, "dev")
@@ -279,7 +279,10 @@ func TestUpdateSaysWhenItCannotPinTheCatalogBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a development build's run: %v\n%s\n%s", err, out, errOut)
 	}
-	whole := out + errOut
+	// The stage's reason is one clause on the screen (report.Brief) and the
+	// whole of it in the log, which is where the base image is named.
+	_, log := onlyLog(t, "update")
+	whole := out + errOut + log
 	for _, want := range []string{"installation-2", "image catalog builds its entries FROM base_images." + config.BaseKind, "this run does not pin"} {
 		if !strings.Contains(whole, want) {
 			t.Errorf("the run left the catalog's entries built by nothing without saying %q:\n%s", want, whole)

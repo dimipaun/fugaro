@@ -130,7 +130,7 @@ ruling that `--yes` answers that one too, outside an agent session, and the plan
 task that makes it so — *(Amended 2026-11-07: **P4 has landed**, so `--yes` answers the typed
 confirmation too, outside an agent session, which is the argv the console spawns.)* Every successful
 write ends with `next: fugaro update` (`runSettingsSet`, **S5 #1525**
-`internal/cli/settings_set.go:1387`). *Consequence:*
+`internal/cli/settings_set.go:2067`). *Consequence:*
 the console spawns this and reads its sentences; it writes no document of its own, and it never
 re-implements the diff (**D1103**).
 
@@ -138,16 +138,16 @@ re-implements the diff (**D1103**).
 `setting.Sensitive` (`internal/cli/settings_read.go:61`, on `main` since #1484) becomes
 `settingsJSON.Sensitive` (`internal/cli/settings_render.go:45`, `json:"sensitive,omitempty"`), and
 the write path refuses a sensitive key outright (`settingsWriteRow`, **S5 #1525**
-`internal/cli/settings_set.go:405`). The registry marks them (`Row.Sensitive`,
+`internal/cli/settings_set.go:487`). The registry marks them (`Row.Sensitive`,
 `internal/settings/registry.go:80`; `sensitiveKeys` in the same file). *Consequence:* **D1111** is
 satisfiable from the CLI's own output, and the console keeps no list of sensitive keys — which is
 the same rule as F7's.
 
 **F7: Exists. The CLI owns the allow-list of writable rows, and the registry owns the owner of
-each.** `settingsGenericKeys` (**S5 #1525** `internal/cli/settings_set.go:83`) is the exact key
-allow-list, `settingsGenericPrefixes` (`:197`) the blocks handed over whole, `settingsFamilyCommands`
-(`:44`) maps a registry `Owner` to the family that writes its keys, and `settingsDefaultLayer`
-(`:561`) picks the narrowest layer a key may be set in. `Row` carries `Owner`, `Sensitive` and
+each.** `settingsGenericKeys` (**S5 #1525** `internal/cli/settings_set.go:96`) is the exact key
+allow-list, `settingsGenericPrefixes` (`:228`) the blocks handed over whole, `settingsFamilyCommands`
+(`:46`) maps a registry `Owner` to the family that writes its keys, and `settingsDefaultLayer`
+(`:701`) picks the narrowest layer a key may be set in. `Row` carries `Owner`, `Sensitive` and
 `Layers` (`internal/settings/registry.go:80`). *Consequence:* the console's row set is the CLI's
 answer, and **D1102** is about how it gets it.
 
@@ -163,7 +163,7 @@ confirmation window's content already exists; what does not is the writability h
 in S5.** The brief for this design names "agent sessions and managed projects (S5's refusals)". S5
 as it stands in #1525 has the **agent-session** refusal and nothing else: `applySettingsEdit` tests
 `agentMarker(os.Getenv)` and no managed state, and `settingsResolveTarget` (**S5 #1525**
-`internal/cli/settings_set.go:625`) resolves a file, not a project posture. The commands that do
+`internal/cli/settings_set.go:790`) resolves a file, not a project posture. The commands that do
 refuse a managed project are `fugaro managed flag` and `fugaro allow-delete`
 (`internal/cli/managed_flag.go`, `internal/cli/allow_delete.go`), and managed projects are gated off
 (`docs/design/managed-projects.md`). *Consequence:* the console's refusal set is **smaller than the
@@ -179,7 +179,7 @@ answered — `settingsJSON` carries `writable`, `owner` and `target_layer`
 (`internal/cli/settings_render.go:53-55`), written on every row and documented at
 `console/docs/json-contract.md:2451-2453`, so the read grew exactly the fields the paragraph below
 asks it to grow, and the console draws the pencil from the CLI's own output with no copy of
-`settingsGenericKeys`.)* `settingsWriteRow` (**S5 #1525** `internal/cli/settings_set.go:405`) prints
+`settingsGenericKeys`.)* `settingsWriteRow` (**S5 #1525** `internal/cli/settings_set.go:487`) prints
 "X is written by `fugaro rigor set`, not by the generic path" — a sentence on a **refusal**,
 reachable only by asking the CLI to write something it will not write. *Consequence, as of
 `d1585a6f`:* **the console cannot draw the pencil from the CLI's output as S5 stands.** Either it
@@ -189,10 +189,10 @@ prerequisite **P2**.
 
 **F11: Missing on `d1585a6f` — P3 has since landed. `settings set|unset` had no machine-readable
 output, no dry run, and no classification.** The flags were `--layer`, `--repo`, `--yes`, `--add` and
-`--remove` and nothing else (`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:292`;
-`newSettingsUnsetCmd`, `:357`). Widening is decided inside `settingsTypedWrite` (**S5 #1525**
-`internal/cli/settings_set.go:1294`) — via `settingsCeilingKey` (`internal/cli/settings_set.go:1103`),
-`settingsLoosens` (`:1231`) and `settingsListSubset` (`:1276`) — and is **never printed as a field**;
+`--remove` and nothing else (`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:348`;
+`newSettingsUnsetCmd`, `:420`). Widening is decided inside `settingsTypedWrite` (**S5 #1525**
+`internal/cli/settings_set.go:1684`) — via `settingsCeilingKey` (`internal/cli/settings_set.go:1401`),
+`settingsLoosens` (`:1399`) and `settingsListSubset` (`:1447`) — and is **never printed as a field**;
 it becomes a prompt. The only outputs are prose on stdout and `userErr`'s exit code. *Consequence:*
 the console cannot ask "is this a widening?" and must not re-derive it — the classification rules
 are S5's, and a copy in TypeScript is a second answer that will drift the day D846's set changes.
@@ -207,7 +207,7 @@ registered no `--project` and no `--config`; the flags it had were `--repo`, `--
 aimed the family was therefore the environment and nothing else: both the read and the write built a
 `localcfg.SelectInput` with **`Config` empty and `Checkout` nil, and `Project` taken from
 `$FUGARO_PROJECT`** (`readSettings`, **S5 #1525** `internal/cli/settings_read.go:154`, whose
-`SelectInput` is at `:156`; `settingsSelection`, **S5 #1525** `internal/cli/settings_set.go:574`) —
+`SelectInput` is at `:157`; `settingsSelection`, **S5 #1525** `internal/cli/settings_set.go:739`) —
 so `localcfg.Select` (`internal/localcfg/select.go:104`) resolves at step 2, "`--project`", for the
 project the environment names, and only with that variable unset does it fall past steps 3–5 to step
 6, "exactly one project config". The console's child **carries `FUGARO_PROJECT`, which is always the
@@ -346,7 +346,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   is the one rule 11 already gives for `--title=` and `--plan-task=`: **a value that follows `=` is
   part of the flag's own word, and nothing that follows can be read as a flag** — but `VALUE` is a
   **positional** argument here (`Use: "set KEY VALUE"`, **S5 #1525**
-  `internal/cli/settings_set.go:296`), so there is no `=` to hide behind and the terminator is the
+  `internal/cli/settings_set.go:351`), so there is no `=` to hide behind and the terminator is the
   equivalent. `settings set commit_name --layer local --yes -- -draft` sets the name `-draft`;
   without the `--`, pflag reads `-draft` as an unknown shorthand and the edit fails — or worse, a
   value spelled `--layer` silently retargets the write. **(b)** is the form this row must never
@@ -364,7 +364,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 - **D1105 (ANSWERED by the owner, 2026-11-01, as recommended: the console passes `--layer`
   explicitly, and only after the CLI named it). Which layer does a pencil write, and who chooses?**
   *Options:* **(a)** the console passes no `--layer` and lets S5 pick the narrowest layer the key
-  may be set in (`settingsDefaultLayer`, **S5 #1525** `internal/cli/settings_set.go:561`); **(b)**
+  may be set in (`settingsDefaultLayer`, **S5 #1525** `internal/cli/settings_set.go:726`); **(b)**
   the console passes `--layer` explicitly, from the `target_layer` field **D1102(a)** adds, and
   shows it in the window; **(c)** the console offers the operator a layer chooser. *Recommendation:*
   **(b)**, because rule 11's whole property is that **what the window shows is what is spawned** — a
@@ -382,9 +382,9 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   backup; **(b)** the console re-derives widening from the registry's key list and the old/new
   values; **(c)** the console performs the write and reads the CLI's prompt behaviour from the exit
   code. *Recommendation:* **(a)**. **(b)** is the option the brief forbids and the one that is wrong
-  on the merits: widening is `settingsCeilingKey` (`internal/cli/settings_set.go:1103`) **and**
-  `settingsLoosens` (`:1231`) **and** `settingsListSubset` (`:1276`) **and** `settingsTypedWrite`
-  (`:1294`), including the deliberate "a form this Fugaro does not know how to compare is treated as
+  on the merits: widening is `settingsCeilingKey` (`internal/cli/settings_set.go:1401`) **and**
+  `settingsLoosens` (`:1399`) **and** `settingsListSubset` (`:1447`) **and** `settingsTypedWrite`
+  (`:1468`), including the deliberate "a form this Fugaro does not know how to compare is treated as
   a loosening" rule — a TypeScript re-implementation would answer *narrowing* where the CLI answers
   *widening*, which is the one direction that must never be got wrong. **(c)** is refused because a
   widening's failure mode is a refusal **after** the operator confirmed a dialog that could not have
@@ -400,7 +400,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 - **D1107 (ANSWERED by the owner, 2026-11-01, and not as this design recommended: `--yes` is allowed
   for a widening, and there is no console-only hook). S5's widening path needs the project's name
   typed at a terminal, and the console has no terminal. What happens to a widening?** *The problem,
-  stated plainly:* `settingsTypedWrite` (**S5 #1525** `internal/cli/settings_set.go:1294`) marks a
+  stated plainly:* `settingsTypedWrite` (**S5 #1525** `internal/cli/settings_set.go:1684`) marks a
   loosened ceiling, a removed ceiling and a `followup.*` key turned on as the typed form;
   `applySettingsEdit` then calls `confirmTypedStrict` (`internal/cli/budget.go:251`), which requires
   a terminal (`stdinIsTerminal`) and compares the typed line against the project's name, and which
@@ -492,7 +492,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   *Recommendation:* **four** exclusions, and every one of them is read, never decided:
   1. **A row the generic path does not own** — `writable: false` in the read (D1102) — is drawn with
      **no pencil**, and the row says which command owns it, from `owner`: S5's own family names
-     (`settingsFamilyCommands`, **S5 #1525** `internal/cli/settings_set.go:44`, whose values are
+     (`settingsFamilyCommands`, **S5 #1525** `internal/cli/settings_set.go:47`, whose values are
      `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`,
      `fugaro project`). A row with `writable: false` and an empty `owner` says the generic path does
      not write it and names nothing, which is the honest answer for an installation-plumbing key.
@@ -680,7 +680,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 
 - **U1. Whether `--` before the value works with S5's parser as written.** `settings set` is
   `cobra.ArbitraryArgs` with `RunE` reading `args[0]`/`args[1]` (**S5 #1525**
-  `internal/cli/settings_set.go:334`), and pflag terminates flag parsing at `--`, so `set KEY
+  `internal/cli/settings_set.go:409`), and pflag terminates flag parsing at `--`, so `set KEY
   --layer local --yes -- -draft` should give `args = [KEY, -draft]`. **Not measured here** — this
   design adds no test and runs no command — and **P3's task measures it and, if it does not hold,
   changes S5's parser to `Flags().SetInterspersed(false)` or accepts the value only after `--`**,

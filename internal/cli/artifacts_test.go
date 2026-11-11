@@ -854,9 +854,11 @@ func TestArtifactsResolvesRepoAndRunLikeRunsLs(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), "acme-app") {
 		t.Errorf("ls of %s with --repo acme/app = %v, want a user error naming both repositories", other, err)
 	}
-	// A bare ID that is not a run ID never becomes part of an object name.
+	// A bare ID that is not a run ID never becomes part of an object name:
+	// it is read as an ending (SR14), and an ending no run answers to is
+	// refused before any key is built.
 	_, _, err = execute(t, "artifacts", "get", "--repo", "acme/app", "not-a-run-id")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "run ID") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "pass the full ID") {
 		t.Errorf("get of a malformed run ID = %v, want a user error", err)
 	}
 }
@@ -2358,5 +2360,71 @@ func TestRunsLsShowsArtifactCountOnlyWhenThereAreArtifacts(t *testing.T) {
 	}
 	if strings.Contains(empty, "ARTIFACTS") {
 		t.Errorf("an empty listing still prints the artifact column:\n%s", empty)
+	}
+}
+
+// TestArtifactsRepoEnding: --repo is what a bare run ID needs, and it is also
+// what scopes an ending (D1701): the ending is resolved by the one resolver
+// (SR3, active runs then the seven-day window) and the answer is held to the
+// repository the flag names, because the slug is part of every object key.
+// Mutation caught: turning an ending into an object name, and answering an
+// ending that resolved to another repository.
+func TestArtifactsRepoEnding(t *testing.T) {
+	f := newEndingFixture(t)
+	ctx := context.Background()
+	id := recentRunID(t, time.Minute, "3bb2")
+	body := []byte("hello")
+	seedArtifactRun(t, f.cloudFixture, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body), ContentType: "video/mp4"},
+	}, map[string][]byte{"sizzle.mp4": body})
+
+	if out, _, err := execute(t, "artifacts", "ls", "--repo", "acme/app", "3bb2"); err != nil || !strings.Contains(out, "sizzle.mp4") {
+		t.Errorf("ls --repo acme/app 3bb2 = %v (%s)", err, out)
+	}
+
+	// An ending nothing in the window carries is D1709's refusal, not an
+	// object name under the repository.
+	_, _, err := execute(t, "artifacts", "ls", "--repo", "acme/app", "ffff")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "pass the full ID") {
+		t.Errorf("ls --repo acme/app ffff = %v, want the not-found refusal", err)
+	}
+
+	// A run of another repository, named by an ending: --repo already said
+	// which repository the run is in, so the match is refused naming both,
+	// exactly as a <slug>/<run-id> that disagrees with --repo is.
+	other := mustSlug("gitlab", "acme/app")
+	otherID := recentRunID(t, 3*time.Minute, "beef")
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if err := runstore.Open(b, other, otherID).CreateTask(ctx, &task.Spec{
+		Version: 1, RunID: otherID, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = execute(t, "artifacts", "ls", "--repo", "acme/app", "beef")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), appSlug) {
+		t.Errorf("ls --repo acme/app beef = %v, want a user error naming both repositories", err)
+	}
+}
+
+// TestArtifactsLsEndingBeyondTheWindow: the listing a refusal points at is
+// given the ending the run is shown by (`fugaro artifacts ls <ending>`, the
+// short form of "recorded no artifact named ..." and of the expired-artifact
+// refusal), so an ending has to reach a run older than the window the lookup
+// starts in: an artifact outlives its run's launch stamp by as long as the
+// bucket keeps the run (runs_days). Mutation caught: the listing's own advice
+// failing for the runs it is printed for.
+func TestArtifactsLsEndingBeyondTheWindow(t *testing.T) {
+	f := newEndingFixture(t)
+	id := recentRunID(t, 30*24*time.Hour, "3bb2")
+	body := []byte("hello")
+	seedArtifactRun(t, f.cloudFixture, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body), ContentType: "video/mp4"},
+	}, map[string][]byte{"sizzle.mp4": body})
+
+	if out, _, err := execute(t, "artifacts", "ls", "3bb2"); err != nil || !strings.Contains(out, "sizzle.mp4") {
+		t.Errorf("ls 3bb2 of a run 30 days old = %v (%s)", err, out)
 	}
 }

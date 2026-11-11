@@ -62,13 +62,16 @@ import (
 // audience its callers' ID tokens are minted for -- the service resource's own
 // uri) and FUGARO_JOB_ACCOUNTS (the installation's per-repository jobs as
 // {"provider","repo","workflow"} triples, from which the job service accounts
-// are derived). Four more names are read beside those seven, each OPTIONAL
+// are derived). Five more names are read beside those seven, each OPTIONAL
 // because the module renders it only where it applies: FUGARO_VERIFIER_ACCOUNTS
 // (C3.9g2), FUGARO_PERSON_ACCOUNTS and FUGARO_COORDINATOR_ACCOUNT (the read
-// mint's two classes, BB4 and BB5) and FUGARO_REVIEW_JOB_ACCOUNTS (the
+// mint's two classes, BB4 and BB5), FUGARO_REVIEW_JOB_ACCOUNTS (the
 // review-only project jobs, C3.9a's class: {"profile","provider","account"}
 // triples the service derives each review job's account from, the same document
-// kind FUGARO_JOB_ACCOUNTS is). The names are held by a second thing:
+// kind FUGARO_JOB_ACCOUNTS is) and FUGARO_LAUNCHER_ACCOUNTS (the launcher class
+// of D1938, the fifth: the addresses that may ask the service for a slip and
+// reach the intake, which is a class of those two routes and of none the seven
+// above serve). The names are held by a second thing:
 // internal/infra/tf's credentialsServiceEnv is the allow-list init's cover
 // applies to the service's container, so a name outside it is refused at plan
 // time, and the two lists move together -- an environment variable is not a
@@ -243,6 +246,17 @@ const (
 	// value that is present and is not one address is a deployment that is
 	// wrong (F24).
 	envCoordinatorAccount = "FUGARO_COORDINATOR_ACCOUNT"
+	// envLauncherAccounts is the identities that may ask this service for a
+	// slip and reach the intake (D1938, F25, F36): a JSON array of bare
+	// addresses, which is what the module renders from the installation's
+	// roster. It is the person class's shape and its rule -- the launcher class
+	// is admitted on the grant route and the intake, and the read mints stay
+	// operators-only -- and like the lists above it is read as OPTIONAL and
+	// lives outside credentialsServiceEnvNames, because the module renders the
+	// entry only on an installation whose roster names a launcher: one that
+	// names none must still start, with a launcher class that admits nobody,
+	// rather than be a service that will not bind a port.
+	envLauncherAccounts = "FUGARO_LAUNCHER_ACCOUNTS"
 )
 
 // credentialsServiceEnvNames is the whole of this command's REQUIRED
@@ -250,9 +264,10 @@ const (
 // the ones whose absence is a service that cannot say which installation it is
 // serving. The class-specific entries it reads beside them are OPTIONAL and
 // live outside this list, because the module renders each of those only where
-// it applies (envReviewJobAccounts, envVerifierAccounts, envPersonAccounts and
-// envCoordinatorAccount). internal/infra/tf's credentialsServiceEnv is init's
-// cover's allow-list, which is these seven plus those four: a name outside it is
+// it applies (envReviewJobAccounts, envVerifierAccounts, envPersonAccounts,
+// envCoordinatorAccount and envLauncherAccounts). internal/infra/tf's
+// credentialsServiceEnv is init's cover's allow-list, which is these seven plus
+// those five: a name outside it is
 // a container the cover refuses, which is what makes the module's list a
 // boundary rather than a convention. The lists are held together by tests
 // rather than by this comment: TestCredentialsServiceEnvIsTheDeploymentsOwn
@@ -407,6 +422,14 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
+	// The launcher class's list (D1938, F25, F36), read by the person list's own
+	// rule and for the same reason: the entry is rendered only on an
+	// installation whose roster names a launcher, and one that names none gets a
+	// class that admits nobody rather than a service that will not bind a port.
+	launchers, err := credentialsServiceLaunchers(getenv(envLauncherAccounts))
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
+	}
 	// The read mint's other class (BB5), read the same way and for the same
 	// reason: the entry is rendered only on an installation whose coordinator is
 	// on, and one that never opted in gets a route that admits no coordinator
@@ -493,6 +516,13 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// state an installation that named no operator starts in, and the
 		// route answers every caller with the class's refusal.
 		PersonAccounts: persons,
+		// The launcher class (D1938, F25): the people who may ask the service
+		// for a slip and reach the intake, by the bare address a Google ID
+		// token's email claim carries -- the same shape PersonAccounts has, and
+		// a class of other routes rather than a widening of that one, so an
+		// installation whose roster names no launcher starts with a class that
+		// admits nobody and its read mints unchanged.
+		LauncherAccounts: launchers,
 		// ... and its second class (BB5): the coordinator's own service
 		// account, which is the identity the scheduled sweep calls with. Empty
 		// is the state an installation that runs no coordinator starts in.
@@ -524,6 +554,14 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// back under it, over the service's own identity — which is the only
 		// writer of that subtree (the rules deny every run token it).
 		Signs: db,
+		// The slips (DS1.1, DS1.3): the grant a launcher asks for and the claim
+		// a run makes once, over the same client and therefore the same service
+		// identity. It is a second store of its own rather than State's, because
+		// a slip is not a selection's business — it is written before the run
+		// exists and read on every call the run makes — and it is not optional:
+		// NewServer refuses a service that cannot write one, because a service
+		// that cannot grant a run its credentials has no purpose at all.
+		Slips: &creds.RTDBStore{DB: db},
 		// Every audited act goes to the process's log, which is the stream
 		// Cloud Logging reads; the one auditor that redacts is built inside
 		// NewServer (NewProbeAuditor arms it with this service's loader).
@@ -635,6 +673,32 @@ func credentialsServicePersons(raw string) ([]string, error) {
 		return nil, fmt.Errorf("%s is not the installation's person list: it must be a JSON array of the bare email addresses a Google ID token carries, one per person who may ask the service to mint a read-scoped Bitbucket token. Nothing was started and no credential was issued", envPersonAccounts)
 	}
 	return persons, nil
+}
+
+// credentialsServiceLaunchers turns FUGARO_LAUNCHER_ACCOUNTS into the launcher
+// class's list (D1938, F36): a JSON array of bare addresses, which is what the
+// module renders from the installation's roster.
+//
+// It is credentialsServicePersons' rule word for word, and for the same reason:
+// an absent or empty value is an EMPTY list and not a refusal, because the
+// module renders the entry only on an installation whose roster names a
+// launcher, while a value that is present and is not that array is a deployment
+// that is wrong. The refusal names the variable and never an entry, because the
+// entries are accounts of people.
+//
+// The list is the person list's shape and not its content: which of the two a
+// given address is on is what makes it a class (D1938), so neither list is
+// derived from the other here. An operator who launches is on both, which is
+// the roster's doing and not this reader's.
+func credentialsServiceLaunchers(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var launchers []string
+	if err := json.Unmarshal([]byte(raw), &launchers); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's launcher list: it must be a JSON array of the bare email addresses a Google ID token carries, one per person who may ask the service to grant a run its secrets. Nothing was started and no credential was issued", envLauncherAccounts)
+	}
+	return launchers, nil
 }
 
 // credentialsServiceCoordinator turns FUGARO_COORDINATOR_ACCOUNT into the read

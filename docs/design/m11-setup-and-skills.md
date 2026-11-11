@@ -70,14 +70,30 @@ Order is the dependency order the dogfooding run discovered by hand: installatio
 
 ```
 fugaro init: project aurora (GCP aurora-prod, us-east5)
-  [done]       preflight
-  [will do]    installation        14 to create, 0 to change, 0 to delete   (Terraform plan below)
-  [will do]    firebase backend    plans after the installation exists
-  [will do]    images              history (about 20 MB); base images on demand
-  [needs you]  secrets             github-app-key, claude-oauth-token (hidden prompts)
-  [skipped]    repository          no fugaro.yaml on the default branch yet
+  ✔ done         preflight
+  ○ will do      installation     14 to create
+  ○ will do      firebase backend plans after the installation exists
+  ○ will do      images           history (about 20 MB); base images on demand
+  ! left for you secrets          github-app-key, claude-oauth-token (hidden prompts)
+  – skipped      repository       no fugaro.yaml on the default branch yet
+
+the installation's plan, every address of it, is in the run's log (and on the terminal under
+--verbose): the view carries the counts and, for what must be reviewed first, one plain-words line
+per item
 Type the project name to apply the installation: 
 ```
+
+Each status is the reporter's mark and a coloured word (`internal/report`): green for done, cyan
+for will do, dim for skipped and waiting, red for refused, yellow for left for you. The stages
+behind a stop are one line between them, `↳ firebase backend, images and 9 more wait for
+installation`, rather than a line each.
+
+A step's reason is one clause on the terminal and the whole of it in the run's log, and a refusal
+is the extreme case of that: it prints three short lines — what was refused, why in a clause, what
+to do — with the rule that fired named in Fugaro's words (`cover: grants a member the review does
+not list`) and no Terraform address in them, and its own step carries the cross rather than the
+left-for-you marker, because nothing this reader types or runs writes a refused plan. The whole
+sentence, gate sentence and addresses included, is `Left.Text`: the log's and `--json`'s.
 
 `--plan-only` prints this view plus each reachable stage's real Terraform plan and changes nothing (as today, it can still create the state bucket behind its confirmation). `--json` prints the same as data, with `left_for_you` as an array of `{stage, kind: command|prompt|console|refused, text}`.
 

@@ -780,3 +780,25 @@ release and neither is the task-governance folder's document, so either of those
 while this folder's **README is R6's at level 4**, so the answer that sends FC8 there adds a second
 writer to a file, one level above R6, and Part II §P4 lists that as a conditional row rather than
 leaving it implicit.
+
+**What the two class rules are, and where their prose lives (FC8, D1449).** The answer above is the
+one taken: this file is FC8's, and the two rules FC7 built are written here, with their reader's copy
+in §3 of `plugin/skills/working/reference/periodic-reviews.md` and their task row in Part II's FC7
+(`docs/periodic-reviews/implementation-plan.md`). **[spec.md](spec.md) is not rewritten for them
+either** — it keeps its 2026-11-04 text and is read through §5 and §6, as it is for every ruling
+since.
+
+- `failure_class_high` fires when one class's runs were **above a quarter of a week's runs**, two
+  weeks running (`FailureClassShareNum/Den` 1/4, `FailureClassWeeks` 2) — the share is of the week's
+  *runs*, not of its failures, and the shape is `halts_high`'s read per class.
+- `failure_class_new` fires when a class **this week's block names that no block of the last four
+  weeks does** (`FailureClassNewWindow` 4).
+
+Both read only the summaries that carry the `failures` block — the first needs every one of its two
+weeks to carry it, the second needs a report before it to have named the class at all — so neither
+can fire in the week the block first ships, and a class a build does not know counts as
+`unclassified`, the closed-cell rule a report's other tables keep. **D326**
+(`docs/task-governance/reconciliation.md`) is their idea, as it is every rule's: a fixed, documented
+rule over the periods' committed blocks, not a search — here read over a closed vocabulary of causes
+instead of over free text (`docs/design/failure-classes.md` §6.2, built by FC7 of
+`docs/failure-classes/implementation-plan.md`).

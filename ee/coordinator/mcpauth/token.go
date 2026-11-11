@@ -306,6 +306,19 @@ func (s *Server) exchangeRefresh(w http.ResponseWriter, r *http.Request, form ur
 		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidGrant(),
 			"the refresh token was already rotated away: the family is revoked and the client has to authorize again"))
 		return
+	case errors.Is(err, ErrFamilyAged):
+		// M5b's fourth bound, and it is its own answer rather than the revoke
+		// below: the family is past the lifetime this door gives one, so nobody
+		// ended it and no theft signal is worth raising — the age is the read
+		// that decides (store.go) — while a client told its family was revoked
+		// would be sent looking for a thief where there is none. What the
+		// client has to do is what the revoke asks for, authorize again,
+		// because an aged family is as gone as a revoked one — and the answer
+		// is terminal for the reason the revocations above give: a 5xx here
+		// would invite the retry that presents a token nothing can rotate.
+		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidGrant(),
+			"the refresh token's family is past the lifetime this front door gives a family: it has aged out, the token is spent with it, and the client has to authorize again"))
+		return
 	case errors.Is(err, ErrTokenNotFound):
 		// The family was gone by the time the rotation read it, though the
 		// record of the token being presented was still there a moment earlier.

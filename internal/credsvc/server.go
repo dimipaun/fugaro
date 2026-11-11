@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -25,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -99,6 +101,22 @@ func routeAct(path string) (purpose, credential string) {
 		// acts apart, and it is the field an operator greps: a person's read is
 		// not a run's mint even though both are signed with the one key.
 		return PurposeGitHubRead, config.GitHubAppKeySecret
+	case SlipPath:
+		// A grant's line names the launcher and no credential: the act is a
+		// request for a run's grant and not an issuance, so there is no name of
+		// a credential it could carry — the slip it writes holds names, and
+		// which of them a run is later served is another route's answer
+		// (DS1.6). Like the verify and read-mint purposes, its line is written
+		// for a caller that is not a run of this installation at all
+		// (callerWithoutJobPurpose).
+		return PurposeSlipGrant, ""
+	case SlipClaimPath:
+		// A claim's line is an ordinary job-class one and names no credential,
+		// for the grant's reason: the claim answers a claim secret and issues
+		// no credential of the cascade, so there is no name to pair with a
+		// tier — and naming one would be recording a fact the route does not
+		// have.
+		return PurposeSlipClaim, ""
 	case SignPath:
 		// The sign route's credential is the account's review-signing key
 		// (verdict.go), and THAT NAME IS NOT IN THE PATH: it is the caller's
@@ -162,7 +180,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath:
+	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, SlipPath, SlipClaimPath:
 		return true
 	}
 	return false
@@ -312,6 +330,16 @@ type Config struct {
 	// probing a credential, which lapses on its own and is never deleted.
 	// *rtdb.Client is one.
 	Probes ProbeLeases
+	// Slips is the grant a launcher asks for and the claim a run makes once
+	// (DS1.1, DS1.3): its own node, its own lifetime and its own store, which
+	// is why it is neither State's nor DB's business — a slip is written before
+	// a run exists and read on every call the run makes, and no selection has
+	// anything to say about it. *creds.RTDBStore is one.
+	//
+	// It is required at construction, like State and Probes and for a stronger
+	// reason than either: a service that cannot write a slip cannot grant a run
+	// its credentials at all, so it is not a service this build starts.
+	Slips creds.SlipStore
 	// Signs is the create-only write the one-signature mark is taken with
 	// (C3.9e, D1074): the sign route's own node, which is why it is neither
 	// DB's business nor State's. It may be nil, and a nil one is a service
@@ -390,6 +418,13 @@ type Verifier interface {
 	// GitHub read is the person's alone, because the coordinator job holds the
 	// App credential itself and mints its own read-only token with it.
 	VerifyPersonCaller(ctx context.Context, tok string) (string, error)
+	// VerifyLauncher admits the caller of the grant route (DS1.3, D1938), which
+	// presents a token and no Request for the same reason as the three above:
+	// the path is answered ahead of RequestFromHTTP. A launcher is a person on
+	// the installation's roster, and what the grant needs of the token beyond
+	// the address is the numeric `sub` — the owner a per-user credential's name
+	// is checked against (R7) and the identity the slip records (DS1.1).
+	VerifyLauncher(ctx context.Context, tok string) (LauncherCaller, error)
 }
 
 // PolicyReader is the published policy as the service reads it: the project's
@@ -399,7 +434,17 @@ type PolicyReader interface {
 	Admissions(ctx context.Context, slug string) (*projectpolicy.RepoPolicy, bool, error)
 }
 
-// KillReader is the operator's two stop switches as the service reads them.
+// KillReader is the operator's stop switches as the service reads them.
+//
+// Stop reads the switches its caller honours, and the slug is what says which:
+// a route that names a repository passes it and gets budget's pair (the global
+// switch and that repository's own), and a route that names a person and no
+// repository passes "" and gets the global switch alone. The empty slug means
+// exactly that and is not a wildcard: a caller that has a repository always
+// passes it, because the two reads are two, and the reader that builds a
+// repository's path refuses an empty slug rather than answer "is this
+// repository stopped" by leaving the repository's switch out of the read
+// (budget.ReadKills).
 type KillReader interface {
 	Stop(ctx context.Context, slug string) (on bool, which string, err error)
 }
@@ -440,18 +485,30 @@ func (p RTDBPolicy) Admissions(ctx context.Context, slug string) (*projectpolicy
 	return rp, true, err
 }
 
-// RTDBKills is the operator's stop flag read from the database. It is
-// budget.ReadKills — the same pair a run honours and `fugaro budget kill`
-// writes — so the service's stop flag is the switch an operator already has,
-// and an unreadable switch is ON in both readers because the rule is one rule
-// in one place (budget's fail-closed decode).
+// RTDBKills is the operator's stop flag read from the database: budget.ReadKills
+// for a route that names a repository (the pair a run honours and `fugaro budget
+// kill` writes) and budget.ReadGlobalKill for one that names a person and no
+// repository (KillReader.Stop's empty slug). Either way the service's stop flag
+// is the switch an operator already has, and an unreadable switch is ON in both
+// readers because the rule is one rule in one place (budget's fail-closed
+// decode).
 type RTDBKills struct {
 	// DB is the database; *rtdb.Client is one.
 	DB budget.KillGetter
 }
 
 func (k RTDBKills) Stop(ctx context.Context, slug string) (bool, string, error) {
-	kills, err := budget.ReadKills(ctx, k.DB, slug)
+	var (
+		kills budget.Kills
+		err   error
+	)
+	if slug == "" {
+		// A person-facing route: the two git reads and the read mint name a
+		// person and no repository, and the global switch alone stops them.
+		kills, err = budget.ReadGlobalKill(ctx, k.DB)
+	} else {
+		kills, err = budget.ReadKills(ctx, k.DB, slug)
+	}
 	if err != nil {
 		return false, "", err
 	}
@@ -471,6 +528,11 @@ type Server struct {
 	// rather than the class.
 	review map[string]ReviewJobAccount
 	audit  *Auditor
+	// slips holds the slip bodies this service has verified, for the five
+	// minutes R4 gives them (slipCache). It is this service's own memory and
+	// not the store's: the store is what the record IS, and this is what one
+	// process last read of it.
+	slips *slipCache
 }
 
 // NewServer validates cfg and returns the service.
@@ -500,6 +562,15 @@ func NewServer(cfg Config) (*Server, error) {
 		// transition off that mark). A service that cannot take the lease is
 		// therefore not a service this build starts.
 		return nil, errors.New("credsvc: the service cannot take the probe's one-at-a-time lease, so a backed-off credential could never come back")
+	}
+	if cfg.Slips == nil {
+		// A service that cannot write a slip cannot grant a run anything: the
+		// grant is the only way a run is ever handed the id its calls are bound
+		// to (D1932), so a nil store is a service whose whole purpose is
+		// unreachable rather than one whose slip route refuses — which is the
+		// same statement NewServer makes about State and Probes, and the reason
+		// a deployment has no flag to leave it out.
+		return nil, errors.New("credsvc: the service cannot write a slip, so it can grant no run its credentials")
 	}
 	if cfg.AuditLog == nil {
 		// The same refusal for the same reason one step further along: a probe
@@ -540,7 +611,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), audit: audit}
+	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), audit: audit, slips: newSlipCache()}
 	for _, ja := range cfg.JobAccounts {
 		if ja.Email == "" || ja.Slug == "" || ja.Repo == "" {
 			return nil, errors.New("credsvc: a job account with no email, slug or repository binds nothing")
@@ -643,7 +714,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+" and "+GitHubReadPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+SlipPath+" and "+SlipClaimPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -674,6 +745,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.githubRead(ctx, w, r)
 		return
 	}
+	if r.URL.Path == SlipPath {
+		// The fourth route answered before the shared parse, and the launcher
+		// class's reason is the other three's: a launcher holds no run identity,
+		// and the run it is asking for does not exist yet (D1937, D1938), so
+		// RequestFromHTTP would refuse the call — for the missing identity
+		// headers — before the class ever read the token. What replaces the
+		// parse is this route's own read of the body (readGrantRequest), and the
+		// run and the repository the call is for are its fields and not headers.
+		//
+		// The CLAIM route is deliberately not here: a claim is the run's own
+		// first call and presents the two identities every other run call does,
+		// so it goes through the shared parse below and is branched on after the
+		// stop switches, exactly as the mint is.
+		s.slipGrant(ctx, w, r)
+		return
+	}
 	req, err := RequestFromHTTP(r)
 	if err != nil {
 		// The contract's own reading of the headers, never this server's
@@ -683,7 +770,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.cfg.Auth.Verify(ctx, req)
 	if err != nil {
-		s.refuseIdentity(ctx, w, err)
+		s.refuseIdentity(ctx, w, r, err)
 		return
 	}
 	// The purpose the call asks for and the credential a line for it names, and
@@ -764,6 +851,43 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"the credentials service is stopped by the "+which+" kill switch")
 		return
 	}
+	if r.URL.Path != SlipClaimPath {
+		// The slip the call presents, if it presents one (DS1.6, G3, G4, G12).
+		// It is read after the stop switches — a stopped service reads no slip
+		// either — and on every route but the claim's: a claim is not a call
+		// that carries a slip, it is the call that TAKES one, and its own read
+		// of the two headers is the once-only fence of D1941 (slipClaim). A
+		// call that presents neither header is the slip-less path, which is
+		// what this service served before the slips existed and what it goes on
+		// serving (R9).
+		binding, refused := s.verifyCallSlip(ctx, r, id)
+		if refused != nil {
+			s.refuseCall(ctx, w, id, purpose, credential, "", refused.status, refused.typ, refused.message)
+			return
+		}
+		if binding != nil {
+			// The rest of the call is answered under the slip it was admitted
+			// by: the audit line reads the two fields from here (Auditor.Write,
+			// R5), the offering is fenced by it (slipOffering, G12) and the
+			// claim secret is registered with the call's scrub (callScrubs), so
+			// a value the run pasted into its own body reaches no upstream log.
+			ctx = withCallSlip(ctx, binding)
+		}
+	}
+	if r.URL.Path == SlipClaimPath {
+		// The claim (DS1.3, D1941). Everything above it is its admission and
+		// nothing below it is: the run identity and the job's own token have
+		// been verified, the pairing has fixed the repository the run belongs
+		// to, and the operator's stop flag has been read, so a stopped service
+		// claims nothing. It reads the slip the run names and decides from the
+		// record alone — the run it binds, the account it expects and the claim
+		// secret, if it was already claimed — and it consults no policy, no
+		// bundle and no cascade: a slip is a grant, not a credential, and no
+		// tier or admission has anything to say about it. Which of those names a
+		// run is later served is DS1.6's call.
+		s.slipClaim(ctx, w, r, id, req)
+		return
+	}
 	if r.URL.Path == MintPath {
 		// The mint (C2.1, D145). Everything above it is its admission and
 		// nothing below it is: the run identity and the job's own token have
@@ -821,7 +945,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
 		return
 	}
-	cl, err := readCall(r, []string{req.RunIDToken, req.JobIDToken})
+	cl, err := readCall(r, callScrubs(ctx, req))
 	if err != nil {
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, err.Error())
 		return
@@ -877,6 +1001,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return
 	}
+	// The slip's own fence on the offering (G12, R9), and the last thing
+	// between the candidates and the cascade: a credential that belongs to a
+	// person or to the project is served only under a slip that names it.
+	binding, _ := callSlipOf(ctx)
+	cands, notAdmitted = slipOffering(binding, cands, notAdmitted)
 	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now}
 	s.forward(ctx, w, cl, sel, id, b, cands, notAdmitted)
 }
@@ -911,11 +1040,16 @@ func (s *Server) refuse(w http.ResponseWriter, status int, typ, message string) 
 // best-effort in exactly one sense: the refusal is answered whatever it does,
 // since a caller whose run has ended must be refused whether or not the
 // cleanup landed, and the next call for that run will try again.
-func (s *Server) refuseIdentity(ctx context.Context, w http.ResponseWriter, err error) {
+//
+// A run that has ended is also where its slip ends (endEndedRunsSlip): the two
+// are the same fact seen twice, and this refusal is the only place the service
+// learns it.
+func (s *Server) refuseIdentity(ctx context.Context, w http.ResponseWriter, r *http.Request, err error) {
 	var ended *RunEnded
 	switch {
 	case errors.As(err, &ended):
 		s.forgetRun(ctx, ended.Slug, ended.Run)
+		s.endEndedRunsSlip(ctx, r, ended)
 		s.refuse(w, StatusUnverified, ErrorUnverifiedRunIdentity, err.Error())
 	case errors.Is(err, ErrUnverifiedJob):
 		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, err.Error())
@@ -945,4 +1079,355 @@ func (s *Server) forgetRun(ctx context.Context, slug, run string) {
 	}); err != nil {
 		s.log.Warn("credsvc: an ended run's placement could not be removed", "error", err)
 	}
+}
+
+// slipBodyTTL is how long the body of a slip this service verified is held in
+// memory (R4, F14): five minutes, which is the plan's number and not a tuning
+// knob.
+//
+// What the window buys is a model call decided without a read of the database:
+// a slip is read on EVERY call a run makes, and its body is written twice in a
+// run's life — the grant and the claim — so a read per call is a read the
+// record does not need. What the window costs is that a change to the slip's
+// OWN fields (an ended record, an edited Allowed set) is seen up to five
+// minutes late, and that is the trade R4 and F14 accept.
+//
+// What it must never answer is the run's own liveness and the operator's stop
+// switches, and neither is here: the outcome is read per call by auth.go's
+// checkLive as it always was, the switches by ServeHTTP, and the runtime is a
+// field of the body the decision is recomputed from on every call — so an
+// expiry that arrives inside the window still ends the record at that call.
+const slipBodyTTL = 5 * time.Minute
+
+// slipCache holds the slip bodies this service has verified, one entry per slip
+// id, each good for slipBodyTTL from the read that put it there.
+//
+// What it holds is a BODY and never a DECISION: every call re-asks the record's
+// own questions of the body it finds — is this the call's run and account, is
+// this the claim secret, is the runtime still running — so the cache can never
+// serve a call the record would refuse, and what it hides is a change to the
+// fields and nothing else.
+//
+// Only a record this service read back and admitted a call by is ever written
+// into it (verifyCallSlip). That is what keeps the map the installation's own
+// slips: the key is an id a CALLER chose, so a cache that remembered whatever
+// an id turned up would be a place for one caller to plant a record another
+// call is decided from.
+type slipCache struct {
+	mu      sync.Mutex
+	entries map[string]slipEntry
+}
+
+// slipEntry is one cached body and the instant it was read.
+type slipEntry struct {
+	sl creds.Slip
+	at time.Time
+}
+
+func newSlipCache() *slipCache { return &slipCache{entries: map[string]slipEntry{}} }
+
+// get answers the body held for id, if one is held and its window has not
+// passed at now. An entry past its window is dropped where it is found rather
+// than by a sweeper, because a sweep is the eviction the spec says this cache
+// has none of: a slip whose calls stop leaves its entry behind until the
+// instance goes away, and a cache that is per instance and lost on scale-to-zero
+// is what the spec accepts in exchange for reading the record once in five
+// minutes.
+func (c *slipCache) get(id string, now time.Time) (creds.Slip, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[id]
+	if !ok {
+		return creds.Slip{}, false
+	}
+	if !now.Before(e.at.Add(slipBodyTTL)) {
+		delete(c.entries, id)
+		return creds.Slip{}, false
+	}
+	return e.sl, true
+}
+
+// put holds one verified body for its window.
+func (c *slipCache) put(id string, sl creds.Slip, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[id] = slipEntry{sl: sl, at: now}
+}
+
+// forget drops any body held for id. It is called where the service ENDS a
+// record itself — the max runtime, the run's outcome — because a record that is
+// gone needs no window, and one that is ended and then re-granted under the
+// same id (which only a collision could do) must not be read from a body read
+// before it.
+func (c *slipCache) forget(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, id)
+}
+
+// slipBinding is the slip a call was ADMITTED under: the id, the owner the
+// grant recorded and the names it allows, all taken from a record verified as
+// this call's, this account's, claimed with the secret it presented and still
+// inside its runtime (verifyCallSlip).
+//
+// verifyCallSlip is the only thing that builds one, and that is the point: the
+// fence below (slipOffering) and the audit line's two fields (Auditor.Write)
+// read a binding as "this call was checked", and a value that could be built
+// anywhere would be a claim the service had not verified.
+type slipBinding struct {
+	id      string
+	owner   string
+	allowed []string
+	// secret is the claim secret the call presented. It is held for ONE thing:
+	// registering it with the call's scrub (callScrubs), so a value the run
+	// pasted into its own body reaches no upstream log. Nothing writes it
+	// anywhere else.
+	secret string
+}
+
+// names reports whether the slip allows a credential name. A nil binding — a
+// call with no slip — allows none, which is the fail-closed half of G12 read at
+// its narrowest: the receiver is nil-safe so the caller does not have to be.
+func (b *slipBinding) names(name string) bool {
+	return b != nil && slices.Contains(b.allowed, name)
+}
+
+// ctxCallSlip is the key a verified slip travels under for the rest of its
+// call.
+//
+// The line it is for is written by the code that ANSWERS the call — cascade.go's
+// auditCall, refuseCall and answer — and that code is not the code that
+// verified the slip. The request's context is the one thing every one of those
+// writers already holds, and it is the call's own: a value put here is read by
+// the lines of this call and by no other, which is what R5's two fields are.
+// The alternative — a parameter threaded through the cascade — is the interface
+// of a task that is not this one.
+type ctxCallSlip struct{}
+
+// withCallSlip hangs a verified slip on the call's context.
+func withCallSlip(ctx context.Context, b *slipBinding) context.Context {
+	return context.WithValue(ctx, ctxCallSlip{}, b)
+}
+
+// callSlipOf answers the verified slip of the call ctx belongs to, if it was
+// admitted under one.
+func callSlipOf(ctx context.Context) (*slipBinding, bool) {
+	b, ok := ctx.Value(ctxCallSlip{}).(*slipBinding)
+	return b, ok && b != nil
+}
+
+// callScrubs is what readCall must keep out of the forwarded request: the
+// caller's own two tokens, and — when the call was admitted under a slip — the
+// claim secret it presented.
+//
+// The secret is a credential the run holds (D1941) and the id beside it is
+// public (G5); neither belongs upstream. The headers go by prefix
+// (readCall) and this is what covers the BODY, which is where a run that pasted
+// one would put it — and where an upstream's logs would keep it.
+func callScrubs(ctx context.Context, req Request) []string {
+	scrubs := []string{req.RunIDToken, req.JobIDToken}
+	if b, ok := callSlipOf(ctx); ok {
+		scrubs = append(scrubs, b.secret)
+	}
+	return scrubs
+}
+
+// slipRefusal is a refused call that carried a slip: the typed refusal
+// ServeHTTP answers it with, in the shape every refusal on that path has.
+type slipRefusal struct {
+	status  int
+	typ     string
+	message string
+}
+
+// verifyCallSlip reads the slip a call presents and verifies it (DS1.6, G3, G4,
+// G12, R10). It answers the binding the call was admitted under, or the refusal
+// it is answered with, or neither for a call that presents no slip at all.
+//
+// The reading is this contract's own (oneHeader, slipSecretFromHTTP): a value
+// sent twice, an id this service could not have minted, an id with no claim
+// secret and a secret with no id are requests this service does not read, and
+// they are refused before the database is asked anything. A call that presents
+// NEITHER header is the slip-less path — not a refusal — and what that path is
+// served is the same as it was before the slips existed (R9's second sentence).
+//
+// What a record read back must be is what the claim's own reading form asks of
+// it (slipClaim, DS1.3), in the same order: THIS run's and THIS account's,
+// claimed with the secret the call presented, and still inside its runtime. The
+// three are ONE sentence and one status, so a caller cannot use this route to
+// learn which slips exist — and only a record that passes all three is ever
+// cached, because a body admitted from a refused call is a body another call
+// could be decided from.
+//
+// The runtime is the one refusal that also ACTS: a slip whose runtime has passed
+// is ENDED here (creds.SlipStore.End), so issuance stops for every later call
+// and for every other reader of the database rather than only for the call that
+// found it expired. A record whose secret does NOT match ends nothing,
+// deliberately: the id is public and every run of the installation holds a job
+// token, so ending the record of a call that presented a bad secret would be a
+// way to stop a working run by knowing its id.
+func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identity) (*slipBinding, *slipRefusal) {
+	secret, presented, err := slipSecretFromHTTP(r)
+	if err != nil {
+		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused, requestRefused + err.Error()}
+	}
+	if len(r.Header.Values(HeaderSlip)) == 0 {
+		if presented {
+			// A claim secret with no slip names the secret of nothing: there is
+			// no record this call could be asking about.
+			return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused,
+				requestRefused + "the call carries a " + HeaderSlipClaim + " header and no " + HeaderSlip + " header"}
+		}
+		return nil, nil
+	}
+	slipID, err := oneHeader(r, HeaderSlip)
+	if err != nil {
+		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused, requestRefused + err.Error()}
+	}
+	if !printableHeaderValue(slipID, maxSlipIDBytes) {
+		// A slip id this service could not have minted is a request it does not
+		// read, refused BEFORE the database is asked — the claim route's own
+		// rule (slipClaim), for its own reason: a lookup of every string a
+		// caller sends is a lookup an operator's database should not have to
+		// answer.
+		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused,
+			requestRefused + "the " + HeaderSlip + " header is not one slip id"}
+	}
+	if !presented {
+		// Every call after the claim presents the secret the claim answered
+		// (D1941): an id alone is never enough (G3), and a call that has none
+		// is a call of a shape this route does not have rather than one to
+		// serve.
+		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused,
+			requestRefused + "the call carries a " + HeaderSlip + " header and no " + HeaderSlipClaim + " header"}
+	}
+
+	now := s.now()
+	sl, held := s.slips.get(slipID, now)
+	if !held {
+		read, found, err := s.cfg.Slips.Slip(ctx, slipID)
+		if err != nil {
+			// The state the slip must be read from could not be read: a refusal
+			// the run halts on, never a fallback (D143).
+			return nil, &slipRefusal{StatusUnavailable, ErrorStateUnavailable, "the slip could not be read"}
+		}
+		if !found {
+			return nil, slipNotThisRunsRefusal()
+		}
+		sl = read
+	}
+	if !slipIsThisRuns(sl, id) || !sl.ClaimMatches(secret) {
+		return nil, slipNotThisRunsRefusal()
+	}
+	if !sl.Live(now) {
+		s.endSlip(ctx, slipID, "its runtime has passed")
+		return nil, slipNotThisRunsRefusal()
+	}
+	if !held {
+		// The window is measured from the READ that just happened and never
+		// from the call: a put on every call would slide it, and a run that
+		// calls this service as its runs do — every model call — would then
+		// hold a body the record could have changed under for as long as it
+		// keeps calling. Five minutes is the whole of what the spec accepts a
+		// finished or revoked job keeps access for (F14), so the body is
+		// re-read from the record once the window has passed.
+		s.slips.put(slipID, sl, now)
+	}
+	return &slipBinding{id: slipID, owner: sl.Owner, allowed: slices.Clone(sl.Allowed), secret: secret}, nil
+}
+
+// slipNotThisRunsRefusal is the one answer every refusal the RECORD makes is
+// given (slipNotThisRuns), in this path's shape.
+func slipNotThisRunsRefusal() *slipRefusal {
+	return &slipRefusal{StatusUnverified, ErrorUnverifiedRunIdentity, slipNotThisRuns}
+}
+
+// endSlip ends one slip and forgets the body held for it. It is the service's
+// own act and not a caller's — creds.SlipStore.End is reached from nowhere else
+// (G10's no end route) — and it is best-effort in the way forgetRun is: a
+// record that could not be ended is one the runtime cap reaches anyway, and the
+// call this was decided on is refused either way.
+func (s *Server) endSlip(ctx context.Context, id, why string) {
+	s.slips.forget(id)
+	if err := s.cfg.Slips.End(ctx, id); err != nil {
+		s.log.Warn("credsvc: a slip could not be ended", "slip", id, "why", why, "error", err)
+	}
+}
+
+// endEndedRunsSlip ends the slip a call presented when the record is the ENDED
+// run's own: the outcome half of "issuance ends" (DS1.1's End names the run's
+// outcome and the max runtime as its two callers, R10).
+//
+// It is the half nothing else reaches. A run that has ended makes no call this
+// service would serve, so no other path ever sees its record again, and without
+// this the installation would keep one node per slipped run for ever — the same
+// accumulation the placement cleanup beside it exists to prevent (forgetRun).
+// The runtime cap would reach the record one day; the outcome reaches it now.
+//
+// The RECORD decides, and not the caller: the id the call presented is read
+// back, and it is ended only if it names this very run. A call cannot end
+// anyone's slip by naming an id (G3, the id alone is never enough) — and a
+// record whose secret this call did not present is untouched, because this path
+// has verified the run's identity and not the slip's.
+func (s *Server) endEndedRunsSlip(ctx context.Context, r *http.Request, ended *RunEnded) {
+	ids := r.Header.Values(HeaderSlip)
+	if len(ids) != 1 || !printableHeaderValue(ids[0], maxSlipIDBytes) {
+		return
+	}
+	sl, found, err := s.cfg.Slips.Slip(ctx, ids[0])
+	if err != nil {
+		s.log.Warn("credsvc: an ended run's slip could not be read", "slip", ids[0], "error", err)
+		return
+	}
+	if !found || sl.Slug != ended.Slug || sl.Run != ended.Run {
+		return
+	}
+	s.endSlip(ctx, ids[0], "the run has ended")
+}
+
+// slipOffering narrows a call's offering to what it may be served (G12, R9).
+//
+// The rule is about NAMES, and it is one sentence: a credential of the secret
+// grammar (secretname) belongs to a person or to the project, so it is served
+// only under a slip that names it — and a call with no slip is offered none of
+// them, which is the fail-closed half. Every other name a caller's list holds
+// is a platform credential of the bundle's own closed key set (CredentialKey),
+// which is what this service served before the slips existed and what it goes
+// on serving, so the slip-less path is unchanged (R9's second sentence).
+//
+// A name dropped here is reported in the tried list as ReasonNotAdmitted — the
+// reason the cascade already has for "this credential is not yours" — so a run
+// reads a slip that does not cover it exactly as it reads a repository the
+// policy does not admit it to. And when nothing is left, the refusal is the
+// cascade's own: the offering arrives empty, the selection has no candidates,
+// and refuseSelection answers with the tried list (one line, one status).
+func slipOffering(b *slipBinding, cands []creds.Credential, notAdmitted []Tried) ([]creds.Credential, []Tried) {
+	out := make([]creds.Credential, 0, len(cands))
+	for _, c := range cands {
+		if slipRequiresSlip(c.Name) && !b.names(c.Name) {
+			notAdmitted = append(notAdmitted, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, notAdmitted
+}
+
+// slipRequiresSlip reports whether a credential name is one only a slip may
+// serve: a per-user or project-shared name of the grammar, which is the whole
+// of what "belongs to a person or to the project" means to this service (R9).
+// A name outside the grammar is a bundle entry's, and the bundle's keys are a
+// closed set this service already decided about.
+//
+// The PREFIX is the test, which is the reading the grant already holds a name
+// to (checkGrantedNames, fail-closed for the same case): a name that carries
+// fugaro_u_ or fugaro_p_ and does not parse — an upper-case letter, an
+// ambiguous separator, no name half at all — is a name of the grammar's kind
+// that this service cannot read, and one it cannot read as somebody else's is
+// not thereby nobody's. Only a name with neither prefix is a bundle entry's.
+func slipRequiresSlip(name string) bool {
+	if _, err := secretname.Parse(name); err == nil {
+		return true
+	}
+	return strings.HasPrefix(name, secretname.UserPrefix) || strings.HasPrefix(name, secretname.ProjectPrefix)
 }

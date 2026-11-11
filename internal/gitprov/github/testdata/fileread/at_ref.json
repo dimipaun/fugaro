@@ -1,0 +1,6 @@
+[
+  {"method": "GET", "path": "/repos/acme/web/contents/fugaro.yaml?ref=release/1.2",
+   "auth": "Bearer ghs_fixture_person_read", "status": 200,
+   "response": {"type": "file", "encoding": "base64", "size": 68,
+    "content": "d29ya2Zsb3dzOgogIGRlZmF1bHQ6CiAgICBjaGVja291dDogY2xvbmUKICAg\nIGpvYl9wcm9maWxlOiBzdGFuZGFyZAo="}}
+]

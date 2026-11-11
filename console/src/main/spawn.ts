@@ -344,13 +344,52 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
 }
 
 /**
+ * LICENCE_KEY_VAR is the variable the console hands the installation's licence
+ * key to the child in, and it is the CLI's own name for it (`ee/licence`'s
+ * `EnvironmentKey`).
+ *
+ * **The step that keeps the key from the child's own children is the CLI's, and
+ * it has no caller on this tree yet.** `ee/licence/store.go`'s
+ * `TakeEnvironmentKey` reads the variable and unsets it before any subprocess
+ * starts (`docs/licensing/licence-key.md`, "Storage and hand-off (F41)"), and
+ * the registration point is what calls it: `ee/register`'s `init` sets the
+ * edition and nothing else, and no non-test package imports `ee/licence`. So a
+ * key handed over here today is **inherited by every program the child starts**
+ * -- git, the tools `doctor` finds with `LookPath`, `gcloud`, and their
+ * plugins -- which is the leak F41 exists to forbid, and the same "a credential
+ * handed over for no reader" the WSL route below leaves the key out for.
+ * Nothing reaches that state yet, only because `PRODUCTION_KEYRING` is empty
+ * and every paste is refused until S2.9. **A real installation must not be
+ * handed the key before the child can take it back out**, so the hand-off asks a
+ * floor on the child's version -- `LICENCE_KEY_CLI_FLOOR`
+ * (`src/shared/version.ts`), the release that carries the registration point --
+ * the way `MODELS_LIST_CLI_FLOOR` is asked, and it asks it at the two places the
+ * key reaches a plan (`src/source/cli.ts`'s `#plan`, `src/main/launch.ts`)
+ * rather than here, because this function is handed a key and has no version to
+ * judge it against. **The floor is unset, because no release carries the removal
+ * yet, and an unset floor hands a key to no child at all**: the leak is closed
+ * today rather than the day the keyring stops being empty, and `spawn.test.ts`
+ * fails if a keyring is filled while the floor is still unset.
+ *
+ * **It is the environment and never the argv**, because a key in a command line
+ * is a key every local process reads (F41's first sentence), and it is **not
+ * read from the app's own environment**:
+ * `childEnvironment` writes it from the store and nothing else, so a
+ * `FUGARO_LICENCE_KEY` the console itself was started with reaches no child.
+ * The store is `src/main/licence-store.ts` and `keyFor` is its only door.
+ */
+export const LICENCE_KEY_VAR = 'FUGARO_LICENCE_KEY'
+
+/**
  * CHILD_ENV_KEYS is the whole environment the child may receive, and the order
  * is the schema's: the one key this module always writes (`PATH`, rebuilt),
  * the four the operator's own environment supplies when it has them, the five
- * `XDG_*` variables, and `FUGARO_PROJECT`, which is always the chosen
- * installation's. Anything not on this list is not passed -- there is no merge
- * with `process.env` anywhere in this file, and that is the property
- * `test/unit/spawn.test.ts` diffs the child's own report against.
+ * `XDG_*` variables, and the two the console states from its own state --
+ * `FUGARO_PROJECT`, which is always the chosen installation's, and
+ * `LICENCE_KEY_VAR`, which is the installation's key when it has one. Anything
+ * not on this list is not passed -- there is no merge with `process.env`
+ * anywhere in this file, and that is the property `test/unit/spawn.test.ts`
+ * diffs the child's own report against.
  *
  * **It is the whole list on both routes, and the WSL route adds `WSLENV_KEY` to
  * the environment `wsl.exe` is handed always and `WSL_UTF8_VAR` only when the
@@ -362,6 +401,11 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * inherited (F20, D5(a)); `WSL_UTF8_VAR` is the console's own switch asking
  * `wsl.exe` for UTF-8 rather than the machine's console encoding, and the empty
  * share list is what keeps it out of the distribution.
+ *
+ * **The WSL route is therefore the one route a key does not travel on**, and it
+ * is `planFor` that leaves it out rather than this list that forbids it: with
+ * the share list empty the key would sit in `wsl.exe`'s own environment and
+ * reach nothing, which is a credential handed over for no reader.
  */
 export const CHILD_ENV_KEYS: readonly string[] = Object.freeze([
   'PATH',
@@ -375,6 +419,7 @@ export const CHILD_ENV_KEYS: readonly string[] = Object.freeze([
   'XDG_STATE_HOME',
   'XDG_RUNTIME_DIR',
   'FUGARO_PROJECT',
+  LICENCE_KEY_VAR,
 ])
 
 /**
@@ -426,6 +471,15 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--pr',
   '--project-wide',
   '--from-store',
+  // The graph stream's own mode word (the graph plan's CG9b), and the graph
+  // watch's argv is its only user: it is a fixed word of that row's command path
+  // (`graph --watch --json`) rather than a declared flag, so nothing a renderer
+  // sends can turn it on or off. It is on this list because `assertArgvFlags`
+  // holds every word of every argv to it -- and the never table's `--watch` row,
+  // which refuses the word on every other command, carries `graph.watch` as its
+  // one `except` (`src/main/ipc.ts`), so this list's admission and that table's
+  // exception are the same fact read from two sides.
+  '--watch',
   // `graph`'s own scope selector, and the graph read's argv is its only user:
   // the value behind it is the closed scope of `src/main/ipc.ts`'s
   // `graphSource` kind, and every row of the table emits it as a value rather
@@ -634,6 +688,13 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   settingKey: 'value',
   settingOp: 'settingOp',
   settingValue: 'settingValue',
+  // `licenceKey` is the second kind whose operation spawns nothing
+  // (`licence.read`/`licence.save`, S2.7, carry `command: null`), for
+  // `gitProvider`'s reason: the mapping is total over ipc.ts's kinds, and
+  // `value` is what a bare word would reach an argv as if one ever did -- which
+  // is the one thing a licence key must never do (S2.1's hand-off: the key
+  // travels in a child's environment and in no argv).
+  licenceKey: 'value',
 })
 
 /** SpawnArgument is one declared argument of one command. `flag` is null for a
@@ -847,13 +908,44 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // `isSafeArgumentValue` on the way into the argv -- and the words are the
     // row's own fixed three, so no other word of the command line is reachable.
     //
-    // It is §5.1 rule 6's `graph --json` row; `--json` is fixed, and the CLI's
-    // `--watch` form is not on the table at all (CG9b is the row that will
-    // carry it, and it will carry it as its own argv).
+    // It is §5.1 rule 6's `graph --json` row; `--json` is fixed, and the
+    // CLI's `--watch` form is the row below rather than a word of this one
+    // (CG9b landed it as its own argv, because a flag here would be a word a
+    // renderer could turn a long-lived child on with).
     operation: 'graph.read',
     words: ['graph', '--json'],
     takesProject: true,
     args: [{ key: 'source', flag: '--source', kind: 'value' }],
+    dirFlag: false,
+  },
+  {
+    // The Graph's own live feed (the graph plan's CG9b): `fugaro graph --watch
+    // --json`, the same versioned document the row above reads, printed again
+    // whole on every change (contract §6.22, §10).
+    //
+    // **It is the one row whose command path carries a mode**, and that is why
+    // it is a row of its own rather than a flag on the read above: `--watch` is
+    // what makes the child long-lived, and a `flags` member would be a word a
+    // renderer could turn off. The CLI has no `graph watch` word, so this is the
+    // graph's only streaming form -- which is exactly the exception the never
+    // table's `--watch` row states (it is the flag the console refuses on every
+    // other command because `watch` is the read it uses there).
+    //
+    // `--source` is the row above's own scope argument, held to the same grammar
+    // and to the same membership (`src/main/ipc.ts`'s `graphSource`,
+    // `createBoundSource`'s F21 rule). `visible` is the one argument here that
+    // emits no word at all (`flag: null`, the way the launch's task text is
+    // declared): it decides whether the child runs, not what it is asked, and
+    // `src/source/cli.ts` is where a poll and a stop are told apart. Both are
+    // optional, so the whole of what this row can build is `graph --watch --json`
+    // with at most one `--source <v>` on it, plus the installation's flags.
+    operation: 'graph.watch',
+    words: ['graph', '--watch', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'source', flag: '--source', kind: 'value' },
+      { key: 'visible', flag: null, kind: 'boolean' },
+    ],
     dirFlag: false,
   },
   {
@@ -1069,9 +1161,9 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     //
     // **This is the second row whose child mints a credential of the host's**:
     // `run.launch` is the first, and its child is a run whose token can write.
-    // This one's is the coordinator's own read-only GitHub App installation
-    // token -- so what the table lets this argv carry is the whole security
-    // question, and the answer
+    // This one's is the person read set's own read-only GitHub App installation
+    // token (contents, pull requests and metadata, all read) -- so what the
+    // table lets this argv carry is the whole security question, and the answer
     // is the two arguments and nothing else: no `--token`, no `--host`, no
     // `--url`, no `--dir` and no positional word. `--json` is the only flag the
     // row fixes, and every other word it could emit is refused by
@@ -1679,6 +1771,79 @@ export function argvFor(
   return Object.freeze(argv)
 }
 
+/**
+ * keyedArguments is one argument object reduced to the arguments that reach a
+ * word of this operation's argv -- the whole of what two calls have to agree on
+ * to be the same child.
+ *
+ * It exists for the bound source (`src/source/cli.ts`, `src/source/fixture.ts`),
+ * which keys a live feed **before** any child is planned, and it is the reason
+ * that key can be trusted: an argument that emits no word is not part of the
+ * argv, so it must not be part of the key either. **`graph.watch`'s `visible` is
+ * the case that made this a function.** It says whether the child runs at all,
+ * so the renderer's poll (`{source}`) and its stop (`{source, visible: false}`)
+ * name one subscription; keyed on the raw arguments they were two, the stop
+ * looked for a feed that did not exist, answered nothing, and left a
+ * `graph --watch` child running after the Graph tab went off screen (H6).
+ *
+ * The answer comes from the row rather than from a second list:
+ * `emitsArgvWord` reads each declared argument the way `argvFor` emits it. An
+ * **undeclared** key is kept, so two calls carrying different junk still split
+ * the key -- `argvFor` is where such a key is refused, by name, and this
+ * function must not quietly merge what that one rejects.
+ */
+export function keyedArguments(
+  operation: SpawnOperationName,
+  args: ValidatedArguments,
+): Readonly<Record<string, ValidatedArgument>> {
+  const row = spawnCommandFor(operation)
+  const declared = new Map(row.args.map((spec) => [spec.key, spec]))
+  const out: Record<string, ValidatedArgument> = {}
+  for (const key of Object.keys(args)) {
+    const value = args[key]
+    if (value === undefined) continue
+    const spec = declared.get(key)
+    if (spec !== undefined && !emitsArgvWord(spec, value)) continue
+    out[key] = value
+  }
+  return Object.freeze(out)
+}
+
+/**
+ * emitsArgvWord answers whether one declared argument puts a word of its own
+ * into the argv for this value. It is `argvFor`'s own switch read as a question
+ * rather than a second emitter, and it is exhaustive over `SpawnArgumentKind` so
+ * that a kind added to the table with no answer here is a compile error rather
+ * than a feed keyed on an argument the child is never asked.
+ *
+ * Three kinds can emit nothing: the boolean whose row declares no flag
+ * (`graph.watch`'s `visible`, which decides whether the child runs rather than
+ * what it is asked), the `repo` secret scope (`--project-wide` is the word, and
+ * it is absent when the scope is the other one) and the launch's task text,
+ * which travels on the child's standard input. The settings value emits a word
+ * like any other, behind the row's terminator.
+ */
+function emitsArgvWord(spec: SpawnArgument, value: ValidatedArgument): boolean {
+  switch (spec.kind) {
+    case 'boolean':
+      return spec.flag !== null && value === true
+    case 'secretScope':
+      return value === 'project-wide'
+    case 'stdin':
+      return false
+    case 'value':
+    case 'limit':
+    case 'after':
+    case 'summarySince':
+    case 'pullRequest':
+    case 'title':
+    case 'planTask':
+    case 'settingOp':
+    case 'settingValue':
+      return true
+  }
+}
+
 /** RUN_ID_ARGUMENT_RE is `task.NewRunID`'s shape as this module requires it of
  * the id the main process generated: a UTC stamp and four hex digits. It is
  * narrower than `ipc.ts`'s `RUN_ID_RE` -- which has to accept any run id a CLI
@@ -1781,7 +1946,14 @@ export function assertArgvFlags(operation: string, argv: readonly string[]): voi
     if (!SPAWN_FLAGS.includes(element)) {
       refused(`${operation} would emit ${element}, which is not a flag this console may spawn`)
     }
-    const forbidden = isNeverReachable({ command, flags: argv })
+    // **The operation is named here**, because a flag row's `except` is about
+    // one operation's argv and not about a word: `--watch` is refused on every
+    // command but `graph.watch` (`src/main/ipc.ts`), and a caller that did not
+    // say which operation this argv belongs to could not be told apart from the
+    // one that may carry it. The command is still the argv's own (`commandPathIn`
+    // above) rather than the operation's, so an `argv` row is matched against
+    // what would actually be spawned.
+    const forbidden = isNeverReachable({ name: operation, command, flags: argv })
     if (forbidden !== null) {
       refused(`${operation} would emit ${forbidden.value}: ${forbidden.why} (${forbidden.where})`)
     }
@@ -2237,6 +2409,15 @@ export function parseVersionLine(text: string):
  * process at all (`src/main/wsl.ts`). Only a plan that hands `wsl.exe` a CLI to
  * run **inside** a distribution has a distribution process to state a share list
  * to, and only that plan sets this.
+ *
+ * **`licenceKey` is the installation's key, and it is written only from the
+ * store.** It is a value the caller read (`LicenceStore.keyFor`,
+ * `src/main/licence-store.ts`) and never one this process inherited: the
+ * `appEnv` loop skips `LICENCE_KEY_VAR` exactly as it skips `PATH` and
+ * `FUGARO_PROJECT`, so a key in the console's own environment is not a key any
+ * child is handed. It is absent whenever the installation has no key or holds
+ * one that does not verify (F43's no-key state), and a caller that passed an
+ * empty string gets no variable at all, because an empty variable is not a key.
  */
 export function childEnvironment(options: {
   readonly target: SpawnTarget
@@ -2258,15 +2439,26 @@ export function childEnvironment(options: {
    * own constant, and `wsl`'s empty share list is what keeps it out of the
    * distribution. */
   readonly wslUtf8?: boolean | undefined
+  /** `licenceKey` is the installation's licence key, or absent when it has none
+   * (F43). It comes from the console's own store and from nowhere else -- the
+   * app's environment is not a source of it -- and it travels in the environment
+   * rather than in an argv, which is the whole of F41's hand-off. */
+  readonly licenceKey?: string | undefined
 }): Readonly<Record<string, string>> {
   const env: Record<string, string> = Object.create(null) as Record<string, string>
   for (const key of CHILD_ENV_KEYS) {
-    if (key === 'PATH' || key === 'FUGARO_PROJECT') continue
+    if (key === 'PATH' || key === 'FUGARO_PROJECT' || key === LICENCE_KEY_VAR) continue
     const value = options.appEnv[key]
     if (typeof value === 'string' && value !== '') env[key] = value
   }
   env['PATH'] = childPath(options.binaryPath, options.platform)
   env['FUGARO_PROJECT'] = options.target.project
+  // Written from the argument and never from `appEnv`: the store is the only
+  // source of a handed-over key, so a console started with one in its own
+  // environment hands it to no child.
+  if (typeof options.licenceKey === 'string' && options.licenceKey !== '') {
+    env[LICENCE_KEY_VAR] = options.licenceKey
+  }
   // Written unconditionally, and never read from `appEnv`: the host's own
   // `WSLENV` is the operator's business and not this console's, and a value
   // carried over from it would be a share list the console did not choose.
@@ -3227,6 +3419,12 @@ export function planFor(
      * from every other row's, and it is the **only** way a layer or a phase
      * reaches an argv. */
     readonly settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string } | undefined
+    /** `licenceKey` is the installation's key, already read from the console's
+     * store for this spawn (`LicenceStore.keyFor`), or absent when it has none.
+     * It is a value rather than a reader so this function stays a pure assembler
+     * and a caller can be held to handing over exactly what the store answered;
+     * see `childEnvironment`. */
+    readonly licenceKey?: string | undefined
   },
 ): SpawnPlan {
   const wsl = context.wsl
@@ -3283,6 +3481,12 @@ export function planFor(
         // build that ignores this switch those warnings are UTF-16LE -- which
         // is what left a NUL in front of the wrapper's line.
         wslUtf8: true,
+        // **No key on this route**, and it is the share list above that decides
+        // it: `WSLENV` is stated empty, so a key written into `wsl.exe`'s
+        // environment would reach no process at all -- a credential handed over
+        // for no reader. The CLI inside the distribution reads the key file of
+        // its own config directory instead (S2.3), which is where a Windows
+        // operator's `fugaro licence install` puts it.
       }),
       project: context.target.project,
       backoff: context.backoff ?? DEFAULT_BACKOFF,
@@ -3305,6 +3509,7 @@ export function planFor(
       target: context.target,
       binaryPath: context.binaryPath,
       appEnv: context.appEnv,
+      licenceKey: context.licenceKey,
     }),
     project: context.target.project,
     backoff: context.backoff ?? DEFAULT_BACKOFF,
@@ -4376,6 +4581,51 @@ export class FeedTracker {
     const rolled = day !== null && this.#day !== null && day !== this.#day
     this.#day = day ?? this.#day
     return { document, receivedAt, sequence: this.#sequence, day, rolled }
+  }
+}
+
+/**
+ * GraphStreamGate is the graph stream's own document rule, the way `FeedTracker`
+ * is the live stream's: **it keeps the latest document per `stream_id`, and a
+ * `seq` that does not move forward within one is not an answer** (contract
+ * section 6.22; the graph plan's CG9b and H4).
+ *
+ * It is here, beside `FeedTracker`, for the same reason that one is: the rule is
+ * about the *documents*, not about the process, so the real child's frames
+ * (`src/source/cli.ts`) and a replay of a recording (`src/source/fixture.ts`) are
+ * held to one implementation of it rather than two that can drift.
+ *
+ * A document it refuses is refused **whole**: the reader drops the frame, so
+ * nothing downstream can draw a state the console has already superseded.
+ *
+ * Three cases, and the third is why this is lenient about what it cannot read:
+ *
+ *   - a `seq` at or below the highest already seen **for the same `stream_id`**
+ *     is refused: the console's copy is only ever behind the child's, so such a
+ *     frame is a document it already has, delivered late or twice.
+ *   - a **new** `stream_id` is kept whatever its `seq` says. The identity is
+ *     drawn once per child, so a new one is a child that restarted, and its `seq`
+ *     starts again at one -- holding the old watermark against it would drop the
+ *     first documents of every restart.
+ *   - a document with no readable `stream_id` or `seq` is **kept and changes
+ *     nothing**. This gate orders documents; it does not judge them. What a
+ *     document must *be* is decided where every document is decoded
+ *     (`decodeGraphDocument`, `src/shared/schema.ts`), and dropping one here on a
+ *     rule about equality would be refusing a document for the wrong reason.
+ */
+export class GraphStreamGate {
+  #streamId: string | null = null
+  #seq = 0
+
+  /** keep answers whether this document is one the console may draw. */
+  keep(document: JSONObject): boolean {
+    const id = typeof document['stream_id'] === 'string' ? document['stream_id'] : null
+    const seq = typeof document['seq'] === 'number' && Number.isSafeInteger(document['seq']) ? document['seq'] : null
+    if (id === null || seq === null) return true
+    if (id === this.#streamId && seq <= this.#seq) return false
+    this.#streamId = id
+    this.#seq = seq
+    return true
   }
 }
 

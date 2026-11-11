@@ -1,0 +1,259 @@
+package cli
+
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
+)
+
+// image_build_lease_test.go holds the two fixtures every test of a submitted
+// build needs now that a build leases its cost (T4): the price lookup, and the
+// caps the lease is judged against. Both are shared by the build tests in
+// image_test.go, image_gate_test.go, image_build_managed_test.go and
+// image_refresh_steps_test.go, because they are what a build on an installation
+// with a budget backend leases against. A world whose config has no budget
+// block is a different one — an installation with no backend at all, where the
+// build is submitted uncounted (image_build_lease.go's header, and
+// dropBudgetBackend below) — and only a test that means that installation
+// leaves the block out.
+
+// stubBuildPricer prices every build of a test from this package's own book
+// (pricedBook), instead of reading the Cloud Billing catalog on the caller's
+// credentials: a hermetic test has no account for that read, and the price of a
+// build is not what any of these tests is about. The real lookup is
+// newBuildPricer's own default, restored when the test ends.
+func stubBuildPricer(t *testing.T) {
+	t.Helper()
+	was := newBuildPricer
+	newBuildPricer = func(*localcfg.Config) buildPricer { return fakePricer{book: pricedBook()} }
+	t.Cleanup(func() { newBuildPricer = was })
+}
+
+// budgetBlock is the local config's budget block for the fake db — the state
+// `fugaro update --firebase-project` leaves, and the only thing that makes an
+// installation's builds lease their cost (image_build_lease.go). It is one
+// function because buildBudgetWorld appends it and dropBudgetBackend takes it
+// back out: a test that means the backend-less installation has to remove
+// exactly this.
+func budgetBlock(db *gcpfake.RTDB) string {
+	return "budget: { mode: observe, per_run_usd: 50, firebase_project: proj-1234, rtdb_url: " + db.URL + " }\n"
+}
+
+// buildBudgetWorld makes a checkout's installation one whose builds can be
+// leased: the budget block pointing at the RTDB fake, the caps, the price
+// lookup, and the database's own mode. It returns the fake database for the
+// tests that go on to read what the build left in it.
+//
+// One fake per fixture, made on the first call: cloudBuildCheckout already gives
+// every checkout that can build one, and a world built on top of it (the managed
+// gate's, the catalog arm's) would otherwise append the key twice — a config this
+// program does not read.
+func buildBudgetWorld(t *testing.T, f *cloudFixture) *gcpfake.RTDB {
+	t.Helper()
+	if f.db != nil {
+		return f.db
+	}
+	db := gcpfake.NewRTDB(t)
+	f.appendConfig(t, budgetBlock(db))
+	adoptBudgetFake(db)
+	buildBudgetCaps(db)
+	stubBuildPricer(t)
+	f.db = db
+	return db
+}
+
+// dropBudgetBackend takes the budget block back out of a fixture's config, and
+// with it the installation's backend: what is left is the project of an owner
+// who never ran `fugaro update --firebase-project`, which every build loads as
+// lc.Budget == nil (localcfg). The fake the block pointed at stays up, so a
+// test can still read it and assert that nothing wrote into it.
+func dropBudgetBackend(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	if f.db == nil {
+		t.Fatal("dropBudgetBackend needs a fixture whose world has a budget database (buildBudgetWorld)")
+	}
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := budgetBlock(f.db)
+	if !strings.Contains(string(data), block) {
+		t.Fatalf("the config no longer carries the budget block this drops:\n%s", data)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), block, "", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// adoptBudgetFake marks a budget fake as this installation's own, the way
+// `fugaro update --firebase-project` leaves one: the project's name at
+// /fugaro/project and the mark beside it, both written by that door's
+// infra.DB.Plan. The two are what every writer into the database asks before
+// it writes — the name gate (checkDBProject) and then the ownership question
+// (requireOwnBudgetDB) — so a database holding data and no mark, or a name
+// another project owns, is not ours. auroraMark is that mark, and every fixture
+// here is the same installation: name aurora, gcp_project proj-1234.
+func adoptBudgetFake(db *gcpfake.RTDB) {
+	db.Set(budget.PathProject, "aurora")
+	db.Set(budget.PathMark, auroraMark())
+}
+
+// buildBudgetCaps gives a world's budget database what a build lease is judged
+// against, wide enough that one e2-highcpu-8 build's $0.94 fits with room to
+// spare: these worlds are about what a build does, not about the refusal an
+// over-cap build gets — that refusal is its own tests' (image_cost_test.go's
+// fixtures and TestImageBuildOverCapFailsWithTheSpecError), and each of them
+// states the cap its own case needs.
+//
+// The mode is enforce, and it has to be said: the predicate reads the mode from
+// the database's own node (budget.PathMode), an absent one is observe (D1548),
+// and a world in observe records an over-cap build and submits it anyway — so a
+// test that seeds a cap below what a build reserves and expects the build NOT to
+// run is a test that needs this. (The local config's own `mode: observe` above
+// is the jobs' budget mode, a different knob.)
+func buildBudgetCaps(db *gcpfake.RTDB) {
+	db.Set(budget.PathMode, budget.ModeEnforce)
+	db.Set(budget.PathCapsGlobal, map[string]any{"perRunMicros": 50 * usd1, "dailyMicros": 1000 * usd1})
+	db.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 100 * usd1, "repoPerRunMicros": 50 * usd1})
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 100 * usd1})
+}
+
+// buildRate is the rate this package's stubBuildPricer answers every build of a
+// test with, read here for the figures a settle is asserted against: the whole
+// reservation a lease takes (Estimate) and the first minute of it
+// (MicrosPerMinute), which is what a build this command watched to an end
+// records (buildSpend).
+func buildRate(t *testing.T) budget.BuildRate {
+	t.Helper()
+	rate, err := budget.BuildCost(pricedBook(), "E2_HIGHCPU_8", "us-east5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rate
+}
+
+// countedOnTheDay fails the test unless the day counts want for one build: the
+// repository's and the project's day counters and the repository's spent leaf
+// all hold it. A settled lease leaves one figure in all three — the money the
+// lease did not give back, which is what the build spent — so both directions of
+// the settle are this same assertion with a different want. why says which build
+// the caller is asserting about, and what its figure is, so a failure reads as
+// its own case.
+func countedOnTheDay(t *testing.T, db *gcpfake.RTDB, slug string, want budget.Micros, why string) {
+	t.Helper()
+	client, err := newBudgetClient(context.Background(), db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := budget.ReadBuildState(context.Background(), client, slug, today())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		what string
+		got  budget.Micros
+	}{
+		{"the repository's day counter", read.State.Repo.Counted},
+		{"the project's day counter", read.State.Global.Counted},
+		{"the repository's day spend", read.State.Repo.Spent},
+	} {
+		if c.got != want {
+			t.Errorf("%s is %d µ$ %s, want %d µ$", c.what, c.got, why, want)
+		}
+	}
+}
+
+// wholeReservationCounted is countedOnTheDay for the build this command never
+// watched to an end: the day counts the WHOLE of its reservation, priced here
+// from the same book the fixture sizes every build with — the whole thing, not
+// the minutes a watch saw before it was lost and not nothing at all. why names
+// the build the caller is asserting about, so a failure reads as its own case.
+func wholeReservationCounted(t *testing.T, db *gcpfake.RTDB, slug, why string) {
+	t.Helper()
+	countedOnTheDay(t, db, slug, buildRate(t).Estimate(),
+		why+": a build nothing here watched records all of it, and the first minute of it is what the other direction leaves")
+}
+
+// TestBuildSpend: the four things the figure a watched build records is made of
+// — the watch's own clock, priced at the rate the lease was taken at, rounded
+// up to whole minutes the way Cloud Build bills them, and capped at what the
+// lease holds — and the unwatched arm, which takes the whole reservation
+// whatever the clock says. The reservation IS the rate: a lease reserves the
+// build's fixed timeout at the machine's rate (BuildRate.Estimate), so the rate
+// is recovered from the lease rather than carried beside it, and a lease taken
+// at another machine's rate prices the same seconds at its own.
+//
+// The lease is one e2-highcpu-8 build at this package's fixture rate: 936 000 µ$
+// reserved, 15 600 µ$ a minute.
+func TestBuildSpend(t *testing.T) {
+	const fixture = budget.Micros(936_000)
+	for _, tc := range []struct {
+		name     string
+		reserved budget.Micros
+		waited   bool
+		elapsed  time.Duration
+		want     budget.Micros
+		why      string
+	}{
+		{name: "a partial minute is billed as a whole one", reserved: fixture, waited: true, elapsed: 30 * time.Second, want: 15_600,
+			why: "rounding down would hand back time the build spent"},
+		{name: "the second minute is billed as soon as it is entered", reserved: fixture, waited: true, elapsed: 61 * time.Second, want: 31_200,
+			why: "a build of a minute and a second costs two minutes"},
+		{name: "an hour at the rate is the whole reservation", reserved: fixture, waited: true, elapsed: 60 * time.Minute, want: fixture,
+			why: "the fixed timeout's own sixty minutes are what the lease holds"},
+		{name: "a build that outlived its hour still holds one reservation", reserved: fixture, waited: true, elapsed: 3 * time.Hour, want: fixture,
+			why: "the lease holds one reservation, and Settle refuses an amount over it"},
+		{name: "an unwatched build records the whole reservation", reserved: fixture, waited: false, elapsed: 30 * time.Second, want: fixture,
+			why: "nothing here knows how long it runs, and giving the reservation back would let a loop of --no-wait submissions run uncounted"},
+		{name: "a lease taken at another rate prices the same seconds at its own", reserved: 60_000, waited: true, elapsed: 2 * time.Minute, want: 2_000,
+			why: "60 000 µ$ over the fixed hour is 1 000 µ$ a minute"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := buildSpend(budget.BuildLease{Reserved: tc.reserved}, tc.waited, tc.elapsed); got != tc.want {
+				t.Errorf("buildSpend = %d µ$, want %d: %s", got, tc.want, tc.why)
+			}
+		})
+	}
+}
+
+// buildBudgetForRig is buildBudgetWorld for an init rig, whose config lives at
+// r.cfg rather than in a cloud fixture: the refresh tests build a target out of
+// the rig's loaded config, so the budget block has to be in it before the load.
+// One fake per rig, made on the first call: the config block is appended once,
+// and a rig that builds two targets (a test's own, then the command's) would
+// otherwise carry the key twice — a config this program does not read.
+func buildBudgetForRig(t *testing.T, r *initRig) *gcpfake.RTDB {
+	t.Helper()
+	if r.budget != nil {
+		return r.budget
+	}
+	db := gcpfake.NewRTDB(t)
+	r.appendConfig(t, budgetBlock(db))
+	adoptBudgetFake(db)
+	buildBudgetCaps(db)
+	stubBuildPricer(t)
+	r.budget = db
+	return db
+}
+
+// rigBudgetClient is a client of the budget database the installation an init
+// engine loaded points at: a test that has to change a cap or a counter AFTER
+// its world was built — and that therefore cannot reach the fake the world was
+// built with — writes it through this. The path's own leaves are written as
+// the database rules read them (budget.PathCapsRepo and friends).
+func rigBudgetClient(t *testing.T, e *initEngine) *rtdb.Client {
+	t.Helper()
+	db, err := newBudgetClient(context.Background(), e.lc.Budget.RTDBURL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}

@@ -15,7 +15,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/digest"
+	"github.com/dimipaun/fugaro/internal/installrec"
+	"github.com/dimipaun/fugaro/internal/issueresolve"
+	"github.com/dimipaun/fugaro/internal/issues"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -319,7 +323,177 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 		return fmt.Errorf("writing %s: %w", indexPath, err)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\nwrote %s\n", path, indexPath)
+	digestIssuesSection(cmd, ctx, env)
 	return nil
+}
+
+// digestIssuesRows reads the project's shared issues, which runs digest prints
+// as the terminal Issues section. Tests replace it: the store's own failures
+// are a bucket the tests of this command do not reach.
+var digestIssuesRows = issues.ListShared
+
+// digestIssuesSection prints the Issues section after the output of the report
+// this call just wrote (T-IS16, D1729).
+//
+// The section is the terminal's own and is printed nowhere else: a person
+// reads it, the committed file never carries it, and a coding agent's session
+// adds no part of it to output a caller reads. It is printed once the report
+// and the index are written, so nothing here can change a byte of either.
+//
+// A shared store the CLI cannot read costs one line on stderr and nothing
+// else: the report is written and the command succeeded, and a teammate's
+// store being unreachable must not turn the daily report into a failed
+// command.
+//
+// The section names `fugaro issue submit` on every pending line, and this
+// build prints that reference only if it answers the command: `issue submit`
+// is a later slice, so a tree without it prints the listing and no command a
+// reader cannot type (the rule `fugaro issue`'s own help follows).
+//
+// The report retries the pass `fugaro update` runs before it reads the store
+// (T-RU6, F19): "retry on the next daily report" is the spec's answer for a
+// machine that met the fix while GitHub was unreachable, and the report is
+// what reaches a reporter between two updates. It runs where the section does
+// and nowhere else, so the scheduled job and the console never spend a
+// request, and it is best effort like everything else here: a pass that could
+// not run leaves the store as it was and the section prints what the store
+// holds.
+func digestIssuesSection(cmd *cobra.Command, ctx context.Context, env *cloudEnv) {
+	if !writerIsTerminal(cmd.OutOrStdout()) || agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) != "" {
+		return
+	}
+	_, _ = issues.Resolve(ctx, digestResolveDeps(cmd, env), Version)
+	rows, err := digestIssuesRows(ctx, env.bucket)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this project's issues could not be read, so no Issues section is printed: %s\n", safetext.OneLine(err.Error()))
+		return
+	}
+	versions := digestVersions(ctx, env)
+	th := issues.Thresholds{AfterDays: env.lc.NudgeAfterDays(), Recurrence: env.lc.NudgeRecurrence()}
+	section := issues.Section(digestSectionRows(ctx, env.bucket, rows, versions), versions, digestNow().UTC(), th)
+	if !digestAnswersCommand(cmd.Root(), "issue", "submit") {
+		section = digestWithoutSubmitRefs(section)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "\n%s", section)
+}
+
+// digestResolveDeps is one report run's wiring of the resolver (T-RU4): the
+// project's own store, a reader over GitHub's API, this machine's cursor and
+// the session's own marker. It is a seam because the tests of this command
+// answer for GitHub rather than reaching it, and the version the pass is given
+// is this binary's own (cli.Version), which is the release the report's window
+// ends at.
+var digestResolveDeps = func(cmd *cobra.Command, env *cloudEnv) issues.ResolveDeps {
+	return issues.ResolveDeps{
+		Bucket:      env.bucket,
+		Reader:      issueresolve.NewReader(nil, issueresolve.DefaultBaseURL),
+		Cursor:      issueresolve.LoadCursor(os.Getenv),
+		AgentMarker: func() string { return agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) },
+		Now:         digestNow,
+	}
+}
+
+// digestVersions is the release window the section reads: the installation
+// record the runs bucket holds (T-RU2, F17), and the release this binary is.
+//
+// The record is read best effort. An installation that has never updated with
+// a build that writes one has no record at all, and one this build cannot read
+// has no window it can vouch for; either way the section omits the Resolved
+// list rather than failing the report — a report is about the repository's
+// runs, and this is one paragraph of it.
+func digestVersions(ctx context.Context, env *cloudEnv) issues.Versions {
+	v := issues.Versions{Running: Version}
+	rec, err := installrec.Read(ctx, env.bucket)
+	if err != nil {
+		return v
+	}
+	v.Previous, v.Release = rec.PreviousRelease, rec.Release
+	return v
+}
+
+// digestHitBy is who ran into one fixed issue, as the section prints it (F10),
+// or "" when the store cannot answer: the line is a line of the section, and a
+// name nobody could read is not worth the listing it is part of. The line is
+// built by internal/issues, which is what makes the report and `fugaro update`
+// say the same thing about one issue.
+func digestHitBy(ctx context.Context, b *blobx.Bucket, number int) string {
+	names, err := issues.Reporters(ctx, b, number)
+	if err != nil {
+		return ""
+	}
+	return issues.HitByLine(names)
+}
+
+// digestAnswersCommand reports whether this build answers the command at path.
+// It is how the section knows whether it may print the reference T-IS14 adds to
+// every pending line: the command is a later slice, so the answer turns true
+// the day T-IS7 registers it, and tests replace it to check both sides of that
+// turn on one tree.
+var digestAnswersCommand = func(root *cobra.Command, path ...string) bool {
+	found, _, err := root.Find(path)
+	return err == nil && found != nil && len(path) > 0 && found.Name() == path[len(path)-1]
+}
+
+// digestSubmitRefLead opens the reference T-IS14 appends to a pending line, and
+// digestPendingHead is the heading of the block whose lines carry it.
+const (
+	digestSubmitRefLead = " [fugaro issue submit "
+	digestPendingHead   = "Pending, oldest first:"
+)
+
+// digestWithoutSubmitRefs is the section with that reference taken out of the
+// pending block's lines, which are the only ones it is appended to. The New
+// and Recurring lines end in the reporter's own summary, which may itself end
+// in `]` and spell the reference out: cutting whatever looks like one out of
+// every line would print a teammate's text short. The lines are
+// internal/issues' own, so this reads the shape they are written in and its
+// test fails if that shape changes.
+func digestWithoutSubmitRefs(section string) string {
+	blocks := strings.Split(section, "\n\n")
+	for i, b := range blocks {
+		if !strings.HasPrefix(b, digestPendingHead) {
+			continue
+		}
+		lines := strings.Split(b, "\n")
+		for j, line := range lines {
+			// The appended reference is the last thing on the line, so the
+			// last lead on it opens the reference and never the summary's own.
+			if at := strings.LastIndex(line, digestSubmitRefLead); at >= 0 {
+				lines[j] = line[:at]
+			}
+		}
+		blocks[i] = strings.Join(lines, "\n")
+	}
+	return strings.Join(blocks, "\n\n")
+}
+
+// digestSectionRows is the shared store's rows as the section prints them. An
+// issue has been reported once for the report that created it and once more
+// for every duplicate the store merged into it (F21), which is what makes it
+// recurring.
+//
+// The one field the listing does not carry is who hit a fixed issue, and it is
+// read for the rows the section's window will list and for no others: the
+// names of an issue no line prints are an occurrence listing nobody reads.
+func digestSectionRows(ctx context.Context, b *blobx.Bucket, rows []issues.SharedRow, v issues.Versions) []issues.SectionRow {
+	out := make([]issues.SectionRow, 0, len(rows))
+	for _, r := range rows {
+		row := issues.SectionRow{
+			Number:     r.Number,
+			LocalID:    r.LocalID,
+			Class:      r.Class,
+			Status:     r.Status,
+			Summary:    r.Summary,
+			Created:    r.Created,
+			Reports:    1 + r.Occurrences,
+			ResolvedIn: r.ResolvedIn,
+		}
+		if row.Status == issues.StatusResolved && v.Holds(row.ResolvedIn) {
+			row.HitBy = digestHitBy(ctx, b, r.Number)
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 // digestDim is --period as the time grouping it names.

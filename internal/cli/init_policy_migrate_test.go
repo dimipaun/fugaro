@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -169,23 +170,48 @@ func TestUpdateMigratesAV3PolicyNodeAfterConfirmation(t *testing.T) {
 	}
 }
 
-// TestUpdateMigrationDoesNotWriteWithoutTheTypedName: the write is behind the
-// same confirmation `publish --delete` puts it behind, and --yes is the flag
-// of the same path (the in-flight refusal below is the one it does not cover).
-func TestUpdateMigrationDoesNotWriteWithoutTheTypedName(t *testing.T) {
-	f := newProjectFixture(t, "")
-	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
-	h := newMigrationRig(t, f, &initOptions{})
-	fakeTerminal(t)
-	h.cmd.SetIn(strings.NewReader("not-the-project\n"))
+// TestUpdateMigrationTakesNoTypedName: nothing is typed for the write (T7,
+// docs/no-prompt-policy). The person at the terminal confirms it by being
+// there — whatever the line they left on the input is, and with the banner
+// above the write rather than a prompt under it — and a session nobody is at
+// is refused instead of reading, so the node does not move either way.
+func TestUpdateMigrationTakesNoTypedName(t *testing.T) {
+	t.Run("a person at the terminal", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+		h := newMigrationRig(t, f, &initOptions{})
+		fakeTerminal(t)
+		h.cmd.SetIn(strings.NewReader("not-the-project\n"))
 
-	out, err := h.apply(t, false)
-	if err == nil || !strings.Contains(err.Error(), "not confirmed") {
-		t.Fatalf("typing something else was accepted: %v\n%s", err, out)
-	}
-	if got := nodeVersionOn(t, f.db); got != 3 {
-		t.Errorf("the node moved to version %d on a refusal", got)
-	}
+		out, err := h.apply(t, false)
+		if err != nil {
+			t.Fatalf("a person at the terminal was refused: %v\n%s", err, out)
+		}
+		if strings.Contains(out, "Type ") || strings.Contains(out, "[y/N]") {
+			t.Errorf("the person at the terminal was asked to type something:\n%s", out)
+		}
+		if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+			t.Errorf("the write was not confirmed:\n%s", out)
+		}
+		if got := nodeVersionOn(t, f.db); got == 3 {
+			t.Errorf("the node was not written (version %d)", got)
+		}
+	})
+	t.Run("nobody at the terminal", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+		h := newMigrationRig(t, f, &initOptions{})
+		noTerminal(t)
+		h.cmd.SetIn(strings.NewReader(""))
+
+		out, err := h.apply(t, false)
+		if err == nil || !strings.Contains(err.Error(), "needs a real terminal") {
+			t.Fatalf("a session nobody is at confirmed the write: %v\n%s", err, out)
+		}
+		if got := nodeVersionOn(t, f.db); got != 3 {
+			t.Errorf("the node moved to version %d on a refusal", got)
+		}
+	})
 }
 
 func TestUpdatePolicyMigrationPreservesHandEditedAllowList(t *testing.T) {
@@ -445,6 +471,184 @@ func TestUpdatePublishesTheFirstPolicyNodeForAnOrchestratorBlock(t *testing.T) {
 	}
 }
 
+// imageMapConfigYAML is the owner's repo-to-image map as the file writes it,
+// and the only member of a node this config states: one repository of the
+// project mapped to a catalog entry.
+const imageMapConfigYAML = "image_map:\n  acme/app: universal\n"
+
+// TestUpdatePublishesTheFirstPolicyNodeForAnImageMap is #1656's member for the
+// map (D1906), and the reason the first-publish question is asked of it too: a
+// run looks its own repository up in the map on the published node and nowhere
+// else — the job's environment carries none, and the shared config refuses the
+// key outright — so a project that had never published a node and whose owner
+// had just mapped a repository was told there was nothing to do, and every run
+// of that repository took the catalog's default image instead of the one they
+// mapped it to, with `fugaro project policy publish` as the second command
+// `fugaro update`'s one command must not need.
+func TestUpdatePublishesTheFirstPolicyNodeForAnImageMap(t *testing.T) {
+	f := newProjectFixture(t, imageMapConfigYAML)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "no policy is published") {
+		t.Errorf("the check does not say the project has no node: %q", st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the repo-to-image map") || strings.Contains(st.Detail, "image_catalog") || strings.Contains(st.Detail, "guardrails") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Fatalf("the preview wrote a node of its own: %v", v)
+	}
+
+	// The write is behind the same confirmation the catalog's first publish
+	// takes, and the diff it prints names the map it creates the node with.
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+		t.Errorf("the first publish was not behind the confirmation:\n%s", out)
+	}
+	if !strings.Contains(out, "this publish creates the node") || !strings.Contains(out, "image_map") {
+		t.Errorf("the diff the operator confirmed does not name the map it creates the node with:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if got := p.ImageMap["acme/app"]; got != "universal" {
+		t.Fatalf("the published node maps acme/app to %q, want the entry the config names: %+v", got, p.ImageMap)
+	}
+}
+
+// TestUpdatePublishesTheFirstPolicyNodeForTheBakeSwitch is the same member
+// class for the switch (D1901): what a run does with a repository's clone is
+// read off the node, so a project whose owner had written `bake_repos: false`
+// and had never published a node was told there was nothing to do, and every
+// job of the project went on cloning again.
+//
+// A written true is a reason to create the node as well, which is the one
+// spelling where this question is asked of a value that changes nothing for a
+// reader (absent and true are one statement, BakesRepos): the publisher's row
+// for the switch is reached by `lc.BakeRepos != nil` and the node it builds
+// carries whatever the file writes, so a first publish that left a written
+// answer behind would be a node that contradicts the file it was built from
+// (the reading `orchestrator: {}` gets is the other one, and it is asked of the
+// effective rule rather than of the key).
+func TestUpdatePublishesTheFirstPolicyNodeForTheBakeSwitch(t *testing.T) {
+	f := newProjectFixture(t, "bake_repos: false\n")
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "no policy is published") {
+		t.Errorf("the check does not say the project has no node: %q", st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the bake switch") || strings.Contains(st.Detail, "image_catalog") || strings.Contains(st.Detail, "guardrails") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "this publish creates the node") || !strings.Contains(out, "bake_repos") {
+		t.Errorf("the diff the operator confirmed does not name the switch it creates the node with:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if p.BakeRepos == nil || p.BakesRepos() {
+		t.Fatalf("the published node carries bake_repos %v, want the false the config writes", p.BakeRepos)
+	}
+
+	// The other value of the same key is a reason to create the node too: the
+	// node is built carrying what the file writes, and a member the file states
+	// is one the node has to state for the two to agree.
+	on := newProjectFixture(t, "bake_repos: true\n")
+	h2 := newMigrationRig(t, on, &initOptions{})
+	st, err = h2.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Errorf("the check says %s %q for a written true, want it published like any other member the file states", st.State, st.Detail)
+	}
+	if v := on.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Errorf("the check wrote a node of its own: %v", v)
+	}
+}
+
+// TestUpdatePublishesTheFirstPolicyNodeForTheTriageSwitch is the same member
+// class for the switch the review finding names (D1854): the stage turns on
+// what the node says, so a project whose owner had written `triage: false` and
+// had never published a node would go on judging findings the owner turned the
+// judge off for — and the first publish is what carries the answer, with no
+// second command (the HARD RULE). Only the written false asks the question, the
+// bake switch's reason: an absent key and a written true are one statement to
+// every reader (config.Agent.TriageOn), so the check is reached by the key's
+// presence and not by its value.
+func TestUpdatePublishesTheFirstPolicyNodeForTheTriageSwitch(t *testing.T) {
+	f := newProjectFixture(t, "triage: false\n")
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the triage switch") || strings.Contains(st.Detail, "the bake switch") {
+		t.Errorf("the check names a switch this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "triage") {
+		t.Errorf("the diff the operator confirmed does not name the switch it creates the node with:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if p.Triage == nil || *p.Triage {
+		t.Fatalf("the published node carries triage %v, want the false the config writes", p.Triage)
+	}
+}
+
 // catalogConfigWithNoRepos rewrites the fixture's config so the project lists no
 // repository while the catalog the fixture's extra block states stays: a first
 // publish from it would write a node whose allow-list admits nothing, which is
@@ -473,6 +677,12 @@ func setCatalogConfigWithNoRepos(t *testing.T, f *projectFixture) {
 // name, and a session with no terminal is refused — the confirmation D846
 // reserves for the boundary every run is admitted by, and the class a coding
 // agent's session never reaches under the managed gate (D1026).
+//
+// A config that lists no repository is the publisher's own warning instead
+// (#1674): that node admits nothing, so every run of the project stops before
+// it starts, and since T7 nothing is typed under the sentence — the person at
+// the terminal is the whole of the answer, and a session without one is refused
+// with the publisher's sentence before the write.
 func TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation(t *testing.T) {
 	f := newProjectFixture(t, catalogConfigYAML)
 	h := newMigrationRig(t, f, &initOptions{})
@@ -491,7 +701,10 @@ func TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation(t *testing.T) {
 
 	// A config that lists no repository is the other refusal of the same write,
 	// and the sentence is the publisher's own (#1674): the node admits nothing,
-	// so every run of the project stops before it starts.
+	// so every run of the project stops before it starts. Nothing is typed
+	// under it any more (T7): the person at the terminal is what answers it,
+	// and this session — still without one — is refused with that same
+	// sentence, before anything is written.
 	ger := newProjectFixture(t, catalogConfigYAML)
 	setCatalogConfigWithNoRepos(t, ger)
 	h2 := newMigrationRig(t, ger, &initOptions{})
@@ -499,8 +712,10 @@ func TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation(t *testing.T) {
 	if err == nil {
 		t.Fatalf("--yes published a policy that admits no repository:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "every run stops before it starts") {
-		t.Errorf("the refusal does not say the consequence: %v", err)
+	for _, want := range []string{"needs a real terminal", "every run stops before it starts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
 	}
 	if v := ger.db.Value(projectpolicy.PathShared()); v != nil {
 		t.Fatalf("the refused publish wrote a node: %v", v)
@@ -528,39 +743,121 @@ func TestUpdatePolicyMigrationLeavesAMalformedNodeUntouched(t *testing.T) {
 	}
 }
 
-func TestUpdatePolicyMigrationSurfacesRunsInFlight(t *testing.T) {
+// TestUpgradePolicyStepSurfacesRunsInFlight: `fugaro upgrade`'s own policy step
+// is the one door left that refuses a node write for the runs in flight, and it
+// is the door that is NOT the whole upgrade: the person there is in the middle
+// of something else and a node of theirs is being published, so the refusal
+// costs them nothing the HARD RULE promises them. `fugaro update` — the one
+// command the upgrade is — answers the same state with inflightQuiet and never
+// refuses (TestUpdatePolicyMigrationWritesUnderRunsInFlight).
+func TestUpgradePolicyStepSurfacesRunsInFlight(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
 	f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
 	h := newMigrationRig(t, f, &initOptions{})
+	m, _, err := h.s.plan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// --yes is the flag the in-flight refusal tells the operator to pass
 	// once they have read what the migration does, exactly as --delete
 	// does with it: without it, a run that read the node stops the write.
-	out, err := h.apply(t, false)
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, false, h.s.e.r.conditions(), inflightAsk)
 	if err == nil {
-		t.Fatalf("a run in flight did not stop the migration:\n%s", out)
+		t.Fatalf("a run in flight did not stop `fugaro upgrade`'s policy step:\n%s", h.out)
 	}
 	if !strings.Contains(err.Error(), "run(s) are in flight") || !strings.Contains(err.Error(), "fugaro runs ls") {
 		t.Errorf("the refusal is not the in-flight one: %v", err)
 	}
 	// The refusal is the whole of what the operator gets: the check is before
-	// the diff (policyMigrationConfirm), which is what the upgrade step runs
-	// too, so the two doors refuse one state in the same words and print the
-	// same nothing — a diff shown for a write that does not happen is a
-	// document the operator cannot act on without a second run.
-	if strings.Contains(out, "rewritten in place as version") {
-		t.Errorf("the diff was printed for a write that was refused:\n%s", out)
+	// the diff (policyMigrationConfirm), so a diff shown for a write that does
+	// not happen — a document the operator cannot act on without a second run
+	// — is never printed.
+	if strings.Contains(h.out.String(), "rewritten in place as version") {
+		t.Errorf("the diff was printed for a write that was refused:\n%s", h.out)
 	}
 	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d while a run was in flight", got)
 	}
 }
 
-// TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight pins the other half of
-// that refusal: --yes is the way past it, which is what the refusal's own words
-// tell the operator to use, and the same reading `publish --delete` has. The
-// two doors and their help text have to say this one way.
+// TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight drives the step
+// itself, not the constant: the refusal is the upgrade door's answer to the
+// runs in flight (upgrade.go's inflightAsk) and this is what pins it — flipping
+// that call site to inflightQuiet lets the migration through here, which is the
+// whole of the difference between the two doors. A test that called
+// policyMigrationConfirm with the constant would pass whatever the door passes.
+//
+// No --yes, and a terminal: the refusal is what stands in its place, and it is
+// asked before the typed confirmation a person would otherwise be given.
+func TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	db.Set(budget.PathProject, initProjectName)
+	db.Set(budget.PathMode, budget.ModeEnforce)
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+	db.Set("agents", map[string]any{initProjectName: map[string]any{"run-1": map[string]any{"repo": "acme/app"}}})
+
+	fakeTerminal(t)
+	out := &syncBuf{}
+	cmd := NewRootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(&syncBuf{})
+	cmd.SetIn(strings.NewReader("aurora\n"))
+	u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: r.root}}
+
+	got := policyStep(context.Background(), u)
+	if got.state != stepFailed || got.code != ExitUserError {
+		t.Fatalf("the policy step is %s (exit %d): %s\n%s", got.state, got.code, got.reason, out)
+	}
+	if !strings.Contains(got.reason, "run(s) are in flight") {
+		t.Errorf("the refusal is not the in-flight one: %s", got.reason)
+	}
+	if v := nodeVersionOn(t, db); v != 3 {
+		t.Errorf("the node moved to version %d while a run was in flight", v)
+	}
+}
+
+// TestUpdatePolicyMigrationWritesUnderRunsInFlight is the owner's ruling of
+// 2026-11-09 at this stage: `fugaro update` is the whole upgrade and it is safe
+// while runs are in flight, so the door answers the same state the test above
+// refuses with inflightQuiet — the node is written with no --yes and this stage
+// says NOTHING about the runs. No refusal, no request to wait, and no note: the
+// door's one line about them is printed once, before the first stage
+// (update_in_flight.go's announceRunsInFlight), and a second line here would be
+// the same fact read twice.
+func TestUpdatePolicyMigrationWritesUnderRunsInFlight(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
+	h := newMigrationRig(t, f, &initOptions{})
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the update door refused a policy write for the runs in flight: %v\n%s", err, out)
+	}
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+		t.Errorf("the node is version %d, want %d: the update door did not write it", got, projectpolicy.Version)
+	}
+	if strings.Contains(out, "run(s) are in flight") || strings.Contains(out, "fugaro runs ls") {
+		t.Errorf("the update door's own stage said something about the runs in flight, which is the door's line:\n%s", out)
+	}
+}
+
+// TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight pins that --yes is
+// accepted while a run is in flight on this door, which is what a scripted
+// update passes. It is the flag the UPGRADE door's refusal tells the operator
+// to use (the test above), and the reading `publish --delete` has; on the
+// update door it is simply the confirmation, and the runs in flight change
+// nothing about it.
 func TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
@@ -576,19 +873,22 @@ func TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight(t *testing.T) {
 	}
 }
 
-// TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites: the owner's
-// ruling of 2026-11-06 — in a MANAGED project the in-flight guard never
-// refuses. With up to twenty cloud runs in flight the refusal fired nearly
-// every time and left the owner unable to apply a policy at all, so the count
-// becomes a note on the command's output and the write proceeds.
+// TestUpdatePolicyManagedMigrationWritesUnderRunsInFlight: the owner's ruling
+// of 2026-11-06 made a managed project's in-flight guard a note instead of a
+// refusal, because with up to twenty cloud runs in flight the refusal fired
+// nearly every time and left the owner unable to apply a policy at all. The
+// ruling of 2026-11-09 (inflightQuiet) took the note away with the guard: the
+// update door prints one line about the runs itself, before the first stage,
+// and a stage line about the same runs would be the same fact read twice.
 //
-// The note replaces the refusal and nothing else. The diff is still printed and
-// the stage's own typed confirmation is NOT asked of a person on a managed
-// project (the owner's ruling of 2026-11-06; the rig's gate admits nothing, so
-// admitted is false here, and the person branch is what spares the prompt), the
-// node is written, and the generation the write landed is recorded in the file
-// it was built from exactly as a run with nothing in flight records it.
-func TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites(t *testing.T) {
+// What the managed case keeps is the rest of the 2026-11-06 ruling: the write
+// proceeds — with no --yes and no run asked to finish — and the stage's own
+// typed confirmation is NOT asked of a person on a managed project (the rig's
+// gate admits nothing, so admitted is false here, and the person branch is what
+// spares the prompt). The node is written, and the generation the write landed
+// is recorded in the file it was built from exactly as a run with nothing in
+// flight records it.
+func TestUpdatePolicyManagedMigrationWritesUnderRunsInFlight(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
 	h := newMigrationRig(t, f, &initOptions{}).managedGate().inFlight()
@@ -599,8 +899,8 @@ func TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a managed project's migration was refused for the runs in flight: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "1 run(s) are in flight and a run whose model calls go through the credentials service reads the new policy on its next call") {
-		t.Errorf("the managed guard did not print its note:\n%s", out)
+	if strings.Contains(out, "run(s) are in flight") {
+		t.Errorf("the stage printed its own line about the runs in flight, which is the door's:\n%s", out)
 	}
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node is version %d, want %d: the note did not let the write through", got, projectpolicy.Version)
@@ -612,36 +912,15 @@ func TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites(t *testing.T) {
 		t.Errorf("the write did not say what it does:\n%s", out)
 	}
 	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
-		t.Errorf("the generation the write landed is recorded as %q, want %q: the note changed the record", gen, want)
-	}
-}
-
-// TestUpdatePolicyManagedMigrationWithoutRunsPrintsNoNote: the note is about
-// the runs in flight, so a managed project with none gets the guard's old
-// silence — nothing is printed and the write proceeds as it always did.
-func TestUpdatePolicyManagedMigrationWithoutRunsPrintsNoNote(t *testing.T) {
-	f := newProjectFixture(t, "")
-	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
-	h := newMigrationRig(t, f, &initOptions{}).managedGate()
-	fakeTerminal(t)
-	h.cmd.SetIn(strings.NewReader("aurora\n"))
-
-	out, err := h.apply(t, false)
-	if err != nil {
-		t.Fatalf("a managed migration with nothing in flight was refused: %v\n%s", err, out)
-	}
-	if strings.Contains(out, "reads the new policy on its next call") {
-		t.Errorf("a note was printed with no run in flight:\n%s", out)
-	}
-	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
-		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
+		t.Errorf("the generation the write landed is recorded as %q, want %q: the runs in flight changed the record", gen, want)
 	}
 }
 
 // TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal: a coding agent's
-// session is not widened by the managed case — the owner's ruling of 2026-11-06
-// scopes the note to the owner's own session — so a marker keeps the refusal
-// byte for byte. The guard is reached only where the gate admitted the node (a
+// session is not widened by the update door's ruling — every ruling widens the
+// person's own session and never a marker's — so a marker keeps the refusal
+// even on `fugaro update`'s own step, which passes inflightQuiet for every
+// other session. The guard is reached only where the gate admitted the node (a
 // session the gate refuses never gets this far), so the tail is driven directly
 // with admitted true, which is the answer an admitted managed step carries.
 func TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal(t *testing.T) {
@@ -654,28 +933,94 @@ func TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true, h.s.e.r.conditions())
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true, h.s.e.r.conditions(), inflightQuiet)
 	if err == nil {
 		t.Fatalf("a coding agent's session wrote a managed project's policy with a run in flight:\n%s", h.out)
 	}
 	if !strings.Contains(err.Error(), "run(s) are in flight") {
 		t.Errorf("the refusal is not the in-flight one: %v", err)
 	}
-	if strings.Contains(h.out.String(), "reads the new policy on its next call") {
-		t.Errorf("the managed note was printed in a coding agent's session:\n%s", h.out)
-	}
 	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d under a marker", got)
 	}
 }
 
-// TestUpdatePolicyReseedAsksAboutRunsInFlightBeforeItWritesTheFile: the
+// TestSetupPolicyStepKeepsTheRunsInFlightAnswer: the policy stage is not the
+// update door's alone — initStages registers it for `fugaro setup` and for
+// `fugaro accounts add` / `accounts rm` too — and the owner's ruling of
+// 2026-11-09 (inflightQuiet) is the update door's. A stage that passed that
+// answer for every door would publish the node under the runs in flight with no
+// refusal, no --yes and no line at all, because the line about them is the
+// update door's own (announceRunsInFlight). So the doors that are not the
+// update door keep the answer of 2026-11-06 they had before it
+// (inflightManaged): a managed project's own session is told the count and
+// writes, and every other session is refused without --yes.
+func TestSetupPolicyStepKeepsTheRunsInFlightAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		managed bool
+		want    string
+		writes  bool
+	}{
+		{
+			// The refusal --yes is the way past, unchanged: the update door is
+			// the one command the whole upgrade is, so the door that is not it
+			// still waits for the runs exactly as it did before.
+			name: "an unmanaged project's setup is refused",
+			want: "run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite",
+		},
+		{
+			name:    "a managed project's setup writes and is told the count",
+			managed: true,
+			want:    "1 run(s) are in flight and a run whose model calls go through the credentials service reads the new policy on its next call",
+			writes:  true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+			h := newMigrationRig(t, f, &initOptions{door: setupDoor.name}).inFlight()
+			if tc.managed {
+				h.managedGate()
+			}
+			fakeTerminal(t)
+			h.cmd.SetIn(strings.NewReader("aurora\n"))
+
+			out, err := h.apply(t, false)
+			if tc.writes {
+				if err != nil {
+					t.Fatalf("a managed project's setup was refused for the runs in flight: %v\n%s", err, out)
+				}
+				if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+					t.Errorf("the node is version %d, want %d: the setup wrote nothing", got, projectpolicy.Version)
+				}
+				if !strings.Contains(out, tc.want) {
+					t.Errorf("the stage did not say %q:\n%s", tc.want, out)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("an unmanaged project's setup published the node under a run in flight:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal is not the in-flight one: %v", err)
+			}
+			if got := nodeVersionOn(t, f.db); got != 3 {
+				t.Errorf("the node moved to version %d under the refusal", got)
+			}
+		})
+	}
+}
+
+// TestUpgradePolicyReseedAsksAboutRunsInFlightBeforeItWritesTheFile: the
 // in-flight refusal is about the node a run rewrites, and D854's re-seed carries
-// a pending migration with it — so the refusal is asked before the re-seed of
-// this machine's file, not after it. A run that re-seeded first would have moved
-// the file under a write this refusal exists to stop, and would have taken the
-// operator's typed confirmation for a write that then does not happen.
-func TestUpdatePolicyReseedAsksAboutRunsInFlightBeforeItWritesTheFile(t *testing.T) {
+// a pending migration with it — so on the door that keeps the refusal (`fugaro
+// upgrade`'s own step) it is asked before the re-seed of this machine's file,
+// not after it. A run that re-seeded first would have moved the file under a
+// write this refusal exists to stop, and would have taken the operator's typed
+// confirmation for a write that then does not happen. The update door re-seeds
+// and writes: nothing it changes is held by the run (docs/design/update-in-flight.md).
+func TestUpgradePolicyReseedAsksAboutRunsInFlightBeforeItWritesTheFile(t *testing.T) {
 	f := newProjectFixture(t, "")
 	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
 	f.db.Set(projectpolicy.PathShared(), v3Node(map[string]any{
@@ -689,14 +1034,18 @@ func TestUpdatePolicyReseedAsksAboutRunsInFlightBeforeItWritesTheFile(t *testing
 	blockBudgetConfig(t, f)
 	fakeTerminal(t)
 	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	m, _, err := h.s.plan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	before, err := os.ReadFile(f.path)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	out, err := h.apply(t, false)
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, false, h.s.e.r.conditions(), inflightAsk)
 	if err == nil {
-		t.Fatalf("a run in flight did not stop the re-seed:\n%s", out)
+		t.Fatalf("a run in flight did not stop the re-seed:\n%s", h.out)
 	}
 	if !strings.Contains(err.Error(), "run(s) are in flight") {
 		t.Errorf("the refusal is not the in-flight one: %v", err)
@@ -1365,23 +1714,30 @@ func TestUpgradePolicyStepSkipsWhereItCannotWrite(t *testing.T) {
 
 // TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject: the owner's ruling
 // of 2026-11-06, no typed prompt for a person at a real terminal on a managed
-// project. The tail is driven directly with admitted false (the gate did not
-// stand in for the confirmation) and nothing on stdin: a person on a managed
-// project proceeds on a note, and every other session keeps the confirmation —
-// an unmanaged project, a coding agent's session, a run with no terminal and a
-// run whose owner asked for the prompts back (--ask) are each refused without
-// the typed name, and the node does not move.
+// project, and T7's extension of it to every session nothing stands in the
+// write's way for. The tail is driven directly with admitted false (the gate
+// did not stand in for the confirmation) and nothing on stdin: a person on a
+// managed project proceeds on a note and a person on a project that is not
+// managed proceeds on the banner alone — nothing is typed in either — while a
+// coding agent's session and a run with no terminal are refused, and a run
+// whose owner asked for the prompts back (--ask) is asked the step's own
+// question again.
 //
 // The subtests are the mutation check of the condition
-// (managed && initflow.PersonAtTheTerminal(c) && !admitted): dropping any one
-// of its halves lets a session through that must not be, and the first subtest
-// is the positive control for the refusals after it.
+// (managed && initflow.PersonAtTheTerminal(c) && !admitted): dropping either
+// half lets a session through to the note that must not be, and the first
+// subtest is the positive control for the two refusals after it.
 func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 	run := func(t *testing.T, managed, terminal, ask bool, marker string) (*migrationRig, *projectFixture, error) {
 		t.Helper()
 		f := newProjectFixture(t, "")
 		f.db.Set(projectpolicy.PathShared(), v3Node(nil))
 		h := newMigrationRig(t, f, &initOptions{ask: ask})
+		if ask {
+			// The flag is what the sanctioned question reads, and --ask is only
+			// ever in the options because it was passed (init_confirm_test).
+			h.cmd.Flags().Bool("ask", true, "")
+		}
 		if terminal {
 			fakeTerminal(t)
 		} else {
@@ -1395,18 +1751,22 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, managed, h.s.e.r.conditions())
+		return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, managed, h.s.e.r.conditions(), inflightAsk)
 	}
-	// refused is the four sessions that keep the confirmation: the run is
-	// stopped with the typed name asked for, and the node does not move.
+	// refused is the two sessions that can answer neither by being there nor by
+	// --yes: the run is stopped without a line being read, and the node does
+	// not move.
 	refused := func(t *testing.T, why string, managed, terminal, ask bool, marker string) {
 		t.Helper()
 		h, f, err := run(t, managed, terminal, ask, marker)
 		if err == nil {
-			t.Fatalf("%s wrote without the typed name:\n%s", why, h.out)
+			t.Fatalf("%s confirmed the write:\n%s", why, h.out)
 		}
 		if !strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
-			t.Errorf("%s was refused without the confirmation being asked for:\n%s", why, h.out)
+			t.Errorf("%s was refused without the confirmation being shown:\n%s", why, h.out)
+		}
+		if strings.Contains(h.out.String(), "[y/N]") {
+			t.Errorf("%s was asked a question it cannot answer:\n%s", why, h.out)
 		}
 		if got := nodeVersionOn(t, f.db); got != 3 {
 			t.Errorf("%s moved the node to version %d without a confirmation", why, got)
@@ -1428,7 +1788,41 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 		}
 	})
 	t.Run("an unmanaged project", func(t *testing.T) {
-		refused(t, "an unmanaged project", false, true, false, "")
+		// The same person, on a project the marks did not answer "managed" for:
+		// there is no note to read, and the banner above the diff is the whole
+		// of what stands in for the typed name — which is the half of the
+		// ruling T7 is (the typed name was asked for here until it landed).
+		h, f, err := run(t, false, true, false, "")
+		if err != nil {
+			t.Fatalf("a person on a project that is not managed was refused: %v\n%s", err, h.out)
+		}
+		if !strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
+			t.Errorf("the write was not confirmed:\n%s", h.out)
+		}
+		if strings.Contains(h.out.String(), "note: ") || strings.Contains(h.out.String(), "Type ") {
+			t.Errorf("a project that is not managed was asked to type something:\n%s", h.out)
+		}
+		if got := nodeVersionOn(t, f.db); got == 3 {
+			t.Errorf("the node was not written (version %d)", got)
+		}
+	})
+	t.Run("an unmanaged project whose owner passed --ask", func(t *testing.T) {
+		// The flag's own rule, read at this door too (restoreAsk): --ask puts
+		// back the question a managed project's gate replaces, and a project
+		// whose marks did not answer "managed" has none to put back — so it is
+		// the no-op its help describes, and the person at the terminal is the
+		// confirmation exactly as they are without it. Before this read, the
+		// flag asked here while the run's every other step asked nothing.
+		h, f, err := run(t, false, true, true, "")
+		if err != nil {
+			t.Fatalf("--ask in a project that is not managed refused the write: %v\n%s", err, h.out)
+		}
+		if strings.Contains(h.out.String(), "[y/N]") {
+			t.Errorf("--ask asked a question it has nothing to put back:\n%s", h.out)
+		}
+		if got := nodeVersionOn(t, f.db); got == 3 {
+			t.Errorf("the node was not written (version %d)", got)
+		}
 	})
 	t.Run("a coding agent's session on a managed project", func(t *testing.T) {
 		refused(t, "a coding agent's session", true, true, false, "CLAUDECODE")
@@ -1442,15 +1836,49 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 		refused(t, "a managed project with nobody at the terminal", true, false, false, "")
 	})
 	t.Run("a managed project whose owner asked for the prompts back", func(t *testing.T) {
-		refused(t, "a managed project run with --ask", true, true, true, "")
+		// The prompt comes back as this step's own question, and it is answered
+		// here: nothing on the input is a no, which is the refusal — and the
+		// write waits for a y, which the subtest after this one gives it.
+		h, f, err := run(t, true, true, true, "")
+		if err == nil {
+			t.Fatalf("an empty answer confirmed the write:\n%s", h.out)
+		}
+		if !strings.Contains(h.out.String(), "[y/N]") {
+			t.Errorf("--ask did not put the step's question back:\n%s", h.out)
+		}
+		if strings.Contains(h.out.String(), "Type ") {
+			t.Errorf("--ask restored the typed name instead of the step's own question:\n%s", h.out)
+		}
+		if got := nodeVersionOn(t, f.db); got != 3 {
+			t.Errorf("the node moved to version %d on an unanswered question", got)
+		}
+	})
+	t.Run("a managed project whose owner answered the question", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+		h := newMigrationRig(t, f, &initOptions{ask: true})
+		h.cmd.Flags().Bool("ask", true, "")
+		fakeTerminal(t)
+		h.cmd.SetIn(strings.NewReader("y\n"))
+		m, _, err := h.s.plan(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions(), inflightAsk); err != nil {
+			t.Fatalf("--ask with a y did not confirm the write: %v\n%s", err, h.out)
+		}
+		if got := nodeVersionOn(t, f.db); got == 3 {
+			t.Errorf("the node was not written (version %d)", got)
+		}
 	})
 	// A project's FIRST node is the note's case too, and the one no other
 	// subtest here reaches: they all drive a node that is already published.
 	// The write replaces nothing and deletes nothing, its document is entirely
 	// the person's own local config, and the diff above the note is the first
 	// publish's own — every member the node is created with, named against the
-	// empty document it is created from. The first publish that does keep the
-	// typed name is the empty allow-list one, which the last subtest here pins.
+	// empty document it is created from. The first publish that does keep a
+	// warning of its own is the empty allow-list one, which the subtest after
+	// this one pins.
 	t.Run("a managed project with no node to publish yet", func(t *testing.T) {
 		h, f := firstPublishRig(t, "", true)
 		out := h.out.String()
@@ -1465,17 +1893,51 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 		}
 	})
 	// The empty allow-list first publish is the one write of that case that
-	// keeps the confirmation: the node it writes admits no repository, so from
-	// the moment it lands every run of the project stops before it starts.
+	// says the consequence before it: the node it writes admits no repository,
+	// so from the moment it lands every run of the project stops before it
+	// starts. Nothing is typed under the warning any more (T7): the publisher's
+	// own sentence is printed, and the write goes ahead — --ask is the flag
+	// that would put the question back.
 	t.Run("a managed project with no node and no repository listed", func(t *testing.T) {
 		h, f := firstPublishRig(t, "no-repos", true)
 		if !strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
-			t.Errorf("a node that admits nothing was written without the confirmation:\n%s", h.out)
+			t.Errorf("a node that admits nothing was written without the warning:\n%s", h.out)
 		}
-		if v := f.db.Value(projectpolicy.PathShared()); v != nil {
-			t.Errorf("the node that admits nothing was written: %v", v)
+		if !strings.Contains(h.out.String(), "every run stops before it starts") {
+			t.Errorf("the warning does not say the consequence:\n%s", h.out)
+		}
+		if f.db.Value(projectpolicy.PathShared()) == nil {
+			t.Error("the warned publish wrote no node")
 		}
 	})
+	// The two rows the review of T7 raised: --yes says "the ordinary steps",
+	// and this is the write that stops every run of the project, while
+	// --non-interactive and --json say nobody is reading. Before T7 this step
+	// took a typed name, and neither session could type one, so each was
+	// refused — and each is refused again, at a real terminal included, or a
+	// converge nobody is watching publishes a policy that admits nothing.
+	for _, row := range []struct {
+		name string
+		o    *initOptions
+	}{
+		{"--yes --non-interactive", &initOptions{yes: true, nonInteractive: true}},
+		{"--yes --json", &initOptions{yes: true, asJSON: true}},
+	} {
+		t.Run("a managed project with no node and no repository listed, "+row.name, func(t *testing.T) {
+			h, f, err := firstPublishRigErr(t, "no-repos", true, row.o)
+			if err == nil {
+				t.Fatalf("%s wrote a node that admits nothing:\n%s", row.name, h.out)
+			}
+			for _, want := range []string{"needs a real terminal", "every run stops before it starts", "fugaro project repos add provider/owner/name"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			if f.db.Value(projectpolicy.PathShared()) != nil {
+				t.Errorf("%s wrote the node", row.name)
+			}
+		})
+	}
 	// The note is the person's, so a first publish reached without one keeps
 	// the typed confirmation like every other write here.
 	t.Run("a managed project with no node and nobody at the terminal", func(t *testing.T) {
@@ -1494,14 +1956,28 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 // publish rather than nothing to do — and runs the tail over it: managed, a
 // person at the terminal unless terminal is false, and nothing on stdin. extra
 // "no-repos" rewrites the config so the node it would write admits no
-// repository, which is the first publish that keeps the typed name.
+// repository, which is the first publish that warns before it writes. Its own
+// error is logged: firstPublishRigErr is the same rig for the rows a refusal is
+// the subject of.
 func firstPublishRig(t *testing.T, extra string, terminal bool) (*migrationRig, *projectFixture) {
+	t.Helper()
+	h, f, err := firstPublishRigErr(t, extra, terminal, &initOptions{})
+	if err != nil {
+		t.Logf("the tail refused the first publish: %v", err)
+	}
+	return h, f
+}
+
+// firstPublishRigErr is firstPublishRig over the run's own options, with the
+// tail's error handed back: the rows that are about a refusal need it, and the
+// rows that write do not.
+func firstPublishRigErr(t *testing.T, extra string, terminal bool, o *initOptions) (*migrationRig, *projectFixture, error) {
 	t.Helper()
 	f := newProjectFixture(t, catalogConfigYAML)
 	if extra == "no-repos" {
 		setCatalogConfigWithNoRepos(t, f)
 	}
-	h := newMigrationRig(t, f, &initOptions{})
+	h := newMigrationRig(t, f, o)
 	if terminal {
 		fakeTerminal(t)
 	} else {
@@ -1515,8 +1991,5 @@ func firstPublishRig(t *testing.T, extra string, terminal bool) (*migrationRig, 
 	if !m.firstPublish {
 		t.Fatalf("the rig planned a publish of a node that is there, so this is not the first node")
 	}
-	if err := policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions()); err != nil {
-		t.Logf("the tail refused the first publish: %v", err)
-	}
-	return h, f
+	return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions(), inflightAsk)
 }

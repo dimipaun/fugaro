@@ -1,7 +1,6 @@
 # Workspaces: an optional grouping of projects
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The owner's spec of 2026-10-24 is carried in [spec.md](spec.md) §0 as this run recorded
+**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.** The owner's spec of 2026-10-24 is carried in [spec.md](spec.md) §0 as this run recorded
 it; [reconciliation.md](reconciliation.md) §4 puts sixteen decisions (**D1290–D1305**) in front of
 the owner, each with the recommendation first and the cost of the alternative, and **the owner
 answered all sixteen on 2026-11-04 — every one as recommended**. **The design merged as #1492, and
@@ -12,7 +11,12 @@ the service itself) and **D1301** (the cap is metered at the proxy, and the roll
 reconciliation alarm) — with **D1300** amended only as it depends on D1301. Those two amendments are
 the one place this folder deviates from what the reconciliation had recommended: **D1301's amendment
 is not the option [reconciliation.md](reconciliation.md) had put first**. No decision number moved
-and none was added; §5 of that file says so. **If the implementation happens,
+and none was added; §5 of that file says so. **Two further decisions this design's implementation
+raised were reported afterwards and the owner answered both on 2026-11-10, each as recommended** —
+the pairing §8's residual risk 7 names, and which task carries the region of a member's database —
+and [reconciliation.md](reconciliation.md) §9 is the record: **this release ships the shape and
+states both gaps, and the task that first gives the per-member table a writer takes them**. **If the
+implementation happens,
 [implementation-plan.md](implementation-plan.md) §5 recommends 0.21.0 or later, after the MCP
 server**: the design is large and security-heavy, and §5 says why.
 

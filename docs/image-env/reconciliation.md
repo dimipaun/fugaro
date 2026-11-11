@@ -21,7 +21,7 @@ read in this checkout; a citation by symbol is held where a line would move.
 | --- | --- | --- |
 | "The agent's environment … is built from an allowlist (`internal/agent/env.go`'s `baseEnv`: `PATH`, `HOME`, `JAVA_HOME`, locale, temp and cache variables, proxies and CA bundles, and four base-image variables)" | True, and complete: `baseEnv` is exactly those names plus `USER`, `LOGNAME`, `SHELL`, `TERM`, `TZ`, `GRADLE_USER_HOME`, `NODE_OPTIONS`, `npm_config_cache`, `PNPM_HOME`, the `XDG_*` three, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS` and four base-image variables (`internal/agent/env.go:14-27`) | Confirmed |
 | "Every other variable the job's image sets with `ENV` is silently dropped" | Confirmed: `BuildEnv` reads the runner's environment and copies only `baseEnv`, the auth variables, the declared secrets and `spec.Set` (`internal/agent/env.go:78-110`, `:204-220`). Nothing warns | Confirmed |
-| "The image is operator-owned (the catalog lives in the published policy, D1140)" | Confirmed: the published `image_catalog` node is `config.Catalog` on the project node (`internal/projectpolicy/policy.go:345`), the local config wins over it (`internal/localcfg/localcfg.go:1422-1431`), and the deploy picks the image from it (`internal/infra/spec.go:836-854`, `:1063-1074`) | Confirmed |
+| "The image is operator-owned (the catalog lives in the published policy, D1140)" | Confirmed: the published `image_catalog` node is `config.Catalog` on the project node (`internal/projectpolicy/policy.go:346`), the local config wins over it (`internal/localcfg/localcfg.go:1448-1457`), and the deploy picks the image from it (`internal/infra/spec.go:836-854`, `:1063-1074`) | Confirmed |
 | "Our build CLI also reads `NEXUS_BASEURL` (`require_var`) in its artifact-lookup helpers" | Not this repository's code — it is the reporter's own build tooling inside their image, and nothing here can confirm or refute it | Out of reach |
 | "Nothing warned … it took a failed run and a transcript search to find" | Confirmed, and worse than the issue says: **no command reads a job image's environment** and `doctor`, which reads the installation, never reads a job's container env (F14) | Confirmed |
 | "The only hint in the docs is a clause in `docs/base-image.md`" | Confirmed, and it is **two** sentences: `docs/base-image.md:45` and the reason it points at, `docs/design/base-image.md:167` (F2) | Confirmed |
@@ -110,8 +110,8 @@ same template (`:22`) and read at `internal/cli/exec.go:193` — and a catalog e
 arbitrary Dockerfile need not set it. `FUGARO_REMOTE` is written for a **prebuilt** catalog entry
 (`internal/infra/spec.go:1130-1135`) but that is the prebuilt sub-case, not a catalog marker: **a
 catalog image built from a Dockerfile is indistinguishable from a repository's own derived image.**
-`CatalogImageEntry` (`internal/backend/gcp/catalog.go:141-159`) can read an entry back out of a
-reference, and `JobImage` (`:171-187`) can read a deployed job's image — both are **launcher-side**
+`CatalogImageEntry` (`internal/backend/gcp/catalog.go:168-192`) can read an entry back out of a
+reference, and `JobImage` (`:194-220`) can read a deployed job's image — both are **launcher-side**
 reads. Without the stamp D1371 adds, this design cannot be implemented as ruled; with it, it can.
 
 **F6. The entry is known at deploy, which is where the stamp goes.** `repoCtx.catalogJobImage`
@@ -124,7 +124,7 @@ is one assignment in a function that already knows the answer.
 
 **F7. A job's image is fixed when the job is deployed, so a stamp cannot drift from it.** Cloud Run
 cannot vary an image per execution, which is why the launch path reads the **deployed** job's image
-and refuses to re-run the choice (`internal/backend/gcp/catalog.go:161-170`; `internal/cli/run.go`'s
+and refuses to re-run the choice (`internal/backend/gcp/catalog.go:194-220`; `internal/cli/run.go`'s
 `catalogDockerAsk`, `:3233-3304`, and `catalogEntryOf`, `:3321-3335`). A stamp written at deploy is
 therefore a fact about the image the execution actually runs, not a guess.
 

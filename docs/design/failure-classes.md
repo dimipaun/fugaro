@@ -1,6 +1,6 @@
 # Failure classes: a closed vocabulary on the run record, and a failures report
 
-**Status: a design, and its FC1–FC5 and FC7 have shipped; the rest of §10 is not built.** This document
+**Status: a design, and its FC1–FC8 have shipped; §10 is built.** This document
 recommends, and names the alternative and what it costs, for every question it takes up; the owner
 rules, and the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his. The plan's decisions,
 D1450–D1469, are answered 2026-11-07, each as recommended. **FC1** — the vocabulary, the record's
@@ -18,8 +18,9 @@ class through — exported on D1454's decision so the digest's own read (§5, "t
 same function") can call the same one, which it does: **FC7** — the Failures table, `failures` in
 the summary block and the two class rules — **is on `main`**, and the digest is the caller outside
 `internal/runview` that the export was for, the runner's own agreement walks being the others.
-**FC6 and FC8 are not started.** What is written here was read against `main` on 2026-11-05, and the
-line citations are taken from that tree.
+**FC8** — the documents, the contract and the skills — **is on `main` too**, so §10 is built. What
+is written here was read against `main` on 2026-11-05, and the line citations are taken from that
+tree.
 
 Related: [v1.md](v1.md) §4.5 (failure paths), §4.6 (the run record) and §4.8 (`runs ls`),
 [artifact-runs.md](artifact-runs.md) (the report a run writes with the digest), the digest's own
@@ -45,8 +46,8 @@ so `fugaro runs ls --json` carries one `reason` string per row and no grouping a
 (`internal/userstats/userstats.go`) counts runs by *person* and buckets every status into
 `succeeded/failed/halted/infra_error/other` (`userstats.go:124`–`136`); `fugaro runs digest` writes
 one closed period's report of one repository into that repository's tree, and its per-run
-"oddities" are six closed flags — `review_calls`, `subagents`, `halt`, `fix_rounds`,
-`repeated_command`, `review_scope_drift` (`internal/digest/digest.go:79`–`97`) — each a property of a
+"oddities" are seven closed flags — `review_calls`, `subagents`, `halt`, `fix_rounds`,
+`repeated_command`, `review_scope_drift`, `scope_drift` (`internal/digest/digest.go:83`–`110`) — each a property of a
 run, none of them a cause. So the owner's own 7-day report had to be built by normalizing this free
 text with a script: **the vocabulary below exists because the arithmetic that answers "where does the
 money go" was done by hand in a shell.**
@@ -166,7 +167,7 @@ knows what to do without reading a sentence:
 | **`failure_class`** | The run ended because | kind | retryable | needs owner |
 | --- | --- | --- | --- | --- |
 | `review_not_converged` | the deciding review round's verdict was `changes` and the mode did not tolerate its findings, or a level that had shipped was held back by one that did not (`review round N still has N findings`, `heldBackReason`, `internal/runner/outcome.go:73`, `:81`). The work is on the branch and the pull request is a draft. | quality | no — a follow-up on the pull request is the retry | yes |
-| `review_unread` | no round the rule can read: no deciding round at all, or a verdict of `none` after the retry (`no review verdict`, `review round N returned no parseable verdict after a retry`, `outcome.go:54`, `:65`) | quality | no | yes |
+| `review_unread` | no round the rule can read, and no round that read the commit the run publishes: no deciding round at all, a verdict of `none` after the retry, or a round whose verdict bought a fix nothing read before the stop — the fix is the branch's head and the pull request is a draft (`no review verdict`, `review round N returned no parseable verdict after a retry`, `the fix after review round N was not reviewed`, `outcome.go:54`, `:65`, `unreadFixReason`, `internal/runner/outcome.go:113`) | quality | no | yes |
 | `tests_failed` | the final commit's test record failed (`tests failing on the final commit`, `outcome.go:52`) | quality | no | yes |
 | `unverified_final_commit` | the pushed head carries no passing test: no test record on that commit, or work committed at finalize after the last verified run (`ReasonNoVerifiedTest`, `outcome.go:26`; `internal/runner/runner.go:4243`) | quality | no | yes |
 | `no_commits` | the agent made no commits (`internal/runner/runner.go:4196`) | quality | no | yes |
@@ -186,7 +187,7 @@ knows what to do without reading a sentence:
 | `unclassified` | the terminal the run reached has no class of its own (`stage_no_result`'s neighbour: a class the vocabulary does not yet hold). The report prints its count, and that count is the signal to name one. | other | yes | yes |
 
 **Nineteen values, and the set is closed in Go, in the schema and in the digest**, the way
-`runstore.HaltReason` and the six digest flags are: one slice the tests read (`failure.Classes()`,
+`runstore.HaltReason` and the seven digest flags are: one slice the tests read (`failure.Classes()`,
 `internal/failure/failure.go`, built by FC1), the schema's enum, and the report's table all built from
 it (the shape `TestResultSchemaStatusesAgreeWithGo` already uses for `status`).
 
@@ -247,7 +248,7 @@ are the six the one-offs row of §2 counts, that row being the remainder that cl
 
 **What is not in this change.** `fail` keeps its signature and its job (the pull request's report
 reads it); `r.rec.Reason` is not reworded anywhere; the pull request's section, `diagnose`'s output
-and the six digest flags do not move. The one new thing is that the 36 statements become one call,
+and the seven digest flags do not move. The one new thing is that the 36 statements become one call,
 at the site that already knows why the run is stopping.
 
 ### 4.2 How a class is chosen where several apply
@@ -395,16 +396,23 @@ within 90 days anyway.
 value, `failure_class`, refused by the flag's own closed list the way `--state` refuses
 (`lsStates`, `runs.go:65`), so the flag cannot be asked for a grouping that does not exist.
 
-- The text listing prints one row per class — `class`, `kind`, `runs`, `spend`, `share` (of the
-  window's runs), `delivered` (runs whose `outcome` is `draft` or `ready` with a branch pushed) and
-  an example run id — newest-first classes first? No: by runs descending, ties by name, so two
-  readers of one window print the same table. The totals line keeps its meaning and now reads
-  `191 of 585 runs failed (33%), $354.68 of $844.27` — the same figures, with the share the owner
-  computed by hand.
+- The text listing prints one row per class — `class`, `runs`, `share` (of the window's runs) and
+  `spend` beside it — by runs descending, ties by name, so two readers of one window print the same
+  table. The totals line keeps its figures: the grouped listing is the same read of the same window
+  with one block added, so the totals it already carries are the window's, and a share written into
+  them would be a second reading of the number the block already gives.
 - `--json` gains one block, `groups`, beside the `runs` array it already carries (`lsDoc`,
-  `runs.go:214`): per class, the six figures and the properties (`kind`, `retryable`,
-  `needs_owner`). The block is additive: a reader that does not know it loses the grouping, not the
-  rows.
+  `runs.go:214`): per class, those four figures, in the vocabulary's own order
+  (`failure.Classes()`, §3). The block is additive: a reader that does not know it loses the
+  grouping, not the rows.
+- **These four keys are what FC6 settled, and this section's first sketch was wider.** The sketch
+  named six figures per class — adding `kind`, `delivered` (runs whose `outcome` is `draft` or
+  `ready` with a branch pushed) and an example run id — and a totals line that moved to read
+  `191 of 585 runs failed (33%), $354.68 of $844.27`. The plan's approved Interfaces carry the four
+  above and leave the totals line alone: `kind`, `retryable` and `needs_owner` are the vocabulary's
+  own and `failure.PropertiesOf` answers them from the class alone (§3), so a wire format needs no
+  second copy of them, and an example run id is the committed table's figure (§6.2), not a listing's.
+  The plan is what shipped.
 - **`--group-by` and `--limit`/`--after` are refused together** (a page of a grouped table is a
   total of a page, and `--limit`'s own help says a page is not a total); `--group-by` with `--watch`
   is refused for the same reason `--limit` is.
@@ -580,9 +588,9 @@ that is already long; no reader of it is a contract.
 
 ## 10. Tasks
 
-**Status: a plan, approved to build on 2026-11-07; FC1–FC5 and FC7 are built and FC6 and FC8 are
-not started.** Each task is written to fit one run's $5 cap: it names at most twelve files, one command,
-one commit message and one red step. The convention is the one the active plans use
+**Status: a plan, approved to build on 2026-11-07; FC1–FC8 are built.** Each task is written to fit
+one run's $5 cap: it names at most twelve files, one command, one commit message and one red step.
+The convention is the one the active plans use
 (`docs/bitbucket-credentials/implementation-plan.md` is the most recent): **Files**,
 **Interfaces**, **Tests**, **Command**, **Depends on**, **Red step**, **Reviewer**, **Commit**, and a
 **SEC** flag where the change moves a security boundary. **This work is SECURITY-SENSITIVE: the

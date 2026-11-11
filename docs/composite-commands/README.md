@@ -2,7 +2,7 @@
 
 Spec owner: Dimi Paun. Spec received 2026-11-07.
 
-Status: **plan only; nothing is implemented; no task approved.**
+**Status as of 2026-11-10: parked, 1/10 merged; see [docs/status.md](../status.md) for the current table.**
 
 - `spec.md`: the spec as received, unchanged.
 - `reconciliation.md`: findings against the code, the decisions (D1560-D1579, all reserved) and the owner's answers, open tensions.

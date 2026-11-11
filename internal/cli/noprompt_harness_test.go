@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // noprompt_harness_test.go is the closed-stdin harness of the no-prompt policy
@@ -90,7 +91,7 @@ const closedStdinDeadline = 10 * time.Second
 // prompt the tree writes.
 //
 // The ⚠ CONFIRM banner is the first: every typed step prints it before it reads
-// the project's name (confirmTyped, confirmTypedStrict, confirmBuild,
+// the project's name (confirmTyped, confirmTypedStrict,
 // confirmRemoval, the initflow steps, managed apply). It is matched anywhere,
 // because it is a line of its own and the question comes after it.
 //
@@ -111,7 +112,7 @@ const closedStdinDeadline = 10 * time.Second
 //
 // The y/N question is read a second time, unanchored, because the
 // print-then-refuse ordering it guards against puts the refusal on the
-// prompt's own line. The five prints of the bracketed form are its only
+// prompt's own line. The three prints of the bracketed form are its only
 // writers, so it is a question wherever it appears.
 //
 // Reading a line that ends in ": " as a question is deliberately generous: no
@@ -119,6 +120,31 @@ const closedStdinDeadline = 10 * time.Second
 // what says so), and a false positive is a failure that names the run and
 // prints its output, which is a sentence away from being read.
 var closedStdinQuestion = regexp.MustCompile(`(?m)⚠ CONFIRM|: $|\[y/N\]:`)
+
+// cliConfirmQuestion matches a confirmation's own question and nothing else:
+// the ⚠ CONFIRM banner every typed step prints, the bracketed y/N under it, and
+// the `Type <name> to confirm: ` line beside the banner. It is the reading the
+// per-command ...AsksNothing tests make, and it is closedStdinQuestion's
+// question half on purpose: a command this task covers may still print a VALUE
+// prompt — the token entry `accounts add` reads off the owner's own terminal
+// (readValue, D1540) — and the harness's generous `: $` reading would call that
+// entry a question. What the pattern leaves out is exactly what a terminal may
+// still be asked for. A run that passes the assertion below passes the
+// harness's own question check on the same output.
+var cliConfirmQuestion = regexp.MustCompile(`⚠ CONFIRM|\[y/N\]:|to confirm: `)
+
+// assertNoPrompt fails a ...AsksNothing test whose run asked for a
+// confirmation. What replaced every one of those questions is the sentence
+// naming the change (D1540), and the one question a command may still raise is
+// --ask's, asked by askConfirm where somebody is there to answer it (D1544):
+// a confirmation question in a run this test drove is a prompt nobody is
+// waiting for.
+func assertNoPrompt(t *testing.T, out string) {
+	t.Helper()
+	if q := cliConfirmQuestion.FindString(out); q != "" {
+		t.Errorf("the run asked %q, and no command asks for a confirmation any more (D1540):\n%s", q, out)
+	}
+}
 
 // closedStdinFixture is one leaf's run: the arguments that put it on the path
 // where it would ask somebody something, and the sentence the run must still
@@ -164,19 +190,58 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 			f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "boss@example.com", "at": int64(1)})
 		},
 	},
-	// The write asks before it rewrites the project's claude_accounts block.
+	// The write used to ask before it rewrote the project's claude_accounts
+	// block; it asks nothing now (D1540) and the diff of that block is the proof
+	// this fixture reaches it.
 	"fugaro accounts add": {args: []string{"team-a", "--repos", "acme/app"}, reaches: "claude_accounts"},
-	// The settings write asks with the typed name of the document it edits, and
-	// what it edits here is the world's own project config. The key is a real
-	// one: an unknown key stops at the registry's nearest-name refusal, and a
-	// fixture that stopped there would call the leaf quiet without the write
-	// having begun. The unset needs a value to remove, which its seed sets.
-	"fugaro settings set":   {args: []string{"base_branch", "main"}, reaches: "⚠ CONFIRM (project aurora): write base_branch"},
-	"fugaro settings unset": {args: []string{"base_branch"}, reaches: "⚠ CONFIRM (project aurora): remove base_branch", seed: closedStdinSetBaseBranch},
+	// The pool writes are the same kind of edit, and they reach it the same
+	// way: the seed gives the world a credential to list and a pool to remove,
+	// so each runs to its own sentence rather than stopping at the block's own
+	// "no credential of this name is defined here".
+	"fugaro accounts pool add": {
+		args:    []string{"claude-pool", "team-a", "team-b"},
+		reaches: "declare pools.claude-pool.members = [team-a, team-b]",
+		seed:    closedStdinPoolSeed,
+	},
+	"fugaro accounts pool rm": {
+		args:    []string{"claude-pool"},
+		reaches: "remove pools.claude-pool",
+		seed:    closedStdinPoolSeed,
+	},
+	// The settings write used to ask for the project's name over the document it
+	// edits, and what it edits here is the world's own project config. It asks
+	// nothing now (D1540), and the sentence naming the change is the proof this
+	// fixture reaches the write. The key is a real one: an unknown key stops at
+	// the registry's nearest-name refusal, and a fixture that stopped there would
+	// call the leaf quiet without the write having begun. The unset needs a value
+	// to remove, which its seed sets.
+	"fugaro settings set":   {args: []string{"base_branch", "main"}, reaches: "write base_branch in"},
+	"fugaro settings unset": {args: []string{"base_branch"}, reaches: "remove base_branch from", seed: closedStdinSetBaseBranch},
+	// The two workflow writes are repository-scoped, so their fixture's world
+	// is a checkout of a repository of the world's own project, whose file
+	// already defines the workflows they work on — and what they write there is
+	// a block of commands, so the flag the executable-key refusal asks for is
+	// part of the fixture. The sentence naming the block is the proof the run
+	// reached the write rather than the "not a checkout" refusal.
+	"fugaro workflow add": {
+		args:    []string{"docs", "--set", "commands.build=make docs", "--set", "commands.test=make test", "--executable-changes"},
+		reaches: "create workflows.docs in",
+		seed:    closedStdinWorkflowSeed(""),
+	},
+	"fugaro workflow rm": {
+		args:    []string{"docs", "--executable-changes"},
+		reaches: "remove workflows.docs from",
+		seed:    closedStdinWorkflowSeed(workflowDocs),
+	},
 	// watch is the one leaf whose contract is not to return: it follows the
 	// project until it is interrupted. --once is its own one snapshot, which is
 	// the run this harness can hold to a deadline.
 	"fugaro watch": {args: []string{"--once"}, reaches: "counted"},
+	// The daemon is the same shape and answers it the same way: it drives the
+	// project until it is stopped, and --once is its own one cycle — the lease
+	// taken for it and released with it. In this world the node holds no work
+	// and no run, so the cycle it reaches is the empty one it prints.
+	"fugaro orchestrator run": {args: []string{"--once"}, reaches: "one cycle as asked (--once)"},
 
 	// The arguments the rest of the tree's leaves require. Each is the shallowest
 	// set that reaches the command's body; what the body answers in this world is
@@ -196,9 +261,18 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro image add":            {args: []string{"base"}},
 	"fugaro image gate":           {args: []string{"--record", "r", "--slug", "s", "--bucket", "file:///nonexistent"}},
 	"fugaro image git-credential": {args: []string{"--out", "git-cred"}},
+	"fugaro image map set":        {args: []string{"acme/app", "base"}, reaches: "runs the catalog entry"},
 	"fugaro image promote":        {args: []string{"base"}},
 	"fugaro image record":         {args: []string{"--in", "r", "--digest-from", "a", "--base-digest-from", "b", "--image", "i", "--base", "ba", "--build-id", "x", "--slug", "s", "--bucket", "file:///nonexistent"}},
 	"fugaro image rm":             {args: []string{"base"}},
+	// show and dismiss are the two leaves whose argument is an issue's name, and
+	// this world saved none: the reference is a well-formed local ID the store
+	// does not hold, so the run reaches the command's own body and its "no issue"
+	// answer, which is the whole of what a closed stdin can be shown here. The
+	// same reference in both is the point — neither leaf may ask a question of a
+	// missing issue.
+	"fugaro issue dismiss":        {args: []string{"local-update-20261107183012-1"}},
+	"fugaro issue show":           {args: []string{"local-update-20261107183012-1"}},
 	"fugaro logs":                 {args: []string{"run-1"}},
 	"fugaro managed apply":        {args: []string{"root"}},
 	"fugaro managed flag":         {args: []string{"proj-1234"}},
@@ -256,6 +330,8 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 var closedStdinNoFixture = map[string]string{
 	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
+	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
+	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
 	"fugaro backends":          "is a name for its one subcommand: a bare run prints its own usage and returns",
 	"fugaro backends ls":       "lists every backend a project may name, which needs no project",
 	"fugaro backlog add":       "stops at its own D27 field checks, which this world has no values for",
@@ -276,13 +352,16 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro creds ls":          "prints the no-project-config refusal",
 	"fugaro doctor":            "runs its whole check and reports what this world lacks",
 	"fugaro graph":             "refuses: the edition is not in this build",
-	"fugaro image build":       "refuses before the build: a billable build's confirmation needs a real terminal",
+	"fugaro image build":       "refuses before the build: the budget database a build's lease is taken from is not in this world",
 	"fugaro image check":       "prints the no-project-config refusal",
 	"fugaro image ls":          "prints the no-project-config refusal",
-	"fugaro image refresh":     "refuses before its steps: each asks for the project's name at a real terminal",
+	"fugaro image refresh":     "refuses before its steps: the two cloud steps that ask need a real terminal",
 	"fugaro image render":      "refuses outside a git checkout, which is what the world is",
 	"fugaro image selftest":    "reads its spec from the closed stdin and returns on the EOF",
 	"fugaro image status":      "prints the no-project-config refusal",
+	"fugaro image survey":      "prints the no-project-config refusal",
+	"fugaro issue list":        "reads this machine's issue folder, which holds nothing in this world, and prints no row",
+	"fugaro issue mine":        "reads no store here: this world's credential lookup is refused before the bucket is opened, so it prints the notes of a machine whose shared state could not be read and no row",
 	"fugaro managed status":    "prints the no-project-config refusal",
 	"fugaro models ls":         "prints the built-in list with no project selected",
 	// The orchestrator family reads and writes the state its project's daemon
@@ -327,21 +406,18 @@ var closedStdinNoFixture = map[string]string{
 
 // closedStdinPrompts is the allow-list: the leaves that still print a question
 // with a closed stdin, each with the task of the plan that removes it. Every
-// entry is a promise to delete it in that task's commit, and the run's own check
-// holds the promise — a leaf that stops asking fails until its entry is gone.
-// The list reaching empty is what the policy's first constraint looks like from
-// here.
-var closedStdinPrompts = map[string]string{
-	// The account write asks before it rewrites the project's claude_accounts
-	// block and mints the account's secret version; T5 removes the ask.
-	"fugaro accounts add": "T5",
-	// Both halves of the generic settings write ask with the typed name of the
-	// document they edit; T5 removes the asks. They are here rather than in the
-	// unreached ledger because the world's own project config is the document
-	// they edit, so a fixture that names a real setting reaches the banner.
-	"fugaro settings set":   "T5",
-	"fugaro settings unset": "T5",
-}
+// entry was a promise to delete it in that task's commit, and the run's own
+// check held the promise — a leaf that stops asking failed until its entry was
+// gone.
+//
+// It is EMPTY, and that is the policy's first constraint as this harness can see
+// it: no leaf of the tree asks anybody anything when nobody is there. The asks
+// that are still in the tree are the ones this world cannot drive its leaf to,
+// and they are named in closedStdinUnreached instead — a list of leaves that
+// were proved quiet is not what is left to fix. The map stays, empty, because
+// the check below reads it in both directions: the next leaf that grows a prompt
+// fails here until somebody names the task that removes it.
+var closedStdinPrompts = map[string]string{}
 
 // closedStdinUnreachedAsk is one ask this world cannot drive its leaf to: the
 // file the ask is written in, the line that has to survive for the entry to be
@@ -360,30 +436,20 @@ type closedStdinUnreachedAsk struct {
 // named removes the ask, and the commit that removes it has to delete this entry
 // too, or the marker check below fails.
 var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
-	// The write asks only when the list it writes drops an approval the bucket
-	// already holds. Reaching that means a managed installation — the runs
-	// bucket under its default name, the endpoints the read needs, and an
-	// allow-list object — and this world is a project config with a file://
-	// bucket, so the run refuses before it reads anything.
-	"fugaro allow-delete": {
-		file: "allow_delete.go", marker: "confirmTypedStrict(cmd, lc,",
-		task: "T5", why: "asks only where the write drops a read approval, which needs a managed installation this world is not",
-	},
 	// managed apply asks from inside an apply: the question carries a saved
 	// plan's hash and counts, so it takes a planned root this world has none of.
 	"fugaro managed apply": {
 		file: "managed_apply.go", marker: "func managedAsk(cmd *cobra.Command, lc *localcfg.Config)",
 		task: "T9", why: "asks inside an apply, which needs a saved plan this world does not build",
 	},
-	// A build's confirmation stands behind the rig that builds a real image:
-	// the registry, the build record and the Cloud Build API it submits to.
-	"fugaro image build": {
-		file: "image.go", marker: "func confirmBuild(cmd *cobra.Command, project, gcpProject, what string) error {",
-		task: "T4", why: "confirms at the submit, which needs the build rig's registry and Cloud Build fake",
-	},
+	// The refresh's own two cloud steps — the base pin and the daily image check
+	// job's config — ask from inside the run, and reaching one needs the jobs and
+	// the registry this world does not fake. Its billable builds asked here too
+	// until T4 removed the build's confirmation: what is left of this entry is
+	// T7's, which is the task that removes the two asks above it.
 	"fugaro image refresh": {
 		file: "image_refresh_steps.go", marker: "r.confirm(",
-		task: "T4", why: "asks from the refresh's own plan, which needs the jobs this world does not fake",
+		task: "T7", why: "asks from the refresh's own plan, which needs the jobs this world does not fake",
 	},
 	// The published policy's own two writes ask before they replace rules
 	// nothing can read back after them; both stand behind a deployed-rules read.
@@ -391,17 +457,16 @@ var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 		file: "project_cmd.go", marker: "confirmRemoval(cmd, lc, o.yes,",
 		task: "T7", why: "asks after a deployed-rules read, which this world refuses",
 	},
-	// The rules deployment asks as the owner, through the database client this
-	// world keeps out of the dev-build path.
-	"fugaro upgrade": {
-		file: "upgrade.go", marker: "confirmRemoval(u.cmd, lc, u.o.yes,",
-		task: "T5", why: "asks when it deploys the security rules, which a development build skips",
-	},
-	// update and setup ask from their stages: the workspace and layer steps, the
-	// policy steps, and the wizard's own confirmations.
+	// update and setup ask from their stages: the policy step's loosening, the
+	// layer step, and the wizard's own confirmations. The workspace step asked
+	// here through T15, which removed its last ask — the membership is the
+	// owner's own session now and the removal asks nothing at all
+	// (TestWorkspaceRemovalAsksNothingAtATerminal) — so what is left of this
+	// entry is the policy stage's typed loosening, which T12 removes with the
+	// class system the call is written in.
 	"fugaro update": {
-		file: "update_workspace.go", marker: "confirmTypedStrict(cmd, p.lc, why, what)",
-		task: "T15", why: "asks from its stages, which need an installation this world does not build",
+		file: "init_policy_migrate.go", marker: "confirmTypedStrict(cmd, m.lc, why, what)",
+		task: "T12", why: "asks from its stages, which need an installation this world does not build",
 	},
 	"fugaro setup": {
 		file: "init.go", marker: "func (r *initRun) ask(what string) (bool, error) {",
@@ -557,6 +622,34 @@ const closedStdinRetiredWhy = "is the tombstone: it prints the two commands that
 func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "base_branch: main\n")
+}
+
+// closedStdinPoolSeed gives the world the two things a pool write needs to
+// reach its own edit: a credential a member may name (two of them, so the
+// declaration the fixture asks for is a change) and a pool to remove.
+func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\npools:\n  - name: claude-pool\n    members:\n      - team-a\n")
+}
+
+// closedStdinWorkflowSeed makes the world's own directory a checkout of a
+// repository of project aurora — the project the world's config selects —
+// whose file defines the workflow web and, when extra is not "", the block the
+// caller puts there too. The directory is already the world's temporary one, so
+// it is the same "the current directory's checkout" a person runs these writes
+// in.
+func closedStdinWorkflowSeed(extra string) func(*testing.T, *budgetFixture) {
+	return func(t *testing.T, _ *budgetFixture) {
+		t.Helper()
+		dir, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		testutil.Git(t, dir, "init", "-q")
+		if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(settingsRepoYAML(extra)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // closedStdinWorld is the state every leaf is run in: one hermetic

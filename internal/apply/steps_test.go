@@ -107,9 +107,11 @@ func TestStepsMatchesRealSettingKeys(t *testing.T) {
 		// The project layer's keys are published by the layer stage.
 		{"layer.defaults.agent.auth", []string{initflow.Layer}},
 		{"layer.ab.judge_model", []string{initflow.Layer}},
-		// The workspace OWNER's half, which the workspace stage publishes.
-		{"workspace_members.*.repos", []string{initflow.Workspace}},
-		{"workspace_cap.monthly", []string{initflow.Workspace}},
+		// The workspace OWNER's half: the same declaration is what the
+		// workspace's own project is applied from (its service account and the
+		// one grant) and what the record stage publishes, so it owes both.
+		{"workspace_members.*.repos", []string{initflow.WorkspaceProject, initflow.Workspace}},
+		{"workspace_cap.monthly", []string{initflow.WorkspaceProject, initflow.Workspace}},
 		// The workspace MEMBER's half, which owes no step: nothing publishes
 		// either key, and the workspace stage skips on a member. The two are
 		// declared rather than missing, so Steps answers true with no steps —

@@ -97,7 +97,9 @@ import (
 // is a publish that admits more to the group than the node already carries:
 // that step is initflow.Typed (D846) and D1026 admits no plan gate's answer for
 // a Typed step, so the one write that decides who is in the group stays the
-// owner's own word and never a mark's (SEC, rule 1).
+// owner's own word and never a mark's (SEC, rule 1); a coding agent's session
+// is refused the widening whatever the class says, which is the fence D1555
+// puts in the class's place (gateStep).
 //
 // The policy stage's own two branches that write NO node are outside the gate
 // as well, and they are the ones this map cannot express: D854's bare re-seed
@@ -321,6 +323,38 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 // of it is a step whose confirmation the gate does not judge, and never a step
 // the gate refused.
 func (r *initRun) gateUnderway() bool { return r.gate.underway() }
+
+// gateRestores is whether --ask has a confirmation to put back in this run: the
+// marks were read and they answered "managed", at whichever of the two doors
+// made that read — `update`'s own gate (r.gate, gateUnderway) or the read
+// `fugaro image refresh` makes for itself (r.refresh: openRefreshManaged answers
+// non-nil exactly where the marks said managed, and that command's askDecide is
+// given this same fact). It is the flag's own rule and not a permission of its
+// own: --ask restores the question a managed project's gate replaces, and in a
+// project whose marks did not answer "managed" there is no such question, so the
+// flag moves nothing and says so (initflow.AskDecision's AskUnmanaged, and the
+// line gateRun prints) — which is why initRun.confirmNow asks only here.
+func (r *initRun) gateRestores() bool { return r.gateUnderway() || r.refresh != nil }
+
+// asksBack is --ask where the flag has a question to put back, which is the one
+// read confirmNow asks its own question on (gateRestores). A project whose
+// marks did not answer "managed" has no question for the flag to restore, and
+// the flag's own help says so: it is a no-op there, with a sentence
+// (AskDecision's AskUnmanaged).
+func (r *initRun) asksBack() bool { return r.o.ask && r.gateRestores() }
+
+// restoreAsk is c with --ask answered by the run's own rule (asksBack), the
+// form the confirmations shared between stages take (confirmStageWrite): the
+// flag as given puts its question to every session that passed it, and
+// Conditions.Ask read whole is read twice — as the question to ask, and as the
+// owner's own arm of PersonAtTheTerminal, where it takes the person at the
+// terminal out of a confirmation the flag has nothing to restore for. The
+// managed read is the caller's own fact about the run: initRun.asksBack at the
+// run, and policyMigrationConfirm's `managed` at a door that holds no initRun.
+func restoreAsk(c initflow.Conditions, ask bool) initflow.Conditions {
+	c.Ask = ask
+	return c
+}
 
 // gateStandsIn is whether the gate stands in for the confirmations it does NOT
 // judge document by document — the run's one confirmation (init_review.go's
@@ -662,6 +696,12 @@ var policyAdmittedRules = []string{
 // YesOrTyped step the gate may stand in for, which is what the workspaces design
 // says of this write ("it runs under the gate `update` already opens", §6;
 // reconciliation F32 names it the cloud write of the two that the gate ADMITS).
+//
+// The widening's refusal is read off p.widens and the session's own marker
+// rather than off the class (D1555): the class is the second thing that refuses
+// one, and a fence read off a class the same release deletes would leave the
+// membership unfenced. What a widening therefore still is, class or no class,
+// is a step the gate never admits and a coding agent's session never writes.
 func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) (bool, error) {
 	r := s.e.r
 	if !r.gateUnderway() {
@@ -685,21 +725,32 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
 	if !initflow.GateConfirms(class, r.conditions(), mg) {
-		// The Typed class is the one not-admitted answer with a sentence of the
-		// gate's own, and it is given here rather than left to the caller's
-		// coding-agent refusal: this step's document WAS admitted by the rules
-		// above, so what refuses it is the class rule and nothing about the
-		// session. The marker is asked for beside the class, and it is what
-		// keeps this sentence inside the session the gate is about: it is the
-		// coding agent's alone. A person at a real terminal on a managed project
-		// is not asked for the typed name (the owner's ruling of 2026-11-06,
-		// workspacePublication.confirm), so the widening writes there on a note
-		// with the diff above it — what this admits is read in the added lines
-		// rather than in a sentence worded for a confirmation nobody is asked
-		// for — and every other not-admitted answer (a pipe, --json and
-		// --non-interactive carry no marker and no answer either) keeps the
-		// confirmation the caller would have asked.
-		if class == initflow.Typed && marker != "" {
+		// The publish that admits something to the group is the owner's own
+		// step, and the fence on it is the session's rather than its class's
+		// (D1555, the same fence as D1552's): a widening is what refuses here —
+		// p.widens is every write that puts more in the group, the first record
+		// which chooses the whole of it included — and the marker is what asks
+		// it, so the fence keeps refusing a coding agent's session when the
+		// class system goes (D1555's own reason for the fence being this one
+		// and not Typed). The class stays beside it for everything else: it is
+		// what D1026 keeps out of a plan gate's reach, and a step this gate
+		// admits is one the rules above admitted, so what the sentence below
+		// names is the class rule and no rule that passed.
+		//
+		// The sentence is the coding agent's alone, and the person at a real
+		// terminal on a managed project is not asked for the typed name (the
+		// owner's ruling of 2026-11-06, workspacePublication.confirm), so the
+		// widening writes there on a note with the diff above it — what this
+		// admits is read in the added lines rather than in a sentence worded
+		// for a confirmation nobody is asked for. What it leaves the owner is
+		// the command they run themselves (Left, below): this refusal is about
+		// the step and not about the plan, so the step is theirs.
+		//
+		// Every other not-admitted answer keeps the caller's refusal, because
+		// the gate has no sentence for it: a mark revoked between the two reads
+		// is a project that is not managed at this moment, and a fallback
+		// inventory is not a verdict about this document either.
+		if len(p.widens) > 0 && marker != "" {
 			refused := conv.Refuse()
 			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
 		}
@@ -736,6 +787,33 @@ func (r *initRun) gateApplied(ctx context.Context) error {
 		return initErr(err)
 	}
 	return nil
+}
+
+// applyAndRecord applies the saved plan the step was judged for and records
+// the admission — the same record gateApplied writes after a successful apply,
+// written for a failed one as well.
+//
+// A failed apply is not an apply that applied nothing, and the failure the
+// retry absorbs is the clearest case of it: a propagation error means terraform
+// created the resource the refused grant names before it stopped, so the plan
+// the gate admitted has landed in the project whether or not the command
+// returned zero. The retry then plans and judges a NEW document, and the
+// admission of the old one would be replaced before anything recorded it: the
+// trail D1014 requires would carry the digest of a plan that did not land, and
+// none of the plan that did. A record that cannot be written is the command's
+// own failure here too, and it stops the retry with it: the trail is what the
+// retry must not carry on without.
+//
+// A step the gate did not admit has nothing to record, which is what
+// recorded() answers with no document.
+func (r *initRun) applyAndRecord(ctx context.Context, t *tf.TF) error {
+	if err := t.Apply(ctx, infra.PlanFile); err != nil {
+		if rerr := r.gateApplied(ctx); rerr != nil {
+			return rerr
+		}
+		return remote(err)
+	}
+	return r.gateApplied(ctx)
 }
 
 // gateUnreadable is the sentence a step reads when the document the gate was
@@ -777,7 +855,7 @@ func (r *initRun) gateRefused(err error, doc []byte, verdict managedmode.Verdict
 	if owner, ok := r.gateDeleteLeft(err.Error(), doc, verdict, cover, imports); ok {
 		return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: initflow.GateRefusedDelete, Owner: owner}
 	}
-	return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal}
+	return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal, Reasons: refusedReasons(verdict)}
 }
 
 // gateRefusalOf is what a step's refusal leaves the person who reads it, read
@@ -992,4 +1070,23 @@ func refusedRules(v managedmode.Verdict) []string {
 		rules = append(rules, why)
 	}
 	return rules
+}
+
+// refusedReasons is the same verdict as the short lines a person reads: each
+// rule's own words and the half of the gate that wrote them, with the
+// address left out. The address is Terraform's and not Fugaro's, it is what a
+// rule was read at rather than what was refused, and it is in the log beside
+// the sentence the refusal's line shortened (the owner's feedback of
+// 2026-11-09) — so what the terminal names is the thing ("cover: a member the
+// review did not list") and never a module path or a resource type.
+func refusedReasons(v managedmode.Verdict) []string {
+	reasons := make([]string, 0, len(v.Refusals))
+	for _, ref := range v.Refusals {
+		reason := ref.Why
+		if ref.Gate != "" {
+			reason = ref.Gate + ": " + ref.Why
+		}
+		reasons = append(reasons, reason)
+	}
+	return reasons
 }

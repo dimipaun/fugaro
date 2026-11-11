@@ -963,11 +963,35 @@ func AuthorProblem(p Person) string {
 }
 
 // Overrides are the only config values a single task may change.
+//
+// The last four are a chain's limits rather than this run's settings, which
+// is why none of them reuses a member above it: review_rounds is this run's
+// round count and max_budget_usd is the per-stage ceiling the agent is
+// launched with (Spec.Apply), while max_usd, max_tokens, max_time and
+// max_review_rounds bound what a whole chain of runs may spend (D1041,
+// D1042, D1056). They belong on the launch that begins a chain and are unset
+// on every other task, so a launch that names none keeps today's per-run
+// caps exactly. The four --max-* flags of `fugaro run` are what writes them
+// (docs/run-limit-carry-over L3), and nothing else does: a launch that reuses
+// a stored task — --retry, or a repeated --run-id — carries the limits that
+// task already holds.
 type Overrides struct {
 	ReviewRounds *int     `json:"review_rounds,omitempty"`
 	MaxBudgetUSD *float64 `json:"max_budget_usd,omitempty"`
 	Model        string   `json:"model,omitempty"`
 	TotalTimeout string   `json:"total_timeout,omitempty"`
+
+	// The chain's dollar, token, wall-time and review-round limits, each
+	// nil or empty when the launch set none. They need a runner that knows
+	// them: an older one decodes with DisallowUnknownFields and refuses the
+	// whole task, so a launch that carries one is gated on the job image
+	// (launchLimitsSince beside governanceSince in
+	// internal/cli/recipes_skew.go, docs/run-limit-carry-over L3, E1) rather
+	// than started on an image that would refuse the task at bootstrap.
+	MaxUSD          *float64 `json:"max_usd,omitempty"`
+	MaxTokens       *int64   `json:"max_tokens,omitempty"`
+	MaxTime         string   `json:"max_time,omitempty"`
+	MaxReviewRounds *int     `json:"max_review_rounds,omitempty"`
 }
 
 // NewRunID returns a run ID for now, in UTC, with 4 random hex digits from r.
@@ -1222,27 +1246,27 @@ func (s *Spec) Validate() error {
 	// after it was paid for, so the two refuse the same names in the same
 	// words (config.ReservedClaudeAccountName).
 	//
-	// The account axis's one value that is not an account at all
-	// (config.AnthropicKeyAccount, the project's own Anthropic API key) is
-	// admitted here as its own case rather than by loosening the shape rule,
-	// which is what the sentinel's spelling exists for: it is outside
-	// ClaudeAccountNameRE by construction. A review launch names it as the
-	// run's own credential (internal/cli's claudeAccountFor, D1417), so the
-	// spec a review is stored as carries it, and the runner resolves the
-	// class's model path from exactly that field (internal/runner's
-	// checkReviewClassModelPath). It is written where an account is
-	// REFERENCED and never defined (config.ValidClaudeAccountRef,
-	// config.ValidateClaudeAccounts), which is why this is the same
-	// reference the launcher already made.
+	// The account axis's values that are not accounts at all
+	// (config.AnthropicKeyAccount, the project's own Anthropic API key, and
+	// config.ProviderKeyAccount, the project's provider key) are admitted here
+	// as their own case rather than by loosening the shape rule, which is what
+	// those spellings exist for: both are outside ClaudeAccountNameRE by
+	// construction. A review launch names one as the run's own credential
+	// (internal/cli's claudeAccountFor, D1417), so the spec a review is stored
+	// as carries it, and the runner resolves the class's model path from
+	// exactly that field (internal/runner's checkReviewClassModelPath). Each is
+	// written where an account is REFERENCED and never defined
+	// (config.ValidClaudeAccountRef, config.ValidateClaudeAccounts), which is
+	// why this is the same reference the launcher already made.
 	switch {
 	case s.OAuthToken == "":
 	case s.OAuthToken == config.DefaultClaudeAccount:
 		bad(`task spec: oauth_token must not be "default": the empty value already means the repository's default account`)
 	case config.ReservedClaudeAccountName(s.OAuthToken):
 		bad("task spec: oauth_token: %s", config.ReservedClaudeAccountNameMessage)
-	case s.OAuthToken == config.AnthropicKeyAccount:
-		// Valid, and deliberately before the shape rule: the sentinel does not
-		// match it, and it is no account name to judge as one.
+	case config.AxisNonAccountValue(s.OAuthToken):
+		// Valid, and deliberately before the shape rule: neither value matches
+		// it, and neither is an account name to judge as one.
 	case len(s.OAuthToken) > config.MaxClaudeAccountNameLen:
 		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
 	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):
@@ -1387,6 +1411,26 @@ func (s *Spec) Validate() error {
 		if d, err := time.ParseDuration(o.TotalTimeout); err != nil || d <= 0 {
 			bad("task spec: overrides.total_timeout %q must be a positive duration such as 45m", o.TotalTimeout)
 		}
+	}
+	// The chain's four limits are caps, and the value that is not a cap is
+	// the value refused — zero included, for the reason max_budget_usd
+	// refuses it: absence is how a task says it has no chain limit, so a
+	// zero would leave the reader with one meaning for "not there" and
+	// another for a number, and a chain that started with zero remaining
+	// would refuse every run it continued.
+	if o.MaxUSD != nil && *o.MaxUSD <= 0 {
+		bad("task spec: overrides.max_usd must be greater than 0")
+	}
+	if o.MaxTokens != nil && *o.MaxTokens <= 0 {
+		bad("task spec: overrides.max_tokens must be greater than 0")
+	}
+	if o.MaxTime != "" {
+		if d, err := time.ParseDuration(o.MaxTime); err != nil || d <= 0 {
+			bad("task spec: overrides.max_time %q must be a positive duration such as 45m", o.MaxTime)
+		}
+	}
+	if o.MaxReviewRounds != nil && *o.MaxReviewRounds < 1 {
+		bad("task spec: overrides.max_review_rounds must be greater than 0")
 	}
 	if rc := s.Recipe; rc != nil {
 		switch {

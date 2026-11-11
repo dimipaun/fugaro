@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
@@ -164,6 +165,109 @@ func TestAllowedIgnoredPartialAndDisjoint(t *testing.T) {
 	e = Merge(Layer{AllowedModels: []string{"a", "b"}}, Layer{AllowedModels: []string{"b"}}, Layer{AllowedModels: []string{"b"}})
 	if len(e.Ignored) != 0 {
 		t.Fatalf("%+v", e.Ignored)
+	}
+}
+
+// TestBinariesListMergesByIntersection is the binaries half of D986 and F10:
+// the paths a run may add a binary at tighten by intersection, the way every
+// other allow-list in this package does, so a layer below the ceiling can
+// remove an admitted path and can never add one. The key is the owner's policy
+// node's alone — fugaro.yaml refuses it, the shared config refuses it — and
+// the merge is what makes "nothing below the ceiling widens it" a property of
+// this package rather than of the callers that build the layers.
+func TestBinariesListMergesByIntersection(t *testing.T) {
+	const (
+		brand = "brand/*.png"
+		site  = "website/public/**"
+		code  = "internal/**"
+	)
+	e := Merge(Layer{BinariesAllow: []string{brand, site}}, Layer{BinariesAllow: []string{site, code}})
+	if want := []string{site}; !reflect.DeepEqual(e.BinariesAllow, want) {
+		t.Fatalf("BinariesAllow = %v, want %v: a layer below the ceiling grew the list", e.BinariesAllow, want)
+	}
+	if e.Sources[KeyBinariesAllow] != SourceDefaultBranch || len(e.Ignored) != 1 {
+		t.Fatalf("%+v", e)
+	}
+	if want := []Ignored{{KeyBinariesAllow, site + "," + code, site, SourceCeiling}}; !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("Ignored = %+v, want %+v", e.Ignored, want)
+	}
+	// A disjoint list is the empty one, which admits nothing: the same answer
+	// an absent list gives, and not "unset" the way a nil models list is.
+	e = Merge(Layer{BinariesAllow: []string{brand}}, Layer{BinariesAllow: []string{code}})
+	if e.BinariesAllow == nil || len(e.BinariesAllow) != 0 {
+		t.Fatalf("a disjoint list = %#v, want an empty non-nil list", e.BinariesAllow)
+	}
+	// nil is "no layer set a list", and for this key that is the strict end:
+	// it stays nil rather than becoming a list every path passes.
+	if got := Merge(Layer{}, Layer{}).BinariesAllow; got != nil {
+		t.Fatalf("unset must stay nil, got %#v", got)
+	}
+	// A subset is not ignored, and the running order is kept.
+	e = Merge(Layer{BinariesAllow: []string{brand, site, code}}, Layer{BinariesAllow: []string{code, brand}}, Layer{BinariesAllow: []string{brand}})
+	if want := []string{brand}; !reflect.DeepEqual(e.BinariesAllow, want) || len(e.Ignored) != 0 {
+		t.Fatalf("BinariesAllow = %v ignored = %+v, want %v and none", e.BinariesAllow, e.Ignored, want)
+	}
+}
+
+// TestBinariesListIsOnlyTheFirstLayerToWrite is the other half of D986's
+// direction, and the half the intersection rule does not give on its own. No
+// list admits no binary (spec.md §2.1), so a layer that writes one where the
+// layers so far admitted nothing is not narrowing anything: it would be
+// introducing every path it names, which is the widening the plan's red step
+// (a layer below the ceiling that adds a path) names as the thing the task
+// exists to make impossible. The models rule is the opposite and is right to
+// be: no models list allows every model, so the first list there is the
+// tightening one.
+func TestBinariesListIsOnlyTheFirstLayerToWrite(t *testing.T) {
+	e := Merge(Layer{}, Layer{BinariesAllow: []string{"**"}})
+	if e.BinariesAllow != nil {
+		t.Fatalf("BinariesAllow = %v: a layer under the ceiling admitted every binary", e.BinariesAllow)
+	}
+	if want := []Ignored{{KeyBinariesAllow, "**", "", SourceCeiling}}; !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("Ignored = %+v, want %+v", e.Ignored, want)
+	}
+	// The refused list is not a value any layer holds, so no source names one.
+	if len(e.Sources) != 0 {
+		t.Fatalf("sources = %v, want none: the list the layer asked for is not in force", e.Sources)
+	}
+	// A layer that names no path introduces none and lost nothing to.
+	if got := Merge(Layer{}, Layer{BinariesAllow: []string{}}); got.BinariesAllow != nil || len(got.Ignored) != 0 {
+		t.Fatalf("%+v, want no list and nothing ignored", got)
+	}
+	// The ceiling is the layer that writes the list, and its own empty one is a
+	// list: the later layer's paths are then refused against it, which is the
+	// same answer the nil ceiling gives and a different record.
+	e = Merge(Layer{BinariesAllow: []string{}}, Layer{BinariesAllow: []string{"**"}})
+	if e.BinariesAllow == nil || len(e.BinariesAllow) != 0 || e.Sources[KeyBinariesAllow] != SourceCeiling {
+		t.Fatalf("%+v, want the ceiling's empty list standing", e)
+	}
+	if want := []Ignored{{KeyBinariesAllow, "**", "", SourceCeiling}}; !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("Ignored = %+v, want %+v", e.Ignored, want)
+	}
+}
+
+// TestBinariesCapTightensOnly is the cap's half of F10: one project-wide bound
+// in bytes, merged by TightenInt, so a layer below the ceiling may only lower
+// it and a layer that leaves it out passes the ceiling's own through.
+func TestBinariesCapTightensOnly(t *testing.T) {
+	const shipped = 2097152 // D983's default, the node's own to fill
+	e := Merge(Layer{BinariesMaxBytes: shipped}, Layer{BinariesMaxBytes: 262144})
+	if e.BinariesMaxBytes != 262144 || e.Sources[KeyBinariesMaxBytes] != SourceDefaultBranch || len(e.Ignored) != 0 {
+		t.Fatalf("%+v", e)
+	}
+	// A looser cap is dropped and recorded, never applied.
+	e = Merge(Layer{BinariesMaxBytes: 262144}, Layer{BinariesMaxBytes: shipped})
+	if e.BinariesMaxBytes != 262144 || len(e.Ignored) != 1 || e.Ignored[0].Key != KeyBinariesMaxBytes {
+		t.Fatalf("%+v", e)
+	}
+	// 0 and below are unset, not a cap of nothing: a node whose block names no
+	// cap leaves the ceiling's own standing, and the default a written block
+	// takes is the node's to fill (D983), not this layer's.
+	if got := Merge(Layer{BinariesMaxBytes: shipped}, Layer{}); got.BinariesMaxBytes != shipped || len(got.Ignored) != 0 {
+		t.Fatalf("%+v", got)
+	}
+	if got := Merge(Layer{BinariesMaxBytes: shipped}, Layer{BinariesMaxBytes: -1}); got.BinariesMaxBytes != shipped {
+		t.Fatalf("a negative cap = %d, want the ceiling's %d", got.BinariesMaxBytes, shipped)
 	}
 }
 
@@ -626,5 +730,114 @@ func TestABMergeTightenOnly(t *testing.T) {
 	// Equal rates are not ignored, as for every other key.
 	if e := Merge(Layer{ABRate: rate(0.05)}, Layer{ABRate: rate(0.05)}); len(e.Ignored) != 0 {
 		t.Errorf("two equal rates = %v, want nothing ignored", e.Ignored)
+	}
+}
+
+// TestAgentTriageOffInPolicyWinsOverARepositoryOn is D1854's direction for the
+// triage stage's switch, read at the layer the rule belongs to: the switch has
+// two homes — the repository's own fugaro.yaml (config.Agent.Triage) and the
+// owner's published policy node (Layer.Triage, which the runner puts on the
+// ceiling beside every other key of the node) — and only one direction between
+// them. Off is the stricter answer, so a repository may turn the stage off for
+// itself under a node that is silent, and may not turn it back on under a node
+// that turned it off: the merge drops the repository's `true` and records it,
+// the way it drops a looser cap.
+//
+// The layers are the three Merge is always handed — the owner's node as the
+// ceiling, the project's default branch, the task's own branch — because the
+// question is what a run reads once they meet, and a repository writes two of
+// the three.
+func TestAgentTriageOffInPolicyWinsOverARepositoryOn(t *testing.T) {
+	on, off := true, false
+	cases := []struct {
+		name                 string
+		ceiling, def, branch *bool
+		wantOff              bool
+		wantSrc              string
+		ignored              int
+	}{
+		{"nothing set", nil, nil, nil, false, "", 0},
+		{"the repository turns it off", nil, nil, &off, true, "branch", 0},
+		{"the default branch turns it off", nil, &off, nil, true, "default-branch", 0},
+		{"the owner's node turns it off", &off, nil, nil, true, "ceiling", 0},
+		{"the owner's node turns it off over a repository on", &off, nil, &on, true, "ceiling", 1},
+		{"the owner's node turns it off over a default-branch on", &off, &on, &on, true, "ceiling", 2},
+		{"a repository on under a silent node", nil, nil, &on, false, "branch", 0},
+		{"the owner's node turns it on, the repository off", &on, nil, &off, true, "branch", 0},
+		{"a branch off under a default-branch on", nil, &on, &off, true, "branch", 0},
+		{"a branch on under a default-branch off", nil, &off, &on, true, "default-branch", 1},
+		{"the repository says off twice", nil, &off, &off, true, "default-branch", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := Merge(Layer{Triage: tc.ceiling}, Layer{Triage: tc.def}, Layer{Triage: tc.branch})
+			if got := e.TriageOff(); got != tc.wantOff {
+				t.Fatalf("TriageOff() = %v, want %v (Triage = %v)", got, tc.wantOff, e.Triage)
+			}
+			if got := e.Sources[KeyTriage]; got != tc.wantSrc {
+				t.Errorf("Sources[%s] = %q, want %q", KeyTriage, got, tc.wantSrc)
+			}
+			if len(e.Ignored) != tc.ignored {
+				t.Fatalf("Ignored = %v, want %d record(s)", e.Ignored, tc.ignored)
+			}
+			for _, ig := range e.Ignored {
+				if ig.Key != KeyTriage || ig.Value != "true" || ig.Effective != "false" {
+					t.Errorf("Ignored = %+v: a dropped value is the repository's true under an effective false", ig)
+				}
+				if ig.Source != tc.wantSrc {
+					t.Errorf("Ignored = %+v: source = %q, want the layer the effective value came from, %q", ig, ig.Source, tc.wantSrc)
+				}
+			}
+		})
+	}
+}
+
+// TestMergeNamesTheChainLayer pins the two things the chain layer needs of
+// this package (docs/run-limit-carry-over F4, D1055): a layer past the run's
+// own file is named "chain" and not "branch" — the number did not come from
+// the branch — and the two members a chain carries get a source of their own.
+// The third layer is still the branch, which is what the runner merges today.
+func TestMergeNamesTheChainLayer(t *testing.T) {
+	chain := Layer{PerRunUSD: 5, MaxRunTokens: 500, MaxRunTime: 90 * time.Minute, MaxReviewRounds: 4}
+	e := Merge(Layer{PerRunUSD: 10, MaxRunTokens: 1000}, Layer{}, Layer{PerRunUSD: 8, MaxRunTokens: 800}, chain)
+	for key, src := range map[string]string{
+		KeyPerRunUSD: SourceChain, KeyMaxRunTokens: SourceChain,
+		KeyMaxRunTime: SourceChain, KeyMaxReviewRounds: SourceChain,
+	} {
+		if e.Sources[key] != src {
+			t.Errorf("%s: source = %q, want %q", key, e.Sources[key], src)
+		}
+	}
+	if e.PerRunUSD != 5 || e.MaxRunTokens != 500 || e.MaxRunTime != 90*time.Minute || e.MaxReviewRounds != 4 {
+		t.Errorf("the chain layer = %+v, want its own four figures", e.Layer)
+	}
+	// The layer under it keeps its own name: a value the run's own file set
+	// is still the branch's, whatever the chain layer above it does.
+	if e := Merge(Layer{PerRunUSD: 10}, Layer{}, Layer{PerRunUSD: 8}); e.Sources[KeyPerRunUSD] != SourceBranch {
+		t.Errorf("the run's own file: source = %q, want %q", e.Sources[KeyPerRunUSD], SourceBranch)
+	}
+	// A chain value looser than the layer under it is dropped and recorded
+	// against the layer that set the lower one — the entry the launcher reads
+	// to refuse a launch argument (D1043) rather than drop it in silence.
+	e = Merge(Layer{PerRunUSD: 10, MaxRunTokens: 1000}, Layer{}, Layer{PerRunUSD: 8, MaxRunTokens: 800},
+		Layer{PerRunUSD: 9, MaxRunTokens: 900})
+	for _, ig := range e.Ignored {
+		if ig.Key == KeyPerRunUSD && ig.Value != "9" || ig.Key == KeyMaxRunTokens && ig.Value != "900" {
+			t.Errorf("Ignored = %+v, want the chain's own looser figures", ig)
+		}
+		if ig.Source != SourceBranch {
+			t.Errorf("Ignored = %+v, want the source of the lower number (%s)", ig, SourceBranch)
+		}
+	}
+	if len(e.Ignored) != 2 || e.PerRunUSD != 8 || e.MaxRunTokens != 800 {
+		t.Errorf("a looser chain layer = %+v (ignored %v), want the branch's 8 and 800", e.Layer, e.Ignored)
+	}
+	// The time and the review rounds have no layer under the chain's own, so
+	// a chain layer that writes them is the one that wins: a chain limit is
+	// never refused against the mode's own number or the run's clock by this
+	// merge (D1057), which is the launcher's own comparison.
+	e = Merge(Layer{}, Layer{}, Layer{}, Layer{MaxRunTime: 30 * time.Minute, MaxReviewRounds: 2})
+	if len(e.Ignored) != 0 || e.Sources[KeyMaxReviewRounds] != SourceChain {
+		t.Errorf("a chain layer alone = %+v (ignored %v), want nothing ignored and the chain named", e.Layer, e.Ignored)
 	}
 }

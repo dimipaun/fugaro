@@ -785,10 +785,10 @@ const accessDropped = "this machine's list holds %s as %s, which the installatio
 // accessAdded is what the roles step says when the grants node holds a member
 // this installation's own outputs do not: the run's plan grants that member the
 // roles the node holds them at, and the review screen does not list them, so a
-// plan that does is not covered — the step that plans them asks for the
-// project's name typed at a real terminal, which --yes does not answer
-// (init_review.go's confirmPlanned).
-const accessAdded = "the grants node holds %s, who this installation's own outputs do not: the roles the node holds are granted by this run's plan, the review does not list them, and the step that plans them asks for the project's name typed at a terminal"
+// plan that does is not covered — the step that plans them names them in its
+// banner and takes the run's ordinary confirmation (init_review.go's
+// confirmPlanned).
+const accessAdded = "the grants node holds %s, who this installation's own outputs do not: the roles the node holds are granted by this run's plan, the review does not list them, and the step that plans them names them in its confirmation"
 
 // accessAddsUnknown is what a run that could not read the installation's own
 // outputs says instead. It cannot tell a member the node added from one the

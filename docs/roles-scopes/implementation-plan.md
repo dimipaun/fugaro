@@ -1,6 +1,6 @@
 # User roles and scopes: implementation plan
 
-**Status: plan only; nothing is implemented; no task is approved.** Every task below needs the owner's
+**Status as of 2026-11-10: in progress, 3/12 merged; see [docs/status.md](../status.md) for the current table.** Every task below needs the owner's
 explicit go; answering a decision is not approving a task. It builds [spec.md](spec.md) as amended by
 [reconciliation.md](reconciliation.md). Answers that shaped it (2026-11-07): D1580 (CLI and console
 checks first), D1581 (rename and migrate in `update`), D1582 (a lapse limits only Subscription
@@ -136,7 +136,7 @@ standard.
   `--provision-batch` (`internal/cli/init_compute.go`, pinned by `TestComputeRootTakesTheLaunchersTheModuleGrants`;
   the stage is opt-in, prints its plan and asks for the project's name typed at a terminal). D1589 carries it too.
 - **Tests:** `TestUpdateMigratesListsToAccessNode` (an installation at the previous shape converges), `TestLegacyMemberFormsKeepTheirGrants`,
-  `TestPlanIsEmptyForAPureRename` (the installation and repository roots), `TestAGrantTheInstallationNeverHeldIsNotCoveredByYes`, the plugin lint, `go test ./internal/cli -run Docs`.
+  `TestPlanIsEmptyForAPureRename` (the installation and repository roots), `TestAGrantTheInstallationNeverHeldNamesItself`, the plugin lint, `go test ./internal/cli -run Docs`.
 - **Command:** `GOFLAGS=-p=1 go test ./internal/cli/ -run 'Migrat|Roles|Docs' ./plugin/ -count=1`
 - **Depends on:** RS2. **Commit:** `update: launchers/operators become operator/admin grants`.
 - **Red step:** the converge test fails with the old keys still read. **Tier:** opus + level 3.

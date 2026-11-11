@@ -2,8 +2,10 @@
 
 ## Status
 
-**Plan only. Nothing is implemented. No task is approved: each task needs the owner's own explicit
-go, and answering a decision is not approving a task.** It builds [spec.md](spec.md) **as amended by
+**Status as of 2026-11-10: 9/25 merged, 1 closed as superseded (E0), 15 open — C8's C8a built; see [docs/status.md](../status.md) for the current table.** Every task below carries a **State** line
+from [reconciliation-image-setup.md](reconciliation-image-setup.md), which checked each one against
+`origin/main` and against [docs/image-setup-skill](../image-setup-skill/) at the owner's ask of
+2026-11-10 and wins where the two disagree about a task's state. It builds [spec.md](spec.md) **as amended by
 [reconciliation.md](reconciliation.md)**, which wins where they differ.
 
 **The owner answered D600–D649 on 2026-10-29: every answer is the recommendation except D618**
@@ -113,6 +115,9 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### A1. A stamp environment and a trailer hook in `gitops`
 
+- **State:** Merged — `internal/gitops/stamp.go` (`StampEnv`, `WriteStampHooks`) and
+  `internal/gitops/stamp_hook.sh`, pinned by `internal/gitops/stamp_test.go`.
+
 - **Decisions:** D601, D602, D603, D644, D645; Constraints 1, 2, 5, 8.
 - **Files:** `internal/gitops/stamp.go` (new), `internal/gitops/stamp_hook.sh` (new, embedded),
   `internal/gitops/stamp_test.go` (new).
@@ -141,6 +146,10 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### A2a. The author in the task, and the repository's opt-in
 
+- **State:** Merged — `task.Spec.Author` and `task.AuthorProblem` (`internal/task/task.go`),
+  `config.GitAuthorFugaro`/`GitAuthorLauncher`/`RepoGitAuthorSet` (`internal/config/config.go`),
+  `schemas/task.schema.json` and `schemas/fugaro.schema.json`.
+
 - **Decisions:** D604, D606.
 - **Files:** `internal/task/task.go`, `schemas/task.schema.json`, `internal/config/config.go`
   (`Git.Author`: `fugaro` or `launcher`), `internal/config/validate.go`,
@@ -160,6 +169,9 @@ the stage runs (Constraint 1). Commits are now born stamped.
 - **Reviewer:** standard.
 
 #### A2b. The launcher fills the author
+
+- **State:** Merged — `localcfg.Config.CommitName`/`CommitEmail` (`internal/localcfg/localcfg.go`),
+  the `authorSince` and `gitAuthorSince` gates (`internal/cli/recipes_skew.go`).
 
 - **Decisions:** D604, D605, D606, D649.
 - **Files:** `internal/localcfg/localcfg.go` (optional `commit_name`, `commit_email`),
@@ -189,6 +201,9 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### A3. The runner stamps commits as they are made
 
+- **State:** Merged — `internal/runner/runner.go` (`stampHooks`, `stampAuthor`,
+  `writeStampHooks`), pinned by `internal/runner/stamp_test.go`.
+
 - **Decisions:** D601–D605, D647; Constraints 1, 3, 6.
 - **Files:** `internal/runner/runner.go` (the agent's environment per stage, beside the
   `gitops.Identity` loop; the finalize count), `internal/runner/gate.go` and
@@ -217,6 +232,9 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### A4. Docs
 
+- **State:** Merged — `docs/git-providers.md` §"Commit author and trailers", `SECURITY.md`'s
+  "Known limits" entry, pinned by `internal/cli/docs_commit_author_test.go`.
+
 - **Decisions:** D604, D612, D643, D647.
 - **Files:** `docs/git-providers.md` (a "Commit author and trailers" section replacing the sentence
   that commits are authored as `Fugaro` whatever the token is called, and a "Supported forges" line:
@@ -236,6 +254,10 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### A5. Check 230 (OWNER-RUN)
 
+- **State:** Kept — the code it measures is merged (A3), the check has not run, and its entry is
+  unwritten: `docs/gcp-live-checklist.md` has no Check 230 section and X1, its only writer, is not
+  merged.
+
 - **Measures:** on a sandbox GitHub repository and a sandbox Bitbucket repository, with
   `git.author: launcher` committed: the run's boundary commits show the launcher as author and the
   run's identity as committer, with the three trailers; blame and the PR's commit list show the
@@ -250,6 +272,10 @@ the stage runs (Constraint 1). Commits are now born stamped.
 ### Slice B: forge
 
 #### B1. One list of forge kinds
+
+- **State:** Kept — there is no `internal/gitprov/kinds.go`: `internal/gitprov/gitprov.go` still
+  declares the two kinds and `internal/gitprov/providers/providers.go` reads them ad hoc. Nothing in
+  the image setup plan creates or moves a forge kind.
 
 - **Decisions:** D610, D611.
 - **Files:** `internal/gitprov/kinds.go` (new), `internal/gitprov/kinds_test.go` (new),
@@ -269,6 +295,9 @@ the stage runs (Constraint 1). Commits are now born stamped.
 - **Reviewer:** standard.
 
 #### B2. A CI-status read (GATED: D614 or D615 must need it)
+
+- **State:** Kept — no `Checks` on `gitprov.Provider`. image-setup's IS11 smokes a catalog entry's
+  prebuilt image, which is a build-time contract check and not a commit's CI status.
 
 - **Files:** `internal/gitprov/gitprov.go` (`Checks(ctx, sha) ([]CheckState, error)`),
   `internal/gitprov/github/checks.go` (new), `internal/gitprov/bitbucket/statuses.go` (new),
@@ -291,6 +320,8 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### B3. GitLab (GATED: D610 answered "build")
 
+- **State:** Kept — gated, and unwritten: no file under `docs/` reconciles GitLab.
+
 A docs-only reconciliation in this folder first: tokens (project or group access tokens and what they
 cost), `Draft:` semantics, the image build's credential step, the credentials service's mint, the
 secrets and Terraform, using B1's inventory table as the list of places. The adapter tasks are written
@@ -299,6 +330,9 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 ### Slice C: repositories and images
 
 #### C1. `fugaro project sync` for Bitbucket, with `--check`
+
+- **State:** Kept — `internal/gitprov/bitbucket/` has no `list.go`, and `newProjectSyncCmd`
+  (`internal/cli/project_enroll.go`) offers the GitHub App's installed repositories only.
 
 - **Decisions:** D623, D625.
 - **Files:** `internal/cli/project_enroll.go`, `internal/gitprov/bitbucket/list.go` (new),
@@ -319,6 +353,11 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 #### C3. Lockfiles before source in the derived image
 
+- **State:** Merged — `image.RenderInput.KeyFiles` and `ShellKeyFiles` (`internal/image/render.go`),
+  pinned by `internal/image/render_test.go` `TestRenderPutsKeyFilesBeforeSource`. Its subject is the
+  path image-setup's IS1/IS2 retire: see §1 of
+  [reconciliation-image-setup.md](reconciliation-image-setup.md), F1.
+
 - **Decisions:** D620.
 - **Files:** `images/derived/Dockerfile.tmpl`, `internal/image/render.go`,
   `internal/image/render_test.go`, `images/cloudbuild_test.go`.
@@ -337,6 +376,10 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 #### C4. The image digest checked at launch
 
+- **State:** Merged — `warnImageDigestDrift` (`internal/cli/run.go`), pinned by
+  `internal/cli/run_image_digest_test.go` `TestRunDigestWarnsOnMismatch`. The project image catalog
+  kept the same shape (its D1152).
+
 - **Decisions:** D619.
 - **Files:** `internal/cli/run.go`, `internal/imagecheck/record.go`,
   `internal/cli/run_image_digest_test.go` (new).
@@ -351,6 +394,9 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 - **Reviewer:** standard.
 
 #### C5a. Context repositories in the task (GATED: D613)
+
+- **State:** Kept — no `Spec.ContextRepos`. The image setup plan's baked repositories are not context
+  repositories; the choice is [reconciliation-image-setup.md](reconciliation-image-setup.md) §5, D652.
 
 - **Files:** `internal/task/task.go`, `schemas/task.schema.json`, `internal/cli/run.go`
   (`--context owner/name`, repeatable), `internal/cli/recipes_skew.go`,
@@ -377,6 +423,9 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 #### C5b. A read-only token for context repositories (GATED: D613)
 
+- **State:** Kept — no second mint in `internal/gitprov/github/apptoken.go` or
+  `internal/credsvc/github.go`.
+
 - **Files:** `internal/gitprov/github/apptoken.go`, `internal/credsvc/github.go`,
   `internal/credsvc/auth.go` (`Identity` carries C5a's claim), tests beside each.
 - **Behaviour:** a second mint with **Contents: read** and **Metadata: read** only, naming exactly
@@ -399,6 +448,10 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 #### C5c. The runner clones context repositories read-only (GATED: D613)
 
+- **State:** Kept — no `internal/runner/context_repos.go`. image-setup's IS8 (a baked checkout is
+  opened only for the job's own repository) is adjacent and builds the other direction: it refuses a
+  foreign checkout rather than adding repositories.
+
 - **Files:** `internal/runner/context_repos.go` (new), `internal/runner/context_repos_test.go`
   (new), `internal/runner/runner.go` (bootstrap call; the prompt names the paths), the next release's
   notes file under `docs/releases/` (`### For operators`: install the GitHub App on every context
@@ -416,6 +469,13 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 - **Reviewer:** opus + mandatory independent review.
 
 #### C6. SECURITY.md: baked source and registry readers
+
+- **State:** Kept in part — the shared-key half of the commit is merged with C8a (`SECURITY.md`'s
+  "Shared images: what the key protects, and what it does not", pinned by
+  `internal/cli/docs_security_test.go` `TestSecurityMdStatesTheModelAndItsLimits`); the baked-source
+  half is written nowhere — the design's own "C6 is not written" line predates C8a's paragraph and
+  still holds for that half. Whether to re-point it at the catalog's images is
+  [reconciliation-image-setup.md](reconciliation-image-setup.md) §5, D651.
 
 - **Files:** `SECURITY.md`, `website/content/security.md` (regenerated),
   `internal/cli/docs_registry_readers_test.go` (new).
@@ -440,6 +500,9 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 #### C7. Shared images keyed by the resolved dependency set: a design (D617, D618 as answered, D622)
 
+- **State:** Merged — [shared-images.md](shared-images.md), pinned by
+  `internal/cli/docs_shared_images_test.go` `TestDocsSharedImagesDesign`.
+
 Docs only, in this folder. D618 was answered **not as recommended**: images are shared across
 repositories, but only between repositories with an identical resolved dependency set, so a change
 to one forks it automatically. The design covers: the key (a hash of the resolved dependency set:
@@ -463,6 +526,14 @@ automatically (not the recommendation): the design specifies the proposal and it
 behaviour (C8). C8 may start once the owner gives the go; T6 is no longer a gate.
 
 #### C8. Build, lock, proposal and job update for shared images (after C7; the owner's go)
+
+- **State:** Kept — **C8a is merged** (`imagecheck.Key`, `imagecheck.ParseLock`/`ReadLock`/`Update`,
+  `imagecheck.Superset`, `schemas/image-lock.schema.json`); **C8b/C8c are not**: there is no
+  `internal/cli/image_ls.go`, `image_proposal.go` or `image_prune.go`, and
+  `config.SharedCheckoutRefusal` refuses `checkout: shared` until a release ships the images. Whether
+  image-setup's catalog-first direction closes them is
+  [reconciliation-image-setup.md](reconciliation-image-setup.md) §5, D650; D653 asks what a shared
+  image is defined by if they are built.
 
 - **Decisions:** D617, D618, D619, D620, D621.
 - **Interfaces:** `imagecheck.Key(resolved) string` (the normalised hash: package names, versions and
@@ -526,6 +597,10 @@ tagged CLI refuses it until D3 has shipped, so no change set can be stuck in dra
 
 #### D1. Change sets created together, linked PRs
 
+- **State:** Kept — no `Spec.ChangeSet` (`internal/task/task.go`) and no
+  `internal/runstore/changeset.go`. Multi-repository runs are outside the image setup plan's subject:
+  its images hold several repositories' sources, never one run across repositories.
+
 - **Files:** `internal/task/task.go` (`Spec.ChangeSet`: an ID and the member list),
     `schemas/task.schema.json`, `internal/cli/run.go` (`--change-set` makes `--repo` repeatable and
   launches one run per repository, writing every member's task with the full member list; refused
@@ -546,6 +621,8 @@ tagged CLI refuses it until D3 has shipped, so no change set can be stuck in dra
 
 #### D2. The draft hold
 
+- **State:** Kept — `internal/runner/prflow.go` carries no change-set rule.
+
 - **Files:** `internal/runner/runner.go` (finalize: a change-set run never flips ready; it records
   its verdict), `internal/runstore/changeset.go`, `internal/cli/run.go` (a `--pr` follow-up on a
   member PR carries the change set), `internal/runner/changeset_test.go` (new).
@@ -558,6 +635,8 @@ tagged CLI refuses it until D3 has shipped, so no change set can be stuck in dra
 - **Reviewer:** standard.
 
 #### D3. Settle a change set (`ee/coordinator`)
+
+- **State:** Kept — no `ee/coordinator/changeset.go`; it also waits on ee-reorg's coordinator move.
 
 - **Files:** `ee/coordinator/changeset.go` (new), `ee/coordinator/changeset_test.go` (new), the
   settle subcommand under the `ee/` CLI package the ee-reorg plan creates, and the settle-only token
@@ -582,6 +661,8 @@ tagged CLI refuses it until D3 has shipped, so no change set can be stuck in dra
 
 #### D4. Advisory merge order (`ee/coordinator`)
 
+- **State:** Kept — on D3.
+
 - **Files:** `ee/coordinator/changeset.go`, `ee/coordinator/changeset_test.go`,
   `internal/gitprov/status.go` (the order line).
 - **Behaviour:** the change set records an order at launch; each PR body states it; the coordinator
@@ -597,6 +678,11 @@ tagged CLI refuses it until D3 has shipped, so no change set can be stuck in dra
 
 #### E0. The roles design (D446)
 
+- **State:** Closed as superseded — by [docs/roles-scopes](../roles-scopes/) (spec 2026-11-07,
+  D1580–D1593, tasks RS1–RS10), which extends the roles design E0 names (`docs/design/roles.md`) and
+  answers reconciliation §6's O5 ("nobody owns it yet"). Its one shipped output, `fugaro user`, is
+  E1's. See [reconciliation-image-setup.md](reconciliation-image-setup.md) §2.
+
 A separate spec and reconciliation (its own `/spec-to-pr`), owned by the owner: roles, the sign-in
 shape (D628), the launch path without per-person IAM (D627), the authenticated launcher identity that
 replaces A's claim (D604, U1), suspension and seats (D629), contributed tokens with a per-person
@@ -605,6 +691,9 @@ mobile's parts (D635, D636), workspace invites (D638) and the licence split (D63
 written from it.**
 
 #### E1. `fugaro user ls|add|rm` over the IAM lists
+
+- **State:** Merged — `internal/cli/user.go` `newUserCmd` (registered in `internal/cli/root.go`),
+  pinned by `internal/cli/user_test.go`, and named in `plugin/skills/working/SKILL.md`.
 
 - **Decisions:** D627 (interim), D637; F42.
 - **Files:** `internal/cli/user.go` (new), `internal/cli/user_test.go` (new),
@@ -629,12 +718,20 @@ written from it.**
 
 #### E4 onward (GATED: E0)
 
+- **State:** Kept — and its gate moved: E0 is closed as superseded, so E4 onward is written from
+  [docs/roles-scopes](../roles-scopes/) and its roles design, exactly as E0's text said it would be.
+
 Google sign-in exchanged for a custom token with a role claim; role checks in the database rules;
 the service's authenticated token write route and `fugaro token add`; `fugaro user role|suspend|
 resume`; the console's read-only Members list; mobile suspend. Each is security-sensitive and written
 from E0.
 
 ### X1. The live-check entries
+
+- **State:** Kept — `docs/gcp-live-checklist.md` has no Check 230, 231, 232, 234 or 235 section, and
+  `internal/cli/docs_forge_checks_test.go` does not exist. The image setup plan reserves Checks
+  500–509 and secrets-brokering's dynamic-delivery holds Checks 510–519; 230–249 stays this
+  folder's.
 
 - **Files:** `docs/gcp-live-checklist.md` (Checks 230, 231, 232, 234, 235, each NOT RUN, with its
   prerequisites, the exact commands and the task that makes it runnable),
@@ -679,6 +776,7 @@ from E0.
 | D649 | A2b |
 | D647 | A3, A4 |
 | D648 | A5 (Check 230's squash step) |
+| D650–D653 | written 2026-11-10 by [reconciliation-image-setup.md](reconciliation-image-setup.md), **awaiting the owner's answers**; they name what C8b/C8c become (D650), whether C6 is re-pointed at the catalog's images (D651), whether baked repositories replace C5a–C5c (D652), and what defines a shared image if C8b/C8c are built (D653) |
 
 ## Parallel execution
 

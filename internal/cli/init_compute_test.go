@@ -1,18 +1,20 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -402,6 +404,52 @@ func equalJSON(a, b any) bool {
 	return string(x) == string(y)
 }
 
+// TestComputeStageRefusesInAnAgentSession: the compute step is the owner's own
+// (D1555), and the fence on it is the session's and not the class's. A coding
+// agent's session is refused before anything of the compute root is touched —
+// no tfvars, no init, no plan, no apply — and what it reads is the session's
+// own refusal beside the command it would run itself (Left: `fugaro setup
+// --provision-batch`), never a question it could answer.
+//
+// The marker is what refuses and not the missing terminal: the same session
+// with a terminal on its stdin is refused too (the stage's own arm), which is
+// the half a session whose stdin happens to be a tty would otherwise walk past.
+func TestComputeStageRefusesInAnAgentSession(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		terminal bool
+	}{
+		{"no terminal", false},
+		{"a terminal", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := computeRig(t)
+			s := newComputeStage(rigEngine(t, r, &initOptions{door: updateDoor.name, provisionBatch: true}))
+			if tc.terminal {
+				fakeTerminal(t)
+			} else {
+				noTerminal(t)
+			}
+			agentSession(t)
+			_, err := s.Apply(context.Background(), initflow.Env{Interactive: true})
+			var ae *initflow.AgentError
+			if !errors.As(err, &ae) {
+				t.Fatalf("a coding agent's session applied the compute step: %v", err)
+			}
+			if !strings.Contains(err.Error(), "CLAUDECODE") {
+				t.Errorf("the refusal does not name the marker: %v", err)
+			}
+			if calls := computeCalls(t, r); len(calls) != 0 {
+				t.Fatalf("a coding agent's session reached the compute root: %q", calls)
+			}
+			left := s.Left()
+			if len(left.Commands) != 1 || !strings.Contains(left.Commands[0], "--provision-batch") {
+				t.Errorf("the step the session is refused does not name the owner's own command: %+v", left)
+			}
+		})
+	}
+}
+
 // --yes never covers it: it is not a stage --yes is allowed to reach, so a
 // run that passes --yes and types nothing leaves it for the owner instead of
 // applying.
@@ -686,8 +734,23 @@ func TestComputeStageHoldsItsGrantsToTheCover(t *testing.T) {
 
 // propagationStderr is what an apply says when a binding names a service
 // account the same apply created a moment ago and IAM does not see yet
-// (design compute-backend §7.2 finding 5).
-const propagationStderr = `Error: Error applying IAM policy for project "proj-1234": Error setting IAM policy for project "proj-1234": googleapi: Error 400: Service account fugaro-reaper@proj-1234.iam.gserviceaccount.com does not exist., badRequest`
+// (design compute-backend §7.2 finding 5). It is terraform's own shape -- the
+// box, and the resource the diagnostic was applying -- which is what a person
+// running terraform by hand reads; an apply fugaro runs pipes stderr, so what
+// it really writes is the same diagnostic without the box, and the retry's
+// closed list reads both (tf's TestPropagationFailureIsTheClosedList has a
+// piped row). A one-line error nobody sees is not either of them.
+const propagationStderr = "╷\n│ Error: Error applying IAM policy for project \"proj-1234\": Error setting IAM policy for project \"proj-1234\": googleapi: Error 400: Service account fugaro-reaper@proj-1234.iam.gserviceaccount.com does not exist., badRequest\n│ \n│   with module.compute.google_project_iam_member.reaper,\n│   on iam.tf line 88, in resource \"google_project_iam_member\" \"reaper\":\n│   88: resource \"google_project_iam_member\" \"reaper\" {\n│ \n╵\n"
+
+// reaperGapPlan makes the compute root's plan hold the account the apply's own
+// error names: the gap is only retryable against a plan that creates that
+// resource in the same apply (tf.PropagationFailure), which is what an apply
+// that lost the race to IAM was on.
+func reaperGapPlan(t *testing.T, r *initRig) {
+	t.Helper()
+	r.setPlanAt(t, "compute", created("module.compute.google_service_account.reaper", "google_service_account",
+		map[string]any{"account_id": infra.ReaperAccountID, "email": infra.ReaperAccountID + "@" + initProject + ".iam.gserviceaccount.com"}))
+}
 
 // A fresh account's bindings are retried, not given up on: an apply that fails
 // because IAM does not see an account yet waits, re-plans, holds the new plan
@@ -695,9 +758,10 @@ const propagationStderr = `Error: Error applying IAM policy for project "proj-12
 // what is left -- without asking again, since what is left is part of what
 // was confirmed.
 func TestComputeStageRetriesIAMPropagation(t *testing.T) {
-	noComputeWaits(t)
+	noPropagationWaits(t)
 	typedThroughYes(t)
 	r := computeRig(t)
+	reaperGapPlan(t, r)
 	r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
 	r.save(t)
 	fakeTerminal(t)
@@ -708,7 +772,7 @@ func TestComputeStageRetriesIAMPropagation(t *testing.T) {
 	if got := subcommands(computeCalls(t, r)); !slices.Equal(got, []string{"version", "init", "plan", "show", "apply", "plan", "show", "apply", "output"}) {
 		t.Fatalf("terraform calls in the compute workdir = %q, want one re-plan and one more apply\n%s", got, out)
 	}
-	if !strings.Contains(out, "not visible to IAM yet") {
+	if !strings.Contains(out, "retrying the compute step in 20s: Google had not yet caught up with a resource it just created (attempt 1 of 3)") {
 		t.Errorf("the retry was not reported:\n%s", out)
 	}
 	if runs := r.sched.Runs(); len(runs) != 1 {
@@ -720,9 +784,10 @@ func TestComputeStageRetriesIAMPropagation(t *testing.T) {
 // retry for ever, or apply a re-plan that holds more than was confirmed.
 func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 	t.Run("another failure", func(t *testing.T) {
-		noComputeWaits(t)
+		noPropagationWaits(t)
 		typedThroughYes(t)
 		r := computeRig(t)
+		reaperGapPlan(t, r)
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded"}
 		r.save(t)
 		fakeTerminal(t)
@@ -735,9 +800,10 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		}
 	})
 	t.Run("a gap that never closes", func(t *testing.T) {
-		noComputeWaits(t)
+		noPropagationWaits(t)
 		typedThroughYes(t)
 		r := computeRig(t)
+		reaperGapPlan(t, r)
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": propagationStderr}
 		r.save(t)
 		fakeTerminal(t)
@@ -745,16 +811,53 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "does not exist") {
 			t.Fatalf("err = %v, want the last propagation error", err)
 		}
-		if n := strings.Count(strings.Join(subcommands(computeCalls(t, r)), " "), "apply"); n != len(computeApplyWaits)+1 {
-			t.Errorf("applied %d times, want %d", n, len(computeApplyWaits)+1)
+		if n := strings.Count(strings.Join(subcommands(computeCalls(t, r)), " "), "apply"); n != len(propagationWaits)+1 {
+			t.Errorf("applied %d times, want %d", n, len(propagationWaits)+1)
+		}
+	})
+	t.Run("a re-plan with a grant member outside the cover", func(t *testing.T) {
+		noPropagationWaits(t)
+		typedThroughYes(t)
+		r := computeRig(t)
+		// The first plan is the gap's own AND one of the module's grants to a
+		// run account the stage read, which the compute cover accepts. The
+		// re-plan holds the SAME address with the same action and another
+		// member: unconfirmed compares addresses and actions and cannot see
+		// that, so the grant rules are the whole of what keeps a re-plan's
+		// member inside the compute cover.
+		reaper := created("module.compute.google_service_account.reaper", "google_service_account",
+			map[string]any{"account_id": infra.ReaperAccountID, "email": infra.ReaperAccountID + "@" + initProject + ".iam.gserviceaccount.com"})
+		grant := func(member string) planChange {
+			return planChange{"address": "module.compute.google_project_iam_member.run_log_writer", "type": "google_project_iam_member",
+				"change": map[string]any{"actions": []string{"create"}, "before": map[string]any{},
+					"after": map[string]any{"project": initProject, "role": "roles/logging.logWriter", "member": member}}}
+		}
+		run := "serviceAccount:fugaro-acme-web@" + initProject + ".iam.gserviceaccount.com"
+		r.script["show@compute"] = []any{
+			map[string]any{"stdout": planJSON(t, reaper, grant(run))},
+			map[string]any{"stdout": planJSON(t, reaper, grant("serviceAccount:stranger@"+initProject+".iam.gserviceaccount.com"))},
+		}
+		r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
+		r.save(t)
+		fakeTerminal(t)
+		out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
+		if err == nil || !strings.Contains(err.Error(), "the compute root's plan grants what the compute module does not") ||
+			!strings.Contains(err.Error(), "run_log_writer") {
+			t.Fatalf("err = %v, want the compute stage's grant refusal for the re-plan's member:\n%s", err, out)
+		}
+		if n := strings.Count(strings.Join(subcommands(computeCalls(t, r)), " "), "apply"); n != 1 {
+			t.Errorf("applied %d times, want 1: the re-plan was refused before it reached the apply", n)
 		}
 	})
 	t.Run("a re-plan with something new", func(t *testing.T) {
-		noComputeWaits(t)
+		noPropagationWaits(t)
 		typedThroughYes(t)
 		r := computeRig(t)
-		first := planJSON(t, change("module.compute.google_compute_router.this", "create"))
-		second := planJSON(t, change("module.compute.google_compute_router.this", "create"), change("module.compute.google_compute_firewall.extra", "create"))
+		first := planJSON(t, created("module.compute.google_service_account.reaper", "google_service_account",
+			map[string]any{"account_id": infra.ReaperAccountID}))
+		second := planJSON(t, created("module.compute.google_service_account.reaper", "google_service_account",
+			map[string]any{"account_id": infra.ReaperAccountID}),
+			change("module.compute.google_compute_firewall.extra", "create"))
 		r.script["show@compute"] = []any{map[string]any{"stdout": first}, map[string]any{"stdout": second}}
 		r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
 		r.save(t)
@@ -767,12 +870,4 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 			t.Errorf("applied %d times, want 1", n)
 		}
 	})
-}
-
-// noComputeWaits makes the propagation retry's waits instant.
-func noComputeWaits(t *testing.T) {
-	t.Helper()
-	old := computeApplyWaits
-	computeApplyWaits = make([]time.Duration, len(old))
-	t.Cleanup(func() { computeApplyWaits = old })
 }

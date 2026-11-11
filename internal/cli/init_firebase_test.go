@@ -86,6 +86,16 @@ func newFBRigFor(t *testing.T, fp string) *fbRig {
 	}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"history_service_account": historyAccount, "history_job": nil})}
 	r.script["output@firebase"] = map[string]any{"stdout": r.firebaseOutputs(t)}
+	// The workspace's own project's root plans too in a run whose config
+	// declares a workspace (init_stages.go, W3), and its cover is its OWN and
+	// not the installation's (internal/infra/tf's WorkspaceNotCovered): the
+	// fixture this rig scripts for every root is the installation's plan,
+	// which that cover refuses by name. What is answered here is the converged
+	// state — the workspace's own service account and its one grant already
+	// exist — because the tests built on this rig are about the record, the
+	// rules and the gate, and not about that root. A test that is about the
+	// root builds its own rig (workspace_create_test.go's newWSCreateRig).
+	r.script["plan@workspace"] = map[string]any{"exit": 0}
 	r.save(t)
 	return r
 }
@@ -179,13 +189,15 @@ func strs(v any) []string {
 	return out
 }
 
-// Each of the three applies, and the database step, has its own plan and its
-// own confirmation: typing the name n times gets exactly n steps.
+// Each of the three applies, the database and its location has its own plan
+// and its own banner: a person at the terminal reads five separate
+// confirmations and every step goes on, with nothing typed (T7). Where nobody
+// can confirm it, the first step is left and nothing after it happens.
 func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, names(3)+"us-east5\n"+names(1), "setup", "--firebase-project", fpID, "--budget-mode", "observe")
+	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID, "--budget-mode", "observe")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -204,23 +216,20 @@ func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 		t.Errorf("rules deployed %d times", r.db.RulePuts())
 	}
 
-	// Each confirmation is its own: with only two names the second apply is
-	// the last thing that happens, and the database is never touched.
+	// A run nobody can confirm stops at its first step: the second apply and
+	// the database are never reached.
 	r2 := newFBRig(t)
 	r2.historyImage()
-	fakeTerminal(t)
-	_, _, err = executeStdin(t, names(2), "setup", "--firebase-project", fpID)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not confirmed") {
+	noTerminal(t)
+	_, _, err = executeStdin(t, "", "setup", "--firebase-project", fpID)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "needs a real terminal") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
-	if got := r2.applies(t); !slices.Equal(got, []string{"installation", "firebase"}) {
+	if got := r2.applies(t); len(got) != 0 {
 		t.Errorf("applies = %v", got)
 	}
 	if r2.db.RulePuts() != 0 || r2.db.Value("fugaro") != nil {
 		t.Errorf("the database was written without its confirmation: rules %d, fugaro %v", r2.db.RulePuts(), r2.db.Value("fugaro"))
-	}
-	if _, err := os.Stat(r2.fbRoot()); err != nil {
-		t.Errorf("no firebase workdir: %v", err)
 	}
 }
 
@@ -493,8 +502,6 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 	if r.db.RulePuts() != 1 || !bytes.Equal(a, b) {
 		t.Errorf("rules puts %d; deployed rules differ from the generated ones", r.db.RulePuts())
 	}
-	// The rules go in last, over a database that is already marked and
-	// configured: the mark is written before them.
 	var puts []string
 	for _, q := range r.db.Requests() {
 		if q.Method == "PUT" {
@@ -503,15 +510,17 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 	}
 	// The rules go in last of the database's own writes, over a database that
 	// is already marked and configured: the mark is written before them. The
-	// three writes after them are the generation markers, which exist to say
+	// four writes after them are the generation markers, which exist to say
 	// the deploy above succeeded and must not be there otherwise
 	// (TestRulesMarkerOnlyAfterTheRulesDeploy): the document's generation and,
 	// beside it, the credentials children's own (credentials-service plan, task
-	// C1.3) and the orchestrator subtree's (stateless orchestrator plan, O2),
-	// which the same deploy carries because they ride on the same document.
-	if len(puts) < 4 || puts[0] != "/fugaro/mark" || puts[len(puts)-4] != "/.settings/rules" ||
-		puts[len(puts)-3] != "/"+projectpolicy.PathRulesMarker() ||
-		puts[len(puts)-2] != "/"+rules.PathCredsRulesMarker() ||
+	// C1.3), the workspace family's (workspaces plan, task W3) and the
+	// orchestrator subtree's (stateless orchestrator plan, O2), which the same
+	// deploy carries because they ride on the same document.
+	if len(puts) < 5 || puts[0] != "/fugaro/mark" || puts[len(puts)-5] != "/.settings/rules" ||
+		puts[len(puts)-4] != "/"+projectpolicy.PathRulesMarker() ||
+		puts[len(puts)-3] != "/"+rules.PathCredsRulesMarker() ||
+		puts[len(puts)-2] != "/"+rules.PathWorkspaceRulesMarker() ||
 		puts[len(puts)-1] != "/"+rules.PathOrchestratorRulesMarker() {
 		t.Errorf("PUT order = %v", puts)
 	}
@@ -526,16 +535,20 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 // marker at all.
 //
 // The credentials children's marker (`config/limits/credsRules`, plan task
-// C1.3) is written by the same deploy and for the same reason, so it is pinned
-// here too: absent after a refused deploy, at this binary's generation after
-// one that succeeded, and beside — never on top of — the largest lease. The
-// orchestrator subtree's own (`config/limits/orchestratorRules`, stateless
-// orchestrator plan, O2) is the third of them, written after the same deploy
-// for the same reason: the daemon's gate reads it before it writes any state,
-// so it must not survive a deploy that did not happen.
+// C1.3), the workspace family's (`config/limits/workspaceRules`, workspaces
+// plan task W3) and the orchestrator subtree's (`config/limits/orchestratorRules`,
+// stateless orchestrator plan, O2) are written by the same deploy and for the
+// same reason, so they are pinned here too: absent after a refused deploy, at
+// this binary's generation after one that succeeded, and beside — never on top
+// of — the largest lease. A Realtime Database carries ONE rules document, so
+// the four generations ride on it together and each counts its own changes. The
+// daemon's gate reads the orchestrator one before it writes any state, so a
+// marker left behind by a deploy that did not happen is a daemon writing into a
+// subtree the deployed rules do not carry.
 func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	marker := func(r *fbRig) any { return r.db.Value(projectpolicy.PathRulesMarker()) }
 	credsMarker := func(r *fbRig) any { return r.db.Value(rules.PathCredsRulesMarker()) }
+	wsMarker := func(r *fbRig) any { return r.db.Value(rules.PathWorkspaceRulesMarker()) }
 	orchMarker := func(r *fbRig) any { return r.db.Value(rules.PathOrchestratorRulesMarker()) }
 
 	// A refused rules deploy: init fails and leaves no marker.
@@ -555,10 +568,17 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	if got := credsMarker(refused); got != nil {
 		t.Errorf("%s = %#v after a refused rules deploy, want it absent: a cascade launch would pass the marker gate on rules that do not carry the children", rules.PathCredsRulesMarker(), got)
 	}
-	// The orchestrator subtree's marker is the same claim about a third
-	// generation (stateless orchestrator plan, O2): the daemon reads it before it
-	// writes any state, so a marker left behind by a deploy that did not happen
-	// is a daemon writing into a subtree the deployed rules do not carry.
+	// The workspace family's marker is the same claim about the family's own
+	// generation (workspaces plan, task W3): it says the database runs under the
+	// record, the token hashes, the meter and the rollup, so it must not survive
+	// a deploy that did not happen either.
+	if got := wsMarker(refused); got != nil {
+		t.Errorf("%s = %#v after a refused rules deploy, want it absent: the database would be read as running under a workspace family these rules do not carry", rules.PathWorkspaceRulesMarker(), got)
+	}
+	// The orchestrator subtree's marker is the same claim about its generation
+	// (stateless orchestrator plan, O2): the daemon reads it before it writes any
+	// state, so a marker left behind by a deploy that did not happen is a daemon
+	// writing into a subtree the deployed rules do not carry.
 	if got := orchMarker(refused); got != nil {
 		t.Errorf("%s = %#v after a refused rules deploy, want it absent: the daemon's gate would pass on rules that carry no orchestrator subtree", rules.PathOrchestratorRulesMarker(), got)
 	}
@@ -583,14 +603,18 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	if !ok || credsNum.String() != strconv.Itoa(rules.CredsRulesVersion) {
 		t.Errorf("%s = %#v, want %d (CredsRulesVersion)", rules.PathCredsRulesMarker(), credsMarker(r), rules.CredsRulesVersion)
 	}
+	wsNum, ok := wsMarker(r).(json.Number)
+	if !ok || wsNum.String() != strconv.Itoa(rules.WorkspaceRulesVersion) {
+		t.Errorf("%s = %#v, want %d (WorkspaceRulesVersion)", rules.PathWorkspaceRulesMarker(), wsMarker(r), rules.WorkspaceRulesVersion)
+	}
 	orchNum, ok := orchMarker(r).(json.Number)
 	if !ok || orchNum.String() != strconv.Itoa(rules.OrchestratorRulesVersion) {
 		t.Errorf("%s = %#v, want %d (OrchestratorRulesVersion)", rules.PathOrchestratorRulesMarker(), orchMarker(r), rules.OrchestratorRulesVersion)
 	}
-	// All three sit beside the largest lease, not on top of it.
+	// All four sit beside the largest lease, not on top of it.
 	lim, _ := r.db.Value("config/limits").(map[string]any)
-	if len(lim) != 4 || lim["maxReserveMicros"] == nil {
-		t.Errorf("config/limits = %v, want the three markers beside maxReserveMicros", lim)
+	if len(lim) != 5 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the four markers beside maxReserveMicros", lim)
 	}
 }
 
@@ -920,8 +944,14 @@ func TestGuardListsRemovedAdminGrant(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), addr) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if !strings.Contains(out, "⚠ Review these first:\n  ⚠ delete "+addr) {
-		t.Errorf("the removed grant is not listed under Review:\n%s", out)
+	// The screen names the grant in Fugaro's words and never in Terraform's:
+	// the module address is what --allow-delete takes, and the log is where a
+	// person reads it (the owner's feedback of 2026-11-09).
+	if !strings.Contains(out, "Plan: 1 to delete.\n\n⚠ Review these first:\n  ⚠ the admin grant to user:old@example.com is removed\n") {
+		t.Errorf("the removed grant is not listed under Review, in Fugaro's words:\n%s", out)
+	}
+	if _, log := onlyLog(t, "setup"); !strings.Contains(log, addr) {
+		t.Errorf("the log does not carry the address --allow-delete takes:\n%s", log)
 	}
 	if !strings.Contains(err.Error(), "owners and editors") || !strings.Contains(err.Error(), "--budget-admin") {
 		t.Errorf("no hint on why a grant is removed: %v", err)
@@ -1066,20 +1096,35 @@ func TestIdentityPlatformInitializedWhenMissing(t *testing.T) {
 	}
 }
 
+// The Identity Platform step is part of the database step, behind its one
+// confirmation, and the confirmation is a person at the terminal, with
+// nothing typed (T7): the confirmation lists the step and it runs. Where
+// nobody can confirm it, initializeAuth is never called.
 func TestIdentityPlatformStepNotRunWithoutConfirmation(t *testing.T) {
 	r := newFBRig(t)
 	r.idt.UninitializeIdentityPlatform()
-	fakeTerminal(t) // nothing is typed
-	// The installation and Firebase applies are confirmed; the database step is not.
-	out, _, err := executeStdin(t, initProjectName+"\n"+initProjectName+"\n", "setup", "--firebase-project", fpID)
-	if err == nil {
-		t.Fatalf("not confirmed, yet init succeeded:\n%s", out)
-	}
-	if n := r.idt.InitializeAuthCalls(); n != 0 {
-		t.Errorf("initializeAuth calls = %d before the confirmation", n)
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
 	if !strings.Contains(out, "ensure Identity Platform is initialized (no sign-in providers)") {
 		t.Errorf("the confirmation does not list the step:\n%s", out)
+	}
+	if n := r.idt.InitializeAuthCalls(); n != 1 {
+		t.Errorf("initializeAuth calls = %d at a person's terminal, want 1", n)
+	}
+
+	// Nobody can confirm it: the step is left and nothing is written.
+	r2 := newFBRig(t)
+	r2.idt.UninitializeIdentityPlatform()
+	noTerminal(t)
+	_, _, err = executeStdin(t, "", "setup", "--firebase-project", fpID)
+	if err == nil || !strings.Contains(err.Error(), "needs a real terminal") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := r2.idt.InitializeAuthCalls(); n != 0 {
+		t.Errorf("initializeAuth calls = %d before the confirmation", n)
 	}
 }
 
@@ -1106,12 +1151,30 @@ func TestIdentityPlatformAlreadyEnabledRaceIsOK(t *testing.T) {
 	}
 }
 
+// idpPath is an Identity Platform IdP entry's `name` as the Admin API returns
+// it: the RESOURCE PATH, projects/<project>/<field>/<id>, and not the bare
+// provider id. Every fixture below uses it, because a fixture naming `google.com`
+// alone would be a shape the API never sends — infra.PublicSignUp passes this
+// field through unchanged — and a matcher written against the bare form would
+// pass here and refuse the pin's own provider in the cloud
+// (workspaceSignInPath; scripts/live-checks/check361.sh strips the last path
+// segment for the same reason). The project is the caller's, because the entry
+// names the project it belongs to and a test that reads a project other than
+// the installation's has to say which.
+func idpPath(fp, field, id string) string { return "projects/" + fp + "/" + field + "/" + id }
+
+// idpEntry is one enabled IdP of that shape, as `SetIdentityPlatformConfig`
+// takes it.
+func idpEntry(fp, field, id string) map[string]any {
+	return map[string]any{"name": idpPath(fp, field, id), "enabled": true}
+}
+
 func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 	for name, cfg := range map[string]map[string]any{
 		"email":     {"signIn": map[string]any{"email": map[string]any{"enabled": true}}},
 		"anonymous": {"signIn": map[string]any{"anonymous": map[string]any{"enabled": true}}},
 		"phone":     {"signIn": map[string]any{"phoneNumber": map[string]any{"enabled": true}}},
-		"idp":       {"defaultSupportedIdpConfigs": []any{map[string]any{"name": "google.com", "enabled": true}}},
+		"idp":       {"defaultSupportedIdpConfigs": []any{idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com")}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)
@@ -1122,6 +1185,210 @@ func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 			}
 			if r.idt.InitializeAuthCalls() != 0 || r.db.Value("fugaro/mark") != nil {
 				t.Error("a refused configuration was followed by writes")
+			}
+		})
+	}
+}
+
+// TestIdentityPlatformAllowsTheWorkspacesOwnSignIn: the workspace's own project
+// is the one Firebase project whose public sign-in paths the owner enables —
+// spec.md §3 pins exactly which ones — so the refusal that holds every other
+// installation to custom tokens only does not hold it. The predicate is the
+// config's own owner half and nothing else, and this test is why it exists:
+// `fugaro update` converges the workspace's own project (workspace_create.go,
+// W3), so a refusal there would fail the one command the HARD RULE says brings
+// an installation to the new version.
+//
+// A member's project is the other side of the same predicate: it carries a
+// pin, not the owner's half, and its Firebase project is a member's own, where
+// nothing but a Fugaro token may sign in. A config carrying BOTH halves is that
+// side too: the member's half is the narrower claim, and reading it as a
+// workspace's own would leave a member's Firebase with the providers on and
+// every public sign-up path admitted.
+func TestIdentityPlatformAllowsTheWorkspacesOwnSignIn(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		extra   string
+		refused bool
+	}{
+		{"a workspace's own project", wsOwnerTable + wsOwnerCap, false},
+		{"a workspace of its own with a cap and no member", wsOwnerCap, false},
+		{"a member's project", wsPin, true},
+		{"a member's project that also declares the owner's half", wsPin + wsOwnerCap, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newFBRig(t)
+			b, err := os.ReadFile(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(r.cfg, append(b, c.extra...), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			lc, err := localcfg.Load(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.idt.SetIdentityPlatformConfig(map[string]any{
+				"signIn":                     map[string]any{"email": map[string]any{"enabled": true}},
+				"defaultSupportedIdpConfigs": []any{idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com")},
+			})
+			cmd := NewRootCmd()
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetIn(strings.NewReader(""))
+			run := newInitRun(cmd, &initOptions{door: setupDoor.name})
+			_, err = run.identityPlatform(context.Background(), lc, fpID)
+			if c.refused {
+				if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "public sign-up") {
+					t.Fatalf("a member's project carrying providers = %v, want the refusal", err)
+				}
+				if !strings.Contains(err.Error(), "google.com") || !strings.Contains(err.Error(), "email") {
+					t.Errorf("the refusal does not name the paths it found: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("the workspace's own providers were refused: %v", err)
+			}
+			// The step's own answer for an accepted configuration: it is read and
+			// left alone, and this run writes nothing over it.
+			if r.idt.InitializeAuthCalls() != 0 {
+				t.Errorf("the workspace's own Identity Platform was initialized: %d call(s)", r.idt.InitializeAuthCalls())
+			}
+		})
+	}
+}
+
+// TestIdentityPlatformRefusesASplitInstallationsPublicSignUp: the carve-out is
+// the project's and not the config's. A config can declare a workspace's own
+// half while the Firebase project read is another project's — a split
+// installation, `budget.firebase_project` naming a project that is not
+// `gcp_project` — and the pin's providers must not be admitted there: the
+// project whose sign-in the pin describes is the workspace's own, and this read
+// is of a project that is not it, so its public sign-up is refused exactly as
+// any other installation's is, with the project that has it named.
+//
+// The state is refused twice before this step in a real run (the Firebase step
+// refuses a config whose budget.firebase_project is not the project it reads,
+// and workspaceSplitFirebase refuses the split a stage later, with the flag that
+// names the other project refused before any cloud call). This pins the step's
+// own answer anyway: what it accepts is decided where the read is made, and not
+// by a check made somewhere else.
+func TestIdentityPlatformRefusesASplitInstallationsPublicSignUp(t *testing.T) {
+	const other = "aurora-fp"
+	r := newFBRigFor(t, other)
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	split := string(b) + wsOwnerTable + wsOwnerCap +
+		"budget: { rtdb_url: " + r.db.URL + ", firebase_project: " + other + " }\n"
+	if err := os.WriteFile(r.cfg, []byte(split), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.GCPProject == other || lc.Budget == nil || lc.Budget.FirebaseProject != other {
+		t.Fatalf("the rig is not a split installation: gcp_project %s, budget %+v", lc.GCPProject, lc.Budget)
+	}
+	r.idt.SetIdentityPlatformConfig(map[string]any{
+		"signIn":                     map[string]any{"email": map[string]any{"enabled": true}},
+		"defaultSupportedIdpConfigs": []any{idpEntry(other, "defaultSupportedIdpConfigs", "google.com")},
+	})
+	cmd := NewRootCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetIn(strings.NewReader(""))
+	run := newInitRun(cmd, &initOptions{door: setupDoor.name})
+	_, err = run.identityPlatform(context.Background(), lc, other)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "public sign-up") {
+		t.Fatalf("a split installation's providers = %v, want the refusal", err)
+	}
+	if !strings.Contains(err.Error(), other) || strings.Contains(err.Error(), "workspace's own Firebase project") {
+		t.Errorf("the refusal is not the one every other installation's project gets: %v", err)
+	}
+	if !strings.Contains(err.Error(), "google.com") || !strings.Contains(err.Error(), "email") {
+		t.Errorf("the refusal does not name the paths it found: %v", err)
+	}
+}
+
+// TestIdentityPlatformRefusesAWorkspacesOffPinProvider: the workspace's own
+// project is admitted for the paths spec §3's pin carries and for nothing else.
+// The exemption is not "a workspace may carry any provider": an anonymous
+// sign-in proves no address, a phone number is an address this project accepts
+// that nobody decided on, and a provider beside google.com is a second way in —
+// and this project is also an installation whose own sign-in reads a token's
+// claim and not the provider that signed the user in, so an off-pin provider is
+// admitted silently everywhere else. Each off-pin path is refused BY NAME, and
+// the pinned ones beside it are not what the refusal is about.
+func TestIdentityPlatformRefusesAWorkspacesOffPinProvider(t *testing.T) {
+	for name, c := range map[string]struct {
+		cfg map[string]any
+		off string
+	}{
+		"anonymous": {
+			cfg: map[string]any{"signIn": map[string]any{"anonymous": map[string]any{"enabled": true}}},
+			off: "signIn.anonymous.enabled",
+		},
+		"phone": {
+			cfg: map[string]any{"signIn": map[string]any{"phoneNumber": map[string]any{"enabled": true}}},
+			off: "signIn.phoneNumber.enabled",
+		},
+		"a second IdP beside the pinned one": {
+			cfg: map[string]any{"defaultSupportedIdpConfigs": []any{
+				idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com"),
+				idpEntry(fpID, "defaultSupportedIdpConfigs", "microsoft.com"),
+			}},
+			off: "defaultSupportedIdpConfigs " + idpPath(fpID, "defaultSupportedIdpConfigs", "microsoft.com") + " enabled",
+		},
+		"an OAuth IdP": {
+			cfg: map[string]any{"oauthIdpConfigs": []any{idpEntry(fpID, "oauthIdpConfigs", "github.com")}},
+			off: "oauthIdpConfigs " + idpPath(fpID, "oauthIdpConfigs", "github.com") + " enabled",
+		},
+		"the pinned set with email and an off-pin provider": {
+			cfg: map[string]any{
+				"signIn": map[string]any{"email": map[string]any{"enabled": true}},
+				"defaultSupportedIdpConfigs": []any{
+					idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com"),
+					idpEntry(fpID, "defaultSupportedIdpConfigs", "apple.com"),
+				},
+			},
+			off: "defaultSupportedIdpConfigs " + idpPath(fpID, "defaultSupportedIdpConfigs", "apple.com") + " enabled",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newFBRig(t)
+			b, err := os.ReadFile(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(r.cfg, append(b, wsOwnerTable+wsOwnerCap...), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			lc, err := localcfg.Load(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.idt.SetIdentityPlatformConfig(c.cfg)
+			cmd := NewRootCmd()
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetIn(strings.NewReader(""))
+			run := newInitRun(cmd, &initOptions{door: setupDoor.name})
+			if _, err := run.identityPlatform(context.Background(), lc, fpID); ExitCode(err) != ExitUserError || err == nil {
+				t.Fatalf("a workspace's own project carrying %s = %v, want a refusal", c.off, err)
+			} else {
+				for _, want := range []string{c.off, "docs/workspaces/spec.md §3", "pin"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+			}
+			if n := r.idt.InitializeAuthCalls(); n != 0 {
+				t.Errorf("a refused workspace configuration was followed by %d initializeAuth call(s)", n)
 			}
 		})
 	}
@@ -1644,20 +1911,22 @@ func TestUpdateWithoutSharedBudgetDoesNotTouchFirebase(t *testing.T) {
 	}
 }
 
-// TestUpdateRulesDeclinedRefusesPolicyWrite: the deploy is behind the
-// confirmation the database step of `--firebase-project` takes, and declining it
-// stops the run where it stands. It must not go on to migrate the policy node:
-// the gate the migration holds (requirePolicyRules) is the marker the refused
-// deploy would have written, so a run that carried on would write a policy under
-// the very rules it just declined to deploy. A person at a terminal who does not
-// type the project's name is what a decline is — no other answer confirms this
-// step for them — and the rules and the node are read back exactly as they were.
+// TestUpdateRulesUnconfirmedRefusesPolicyWrite: the deploy is behind the
+// confirmation the database step of `--firebase-project` takes, and a session
+// where nobody can answer it stops the run where it stands. It must not go on to
+// migrate the policy node: the gate the migration holds (requirePolicyRules) is
+// the marker the never-made deploy would have written, so a run that carried on
+// would write a policy under rules that are not deployed. Nothing is typed at a
+// confirmation any more (T7, docs/no-prompt-policy): a person at a terminal
+// confirms this step by being there, so the session that leaves it — and stops
+// the run with it — is one with no terminal at all. The rules and the node are
+// read back exactly as they were.
 //
 // The first run converges the installation, so the second one's first step with
 // something to do is the rules deploy: on a fixture that has never run, the
-// installation stage's own confirmation comes first, and the answer typed there
-// would be the one this test is about.
-func TestUpdateRulesDeclinedRefusesPolicyWrite(t *testing.T) {
+// installation stage's own confirmation comes first, and the answer to it would
+// be the one this test is about.
+func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
 	_, db := updateBudgetRig(t)
 	if out, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
 		t.Fatalf("the converging run: %v\n%s", err, out)
@@ -1674,17 +1943,17 @@ func TestUpdateRulesDeclinedRefusesPolicyWrite(t *testing.T) {
 	db.SetRules(stale)
 
 	old := stdinIsTerminal
-	stdinIsTerminal = func(io.Reader) bool { return true }
+	stdinIsTerminal = func(io.Reader) bool { return false }
 	t.Cleanup(func() { stdinIsTerminal = old })
 
-	out, errOut, err := executeStdin(t, "\n\n\n\n\n\n\n\n", "update")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
-		t.Fatalf("a declined rules deploy exited 0:\n%s%s", out, errOut)
+		t.Fatalf("a rules deploy nobody could confirm exited 0:\n%s%s", out, errOut)
 	}
-	if text := out + errOut + ErrorText(err); !strings.Contains(text, "not confirmed") {
-		t.Errorf("the refusal is not the declined confirmation: %s", text)
+	if text := out + errOut + ErrorText(err); !strings.Contains(text, "needs a real terminal") {
+		t.Errorf("the refusal is not the step's own unconfirmed confirmation: %s", text)
 	}
-	// And it is the rules step's own decline: the run reaches this stage's
+	// And it is the rules step's own: the run reaches this stage's
 	// confirmation and stops there, not at a step of a stage before it.
 	if !strings.Contains(out, "stopped at "+initflow.Rules) {
 		t.Errorf("the run did not stop at the rules stage's own confirmation:\n%s", out)
@@ -1699,7 +1968,7 @@ func TestUpdateRulesDeclinedRefusesPolicyWrite(t *testing.T) {
 		t.Errorf("the rules generation marker is %q, want the stale %q the deploy would have moved", got, want)
 	}
 	if got := nodeVersionOn(t, db); got != 3 {
-		t.Errorf("the published policy moved to version %d after the rules deploy was declined: the migration's own gate is the marker that deploy did not write", got)
+		t.Errorf("the published policy moved to version %d after the rules deploy was left unconfirmed: the migration's own gate is the marker that deploy did not write", got)
 	}
 }
 
@@ -2532,15 +2801,15 @@ func TestRulesStageDetailCarriesTheMobileLockOut(t *testing.T) {
 // (false, "") for the one case it cannot word — no --firebase-project at all —
 // and firebaseReason pasted that into "the Firebase project is ", so the run
 // that deploys into the project's own database without the flag told the
-// operator a sentence that stopped after "is". The note is what asks the step
-// for its own typed confirmation, so half a sentence is the one thing it cannot
-// be.
+// operator a sentence that stopped after "is". The note is what says the step
+// is not covered by the run confirmation, so half a sentence is the one thing
+// it cannot be.
 func TestRulesStageNotCoveredNoteWithoutTheFlag(t *testing.T) {
 	r := &initRun{cmd: NewRootCmd(), o: &initOptions{}, w: &syncBuf{}, projectName: initProjectName, gcpProject: initProject,
 		review: &runReview{state: reviewTaken, firebase: func(context.Context) (bool, string) { return false, "" }}}
 	got := r.firebaseReason()
-	// The note is embedded before the loop's "; it asks for its own", so it has
-	// to end on a word of its own: the old text ended on "is".
+	// The note is embedded before the loop's "; it is shown and then applied", so
+	// it has to end on a word of its own: the old text ended on "is".
 	if strings.HasSuffix(got, " is") || strings.HasSuffix(got, " ") || strings.HasSuffix(got, ", ") {
 		t.Fatalf("the note stops mid-sentence: %q", got)
 	}

@@ -737,3 +737,106 @@ func TestDeriveAccountsPublishesTheProjectsAnthropicKey(t *testing.T) {
 		t.Fatalf("a profile list with no provider segment: %v", err)
 	}
 }
+
+// TestDeriveAccountsPublishesTheProjectsProviderKey: the account axis's second
+// non-account value (AK6a) is an axis value this block must carry, on the same
+// terms as the sentinel above — without an entry for it, the credentials
+// service's admittedAccounts (which intersects a repository's child admission
+// with shared.Accounts[name]) would admit nothing for it, so a profile that
+// publishes the provider key would be a review no installation could be served
+// by. DeriveAccounts is the one path that writes the block.
+//
+// One rule is the provider key's own and is the reason this is a test of its
+// own rather than another case above: the credential is the credentials
+// service's, held once for the project, so no project_secrets entry narrows its
+// reach (config.ProjectSecretReaches answers every repository for the name, and
+// ValidateProjectSecrets could not admit an entry under it) — the naming
+// profiles' own allow_repos IS the published list, not a bound on one. The
+// mutation is taking the value's branch out of DeriveAccounts: then the value
+// takes the account path, and every case below is red with "is not defined
+// here" (the local config defines no claude_accounts entry for it, and can
+// define none).
+func TestDeriveAccountsPublishesTheProjectsProviderKey(t *testing.T) {
+	value := config.ProviderKeyAccount
+	profiles := func(allowRepos []string) map[string]Profile {
+		return map[string]Profile{
+			"standard": {JobProfile: config.JobProfile{
+				Provider:       "github",
+				AllowRepos:     allowRepos,
+				ClaudeAccounts: []string{value},
+			}},
+		}
+	}
+	want := []string{"github/acme/app", "github/acme/tools"}
+	got, err := DeriveAccounts(profiles([]string{"github/acme/app", "github/acme/tools"}), nil, nil)
+	if err != nil {
+		t.Fatalf("a profile naming the provider key derived no block: %v", err)
+	}
+	if !slices.Equal(got[value].AllowRepos, want) {
+		t.Errorf("accounts.%s.allow_repos = %v, want %v (the profile's own list as it stands)", value, got[value].AllowRepos, want)
+	}
+	// The derived block is what the node's own rules accept, and the profile's
+	// authority is unchanged: the entry is a reference (config.
+	// ValidClaudeAccountRef), the block is what makes it satisfiable, and the
+	// subset rule (D3) is decided between the two.
+	block, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, _, err := Decode([]byte(accountsNode(string(block),
+		`{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","claude_accounts":["`+value+`"],`+
+			`"allow_repos":["github/acme/app","github/acme/tools"]}}`)))
+	if err != nil {
+		t.Fatalf("the derived block was refused by the node's own rules: %v", err)
+	}
+	if !slices.Equal(node.Accounts[value].AllowRepos, want) {
+		t.Errorf("the node's accounts.%s.allow_repos = %v, want %v", value, node.Accounts[value].AllowRepos, want)
+	}
+	// No project_secrets entry narrows the list: one for the project's own key
+	// beside it leaves the provider key's list whole, and so does one written
+	// under the provider key's own name — which no installation may write
+	// (ValidateProjectSecrets admits only ReservedSecrets' names, and
+	// ProviderKeySecret is deliberately not one), and which this function must
+	// therefore not read as a bound either.
+	for name, secrets := range map[string]map[string]config.ProjectSecret{
+		"the project's own key, narrowed to another repository": {config.AnthropicSecret: {AllowDataTo: []string{"acme/other"}}},
+		"an entry under the provider key's own name":            {config.ProviderKeySecret: {AllowDataTo: []string{"acme/other"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := DeriveAccounts(profiles([]string{"github/acme/app", "github/acme/tools"}), nil, secrets)
+			if err != nil {
+				t.Fatalf("an installation holding %v: %v", secrets, err)
+			}
+			if !slices.Equal(got[value].AllowRepos, want) {
+				t.Errorf("accounts.%s.allow_repos = %v, want %v: the provider key is held for the whole project, and the profiles naming it are the whole of its bound", value, got[value].AllowRepos, want)
+			}
+		})
+	}
+
+	// The refusals, each naming the list the operator edits. A profile naming
+	// the value with no allow_repos of its own has nothing to publish, and the
+	// sentence says why in this value's own words: no project_secrets entry
+	// narrows it, so there is no second block to go and edit.
+	_, err = DeriveAccounts(profiles(nil), nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "the project's provider key may serve no repository") {
+		t.Fatalf("a profile naming the provider key with no allow_repos of its own: %v", err)
+	}
+	for _, want := range []string{"profiles.standard.claude_accounts", "accounts." + value + ".allow_repos", "profiles.standard.allow_repos", "no project_secrets entry narrows it", "take the provider key off the profile"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "project_secrets.") {
+		t.Errorf("the refusal names a project_secrets entry, which this value cannot have (ValidateProjectSecrets admits only ReservedSecrets' names): %v", err)
+	}
+	// A wildcard on the profile's own list is refused at the derive, naming the
+	// published block as exact rather than reporting a value the profile's own
+	// rules would call a pattern.
+	_, err = DeriveAccounts(profiles([]string{"github/acme/*"}), nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "a pattern, and the project's provider key's list is published as accounts."+value+".allow_repos, which is exact") {
+		t.Fatalf("a wildcard profile list under the provider key: %v", err)
+	}
+	if strings.Contains(err.Error(), "is not a repository") {
+		t.Errorf("the refusal calls the pattern not a repository, which a profile's own list may spell: %v", err)
+	}
+}

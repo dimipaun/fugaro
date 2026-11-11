@@ -40,12 +40,14 @@
 // on screen explaining why.
 
 import {
+  GraphStreamGate,
   MAX_FEED_LINE_LENGTH,
   SPAWN_COMMANDS,
   assertSpawnSurface,
   binDirectories,
   cliSentence,
   decodeFeedLine,
+  keyedArguments,
   planFor,
   privateWorkingDirectory,
   resolveBinary,
@@ -55,11 +57,14 @@ import {
   startSidecar,
 } from '../main/spawn'
 import type {
+  BinaryRefusalKind,
+  BinaryResolution,
   ChildSpawner,
   JSONObject,
   Notice,
   SettingsEditPhase,
   Sidecar,
+  SpawnOperationName,
   SpawnPlan,
   SpawnTarget,
 } from '../main/spawn'
@@ -67,6 +72,7 @@ import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
+import { licenceKeySupported } from '../shared/version'
 import { SourceRefusal, refusalFrom, GRAPH_SCOPE_ALL, NO_GRAPH_SCOPE, NO_PLAN_CHECKOUT, SETTINGS_EDIT_MOVED } from './source'
 import type {
   FeedEnd,
@@ -142,6 +148,11 @@ export const PLAN_STATUS_MIN_INTERVAL_MS = 60_000
  * clock of that read and never re-stamped, exactly as `PLAN_STATUS_MIN_INTERVAL_MS`
  * above; the scope is part of the key, because one scope's document is not
  * another's.
+ *
+ * The feed this command's `--watch` form is (`subscribeGraph`) holds the same
+ * floor **for a feed that has ended**: a child that exits at once leaves a
+ * refusal and no stream, and the poll that finds it gone is answered with that
+ * refusal rather than with another child a second (`lazyFeed`).
  */
 export const GRAPH_READ_MIN_INTERVAL_MS = 60_000
 
@@ -202,11 +213,20 @@ export function feedSilence(
 }
 
 /**
- * FUGARO_INSTALL_COMMAND is the one line the absent-binary screen offers, and
- * it is the README's own command rather than one this file invented:
+ * FUGARO_INSTALL_COMMAND is the line the absent-binary screen offers, and it is
+ * the README's own command rather than one this file invented:
  * `console/README.md` and `docs/release.md` both hand the cask as the install
  * step (`brew install dimipaun/tap/fugaro`). The console prints it and runs
  * nothing -- installing a binary is the operator's act, not the app's.
+ *
+ * **It is the host route's line, and not the console's only one** (F32). It is
+ * a macOS (and Linux) install, so it is the answer for `no-binary` alone: on the
+ * WSL route the CLI is a Linux binary inside a distribution, which Homebrew
+ * neither installs nor reaches, and that route's install line is the procedure
+ * in `docs/windows-cli/wsl.md`. Nothing here carries that line -- the three WSL
+ * kinds carry the empty string, deliberately -- and it is the pages' own remedy
+ * sentences in `renderer/screens/degraded.ts` that name the document rather than
+ * retyping its commands.
  */
 export const FUGARO_INSTALL_COMMAND = 'brew install dimipaun/tap/fugaro'
 
@@ -215,13 +235,54 @@ export const FUGARO_INSTALL_COMMAND = 'brew install dimipaun/tap/fugaro'
  * everything design section 6.3's first screen needs, with no document in it.
  * `renderer/screens/degraded.ts` draws it, and `degraded.spec.ts` holds one
  * built here to the renderer's own type, so the two cannot drift.
+ *
+ * **`kind` is the resolution's own** (`BinaryRefusalKind`, `src/main/spawn.ts`),
+ * and it is the whole of what tells the four failures apart: one page is drawn
+ * per kind, each with its own headline and its own remedy (Part G, T-G1). A
+ * state that answered `no-binary` for a machine with no WSL would send the
+ * operator to install a CLI they do not need.
+ *
+ * **What can build a state with a WSL kind is narrower than the four kinds**, and
+ * it is worth knowing here rather than three modules away: `resolveBinary`
+ * answers `no-binary` for every refusal of its own, and the three WSL kinds are
+ * `resolveInstalledBinary`'s (`resolveInDistribution`), which no console call
+ * site resolves through today -- so the carry-through in `CliSource.create` and
+ * the four pages in `degraded.ts` are reached by the tests and the screenshots.
+ * The screen a first run actually meets is `src/main/onboarding.ts`'s
+ * `installCliState`, drawn by the picker and by the rail: it is not built from
+ * this state at all, it takes the reason and the searched list, and it offers
+ * `FUGARO_INSTALL_COMMAND` for every failure.
  */
 export interface NoInstallationState {
-  readonly kind: 'no-binary'
+  readonly kind: BinaryRefusalKind
   /** the resolution's own sentence, kept as the CLI-less reason it is */
   readonly reason: string
+  /**
+   * the install line the screen offers under `install it with`, or the empty
+   * string when installing a CLI on this machine is not this kind's remedy.
+   * `FUGARO_INSTALL_COMMAND` is `no-binary`'s answer; a machine with no WSL, or
+   * no distribution this console can drive, is fixed by installing something no
+   * command here installs, and the page's own sentence says so instead.
+   *
+   * The three WSL kinds carry the empty string and not `FUGARO_INSTALL_COMMAND`:
+   * `brew install dimipaun/tap/fugaro` is not a Windows install and Homebrew is
+   * not inside the distribution (F32), and the one command that would install
+   * WSL installs nothing this console can then run. Their route's install line is
+   * the procedure in `docs/windows-cli/wsl.md`, **pointed at** rather than
+   * retyped (F32) -- and it is not drawn from here: these pages carry their
+   * remedy as their own sentence, and that sentence is what names the procedure
+   * (`degraded.ts`'s `NO_WSL_REMEDY` and the two beside it). The line is
+   * therefore per route -- the command below for the host one, the document for
+   * the WSL one -- and this field carries only the host route's.
+   */
   readonly installCommand: string
-  /** every candidate the resolution looked at, in the order it looked */
+  /**
+   * every candidate the resolution looked at, in the order it looked. It is
+   * empty for the three WSL kinds, and not because nothing was looked at: that
+   * route asks `wsl.exe` and the distribution, and walks no directory on this
+   * host -- so there is no count of host places to draw (F30's rule: the count,
+   * and never the paths).
+   */
   readonly searched: readonly string[]
 }
 
@@ -245,40 +306,73 @@ export class NoInstallation extends SourceRefusal {
 }
 
 /**
- * noInstallationState is the state, built from the resolution that failed. The
- * candidate list is re-derived from the same `binDirectories` the resolution
+ * noInstallationState is the state, built from the resolution that failed --
+ * which kind it failed as, and its own sentence.
+ *
+ * The candidate list is re-derived from the same `binDirectories` the resolution
  * walked, with the same options -- so the screen names the directories this
  * machine would actually be searched in, not a list written down twice. The
  * configured path is an *input* and not a field: it is one of those candidates,
  * and the screen draws the count of them and never a path.
+ *
+ * **Only `no-binary` walked them.** The three WSL kinds are answered by
+ * `wsl.exe` and the distribution (`resolveInDistribution`), so they carry an
+ * empty `searched` and no install command: their remedy is not a command on this
+ * machine at all.
  */
 export function noInstallationState(options: {
+  readonly kind?: BinaryRefusalKind
   readonly reason: string
   readonly configuredPath?: string | undefined
   readonly home?: string
 }): NoInstallationState {
+  const kind = options.kind ?? 'no-binary'
+  const walked = kind === 'no-binary'
   return {
-    kind: 'no-binary',
+    kind,
     reason: options.reason,
-    installCommand: FUGARO_INSTALL_COMMAND,
-    searched: binDirectories({
-      ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
-      ...(options.home === undefined ? {} : { home: options.home }),
-    }),
+    installCommand: walked ? FUGARO_INSTALL_COMMAND : '',
+    searched: walked
+      ? binDirectories({
+          ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
+          ...(options.home === undefined ? {} : { home: options.home }),
+        })
+      : [],
   }
 }
 
 /** CliSourceOptions is everything a v1 source is built from. `appEnv` is the
  * app's own environment, used for `HOME`, `TMPDIR`, `LANG`/`LC_ALL`, the five
  * `XDG_*` variables and binary resolution -- and for nothing else, because
- * `childEnvironment` reads no other key. */
+ * `childEnvironment` reads no other key.
+ *
+ * `licenceKey` is the one value that does **not** come from `appEnv`: it is the
+ * installation's key, read from the console's own store at the moment of the
+ * spawn (`src/main/licence-store.ts`), and handed to the child in its
+ * environment and never in an argv (S2.1, S2.7). It is a reader rather than a
+ * string because a paste made while the console is running applies to the next
+ * spawn, and because nothing here holds the key text between two of them. */
 export interface CliSourceOptions {
   readonly target: SpawnTarget
   readonly configuredBinaryPath?: string | undefined
   readonly checkout?: string | undefined
   readonly appEnv?: Readonly<Record<string, string | undefined>>
+  readonly licenceKey?: ((project: string) => string | undefined) | undefined
   readonly spawner?: ChildSpawner
   readonly spawnLog?: SpawnLogWriter
+  /**
+   * `resolver` replaces `resolveBinary` itself, and it is a seam for the same
+   * reason `spawner` is: it is how a test reaches a resolution this machine
+   * cannot produce. The shipped app leaves it out.
+   *
+   * It exists for exactly one fact: `resolveBinary` answers `no-binary` for
+   * **every** refusal it makes, because the WSL route is `resolveInstalledBinary`
+   * and nothing in `resolveBinary` reaches it. So a state that failed as one of
+   * the three WSL kinds cannot be produced through `create` by any filesystem a
+   * test can build, and the line that carries `resolution.kind` into the refusal
+   * would otherwise be pinned by nothing.
+   */
+  readonly resolver?: ((request: Parameters<typeof resolveBinary>[0]) => Promise<BinaryResolution>) | undefined
   readonly home?: string
   readonly clock?: () => Date
   readonly firstFrameBudgetMs?: number
@@ -328,9 +422,9 @@ export class CliSource implements FugaroSource {
     const directory = options.checkout ?? privateWorkingDirectory()
     const log = options.spawnLog ?? createSpawnLog(env)
     const ownsLog = log !== options.spawnLog
-    let resolution: Awaited<ReturnType<typeof resolveBinary>>
+    let resolution: BinaryResolution
     try {
-      resolution = await resolveBinary({
+      resolution = await (options.resolver ?? resolveBinary)({
         ...(options.configuredBinaryPath === undefined ? {} : { configuredPath: options.configuredBinaryPath }),
         appEnv: env,
         directory,
@@ -347,6 +441,9 @@ export class CliSource implements FugaroSource {
       if (ownsLog) log.close()
       throw new NoInstallation(
         noInstallationState({
+          // The resolution's own kind, carried rather than flattened to
+          // `no-binary`: this is what the screen draws one page per (F26).
+          kind: resolution.kind,
           reason: resolution.reason,
           configuredPath: options.configuredBinaryPath,
           ...(options.home === undefined ? {} : { home: options.home }),
@@ -378,11 +475,24 @@ export class CliSource implements FugaroSource {
     args: ValidatedArguments,
     settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string },
   ): SpawnPlan {
+    // Read here rather than carried on the instance: the store answers for the
+    // project this source drives, and a key pasted a moment ago is the key the
+    // next child is handed.
+    //
+    // **And only to a child that takes it back out of its own environment**
+    // (`licenceKeySupported`): the floor is asked of the resolved binary's own
+    // version line, before the store is read, so a CLI that would hand the key
+    // on to every program it starts is handed nothing. The constant is unset
+    // until a release carries the removal, so no child is handed a key today.
+    const licenceKey = licenceKeySupported(this.installation.version)
+      ? this.#options.licenceKey?.(this.#options.target.project)
+      : undefined
     return planFor(operation, args, {
       target: this.#options.target,
       binaryPath: this.#binaryPath,
       directory: this.#directory,
       appEnv: this.#env,
+      ...(licenceKey === undefined ? {} : { licenceKey }),
       ...(settingsEdit === undefined ? {} : { settingsEdit }),
     })
   }
@@ -432,11 +542,9 @@ export class CliSource implements FugaroSource {
   }
 
   /**
-   * subscribeLive is **idempotent for the same arguments while a feed is live**
-   * (the contract `FugaroSource.subscribeLive` states). The surface is
-   * `invoke`-only, so the Live screen reaches `live.watch` once per poll; a
-   * stream per call would be a `fugaro watch` child per poll, and nothing would
-   * ever stop them until `close()`.
+   * #live is where a long-lived child is made and counted -- the one place, so
+   * that every streaming read of this console is held to the same ceiling and
+   * stopped by the same `close()`.
    *
    * The key is the argv, because the argv is what decides which child this is:
    * two calls that plan the same argv are the same subscription, and two that do
@@ -448,9 +556,11 @@ export class CliSource implements FugaroSource {
    * moves its entry to the end), and a new subscription past the ceiling stops
    * the oldest one first.
    */
-  subscribeLive(args: ValidatedArguments): LiveFeed {
-    const plan = this.#plan('live.watch', args)
-    const key = plan.argv.join('\u0000')
+  #live(
+    key: string,
+    plan: SpawnPlan,
+    feed: { readonly operation: OperationName; readonly gate?: GraphStreamGate | undefined },
+  ): LiveStream {
     const live = this.#feeds.get(key)
     if (live !== undefined) {
       this.#feeds.delete(key)
@@ -470,6 +580,8 @@ export class CliSource implements FugaroSource {
       log: this.#log,
       clock: this.#clock,
       firstFrameBudgetMs: this.#options.firstFrameBudgetMs ?? FIRST_FRAME_BUDGET_MS,
+      operation: feed.operation,
+      ...(feed.gate === undefined ? {} : { gate: feed.gate }),
     })
     this.#feeds.set(key, stream)
     // The listener is what makes the map mean "live": it is also called
@@ -479,6 +591,55 @@ export class CliSource implements FugaroSource {
       if (this.#feeds.get(key) === stream) this.#feeds.delete(key)
     })
     return stream
+  }
+
+  /**
+   * subscribeLive is **idempotent for the same arguments while a feed is live**
+   * (the contract `FugaroSource.subscribeLive` states). The surface is
+   * `invoke`-only, so the Live screen reaches `live.watch` once per poll; a
+   * stream per call would be a `fugaro watch` child per poll, and nothing would
+   * ever stop them until `close()`.
+   */
+  subscribeLive(args: ValidatedArguments): LiveFeed {
+    const plan = this.#plan('live.watch', args)
+    return this.#live(plan.argv.join('\u0000'), plan, { operation: 'live.watch' })
+  }
+
+  /**
+   * subscribeGraph is the graph's live feed (`graph --watch --json`, CG9b), and
+   * it goes through `#live` with everything else that streams: **the argv is the
+   * key**, so a poll with the same scope is answered by the child that is
+   * already running, and the feed counts toward `MAX_LIVE_FEEDS` beside the
+   * `watch` feeds -- the ceiling is a ceiling on children, and a graph stream is
+   * a child like any other.
+   *
+   * What it adds is the ordering rule of `FugaroSource.subscribeGraph`, which is
+   * the gate below: the console draws the newest document it has been given, and
+   * a document that has already been superseded is not drawn at all.
+   */
+  subscribeGraph(args: ValidatedArguments): LiveFeed {
+    const plan = this.#plan('graph.watch', args)
+    return this.#live(plan.argv.join('\u0000'), plan, { operation: 'graph.watch', gate: new GraphStreamGate() })
+  }
+
+  /**
+   * stopGraphWatch stops the graph feed these arguments name -- the same key
+   * `subscribeGraph` built, so it stops the child that is running and not a
+   * second one -- and forgets it, so a later subscription starts a fresh child
+   * rather than handing back a stopped stream.
+   *
+   * It is idempotent and never a refusal: a feed that is not there is the state
+   * the caller asked for. It is deliberately narrower than `subscribeGraph`
+   * rather than a general "stop everything": a screen leaving the Graph tab must
+   * not stop the Live screen's `watch` child, so what is stopped is named by the
+   * arguments and nothing else.
+   */
+  async stopGraphWatch(args: ValidatedArguments): Promise<void> {
+    const key = this.#plan('graph.watch', args).argv.join('\u0000')
+    const feed = this.#feeds.get(key)
+    if (feed === undefined) return
+    this.#feeds.delete(key)
+    await feed.stop()
   }
 
   showBudget(args: ValidatedArguments): Promise<Snapshot> {
@@ -563,9 +724,8 @@ export class CliSource implements FugaroSource {
    * argument at all -- the whole argv is the spawn row's, `--all --json` -- and
    * like the stored view above its child asks nothing of the host: the
    * declarations are the caller's own database node, read through the same
-   * store and the same ADC, so this read succeeds with
-   * `FUGARO_CREDENTIALS_SERVICE_URL` set where `coordinatorShow`'s host read
-   * refuses. */
+   * store and the same ADC, so this read needs no published credentials service
+   * where `coordinatorShow`'s host read needs the one its project publishes. */
   coordinatorIntents(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('coordinator.intents', args)
   }
@@ -577,7 +737,7 @@ export class CliSource implements FugaroSource {
    * project flags main-process state settles -- and like the declarations read
    * above its child asks nothing of the host: the marks and the audit trail are
    * the caller's own database node, read through the same store and the same
-   * ADC, so this read succeeds with `FUGARO_CREDENTIALS_SERVICE_URL` set. **The
+   * ADC, so this read needs no credentials service of any kind. **The
    * subset is the command's** -- `argv` is not in it (D1476) -- so nothing this
    * process does can widen or narrow what a screen is shown. */
   managedStatus(args: ValidatedArguments): Promise<Snapshot> {
@@ -940,15 +1100,23 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     injected ?? ((installation: BoundInstallation): Promise<CliSource> => sourceFor(installation, options))
   let bound: { readonly key: string; readonly source: CliSource } | null = null
   let pending: { readonly key: string; readonly source: Promise<CliSource> } | null = null
-  const feeds = new Map<string, LiveFeed>()
+  /**
+   * feeds is the live subscriptions this surface handed out, keyed by `feedKey`.
+   * Each entry names the **binding** it was made for, because an entry can belong
+   * to the binding that is being *built* rather than the one being dropped: a
+   * subscription is registered before any source exists (`lazyFeed`), so the
+   * first `resolve()` of a binding runs with that binding's own entries already
+   * here (see `resolve`).
+   */
+  const feeds = new Map<string, { readonly binding: string; readonly feed: LiveFeed }>()
 
   /**
    * planReads holds the last `plan status` read per (binding, argv) -- the
    * promise itself, so a read still in flight is shared -- with the console
    * clock of the moment it finished, `null` while it runs. It is cleared wherever
-   * `feeds` is: both are answers about the binding that is being dropped, and a
-   * cached plan graph for a directory the console has stopped showing is the
-   * same defect as a live feed for one.
+   * the caches of a dropped binding are: both are answers about the binding that
+   * is being dropped, and a cached plan graph for a directory the console has
+   * stopped showing is the same defect as a live feed for one.
    */
   const planReads = new Map<string, { readonly reading: Promise<Snapshot>; at: number | null }>()
 
@@ -1040,7 +1208,17 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     // that was already being probed).
     const previous = bound
     bound = null
-    feeds.clear()
+    // The feeds of the binding that is going, and **only** those. An entry for
+    // the binding being built is a subscription that arrived before its source
+    // existed (`lazyFeed`), and clearing it would leave that feed's own stop
+    // looking for an entry that is not there: the child would run on with
+    // nothing holding it (H6 -- a `graph --watch` child outliving the Graph tab).
+    // The keys themselves cannot be reused across bindings -- `feedKey` carries
+    // the installation -- so this is about the *same* installation's entries
+    // surviving the first build of the binding they were registered for.
+    for (const [entryKey, entry] of feeds) {
+      if (entry.binding !== key) feeds.delete(entryKey)
+    }
     planReads.clear()
     graphReads.clear()
     graphScopes.clear()
@@ -1092,24 +1270,61 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   })
 
   /**
-   * lazyFeed wraps one subscription. It is deliberately small: the three
-   * listeners attach once the source exists (nothing in this console calls them
-   * yet -- the surface is `invoke`-only and `live.watch` is a poll), and
-   * `current`/`stop` are the two the handler uses.
+   * lazyFeed wraps one subscription, and the caller names which subscription it
+   * is (`subscribeLive` or `subscribeGraph`) rather than this function choosing:
+   * the two are different children with different contracts, and the only thing
+   * they share is that both are reached asynchronously and polled.
+   *
+   * It is deliberately small: the three listeners attach once the source exists
+   * (nothing in this console calls them yet -- the surface is `invoke`-only and
+   * both feeds are polls), and `current`/`stop` are the two the handler uses.
    *
    * Every `current()` asks the bound source for the feed again rather than
-   * keeping the first stream it was handed. `CliSource.subscribeLive` answers
-   * the same stream while it is live and drops one that has *ended*, so the
-   * poll after a `watch` child exited (or was evicted past `MAX_LIVE_FEEDS`)
-   * starts a fresh child; a stream held here would be polled dead forever.
+   * keeping the first stream it was handed. Both subscription methods answer the
+   * same stream while it is live and drop one that has *ended*, so the poll after
+   * a child exited (or was evicted past `MAX_LIVE_FEEDS`) starts a fresh child; a
+   * stream held here would be polled dead forever.
+   *
+   * **`endedFloorMs` holds that re-subscription to a cadence, for a feed that has
+   * ended.** A child that exits at once -- a scope its own CLI refuses, no
+   * database, no bucket -- leaves a refusal and no stream at all, and the poll
+   * that finds it gone would otherwise start another child on every tick and open
+   * the project's cloud again to be refused again. The answer the feed gave is
+   * kept with the console clock of the moment it ended, and a call inside the
+   * floor is answered with it. `null` is the live feed's rule: the `watch` child
+   * is wanted on every poll, and a feed that has gone is a feed the screen is
+   * owed back.
    */
-  const lazyFeed = (args: ValidatedArguments): LiveFeed => {
+  const lazyFeed = (subscribe: (source: CliSource) => LiveFeed, endedFloorMs: number | null): LiveFeed => {
     let real: LiveFeed | null = null
     let attaching: Promise<LiveFeed> | null = null
+    /** the answer the feed in hand gave, and when it ended -- `null` while it
+     * lives, which is what makes the floor below about a feed that is *gone*. */
+    let answering: Promise<Snapshot> | null = null
+    let endedAt: number | null = null
+    /** endedAnswer is the answer a feed that has ended left, for as long as the
+     * floor holds it: `null` means this call is due a child. */
+    const endedAnswer = (): Promise<Snapshot> | null => {
+      if (endedFloorMs === null || endedAt === null || answering === null) return null
+      return nowMs() - endedAt < endedFloorMs ? answering : null
+    }
     const attach = (): Promise<LiveFeed> => {
       attaching = resolve().then((source) => {
-        real = source.subscribeLive(args)
-        return real
+        const feed = subscribe(source)
+        // A source answers the **same stream** for the same key while it is live
+        // (`CliSource.subscribeGraph`), and this runs on every poll: what is
+        // watched once per stream is the stream's own end. Registered per call,
+        // the listener below would grow that stream's set by one a second for as
+        // long as the tab is open, and every one of them would run when the child
+        // finally ended.
+        if (feed === real) return feed
+        real = feed
+        answering = null
+        endedAt = null
+        feed.onEnded(() => {
+          endedAt = nowMs()
+        })
+        return feed
       })
       return attaching
     }
@@ -1133,7 +1348,13 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       onChange: (listener) => defer((feed) => feed.onChange(listener)),
       onNotice: (listener) => defer((feed) => feed.onNotice(listener)),
       onEnded: (listener) => defer((feed) => feed.onEnded(listener)),
-      current: async (): Promise<Snapshot> => (await attach()).current(),
+      current: async (): Promise<Snapshot> => {
+        const held = endedAnswer()
+        if (held !== null) return held
+        const feed = await attach()
+        answering = feed.current()
+        return answering
+      },
       stop: async (): Promise<void> => {
         if (real !== null) {
           await real.stop()
@@ -1190,16 +1411,93 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     subscribeLive(args: ValidatedArguments): LiveFeed {
       // One feed object per (installation, arguments) while it is live, which is
       // the idempotency `FugaroSource.subscribeLive` states. The key is the
-      // active installation's id and the argument object: the same arguments
-      // under a different installation are legitimately a different feed.
+      // active installation's id and the arguments that reach a word of the
+      // child's argv (`keyedArguments`): the same arguments under a different
+      // installation are legitimately a different feed, and an argument the child
+      // is never asked is not part of the child at all.
       const installation = deps.installation()
       if (installation === null) throw noInstallation()
-      const key = `${installation.id}\u0000${JSON.stringify(sortedArguments(args))}`
+      const key = feedKey('live.watch', installation.id, args)
       const existing = feeds.get(key)
-      if (existing !== undefined) return existing
-      const feed = lazyFeed(args)
-      feeds.set(key, feed)
+      if (existing !== undefined) return existing.feed
+      const feed = lazyFeed((source) => source.subscribeLive(args), null)
+      feeds.set(key, { binding: bindingKey(installation), feed })
       return feed
+    },
+    /**
+     * subscribeGraph is `subscribeLive`'s shape over the graph's own child, and
+     * it differs in three ways, all of them the read above's rather than the
+     * `watch` feed's:
+     *
+     *   - **the scope is admitted here**, on `graphScopes` alone and before
+     *     `resolve`: an id no previous answer of this installation listed is
+     *     refused with `NO_GRAPH_SCOPE` with no binary probed and no child
+     *     spawned (F21). The feed does **not** teach new scopes and does not need
+     *     to: a live feed is opened for a scope a document already listed, and
+     *     `all` -- the selector, not a member -- is admitted without being
+     *     listed. What the CLI itself rejects inside an admitted scope is its own
+     *     refusal, with its own sentence, on the frame or on the child's exit.
+     *   - **no cadence while the child lives, and `graph.read`'s floor once it has
+     *     died.** A floor exists to keep a *read* from spawning once per poll, and
+     *     a live feed is one child for as long as it is wanted -- the thing that
+     *     bounds it is `MAX_LIVE_FEEDS` on the source below. But a child that
+     *     exits at once (a scope its own CLI refuses, no database, no bucket) is
+     *     not a stream that can be polled: the poll starts the next child, so
+     *     without a floor the Graph tab would open the project's cloud once a
+     *     second to be refused again, where `graph.read` beside it asks once a
+     *     minute. So a feed that has **ended** holds the answer it left for
+     *     `GRAPH_READ_MIN_INTERVAL_MS`, per scope (`lazyFeed`'s `endedFloorMs`),
+     *     and the tab is answered with the refusal it already has.
+     *   - **no checkout is required**, exactly as `graphRead` requires none: the
+     *     stream reads the project's stored view through the caller's own
+     *     credential, from wherever the child runs.
+     *
+     * The key is the installation and the arguments **that reach a word of the
+     * child's argv** (`keyedArguments`), as above, so a poll with the same scope
+     * is answered by the feed that is already live. `visible` is deliberately
+     * not part of it: it reaches no argv, so it decides whether the child runs
+     * rather than which child it is -- and the two calls this surface is asked
+     * for differ by exactly that argument, the poll (`{source}`) and the stop
+     * (`{source, visible: false}`). Keyed on it, the stop would look for a feed
+     * that does not exist, answer nothing, and leave the running child alive
+     * (H6).
+     */
+    subscribeGraph(args: ValidatedArguments): LiveFeed {
+      const installation = deps.installation()
+      if (installation === null) throw noInstallation()
+      const scope = typeof args['source'] === 'string' ? args['source'] : GRAPH_SCOPE_ALL
+      if (scope !== GRAPH_SCOPE_ALL && !(graphScopes.get(bindingKey(installation))?.has(scope) ?? false)) {
+        throw new SourceRefusal(NO_GRAPH_SCOPE)
+      }
+      const key = feedKey('graph.watch', installation.id, args)
+      const existing = feeds.get(key)
+      if (existing !== undefined) return existing.feed
+      const feed = lazyFeed((source) => source.subscribeGraph(args), GRAPH_READ_MIN_INTERVAL_MS)
+      feeds.set(key, { binding: bindingKey(installation), feed })
+      return feed
+    },
+    /**
+     * stopGraphWatch stops the feed these arguments name, and the act is
+     * **forgetting it as well as stopping it**: the entry leaves the map here, so
+     * the next `subscribeGraph` for the same scope builds a new child rather than
+     * handing back the stopped one. The stop itself is the source's own (H6): the
+     * child's `SIGTERM`, then `SIGKILL` after the grace period, the shutdown
+     * every other long-lived child of this console gets.
+     *
+     * It never refuses and never throws. An arguments object that names no feed
+     * -- a second stop, a scope whose feed the ceiling already evicted, a console
+     * whose installation has just gone -- is the state the caller asked for: a tab
+     * that is not on screen must not be able to fail, and there is nothing here
+     * for it to fail at.
+     */
+    stopGraphWatch: async (args) => {
+      const installation = deps.installation()
+      if (installation === null) return
+      const key = feedKey('graph.watch', installation.id, args)
+      const entry = feeds.get(key)
+      if (entry === undefined) return
+      feeds.delete(key)
+      await entry.feed.stop()
     },
     showBudget: (args) => read('budget.show', (source) => source.showBudget(args)),
     runReport: (args) => read('spend.report', (source) => source.runReport(args)),
@@ -1390,6 +1688,24 @@ function sortedArguments(args: ValidatedArguments): Record<string, unknown> {
 }
 
 /**
+ * feedKey is the key one bound live feed is held under: the installation, and
+ * the arguments that reach a word of the child's argv (`keyedArguments`).
+ *
+ * **An argument that reaches no word is left out of it, and that is what makes a
+ * stop find the feed a poll started.** `graph.watch`'s `visible` says whether
+ * the child runs rather than what it is asked, so the renderer's poll
+ * (`{source}`) and its stop (`{source, visible: false}`) name one child; keyed on
+ * the raw arguments they would be two, the stop would find nothing, and the
+ * `graph --watch` child would outlive the Graph tab (H6).
+ *
+ * The installation is part of the key because the same arguments under another
+ * installation are legitimately another child.
+ */
+function feedKey(operation: SpawnOperationName, installationId: string, args: ValidatedArguments): string {
+  return `${installationId}\u0000${JSON.stringify(sortedArguments(keyedArguments(operation, args)))}`
+}
+
+/**
  * parseStdout reads a one-shot read's stdout. Every one-shot command in the
  * console's set prints ONE document indented over several lines
  * (`console/docs/json-contract.md` section 9.2: a line parser is right only for
@@ -1536,20 +1852,36 @@ function logEntryOf(document: JSONObject): JSONObject | null {
 }
 
 /**
- * LiveStream is `LiveFeed` over a supervised child: the sidecar's frames become
- * snapshots, its notices accumulate onto the next snapshot (so a degraded mode's
- * sentence travels with the document a screen draws), and an end that is not a
- * stop is a refusal the screen can show.
+ * LiveStreamDeps is what a feed is built from: the supervisor's own four
+ * arguments, the first-frame budget `current()` uses, and the two facts the
+ * graph's feed adds.
+ *
+ * `operation` is the operation the stream belongs to, and it is here for the
+ * refusals: a feed that ends before its first document, or that says nothing
+ * within the budget, is refused **in the name of the read the screen asked
+ * for** -- `live.watch` for the Live screen's child and `graph.watch` for the
+ * graph's -- so the sentence on screen names the command that is actually
+ * running (`SourceRefusal` is shown verbatim).
+ *
+ * `gate` is the feed's own rule on its frames, absent for a feed that draws
+ * every one it is given; see `GraphStreamGate` for the one that does not.
  */
-/** LiveStreamDeps is what a feed is built from: the supervisor's own four
- * arguments plus the first-frame budget `current()` uses. */
 interface LiveStreamDeps {
   readonly spawner?: ChildSpawner | undefined
   readonly log?: SpawnLogWriter | undefined
   readonly clock?: (() => Date) | undefined
   readonly firstFrameBudgetMs?: number | undefined
+  readonly operation: OperationName
+  readonly gate?: GraphStreamGate | undefined
 }
 
+/**
+ * LiveStream is `LiveFeed` over a supervised child: the sidecar's frames become
+ * snapshots, its notices accumulate onto the next snapshot (so a degraded mode's
+ * sentence travels with the document a screen draws), and an end that is not a
+ * stop is a refusal the screen can show. `deps.gate`, where a feed has one, is
+ * the rule a frame must pass to become a snapshot at all (`GraphStreamGate`).
+ */
 class LiveStream implements LiveFeed {
   #latest: Snapshot | null = null
   #notices: Notice[] = []
@@ -1557,6 +1889,10 @@ class LiveStream implements LiveFeed {
   #ended: FeedEnd | null = null
   readonly #sidecar: Sidecar
   readonly #budget: number
+  readonly #operation: OperationName
+  /** #gate is the feed's rule on its frames, `null` for a feed that draws every
+   * one it is given. */
+  readonly #gate: GraphStreamGate | null
   readonly #change = new Set<(snapshot: Snapshot) => void>()
   readonly #noticeListeners = new Set<(notice: Notice) => void>()
   readonly #endedListeners = new Set<(end: FeedEnd) => void>()
@@ -1573,13 +1909,20 @@ class LiveStream implements LiveFeed {
 
   constructor(plan: SpawnPlan, deps: LiveStreamDeps) {
     this.#budget = deps.firstFrameBudgetMs ?? FIRST_FRAME_BUDGET_MS
+    this.#operation = deps.operation
+    this.#gate = deps.gate ?? null
     this.#sidecar = startSidecar(plan, {
       onFrame: (frame) => {
+        // The gate is asked first, so a refused frame is not a snapshot at all:
+        // it is not counted, it reaches no listener and it answers no
+        // `current()`. A screen therefore cannot draw a document this feed has
+        // already superseded, whichever door it used.
+        if (this.#gate !== null && !this.#gate.keep(frame.document)) return
         this.#snapshots += 1
         const snapshot: Snapshot = {
           document: frame.document as JSONDoc,
           receivedAt: frame.receivedAt,
-          sequence: frame.sequence,
+          sequence: this.#snapshots,
           day: frame.day,
           rolled: frame.rolled,
           notices: this.#notices,
@@ -1608,7 +1951,7 @@ class LiveStream implements LiveFeed {
         const waiting = [...this.#waiting]
         this.#waiting.clear()
         for (const waiter of waiting) {
-          waiter.reject(refusalFrom('watch', end.sentence ?? 'the live feed ended before its first document'))
+          waiter.reject(refusalFrom(this.#operation, end.sentence ?? 'the live feed ended before its first document'))
         }
         for (const listener of [...this.#endedListeners]) listener(finished)
       },
@@ -1656,7 +1999,7 @@ class LiveStream implements LiveFeed {
     if (this.#latest !== null) return Promise.resolve(this.#latest)
     if (this.#ended !== null) {
       return Promise.reject(
-        refusalFrom('watch', this.#ended.sentence ?? 'the live feed ended before its first document'),
+        refusalFrom(this.#operation, this.#ended.sentence ?? 'the live feed ended before its first document'),
       )
     }
     return new Promise<Snapshot>((resolve, reject) => {
@@ -1673,7 +2016,7 @@ class LiveStream implements LiveFeed {
       }
       timer = setTimeout(() => {
         this.#waiting.delete(waiter)
-        reject(refusalFrom('watch', `no document arrived within ${Math.round(this.#budget / 1000)}s`))
+        reject(refusalFrom(this.#operation, `no document arrived within ${Math.round(this.#budget / 1000)}s`))
       }, this.#budget)
       this.#waiting.add(waiter)
     })

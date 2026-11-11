@@ -145,16 +145,20 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		// the one function the deployer, the launcher and the runner compute
 		// the axis with): the profile's no-account job, whose name, service
 		// account and mounts are byte for byte what this deployer built before
-		// accounts existed (D9), plus one per account the profile lists. One
-		// of those values is no Claude account at all — the project's own
-		// Anthropic API key (config.AnthropicKeyAccount), which a profile may
-		// list and which config.ValidClaudeAccountRef admits there — and its
-		// job is deployed like any other value of the axis: it mounts no token
-		// (projectAccountMount) and its review-only variant is the one the
-		// credentials service serves the key from (D1417, F17). Nothing
-		// refuses it: the value carries no credential of the installation's,
-		// so there is no mount to get wrong, and a job this deployer skipped
-		// is a review the launcher would ask Cloud Run for and never find.
+		// accounts existed (D9), plus one per account the profile lists. Two
+		// of those values are no Claude account at all — the project's own
+		// Anthropic API key (config.AnthropicKeyAccount) and the project's
+		// provider key (config.ProviderKeyAccount), which a profile may list
+		// and which config.ValidClaudeAccountRef admits there — and each
+		// one's job is deployed like any other value of the axis: it mounts no
+		// token (projectAccountMount) and its review-only variant is the one
+		// the credentials service serves that credential from (D1417, F17).
+		// Nothing refuses them: neither value carries a credential of the
+		// installation's, so there is no mount to get wrong, and a job this
+		// deployer skipped is a review the launcher would ask Cloud Run for
+		// and never find. The loop is the axis itself, so the two are
+		// deployed without this function naming them: it builds one job per
+		// value config.ProjectJobAccounts yields, whichever value that is.
 		//
 		// Each account's job gets its own copy of the profile's mounts — the
 		// token of one account must never ride on another's job — its own copy
@@ -639,12 +643,14 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 // when the profile lists "default" (D5), which is the same rule that function
 // states — a profile that lists no account mounts no Claude token anywhere.
 //
-// The account axis's one non-account value (config.AnthropicKeyAccount, the
-// project's own Anthropic API key) is one entry of config.ProjectJobAccounts
-// like any other, and the arm below is where it is answered: its job mounts no
-// token, because the credential is the platform's own — the container lookup
-// this function is otherwise made of would answer it with
-// claude_accounts.<sentinel>.allow_data_to, a key config.ValidateClaudeAccounts
+// The account axis's non-account values (config.AnthropicKeyAccount, the
+// project's own Anthropic API key, and config.ProviderKeyAccount, the project's
+// provider key) are entries of config.ProjectJobAccounts like any other, and
+// the arm below is where they are answered: their jobs mount no token, because
+// each credential is held outside the installation — the platform's own key,
+// and the credentials service's provider key — and the container lookup this
+// function is otherwise made of would answer them with
+// claude_accounts.<value>.allow_data_to, a key config.ValidateClaudeAccounts
 // refuses.
 //
 // The mount is refused, rather than granted, when the installation creates no
@@ -659,18 +665,20 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 // that keeps the two rules from drifting apart, and the one that fires if
 // either stops holding.
 func projectAccountMount(lc *localcfg.Config, profile string, pr config.JobProfile, account string, secretEnv, env map[string]string) error {
-	// The axis's one non-account value is the project's own Anthropic API key
-	// (config.AnthropicKeyAccount): it names a credential the platform already
-	// holds, so its job mounts no token and the container lookup below is not
-	// its question — the account's own logical name has no container to find,
-	// and its answer would prescribe a claude_accounts key
-	// config.ValidateClaudeAccounts refuses. The arm stands ahead of the
-	// lookup for that reason, as it did when this value was refused outright:
-	// the lookup's answer is a remedy nobody can carry out. Its review-only
-	// variant mounts nothing at all (reviewVariant), which is what makes the
-	// value deployable: the class's calls are the credentials service's, and
-	// the key it serves them with never rides a job (D1417, O1).
-	if account == config.AnthropicKeyAccount {
+	// The axis's non-account values are the project's own Anthropic API key and
+	// the project's provider key (config.AnthropicKeyAccount,
+	// config.ProviderKeyAccount): each names a credential held outside the
+	// installation's own mounts, so its job mounts no token and the container
+	// lookup below is not its question — the value's logical name has no
+	// container to find, and the lookup's answer would prescribe a
+	// claude_accounts key config.ValidateClaudeAccounts refuses. The arm stands
+	// ahead of the lookup for that reason, as it did when these values were
+	// refused outright: the lookup's answer is a remedy nobody can carry out.
+	// Each one's review-only variant mounts nothing at all (reviewVariant),
+	// which is what makes the values deployable: the class's calls are the
+	// credentials service's, and the credentials it serves them with never ride
+	// a job (D1417, O1).
+	if config.AxisNonAccountValue(account) {
 		return nil
 	}
 	if account == "" && !slices.Contains(pr.ClaudeAccounts, config.DefaultClaudeAccount) {

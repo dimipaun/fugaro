@@ -36,7 +36,7 @@ import (
 //
 // The delete is the one step here no other command reaches (spec §4 step 2),
 // and it is the step the whole file is written around: the secret's ID is named
-// in the confirmation before it goes, the command says plainly that deleting a
+// in the sentence the run prints before it goes, the command says plainly that deleting a
 // secret does not revoke the token at the provider (D866), and a delete that
 // fails puts the local config back behind a compare-and-swap rather than
 // leaving a file whose declaration is gone while the credential is still there.
@@ -54,8 +54,8 @@ import (
 // refused outright, whatever the walk found: the refs and the records that check
 // reads are the session's own, so a clean read is its own word for what origin
 // carries (D1172, managed spec §4.1), and the way out is the same removal in the
-// person's own terminal window, where it prints every reference it finds and asks
-// to be confirmed.
+// person's own terminal window, where it prints every reference it finds before
+// the removal below it goes ahead.
 //
 // The local config half is internal/yamledit's edit and the settings commands'
 // shared write path, as add's is (D847); the converge is add's own runner,
@@ -94,12 +94,12 @@ Removing the declaration also deletes the secret claude-oauth-token-<name>
 through Secret Manager's own delete. That delete cannot be undone — Secret
 Manager keeps no grace period for a secret — and the copy of the credential
 left behind is the token at the provider. The secret's ID is named in the
-confirmation before it goes, and the command says plainly that deleting the
+sentence this run prints before it goes, and the command says plainly that deleting the
 secret does not revoke the token at the provider: it stays valid until it
 expires or you revoke it in Anthropic's own console, which no command here
 reaches.
 
-Then it converges, in the same command and behind the same confirmation: the
+Then it converges, in the same command and after that one sentence: the
 policy node the account was published in, the job set and this checkout's
 repository root, through the stages fugaro update runs.
 
@@ -127,12 +127,20 @@ carries.`,
 // anything is written: the profile whose list loses the name, whether the
 // declaration and the secret go with it, and the profiles that still list the
 // account afterwards. Resolving it first is what lets every refusal fire before
-// the file is touched, and what lets the confirmation name the secret's ID.
+// the file is touched, and what lets the sentence this run prints name the
+// secret's ID.
 type accountsRmPlan struct {
-	name     string
-	profile  string
-	entry    bool // the profile's list loses the name
-	drop     bool // the declaration, its secret and its job go too
+	name    string
+	profile string
+	entry   bool // the profile's list loses the name
+	drop    bool // the declaration, its secret and its job go too
+	// typed is the account's own entry in the credentials block: the one
+	// `accounts add --type claude-oauth` declares beside the account, which is
+	// what lets a craft or a pool spend the name. It goes with the account —
+	// an entry left behind is a credential no service holds that a pool of
+	// this very file is still allowed to list, which is the state add's own
+	// --type refusal exists to keep out of the file (accounts_add.go).
+	typed    bool
 	allow    []string
 	secretID string
 	rest     []string // the profiles that still list the account after the edit
@@ -166,9 +174,10 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	command := accountsRmCommand(plan)
 
 	// The repositories this project has enrolled, read before the gate and
-	// before the confirmation: one whose committed fugaro.yaml names the account
-	// is a reference this command cannot edit, and it is what the gate refuses a
-	// session on and what the confirmation warns a person about (spec §4 step 2,
+	// before the sentence this run prints: one whose committed fugaro.yaml names
+	// the account is a reference this command cannot edit, and it is what the
+	// gate refuses a session on and what that sentence warns a person about
+	// (spec §4 step 2,
 	// managed spec §4.2). The marker is read once and decides both what the walk
 	// answers about a checkout this machine read here (accountsRmRepos) and the
 	// gate's own call below.
@@ -195,10 +204,10 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 		return accountsRmSession(marker, plan, command)
 	}
 
-	// The one reference this command may not answer for, before the person
-	// answers the confirmation and not after it: what it warns about is a break
-	// the removal makes, and the confirmation is the moment that break can still
-	// be declined.
+	// The one reference this command may not answer for, before the write and
+	// not after it: what it warns about is a break the removal makes, and it is
+	// said in the same breath as the sentence that names what goes, since
+	// nothing here waits for an answer to either (D1540).
 	accountsRmWarn(cmd, plan, read)
 
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
@@ -222,7 +231,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 		}
 	}
 
-	// The secret, which is the step the confirmation above named the ID for.
+	// The secret, which is the step the sentence above named the ID for.
 	// It runs before the converge and after the write, in spec §4's own order
 	// (step 2 removes, step 3 converges): a run launched in the window between
 	// them finds the published policy still naming an account whose secret is
@@ -267,6 +276,7 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 		name:     name,
 		profile:  want,
 		entry:    want != "",
+		typed:    accountsRmTyped(lc, name),
 		allow:    slices.Clone(lc.ClaudeAccounts[name].AllowDataTo),
 		secretID: gcp.ProjectSecretID(lc.Name, config.ClaudeAccountSecret(name)),
 	}
@@ -294,6 +304,21 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 		}
 		next = n
 	}
+	// The typed half goes with the declaration, on the same bytes: the entry the
+	// account was declared as is the account's, and a name left in the
+	// credentials block by this removal is a credential whose secret and job are
+	// gone that a pool would still be admitted to list.
+	if plan.drop && plan.typed {
+		if err := accountsRmTypedNamed(lc, name); err != nil {
+			return accountsRmPlan{}, nil, nil, err
+		}
+		n, err := yamledit.RemoveSeqItemByKeyWithOptions(next, []string{"credentials"}, "name", name,
+			yamledit.RemoveOptions{DropEmptyParents: true})
+		if err != nil {
+			return accountsRmPlan{}, nil, nil, userErr("credentials.%s: %v", pluginwire.Printable(name), err)
+		}
+		next = n
+	}
 	// The edit is read back strictly before it is written, as add's is: a file
 	// this Fugaro cannot load is a file the owner's very next command refuses,
 	// and this command is the one that can leave one — a declaration removed
@@ -303,6 +328,46 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 		return accountsRmPlan{}, nil, nil, userErr("the local config this would write does not read back: %v", err)
 	}
 	return plan, next, after, nil
+}
+
+// accountsRmTyped is whether this account carries a typed half: the entry in
+// the credentials block that names it as the credential a craft or a pool may
+// spend. Only the type this pair's own token step serves is one `accounts add
+// --type` wrote, so an entry of another type is a declaration this command did
+// not make and is left where it is.
+func accountsRmTyped(lc *localcfg.Config, name string) bool {
+	for _, c := range lc.Credentials {
+		if c.Name == name && c.Type == config.CredentialTypeClaudeOAuth {
+			return true
+		}
+	}
+	return false
+}
+
+// accountsRmTypedNamed refuses an account whose typed entry is still named: the
+// entry goes with the account, and a craft's access or a pool's members left
+// pointing at a credential no run can serve is the state the --type guard in
+// `accounts add` exists to keep out of the file. It is the refusal
+// `accounts pool rm` makes for a pool a craft names, at the other end of the
+// same name.
+func accountsRmTypedNamed(lc *localcfg.Config, name string) error {
+	var named []string
+	for _, craft := range config.CraftNames {
+		if lc.Crafts.Of(craft).Access == name {
+			named = append(named, "crafts."+craft+".access")
+		}
+	}
+	for _, p := range lc.Pools {
+		if slices.Contains(p.Members, name) {
+			named = append(named, "pools."+pluginwire.Printable(p.Name)+".members")
+		}
+	}
+	if len(named) == 0 {
+		return nil
+	}
+	where := strings.Join(named, " and ")
+	return userErr("credentials.%s is still named by %s, so removing the account would leave it with nothing to spend: point it at another credential or pool first, then run this again; nothing was written",
+		pluginwire.Printable(name), where)
 }
 
 // accountsRmServing is the profiles that list the account, in the order every
@@ -386,7 +451,7 @@ type accountsRmReferrers struct {
 // session owns that checkout and can point such a ref at a commit that hides the
 // name, which makes a clean local read indistinguishable from a forged one.
 // accountsRmRules carries the refusal, and the owner's own run keeps the warning
-// and the confirmation: it is the owner's own checkout, and a checkout's
+// and the write: it is the owner's own checkout, and a checkout's
 // committed file is what the runs of the repository resolve their account from.
 //
 // The file is read through config.AgentOf and not through a resolved config:
@@ -591,9 +656,8 @@ func accountsRmCommittedYAML(ctx context.Context, dir, ref string) ([]byte, stri
 // record of the checkouts itself when that document could not be read, which is
 // every repository at once. It is a warning and never a block — that file is a
 // repository's and not this installation's, so the owner's own edit may not be
-// stopped by one this command cannot write — and it is printed while the
-// confirmation below can still be declined, because the break it describes is
-// one the removal makes.
+// stopped by one this command cannot write — and it is printed before the write
+// below, because the break it describes is one the removal makes.
 //
 // The session-only bucket is not read here: a session holding one was refused
 // by the gate before this point, and the owner's own run never fills it.
@@ -703,10 +767,9 @@ func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 	if len(refused) > 0 {
 		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
 	}
-	// YesOrTyped is the class of the confirmation this step is: the ordinary
-	// y/N the diff is answered with, and not a Typed step — the value D846
-	// reserves for a loosened ceiling is what the declaration's own rules
-	// already refuse here.
+	// YesOrTyped is the class this step is: the ordinary edit the diff
+	// describes, and not a Typed step — the value D846 reserves for a loosened
+	// ceiling is what the declaration's own rules already refuse here.
 	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
 	if err == nil {
 		return m, gate, nil
@@ -771,7 +834,7 @@ func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 // reads, so a check that writes its own answer is not a check (managed spec
 // §4.1), and the refusal says which documents those are rather than which one
 // was used. It is the only rule that fires for a session and no other path: the
-// owner reads the same buckets as warnings and a confirmation.
+// owner reads the same buckets as warnings, and the sentence the write prints.
 func accountsRmRules(plan accountsRmPlan, read accountsRmReferrers) (applied, refused []string) {
 	referrers, unread, state := read.referrers, read.unread, read.state
 	if plan.drop {
@@ -811,7 +874,7 @@ func accountsRmRules(plan accountsRmPlan, read accountsRmReferrers) (applied, re
 	// (512 runes, elided): a session that reads its refusal reads the two things
 	// it acts on, and the sentence the owner reads in full is the record.
 	if read.session {
-		refused = append(refused, "no read a coding agent's session makes is evidence about origin, so run `"+accountsRmCommand(plan)+"` in your own terminal window, where the same removal prints every reference it finds and asks you to confirm it: the committed fugaro.yaml it reads is the copy at refs/remotes/origin/<ref> (else the branch of the same name) in a checkout the session owns, the record of which checkouts this machine holds is a document the session writes, and so is the installation's own list of enrolled repositories — so whether a repository still names "+pluginwire.Printable(plan.name)+" is a value this step cannot resolve at plan time in a session, and an unresolved value is a refusal and never a pass (managed spec §4.1)")
+		refused = append(refused, "no read a coding agent's session makes is evidence about origin, so run `"+accountsRmCommand(plan)+"` in your own terminal window, where the same removal prints every reference it finds before it goes ahead: the committed fugaro.yaml it reads is the copy at refs/remotes/origin/<ref> (else the branch of the same name) in a checkout the session owns, the record of which checkouts this machine holds is a document the session writes, and so is the installation's own list of enrolled repositories — so whether a repository still names "+pluginwire.Printable(plan.name)+" is a value this step cannot resolve at plan time in a session, and an unresolved value is a refusal and never a pass (managed spec §4.1)")
 	}
 	if len(referrers) == 0 && len(unread) == 0 && len(read.unresolved) == 0 && state == "" && !read.session {
 		applied = append(applied, "no repository this machine holds a checkout of names "+pluginwire.Printable(plan.name)+" in the committed agent.oauth_token of its fugaro.yaml")
@@ -819,12 +882,13 @@ func accountsRmRules(plan accountsRmPlan, read accountsRmReferrers) (applied, re
 	return applied, refused
 }
 
-// accountsRmWhat is the one confirmation's text (spec §4 step 2): every change
+// accountsRmWhat is the sentence the run prints before it makes any of them
+// (spec §4 step 2): every change
 // this command makes — the profile entry, the declaration, the secret it
 // deletes, the publish and the deploy behind them — and, because a deleted
 // secret is the change the provider knows nothing about, the sentence that says
 // what deleting it does NOT do (D866). The secret's ID is here for the same
-// reason: it is named before it goes, so the person answering knows which
+// reason: it is named before it goes, so whoever reads the run knows which
 // credential this is.
 func accountsRmWhat(plan accountsRmPlan) string {
 	parts := []string{}
@@ -842,6 +906,10 @@ func accountsRmWhat(plan accountsRmPlan) string {
 	}
 	parts = append(parts, fmt.Sprintf("remove claude_accounts.%s (its allow_data_to was [%s])",
 		pluginwire.Printable(plan.name), strings.Join(plan.allow, ", ")))
+	if plan.typed {
+		parts = append(parts, fmt.Sprintf("remove credentials.%s (the typed entry the account was declared with)",
+			pluginwire.Printable(plan.name)))
+	}
 	parts = append(parts,
 		fmt.Sprintf("delete the secret %s (Secret Manager's own delete, which cannot be undone here)", plan.secretID),
 		fmt.Sprintf("deleting the secret does not revoke the token at the provider: %s's token stays valid until it expires or you revoke it in Anthropic's own console, which no command here reaches",
@@ -961,7 +1029,7 @@ func accountsRmConverge(ctx context.Context, cmd *cobra.Command, after *localcfg
 		return err
 	}
 	// The publish line is read off the node and never off the derivation the
-	// confirmation named: the derivation is what the publish would write, and a
+	// write announced: the derivation is what the publish would write, and a
 	// block that claimed the node had dropped the account without reading it
 	// would be the one sentence this command may not print.
 	allow, carried, why := accountsRmNode(ctx, after, plan.name)
@@ -1015,7 +1083,11 @@ func accountsRmReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string
 		row("profile", plan.profile, "profiles."+pluginwire.Printable(plan.profile)+".claude_accounts -= "+pluginwire.Printable(plan.name))
 	}
 	if plan.drop {
-		row("account", plan.name, "claude_accounts."+pluginwire.Printable(plan.name)+" removed, its allow_data_to was ["+strings.Join(plan.allow, ", ")+"]")
+		gone := "claude_accounts." + pluginwire.Printable(plan.name) + " removed, its allow_data_to was [" + strings.Join(plan.allow, ", ") + "]"
+		if plan.typed {
+			gone += ", and credentials." + pluginwire.Printable(plan.name) + " with it"
+		}
+		row("account", plan.name, gone)
 		// The account's name is the value column and the secret's ID opens the
 		// rest, as add's report has it: the ID is longer than that column, so
 		// naming it there would run into the sentence that says what happened to

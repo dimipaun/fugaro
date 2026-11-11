@@ -3,6 +3,7 @@ package runner
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -55,9 +56,33 @@ type planStep struct {
 // layer, and rigor.Known is false only for a run that never resolved one at
 // all (a hand-built one; every real run's bootstrapRigor answers).
 func (r *run) resolveLevels() error {
+	levels, err := r.resolveLevelsForcing(nil)
+	if err != nil {
+		return err
+	}
+	r.levels = levels
+	return nil
+}
+
+// resolveLevelsForcing is resolveLevels with levels forced on above the owner's
+// floor. It is the security escalation's re-resolution (security.go, D1507):
+// the run's diff matched a row of the list in force, so level 3 is required of
+// this run exactly as the owner's floor requires a level — the same input, so
+// the same refusals and the same Inserted answer, and the runner's plan then
+// carries the step.
+//
+// A forced level is raise-only (D1517): the layers' off-switches for it are
+// cleared rather than allowed to defeat it (forcedLevelsAreRaiseOnly below).
+//
+// It resolves and returns; it does not write the run's levels. A caller that
+// cannot go on with the answer — a refusal the floor's own requirement met, a
+// plan that would not hold it — leaves the run's levels where they are, which
+// is what "the escalation never fails the run" needs (F9). force is nil for
+// every ordinary resolution, which is then byte-for-byte resolveLevels.
+func (r *run) resolveLevelsForcing(force []policy.Level) (config.Levels, error) {
 	mode := r.reachedRigor()
 	if !rigor.Known(mode) {
-		return nil
+		return config.Levels{}, nil
 	}
 	// A shadow run resolves against the champion's coder: level 1's own
 	// answer is read off the coder's model (Agent.FirstLineOn), and the two
@@ -69,13 +94,20 @@ func (r *run) resolveLevels() error {
 	if r.shadow {
 		arm, r.cfg.Agent.Models.Coder = r.cfg.Agent.Models.Coder, r.championCoder
 	}
-	levels, warns, err := r.applyLevels(config.LevelInputs{
+	in := config.LevelInputs{
 		Mode:           mode,
 		Floor:          r.policy.ReviewFloor(mode),
 		Task:           r.spec.ReviewLevels,
 		Recipe:         r.rcp,
 		CatalogDefault: r.derived,
-	})
+	}
+	if len(force) > 0 {
+		// Cloned: ReviewFloor hands out the policy's own slice, and appending
+		// to it would write the forced levels into the merged policy.
+		in.Floor = append(slices.Clone(in.Floor), force...)
+		in.Config, in.Task = r.forcedLevelsAreRaiseOnly()
+	}
+	levels, warns, err := r.applyLevels(in)
 	if r.shadow {
 		r.cfg.Agent.Models.Coder = arm
 		if levels.L1.On && levels.L1.Model == r.championCoder {
@@ -89,10 +121,79 @@ func (r *run) resolveLevels() error {
 		r.d.Log.Warn("review levels: "+w.Message, "level", string(w.Level))
 	}
 	if err != nil {
-		return fmt.Errorf("review levels: %w", err)
+		return config.Levels{}, fmt.Errorf("review levels: %w", err)
 	}
-	r.levels = levels
+	return levels, nil
+}
+
+// forcedLevelsAreRaiseOnly is the configuration and the task block with review
+// level 3's off-switch cleared, for the escalation's forced resolution.
+//
+// The forced level is raise-only — D1517's rule for the escalation's row, and
+// the reason SC10's `security: false` changes nothing — so a layer's `none` for
+// level 3 is not a veto on it. D722 refuses a floored level a layer turned off,
+// and that refusal is the launcher's: it is raised at bootstrap, where the
+// person who wrote the task can still be told to fix it. At the escalation's
+// seams the launcher is gone and the run's own classification is what decides
+// (D1510), so the switch is cleared rather than allowed to defeat a requirement
+// the owner's list made. The escalation says so where it can be read: in the
+// log and in the record's own member (security.go).
+func (r *run) forcedLevelsAreRaiseOnly() (*config.Config, *config.ReviewLevels) {
+	cfg := *r.cfg
+	cfg.Agent.Levels.L3 = levelThreeNotOff(cfg.Agent.Levels.L3)
+	task := r.spec.ReviewLevels
+	if task == nil {
+		return &cfg, nil
+	}
+	block := *task
+	block.L3 = levelThreeNotOff(block.L3)
+	return &cfg, &block
+}
+
+// levelThreeOff reports whether a layer's level 3 block writes the level's
+// off-switch: `none: true`, or the literal `model: none`, which config's own
+// levelOff reads the same way.
+func levelThreeOff(l *config.LevelSetting) bool {
+	return l != nil && (l.Off || l.Model == config.NoneModel)
+}
+
+// levelThreeNotOff is l with that switch cleared, and l itself when it was not
+// off, so a layer that named the level a model still names it.
+func levelThreeNotOff(l *config.LevelSetting) *config.LevelSetting {
+	if !levelThreeOff(l) {
+		return l
+	}
+	out := *l
+	out.Off = false
+	if out.Model == config.NoneModel {
+		out.Model = ""
+	}
+	return &out
+}
+
+// buildPlan derives the run's plan from its recipe and the levels it has
+// resolved and writes it to the run. It is the one place the plan is built, so
+// the escalation's rebuild (security.go) and bootstrap's first build cannot
+// drift apart.
+func (r *run) buildPlan() error {
+	plan, err := r.planFor(r.levels)
+	if err != nil {
+		return err
+	}
+	r.plan = plan
 	return nil
+}
+
+// planFor is the plan the run's levels make of its recipe, checked. levels is
+// a parameter rather than r.levels because the escalation builds a candidate
+// plan from levels it has not committed to yet: a plan that does not hold them
+// must leave the run's own plan untouched.
+func (r *run) planFor(levels config.Levels) ([]planStep, error) {
+	plan := planOf(r.rcp, levels, r.cfg.Agent, r.spec.Overrides.ReviewRounds, r.reachedRigor())
+	if err := checkPlan(r.rcp, levels, plan); err != nil {
+		return nil, err
+	}
+	return plan, nil
 }
 
 // stepLevel is which review level a step kind belongs to, false for a kind no

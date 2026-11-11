@@ -159,6 +159,13 @@ var credentialEnv = map[string][]string{
 
 var credentialSecretEnv = map[string]string{gitprov.KindBitbucket: gitTokenEnv, gitprov.KindGitHub: githubAppKeyEnv}
 
+// contextDirDefault is the directory a build builds from when nothing names
+// another: the copied definition's own directory in the template's
+// /workspace, which is where CatalogDockerfileStep leaves the Dockerfile. A
+// catalog entry that names a context builds from its checkout instead, which
+// reaches the build step as _CONTEXT_DIR.
+const contextDirDefault = "/workspace/context"
+
 // BuildRequest is the Cloud Build request for s in project: images.CloudBuild
 // with its substitutions set, the credential step's secret and env chosen
 // by provider, the provider credential's version in availableSecrets, and
@@ -217,6 +224,11 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 		"_BUCKET":               s.Bucket,
 		"_SLUG":                 s.Slug,
 		"_PROJECT_LAYER_SHA256": s.ProjectLayerSHA256,
+		// The directory the build step builds from. A repository's own image
+		// renders its Dockerfile beside the checkout the source step made, so
+		// this is the template's default; a catalog entry that names a
+		// context sends its own directory instead.
+		"_CONTEXT_DIR": contextDirDefault,
 	}
 	switch s.GitProvider {
 	case gitprov.KindBitbucket:
@@ -500,6 +512,13 @@ func (b *Builder) Submit(ctx context.Context, s BuildSpec) (BuildResult, error) 
 // the messages here and in the result: a catalog build's request comes from
 // CatalogBuildRequest (catalog.go) and is submitted with it, so a
 // submission, its errors and its result cannot drift between the two paths.
+//
+// The result's Image is image with ":latest", which is what a build that
+// promotes leaves behind — except for a smoke-only request (noPush), where the
+// image is a reference somebody else published: appending a tag to it would
+// spell a reference the entry never named (ghcr.io/owner/image:1.2:latest), and
+// that string is what the caller prints before the wait (--no-wait) and when a
+// SUCCESS reports no digest.
 func (b *Builder) create(ctx context.Context, image string, req *cloudbuild.Build) (BuildResult, error) {
 	op, err := b.svc.Projects.Locations.Builds.Create(b.parent(), req).Context(ctx).Do()
 	if err != nil {
@@ -509,7 +528,11 @@ func (b *Builder) create(ctx context.Context, image string, req *cloudbuild.Buil
 	if err := json.Unmarshal(op.Metadata, &md); err != nil || md.Build == nil || md.Build.Id == "" {
 		return BuildResult{}, fmt.Errorf("Cloud Build accepted the build of %s but returned no build ID (operation %s)", image, op.Name)
 	}
-	return BuildResult{ID: md.Build.Id, Status: md.Build.Status, Image: image + ":latest", LogURL: md.Build.LogUrl}, nil
+	res := BuildResult{ID: md.Build.Id, Status: md.Build.Status, Image: image + ":latest", LogURL: md.Build.LogUrl}
+	if noPush(req) {
+		res.Image = image
+	}
+	return res, nil
 }
 
 // waitRetries and waitRetryBase bound Wait's retries of a failed status
@@ -537,10 +560,23 @@ func retryable(ctx context.Context, err error) bool {
 // terminal are the build statuses Wait stops at.
 var terminal = []string{"SUCCESS", "FAILURE", "INTERNAL_ERROR", "TIMEOUT", "CANCELLED", "EXPIRED"}
 
+// TerminalStatus reports whether status is one of those: the build is over,
+// whatever its outcome. Wait's two kinds of error are not one fact and a caller
+// that measures what a build spent has to tell them apart — a build that ended
+// FAILURE (or TIMEOUT, or CANCELLED) is finished, and its status says so, while
+// a status read that failed or a cancelled wait is a build that may still be
+// running, which is what Wait's own sentence says when it gives up. The status
+// of a result Wait returned with the first kind of error is the terminal one;
+// with the second it is the last one it read (or the empty status of a read
+// that never succeeded).
+func TerminalStatus(status string) bool { return slices.Contains(terminal, status) }
+
 // stepOutputs reads a finished build's step outputs: the build step's is
-// the candidate's pushed digest, and promote's says "superseded" when the
-// gate found a newer record, so latest stayed. ok is false without a
-// digest.
+// the candidate's pushed digest — for a catalog entry whose source is a
+// prebuilt image (config.SourceImage) the smoke step is the one that
+// reports, since that run has no build step — and promote's says
+// "superseded" when the gate found a newer record, so latest stayed. ok is
+// false without a digest.
 func stepOutputs(bd *cloudbuild.Build) (digest string, superseded, ok bool) {
 	if bd.Results == nil {
 		return "", false, false
@@ -555,7 +591,7 @@ func stepOutputs(bd *cloudbuild.Build) (digest string, superseded, ok bool) {
 			continue
 		}
 		switch v := strings.TrimSpace(string(data)); st.Id {
-		case "build":
+		case "build", catalogSmokeStepID:
 			if digestRE.MatchString(v) {
 				digest = v
 			}
@@ -566,6 +602,17 @@ func stepOutputs(bd *cloudbuild.Build) (digest string, superseded, ok bool) {
 	return digest, superseded, digest != ""
 }
 
+// noPush reports whether bd is a prebuilt entry's run: the smoke-only request
+// is the only one without a step that pushes an image, and promote is that
+// step. Such a run smokes a reference somebody else published — it moves no
+// tag and has no latest of its own — so the reference it names is the image
+// and appending ":latest" to it would name a different one.
+func noPush(bd *cloudbuild.Build) bool {
+	return !slices.ContainsFunc(bd.Steps, func(st *cloudbuild.BuildStep) bool {
+		return st != nil && st.Id == "promote"
+	})
+}
+
 // Wait polls build id every poll (zero means 10s) until it finishes. A
 // build that finishes other than SUCCESS comes back with an error naming
 // its status and log URL. Image and Digest are set only on SUCCESS, from
@@ -573,7 +620,9 @@ func stepOutputs(bd *cloudbuild.Build) (digest string, superseded, ok bool) {
 // the build's pushed-image results (a SUCCESS without either leaves Digest
 // empty). A transient failure to read the status is retried (see
 // waitRetries); when Wait gives up, the build may still be running, and
-// the error says so.
+// the error says so — the returned result's Status is terminal exactly when
+// the build really ended (TerminalStatus), which is how a caller tells the
+// two failures apart.
 func (b *Builder) Wait(ctx context.Context, id string, poll time.Duration) (BuildResult, error) {
 	if poll == 0 {
 		poll = 10 * time.Second
@@ -610,7 +659,7 @@ func (b *Builder) Wait(ctx context.Context, id string, poll time.Duration) (Buil
 			if digest, superseded, ok := stepOutputs(bd); ok {
 				res.Digest, res.Superseded = digest, superseded
 				res.Image = bd.Substitutions["_IMAGE"]
-				if !superseded {
+				if !superseded && !noPush(bd) {
 					res.Image += ":latest"
 				}
 			} else if bd.Results != nil && len(bd.Results.Images) > 0 {

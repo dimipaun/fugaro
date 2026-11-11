@@ -28,14 +28,16 @@ func TestToolsTableParses(t *testing.T) {
 			t.Errorf("%s is %q, want critical", name, tier[name])
 		}
 	}
-	// The harnesses of design section 6, present but unsupported by the runner.
+	// The harnesses of design section 6 are gone (image setup skill IS4): the
+	// base carries Claude Code alone among the coding agents, and a row for
+	// one of the seven would fail the base's own CI smoke.
 	for _, name := range []string{"codex", "gemini", "pi", "qwen", "opencode", "goose", "crush"} {
-		if tier[name] != "harness" {
-			t.Errorf("%s is %q, want harness", name, tier[name])
+		if _, present := tier[name]; present {
+			t.Errorf("%s is still a row (tier %q): the base carries Claude Code alone", name, tier[name])
 		}
 	}
 	// graphify (design section 6, 2026-10-13 update) is a tool, not a coding
-	// agent harness, but gets the same presence-only tier as the harnesses.
+	// agent harness: it is the harness tier's one row now.
 	if tier["graphify"] != "harness" {
 		t.Errorf("graphify is %q, want harness", tier["graphify"])
 	}

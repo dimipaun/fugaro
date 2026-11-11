@@ -16,7 +16,7 @@ import (
 var commentFragmentPairRE = regexp.MustCompile(
 	"(?s)\\*\\*before\\*\\*[^\\n]*:\\n\\n```\\n(.*?)```\\n\\n\\*\\*after\\*\\*:\\n\\n```\\n(.*?)```")
 
-// TestCommentFragmentBlocksMatchTheirWorkflowFile: the three comment-only
+// TestCommentFragmentBlocksMatchTheirWorkflowFile: the four comment-only
 // fragments under docs/pending-workflows/ are exact-text instructions. Each
 // quotes a block of an applied workflow file and the block that replaces it, and
 // a person splices them by hand, because no agent run may edit

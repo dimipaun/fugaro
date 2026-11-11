@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // ls reads every run's three objects on every call, and a listing covers the
@@ -545,7 +546,9 @@ func TestRunsLsOversizedObjectIsThisRunsRow(t *testing.T) {
 		return ""
 	}
 	// warn is the one warning line the listing printed for that run: the
-	// corrupt object is the run's, and no other run's.
+	// corrupt object is the run's, and no other run's. The line names the run
+	// by its ending, like every other human surface (spec.md §1, D1705), so
+	// the head of the line carries the ending and not the whole stamp.
 	warn := func(t *testing.T, stderr string) string {
 		t.Helper()
 		var named []string
@@ -554,8 +557,8 @@ func TestRunsLsOversizedObjectIsThisRunsRow(t *testing.T) {
 				named = append(named, line)
 			}
 		}
-		if len(named) != 1 || !strings.Contains(named[0], ids[0]+":") {
-			t.Fatalf("stderr = %q, want one warning naming %s and no other run", stderr, ids[0])
+		if len(named) != 1 || !strings.Contains(named[0], "/"+task.ShortRun(ids[0])+": ") {
+			t.Fatalf("stderr = %q, want one warning naming run %s and no other run", stderr, task.ShortRun(ids[0]))
 		}
 		return named[0]
 	}

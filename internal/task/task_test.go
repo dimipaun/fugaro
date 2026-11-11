@@ -3,6 +3,7 @@ package task
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -547,45 +548,50 @@ func TestOAuthTokenValidate(t *testing.T) {
 	}
 }
 
-// TestOAuthTokenAdmitsTheProjectsAnthropicKey: a task's oauth_token admits the
-// account axis's one value that is not an account at all
-// (config.AnthropicKeyAccount, the project's own Anthropic API key), and it is
-// admitted as its own value rather than by loosening the shape rule: a review
-// launch names it as the run's own credential (D1417), so the spec a review is
-// stored as carries it, and the runner resolves the class's model path from
-// exactly this field (internal/runner's checkReviewClassModelPath). The schema
-// halves of the same rule are schemas/task.schema.json's oauth_token property
-// (its anyOf's second branch), and its own test pins the literal to this
-// constant.
+// TestOAuthTokenAdmitsTheProjectsAnthropicKey: a task's oauth_token admits each
+// of the account axis's values that is not an account at all
+// (config.AnthropicKeyAccount, the project's own Anthropic API key, and
+// config.ProviderKeyAccount, the project's provider key AK6a added beside it),
+// and each is admitted as its own value rather than by loosening the shape
+// rule: a review launch names it as the run's own credential (D1417), so the
+// spec a review is stored as carries it, and the runner resolves the class's
+// model path from exactly this field (internal/runner's
+// checkReviewClassModelPath). The schema half of the same rule is
+// schemas/task.schema.json's oauth_token property (the const branches of its
+// anyOf), and its own test pins each literal to these constants.
 //
-// Mutation (run, restore): drop the case — every review launch's own spec is
-// refused here, after it was paid for, and the refusal names the run's
-// credential as a name that is "not a Claude account name".
+// Mutation (run, restore): drop a case — every review launch on that credential
+// has its own spec refused here, after it was paid for, and the refusal names
+// the run's credential as a name that is "not a Claude account name".
 func TestOAuthTokenAdmitsTheProjectsAnthropicKey(t *testing.T) {
 	ok := Spec{Version: 1, RunID: "20261009-101010-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
-	// The admission can only be this case's: the sentinel is outside the shape
-	// rule every other name in this field is held to, which is the whole reason
-	// it is spelled the way it is.
-	if config.ClaudeAccountNameRE.MatchString(config.AnthropicKeyAccount) {
-		t.Fatalf("%s matches ClaudeAccountNameRE, so this test proves nothing about the sentinel's own case", config.AnthropicKeyAccount)
+	for _, value := range []string{config.AnthropicKeyAccount, config.ProviderKeyAccount} {
+		t.Run(value, func(t *testing.T) {
+			// The admission can only be this case's: each value is outside the
+			// shape rule every other name in this field is held to, which is the
+			// whole reason both are spelled the way they are.
+			if config.ClaudeAccountNameRE.MatchString(value) {
+				t.Fatalf("%s matches ClaudeAccountNameRE, so this test proves nothing about its own case", value)
+			}
+			s := ok
+			s.OAuthToken = value
+			if err := s.Validate(); err != nil {
+				t.Errorf("oauth_token %s: %v", value, err)
+			}
+			// The value is the constant and not a prefix of one: a name carrying
+			// it as a stem is still held to the shape rule that refuses it.
+			for _, name := range []string{value + "-review", "x" + value} {
+				s := ok
+				s.OAuthToken = name
+				if err := s.Validate(); err == nil {
+					t.Errorf("oauth_token %q: accepted, want refused: the field admits the value itself and no name built from it", name)
+				}
+			}
+		})
 	}
+	// And the value the constants are built from is unaffected: a legal Claude
+	// account name beside them still passes.
 	s := ok
-	s.OAuthToken = config.AnthropicKeyAccount
-	if err := s.Validate(); err != nil {
-		t.Errorf("oauth_token %s: %v", config.AnthropicKeyAccount, err)
-	}
-	// The value is the constant and not a prefix of one: a name carrying it as
-	// a stem is still held to the shape rule that refuses it.
-	for _, name := range []string{config.AnthropicKeyAccount + "-review", "x" + config.AnthropicKeyAccount} {
-		s := ok
-		s.OAuthToken = name
-		if err := s.Validate(); err == nil {
-			t.Errorf("oauth_token %q: accepted, want refused: the field admits the sentinel itself and no name built from it", name)
-		}
-	}
-	// And the value the constant is built from is unaffected: a legal Claude
-	// account name beside it still passes.
-	s = ok
 	s.OAuthToken = "acme-personal"
 	if err := s.Validate(); err != nil {
 		t.Errorf("acme-personal: %v", err)
@@ -1568,6 +1574,111 @@ func TestFollowUpOfRefusesAnEmptyRun(t *testing.T) {
 	} {
 		if _, err := Parse([]byte("{" + head + `,"follow_up_of":` + doc + "}")); err != nil {
 			t.Errorf("Parse refused %s: %v", doc, err)
+		}
+	}
+}
+
+// TestTaskDecodesTheLaunchLimits: the four per-launch chain limits ride
+// task.json's overrides (L2, D1041, D1056). They are additive inside
+// version 1 and every one of them is optional, so the two things that
+// matter are that a task carrying all four decodes and survives a round
+// trip — which is what a --retry of a stored chain launch does — and that
+// a task carrying none stays byte-identical to one written before the
+// members existed, because a chain begins only where a limit was set and
+// an older runner must keep reading every other task.
+//
+// Mutation (drop omitempty from one member): the second half fails, since
+// the document then carries a null or a zero the older runner refuses.
+func TestTaskDecodesTheLaunchLimits(t *testing.T) {
+	const head = `"version":1,"run_id":"20261108-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it"`
+	const doc = `"overrides":{"max_usd":12.5,"max_tokens":900000,"max_time":"3h","max_review_rounds":7}`
+	s, err := Parse([]byte("{" + head + "," + doc + "}"))
+	if err != nil {
+		t.Fatalf("Parse refused the launch limits: %v", err)
+	}
+	check := func(who string, o Overrides) {
+		t.Helper()
+		switch {
+		case o.MaxUSD == nil || *o.MaxUSD != 12.5:
+			t.Errorf("%s: overrides.max_usd = %s, want 12.5", who, limitString(o.MaxUSD))
+		case o.MaxTokens == nil || *o.MaxTokens != 900000:
+			t.Errorf("%s: overrides.max_tokens = %s, want 900000", who, limitString(o.MaxTokens))
+		case o.MaxTime != "3h":
+			t.Errorf("%s: overrides.max_time = %q, want 3h", who, o.MaxTime)
+		case o.MaxReviewRounds == nil || *o.MaxReviewRounds != 7:
+			t.Errorf("%s: overrides.max_review_rounds = %s, want 7", who, limitString(o.MaxReviewRounds))
+		}
+	}
+	check("decoded", s.Overrides)
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse refused the round trip: %v", err)
+	}
+	check("round-tripped", back.Overrides)
+
+	plain, err := Parse([]byte("{" + head + "}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkEmpty := func(who string, o Overrides) {
+		t.Helper()
+		if o.MaxUSD != nil || o.MaxTokens != nil || o.MaxTime != "" || o.MaxReviewRounds != nil {
+			t.Errorf("%s: a task with no limits carries max_usd=%s max_tokens=%s max_time=%q max_review_rounds=%s",
+				who, limitString(o.MaxUSD), limitString(o.MaxTokens), o.MaxTime, limitString(o.MaxReviewRounds))
+		}
+	}
+	checkEmpty("decoded", plain.Overrides)
+	data, err = json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"version":1,"run_id":"20261108-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{}}`
+	if string(data) != want {
+		t.Errorf("a task with no limits marshalled to %s, want %s", data, want)
+	}
+}
+
+// limitString prints an optional limit for a failure message without
+// dereferencing a nil.
+func limitString[T any](p *T) string {
+	if p == nil {
+		return "unset"
+	}
+	return fmt.Sprint(*p)
+}
+
+// TestTaskRejectsANegativeLimit: every one of the four is a cap, so the
+// value that is not a cap is the value refused — zero included, for the
+// reason the existing dollar and round members refuse it: zero would read
+// as "no limit" to a reader that has one meaning for absence (the member
+// is not there) and another for a number, and it would spend a chain's
+// whole budget on its first run (D1041). A wall time is refused for the
+// same reason a total_timeout is: a duration that parses but is not
+// positive names no clock.
+func TestTaskRejectsANegativeLimit(t *testing.T) {
+	head := `"version":1,"run_id":"20261108-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it"`
+	for _, tc := range []struct{ name, doc, want string }{
+		{"a negative dollar cap", `{"max_usd":-1}`, "overrides.max_usd"},
+		{"a zero dollar cap", `{"max_usd":0}`, "overrides.max_usd"},
+		{"a negative token cap", `{"max_tokens":-1}`, "overrides.max_tokens"},
+		{"a zero token cap", `{"max_tokens":0}`, "overrides.max_tokens"},
+		{"a negative wall time", `{"max_time":"-5m"}`, "overrides.max_time"},
+		{"a zero wall time", `{"max_time":"0s"}`, "overrides.max_time"},
+		{"a wall time that is not a duration", `{"max_time":"soon"}`, "overrides.max_time"},
+		{"a negative review-round cap", `{"max_review_rounds":-1}`, "overrides.max_review_rounds"},
+		{"a zero review-round cap", `{"max_review_rounds":0}`, "overrides.max_review_rounds"},
+	} {
+		_, err := Parse([]byte("{" + head + `,"overrides":` + tc.doc + "}"))
+		if err == nil {
+			t.Errorf("%s: Parse accepted the spec", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: refusal %q does not mention %s", tc.name, err, tc.want)
 		}
 	}
 }

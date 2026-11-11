@@ -1,6 +1,6 @@
 # The independent senior review as a cloud job: implementation plan
 
-**Nothing here is approved.** This plan exists so that the work is ordered and reviewable.
+**Status as of 2026-11-10: done (CSR17 and CSR18 moved to api-key-review); see [docs/status.md](../status.md) for the current table.** This plan exists so that the work is ordered and reviewable.
 [reconciliation.md](reconciliation.md) §4's decisions **are all answered** — D891, D892, D893 and D894
 with the options named below, and the owner's seven rulings of 2026-11-01 (**O1–O7**) amending the ones
 they touch. An answered decision is not an
@@ -659,7 +659,7 @@ on `/v1/messages`.**
 - **The read-only token, fetched and never handed in (D893 (c)).** The variant carries the
   credentials-service URL in its environment (`FUGARO_CREDENTIALS_SERVICE_URL`, the same variable
   `internal/cli/run.go`'s `credentialsServiceLaunchEnv` sets today), and the job's git provider is
-  installed from `github.ServiceTokens` (`internal/gitprov/github/apptoken.go:405`) — the keyless
+  installed from `github.ServiceTokens` (`internal/gitprov/github/apptoken.go:434`) — the keyless
   source already in the tree — so the token is **fetched by name from the service at the moment it is
   needed and refreshed by the `Token(ctx, minValid)` contract**. Nothing is handed in: no per-launch
   secret is created, and the execution environment carries no token value. The request carries the
@@ -1197,7 +1197,7 @@ that is still the check's step 3.
   (§2's rule, §6.4's note): the constant and its comment, `TestRecipesSkewRefusesReviewJobOnAnOldImage`
   (whose `0.19.0` row is a refused one now and whose admitted row is `"0.20.0"`, derived image and clone
   alike), two new tests — `TestReviewJobSinceHasAReleaseBullet`, the reader this constant never had,
-  since `docs/release.md:227`'s checklist bullet is what holds it to a release and every sibling
+  since `docs/release.md:231`'s checklist bullet is what holds it to a release and every sibling
   `…Since` constant has that test and this one did not, and `TestReviewJobSinceCitationsPointAtItsOwnLine`,
   because the citation checks resolve a line against its file and never against its subject, which is
   how this constant's own citations here went stale in the change that moved it — the same file's
@@ -1788,7 +1788,7 @@ the service opt-in, and they stay correct the day it is not.
       **new** member no installation's block carries yet. Left there, the default above would admit the
       installation's account on **every** opted-in installation whose local config says otherwise: an owner
       who wrote `verifier_accounts: []` — the clear `VerifierAccountsEffective` honours
-      (`internal/localcfg/localcfg.go:1402`) and the publisher keeps — would have the route switched back
+      (`internal/localcfg/localcfg.go:1428`) and the publisher keeps — would have the route switched back
       on at the service, and the published node and the service would disagree in the one direction
       CSR15's reader sees: the reader refuses every fix round on an installation whose service admits the
       account. So the **carry writes that one member from the effective list** — the owner's list as it is,
@@ -1804,7 +1804,7 @@ the service opt-in, and they stay correct the day it is not.
       `credentialsServiceBlock` already sets (`internal/cli/init.go:2622`, called at `:2581`: the update
       writes the block itself — its presence is the fact `fugaro run` reads — rather than asking the owner
       to type a URL) and the rule `VerifierAccountsEffective` states
-      (`internal/localcfg/localcfg.go:1402`: a written list is the owner's, `[]` included). **The gate is
+      (`internal/localcfg/localcfg.go:1428`: a written list is the owner's, `[]` included). **The gate is
       the effective list, not the local field**, and the difference is not academic: a silent local field
       is not a project that names nothing. `fugaro update` runs on any operator's machine, and a
       teammate's config — or the owner's second laptop — predates the key, so a write gated on the local
@@ -1961,7 +1961,7 @@ verify call is admitted for nobody until this lands.
   - **Which identity.** The **one** account the installation's published `verifier_accounts` names — the
     list `env.policy.read` already returns once per run (`policyReadOnce`,
     `internal/cli/launch_budget.go:226`/`:239`, `projectpolicy.Policy.VerifierAccounts`,
-    `internal/projectpolicy/policy.go:323`), which is the same list the service's own environment is
+    `internal/projectpolicy/policy.go:324`), which is the same list the service's own environment is
     rendered from and therefore the only list whose caller the service admits. **A list of none refuses**
     ("this installation names no verifier, and a fix round is not launched on a verdict nobody verified")
     and **a list of two refuses** ("two identities, and the launcher's verify call is one caller"): a
@@ -2065,7 +2065,7 @@ every brief until the head it demands can be read — which is why §6.5's opera
     asked — GitHub's `Repo(repo, appID)` (`internal/gitprov/github/serviceread.go:168`, which also carries
     the App the mint is signed as) and Bitbucket's `Repo(repo)` (`internal/gitprov/bitbucket/service.go:197`,
     which has no App at all) — and that is the same shape the coordinator's person read already uses
-    (`ee/coordinator/cli/coordinator.go:1145`, `:1162`).
+    (`ee/coordinator/cli/coordinator.go:1147`, `:1164`).
   - **The three values the mint needs, and each has one source.** The **service URL** from the
     installation's published `credentials_service` block (`localcfg.Config.CredentialsService`), never
     an environment variable — F23's rule for a person's read, and the same value `reviewVerifier`
@@ -2078,7 +2078,7 @@ every brief until the head it demands can be read — which is why §6.5's opera
     `internal/credsvc/server.go:335`, for the GitHub mint; `VerifyReadCaller`,
     `internal/credsvc/auth.go:890`, for the Bitbucket one). **The mint is written here rather than
     imported**: the tree's person mint is the coordinator's
-    (`ee/coordinator/cli/coordinator.go:1380`), and
+    (`ee/coordinator/cli/coordinator.go:1382`), and
     `ee/coordinator/cli` imports `internal/cli` (`coordinator_intents.go:16`), so this package cannot
     import it — the two either duplicate the small mint or share one lifted into `internal/`.
   - **A Bitbucket repository takes the same path** with its own mint (`/v1/bitbucket/read-token`), and a
@@ -2088,9 +2088,9 @@ every brief until the head it demands can be read — which is why §6.5's opera
     (`internal/gitprov/gitprov.go:344`) and still compared against the artifact's own `head_sha` by
     `VerifyReviewArtifact`; the replay refusal, the "a head the forge cannot be asked for refuses the
     brief" rule and `reviewPRHeadSeam` (the tests' seam, `:87`) all stay as CSR10 left them. **No new
-    grant is needed for this read**: the read mint's permissions are the coordinator's read-only set
-    (contents and pull requests read) and the caller is a person the installation already lists, so the
-    task adds no Terraform, no IAM and no operator step.
+    grant is needed for this read**: the read mint's permissions are a set of its own
+    (`github.PersonReadTokenPermissions`: contents, pull requests and metadata, read), and the caller is a
+    person the installation already lists, so the task adds no Terraform, no IAM and no operator step.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestReviewHead|TestFixBrief' -count=1`.
 - **Tests:** `TestReviewHeadReadsThroughTheReadMint` (a stand-in credentials service over `httptest`: the
   call is `POST /v1/github/read-token`, it names the repository and the project's App ID, it carries the
@@ -2273,7 +2273,7 @@ these levels**: their own release books their files, and the only 0.20.0 file th
   verifier account**: it is a resource the same apply creates beside the credentials service, and the same
   `fugaro update` writes its address into the local config — so the account is **created and
   named by one command**, and the owner's list, written or empty, stays the owner's (the keep rule,
-  `internal/localcfg/localcfg.go:1402`). **The credentials service's own opt-in is not what gates that**:
+  `internal/localcfg/localcfg.go:1428`). **The credentials service's own opt-in is not what gates that**:
   CSR14's guard is `credentials_service_on = var.credentials_service != null`
   (`deploy/terraform/gcp/modules/installation/credentials.tf:25`), and while that expression is unchanged,
   **what it evaluates to is a premise another work stream is moving** — `docs/credentials-service/default-on.md`
@@ -2412,7 +2412,7 @@ recommendation). **Why, in one line:** the 0.19.0 release in flight carries none
 release that carries the flip has to carry the tasks that make the flip work — the placement, the
 registration, the verifier and the switch's own removal. Two consequences, settled together as the item
 said: the release note's `### For operators` sentence is written for that release (§6.5), and
-**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:227`'s bullet verifies it against the release
+**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:231`'s bullet verifies it against the release
 whose runner can serve the launch, `internal/cli/recipes_skew.go:467` holds it, and a wrong value refuses
 too late (a launch names a variant the installation has not deployed, or a runner that cannot serve one)
 or too early (an installation that holds both stays blocked). **The move waited for CSR11's flip**:
@@ -2532,7 +2532,7 @@ the job environment's alone (`internal/runner/policy.go:151`, where `""` becomes
 node replaces the ceiling key by key, so an installation that publishes `budget.mode: observe` (or
 `enforce`) turns the gateway on for a review run even when the job it was deployed with carries no mode at
 all (`internal/infra/spec.go:1266` sets the deploy-time mode only when it is not `off`, and
-`internal/localcfg/localcfg.go:622` is where "no budget block" means `off`). The state that breaks is
+`internal/localcfg/localcfg.go:648` is where "no budget block" means `off`). The state that breaks is
 therefore **an installation that has configured no budget anywhere** — no deploy-time mode and no node
 mode — which is a legal and quietly common state: nothing in the credentials-service work or in this
 section requires an owner to have a budget, and the service's own opt-in was never conditioned on one.
@@ -2575,6 +2575,9 @@ plan's sense:
 a red step, a file list, named tests and a person's gate where a person's gate is what the work needs —
 **and §6.7 names a tenth and an eleventh, `CSR17` and `CSR18`, the api-key review, which are NOT in
 0.20.0** and are therefore outside the levels, the critical path and the shared-files table below.
+**The api-key review's own plan carries them as three tasks** — `CSR17` split into **AK6a** and **AK6b**,
+and `CSR18` as **AK7** — and the reconciliation of **2026-11-09** with this subsection is written in §6.7
+itself, below.
 **An answer is not an approval** (README.md): every task above still waits for the owner to approve it,
 and the tasks that were written because an item was answered are no more started than the ones that were
 already here.
@@ -2604,8 +2607,8 @@ this subsection names.
 **What the tree can hold and mint today, verified rather than assumed — this is the slice's whole cost.**
 The review class's candidates are the pairing's **ONE** account at tier A and nothing else, with no
 fallback even where the policy's `fallback` would allow one (`reviewCandidates`,
-`internal/credsvc/cascade.go:105`), and that account is a **Claude OAuth account**: `ReviewJobAccount.Account`
-is the Claude account's name (`internal/credsvc/review.go:112`), the axis is built from `claude_accounts`
+`internal/credsvc/cascade.go:116`), and that account is a **Claude OAuth account**: `ReviewJobAccount.Account`
+is the Claude account's name (`internal/credsvc/review.go:121`), the axis is built from `claude_accounts`
 (`internal/config/claude_accounts.go`) and its secrets are the `claude-oauth-token` family. The service's
 model credentials are exactly two kinds: the Claude OAuth tokens at **tier A** and the Anthropic API key at
 **tier B** (`config.AnthropicSecret`, `internal/credsvc/bundle.go:677`), and the two the cascade selects are
@@ -2623,6 +2626,19 @@ else (`upstreamKindAnthropic`, `internal/credsvc/forward.go:66`). So the api-key
 somebody forgot to flip — **the service has nowhere to hold the key, no pairing that can name one, no
 candidate list that may offer one and no upstream to send it to**, and the runner has no path that would
 carry a provider's auth shape or base URL. That is why it is a slice and not a paragraph of CSR13.
+**One thing in the paragraph above has moved since it was written, and it is not the provider apparatus:**
+the api-key review's **first** half — the project's own **Anthropic** key as the review class's credential
+— has since been designed, approved and **merged** (`docs/api-key-review`'s AK4 and AK5), so
+`ReviewJobAccount.Account` may now be `config.AnthropicKeyAccount`, the sentinel that names the project's
+own key and is **not** an account, and the class may be served by the tier-B entry. The sentence above
+about the account being a Claude OAuth account is read with that in mind. **Two of the paragraph's own line
+citations moved with that merge and are corrected here** — `reviewCandidates` is `cascade.go`'s **116** and
+`ReviewJobAccount.Account` is `review.go`'s **121** — and **this plan's other citations of those two symbols
+were not swept**: they still carry the lines they had before the merge, and the symbol is what to read
+them by. **Everything else there stands and the provider review is still a slice:** `CredentialKey`'s
+closed set still has no provider-key kind,
+`reviewCandidates` still offers exactly one credential, and no upstream carries a provider's base URL or
+auth shape.
 
 **CSR17. The service can hold and serve a provider key for a review caller (SEC). — NOT IN 0.20.0.**
 **Depends on:** nothing in 0.20.0's levels, and it is **after** the OAuth review path only in the sense
@@ -2642,6 +2658,26 @@ section that is not a credential, and both are a change to a contract another re
 rule: a field never changes meaning). **Red step (sketched):** a service whose bundle holds a provider key
 and whose review pairing names a provider account serves a review caller with **that** key — a test that
 cannot pass today because the pairing refuses the account and the candidate list has nothing to offer.
+
+**Amended 2026-11-09, by the reconciliation `docs/api-key-review` owed to this subsection, and the reading
+that survives is this sketch's.** Two things are settled there and both are read as corrections of this
+task rather than of its intent:
+
+- **The "second axis" is right, and the plan that read this task as six service files was the loser.** The
+  account-axis value **is the admission unit** — the published `accounts` block is keyed by it and the
+  service's own admission intersects a repository's child with it — so a provider key needs **a value of its
+  own** beside `config.AnthropicKeyAccount`, which is a change to `internal/credsvc/review.go`'s own type and
+  to the readers of the axis in `internal/config`, `internal/projectpolicy`, `internal/localcfg`,
+  `internal/infra`, `internal/cli`, `internal/task`, the task schema and the project module. That work is
+  `docs/api-key-review`'s **AK6a**, and the candidate list, the bundle key and the forward above are its
+  **AK6b** — so this subsection's `CSR17` is two tasks there rather than one, and the "**6–8**" above
+  covered the service half only. **Files, as it landed there:** AK6a's 24 and AK6b's 9, listed in
+  `docs/api-key-review`'s implementation-plan §2, which books every one of them.
+- **The design point is answered: the bundle holds the base URL and the auth shape** — the owner's ruling of
+  **2026-11-09** (**D1418**), as **additive optional fields**, so an older bundle still decodes and no
+  format version moves. A provider the bundle does not describe **fails closed**, and the whole
+  reconciliation, with its conditions and its findings, is `docs/api-key-review`'s reconciliation and
+  [security-review.md](../api-key-review/security-review.md).
 **SEC flag:** yes — this is a model credential the service attaches to a caller's request. **Reviewer
 tier:** SEC — opus, with the independent review mandatory. **Commit:** `credsvc: the review class can serve
 a provider key`.
@@ -2652,7 +2688,16 @@ on:** `CSR17` (the service side first: a runner path to a service that cannot se
 is the provider's, not the service's Anthropic forward), `internal/runner/agentenv.go` +
 `agentenv_test.go` (the gateway variables a provider's model list needs), `internal/gateway/gateway.go`
 (the upstream kind and the auth shape a provider call carries) and `internal/runner/runner.go`'s one call
-site if it moves. **Red step (sketched):** a review run served by a provider key reaches the provider's
+site if it moves. **Two clauses of that list are dropped, by the reconciliation of 2026-11-09**
+(`docs/api-key-review`'s implementation-plan §6 item 9, where this task is **AK7**): `internal/gateway/gateway.go`
+was booked on its own condition — "the upstream kind and the auth shape a provider call carries" — and with
+**D1418** both are the **bundle's**, so the service builds the provider's call from the document it holds and
+the gateway's upstream kind does not move; `internal/runner/runner.go`'s call site goes with it, because the
+one call site `agentenv.go` already has is the call site. **The files are therefore
+`internal/runner/routing.go`, `internal/runner/routing_internal_test.go`, `internal/runner/agentenv.go` and
+`internal/runner/agentenv_test.go` — `internal/runner` and nothing else**, which is the property the whole
+answer rests on: the provider's base URL and auth shape never leave the service's bundle, so the runner
+names no provider endpoint and no host. **Red step (sketched):** a review run served by a provider key reaches the provider's
 endpoint with the provider's auth shape, and `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` is **rewritten**
 rather than deleted — the refusal is 0.20.0's answer and this task is the one that makes it a path, so the
 test keeps its name and gains the second direction. **SEC flag:**
@@ -2663,4 +2708,10 @@ served by a provider key`.
 **What this subsection does not do.** It does not move `reviewJobSince` (that is the release slot's, §6.4),
 it does not change 0.20.0's `### For operators` sentence (§6.5), and it does not add a level, an edge or a
 shared-files row: the two tasks above are a later release's, and their own release writes the sentence that
-names them.
+names them. **Nor does it decide anything about them that the api-key review's own plan now carries**
+(2026-11-09): the reconciliation above, the conditions **the author's own security pass** — which is not
+the independent review the SEC tier asks for — places on AK6a, AK6b and AK7, the fact that **AK10 is a
+release precondition of AK6b** there, and the finding that the OpenRouter half's **served** path waits on **Check 50** — a live check neither plan
+has run, and the tree refuses every tier-C candidate until it has — all live in `docs/api-key-review`. This
+subsection's job was to name the slice, order it and leave it outside 0.20.0, and it still does exactly
+that.

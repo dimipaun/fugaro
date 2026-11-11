@@ -50,14 +50,6 @@ var pairMeLookup = func(ctx context.Context, lc *localcfg.Config) (string, error
 // repository holds keychain.Fake, and no test touches a real keychain.
 var pairKeychain = keychain.System
 
-// pairTerminal is where the *interactive* pairing reads the code the operator
-// types, as opposed to the stdin line a --json caller hands the command. In
-// production the two are the same file, and the seam exists so a test can hold
-// them apart: the failure it guards against — a --json run that asks the
-// operator's terminal something — is invisible otherwise, and it is the
-// failure a console driving this command would hang on.
-var pairTerminal = func(cmd *cobra.Command) io.Reader { return cmd.InOrStdin() }
-
 // pairPollInterval is how often the wait re-reads the phone's request node.
 // The wait is a person scanning a code and typing eight characters, so a poll
 // this coarse costs nothing and keeps the loop a plain read with database
@@ -115,7 +107,9 @@ func newPairCmd() *cobra.Command {
 			"\n" +
 			"Its own state is the local config: the project, its database URL and\n" +
 			"Identity Toolkit API key, and the signer account. --json streams the\n" +
-			"pairing as one JSON object per line on stdout for a console to read.",
+			"pairing as one JSON object per line on stdout for a console to read;\n" +
+			"the console has asked the operator for the code itself, and the command\n" +
+			"takes the code back as one line on stdin.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runPair(cmd, o) },
 	}
@@ -322,16 +316,14 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	}
 	fingerprint := token.Fingerprint(key)
 
-	codeIn := cmd.InOrStdin()
 	if o.asJSON {
 		if err := ev.emit(pairEvent{Event: pairEventCode, UID: uid}); err != nil {
 			return err
 		}
 	} else {
-		fmt.Fprintf(out, "the phone shows %s\ntype that code: ", fingerprint)
-		codeIn = pairTerminal(cmd)
+		fmt.Fprintf(out, "the phone shows %s\n", fingerprint)
 	}
-	typed, err := pairReadCode(waitCtx, codeIn)
+	typed, err := pairReadCode(waitCtx, cmd, o.asJSON)
 	if err != nil {
 		if errors.Is(err, errPairInterrupted) {
 			return pairRefuse(ev, o, pairRefusedInterrupted, err)
@@ -662,23 +654,42 @@ func pairWaitEnded(ctx context.Context, path string, lc *localcfg.Config, timeou
 // out, or the line was empty.
 var errPairNoCode = errors.New("pairing: no typed code")
 
-// pairReadCode reads the operator's typed code as exactly one line (§7.1 step
-// 5): one line, read once, and never a second prompt or a retry — a code that
-// did not match is a refused pairing, not a typo to try again. The read races
-// the wait's deadline because --timeout bounds steps 4 and 5 together, and a
-// reader that has not answered by then is refused like an EOF: an operator who
-// walked away. The goroutine is left behind when a terminal never answers —
-// there is no way to cancel a blocked read of a terminal, and the command is
-// about to exit with its refusal.
-func pairReadCode(ctx context.Context, in io.Reader) (string, error) {
+// pairReadCode reads the operator's code as exactly one value (§7.1 step 5):
+// one value, read once, and never a second prompt or a retry — a code that did
+// not match is a refused pairing, not a typo to try again.
+//
+// The two doors read it differently, and §4.1 is why. --json hands the caller
+// the events and takes the code back as one stdin line: a console has asked the
+// operator itself and has no terminal to lend this command, so what arrives is
+// data a caller delivered. The interactive command reads the same value at the
+// operator's own terminal through the one value-entry helper (readValue,
+// D1540), where the phone's screen can be read beside it, and a run with no
+// terminal there is refused at once naming what it needs instead of waiting for
+// a line nobody can type.
+//
+// The read races the wait's deadline because --timeout bounds steps 4 and 5
+// together, and a reader that has not answered by then is refused like an EOF:
+// an operator who walked away. The goroutine is left behind when a terminal
+// never answers — there is no way to cancel a blocked read of a terminal, and
+// the command is about to exit with its refusal.
+func pairReadCode(ctx context.Context, cmd *cobra.Command, asJSON bool) (string, error) {
 	type line struct {
 		text string
 		err  error
 	}
+	where := "at the terminal"
+	if asJSON {
+		where = "on stdin"
+	}
 	read := make(chan line, 1)
 	go func() {
-		text, err := bufio.NewReader(in).ReadString('\n')
-		read <- line{text: text, err: err}
+		if asJSON {
+			text, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+			read <- line{text: text, err: err}
+			return
+		}
+		b, err := readValue(cmd, valueSpec{what: "the code the phone shows"})
+		read <- line{text: string(b), err: err}
 	}()
 	select {
 	case <-ctx.Done():
@@ -687,17 +698,23 @@ func pairReadCode(ctx context.Context, in io.Reader) (string, error) {
 		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return "", fmt.Errorf("%w while the code the phone shows was being typed, so this pairing was abandoned by the operator rather than refused by it; run fugaro pair again", errPairInterrupted)
 		}
-		return "", fmt.Errorf("%w: the code the phone shows is read as one line on stdin, and no line arrived before the wait ran out", errPairNoCode)
+		return "", fmt.Errorf("%w: the code the phone shows is read as one line %s, and no line arrived before the wait ran out", errPairNoCode, where)
 	case got := <-read:
 		if got.err != nil && !errors.Is(got.err, io.EOF) {
+			if !asJSON {
+				// The value entry's own refusal (no terminal to read a value
+				// at) is the operator's to fix and it says how, so it is
+				// carried as it is rather than folded into the missing-code
+				// sentence.
+				return "", got.err
+			}
 			return "", fmt.Errorf("reading the typed code: %v", got.err)
 		}
-		// A last line without its newline is a line a pipe delivered, and it
-		// is read like any other; whitespace around it is the terminal's, not
-		// the operator's.
+		// Whitespace around the line is the terminal's, not the operator's,
+		// and an empty line — with the input ending on it or not — is no code.
 		code := strings.TrimSpace(got.text)
 		if code == "" {
-			return "", fmt.Errorf("%w: the code the phone shows is read as one line on stdin, and the line was empty", errPairNoCode)
+			return "", fmt.Errorf("%w: the code the phone shows is read as one line %s, and the line was empty", errPairNoCode, where)
 		}
 		return code, nil
 	}

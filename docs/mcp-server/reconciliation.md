@@ -1,12 +1,20 @@
 # The hosted MCP server: reconciliation and decisions
 
-**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
-except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
-half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started; this folder approves no task.**
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged
+on `main`; the front door M4 creates is OFF on every installation until a release writes the flag
+that turns it on, `fugaro update --mcp-server` (D934); M5 is built and M5b is built with it — the
+paired-device approval the owner ruled a task of its own on 2026-11-07 — and what is built of it is
+the endpoint's half: the authorize POST takes the device's act as a shape of its own, the ID token
+is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's
+first requirement is not met — the endpoint cannot tell a paired device from any other holder of
+one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of
+the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no
+task of this plan; M7 is built except the reading of the installation's published state its lists
+come from, which no task of this plan carries; M8 is built except the wiring that would serve its
+four read tools, which no binary has and no task of this plan carries; M9 is not started, and the
+launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of
+2026-11-09); this folder approves no task.**
+
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -43,11 +51,11 @@ safe to build.
 | --- | --- |
 | F1 | **The front door's home is decided**: the coordinator has **its own resident service** — D196 in [../coordinator/reconciliation.md](../coordinator/reconciliation.md) (the row headed D196 says the owner ruled against the recommendation), and [../coordinator/README.md](../coordinator/README.md):26 says P7 and P8 "do not start yet: they wait on the front-door design review". **Exists**, as a decision; **not built** (F24). |
 | F2 | **A Cloud Run *service* is already admissible in the installer's Terraform cover**: `internal/infra/tf/cover.go:33-34` admits `google_cloud_run_v2_service` and `google_cloud_run_v2_service_iam_member`, added for the credentials service. **Exists** — the new resource type needs no cover change. |
-| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:71` (its service account), `:92` with `role = "roles/storage.objectViewer"` at `:96` (the runs bucket — read only), `:113` (the app key secret), `:129` (`google_cloud_run_v2_job`), `:275` (the sweep schedule). There is no Cloud Run *launch* grant and no write grant on the runs bucket. **The lines moved and one claim stopped being true after this folder was written**: the M4 task of [implementation-plan.md](implementation-plan.md) landed its first half as #1716, which added `google_service_account.mcp_server` (`:320`) and the `google_cloud_run_v2_service` front door that runs as it, so "there is **no** `google_cloud_run_v2_service` for the coordinator" is no longer a fact about this tree — the service is the front door's and not the sweep's, and the sweep above is unchanged. |
+| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:71` (its service account), `:92` with `role = "roles/storage.objectViewer"` at `:96` (the runs bucket — read only), `:113` (the app key secret), `:129` (`google_cloud_run_v2_job`), `:275` (the sweep schedule). There is no Cloud Run *launch* grant and no write grant on the runs bucket. **The lines moved and one claim stopped being true after this folder was written**: the M4 task of [implementation-plan.md](implementation-plan.md) landed its first half as #1716, which added `google_service_account.mcp_server` (`:324`) and the `google_cloud_run_v2_service` front door that runs as it, so "there is **no** `google_cloud_run_v2_service` for the coordinator" is no longer a fact about this tree — the service is the front door's and not the sweep's, and the sweep above is unchanged. |
 | F4 | **The coordinator's writer holds the project's database admin**: `deploy/terraform/gcp/modules/firebase/iam.tf:138` grants `roles/firebasedatabase.admin` to the coordinator's writer account. |
-| F5 | **Firebase ID-token verification exists, and it is exact**: `internal/credsvc/auth.go:1069` compares the audience to the **bare project id**, `:1072` builds the issuer as `https://securetoken.google.com/<projectId>`, and `:1373` (`GoogleKeysURL`) is the public signing-key endpoint the owner's spec names. Its refusals name the failed check and never the value; `internal/credsvc/audit.go` writes one structured line per act and per refusal. **Exists** — the design's §4 adds no verification of its own. |
+| F5 | **Firebase ID-token verification exists, and it is exact**: `internal/credsvc/auth.go:1086` compares the audience to the **bare project id**, `:1059-1060` (`firebaseIssuer`) builds the issuer as `https://securetoken.google.com/<projectId>` and `:1089` holds the token's `iss` to it, and `:1390` (`GoogleKeysURL`) is the public signing-key endpoint the owner's spec names. Its refusals name the failed check and never the value; `internal/credsvc/audit.go` writes one structured line per act and per refusal. **Exists** — the design's §4 adds no verification of its own. |
 | F6 | **Identity Platform is initialized with no sign-in providers, and a public sign-up path is refused**: `internal/cli/init_firebase.go:582` records "initialized Identity Platform (no sign-in providers)", `:686` calls `refusePublicSignUp` (`:709`) on a project whose config enables any public sign-up path, and `internal/infra/identityplatform.go:32` is the step's own name. **Exists** — and it is what F26 collides with. |
-| F7 | **The database rules already fence a coordinator subtree**: `internal/budget/rules/rules.json.tmpl:10-13` — `"coordinator": { ".read": "USER", ".write": false }`, with `USER` defined at `internal/budget/rules/rules.go:517` as a signed-in, device-allow-listed person. |
+| F7 | **The database rules already fence a coordinator subtree**: `internal/budget/rules/rules.json.tmpl:10-13` — `"coordinator": { ".read": "USER", ".write": false }`, with `USER` defined at `internal/budget/rules/rules.go:529` as a signed-in, device-allow-listed person. |
 | F8 | **The project's people lists exist and are its only permission model**: `internal/cli/user.go:32-33` writes `terraform.launchers` / `terraform.operators` into the machine's own project config, named together at `:66`, applied by the next update — and **the door already admits one person at a time**: `internal/cli/user.go:266` refuses `domain:`, `group:`, `serviceAccount:`, `allUsers`, `allAuthenticatedUsers` and wildcards, and takes `user:<email>` only, for the reason the comment at `:254-257` gives (the launcher and operator roles carry the token signer's own role, so a `domain:` member would hand a whole domain that role). **Exists** — D923's `user:`-only rule is this rule read at the front door. |
 | F9 | **The rigor vocabulary, its order and its one off-axis member exist**: `internal/rigor/mode.go:36` (`var Modes = []Mode{POC, Startup, Pro, Critical, Hotfix}`, the members at `:21-30`) is the closed vocabulary, `:46` is `Default = Pro`, `:75` ranks the four on-axis modes and gives Hotfix **0**, and `internal/rigor/resolve.go:116` states why ("off the axis and ranks below every on-axis mode"). |
 | F10 | **The run's ceiling and the enforcer exist**: `internal/runner/spend.go:21-34` is the environment the run reads its ceiling from (`FUGARO_MAX_RUN_USD` at `:23`, `Spend` at `:34`), and `internal/runner/gateway.go:141` is "The real credential stays here" — the gateway holds the cap and the agent never sees the key. |
@@ -56,7 +64,7 @@ safe to build.
 | F13 | **Reading a run's logs goes through the Cloud Logging API today**: `internal/backend/gcp/logs.go:29`, on `google.golang.org/api/logging/v2`. |
 | F14 | **A run's transcripts land in the runs bucket**, which the coordinator already reads: `internal/runner/session.go:185` writes `session/<id>.jsonl`, and F3's read-only object viewer reaches it. |
 | F15 | **`golang.org/x/oauth2` is already a dependency** (`go.mod:16`). There is **no** MCP SDK and **no** OIDC library in `go.mod`. |
-| F19 | **The launcher can already set an environment variable for one execution.** `internal/backend/backend.go:124-144`: `Env` (`:133`) and `SecretEnv` (`:144`) are "extra `NAME=value` variables **for this execution only**, merged into the job's own environment (the Cloud Run v2 API merges override env into the job's)", with the budget-token channel as the precedent that already uses one. **Exists** — D924's mechanism needs no new plumbing, only the value and the rule that reads it. |
+| F19 | **The launcher can already set an environment variable for one execution.** `internal/backend/backend.go:124-144`: `Env` (`:133`) and `SecretEnv` (`:144`) are "extra `NAME=value` variables **for this execution only**, merged into the job's own environment (the Cloud Run v2 API merges override env into the job's)", with the budget-token channel as the precedent that already uses one. **Exists** — the plumbing D924's first answer needed, and only the value and the rule that reads it were missing. **Amended 2026-11-09** (the launch-override fence's ruling, §4a) **and restored the same day**: the fence would have taken this channel away from the front door — the account that starts a run would hold no `run.jobs.runWithOverrides` and could set no override at all — and **the owner's later ruling of 2026-11-09 declined the fence and gave the front door the launcher's permissions, so this channel is the front door's as the finding says**: D924's ceiling and the launch marker ride the override it names, and the run's identity stays the `FUGARO_RUN` override at `internal/backend/gcp/run.go:173` rather than moving to a launch binding (§4a, "The owner's ruling of 2026-11-09, later the same day"; D937, §4b). |
 
 ## 2. What is missing
 
@@ -97,7 +105,7 @@ design is now written to them.
 | **D921** | Which OAuth library? | **zitadel/oidc** for the protocol machinery, with storage and Dynamic Client Registration supplied by the coordinator (the owner's spec already expects DCR to be hand-written). **Apache 2.0 and OpenID-certified are the library's own claims and this container cannot check either** — the owner answered with the licence **UNCONFIRMED**, which is why confirming it is the first owner check (§6) and a gate on M5. No new runtime. | **ory/fosite**: the same missing DCR, plus a heavier plugin surface for a flow this small. **A standalone third-party server**: a second resident service in a self-hosted product whose point is one service per project, on a licence the owner has not confirmed — the owner's own open item, which the answer does not close for the library it did pick either. Cost of the recommendation: a new dependency in `go.mod`, a library whose storage interfaces must be fitted to a database it has never seen, and **a licence check that has to pass before any code is written**. | Every endpoint in D921's own scope; the implementation plan's first code task — **and M5 waits on the licence**. |
 | **D922** | Where do token records, client registrations and the audit trail live? | **A separate top-level subtree with reads and writes refused to everything but the coordinator's service account.** Only hashes are stored, and a database read yields no presentable value. | **Reuse the `coordinator/` subtree.** It is `.read: USER` today (F7), so every person the installation admits may read the client list, the redirect URIs, the revocation state and the whole tool-call audit. The "store only hashes" rule protects the token values and nothing else: the client list, the redirect URIs, the revocation state and the whole tool-call audit have no protection at all. Cost of the recommendation: one more subtree in the rules, one more account able to write it, and a census test to keep both honest. | D920's audit requirement, D929's client secrets, F22. |
 | **D923** | How does the person sign in at the authorize step? | **The custom-token flow the installation already has.** The authorize step hands the person to Fugaro's existing signer, and the coordinator verifies the resulting Firebase ID token exactly as F5 already does. No provider page. | **Enable a sign-in provider** so Firebase can host the page the owner's spec describes: it lifts the install's refusal of any public sign-up path (F6) for the whole project, which is the change `docs/mobile-auth` D221 exists to prevent and which that work's reconciliation classifies **Wrong**. Cost of the recommendation: the authorize step is a redirect to a Fugaro-owned page rather than to a provider's, so the flow is one hop longer than a client's most familiar shape, and a project that has *already* enabled a provider keeps it (the design neither enables nor disables one). | The whole auth flow. |
-| **D924** | How is a token's spend limit enforced? | **The coordinator passes the token's limit in its own variable on the execution override, and the run's ceiling becomes the tighter of that and the job's own.** The override mechanism already exists (F19) and the gateway already enforces whatever ceiling the run resolves (F10), so the limit is enforced where every other cap is. A variable of its own rather than a lower value written over the job's is what makes "only narrows" **structural**: the run takes the tighter side itself, so a wrong number at the coordinator cannot widen a ceiling. | **Overwrite the job's own cap variable with `min(...)`.** It works, and it puts the whole "only narrows" property in the launcher's arithmetic rather than in the run — one launcher bug away from a widened ceiling. **Through the agent's `--max-budget-usd`** (F27): the limit would be enforced by the agent's own estimate, which the repository's own notes record as wrong by roughly an order of magnitude for non-Anthropic models. **Or: not enforced, merely recorded** — which is no limit at all. Cost of the recommendation: a small core change (one variable in the run's ceiling, `internal/runner/spend.go`) that is not this work's to make unilaterally, plus the launch grant of F18. | D931; the spend half of spec.md §6. | **Amended 2026-11-04** (M-b) — see §4a |
+| **D924** | How is a token's spend limit enforced? | **The coordinator passes the token's limit in its own variable on the execution override, and the run's ceiling becomes the tighter of that and the job's own.** The override mechanism already exists (F19) and the gateway already enforces whatever ceiling the run resolves (F10), so the limit is enforced where every other cap is. A variable of its own rather than a lower value written over the job's is what makes "only narrows" **structural**: the run takes the tighter side itself, so a wrong number at the coordinator cannot widen a ceiling. | **Overwrite the job's own cap variable with `min(...)`.** It works, and it puts the whole "only narrows" property in the launcher's arithmetic rather than in the run — one launcher bug away from a widened ceiling. **Through the agent's `--max-budget-usd`** (F27): the limit would be enforced by the agent's own estimate, which the repository's own notes record as wrong by roughly an order of magnitude for non-Anthropic models. **Or: not enforced, merely recorded** — which is no limit at all. Cost of the recommendation: a small core change (one variable in the run's ceiling, `internal/runner/spend.go`) that is not this work's to make unilaterally, plus the launch grant of F18. | D931; the spend half of spec.md §6. | **Amended 2026-11-04** (M-b) — see §4a — and **amended on 2026-11-09 and restored the same day**: the fence ruling moved the ceiling's channel from the execution override to the run's own task, and **the owner's later ruling of the same day declined the fence, so the channel is the execution override the original answer named** (§4a, "The owner's ruling of 2026-11-09, later the same day"); the rule itself never changed |
 | **D925** | Is Hotfix part of the rigor window or a flag beside it? | **A separate flag, off by default**, gating Hotfix by itself; the window's `min`/`max` read only the four on-axis modes. | **Fold Hotfix into the axis.** F9's `Rank()` is 0 for Hotfix on purpose, so a `min: pro` token would admit a Hotfix request — the opposite of "off by default". Ranking it high instead reverses the fail-open direction `internal/rigor` chose deliberately. Cost of the recommendation: two things to check instead of one, and a client that asks for Hotfix without the flag is refused rather than downgraded. | The rigor half of spec.md §6. |
 | **D926** | What is the window's shape, and what if it admits nothing? | **An optional `min` and an optional `max` over the closed mode vocabulary; unset means the project's policy alone.** A window with no member — `max` below `min` — is refused **at mint**, so a token that could never start a run cannot be issued. | **Allow it and refuse every call.** The operator mints a token, hands it to an agent, and every call refuses for a reason neither of them can see; the failure surfaces in the agent's retry loop rather than at the person's keyboard. Cost of the recommendation: a mint-time validation that has to be tested, and a refusal an operator may find pedantic. | D925. |
 | **D927** | Which scopes exist in v1? | **`tasks:read` and `tasks:write`, exactly as the owner lists them.** An unknown scope is refused, never ignored. `roadmap:write` is **not** in v1. | **Add `roadmap:write` now** so the console's blocked write (F30) can use the front door. A scope is a wire contract on a self-hosted product: it exists the moment a token can hold it, it cannot be withdrawn without breaking tokens, and the console's own roadmap write design — which has not been written — is what should decide the name and the permission. Cost of the recommendation: the console's GV3.1/GV3.2 stay blocked, and that work comes back to ask for a scope. | The console's graph write. |
@@ -125,14 +133,14 @@ note under the table says what moved.
 | **D921** | **The recommendation** — **zitadel/oidc** for the protocol machinery, with storage and Dynamic Client Registration supplied by the coordinator — **and the licence is UNCONFIRMED.** **The owner or counsel must confirm the licence before any build.** **Amended 2026-11-04** (M-c) — and **answered by the owner on 2026-11-07: he read the branch's own licence table and cleared the set, "Cleared: all permissive", recorded in [licence-gate.md](licence-gate.md)** — see §4a | Apache 2.0 is the library's own claim and nothing in this container can check it, and a dependency a self-hosted product cannot ship would sink the whole design — so the licence becomes a gate of its own, and it is the first owner check in §6. |
 | **D922** | **The recommendation**, in the owner's words of 2026-11-04: the **separate top-level subtree** — **not under `coordinator/`** — is the **`mcpauth`** node, **not readable by any client** (`.read: false`) and with **`.write: false`**; **only the coordinator's account writes it**, because that account holds `roles/firebasedatabase.admin` and the rules do not bind it **Amended 2026-11-04** (H3) — see §4a | The separate subtree is what keeps the coordinator's shared view and the token records off one node, and the closed read is what keeps F26's finding closed against every client the rules bind — **and the amendment is what keeps it closed against the accounts IAM exempts from them**. The separate subtree, the closed read, the keyed hashes, the MAC and the public service's viewer-only grant are now **five independent barriers** rather than two, which is the honest answer to a review that showed the first two were not enough on their own. **This answer was restated the same day** — see the note under the table — and the restatement plus this amendment are the ones every document is written to. spec.md §6 and §8 state both, and M3's red step is the "named and denied to every client" one. |
 | **D923** | **The recommendation**, with the mechanism named: **a PAIRED DEVICE approves the sign-in**, and **the coordinator never mints a custom token**; **v1 admits only exact `user:` launcher entries, and refuses `group:`, `domain:` and `serviceAccount:` entries**; **the Firebase ID token is consumed only at `/oauth/authorize` and is never a grant at `/oauth/token`** **Amended 2026-11-04** (H1, not the recommendation) and again (M-a) — see §4a | The project's Identity Platform is initialized with no sign-in providers and refuses every public sign-up path (F6), so there is no hosted page to redirect to and enabling one is the exact reversal `docs/mobile-auth` D221 refused — and the pairing the repository already has (`fugaro pair`, D165) is the signer that does not make the coordinator one. A `user:` entry is one person (F8's lists), where `domain:`, `group:` and `serviceAccount:` are refused **at `fugaro user` already** (`internal/cli/user.go:266`). Consuming the ID token at authorize is what keeps it out of the token endpoint's grant list. |
-| **D924** | **The recommendation** — the token's limit travels in **a variable of its own** on the execution override, and the run's ceiling is the tighter of it and the job's own — and **spend is counted across the whole token family**, so a rotated refresh token is the same budget and not a new one | The override mechanism already exists (F19) and the gateway is already the place the real stop lives (F10, F27); a variable of its own is what makes "only narrows" structural rather than a launcher's arithmetic, and a per-family counter is what stops rotation from being a way to ask for the limit twice. | **Amended 2026-11-04** (M-b) — see §4a |
+| **D924** | **The recommendation** — the token's limit travels in **a variable of its own** on the execution override, and the run's ceiling is the tighter of it and the job's own — and **spend is counted across the whole token family**, so a rotated refresh token is the same budget and not a new one | The override mechanism already exists (F19) and the gateway is already the place the real stop lives (F10, F27); a variable of its own is what makes "only narrows" structural rather than a launcher's arithmetic, and a per-family counter is what stops rotation from being a way to ask for the limit twice. | **Amended 2026-11-04** (M-b) — see §4a — and **amended on 2026-11-09 and restored the same day**: the fence ruling moved the limit's channel to **the run's own task**, and **the owner's later ruling of the same day declined the fence and gave the front door the launcher's permissions, so the channel is the execution override again** (§4a, "The owner's ruling of 2026-11-09, later the same day") — and the rule, the tighter of the token's limit and the job's cap, is unchanged |
 | **D925** | **The recommendation** — Hotfix is a **separate flag, off by default**, beside the window | `Rank()` gives Hotfix **0** deliberately (F9, F28), so folding it into a `min`/`max` window admits Hotfix at every minimum — the opposite of "off by default". |
 | **D926** | **The recommendation** — an optional `min` and an optional `max`, unset meaning the project's policy alone; a window that admits nothing is refused **at mint** | A token that could never start a run should not be mintable: the failure has to surface at the person's keyboard rather than in an agent's retry loop. |
 | **D927** | **The recommendation** — `tasks:read` and `tasks:write` only; `roadmap:write` is **not** in v1 | A scope is a wire contract: it exists the moment a token can hold it, and the console's own roadmap-write design — which does not exist yet — is what should decide its name and its permission (F30). |
 | **D928** | **The recommendation**, tightened by the owner: the redirect-URI allowlist is the **project's own configuration**, with loopback always allowed and validated at registration and at authorize, exact match — and **registration refuses a non-loopback URI that is not on the allowlist**, **the consent page shows the redirect host**, and **the flow is CSRF-bound** | A vendor's callback URL baked into a self-hosted product goes stale in somebody else's release cycle and refuses every client the owner has not heard of. The three tightenings are the owner's: refusing at registration is the earlier door, a person consents to a host they were shown rather than to a client id, and a flow with no CSRF binding lets an attacker's client finish a sign-in the person started for another. |
 | **D929** | **The recommendation** — a pre-registered confidential client using the client credentials grant, with **mandatory** limits | The owner's option B would make every stored API key an OAuth client by another name, and revocation would stop being one act — against the owner's own non-goal that the keys are not replaced. | **Amended 2026-11-04** (M-f) — see §4a |
 | **D930** | **The recommendation** — **short-lived access tokens and refresh tokens that rotate on every use**, with reuse detection, a replayed token revoking the family, and revocation as one delete | Rotation is what makes a theft detectable rather than merely survivable: a long-lived token that is stolen lives its whole life and nothing distinguishes theft from use. | **Amended 2026-11-04** (M-d) — see §4a |
-| **D931** | **The recommendation**, with the owner's three tightenings: the tool is **`spawn_task`** (the owner's name for the `submit_task` of §0), it starts the run through the same seam `fugaro run` uses (`internal/backend`), the coordinator gains one **new launch grant**, and both tool sets are served on one endpoint under their existing names — and **there is a single launch path**: concurrency, rate, idempotency and the kill switch all go through the **same pre-launch code as `fugaro run`** (`budget.Precheck`, `internal/budget/precheck.go:58`, and the launch claim, `internal/runstore/launch.go:112`) | The sweep alternative delays a launch by the sweep interval, races a second writer, and can leave a caller seeing success for a run that never starts. A second pre-launch path beside `fugaro run`'s is the one that drifts: a front door that skipped the kill switch or the claim would spend money a person's launch could not, and would let one submit become two runs. | **Amended 2026-11-04** (H2) — see §4a and **D936** |
+| **D931** | **The recommendation**, with the owner's three tightenings: the tool is **`spawn_task`** (the owner's name for the `submit_task` of §0), it starts the run through the same seam `fugaro run` uses (`internal/backend`), the coordinator gains one **new launch grant**, and both tool sets are served on one endpoint under their existing names — and **there is a single launch path**: concurrency, rate, idempotency and the kill switch all go through the **same pre-launch code as `fugaro run`** (`budget.Precheck`, `internal/budget/precheck.go:58`, and the launch claim, `internal/runstore/launch.go:112`) | The sweep alternative delays a launch by the sweep interval, races a second writer, and can leave a caller seeing success for a run that never starts. A second pre-launch path beside `fugaro run`'s is the one that drifts: a front door that skipped the kill switch or the claim would spend money a person's launch could not, and would let one submit become two runs. | **Amended 2026-11-04** (H2) — see §4a and **D936** — and **amended 2026-11-09**: the fence ruling made the one new launch grant a split launcher role with no `runWithOverrides`, and **the owner's later ruling of the same day declined the fence and gave the front door the launcher's permissions — `run.jobs.run` and `run.jobs.runWithOverrides` — because the phone and the other remote clients need the full launch path, an accepted v1 risk** (§4a, "The owner's ruling of 2026-11-09, later the same day"). The grant is **M9**'s own diff, and **no task of this plan builds a fence** |
 | **D932** | **The recommendation** — `stream_logs` reads the run's own recorded artefacts in the runs bucket | The coordinator may already read them (F3, F14), the answer is the same material the console and `get_result` draw on, and it cannot read a log line outside the run — where streaming Cloud Logging live needs a grant that reaches every log line in the project. | **Amended 2026-11-04** (M-g) — see §4a |
 | **D933** | **The recommendation** — **only the project's launcher and operator lists may call the front door**: a launcher may call the task tools, an operator may also read the audit record — and the entries those lists admit are D923's answer, **exact `user:` entries only** | With a public endpoint, "any signed-in identity of the project" (F29's sentence) would make every Firebase user of the project a launcher, and the two lists `fugaro user` maintains would govern nothing. Admitting only `user:` entries is the same rule `fugaro user` already applies at its own door, so the front door cannot be the way a `domain:` entry gets in. | **Amended 2026-11-04** (M-f) — see §4a |
 | **D934** | **The recommendation** — the front door is **OFF** on every installation until a person turns it on, on the coordinator's own opt-in | An installation that opted into the coordinator for its read-only aggregator must not acquire a **public write endpoint** — `spawn_task` spends money — as a side effect of an upgrade. | **Amended 2026-11-04** (M-e) — see §4a |
@@ -189,32 +197,45 @@ tree carries is the owner's and no other.
 gate file: the licence confirmation this branch's runs reported before the owner's ruling was not a
 file, a signature or a review comment this tree could show, and the check's own text is what stood —
 **M5 does not start until the licence is settled and a person has written the gate file.** Both
-halves are now there, so **M5 may merge and the licence holds nothing back**; what the clearance does
-not do is put the front door on a binary, because **M5 merges dormant: M5b is a hard prerequisite
-before any binary links it** (§4a, the ruling of 2026-11-07). Had the licence turned out to be
-unusable, it would still send D921 back to its own alternatives, with the library out of `go.mod` and
-M5 rebuilt against them, rather than a dependency landing ahead of its gate. **The transitive set the
-clearance covers is named here for that reason**: `zitadel/schema`, `muhlemmer/gu` and `kr/text`,
-which are
-new, and the version bumps `go mod tidy` made beside the library: `go-jose/v4` v4.1.4→v4.1.6,
-**`go-logr/logr`** v1.4.3→v1.4.4, `doublestar/v4` v4.10.2→v4.10.4, `otel` v1.44.0→v1.46.0 with
-`/metric` and `/trace`, `x/text` v0.42.0→v0.43.0 and `x/sync` v0.23.0→v0.24.0.
+halves are now there, so **M5 may merge and the licence holds nothing back**; what the clearance did
+not do is put the front door on a binary, because **M5 merged dormant: M5b was a hard prerequisite
+before any binary links it** (§4a, the ruling of 2026-11-07), **and M5b is built on the server's
+side** — where M-a's device requirement is not met and the delivery of a flow to the device is owed
+(spec.md §8, §11). Had the licence
+turned out to be unusable, it would still send D921 back to its own alternatives, with the library
+out of `go.mod` and M5 rebuilt against them, rather than a dependency landing ahead of its gate.
+**The transitive set the clearance covers is named here for that reason**: `zitadel/schema`,
+`muhlemmer/gu` and `kr/text`, which are new, and the version bumps `go mod tidy` made beside the
+library: `go-jose/v4` v4.1.4→v4.1.6, **`go-logr/logr`** v1.4.3→v1.4.4, `doublestar/v4`
+v4.10.2→v4.10.4, `otel` v1.44.0→v1.46.0 with `/metric` and `/trace`, `x/text` v0.42.0→v0.43.0 and
+`x/sync` v0.23.0→v0.24.0.
 
 The
 **status of the whole folder** moved from "design only, nothing approved" to the line every file
 took up that day — **design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are
 built and merged on `main`; M5 is built except the paired device M-a asks for, which is pending the
 owner; the rest is not started; this folder approves no task.** **That quotation is the line as it
-stood on 2026-11-04**: the clause after "asks for" was replaced on 2026-11-07, and the line every
-file carries today reads "...which is M5b and is a hard prerequisite before any binary links the
-front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's
-published state its lists come from, which no task of this plan carries; M10 is built except the
-store's own bucket and its one grant, which are M4's store half and not started; M8 is built except
-the wiring that would serve its four read tools, which is the task M5b gates; M9 is not started" —
-**the clauses moving as each task lands** (§4a), each exception added with its own landing because
-the task builds the seam and not the half behind it: M7's reading of the published state, M8's four
-read tools registered on no binary, which is the wiring task M5b gates, and M10's bucket and its one
-grant, which are M4's.
+stood on 2026-11-04**: the clause after "asks for" was replaced on 2026-11-07, and M5b's landing
+wrote what it built and what it did not — the task is built on the server's side and **M-a's device
+requirement is not met**, because the act is proved by an ID token and the endpoint cannot tell a
+paired device from any other holder of one (spec.md §8) — and the line every file carries today
+reads "...M5 is built and M5b is built with it — the paired-device approval the owner ruled a task
+of its own on 2026-11-07 — and what is built of it is the endpoint's half: the authorize POST takes
+the device's act as a shape of its own, the ID token is spent once and a family ages, all of it
+proved by the ID token and by no device key, so M-a's first requirement is not met — the endpoint
+cannot tell a paired device from any other holder of one, which is H1's accepted residual risk — and
+the delivery of a flow to that device, with no QR of the flow's binding rendered and no launcher
+reading the page, is built nowhere and carried by no task of this plan; M7 is built except the
+reading of the installation's published state its lists come from, which no task of this plan
+carries; M8 is built except the wiring that would serve its four read tools, which no binary has and
+no task of this plan carries; M9 is not started, and the launch-override fence it was to wait on is
+declined for v1 and left unbuilt (the owner's ruling of 2026-11-09)" — **the clauses moving as each
+task lands** (§4a), each exception added with its own landing because the task builds the seam and
+not the half behind it, and removed the same way once the half behind it is there: M7's reading of
+the published state and M8's four read tools registered on no binary, which the wiring task would
+serve, are open still, and **M10's exception is the one that has closed** — the store's own bucket
+and its one grant are M4's store half, merged since, and M4's own clause is the newest: the front
+door is built whole and stays OFF until a release writes the flag that turns it on.
 
 ### The answer of 2026-11-05
 
@@ -347,8 +368,9 @@ claim is the library's own and this container cannot check it, and the answer ma
 that he would clear the set by reading one table, and he read it and cleared the set the same day**:
 [licence-table.md](licence-table.md) is the table, **"Cleared: all permissive"** is his answer, and
 [licence-gate.md](licence-gate.md) is the gate file the check describes. **Counsel was never asked**,
-so the clearance is the owner's alone, and **the check no longer gates anything**: what keeps M5
-dormant is **M5b**, the paired device M-a asks for. The review settles the library's *behaviour*
+so the clearance is the owner's alone, and **the check no longer gates anything**: what kept M5
+dormant was **M5b**, the paired device M-a asks for, **and M5b is built on the server's side, where
+M-a's first requirement is not met** (the status line above). The review settles the library's *behaviour*
 against this design, which is the paragraph below, and not its licence.
 
 The review also found that **the library's defaults are the opposite of this design's rules**, and
@@ -411,7 +433,7 @@ node) — and **every launcher and operator holds `signJwt` on the project's sig
 an operator's device** at the authorize endpoint's approve step (`POST /oauth/authorize`, M-a's
 single-use POST). The repository's own rules comment says the same thing from the other side: the
 `mu` claim "binds nothing against a minter"
-(`internal/budget/rules/rules.go:482-487`). The review's recommendation was a **device-held signing
+(`internal/budget/rules/rules.go:505-506`). The review's recommendation was a **device-held signing
 key registered at pairing**; **the owner accepted the residual risk and asked for it documented
 instead** — not built, not in any task. It stands in §3 and §8 as an **ACCEPTED residual risk with
 its consequences**:
@@ -437,21 +459,29 @@ a phone**, where a person cannot see which machine is asking. The owner's answer
   URL**;
 - **nothing is pushed without a person starting it.**
 
-**M5 and M6 build three of those four, and the first is built only as far as the page.** The approve
+**M5 and M6 built three of those four, and the first was built only as far as the page.** The approve
 step is a single-use POST on a named endpoint, an ID token never travels in a GET URL, nothing is
 pushed unstarted, and the page shows the client unverified beside the redirect host. But **the number
-is rendered on the same page and posted back by the same form**: the paired device never sees it, so
-a page rendering a flow of its own displays its own number and collects the number and the ID token
-together from whoever fills that form — which is the approval this check is meant to tell apart from
+was rendered on the same page and posted back by the same form**: the paired device never saw it, so
+a page rendering a flow of its own displayed its own number and collected the number and the ID token
+together from whoever filled that form — which is the approval this check is meant to tell apart from
 the real one. **A check on the page is therefore not M-a's device-side approval**, and the half that
 would be — the number shown on, or entered into, the paired device, so the approval is bound there —
-**is not built**: it was raised as a finding rather than added by a task that did not ask for it, and
-**the owner answered it on 2026-11-07 — it is M5b, a task of its own and a hard prerequisite before
-anything wires the front door** (§4a, "The owner's ruling of 2026-11-07"). The token has the same kind
-of limit beside it: nothing spends an ID token, so one that leaks approves flows until it expires —
-and the **refresh family each of those approvals mints has no expiry of its own** (spec.md §8), so the
-exposure the ID token's hour bounds is one approval and not what that approval leaves behind. **Both
-of those limits are M5b's to close**, as its second and fourth requirements.
+**was not built by M5**: it was raised as a finding rather than added by a task that did not ask for
+it, and **the owner answered it on 2026-11-07 — it is M5b, a task of its own and a hard prerequisite
+before anything wires the front door** (§4a, "The owner's ruling of 2026-11-07"). **M5b is built on
+the server's side, and the two limits the token had beside it are closed with it**: the approve POST
+takes the act as a request shape of its own, the ID token is spent before a code is minted, so a
+replay of one is refused instead of approving a second flow, and the **refresh family an approval
+mints has two lifetimes of its own** (spec.md §6, §8) rather than outliving the ID token's hour by an
+unbounded amount. **What that shape is proved by is the ID token, and by nothing a device holds**:
+the act carries the flow's id, the number the page shows and a pasted ID token, and this endpoint
+cannot tell a paired device from the browser that answered the page, so **a page can approve a flow
+it rendered** — that is H1's accepted residual risk, and **M-a's first requirement is not met**
+(spec.md §3, §8). **What M5b did not build beside it is the delivery**: nothing hands the flow's id
+and its number to the paired device — no QR of the flow's binding, no launcher reading the page — so
+this check is met by the endpoint and unperformed on the device, and both halves are named as owed in
+[spec.md](spec.md) §11 and [implementation-plan.md](implementation-plan.md) §3.
 
 ### D924 — amended (finding M-b)
 
@@ -467,6 +497,15 @@ which M2 and M9 build:
   caller has (D929, amended).
 
 M9 is **deferred** (D936), so the reservation lands with it; the counter's shape lands in M2.
+
+**Amended again on 2026-11-09, and restored the same day.** The owner's ruling that fenced the launch
+override would have taken `run.jobs.runWithOverrides` away from the front door's account, moving the
+token's ceiling from "a variable of its own on the execution override" to a field of its own on the
+run's task. **The owner's later ruling of the same day declined the fence and gave the front door the
+launcher's permissions**, so **the ceiling's channel is the execution override the original answer
+named** and this amendment is withdrawn with the fence. **The row's rule, and the "only narrows"
+property it exists for, were never in question**; both rulings are §4a, "The owner's ruling of
+2026-11-09" and "The owner's ruling of 2026-11-09, later the same day".
 
 ### D929 — amended (finding M-f)
 
@@ -497,7 +536,7 @@ double-submit. The amended answer, built by M2:
 - keep a **small grace window** in which the loser of that race is answered with the same new pair
   rather than read as a replayed token, so a client on a slow link is not logged out by its own
   retry — **not built**, and the first half of the answer is what stands alone: the loser is refused
-  `invalid_grant` with no invitation to retry (`ee/coordinator/mcpauth/token.go:323`), because the
+  `invalid_grant` with no invitation to retry (`ee/coordinator/mcpauth/token.go:336`), because the
   retry a 5xx invites presents the spent token and that presentation revokes the family the winner
   holds — so a double-submit ends in a re-authorization rather than a logout, and the session the
   window would save is the one a client that retries anyway loses;
@@ -511,6 +550,19 @@ finding is that it must not be built in the first slice. **D936** records the de
 later design item has to answer. **M9 is out of the first slice**, M6's
 `TestTheCoordinatorMintsNoCustomToken` keeps its meaning, and no task in
 [implementation-plan.md](implementation-plan.md) starts a run.
+
+**Its one new privilege, and the fence the design first put around it (2026-11-09).** The launch grant
+D931 asks for is a launcher's. **The owner first ruled on 2026-11-09 that the fence around it is a
+split launcher role** — the front door's own account holding `run.jobs.run` and never
+`run.jobs.runWithOverrides`, with D924's ceiling and the marker that a launch carries one travelling in
+the task in the runs bucket (§6 check 0) — **and later the same day he superseded that ruling**: the
+fence is **declined for v1**, the front door is given **the launcher's permissions, overrides
+included**, and the risk is **accepted and to be revisited** (§4a, "The owner's ruling of 2026-11-09,
+later the same day"). **So the grant is D931's one new privilege in full, and it is M9's own diff**: the
+front door's account is bound, on each project job, to the launcher's own role
+(`fugaroJobRunner`, which carries both `run.jobs.run` and `run.jobs.runWithOverrides`), and **no task
+of this plan builds a fence** — the start-only role, the job-scoped split and the launch binding that
+replaced `FUGARO_RUN` are all declined with it, and **D937** (§4b) is answered rather than open.
 
 ### D932 — amended (finding M-g)
 
@@ -593,29 +645,32 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
 - **M4 and M6 were cancelled** and **were to be rerun from this amended plan**: M4's draft predates
   the D934 and M-e answers (the cover rule and the meaning of "off"), and M6's predates M-a and H1.
 - **What has happened since, as of the commit this file is read at.** **M1 (#1713), M2 (#1767), M3
-  (#1715), M6 (#1714) and M4's first half (#1716) are merged on `main`** — M4's half being the
+  (#1715), M6 (#1714) and M4 are merged on `main`** — M4's first half (#1716) being the
   account, the front door service and its public invoker binding
-  (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **because the
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`, `:388`, `:536`), and its store half
+  being the bucket the records live in and the one binding that names the front door's account
+  (`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **because the
   owner approved them one at a time, which is what "may continue" turned into.** **M5 is built** —
   the two metadata documents, the four endpoints and
-  the approve step, **except the paired device M-a asks for**, which is **M5b** and is a task of its
-  own since the owner's ruling of 2026-11-07 — **M7 is built** (the resource server and the tool
+  the approve step — **and so is M5b**, the paired device M-a asks for, a task of its own since the
+  owner's ruling of 2026-11-07, **the endpoint's half of it**: the approve step takes the act as a
+  request shape of its own, and what proves that act is the ID token and no device key, so M-a's
+  first requirement is not met (the status line above) — **M7 is built** (the resource server and the tool
   registry, dormant with the rest of the door) **except the reading of the installation's published
   state its lists come from**: `identity.go` holds the `Roster` seam D933's answer goes through and
   **nothing in the tree implements it over that state, because no task of the plan carries the
-  reading** — **M10 is built** (the audit line, the bounded per-identity record it comes to and
-  revocation from a person's own surface, dormant with the rest of the door) **except the store its
-  records are at rest in**, whose bucket and one grant are M4's store half — **M8 is built** (the
+  reading** — **M10 is built whole**: the audit line, the bounded per-identity record it comes to
+  and revocation from a person's own surface, and **the store its records are at rest in**, whose
+  bucket and one grant M4's store half added — **M8 is built** (the
   four read tools, over the project's own runs and redacted through `internal/safetext`) **except the
-  wiring that would serve them**: no binary registers them, which is the wiring M5b gates — **and the
-  rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
-  and its one grant) and M9; **M3's node is in with its parity test while the comment D935 asks
+  wiring that would serve them**: no binary registers them, which is the wiring no task of this plan
+  carries — **and the rest is not**: M9; **M3's node is in with its parity test while the comment D935 asks
   for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
   POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, was
   built after M6 rather than with it. **And one row of an already-merged task
   is not in the tree either**: M2's entry, and §6's second barrier below, state the **keyed** hash and
   the **MAC over every record** as what the store does, while the store hashes with a plain unkeyed
-  sha256 (`ee/coordinator/mcpauth/store.go:398`) and writes no MAC at all — so a reader who is not the
+  sha256 (`ee/coordinator/mcpauth/store.go:503`) and writes no MAC at all — so a reader who is not the
   store's member reads an identity in the clear, and a record written by anybody else is not refused
   by a mark. That barrier is M2's own row, it is on `main` already and not in this branch, and it is
   raised as a finding rather than closed by an edit here.
@@ -638,9 +693,14 @@ registration that never stops being a client. The red step such a task would car
 `TestRegistrationIsRateLimitedPerSource` and `TestARegisteredClientIsExpiredAndSwept`. **What keeps
 the exposure latent rather than reachable is a guard M5 does carry, and it is a test rather than a
 behaviour**: `TestNoBinaryLinksTheFrontDoorYet` fails if any file a binary builds names this package,
-so the task that wires the front door is the task that carries the two bounds, carries **M5b** (the
-owner's ruling of 2026-11-07) and deletes the guard, and no release mounts an open registration
-endpoint because a wiring arrived unnoticed.
+so the task that wires the front door is the task that carries the two bounds and deletes the guard,
+and no release mounts an open registration endpoint because a wiring arrived unnoticed. **M5b was the
+other thing that task was to carry** (the owner's ruling of 2026-11-07) **and is built on the
+server's side only**, except the half that delivers a flow to the paired device, which nothing builds
+and no task of this plan carries — and except the device binding itself, which the endpoint cannot
+perform: **M-a's first requirement is not met**, so the task that relaxes the guard carries the two
+bounds **and the delivery** with them, and must not read the built half as that requirement met.
+**Until it does, the guard is what holds the door** (spec.md §11).
 
 ### The owner's ruling of 2026-11-07: M5b, and the licence table
 
@@ -653,12 +713,23 @@ raised rather than answered by M5, because the page renders its own number and t
 same form (§4a, D923's M-a amendment). **The owner ruled that the pull request that builds M5 merges
 dormant**: the consent page's token paste stays exactly as it is there, and **M5b is a hard
 prerequisite before anything wires the front door**. So **`TestNoBinaryLinksTheFrontDoorYet` is
-relaxed by building M5b and not by deleting its message**, which now names the task — and M5b is
-written as a task in [implementation-plan.md](implementation-plan.md) §3 with its four requirements:
+relaxed by building M5b and not by deleting its message**, which names what the guard still waits on
+— the two bounds and the delivery of a flow to the paired device — and M5b is written as a task in
+[implementation-plan.md](implementation-plan.md) §3 with its four requirements:
 the approval happens on the paired device, the ID token is spent, the approval is bound to the flow,
 and a refresh family ages. **It is a task and not a change to anything merged**: the code that would
-carry it does not exist yet, and the two limits beside the approve step (a token nothing spends, a
-family with no expiry of its own) are its second and fourth requirements.
+carry it did not exist when the ruling was written, and the two limits beside the approve step (a
+token nothing spends, a family with no expiry of its own) were its second and fourth requirements.
+**M5b is built on the server's side, and M-a's first requirement is not met by it**: the approve step
+takes a flow's id, the number the page shows and a pasted ID token as a POST of its own — the shape
+the two limits beside it hang on — and what that POST is proved by is the ID token and no key a
+device holds, so a browser that rendered the page produces it too, and **the approval on the wire is
+not the paired device's** (H1's accepted residual risk; spec.md §3, §8). The token is spent before a
+code is minted, and the family an approval mints carries the two bounds
+([implementation-plan.md](implementation-plan.md) §3). **What it left beside that is the delivery**:
+nothing renders a QR of the flow's binding and no launcher reads the page, so no client produces the
+act the endpoint now accepts, and that half is carried by no task of this plan ([spec.md](spec.md)
+§11).
 
 **2. The licence gate is cleared by a table the owner read, and the gate is met.** §6 check 1's
 second half is D921's licence, and the owner ruled that he would clear the dependency set by reading
@@ -672,6 +743,180 @@ describes. **The table is evidence rather than the gate and claims no clearance 
 gates anything (§6, check 1). **The claim three commits on this branch made about the licence before
 the owner ruled was unbacked and is withdrawn in the pull request**; the answer is the gate file the
 owner's own clearance produced, and nothing else here.
+
+### The owner's ruling of 2026-11-09: the launch-override fence, and what it moves — **SUPERSEDED later the same day**
+
+**Everything in this section is superseded by the ruling below it ("The owner's ruling of 2026-11-09,
+later the same day"): the owner declined the fence and gave the front door the launcher's permissions,
+overrides included, so no task of the plan builds the split launcher role, the run's identity stays
+the `FUGARO_RUN` override, and the task, level, shared-files and D937 statements here are history
+rather than the design in force.** It is kept because the design was written to it for part of a day
+and because the later ruling's own reasoning is a rejection of this one.
+
+**The one question §6 check 0 still carried — how the runner reads configuration an execution override
+cannot set — was put to the owner and answered on 2026-11-09, as recommended: the fence is a split
+launcher role.** It is a decision about the mechanism and not about the requirement, and it is
+**decided and NOT BUILT**.
+
+**What was ruled.** The front door's own account holds only the permission to **start an execution** —
+`run.jobs.run` — and **never `run.jobs.runWithOverrides`**, so no caller of this front door can rewrite
+the job's template, its environment or its arguments at all; the installation's existing
+`fugaroJobRunner` role, which carries both permissions and which every launcher and the scheduler hold,
+is left as it is, and the front door is given a role of its own rather than a share of that one.
+**The per-launch data the design needs — D924's token ceiling and the marker that says a launch carries
+one — travels in the task in the runs bucket** (`internal/task/task.go:57`, the `Spec` the runner reads
+there at bootstrap), which is the run's own input rather than an environment a caller could rewrite —
+**the task and not "the signed task": nothing signs `task.json`** (`docs/design/bucket-iam.md:412` lists
+signing it as a non-goal), so what the fence buys there is that the ceiling is not on the override
+surface, not that its bytes are authenticated, and the residual that leaves is written out below.
+**Why the mechanism is the IAM grant and not a runner-side allowlist:** the requirement of 2026-11-04
+asked the runner to tell a template value from an override value inside one merged environment, and the
+container cannot — but a role that cannot override makes the two questions one. **The fence is one IAM
+role and one job-scoped binding per project job in Terraform, and it is NOT free for the runner: it
+costs the runner its own way of learning which run it is, which the ruling's first statement of the
+mechanism assumed away** — see "The premise the ruling got wrong" below, and **D937**, the question
+that premise reopens.
+
+**The premise the ruling got wrong (2026-11-09, on this folder's own re-read of the tree).** The ruling
+as first written said the fence costs the runner nothing. **It cannot be built that way**: the run's
+identity reaches the container only as the `FUGARO_RUN` **execution override** — the launcher puts
+`<slug>/<run-id>` into `Overrides.ContainerOverrides`
+(`internal/backend/gcp/run.go:172-178`), the container entrypoint reads it as its own run
+(`internal/cli/exec.go:60`), and the fake refuses a shared project job's execution without it
+(`internal/gcpfake/run.go:973`, because the job's name no longer says which run it is) — so **an account
+holding `run.jobs.run` alone cannot start a working run at all**: setting an override is exactly what
+`run.jobs.runWithOverrides` authorizes, and the request is refused. **What the mechanism therefore
+needs, and what the design's §4b already asked for in words**: per-run input **keyed by the execution**.
+Cloud Run injects the execution's own name into the container itself (`CLOUD_RUN_EXECUTION`, read back by
+`internal/backend/platform.go:69`'s `ExecutionFromEnv` — the Cloud Run codec's `FromEnv` at
+`internal/backend/codec.go:113` is where it is read — which needs no override), so the launcher writes a
+**launch binding** into the runs bucket named by the execution — after `jobs.run` returns the execution
+name — and the runner resolves `<slug>/<run-id>` from that binding at bootstrap instead of from
+`FUGARO_RUN`.
+
+**And the identity is not the only value a launch carries this way.** A launch that minted puts the
+budget token's **seal key** in a *secret* override — `FUGARO_BUDGET_TOKEN`, whose value is the key
+that opens the sealed token the launcher writes into the runs bucket (`internal/cli/run.go:3956`,
+`internal/cli/launch_budget.go:708`; `internal/backend/backend.go:136` is why it is a fact about the
+launch and cannot come from the job's deploy-time environment) — and a review job carries
+`FUGARO_REVIEW_JOB=1` as a plain override (`internal/cli/run.go:3977`). **An account that can set no
+override can carry neither**, so the per-launch data this design moves is **three things and not
+one**: the ceiling and the marker, which the task takes; the identity, which the launch binding
+takes; and **the seal key and the review-job marker, for which this design names no channel at
+all** — the third part of D937, and the reason a front door that mints a budget token cannot hand
+the run the one thing that opens it.
+
+**Its race is named rather than hidden:** the execution starts as soon as the call
+returns, so the runner can reach the bucket before the binding lands, which the runner answers by
+polling for a bounded window (the shape `internal/runstore/launch.go:117`'s `ClaimTTL` already sets),
+and a binding that never arrives is a named bootstrap refusal; a launcher that dies between the start
+and the write leaves an execution that was **paid for** and belongs to no run, which the operator has
+to be able to see (`fugaro ls`/doctor naming an execution with no binding) and which the plan's M11 and
+M9 carry as a refusal rather than a silence. **This is a runner and backend change, and the two tasks
+name its files**: `internal/backend/gcp/run.go` (a **second launch shape** that sends no override at
+all — the fence account's — beside the CLI's own, which keeps every override it sends today and is
+unchanged), `internal/cli/exec.go` (resolve the run from the binding), `internal/runstore/launch.go`
+(the binding and its key), `internal/gcpfake/run.go` (the fake's project-job rule **widens**: a shared
+project job's execution must carry the identity **or** have a launch binding, so the CLI's launches
+still pass and only an execution with neither is refused), and the runner's bootstrap that reads the
+store, with their tests. **The goal the owner ruled is untouched** — the front door's account still never holds
+`run.jobs.runWithOverrides` — **and what is reopened is the ruling's premise**, which is why **D937**
+asks the owner to confirm the mechanism that replaces the override rather than the goal.
+
+**What it moves.**
+
+- **D924's channel, and not its rule.** The answer of 2026-11-04 sent the token's ceiling in "a
+  variable of its own on the execution override"; the front door's account can set no override at all
+  now, so **the limit becomes a field of its own on the run's task** — the same "only narrows" merge,
+  read from the other end. **D924's two rows — §4's and the answers-in-force table's — gain the
+  dated note, so a reader working from either implements the task channel; the rule itself is
+  unchanged**, and
+  `spec.md` §6 states the field rather than the variable.
+- **D931's grant, and M9's launch path.** D931's one new privilege is still asked for, and it is now
+  built by a task of its own — **M11** in [implementation-plan.md](implementation-plan.md) §3, the
+  split launcher role, which is where `coordinator.tf`'s deliberate absence of the grant
+  (`:383`) is filled in. **M9 waits on M11 being built**, and so does D931: **the gate is a task, not
+  an answer** — **and one question of that ruling came back the same day: D937**, its premise about the
+run's identity and the content the fence does not cover (§4a's "The premise the ruling got wrong",
+§4b). Everything else is closed (§6 check 0, spec.md §8 and §11).
+- **M11's level, and the shared-files table.** M11 writes `coordinator.tf`, `cover.go` and
+  `SECURITY.md` beside M4, so it takes **L1** — beside M2, whose files it does not touch — and M9 stops
+  being a writer of the two Terraform files (§2, §4 of the plan). **No level holds two writers of one
+  file**, which is the rule the table exists to check. M11 is **SEC-marked and not one of the five
+  whose marker says mandatory**: that marker is a property of the review of 2026-11-04, which could not
+  have read a task that did not exist, so M11 carries its own independent security reading when it is
+  built, on M5b's terms — **reviewer tier opus, with the independent review mandatory**.
+- **What stays an owner check.** The live IAM: that the front door's account holds `run.jobs.run` and
+  **not** `run.jobs.runWithOverrides` in a real project. It is the shape of check 2 for a grant — a
+  claim about who reaches something, which only a project can answer — and the plan proves the
+  hermetic half of it (no role the installation creates for the front door carries the override
+  permission, asserted against the plan rather than described). **And the premise the ruling assumed
+  away is an owner question again (D937, §4b)**: the goal stands, but the mechanism that replaces
+  `FUGARO_RUN` — the launch binding keyed by the execution, and its poll, its orphan and the runner
+  files it touches — is a runner and backend change the first statement of the ruling did not carry.
+  **Until the owner confirms it, M9 and M11 are gated on both M11 being built and D937 being
+  answered**, and no run may start from the front door.
+
+### The owner's ruling of 2026-11-09, later the same day: the fence is declined, and the front door takes the overrides
+
+**The owner superseded his own fence ruling of 2026-11-09, and the design is written to the later one.
+For v1 the coordinator — the service that hosts this MCP front door — is given the launch and
+run-with-overrides permissions**, so the front door's account may start a run **and set that run's
+environment for one execution**: `run.jobs.run` **and** `run.jobs.runWithOverrides`, which is the
+launcher's own role `fugaroJobRunner` and not a role of its own. **Why:** the phone and the other
+remote clients need the **full launch path**, and the per-launch data that path carries travels as
+execution overrides — the run's identity (`FUGARO_RUN`), the budget token's seal key when a launch
+mints (`FUGARO_BUDGET_TOKEN`, a secret override, `internal/cli/run.go:3956`,
+`internal/cli/launch_budget.go:708`) and the review-job marker (`FUGARO_REVIEW_JOB=1`,
+`internal/cli/run.go:3977`) — and **no fence the owner could see keeps that functionality**. The split
+launcher role of the ruling above kept the run's identity and could carry neither the seal key nor the
+review-job marker, which §4a's "The premise the ruling got wrong" and **D937** had already put back to
+him. **The owner accepts the risk for v1**: a compromised front door **can change what a run does, not
+only narrow its ceiling** — the requirement of 2026-11-04, that the runner ignore the override
+environment except for an allowlist, **stays unmet and the fence stays unbuilt**. **Fortification is to
+be revisited later by other means**, and the owner asked for that to be written down plainly: the
+plan's open items carry a **revisit** entry and §6's owner-checks list carries one too.
+
+**What it settles.**
+
+- **D937 is answered** (§4b): **the launch binding is NOT built.** The run's identity **stays the
+  `FUGARO_RUN` execution override** (`internal/backend/gcp/run.go:172-178`, read back at
+  `internal/cli/exec.go:60`), so the "premise the ruling got wrong" is moot — there is no split account
+  for the identity to be out of reach of, and the runner and backend change that premise demanded is
+  withdrawn with the fence. The budget token's seal key and the review-job marker keep the override
+  channels they use today.
+- **M11 is removed as a task** ([implementation-plan.md](implementation-plan.md) §3): no task of the
+  plan builds the fence, and M11 is kept there as a **considered and declined** note rather than
+  renumbered or deleted. **Nothing depends on it**: M9's edges are M4 and M7 alone, M11 leaves every
+  level, the critical path and the shared-files table, and the files it would have written
+  (`coordinator.tf`, `cover.go`, `SECURITY.md` and the launch-grant wiring) lose no writer.
+- **D924's channel, and the plan's task-format work, go back to the answer of 2026-11-04**: the token's
+  ceiling rides **a variable of its own on the execution override** and not a field on the run's task,
+  so the two `task.Spec` fields and the skew gate they needed are no longer part of M9 (its rows and
+  the ruling above record the round trip).
+- **The medium finding about the fake's project-job rule is out of scope**, because M11 is gone: the
+  widening of `internal/gcpfake/run.go:973` existed only to let a fenced launch carry no `FUGARO_RUN`
+  override, and with the fence declined **every launch carries the identity override and the fake's
+  rule is unchanged**.
+- **M9's grant makes the cover name the front door's account**
+  ([implementation-plan.md](implementation-plan.md) §3 and §4): the binding is written in
+  `modules/project/iam.tf` as a **literal** member — the project module cannot reach the installation
+  module's account, so `member = each.value` carries the root's own string — and the cover classifies
+  a member it knows by its **spelling** (`internal/infra/tf/cover.go:1338-1400`), where `fugaro-mcp`
+  is neither a `FugaroAccounts` ID (`:415`) nor a job account (`:777`), so `fugaroAccount` (`:2061`)
+  refuses it and the plan is refused with "who is not on the review screen". **So
+  `internal/infra/tf/cover.go` joins M9's files** and the account is named there as a kind of its own
+  with the `fugaroJobRunner` row accepting it — the same kind the declined fence would have added, for
+  the launcher's role rather than a role of its own. **The plan said the cover needed no change while
+  the fence was the thing that would have touched it; the ruling is what makes that false**, and the
+  one-writer-per-file rule still holds, because M4's cover work is L0 and M9's is L5. **Letting the
+  member arrive unknown instead does not hold**: `modules/project` creates a service account, so the
+  cover accepts an unknown member there, but a value carried from the installation's output is
+  unknown only on the apply that creates the account — the review would admit the first plan and
+  refuse every later one.
+- **What stays the owner's, and it is now the whole of it**: the live IAM — that the front door's
+  account holds **both** permissions in a real project — which is check 2's shape for a grant rather
+  than a live step, and the **revisit** itself.
 
 ## 4b. The decision the amendment added
 
@@ -690,18 +935,60 @@ whose store is the one every document here now names.
 **What a later `spawn_task` design item has to answer**, written here so the deferral is a plan and
 not a shrug:
 
-- **No `runWithOverrides`.** Use `run.jobs.run` with **per-run input under a bucket prefix only the
+- **No `runWithOverrides` — considered and declined for v1 (the owner's ruling of 2026-11-09, §4a).**
+  The requirement was `run.jobs.run` with **per-run input under a bucket prefix only the
   coordinator writes**, keyed by the execution, so the job's own template decides everything a
-  caller could otherwise rewrite.
+  caller could otherwise rewrite. **The owner first ruled the mechanism of that fence on 2026-11-09
+  (§6 check 0): a split launcher role whose account holds `run.jobs.run` alone and never
+  `run.jobs.runWithOverrides`, with D924's ceiling and the marker that a launch carries one travelling
+  in the task in the runs bucket — and later the same day he declined it**: the front door is given
+  **the launcher's permissions, `runWithOverrides` included**, because the full launch path is what the
+  phone and the other remote clients need — the run's identity, the budget token's seal key and the
+  review-job marker all travel as execution overrides — and **the risk is accepted for v1 and to be
+  revisited**. **D937 is answered with it** (§4a): the launch binding is **NOT built** and the run's
+  identity stays the `FUGARO_RUN` override (`internal/backend/gcp/run.go:172-178`), so no task of this
+  plan carries the identity change either.
 - **Run-token minting moves out of the public service**, so the service that answers strangers holds
   no signer.
-- **An argument allowlist**: no `--no-budget-check` (`internal/cli/run.go:325`), no `--token`
-  (`:313`), no free-form `--run-id`; and **always pass `mode = max(requested, the token's minimum)`**,
+- **An argument allowlist**: no `--no-budget-check` (`internal/cli/run.go:335`), no `--token`
+  (`:322`), no free-form `--run-id` (`:313`); and **always pass `mode = max(requested, the token's minimum)`**,
   so a caller cannot ask for less than its token allows.
 
 **What this moves**: M9 and the parts of M10 that depend on it leave the first slice; the shared-files
 table (§4 of the plan) and the release slot (§5) are re-cut; and **the plan's own statement of the
 tool set is narrower** — the first slice serves the read tools and no run starts from the front door.
+
+### D937 — The premise the ruling got wrong, the two values it cannot carry, and the content the fence does not cover — **ANSWERED 2026-11-09**
+
+**The owner answered it on 2026-11-09, later the same day, by declining the fence** (§4a, "The owner's
+ruling of 2026-11-09, later the same day"): **the launch binding is NOT built, and the run's identity
+stays the `FUGARO_RUN` override.** So (a) is moot rather than built — there is no split account for the
+identity to be out of reach of; (b)'s two values, the budget token's seal key and the review-job
+marker, keep the override channels they use today; and (c) is no longer a bound the fence would have
+given: **with the fence declined the front door holds `runWithOverrides` and may rewrite the job's
+environment, its template and its arguments as well as the task's content**, which is the risk the
+owner accepted for v1 and asked to have revisited. **What was put to him is kept below**, so a later
+reader can see what was declined and why it was raised.
+
+**What was put to the owner, and the answer it got.** The question reopened a premise of the fence
+ruling of 2026-11-09, and it had three parts, every one a correction of an overstatement this folder
+carried rather than a new requirement.
+
+| D | The question | This folder's recommendation (2026-11-09) | Why |
+| --- | --- | --- | --- |
+| **D937** | **Can the split launcher role start a run at all, and does the fence cover what the run is told to do?** | **The goal stands — the front door's account never holds `run.jobs.runWithOverrides` — and three corrections follow.** (a) **The identity moves out of the override too**, along with D924's ceiling and the marker: the launcher writes a **launch binding** into the runs bucket named by the execution, and the runner resolves `<slug>/<run-id>` from it at bootstrap, reading the execution name Cloud Run injects itself (`CLOUD_RUN_EXECUTION` through `internal/backend/platform.go:69`'s `ExecutionFromEnv`, the Cloud Run codec's `FromEnv` at `internal/backend/codec.go:113`) — because `FUGARO_RUN` as an override (`internal/backend/gcp/run.go:173`) is the one thing `run.jobs.run` alone cannot set. (b) **Two further per-launch values have no channel in this design at all**: the budget token's **seal key**, which a minting launch sends as a *secret* override (`FUGARO_BUDGET_TOKEN` — `internal/cli/run.go:3956`, `internal/cli/launch_budget.go:708`, and `internal/backend/backend.go:136` on why it is a fact about the launch), and the **review-job marker** (`FUGARO_REVIEW_JOB=1`, `internal/cli/run.go:3977`), so a fenced launch that minted a token could not hand the run the key that opens it and could not ask for a review job. (c) **The fence is stated for what it is**: an override-surface fence, which does not authenticate `task.json` and does not confine what a compromised coordinator writes into it | §4a's "The premise the ruling got wrong" has the mechanism, its race (the binding lands after the execution starts, so the runner polls for a bounded window; a launcher that dies in between leaves a paid-for execution the operator must be able to see) and its files; (b) is why the design's channel list is short by two entries and why M9's launch path cannot simply send nothing; (c) is why **`task.json` is unsigned text the launcher wrote** (`docs/design/bucket-iam.md:412`) and why M9's runs-bucket write means the fence bounds the channel and not the content |
+
+**What (c) meant, and what declining the fence means instead.** The fence would have stopped a
+compromised coordinator from **rewriting the job's environment, its template or its arguments** while
+leaving it able to write a task whose `repo`, `prompt`, `workflow` and `recipe` it chose — the second
+of which it can do today and the fence was never going to close, because the front door has to be able
+to say what the run should do. **With the fence declined, the first is open too**, and the accepted v1
+risk is exactly that. **The two controls that still bound it** are the ones this folder already has:
+the argument allowlist (no `--no-budget-check`, no `--token`, no free-form `--run-id`), which is what
+keeps the task from being a way around the pre-launch checks, and the budget pre-check and the kill
+switch, which are what bound what the run can spend before its content matters at all. **Spec §8 states
+this residual beside the requirement** rather than leaving the launch grant reading as a fenced one,
+and **M9's Interface says the same of its own launch path**.
 
 ### The store: D935's answer, and what this folder's review adds to it
 
@@ -736,7 +1023,7 @@ moved a long way in three days and a block that was free at launch is not free b
 **This work keeps D920–D934**, the fifteen decisions above, **and D935** — the answer of 2026-11-05,
 which this work's own reservation had left free and which its review asked for, and which says where
 the token records live — **and D936**, the one decision the security review's own findings made
-(§4b): the first MCP slice, with `spawn_task` deferred out of it. **D937–D939 stay reserved
+(§4b): the first MCP slice, with `spawn_task` deferred out of it. **D938–D939 stay reserved
 and unused**; the amendment notes of §4a take **no** number, because they amend a decision rather
 than replace it — a number here is never reused for a new meaning, so an amended answer keeps its own
 number and gains a dated note beside it. They do not collide: on `main` the strings "D920", "D934"
@@ -752,11 +1039,12 @@ not a decision; it is recorded here because a reader running the same grep will 
 
 ## 6. Owner checks, before any implementation
 
-These are not decisions — no answer changes the design. They are the things this design **cannot**
-verify hermetically, and they belong on the live checklist, in the owner's hands, before the first
-code task starts:
+These are not decisions of their own — no answer here changes the design, and where one of them put a
+question to the owner the answer is recorded in the check rather than left as an open item. They are
+the things this design **cannot** verify hermetically, and they belong on the live checklist, in the
+owner's hands, before the first code task starts:
 
-0. **The launch-override fence is decided and built before M9 or D931.** Spec §8 states the owner's requirement (the runner ignores the override environment except an allowlist) as NOT BUILT: the runner reads its ceiling and wiring from variables `runWithOverrides` can rewrite today, so the mechanism that lets it read non-allowlisted configuration from something an override cannot set is an open owner decision.
+0. **The launch-override fence is declined for v1, unbuilt, and an accepted risk — the owner's ruling of 2026-11-09, later the same day, superseding the fence ruling of the same date.** Spec §8 states the owner's requirement of 2026-11-04 — that the runner ignore the override environment except for an allowlist — as **NOT BUILT**, and **it stays that way**: the runner reads its ceiling and wiring from variables `runWithOverrides` can rewrite today, and the container sees one merged environment, so it cannot tell a template value from an override value. **The owner first ruled the mechanism on 2026-11-09 (a split launcher role holding `run.jobs.run` and never `run.jobs.runWithOverrides`, with D924's ceiling and the launch marker in the task in the runs bucket), and later the same day superseded that ruling**: **for v1 the coordinator — the service that hosts this front door — is given the launch and run-with-overrides permissions**, because the phone and the other remote clients need the **full launch path** (the run's identity, the budget token's seal key and the review-job marker all travel as execution overrides) and **no fence the owner could see keeps that functionality**. **He accepts the risk for v1**: a compromised front door **can change what a run does, not only narrow its ceiling**. **Fortification is to be revisited later by other means, and the revisit is an owner check of its own (check 9 below).** **What this closes:** **D937 is answered** (§4b) — **the launch binding is NOT built**, the run's identity **stays the `FUGARO_RUN` override** (`internal/backend/gcp/run.go:172-178`, read at `internal/cli/exec.go:60`), and **no task of the plan builds a fence**: M11 is removed as a task ([implementation-plan.md](implementation-plan.md) §3) and kept there as a considered-and-declined note, and M9's edges are M4 and M7 alone. **What stays the owner's to read is the live IAM** — that the front door's account holds `run.jobs.run` **and** `run.jobs.runWithOverrides` in a real project — which is check 2's shape for a grant rather than a live step, **and the residual the design carries instead of a fence**: the front door holds the runs-bucket write M9 needs **and** the override permission, so a compromised coordinator can choose what the task says **and** rewrite the job's environment, its template and its arguments. The controls that do bound it are the argument allowlist and the budget pre-check, and §8 of [spec.md](spec.md) says so beside the requirement.
 1. **`zitadel/oidc`'s licence is confirmed — by the owner or by counsel — before any build**, and
    **the owner wrote the M5 gate file on 2026-11-07.** D921 was answered with the licence
    **UNCONFIRMED**: the library's Apache 2.0 claim is the library's own and nothing in this
@@ -769,9 +1057,10 @@ code task starts:
    permissive"** ([licence-gate.md](licence-gate.md), the gate file this check describes). **Counsel
    was never asked about the transitive set and has cleared nothing**, so the clearance the tree
    carries is the owner's own and the check is **met**: the gate was never a note, and what met it is
-   an artifact rather than a run's word. **What that does not do is wire the front door** — M5 merges
-   dormant, because the paired device M-a asks for is **M5b** and M5b is a hard prerequisite before
-   any binary links it (§4a) — and D921's alternatives, with the library taken out of `go.mod` and M5
+   an artifact rather than a run's word. **What that did not do was wire the front door** — M5 merged
+   dormant, because the paired device M-a asks for is **M5b** and M5b was a hard prerequisite before
+   any binary links it (§4a), **and M5b is built on the server's side, with M-a's first requirement
+   still unmet and the delivery still owed** — and D921's alternatives, with the library taken out of `go.mod` and M5
    rebuilt against them, remain the answer to a licence that would not have been cleared.
 2. **The endpoint really is reachable from the public internet** once D920's answer says so: a
    request from outside the project reaches the handler and gets the 401, rather than being refused
@@ -811,7 +1100,9 @@ code task starts:
    than left standing** (§8 of the plan holds the answer: the bucket).
 8. **The store's IAM is what D935 says it is, and only a live project can show it.** No hermetic test
    stands in for this one: the plan's own test reads the plan, and the plan is not the project's
-   policy. With the owner's own credentials, once M4 has been applied by `fugaro update`: **read and
+   policy. With the owner's own credentials, once the release that turns the front door on has been
+   applied by `fugaro update` — the store is created by the front door's own opt-in, which no released
+   `fugaro update` writes yet (D934) —: **read and
    list the store's prefix as a launcher and as a budget admin, and see a refusal** — the two classes
    F32 found the rules cannot exclude from the database; **impersonate the deployer as an operator
    (`gcloud storage ls` under the deployer's account, or with the token-creator grant the installation
@@ -819,18 +1110,36 @@ code task starts:
    refusal too** — the reading the correction of 2026-11-05 adds, and the one that proves the store's
    name is outside the deployer's conditioned prefix rather than merely written to be; **read one
    record as the front door's own account `mcp_server` — the store's single member, the account M4
-   creates (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`), never the sweep's — and
+   creates (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`), never the sweep's — and
    see it work**; **read the same record as a basic project Viewer and see a refusal**, which is the
    second correction of 2026-11-05: a new bucket carries GCS's convenience bindings for
-   `projectViewer:` until M4 removes them, so the check reads the created policy rather than assuming
-   it is clean (`SECURITY.md:88`, `docs/design/bucket-iam.md:47`,
-   `internal/infra/statebucket.go:140`); and **confirm the store's
+   `projectViewer:` unless something takes them off, so the check reads the created policy rather
+   than assuming it is clean (`SECURITY.md:88`, `docs/design/bucket-iam.md:47`,
+   `internal/infra/statebucket.go:140`). **What takes them off is
+   `internal/infra.RemoveProjectViewers`, the call `fugaro setup` and `fugaro update` already make on
+   the state and runs buckets, and M4's store half is the bucket and its one grant only**: the plan
+   writes none of those bindings — asserted in the module and in the installation plan's own resource
+   changes — and the removal's call site for this bucket belongs to the release that turns the front
+   door on, since no released `fugaro update` writes the `mcp_server` flag that creates the store at
+   all (D934). Until that release, this reading is the one that will show whether it did; and **confirm the store's
    bucket is not the runs bucket**, which is the one placement a prefix of an existing bucket would
    have made readable by both lists. It is
    check 2's shape for a second resource: the claim is about who reaches something, and only the
    project can answer it. **Which store** it is checked against is no longer open: the plan's §8
    records the owner's answer of 2026-11-05 — the bucket `fugaro-mcpauth-<gcp-project>` — so this
    check is written to it, and M4 creates the bucket it names.
+9. **Revisit the declined fence — the owner's own follow-up, and the one entry here with no date.**
+   The owner's ruling of 2026-11-09 declines the launch-override fence for v1 and asks for
+   **fortification to be revisited later by other means** (§4a, "The owner's ruling of 2026-11-09,
+   later the same day"): the requirement of 2026-11-04 — that the runner read nothing a caller could
+   override except an allowlist — **stands unmet**, and a compromised front door can change what a run
+   does, not only narrow its ceiling. **What is owed is the owner's decision on the means and the
+   moment**, and it is a decision rather than a live reading: the split launcher role and the launch
+   binding are declined rather than impossible, the priced alternatives stay in
+   [implementation-plan.md](implementation-plan.md) §3's M11 note and §4a above, and the plan's open
+   items carry the same **revisit** entry. **Until it is answered the risk is accepted, and nothing
+   here may read as a fence the tree has** — which is what check 0 states beside the requirement in
+   §8 of [spec.md](spec.md).
 
 ## 7. What `main` had overtaken, and what was fixed in place
 
@@ -856,8 +1165,8 @@ discover:
    service by a verified email, so D933's answer — the project's own two lists — is the shape the
    repository already has rather than one invented here.
 3. **Three commands are now on `main`**: `fugaro settings` (`internal/cli/settings.go:61`),
-   `fugaro rigor` (`internal/cli/settings_set.go:45` names `fugaro rigor set` as the owner of the
-   rigor keys) and `fugaro accounts` (`internal/cli/accounts.go:25`). F21's gap is unchanged — none
+   `fugaro rigor` (`internal/cli/settings_set.go:47` names `fugaro rigor set` as the owner of the
+   rigor keys) and `fugaro accounts` (`internal/cli/accounts.go:24`). F21's gap is unchanged — none
    of them writes an MCP token — but the CLI surface a token-minting command would join exists, and
    F21's own row is the finding that says so.
 4. **The project image catalog is on `main`** (`docs/project-image-catalog/`), and the
@@ -881,11 +1190,11 @@ discover:
    (`internal/cli/pair.go`) walks an operator through one pairing: a one-shot token, the QR's
    payload, the phone's key, the typed eight-character code, and the device node it writes —
    `internal/budget/token/device.go:176` (`MintDevice`) mints the device's custom token, and
-   the pairing session's own claim is `PAIRING` (`internal/budget/rules/rules.go:540`, read at
-   `:561`) over the device allowlist `PathDevices` (`:458`) that the `USER` claim already requires
-   (`:517`). **This is why D923's answer can name a signer that is not the coordinator:** the
+   the pairing session's own claim is `PAIRING` (`internal/budget/rules/rules.go:552`, read at
+   `:573`) over the device allowlist `PathDevices` (`:470`) that the `USER` claim already requires
+   (`:529`). **This is why D923's answer can name a signer that is not the coordinator:** the
    repository already has a flow where a person approves something from a device that is paired to
    the installation, and the principal that mints a custom token is deliberately **not** a resident
-   service — `internal/budget/rules/rules.go:482-487` records that whoever can sign for the project chooses the uid and
+   service — `internal/budget/rules/rules.go:494-499` records that whoever can sign for the project chooses the uid and
    every claim in it, and that such a principal is a launcher or a service-account key holder. The
    coordinator holds neither.

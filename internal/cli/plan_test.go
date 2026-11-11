@@ -58,7 +58,10 @@ func TestPlanGraphPrintsTheArtifact(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if doc.SchemaVersion != plan.SchemaVersion || len(doc.Nodes) != 2 || len(doc.Edges) != 1 {
+	// planGraphDoc is a v2 document, and the read carries the version it read
+	// rather than the newest this build writes: a graph written before the
+	// current schema stays the document it is.
+	if doc.SchemaVersion != 2 || len(doc.Nodes) != 2 || len(doc.Edges) != 1 {
 		t.Fatalf("read back %+v, want the fixture's schema version, two nodes and one edge", doc)
 	}
 
@@ -121,6 +124,166 @@ func TestPlanGraphPrintsTheArtifact(t *testing.T) {
 	}
 }
 
+// planDecoupledDoc is a schema-3 graph the decoupling pass ran on: two large
+// sides that no longer wait for each other, a small contract between them with
+// a stub it leaves behind, and the integration task that re-joins them. It is
+// the shape CD3 computes a gain from, written here as the command's own
+// document so the CLI tests exercise what the command prints.
+const planDecoupledDoc = `{
+  "schema_version": 3,
+  "plan": "docs/plans/decoupled.md",
+  "nodes": [
+    {"id": "A", "title": "one side", "size": 5, "footprint": {"prediction": true, "paths": ["internal/a/**"]}},
+    {"id": "B", "title": "the other side", "size": 5, "footprint": {"prediction": true, "paths": ["internal/b/**"]}},
+    {"id": "C1", "title": "the contract", "kind": "contract", "size": 0.5,
+     "stubs": ["internal/contract/stub.go"],
+     "footprint": {"prediction": true, "paths": ["internal/contract/types.go", "internal/contract/stub.go"]}},
+    {"id": "I1", "title": "the integration", "kind": "integration",
+     "footprint": {"prediction": true, "paths": ["internal/contract/stub.go"]}}
+  ],
+  "edges": [
+    {"task": "B", "needs": "C1", "reason": "B is built against the contract"},
+    {"task": "I1", "needs": "A", "reason": "the integration runs both sides"},
+    {"task": "I1", "needs": "B", "reason": "the integration runs both sides"}
+  ],
+  "decoupling": [
+    {"contract": "C1", "was": {"task": "B", "needs": "A"}, "integration": "I1", "reason": "B needed A's interface only"}
+  ]
+}`
+
+// decoupledCheckout writes the decoupled fixture into a checkout of the test's
+// own, with the contract's stub on disk, and returns the plan's path. The stub
+// is what the read resolves against the checkout the artifact stands in, so the
+// fixture only reads in a tree that has one.
+func decoupledCheckout(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(dir, "plan.md")
+	if err := os.WriteFile(planPath, []byte("# a plan\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plan.ArtifactPath(planPath), []byte(planDecoupledDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stub := filepath.Join(dir, "internal", "contract", "stub.go")
+	if err := os.MkdirAll(filepath.Dir(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stub, []byte("package contract\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	return planPath
+}
+
+// TestPlanGraphPrintsDecouplingBlock: the terminal form carries what the pass
+// did, not only the nodes it left behind -- every edge it broke with the
+// contract and the integration task that cover it, what the break bought
+// measured before and after, and the contract stubs still in the checkout. The
+// figures are the read's, so the words a planner reads are the same ones the
+// --json document carries.
+func TestPlanGraphPrintsDecouplingBlock(t *testing.T) {
+	planPath := decoupledCheckout(t)
+	text, _, err := execute(t, "plan", "graph", "--plan", planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"DECOUPLING",
+		"B needed A's interface only",
+		"gain: 1 broken, 0 kept, 2 added; before 2 tasks, weight 10; after 3 tasks, weight 6.5; improves",
+		"stubs remaining: C1: internal/contract/stub.go",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the text graph does not carry %q:\n%s", want, text)
+		}
+	}
+	// The broken edge is named as it stood -- task, needed task -- and the two
+	// nodes that cover it are named beside it, so a reader can find them in the
+	// table above.
+	row := ""
+	for _, l := range strings.Split(text, "\n") {
+		if strings.Contains(l, "B needed A's interface only") {
+			row = l
+		}
+	}
+	for _, want := range []string{"B", "A", "C1", "I1"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("the broken edge's row is %q, want it to name %s", row, want)
+		}
+	}
+}
+
+// TestPlanGraphJSONCarriesGain: the read's --json document is the console's
+// input, so the pass's record and the gain CD3 computes travel in it -- the
+// broken edges, the before and after measures, the added task count and which
+// of a contract's stubs are still in the tree.
+func TestPlanGraphJSONCarriesGain(t *testing.T) {
+	planPath := decoupledCheckout(t)
+	out, _, err := execute(t, "plan", "graph", "--plan", planPath, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g plan.Graph
+	if err := json.Unmarshal([]byte(out), &g); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if len(g.Decoupling) != 1 || g.Decoupling[0].Was != (plan.BrokenEdge{Task: "B", Needs: "A"}) {
+		t.Errorf("decoupling = %+v, want the one recorded break B needs A", g.Decoupling)
+	}
+	if g.Gain == nil {
+		t.Fatalf("the document carries no gain:\n%s", out)
+	}
+	gain := *g.Gain
+	want := plan.Gain{
+		Broken:     1,
+		Kept:       0,
+		AddedTasks: 2,
+		Before:     plan.PathMeasure{Tasks: 2, Weight: 10},
+		After:      plan.PathMeasure{Tasks: 3, Weight: 6.5},
+		Improves:   true,
+	}
+	if gain != want {
+		t.Errorf("gain = %+v, want %+v", gain, want)
+	}
+	var contract *plan.NodeState
+	for i, n := range g.Nodes {
+		if n.ID == "C1" {
+			contract = &g.Nodes[i]
+		}
+	}
+	if contract == nil {
+		t.Fatalf("the document carries no C1 node:\n%s", out)
+	}
+	if strings.Join(contract.StubsPresent, " ") != "internal/contract/stub.go" {
+		t.Errorf("C1's stubs_present = %v, want the stub that is still in the checkout", contract.StubsPresent)
+	}
+}
+
+// TestPlanGraphV2OutputIsUnchanged: the block is a schema-3 answer, so a v2
+// artifact prints the document it always did -- byte for byte, because a
+// console that reads a v2 graph must not see a key or a line it never had.
+func TestPlanGraphV2OutputIsUnchanged(t *testing.T) {
+	_, planPath := planGraphFixture(t, planGraphDoc)
+	text, _, err := execute(t, "plan", "graph", "--plan", planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `plan docs/plans/2026-10-15-desktop-console-v2.md (schema version 2, 2 levels)
+ID      TITLE                                           LEVEL  STATE    VERSION  RUN              NEEDS   FOOTPRINT
+V2.2.1  the graph document and the read that prints it  0      ready    0.9.0    console-graph-1  -       predicted: internal/plan/** internal/cli/plan.go
+V2.2.2  the footprint                                   1      blocked  0.9.0    -                V2.2.1  predicted: none
+critical path (2 tasks): V2.2.1 -> V2.2.2
+bottleneck: V2.2.1
+`
+	if text != want {
+		t.Errorf("a v2 graph prints\n%s\nwant\n%s", text, want)
+	}
+}
+
 // TestPlanGraphPrintsTheStream: the read carries the artifact's stream through
 // to the document it prints, which is what a console draws the release columns
 // from (GV1.3, GD7) -- and a v1 artifact, which carries no such field, prints
@@ -171,7 +334,7 @@ func TestPlanGraphRefusesWhatItCannotRender(t *testing.T) {
 	}{
 		{"malformed", `{"schema_version": 1, "plan": "p.md", "nodes": [`, "not JSON"},
 		{"a future schema version", `{"schema_version": 9, "plan": "p.md", "nodes": [], "edges": []}`,
-			"schema version 9 and this build reads version 2"},
+			"schema version 9 and this build reads version 3"},
 		{"a cycle", `{"schema_version": 1, "plan": "p.md", "nodes": [
 			{"id": "a", "title": "one", "footprint": {"prediction": true, "paths": []}},
 			{"id": "b", "title": "two", "footprint": {"prediction": true, "paths": []}}],
