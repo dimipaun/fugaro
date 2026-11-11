@@ -509,6 +509,12 @@ const catalogBuildKillsSwitchYAML = `image_catalog:
 // kill switch is read before EACH build, so a switch turned on after the first
 // build stops the second. A command that read the switch once for the whole
 // invocation would submit both entries and fail this assertion of one.
+//
+// It is also the one world in this file where a refusal stops a catalog run
+// that has already built something, which is where the account and the exit
+// code have to agree (G3): the account opened at the first entry, so its
+// closing line is this run's verdict and the refused entry is the step it
+// failed on — never a "Done" over a run the switch cut in half.
 func TestImageBuildManagedReadsTheKillSwitchBeforeEachBuild(t *testing.T) {
 	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildKillsSwitchYAML)
 	w := managedBuildWorld(t, f, managedBuildMarker(3))
@@ -537,6 +543,16 @@ func TestImageBuildManagedReadsTheKillSwitchBeforeEachBuild(t *testing.T) {
 		if r.Verdict == managedmode.AuditRefused && !strings.Contains(strings.Join(r.Rules, "; "), "kill switch is on") {
 			t.Errorf("the refused record's rules do not name the switch that refused it: %v", r.Rules)
 		}
+	}
+	// The account this run kept ends the way the command did (G3): the refusal
+	// stops a run whose first entry was built, so the account is open and its
+	// closing line is the run's verdict. A command that exits non-zero may not
+	// end on a "Done" — the entry the switch refused is the step it failed on.
+	if lines := reportLines(out); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {
+		t.Errorf("the run's account ends %q, want the reporter's failed line:\n%s", lines[len(lines)-1], out)
+	}
+	if !strings.Contains(out, markFailed+" tools") {
+		t.Errorf("the entry the switch refused is not the failed step:\n%s", out)
 	}
 }
 
