@@ -365,3 +365,45 @@ func settingsSetListFallback(src []byte, path []string, want []string, err error
 	}
 	return next, nil
 }
+
+// settingsRewriteList writes one allow-list entry again in the block style this
+// program writes a list in — values under allow_data_to, and the Bitbucket
+// token's proxy written back only when the entry carried it — and is the second
+// half of every edit of the two lists that share it: `project_secrets`/
+// `workflow_secrets` and `claude_accounts`.
+//
+// The entry is taken away whole rather than edited in place because a member
+// cannot be spliced into a flow collection, which is the one shape the editor's
+// item operations refuse (yamledit.ReasonFlowCollection) and the shape
+// docs/git-providers.md teaches the operator to write the Bitbucket allow-list
+// in. The values come from the parsed entry rather than from the command line,
+// so a repository the entry already named is not lost with the shape it was
+// spelled in, and the caller's own diff shows the reformatting beside the edit.
+//
+// The flow collection this cannot take away either is the entry itself being a
+// member of a flow mapping — project_secrets: { bitbucket-token: { ... } }, the
+// whole-file line that page teaches — and no edit of this program reaches one.
+// The entry is not even there to take away, so taking it away answers with the
+// bytes unchanged and no error, and the refusal the operator reads comes from
+// the write that follows; that is why every step below, the removal included,
+// means the same thing by its error (workspaceEditResult).
+func settingsRewriteList(old []byte, block, name string, values []string, proxy bool) ([]byte, error) {
+	path := block + "." + name
+	next, err := yamledit.RemoveKeyWithOptions(old, []string{block, name}, yamledit.RemoveOptions{DropEmptyParents: true})
+	if next, err = workspaceEditResult(path, next, err); err != nil {
+		return nil, err
+	}
+	for _, v := range values {
+		added, addErr := yamledit.AddListItem(next, []string{block, name, "allow_data_to"}, v)
+		if next, err = workspaceEditResult(path, added, addErr); err != nil {
+			return nil, err
+		}
+	}
+	if proxy {
+		scaled, setErr := yamledit.SetScalar(next, []string{block, name, "proxy"}, "true")
+		if next, err = workspaceEditResult(path, scaled, setErr); err != nil {
+			return nil, err
+		}
+	}
+	return next, nil
+}

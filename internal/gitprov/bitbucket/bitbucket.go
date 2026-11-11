@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // DefaultBaseURL is the Bitbucket Cloud API root.
@@ -531,15 +532,9 @@ func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead,
 // before relying on `review-only`/`pick` against a real Bitbucket
 // repository, the same caveat the fork-checkout path above already needs.
 func (p *Provider) resolveFullHash(ctx context.Context, rev string) (string, error) {
-	path := "/repositories/" + url.PathEscape(p.o.Workspace) + "/" + url.PathEscape(p.o.Slug) + "/commit/" + url.PathEscape(rev)
-	var c struct {
-		Hash string `json:"hash"`
-	}
-	if err := p.api.Do(ctx, "GET", path, nil, &c); err != nil {
+	hash, err := p.commitHash(ctx, rev)
+	if err != nil {
 		return "", fmt.Errorf("resolving commit %s to its full hash: %w", rev, err)
-	}
-	if c.Hash == "" {
-		return "", fmt.Errorf("resolving commit %s to its full hash: no hash in the response", rev)
 	}
 	// Both checked, not only ValidCommitSHA's shape: the response is a
 	// full hash for the exact commit asked for, not merely something
@@ -548,8 +543,30 @@ func (p *Provider) resolveFullHash(ctx context.Context, rev string) (string, err
 	// "--upload-pack=..." that happens to pass the shape check alone,
 	// must not reach `git fetch`/`git worktree add` as the revision to
 	// check out.
-	if !strings.HasPrefix(c.Hash, rev) || !gitops.ValidCommitSHA(c.Hash) {
-		return "", fmt.Errorf("resolving commit %s to its full hash: got %s, not a full hash of the same commit", rev, c.Hash)
+	if !strings.HasPrefix(hash, rev) {
+		return "", fmt.Errorf("resolving commit %s to its full hash: got %s, not a full hash of the same commit", rev, hash)
+	}
+	return hash, nil
+}
+
+// commitHash is the full hash the commit endpoint answers for one revision,
+// checked to be a full commit here because every caller holds it to that shape
+// (gitops.ValidCommitSHA). It is the read both the pull request's abbreviated
+// hash (resolveFullHash) and a catalog source's branch (Commit) go through:
+// the same endpoint, the same "hash" field, one rule about what a commit is.
+func (p *Provider) commitHash(ctx context.Context, rev string) (string, error) {
+	path := "/repositories/" + url.PathEscape(p.o.Workspace) + "/" + url.PathEscape(p.o.Slug) + "/commit/" + url.PathEscape(rev)
+	var c struct {
+		Hash string `json:"hash"`
+	}
+	if err := p.api.Do(ctx, "GET", path, nil, &c); err != nil {
+		return "", err
+	}
+	if c.Hash == "" {
+		return "", errors.New("no hash in the response")
+	}
+	if !gitops.ValidCommitSHA(c.Hash) {
+		return "", fmt.Errorf("got %s, which is not a full commit", pluginwire.Printable(c.Hash))
 	}
 	return c.Hash, nil
 }

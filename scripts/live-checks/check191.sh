@@ -455,6 +455,7 @@ def env(spec):
 
 def jobs_of(path, repo):
     remote = "https://bitbucket.org/" + repo + ".git"
+    slug = repo.lower().replace("/", "-")
     for job in load(path) or []:
         try:
             spec = job["spec"]["template"]["spec"]["template"]["spec"]
@@ -462,7 +463,9 @@ def jobs_of(path, repo):
         except Exception:
             continue
         e = env(spec["containers"][0])
-        if (e.get("FUGARO_REMOTE") or {}).get("value") != remote:
+        label = ((job.get("metadata") or {}).get("labels") or {}).get("fugaro_repo") or ""
+        owns = label.startswith(slug + "-") and re.fullmatch(r"[0-9a-f]{16}", label[len(slug) + 1:]) is not None
+        if not owns and (e.get("FUGARO_REMOTE") or {}).get("value") != remote:
             continue
         yield name, spec, e
 

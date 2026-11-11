@@ -194,6 +194,34 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// block; it asks nothing now (D1540) and the diff of that block is the proof
 	// this fixture reaches it.
 	"fugaro accounts add": {args: []string{"team-a", "--repos", "acme/app"}, reaches: "claude_accounts"},
+	// The two allow-list pairs are the field that block holds, and the sentence
+	// each one prints is the only proof that the run reached its write rather
+	// than a refusal: what these commands edit is which repository may spend a
+	// credential, so a fixture that stopped short of the write for this reason
+	// would be silent exactly where it matters. allow declares an account the
+	// world does not have — the first form of that pair — so it needs no seed;
+	// deny removes a repository the seed gives the account; and both secrets
+	// fixtures need the entry, the allow one with a repository it does not name
+	// so the addition is a change and not the "no change" answer.
+	"fugaro accounts allow": {
+		args:    []string{"team-a", "acme/web"},
+		reaches: "add acme/web to claude_accounts.team-a.allow_data_to",
+	},
+	"fugaro accounts deny": {
+		args:    []string{"team-a", "acme/web"},
+		reaches: "remove acme/web from claude_accounts.team-a.allow_data_to",
+		seed:    closedStdinAccountAllowListSeed,
+	},
+	"fugaro secrets allow": {
+		args:    []string{"bitbucket-token", "acme/web"},
+		reaches: "add acme/web to project_secrets.bitbucket-token.allow_data_to",
+		seed:    closedStdinProjectSecretAllowListSeed("acme/other"),
+	},
+	"fugaro secrets deny": {
+		args:    []string{"bitbucket-token", "acme/web"},
+		reaches: "remove acme/web from project_secrets.bitbucket-token.allow_data_to",
+		seed:    closedStdinProjectSecretAllowListSeed("acme/web"),
+	},
 	// The pool writes are the same kind of edit, and they reach it the same
 	// way: the seed gives the world a credential to list and a pool to remove,
 	// so each runs to its own sentence rather than stopping at the block's own
@@ -232,6 +260,20 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		args:    []string{"docs", "--executable-changes"},
 		reaches: "remove workflows.docs from",
 		seed:    closedStdinWorkflowSeed(workflowDocs),
+	},
+	// The two clone_urls writes are the settings group's kind: each reaches a
+	// block of the world's own project config, and the sentence naming the
+	// entry it changes is the proof the run reached the write rather than the
+	// refusal a project with no config file of its own meets. rm takes an entry
+	// away, so its seed writes one first.
+	"fugaro project clone-url set": {
+		args:    []string{"github/acme/app", "https://github.com/acme/app"},
+		reaches: "write clone_urls[github/acme/app] = https://github.com/acme/app in",
+	},
+	"fugaro project clone-url rm": {
+		args:    []string{"github/acme/app"},
+		reaches: "remove clone_urls[github/acme/app] from",
+		seed:    closedStdinCloneURLSeed,
 	},
 	// watch is the one leaf whose contract is not to return: it follows the
 	// project until it is interrupted. --once is its own one snapshot, which is
@@ -393,14 +435,23 @@ var closedStdinNoFixture = map[string]string{
 	// takes no argument and its bare run is the whole command: it lists the
 	// node the fixture's database holds (none) and the cached briefs of the
 	// machine it runs on, which this harness does not fixture.
-	"fugaro orchestrator ls":        "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
-	"fugaro orchestrator state":     "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
-	"fugaro orchestrator events":    "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
-	"fugaro orchestrator patch":     "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
+	"fugaro orchestrator ls":     "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
+	"fugaro orchestrator state":  "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
+	"fugaro orchestrator events": "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
+	"fugaro orchestrator patch":  "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
+	// The login unit's three commands read this machine's own home and nothing
+	// else, and this world's home has no unit: install is refused before its
+	// typed confirmation (a unit runs code at every login, and the word install
+	// is not something a closed pipe can type), and uninstall and status answer
+	// about a machine that has none.
+	"fugaro orchestrator install":   "refuses before its ask: the typed confirmation of a unit that runs code at every login needs a real terminal",
+	"fugaro orchestrator status":    "reports this machine's login unit, and this world's home has none: it says so and returns",
+	"fugaro orchestrator uninstall": "says there is nothing to remove: this world's home has no login unit",
 	"fugaro pair":                   "refuses from inside its body: the world's project has no budget.firebase_api_key for the phone to exchange the token with",
 	"fugaro pair ls":                "prints the no-project-config refusal",
 	"fugaro plan graph":             "refuses with no graph artifact under docs/plans",
 	"fugaro plan status":            "reads the repository's plan and stream files and reports what is missing",
+	"fugaro project clone-url ls":   "reads the selected project's own config, which this world's gives no repository a URL in, and prints that it gives none",
 	"fugaro project policy publish": "refuses before its ask: the deployed rules here carry no policy marker",
 	"fugaro project policy show":    "prints that this installation has published no policy",
 	"fugaro project profile ls":     "lists this world's config, which sets no profiles block, and says that it defines none",
@@ -647,12 +698,49 @@ func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 	f.appendConfig(t, "base_branch: main\n")
 }
 
+// closedStdinCloneURLSeed gives the world's own project config the entry the
+// clone_urls removal takes away, beside one it leaves. Without the first the
+// leaf would stop at "this project gives no clone URL for it" and would say
+// nothing about the write; without the second the removal would be the last
+// entry's, which the command refuses for the reason its own refusal gives.
+func closedStdinCloneURLSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n  github/acme/other: https://github.com/acme/other.git\n")
+}
+
 // closedStdinPoolSeed gives the world the two things a pool write needs to
 // reach its own edit: a credential a member may name (two of them, so the
 // declaration the fixture asks for is a change) and a pool to remove.
 func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\npools:\n  - name: claude-pool\n    members:\n      - team-a\n")
+}
+
+// closedStdinAccountAllowListSeed gives the world the account the deny's
+// fixture narrows: a removal from an account the config does not declare is
+// refused before the write, which would leave the fixture's sentence unproven.
+// The allow's own fixture needs no seed — declaring the account is that form's
+// work.
+func closedStdinAccountAllowListSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "claude_accounts:\n  team-a:\n    allow_data_to:\n      - acme/web\n")
+}
+
+// closedStdinProjectSecretAllowListSeed is the same for the project secret's
+// own list, and it is also the fixture's repository: the deny removes the one
+// it names, and the allow adds to a list that does not already hold it, so
+// neither run is the "no change" answer for a state the seed had already
+// reached. Only the names the project stores project-wide may appear here — the
+// loader refuses any other — and bitbucket-token is the one this list is for.
+func closedStdinProjectSecretAllowListSeed(repos ...string) func(*testing.T, *budgetFixture) {
+	return func(t *testing.T, f *budgetFixture) {
+		t.Helper()
+		body := "project_secrets:\n  bitbucket-token:\n    allow_data_to:\n"
+		for _, repo := range repos {
+			body += "      - " + repo + "\n"
+		}
+		f.appendConfig(t, body)
+	}
 }
 
 // closedStdinRigorLayerSeed gives the world the file `fugaro rigor set` edits:
@@ -708,6 +796,13 @@ func closedStdinWorld(t *testing.T) *budgetFixture {
 	// build command and take minutes, and the harness would be measuring the
 	// machine rather than the command.
 	t.Setenv("FUGARO_STATE_DIR", "")
+	// The login unit's file belongs under the person's own home on macOS —
+	// launchd reads $HOME, where Linux reads the XDG directories the fixture
+	// already isolates — and this harness drives the uninstall leaf. Without
+	// this, a developer who has the daemon installed would have their own unit
+	// deleted by a test run, and the leaf would fail on the file it found
+	// rather than on the machine having none.
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
 	// Which machine this is must not decide what a run does: a coding agent's
 	// session refuses writes the closed-stdin case would otherwise reach, and a
 	// real terminal is what this harness is the opposite of.

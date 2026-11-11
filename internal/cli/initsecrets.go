@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -199,6 +200,16 @@ type secretsStage struct {
 	checked bool
 	missing []string // names with no stored value
 	stored  []string // names stored in this run, for Verify
+
+	// node is the project's published policy, read once when the stage
+	// resolves through the run's own memoized read (initRun.policy) and nil
+	// when no node was read. It is the source SD17 answers with: a machine
+	// whose local config holds no project_secrets.bitbucket-token entry reads
+	// the allow-list the owner published instead of being handed a
+	// per-repository token, and this stage's store decision and the plan's
+	// mount decision (infra.ProjectSecretCandidateFromNode) are the one
+	// answer.
+	node *projectpolicy.Policy
 }
 
 func newSecretsStage(e *initEngine) *secretsStage {
@@ -402,6 +413,17 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		}
 	}
 	s.tg, s.origin, s.root = tg, oi, root
+	// The published policy, read here because the node is what decides where a
+	// name is stored for a repository this machine's local config does not
+	// carry an entry for (SD17). It is the run's own memoized read -- the
+	// repository stage reads the same node later for the spec's
+	// bitbucket_proxied fact -- so this moves that read earlier rather than
+	// adding one, and a read that fails passes nil, exactly as
+	// repoPolicyInput gives the repository stage: a node the operator cannot
+	// reach must not be taken for one that admits nobody, and the repository
+	// stage stops the run on the same error.
+	p, found, err := s.e.r.policy.read(ctx, lc)
+	s.node = repoPolicyInput(lc, p, found, err)
 }
 
 // defaultBranchConfig is the fugaro.yaml of the checkout's default branch
@@ -442,21 +464,52 @@ func (s *secretsStage) authorize(env initflow.Env) error {
 	return nil
 }
 
+// projectCandidate is the one function this stage asks where a name belongs:
+// infra.ProjectSecretCandidateFromNode, with the repository's provider and the
+// published node the stage read when it resolved. Both the store decision
+// (projectScope) and the "is it covered" check (find) read it, so the stage can
+// never store a value somewhere the check above would not look for it, and the
+// plan's own mount decision is the same answer.
+func (s *secretsStage) projectCandidate(name string) (string, bool) {
+	return infra.ProjectSecretCandidateFromNode(s.e.lc, name, s.tg.repo, s.tg.provider, s.node)
+}
+
 // projectScope is where this stage stores name: the project's own container
 // when the plan may mount a project copy for *this repository*, this
 // repository's own otherwise.
 //
-// It is infra.ProjectSecretCandidate, the one function that answers
-// eligibility, and the same answer find() reads to call a name covered -- so
-// the stage can never store a value somewhere the check above would not look
-// for it. The repository is the argument that matters (code review, high): a
-// repo-unaware test -- "project_secrets lists someone, so the name has a
-// project-wide meaning" -- called the name project-scope for a repository the
-// list does not name, and `init` on that repository then wrote its value over
-// the shared copy another repository mounts, a copy it may not mount itself,
-// and Verify failed. "Absent or empty means nobody" decides, and it decides
-// for the repository in hand.
+// It is projectCandidate, the one function that answers eligibility, and the
+// same answer find() reads to call a name covered -- so the stage can never
+// store a value somewhere the check above would not look for it. The
+// repository is the argument that matters (code review, high): a repo-unaware
+// test -- "project_secrets lists someone, so the name has a project-wide
+// meaning" -- called the name project-scope for a repository the list does not
+// name, and `init` on that repository then wrote its value over the shared copy
+// another repository mounts, a copy it may not mount itself, and Verify failed.
+// "Absent or empty means nobody" decides, and it decides for the repository in
+// hand.
+//
+// The published node is the second source, and it is the one SD17 adds: with
+// no project_secrets.bitbucket-token entry in this machine's local config, the
+// allow-list the owner published is what says whether this repository may
+// mount the project's copy of the token. It answers for that one name alone,
+// for a Bitbucket repository, and only where the local config holds no entry
+// of its own (infra.ProjectSecretCandidateFromNode).
 func (s *secretsStage) projectScope(name string) bool {
+	_, ok := s.projectCandidate(name)
+	return ok
+}
+
+// projectScopeLocal is the same question asked of the local config alone, which
+// is what Left() spells its command from: the line it leaves is a `fugaro
+// secrets set` invocation, and that command's scope decision is its own
+// (projectScopeName, the local config's) -- the node is read by update --repo,
+// which is the run this stage is part of, and not by `secrets set`. A line
+// spelled from projectScope would then name a command that stores somewhere
+// else than the sentence above it, and on a machine whose node admits the
+// repository with no project value stored yet it would store a repository copy
+// that overrides the project one forever.
+func (s *secretsStage) projectScopeLocal(name string) bool {
 	_, ok := infra.ProjectSecretCandidate(s.e.lc, name, s.tg.repo)
 	return ok
 }
@@ -464,16 +517,18 @@ func (s *secretsStage) projectScope(name string) bool {
 // find lists the repository's secrets (metadata only) and returns what its
 // jobs mount that has no value yet.
 //
-// A name the project's own local config allows this repository to use
-// project-wide (infra.ProjectSecretCandidate: the reserved names through
-// project_secrets, a named Claude account's or a model provider's through its
-// own allow_data_to) is not missing when the installation's copy has a
-// version, whatever the repository's own copy holds: mounting resolves the
-// logical name to that copy (infra.ResolveSecretID, a repository copy with a
-// version wins), so a project-covered name needs nothing typed. Prompting for
-// it anyway would store a repository copy that then wins forever -- a silent
-// precedence flip, and exactly the re-entry project-wide secrets exist to
-// remove; without a terminal it would block the init on NeedsYou.
+// A name the project's own config -- or, for the Bitbucket token, the project's
+// published policy -- allows this repository to use project-wide
+// (projectCandidate: the reserved names through project_secrets, a named Claude
+// account's or a model provider's through its own allow_data_to, the token
+// through the node's bitbucket_token block) is not missing when the
+// installation's copy has a version, whatever the repository's own copy holds:
+// mounting resolves the logical name to that copy (infra.ResolveSecretID, a
+// repository copy with a version wins), so a project-covered name needs nothing
+// typed. Prompting for it anyway would store a repository copy that then wins
+// forever -- a silent precedence flip, and exactly the re-entry project-wide
+// secrets exist to remove; without a terminal it would block the init on
+// NeedsYou.
 //
 // The project-wide listing is read only when some wanted name could be
 // covered by one (the local config has no project_secrets, no allowed Claude
@@ -486,7 +541,7 @@ func (s *secretsStage) find(ctx context.Context, st secretStore) ([]string, erro
 	}
 	var project []gcp.SecretInfo
 	if slices.ContainsFunc(s.tg.wanted, func(name string) bool {
-		_, ok := infra.ProjectSecretCandidate(s.e.lc, name, s.tg.repo)
+		_, ok := s.projectCandidate(name)
 		return ok
 	}) {
 		project, err = st.List(ctx, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: s.e.lc.Name})
@@ -502,7 +557,7 @@ func (s *secretsStage) find(ctx context.Context, st secretStore) ([]string, erro
 		if has(list, gcp.SecretID(s.tg.slug, name)) {
 			continue
 		}
-		if id, ok := infra.ProjectSecretCandidate(s.e.lc, name, s.tg.repo); ok && has(project, id) {
+		if id, ok := s.projectCandidate(name); ok && has(project, id) {
 			continue
 		}
 		out = append(out, name)
@@ -594,13 +649,28 @@ func (s *secretsStage) Left() initflow.Left {
 	}
 	var cmds []string
 	for _, name := range needs {
-		// The scope the command stores to is the scope the prompt above
-		// stores to (projectScope): a name this repository may mount
-		// project-wide defaults to the project's own container, and the fix
-		// the user is handed must not quietly store a repository copy that
-		// would then override the project one forever.
+		// The scope the command stores to is projectScopeLocal's, which is the
+		// scope `secrets set` itself decides: the line below is that command,
+		// and the node this stage read is update --repo's, not `secrets set`'s.
+		//
+		// A name only the node makes project-wide is the one place the two
+		// answers disagree, and `secrets set` cannot store that copy on this
+		// machine at all: with no entry of the local config's own,
+		// projectWideAccepted refuses it --project-wide, and its bare form
+		// writes the repository's own copy -- the copy that then wins over the
+		// project's from then on, which is the flip find() refuses to prompt a
+		// covered name for. The line left for it is the run's own door instead:
+		// at a terminal that door's prompt is take's, which stores the value in
+		// the container this stage's own decision picks.
+		if s.projectScope(name) && !s.projectScopeLocal(name) {
+			door := selfCommand() + " " + s.e.r.o.doorName()
+			if !slices.Contains(cmds, door) {
+				cmds = append(cmds, door)
+			}
+			continue
+		}
 		set := selfCommand() + " secrets set " + quoteWord(name)
-		if !s.projectScope(name) {
+		if !s.projectScopeLocal(name) {
 			set += " --repo " + quoteWord(s.tg.repo)
 		}
 		switch {
@@ -783,10 +853,13 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	// asks projectSecretAllowed, whose workflow_secrets source names the entry's
 	// own repositories. The two must move together: with the candidate reading
 	// the block and the reach not, this prompt told a person storing a workflow
-	// secret that no repository can mount it.
+	// secret that no repository can mount it. The published node is the same
+	// rule read the other way (SD17): projectScope takes it as a source, so
+	// projectReach is handed it too, and the sentence names the node's list
+	// where this machine's local config carries none.
 	if s.projectScope(name) {
 		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where %s; for this repository's own copy instead, press Ctrl-C here and run '%s secrets set %s --repo %s' in your own terminal, then start this again):\n",
-			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject), projectReach(s.e.lc, name), selfCommand(), quoteWord(name), quoteWord(s.tg.repo))
+			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject), projectReach(s.e.lc, name, s.node), selfCommand(), quoteWord(name), quoteWord(s.tg.repo))
 	} else {
 		fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager, in this repository's own copy):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
 	}

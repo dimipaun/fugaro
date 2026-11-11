@@ -686,7 +686,7 @@ func TestDeleteHints(t *testing.T) {
 	}}
 	hints := DeleteHints(p, nil)
 	if len(hints) != 3 || !strings.Contains(hints[0], "--budget, --budget-currency and --billing-account") ||
-		!strings.Contains(hints[1], "--alert-email") || !strings.Contains(hints[2], "--launcher") {
+		!strings.Contains(hints[1], "--alert-email") || !strings.Contains(hints[2], "--operator") {
 		t.Fatalf("hints = %q", hints)
 	}
 	if hints := DeleteHints(p, []string{"module.installation.google_billing_budget.this[0]"}); len(hints) != 2 {
