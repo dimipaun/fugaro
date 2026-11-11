@@ -497,7 +497,7 @@ func TestProjectPolicyPublishModelPricesRoundTrip(t *testing.T) {
 	const slash, dot = "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash"
 	f := newProjectFixture(t, "model_prices:\n"+
 		"  "+slash+": { input_per_m: 0.28, output_per_m: 0.42 }\n"+
-		"  "+dot+": { input_per_m: 1, output_per_m: 2, cache_read: 0.1 }\n")
+		"  "+dot+": { input_per_m: 1, output_per_m: 2, cache_read: 0.1, image_tokens: 6000 }\n")
 	out, _, err := execute(t, "project", "policy", "publish")
 	if err != nil {
 		t.Fatalf("publishing a documented model ID was refused: %v\n%s", err, out)
@@ -533,6 +533,22 @@ func TestProjectPolicyPublishModelPricesRoundTrip(t *testing.T) {
 	if v := p.Prices[dot].CacheRead; v == nil || *v != 0.1 {
 		t.Errorf("the dot-carrying entry did not come back whole: %+v", p.Prices[dot])
 	}
+	// The image ceiling is one of the members D2001 puts on this carrier, and
+	// the node is the one the run's price table is built from when a project
+	// has published (internal/runner's policyOverrides replaces the job
+	// environment's overrides whole), so a publish that dropped it would take
+	// the owner's images away on every run of the project — the failure the
+	// member exists to fix. It is carried by this publisher like every other
+	// rate, under the same escaped key.
+	if !strings.Contains(raw, `"image_tokens":6000`) {
+		t.Errorf("the published node does not carry the image rate:\n%s", raw)
+	}
+	if v := p.Prices[dot].ImageTokens; v == nil || *v != 6000 {
+		t.Errorf("the decoded policy lost the image rate: %+v", p.Prices[dot])
+	}
+	if !strings.Contains(out, "image_tokens 6000") {
+		t.Errorf("the publish diff does not name the image rate it is writing:\n%s", out)
+	}
 
 	// The diff names the model, and so do both show commands: an operator
 	// reads model IDs, not the node's escape.
@@ -562,6 +578,9 @@ func TestProjectPolicyPublishModelPricesRoundTrip(t *testing.T) {
 	}
 	if _, ok := doc.Policy.Prices[slash]; !ok {
 		t.Errorf("--json's policy.model_prices is not keyed by the model ID: %v", doc.Policy.Prices)
+	}
+	if v := doc.Policy.Prices[dot].ImageTokens; v == nil || *v != 6000 {
+		t.Errorf("--json's policy.model_prices lost the image rate: %+v", doc.Policy.Prices[dot])
 	}
 }
 

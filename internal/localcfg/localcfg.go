@@ -946,6 +946,12 @@ type ModelPrice struct {
 	CacheWrite1h   *float64 `yaml:"cache_write_1h,omitempty"`
 	CacheRead      *float64 `yaml:"cache_read,omitempty"`
 	WebSearchPer1k *float64 `yaml:"web_search_per_1k,omitempty"`
+	// ImageTokens is the per-image token ceiling an image block is reserved
+	// at, and it is the whole of what makes a model able to take an image
+	// (D2000): a model with no ceiling is refused the call. Left out, the
+	// model keeps the ceiling it already had — the built-in Claude rows have
+	// one — and an explicit 0 takes its images away.
+	ImageTokens *int64 `yaml:"image_tokens,omitempty"`
 	// LongContext is the price of a call whose input passes a threshold,
 	// for a model with a long-context tier; an override without it
 	// replaces the model's tier with none.
@@ -1012,11 +1018,12 @@ func (c *Config) Overrides() (pricing.Overrides, error) {
 			}
 			r.LongContext = &pricing.Tier{AboveInputTokens: t.AboveInputTokens, InputPerM: *t.InputPerM, OutputPerM: *t.OutputPerM}
 		}
-		if err := r.Validate(); err != nil {
+		ov := pricing.Override{Rates: r, ImageTokens: mp.ImageTokens}
+		if err := ov.Validate(); err != nil {
 			errs = append(errs, fmt.Errorf("model_prices.%s: %w", id, err))
 			continue
 		}
-		o[id] = r
+		o[id] = ov
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, err

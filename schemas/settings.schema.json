@@ -1088,6 +1088,9 @@
         "model_prices.*.cache_write_5m": {
           "default": "unset = the built-in price"
         },
+        "model_prices.*.image_tokens": {
+          "default": "unset = the built-in price"
+        },
         "model_prices.*.input_per_m": {
           "default": "unset = the built-in price"
         },

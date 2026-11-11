@@ -162,6 +162,12 @@ const (
 // longer and the allowlist's one key wider, so the gap the audit is about does
 // not move.
 //
+// The image rate (docs/vision-model, V2) moved it by one more, and this one
+// did move the gap: `model_prices.*.image_tokens` belongs to the `models`
+// family and so is refused by a family command like the rows above, but the
+// block it sits in is a wildcard block no prefix reaches either, so it is one
+// of the rows with no generic writer — one more of them.
+//
 // The settings design's S6 moved the registry's figure once more, by one row
 // and not the allowlist's: the clone URLs a run clones its repository from
 // (settings spec §5.6, SD5, D842) left the policy node for a block of the
@@ -171,7 +177,7 @@ const (
 // (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
 // list does not.
 const (
-	cfmRegistryRows   = 409
+	cfmRegistryRows   = 410
 	cfmAllowlistNamed = 101
 )
 
