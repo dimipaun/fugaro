@@ -330,11 +330,16 @@ func (s *Store) checkMove(ctx context.Context, task, release string) error {
 // The caller supplies the identity, the name, the state and the order; `by`
 // and `at` are the writer's, because they are facts about this write.
 func (s *Store) SetRelease(ctx context.Context, actor Actor, rel Release) error {
+	rel.Schema = RoadmapSchema
+	// The name is sanitised before it is checked, as the plan's title and the
+	// edge's reason are: safetext.Field drops what a screen must not draw, so a
+	// name made of nothing but those characters is the empty name checkRelease
+	// refuses rather than a stored label with nothing in it (D2113, GV4.1).
+	rel.Name = safetext.Field(rel.Name)
 	if err := checkRelease(rel); err != nil {
 		return err
 	}
-	rel.Schema = RoadmapSchema
-	rel.Name, rel.By, rel.At = safetext.Field(rel.Name), actor.by(), time.Now().UTC()
+	rel.By, rel.At = actor.by(), time.Now().UTC()
 	path := PathRelease(rel.Stream, rel.ID)
 	var raw json.RawMessage
 	etag, found, err := s.Read(ctx, path, &raw)

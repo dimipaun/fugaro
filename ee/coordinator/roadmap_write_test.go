@@ -262,6 +262,34 @@ func TestReleaseIDAndStreamNeverChange(t *testing.T) {
 	}
 }
 
+// TestReleaseNameIsCheckedAsItIsStored: a name is sanitised before it is
+// checked, as the plan's title and the edge's reason are. A name made of
+// nothing but the characters safetext.Field drops or folds — spaces, a newline,
+// a zero-width mark — is the empty name a release may not carry (D2113, GV4.1),
+// refused on the way in; checked before it was sanitised, it would have been
+// stored as a label with nothing in it, which no reader could tell from a
+// release whose name went missing.
+func TestReleaseNameIsCheckedAsItIsStored(t *testing.T) {
+	s, _, _ := writeStore(t)
+	rel := Release{Stream: "console", ID: "0.108", Name: " \n​ ", State: ReleaseOpen, Order: 0}
+	if err := s.SetRelease(testCtx(t), "person-1@example.com", rel); !errors.Is(err, ErrRoadmapTooLarge) {
+		t.Fatalf("naming a release with characters a field drops: err = %v, want ErrRoadmapTooLarge", err)
+	}
+	if _, found := readDoc[Release](t, s, PathRelease("console", "0.108")); found {
+		t.Error("a release named by nothing was written: a name is a required field, and it is the label its box is drawn with")
+	}
+
+	// A name that keeps a character is written, as the field it sanitises to.
+	rel.Name = " console 0.108 "
+	if err := s.SetRelease(testCtx(t), "person-1@example.com", rel); err != nil {
+		t.Fatalf("naming a release: %v", err)
+	}
+	got, found := readDoc[Release](t, s, PathRelease("console", "0.108"))
+	if !found || got.Name != "console 0.108" {
+		t.Errorf("the stored release = %+v (found %v), want its name sanitised to %q", got, found, "console 0.108")
+	}
+}
+
 // TestReleaseInUseIsNotDeleted: deleting a release a task's assignment names
 // would orphan that assignment (D2115), so the operator is told to move the
 // task out instead.
