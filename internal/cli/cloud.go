@@ -254,8 +254,9 @@ func openCloudFor(ctx context.Context, lc *localcfg.Config) (*cloudEnv, error) {
 //
 // The Batch entry is reached exactly as the Cloud Run one is: by a project
 // config that names it, which internal/localcfg accepts since the enable
-// (design compute-backend.md §8.1 task 9) and whose doctor gate Task 10 puts in
-// front of it. It is wired here and not in a test because the seam's second
+// (design compute-backend.md §8.1 task 9) and which `fugaro doctor` reports on
+// -- the gate Task 10 puts in front of the choice is doctor's verdict, read by
+// the operator, and this map is what a launch reaches either way. It is wired here and not in a test because the seam's second
 // implementation has to be opened from an installation's own facts -- its run
 // account, its network, its recorded socket gid -- and this is the only place
 // that holds them.

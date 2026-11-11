@@ -26,13 +26,20 @@ func auroraShared() string {
 // after it was fetched and validated for real.
 func sharedEnd2End(t *testing.T) *cloudFixture {
 	t.Helper()
+	return sharedEnd2EndWith(t, auroraShared())
+}
+
+// sharedEnd2EndWith is sharedEnd2End with the published bytes the caller
+// chose, so a test can hand the reader a file the converge would not write.
+func sharedEnd2EndWith(t *testing.T, published string) *cloudFixture {
+	t.Helper()
 	f := newCloudFixture(t)
 	if err := os.Remove(os.Getenv("FUGARO_CONFIG")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", "")
 	runs := strings.TrimPrefix(f.bucket, "file://")
-	if err := os.WriteFile(filepath.Join(runs, filepath.FromSlash(infra.SharedConfigObject)), []byte(auroraShared()), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(runs, filepath.FromSlash(infra.SharedConfigObject)), []byte(published), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	oldOpen, oldFetch := sharedBucketOpener, sharedFetch
@@ -47,6 +54,38 @@ func sharedEnd2End(t *testing.T) *cloudFixture {
 	}
 	t.Cleanup(func() { sharedBucketOpener, sharedFetch = oldOpen, oldFetch })
 	return f
+}
+
+// TestSharedConfigCannotSelectTheBatchBackend is the enable's shared half
+// (plan 2026-10-19-compute-backend.md Task 10 step 4; the code review of the
+// enable). Anyone who can write the runs bucket writes the published file,
+// and what holds a `batch:` block to the installation's own provisioning --
+// the job image's repository mode, the accounts the block's service_account
+// must be one of, the ownership label on every secret it names -- is
+// `fugaro doctor`'s, which no launch consults. So the file never selects a
+// backend at all: Shared and MergeShared stop publishing the key, and the
+// reader refuses it by name besides. Without that, whoever wrote the file
+// would move every teammate with no local config onto VMs with an image, an
+// account and secrets of their choosing -- the escalation step 4 forbids.
+//
+// The refusal is the first thing the reader does with the file, so this fails
+// before the fixture's fakes are reached and no job is ever created.
+func TestSharedConfigCannotSelectTheBatchBackend(t *testing.T) {
+	f := sharedEnd2EndWith(t, auroraShared()+"backend: cloud-batch\n")
+	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
+
+	_, errOut, err := execute(t, "runs", "ls")
+	if err == nil {
+		t.Fatalf("a published backend: was obeyed:\n%s", errOut)
+	}
+	// The key's own refusal, not the net on the decoded values: the joined
+	// list of forbidden keys carries "backend" either way, so only the
+	// sentence pins which check answered.
+	for _, want := range []string{"carries backend:, which is never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must say %q: %v", want, err)
+		}
+	}
 }
 
 func TestLsWithNoLocalConfigUsesTheSharedOne(t *testing.T) {

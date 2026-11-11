@@ -251,10 +251,13 @@ func TestBackendsUnknownSubcommand(t *testing.T) {
 // the name since the enable task, so what the help has to say is no longer
 // "this build refuses it" -- the second line of the command's own output would
 // read as an offer, and the truth is that the name is real and `fugaro doctor`
-// is what refuses an installation that selects it before its provisioning,
-// IAM, logs, cost and reaper checks pass. Both claims are checked against
-// localcfg's real behaviour in the same test, so the help and the acceptance
-// cannot drift apart.
+// is what judges an installation that selects it, failing on the provisioning,
+// IAM, logs, cost and reaper checks until they pass. **And the help says what
+// doctor is not**: a report, which no launch reads, so a reader does not take
+// a green doctor for a fence around `fugaro run` (the code review of the
+// enable raised the wording). Both claims are checked against localcfg's real
+// behaviour in the same test, so the help and the acceptance cannot drift
+// apart.
 func TestBackendsLsHelpSaysWhatGatesTheBatchBackend(t *testing.T) {
 	cfg := func(backendName string) []byte {
 		return []byte("version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +

@@ -282,10 +282,15 @@ func TestDocsCheck124EverySectionCarriesTheGuard(t *testing.T) {
 //
 //   - `backend: cloud-batch` is ACCEPTED by internal/localcfg (the enable
 //     task's step 1, docs/plans/2026-10-19-compute-backend.md's Task 10), and
-//     what refuses an installation that selects it is `fugaro doctor`
-//     (internal/cli/doctor_batch.go's THE GATE). So 124b, 124c and 124d are
-//     runnable once 124a has run — a run needs the provisioning and a doctor
-//     that passes on it, not a second command.
+//     what reports an installation that selects it is `fugaro doctor`, which
+//     fails until every Batch check passes (internal/cli/doctor_batch.go's THE
+//     GATE). **The prose has to say the second half of that**, which the code
+//     review of the enable raised: doctor's verdict holds no launch back
+//     (`fugaro run` reads none of the checks), so the part says what a run on
+//     an unprovisioned installation carries — `_Default` and unswept VMs — and
+//     has the reader take the reading before the launch rather than after. So
+//     124b, 124c and 124d are runnable once 124a has run — a run needs the
+//     provisioning and a doctor that passes on it, not a second command.
 //   - `fugaro doctor`'s Batch half is the gate now: a check carries no
 //     severity for an installation that SELECTS the backend and "warning" for
 //     one that merely carries a batch block. The reading that follows is the
@@ -298,7 +303,9 @@ func TestDocsCheck124EverySectionCarriesTheGuard(t *testing.T) {
 //     line either". So the pass is that info line plus
 //     `fugaro doctor: everything checked is ok`, and any other `batch-` line is
 //     the finding. An installation that selects the backend WITHOUT the
-//     provisioning is refused by name, which is what the gate is for.
+//     provisioning fails doctor by name, which is what the gate is for — and
+//     the gate is a verdict, not a fence: the part says in as many words that
+//     no launch reads it.
 //   - `fugaro validate` prints `<path> is valid` for a checkout selecting the
 //     backend, and the old `not enabled yet` refusal is the finding: it means
 //     the build predates the enable.
@@ -312,7 +319,11 @@ func TestDocsCheck124SaysWhatTheEnableChanged(t *testing.T) {
 	flat := flattenDoc(check124Section(t, "a"))
 	for _, want := range []string{
 		"the enable task has landed",
-		"is what refuses an installation that selects it",
+		"is what reports an installation that selects it",
+		// The launch half, which the review of the enable asked for: doctor
+		// reports and `fugaro run` does not read it, so the part may not read
+		// as a fence that is not there.
+		"fugaro run reads none of these checks",
 		"docs/plans/2026-10-19-compute-backend.md",
 		"124b, 124c and 124d are runnable once it has run",
 		"the gate",

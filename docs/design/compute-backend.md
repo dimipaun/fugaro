@@ -4074,8 +4074,12 @@ task, and the enable task came after logs, cost and the reaper, because a Batch
 run without log routing leaves its output in `_Default` where every project
 viewer reads it (§1.5), and a Batch run without a reaper leaks VMs (§3.4). That
 order is now spent rather than standing: the enable has landed (task 9's own
-**Built** note below), and what holds an installation back is the `doctor` gate
-the same task turned on, not the refusal.
+**Built** note below), and what an operator has in place of the refusal is the
+`doctor` gate the same task turned on — which fails on the installation rather
+than fencing it, since `fugaro run` reads none of the checks, so the ordering
+above is now the operator's to keep and doctor is what tells them when it has
+not been (§8.1 task 9's **Built** note, `SECURITY.md`'s "The VM backend, and
+the Docker daemon it gives a run").
 
 **Task 0 is the owner's, and it is first: Check 57a** (§7.2). It needs no
 Fugaro change at all — committed job JSON and `gcloud` — and it is the
@@ -4350,8 +4354,14 @@ senior reviewer before merge, not just the normal one.
    gives a failing Batch check **no severity** — doctor's own hard failure —
    for an installation whose project config selects the backend, and
    `"warning"` for one that merely carries a `batch:` block while it runs on
-   Cloud Run, so the same checks are a gate for the installation that chose
-   the backend and a report for the one that did not. An installation that
+   Cloud Run, so the same checks are a hard failure for the installation that
+   chose the backend and a warning for the one that did not. **What doctor
+   gives either installation is a verdict and not a fence**: `fugaro run`
+   reads none of these checks, so the enable's gate is what tells the operator
+   before the first run — `_Default` holding a Batch run's output and a VM
+   nobody sweeps are what a launch on an unprovisioned installation still
+   carries (§1.5) — and `SECURITY.md`'s "The VM backend, and the Docker daemon
+   it gives a run" says the same thing where a reader of the hazard will look. An installation that
    selects it with no `batch:` block at all is refused by name
    (`batch-block`), and the checks are the ones Task 8 wrote: the two APIs,
    the preload family **and the gid comparison** (`batchImageFamilyGID`: the

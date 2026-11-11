@@ -101,9 +101,20 @@ import (
 //
 // THE GATE (Task 10 step 2, design §4.4 and §8.1 task 9). These checks are why
 // `backend: cloud-batch` may be a name config validation accepts: an
-// installation whose config SELECTS the backend is refused by `fugaro doctor`
-// until every one of them passes, which is what `batchSeverity` below is --
-// no severity, so doctor fails. They are read for an installation that carries
+// installation whose config SELECTS the backend has a doctor that FAILS until
+// every one of them passes, which is what `batchSeverity` below is -- no
+// severity, so doctor fails.
+//
+// What the gate does NOT do is hold a launch back. `fugaro run` reads none of
+// these checks (grep: no doctorBatch call outside this file, doctor.go and the
+// tests), so an installation that selects the name before it is provisioned
+// still launches: the run's output goes to the project's `_Default` log bucket
+// rather than to the installation's own log view, and a VM no reaper sweeps is
+// left to its job's own timeout. Doctor is the operator's read before the
+// first run, and SECURITY.md's "The VM backend, and the Docker daemon it gives
+// a run", `fugaro backends ls`'s help and Check 124a of the live register all
+// say so in as many words -- none of them may read as a fence that is not
+// there. They are read for an installation that carries
 // a batch block and does NOT select the name too, and there they stay warnings:
 // such an installation is on the way to selecting it (or merely carries the
 // block `fugaro setup --provision-batch` wrote), and a red doctor on a

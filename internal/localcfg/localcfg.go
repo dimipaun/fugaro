@@ -101,10 +101,17 @@ type Config struct {
 	ImageSource string `yaml:"image_source,omitempty"`
 	// BackendName is the compute backend by name (backend.Open's registry
 	// key); empty means backend.CloudRun (design m11-setup-and-skills.md
-	// §7). Both cloud-run and cloud-batch are known names; an installation
-	// that selects the Batch one is what `fugaro doctor` gates, so a config
-	// here only records the choice (design compute-backend.md §4.4). Read it
-	// through Backend.
+	// §7). Both cloud-run and cloud-batch are known names; the Batch one is
+	// what `fugaro doctor` reports on for an installation that selects it,
+	// and a config here only records the choice (design compute-backend.md
+	// §4.4). Read it through Backend.
+	//
+	// It is never published: Shared drops it and ParseShared refuses the key,
+	// so the selection is the one the machine running the launch wrote. The
+	// runs bucket's shared file is written by any launcher, and the checks
+	// that hold a `batch:` block -- or the choice itself -- to the
+	// installation's own provisioning are `fugaro doctor`'s, which a launch
+	// does not consult (docs/design/shared-config.md §4).
 	BackendName string `yaml:"backend,omitempty"`
 	// Batch is what the Cloud Batch backend reads: the installation facts a
 	// run's VM is built and placed from (design
@@ -2551,11 +2558,13 @@ func (c *Config) BuildRegion() string {
 
 // knownBackends are the backend names config validation accepts: the names
 // internal/backend.Open resolves, and no others. `cloud-batch` became one of
-// them in the enable task (plan 2026-10-19-compute-backend.md Task 10): what
-// keeps a Batch run from being unsafe is not this file but `fugaro doctor`,
-// which refuses an installation that selects the name until its provisioning,
-// IAM, logs, cost and reaper checks all pass (design compute-backend.md §4.4,
-// §8.1 task 9).
+// them in the enable task (plan 2026-10-19-compute-backend.md Task 10), and
+// this file accepting the name is all that changed here. `fugaro doctor` is
+// what judges an installation that selects it -- the provisioning, the IAM,
+// the log isolation, the cost table and the reaper -- and it reports what it
+// finds; nothing in this file, and no launch, holds the choice back on that
+// report (design compute-backend.md §4.4, §8.1 task 9; SECURITY.md, "The VM
+// backend, and the Docker daemon it gives a run").
 var knownBackends = map[string]bool{backend.CloudRun: true, backend.CloudBatch: true}
 
 // Backend is the compute backend this config selects: backend.CloudRun
