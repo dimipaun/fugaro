@@ -1724,7 +1724,12 @@ func validateSecret(raw []byte, multiline bool) error {
 	case bytes.IndexByte(raw, 0) >= 0:
 		return userErr("the value holds a NUL byte")
 	case !multiline && bytes.ContainsAny(raw, "\r\n"):
-		return userErr("the value spans several lines; only %s (a PEM) may", multilineSecret)
+		// The sentence names the command that stores a PEM rather than this
+		// one's family, because one of the families that reaches it — the
+		// intake's `secrets user`/`shared` — refuses that name by the grammar
+		// (R7), and a refusal pointing at a name it would refuse again is a
+		// dead end.
+		return userErr("the value spans several lines; the one value that does is %s (a PEM), and `fugaro secrets set %s` is the command that stores it", multilineSecret, multilineSecret)
 	case !multiline && len(bytes.TrimSpace(raw)) != len(raw):
 		return userErr("the value starts or ends with whitespace, most likely a copy-and-paste slip")
 	}

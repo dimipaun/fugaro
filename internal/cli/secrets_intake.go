@@ -170,10 +170,11 @@ The value is read only from stdin: pipe or redirect it in (fugaro secrets ` + wo
 github-token < token-file), or, when stdin is a terminal, paste it at a hidden
 prompt. It is never taken from an argument, a flag or the environment, and
 never printed. One trailing newline (\n or \r\n) is dropped, and the command
-says so. Values must be 4 bytes to 64 KiB, on one line except for
-` + multilineSecret + ` (a PEM, which must be redirected from a file), and a one-line
-value may not start or end with whitespace. Ctrl-C at the prompt stores nothing
-and restores the terminal.
+says so. A value is one line of 4 bytes to 64 KiB with no whitespace at either
+end. The one value that spans lines is the GitHub App key's PEM, and it has no
+business here: ` + "`fugaro secrets set " + multilineSecret + "`" + ` is the command that stores
+one, and the intake's two prefixes refuse that name (R7). Ctrl-C at the prompt
+stores nothing and restores the terminal.
 
 The value travels to the intake and is written there by the intake's own
 account: this command sends it over the installation's own endpoint, with the
@@ -299,7 +300,11 @@ func secretsIntakeSet(cmd *cobra.Command, o secretsIntakeOptions, scope intake.S
 	if err != nil {
 		return err
 	}
-	value, err := readSecret(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name, name == multilineSecret)
+	// Not the PEM read: `name == multilineSecret` is the old family's, and every
+	// name this family writes is one line, because the only value that spans
+	// lines belongs to a reserved platform name the intake refuses (R7) — the
+	// grammar and this help say the same thing.
+	value, err := readSecret(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name, false)
 	if err != nil {
 		return err
 	}

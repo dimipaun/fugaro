@@ -6531,10 +6531,11 @@ The value is read only from stdin: pipe or redirect it in (fugaro secrets shared
 github-token < token-file), or, when stdin is a terminal, paste it at a hidden
 prompt. It is never taken from an argument, a flag or the environment, and
 never printed. One trailing newline (\n or \r\n) is dropped, and the command
-says so. Values must be 4 bytes to 64 KiB, on one line except for
-github-app-key (a PEM, which must be redirected from a file), and a one-line
-value may not start or end with whitespace. Ctrl-C at the prompt stores nothing
-and restores the terminal.
+says so. A value is one line of 4 bytes to 64 KiB with no whitespace at either
+end. The one value that spans lines is the GitHub App key's PEM, and it has no
+business here: `fugaro secrets set github-app-key` is the command that stores
+one, and the intake's two prefixes refuse that name (R7). Ctrl-C at the prompt
+stores nothing and restores the terminal.
 
 The value travels to the intake and is written there by the intake's own
 account: this command sends it over the installation's own endpoint, with the
@@ -6657,10 +6658,11 @@ The value is read only from stdin: pipe or redirect it in (fugaro secrets user s
 github-token < token-file), or, when stdin is a terminal, paste it at a hidden
 prompt. It is never taken from an argument, a flag or the environment, and
 never printed. One trailing newline (\n or \r\n) is dropped, and the command
-says so. Values must be 4 bytes to 64 KiB, on one line except for
-github-app-key (a PEM, which must be redirected from a file), and a one-line
-value may not start or end with whitespace. Ctrl-C at the prompt stores nothing
-and restores the terminal.
+says so. A value is one line of 4 bytes to 64 KiB with no whitespace at either
+end. The one value that spans lines is the GitHub App key's PEM, and it has no
+business here: `fugaro secrets set github-app-key` is the command that stores
+one, and the intake's two prefixes refuse that name (R7). Ctrl-C at the prompt
+stores nothing and restores the terminal.
 
 The value travels to the intake and is written there by the intake's own
 account: this command sends it over the installation's own endpoint, with the

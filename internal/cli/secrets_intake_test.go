@@ -298,6 +298,31 @@ func TestValueNeverInArgsOrEnv(t *testing.T) {
 	}
 }
 
+// TestTheIntakeFamilyTakesOneLineValues: a value that spans lines is refused,
+// and the refusal names the command that stores one rather than a name this
+// family writes and the intake refuses again — `github-app-key` is a reserved
+// platform kind (R7), so the PEM the old family stores under it has no business
+// here, and the set help says so.
+func TestTheIntakeFamilyTakesOneLineValues(t *testing.T) {
+	intakeFixture(t)
+	seen := fakeIntakeCalls(t, nil)
+	const pem = "-----BEGIN PRIVATE KEY-----\nfake-pem-body-not-a-credential\n-----END PRIVATE KEY-----\n"
+
+	_, _, err := executeStdin(t, pem, "secrets", "user", "set", "deploy-key")
+	if err == nil {
+		t.Fatal("a value spanning several lines was accepted: no name this family writes may carry one")
+	}
+	if !strings.Contains(err.Error(), "spans several lines") {
+		t.Errorf("the refusal does not say what was wrong with the value: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fugaro secrets set "+multilineSecret) {
+		t.Errorf("the refusal does not name the command that stores a PEM: %v", err)
+	}
+	if len(*seen) != 0 {
+		t.Errorf("a refused value still reached the intake (%d calls)", len(*seen))
+	}
+}
+
 // TestTheIntakeCallIsTheRoutesOwnCall: the call itself, against a service a
 // test runs — the route the intake declares, the caller's own Google ID token
 // as the bearer, a body carrying the value base64 (Secret Manager's own
@@ -310,18 +335,10 @@ func TestTheIntakeCallIsTheRoutesOwnCall(t *testing.T) {
 		body       intake.CreateRequest
 		status     int
 		answer     any
-		redirects  int
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		path, auth = r.URL.Path, r.Header.Get("Authorization")
-		if r.URL.Path == "/elsewhere" {
-			// A followed redirect would come back here a second time — with the
-			// caller's own identity token in the second request's header.
-			redirects++
-			http.Redirect(w, r, srvURLPlaceholder, http.StatusTemporaryRedirect)
-			return
-		}
 		_ = json.Unmarshal(raw, &body)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -334,7 +351,6 @@ func TestTheIntakeCallIsTheRoutesOwnCall(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	srvURLPlaceholder = srv.URL
 	prevIdentity := secretsIntakeIdentity
 	secretsIntakeIdentity = func(context.Context, string, string) (string, error) { return fakeLauncherToken, nil }
 	t.Cleanup(func() { secretsIntakeIdentity = prevIdentity })
@@ -379,22 +395,96 @@ func TestTheIntakeCallIsTheRoutesOwnCall(t *testing.T) {
 		t.Errorf("a service that does not serve the intake's routes answered %v, want the refusal that names `fugaro update`", err)
 	}
 
-	// Nothing is followed: the request carries the caller's own token, and a
-	// redirect would hand it to whatever host the Location named.
-	status = 0
-	err = secretsIntakeOver(context.Background(), srv.URL, secretsIntakeCall{Path: "/elsewhere", Body: intake.ListRequest{Scope: intake.ScopeUser}, Out: &intake.ListAnswer{}})
-	if redirects != 1 {
-		t.Errorf("the redirect target was reached %d times, want once: a followed 307 would carry the caller's own identity token to whatever host the Location named", redirects)
-	}
-	if err == nil {
-		t.Error("a 307 answer was read as the route's own answer")
+}
+
+// TestTheIntakeCallDoesNotFollowARedirect: a 3xx is not an answer, and the
+// request holds the caller's own Google ID token in a header a redirect would
+// carry to whatever host the Location named. The second server here is exactly
+// that host, and it must never be reached (run_slip_test.go's grant test is the
+// same one for the launcher's own call).
+//
+// Every 3xx is asked, because they differ in what a client that followed one
+// would do with this request: 302 and 303 turn the POST into a GET at the new
+// host, which is the token carried to it in the header and the body dropped,
+// and 307 and 308 send the POST there whole. A client that wants the token to
+// reach only the service it judged sends it nowhere else under any of them.
+//
+// Mutation (verified, run and restored): drop the CheckRedirect from
+// secretsIntakeClient and this fails on the request that reached it.
+func TestTheIntakeCallDoesNotFollowARedirect(t *testing.T) {
+	for _, code := range []int{
+		http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect,
+	} {
+		reached := 0
+		elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reached++
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(intake.SecretAnswer{ID: "fugaro_u_1234_github-token", Version: "3", Created: true})
+		}))
+		t.Cleanup(elsewhere.Close)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, elsewhere.URL+intake.CreatePath, code)
+		}))
+		t.Cleanup(srv.Close)
+		prevIdentity := secretsIntakeIdentity
+		secretsIntakeIdentity = func(context.Context, string, string) (string, error) { return fakeLauncherToken, nil }
+		t.Cleanup(func() { secretsIntakeIdentity = prevIdentity })
+
+		var answer intake.SecretAnswer
+		err := secretsIntakeOver(context.Background(), srv.URL, secretsIntakeCall{
+			Path: intake.CreatePath,
+			What: "a secret of yours is stored",
+			Body: intake.CreateRequest{Scope: intake.ScopeUser, Name: "github-token", Value: base64.StdEncoding.EncodeToString([]byte(intakeTestValue))},
+			Out:  &answer,
+		})
+		if err == nil {
+			t.Errorf("the call followed a %d, want a refusal: the caller's own identity token is a bearer credential and the redirect names the host it would go to", code)
+		}
+		if reached != 0 {
+			t.Errorf("a %d reached the host the Location named (%d requests), want none: the token in the header is the person's own", code, reached)
+		}
 	}
 }
 
-// srvURLPlaceholder is the redirect target the test above hands the handler
-// after the server is built (the handler is what needs the address, and the
-// address is what the server is).
-var srvURLPlaceholder string
+// TestTheIntakeCallRefusesAURLItWillNotSendATokenTo: the call carries the
+// caller's own Google ID token, which is a bearer credential, so the address it
+// is sent to is judged before anything is minted: https, or http on a loopback
+// address, which is a test's own service. A URL that is more than a scheme and
+// a host is refused too — the route is appended to it, and a base path, a query
+// or a fragment would decide where this token goes. The rule is
+// checkSlipServiceURL's, and this is its table for the intake's address.
+//
+// Mutation (verified, run and restored): `return nil` as the first statement of
+// checkIntakeServiceURL and this fails on the plain-http cases.
+func TestTheIntakeCallRefusesAURLItWillNotSendATokenTo(t *testing.T) {
+	for _, c := range []struct {
+		url  string
+		want bool
+	}{
+		{"https://intake.example.com", true},
+		{"https://intake.example.com/", true},
+		{"https://intake.example.com:8443", true},
+		{"http://127.0.0.1:8080", true},
+		{"http://localhost:8080", true},
+		{"http://intake.example.com", false},
+		{"http://10.0.0.1", false},
+		{"https://intake.example.com/v1", false},
+		{"https://intake.example.com?x=1", false},
+		{"https://intake.example.com#f", false},
+		{"https://user:pass@intake.example.com", false},
+		{"intake.example.com", false},
+		{"", false},
+	} {
+		err := checkIntakeServiceURL(c.url)
+		if (err == nil) != c.want {
+			t.Errorf("checkIntakeServiceURL(%q) = %v, want refused = %v: this URL is where the caller's own identity token would be sent", c.url, err, !c.want)
+		}
+		if err != nil && strings.Contains(err.Error(), c.url) && c.url != "" {
+			t.Errorf("the refusal of %q repeats the URL: %v", c.url, err)
+		}
+	}
+}
 
 // TestIntakeAddressIsTheServicesOwnLabelOver: the intake's address is read from
 // the installation's own credentials service address, and every way that can
