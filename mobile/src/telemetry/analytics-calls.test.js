@@ -370,8 +370,12 @@ const RULES = [
       "analytics().logEvent('screen_shown', { screen: message.text });",
       // The same, through the identifier a screen would hold.
       "analytics().logEvent('screen_shown', { screen });",
-      // A key the event does not declare.
+      // A key the event does not declare, and the one declared key spelled
+      // under another name: the entry's shape, not only its values.
       "analytics().logEvent('account_added', { kind: 'manual', project: account.fugaroProject });",
+      "analytics().logEvent('app_launch', { launch: true });",
+      // A declared parameter left out.
+      "analytics().logEvent('account_added', {});",
       // A value outside the parameter's closed set, a screen the app does not
       // have, and a boolean parameter given a string.
       "analytics().logEvent('command_refused', { reason: 'because' });",
