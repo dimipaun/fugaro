@@ -869,11 +869,13 @@ func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 // (TestMain), so this is the one test that reads the ruling itself: it turns
 // the switch on, and puts it back as it found it for whatever runs next.
 //
-// What stays is named in the same breath: the refresh still pins the base
-// image and still moves a checkout: clone workflow's job, neither of which
-// builds anything, and the derived build a converge needs is the images
-// stage's own, inside fugaro update (O4 b: with no catalog default the
-// resolver keeps the per-repository image, so update converges).
+// fugaro update is not one of them, and that is the difference between the
+// commands and the converge: update runs the same machinery in process (the
+// images stage, refreshBuilds), because a repository whose project names no
+// catalog image still runs its own (O4 b) and the HARD RULE says one update is
+// the whole upgrade. A refresh's non-building steps -- pinning the base image,
+// moving a checkout: clone workflow's job onto it -- are part of the same
+// answer: the command is what is disabled, not the work underneath it.
 func TestRepoImageRefreshIsDisabled(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
