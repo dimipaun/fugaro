@@ -473,13 +473,23 @@ func (r *settingsRead) repoRow(row settings.Row, repo repoRead) setting {
 	s.Scope = "repo:" + repo.name
 	s.Levels = nil
 	if repo.state != stateOK {
-		// A repository's own read says nothing about the database's caps: a
+		// A repository that was not read still answers every key it has no
+		// store of its own for: the row is the project scope's, which already
+		// carries the ceiling the published node clamps it by (cloudProjectRow)
+		// and the caps the database holds. What the repository adds is its
+		// state, and that it says nothing about the database's own keys: a
 		// checkout that is missing or refused does not make kill.global.on
 		// unknown, and those rows keep the state their own layer answered.
+		//
+		// The ceiling is not applied again here: the row already carries the
+		// answer projectRow gave it, at the scope the ceiling belongs to.
+		// nodeCeiling is the Tighten family's rule, and calling it here reads a
+		// key the node sets no ceiling for — budget.max_run_tokens is Replace —
+		// as the node's value with WINS policy, which no run gets.
 		if !settingsCapsKey(row.Key) {
 			s.State = repo.state
 		}
-		return r.nodeCeiling(s, row)
+		return s
 	}
 	if !isYAMLKey(row) || repo.config == nil {
 		return s

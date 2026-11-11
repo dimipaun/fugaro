@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -33,6 +34,22 @@ var settingsCloudRowKeys = []string{
 func settingsCloudFixture(t *testing.T) *budgetFixture {
 	t.Helper()
 	f := newBudgetFixture(t, "")
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	return f
+}
+
+// settingsCloudFixtureIn is settingsCloudFixture with the budget block the
+// caller names in the project's own config, so that a file writing no value for
+// a key is a case a test can build. The block's rtdb_url is this fixture's own
+// fake — the read dials what the config names — so what the caller sets on the
+// returned fixture is what the read finds.
+func settingsCloudFixtureIn(t *testing.T, budgetFields string) *budgetFixture {
+	t.Helper()
+	db := gcpfake.NewRTDB(t)
+	db.Set("fugaro/project", "aurora")
+	f := newBudgetFixture(t, "budget: { "+budgetFields+", firebase_project: proj-1234, rtdb_url: "+db.URL+" }\n")
+	f.db = db
+	f.db.Set(budget.PathMark, auroraMark())
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	return f
 }
@@ -288,5 +305,213 @@ func TestSettingsCloudLayersAreBoundedInTime(t *testing.T) {
 	published := rowOf(t, doc, "budget.per_run_usd", "project")
 	if published.Wins != "policy" || published.State != "ok" {
 		t.Errorf("budget.per_run_usd = %q/%q, want the node's value and ok: one source that did not answer does not make the other unread", published.Wins, published.State)
+	}
+}
+
+// TestSettingsANodeThatSetsNoCapDecidesNothing: the published node's budget
+// members are not pointers, so "the node carries no per_run_usd" and "the node
+// carries 0" arrive here as the same bytes — and policy.Merge reads both as one
+// thing (`l.PerRunUSD > 0` is its "this layer writes nothing"). A row that took
+// the decoded zero for a value would print VALUE 0 with WINS policy for a cap
+// nobody set, list itself under --changed, and give --why a `policy 0` level the
+// node does not carry. Both shapes of "no value" are here, because they are two
+// documents: nothing published at all, and a node whose budget block leaves the
+// member out.
+func TestSettingsANodeThatSetsNoCapDecidesNothing(t *testing.T) {
+	f := settingsCloudFixtureIn(t, "mode: observe")
+	nothing := readSettingsJSON(t, "budget.per_run_usd", "--why")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version": projectpolicy.Version,
+		"budget":  map[string]any{"mode": "observe"},
+	})
+	partial := readSettingsJSON(t, "budget.per_run_usd", "--why")
+
+	for _, tc := range []struct {
+		name string
+		doc  settingsTestDoc
+	}{
+		{"nothing is published", nothing},
+		{"the node carries no per_run_usd", partial},
+	} {
+		status := ""
+		for _, src := range tc.doc.Sources {
+			if src.Layer == "policy" {
+				status = src.Status
+			}
+		}
+		if status != "ok" {
+			t.Fatalf("%s: the policy layer read %q, want ok: this is a node that was read and sets no cap", tc.name, status)
+		}
+		row := rowOf(t, tc.doc, "budget.per_run_usd", "project")
+		want := row.Default.Value
+		if want == "" {
+			want = row.Default.Unset
+		}
+		if row.Wins != "default" || deref(row.Value) != want {
+			t.Errorf("%s: budget.per_run_usd = %q/%q, want the default (%q) decided by default: the node sets no cap", tc.name, deref(row.Value), row.Wins, want)
+		}
+		if row.State != "ok" {
+			t.Errorf("%s: state = %q, want ok: the node was read", tc.name, row.State)
+		}
+		for _, l := range row.Levels {
+			if l.Layer == "policy" {
+				t.Errorf("%s: --why prints the level %q the node does not carry", tc.name, l.Value)
+			}
+		}
+	}
+
+	// A row no layer decided is not a change: --changed answers "what have I
+	// changed on this installation" with the rows a layer decided.
+	if rows := readSettingsJSON(t, "budget.per_run_usd", "--changed").Settings; len(rows) != 0 {
+		t.Errorf("--changed lists %+v for a key no layer set", rows)
+	}
+
+	// And the node was read: the member it does carry is the level a run is
+	// admitted by, so the answers above are facts about the node and not about a
+	// read that never happened.
+	mode := rowOf(t, readSettingsJSON(t, "budget.mode"), "budget.mode", "project")
+	if deref(mode.Value) != "observe" || mode.Wins != "policy" {
+		t.Errorf("budget.mode = %q/%q, want the node's observe decided by policy", deref(mode.Value), mode.Wins)
+	}
+}
+
+// TestSettingsClampsAnAllowListToTheIntersection: budget.allowed_models is the
+// ceiling key whose levels combine by set intersection rather than by one of
+// them winning (spec §2.2, policy.Merge's intersectAllowList), so a run may call
+// the models both lists name. When neither list contains the other, what a run
+// gets is neither of them — the one case a comparison of two values cannot
+// answer, because it can only choose a side — and the row prints the
+// intersection, as it prints the smaller cap for the keys that are numbers.
+// The two containment cases are here beside it: they are the ones a comparison
+// already answers right, so the dispatch that answers the third leaves them
+// where they were.
+func TestSettingsClampsAnAllowListToTheIntersection(t *testing.T) {
+	const sonnet, haiku, opus = "claude-sonnet-5-5", "claude-haiku-4-5@20251001", "claude-opus-5-5"
+	file := func(models ...string) string {
+		return "mode: observe, per_run_usd: 5, allowed_models: [" + strings.Join(models, ", ") + "]"
+	}
+	node := func(models ...string) map[string]any {
+		return map[string]any{
+			"version": projectpolicy.Version,
+			"budget":  map[string]any{"mode": "observe", "per_run_usd": 5, "allowed_models": models},
+		}
+	}
+
+	// Neither list contains the other: the run gets the model both of them
+	// allow, and the node's list — which names one the file forbids — is the
+	// winner only in the sense that it is the ceiling that clamps it.
+	mixed := settingsCloudFixtureIn(t, file(sonnet, haiku))
+	mixed.db.Set(projectpolicy.PathShared(), node(haiku, opus))
+	row := rowOf(t, readSettingsJSON(t, "budget.allowed_models", "--why"), "budget.allowed_models", "project")
+	if deref(row.Value) != haiku || row.Wins != "policy" {
+		t.Errorf("neither list contains the other: = %q/%q, want %s/policy: a run may call the models both lists name", deref(row.Value), row.Wins, haiku)
+	}
+	if len(row.Levels) != 2 ||
+		row.Levels[0].Layer != "policy" || row.Levels[0].Value != haiku+", "+opus || row.Levels[0].Outcome != "wins" ||
+		row.Levels[1].Layer != "local" || row.Levels[1].Value != sonnet+", "+haiku ||
+		row.Levels[1].Outcome != "ignored (looser than policy)" {
+		t.Errorf("levels = %+v, want both lists printed with the file's ignored", row.Levels)
+	}
+
+	// The node's list inside the file's: the node's is what a run may use.
+	inside := settingsCloudFixtureIn(t, file(sonnet, haiku))
+	inside.db.Set(projectpolicy.PathShared(), node(haiku))
+	row = rowOf(t, readSettingsJSON(t, "budget.allowed_models"), "budget.allowed_models", "project")
+	if deref(row.Value) != haiku || row.Wins != "policy" {
+		t.Errorf("the node's list is the narrower one: = %q/%q, want %s/policy", deref(row.Value), row.Wins, haiku)
+	}
+
+	// The file's list inside the node's: the file's is what a run may use, and
+	// the ceiling is the level that loses to it.
+	wider := settingsCloudFixtureIn(t, file(haiku))
+	wider.db.Set(projectpolicy.PathShared(), node(sonnet, haiku))
+	row = rowOf(t, readSettingsJSON(t, "budget.allowed_models", "--why"), "budget.allowed_models", "project")
+	if deref(row.Value) != haiku || row.Wins != "local" {
+		t.Errorf("the file's list is the narrower one: = %q/%q, want %s/local", deref(row.Value), row.Wins, haiku)
+	}
+	if len(row.Levels) != 2 ||
+		row.Levels[0].Layer != "local" || row.Levels[0].Outcome != "wins" ||
+		row.Levels[1].Layer != "policy" || row.Levels[1].Value != sonnet+", "+haiku ||
+		row.Levels[1].Outcome != "ignored (looser than local)" {
+		t.Errorf("levels = %+v, want the file's list winning and the node's ignored", row.Levels)
+	}
+}
+
+// TestSettingsACheckoutlessRepoDoesNotClampAReplaceKey: the repository scope
+// answers with the project row when the repository itself was not read, and that
+// row already carries the answer the ceiling belongs to. Applying the ceiling
+// again here was a row that reads a value no run gets: nodeCeiling is the Tighten
+// family's rule, so a Replace key — budget.max_run_tokens has no ceiling among
+// its layers — was read as the node's value with WINS policy at a scope with no
+// checkout while the same key at the project scope read the default, the same
+// key and the same scope answering two ways. The tightening keys are unchanged
+// either way, and the second half here pins it: the row they inherit was clamped
+// once, where the clamp lives.
+func TestSettingsACheckoutlessRepoDoesNotClampAReplaceKey(t *testing.T) {
+	f := settingsCloudFixtureIn(t, "mode: observe, per_run_usd: 5")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version": projectpolicy.Version,
+		"budget":  map[string]any{"mode": "observe", "per_run_usd": 10, "max_run_tokens": 500000},
+	})
+	doc := readSettingsJSON(t, "--all-repos")
+
+	repoTokens := rowOf(t, doc, "budget.max_run_tokens", "repo:acme/app")
+	if repoTokens.State != "unknown (no checkout on this machine)" {
+		t.Fatalf("state = %q, want the unknown sentence: this test is about a repository that was not read", repoTokens.State)
+	}
+	tokens := rowOf(t, doc, "budget.max_run_tokens", "project")
+	if tokens.Wins != "default" || deref(tokens.Value) == "500000" {
+		t.Errorf("budget.max_run_tokens at the project scope = %q/%q, want the default: the file writes none and a Replace key has no ceiling", deref(tokens.Value), tokens.Wins)
+	}
+	if deref(repoTokens.Value) != deref(tokens.Value) || repoTokens.Wins != tokens.Wins {
+		t.Errorf("budget.max_run_tokens = %q/%q at a scope with no checkout and %q/%q at the project scope, want the same row: the node sets no ceiling for a Replace key",
+			deref(repoTokens.Value), repoTokens.Wins, deref(tokens.Value), tokens.Wins)
+	}
+
+	project := rowOf(t, doc, "budget.per_run_usd", "project")
+	if deref(project.Value) != "5" || project.Wins != "local" {
+		t.Errorf("the project scope = %q/%q, want the file's 5 decided by local: the node's 10 is the looser cap", deref(project.Value), project.Wins)
+	}
+	repo := rowOf(t, doc, "budget.per_run_usd", "repo:acme/app")
+	if deref(repo.Value) != "5" || repo.Wins != "local" || repo.State != "unknown (no checkout on this machine)" {
+		t.Errorf("the repository scope = %q/%q/%q, want the project row and its state", deref(repo.Value), repo.Wins, repo.State)
+	}
+}
+
+// TestSettingsCapsRowsSurviveACheckoutlessRepo: caps.* and kill.* have no store
+// in a repository's own file, so a repository that was not read says nothing
+// about them — the database was read, and what it holds is the answer at every
+// scope. Without the guard these rows print `unknown (no checkout on this
+// machine)` beside the state of the one layer that did answer them: a claim
+// about the database made by a file nobody read, and, under --offline, the
+// reason for the missing caps replaced by a state that is not theirs.
+func TestSettingsCapsRowsSurviveACheckoutlessRepo(t *testing.T) {
+	f := settingsCloudFixture(t)
+	f.db.Set(budget.PathMode, "enforce")
+	doc := readSettingsJSON(t, "--all-repos")
+
+	for _, key := range settingsCloudRowKeys {
+		row := rowOf(t, doc, key, "repo:acme/app")
+		if row.State != "ok" {
+			t.Errorf("%s at a scope with no checkout: state = %q, want the caps layer's own", key, row.State)
+		}
+	}
+	mode := rowOf(t, doc, "caps.mode", "repo:acme/app")
+	if deref(mode.Value) != "enforce" || mode.Wins != "caps" {
+		t.Errorf("caps.mode = %q/%q at a scope with no checkout, want the database's enforce decided by caps", deref(mode.Value), mode.Wins)
+	}
+	// The contrast at the same scope: a key a repository's own file carries is
+	// not answered without the checkout.
+	if row := rowOf(t, doc, "budget.per_run_usd", "repo:acme/app"); row.State != "unknown (no checkout on this machine)" {
+		t.Errorf("budget.per_run_usd state = %q, want the unknown sentence", row.State)
+	}
+
+	// --offline: the caps are not read either way, so their rows say why at
+	// every scope and not the repository's own state.
+	offline := readSettingsJSON(t, "--all-repos", "--offline")
+	for _, key := range settingsCloudRowKeys {
+		if row := rowOf(t, offline, key, "repo:acme/app"); row.State != "unread: offline" {
+			t.Errorf("%s under --offline: state = %q, want the flag's own reason", key, row.State)
+		}
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/settings"
 )
@@ -131,16 +132,32 @@ func (r *settingsRead) readPolicyLayer(ctx context.Context) {
 // `budget:` block carries, so budget.per_run_usd reads `5` from either side and
 // the ceiling comparison compares two spellings of one value.
 //
-// The node's members are the whole of the set: a key the node does not carry is
-// a key no publish stage writes, and claiming a level for it would be a level
-// that set nothing.
+// A member the node does not carry is left out of the map rather than rendered
+// as the zero value the decode gives it. The node's budget members are not
+// pointers, so an absent node — nothing published, or a node a hand edit left
+// without a budget block — decodes as mode "", 0 dollars, 0 tokens and no list;
+// and those are exactly the values policy.Merge reads as "this layer writes
+// nothing" (`l.PerRunUSD > 0`, `l.MaxRunTokens > 0`, `ValidMode`,
+// `AllowedModels != nil`). A map that carried them would print `VALUE 0` with
+// `WINS policy` for a cap nobody set, put that row under --changed, and give
+// --why a `policy 0` level the node does not carry — while the ceiling a run
+// gets is the file's or the default's, and `unpublished` is what says the node
+// does not carry what the file says.
 func policyValues(p *projectpolicy.Policy) map[string]string {
-	return map[string]string{
-		"budget.mode":           p.Budget.Mode,
-		"budget.per_run_usd":    strconv.FormatFloat(p.Budget.PerRunUSD, 'f', -1, 64),
-		"budget.max_run_tokens": strconv.FormatInt(p.Budget.MaxRunTokens, 10),
-		"budget.allowed_models": strings.Join(p.Budget.AllowedModels, ", "),
+	out := map[string]string{}
+	if policy.ValidMode(p.Budget.Mode) {
+		out["budget.mode"] = p.Budget.Mode
 	}
+	if p.Budget.PerRunUSD > 0 {
+		out["budget.per_run_usd"] = strconv.FormatFloat(p.Budget.PerRunUSD, 'f', -1, 64)
+	}
+	if p.Budget.MaxRunTokens > 0 {
+		out["budget.max_run_tokens"] = strconv.FormatInt(p.Budget.MaxRunTokens, 10)
+	}
+	if p.Budget.AllowedModels != nil {
+		out["budget.allowed_models"] = strings.Join(p.Budget.AllowedModels, ", ")
+	}
+	return out
 }
 
 // policyDriftSet is the registry keys the published node does not carry what the
@@ -351,6 +368,9 @@ func (r *settingsRead) nodeCeiling(s setting, row settings.Row) setting {
 		s.Levels = []level{{Layer: settings.LayerPolicy, Value: node, Outcome: "wins"}}
 		return s
 	}
+	if row.Key == settingsAllowedModelsKey {
+		return r.nodeAllowedModels(s, node)
+	}
 	if settingsLoosens(row.Key, s.Value, node) {
 		s.Levels = append(s.Levels, level{Layer: settings.LayerPolicy, Value: node, Outcome: "ignored (looser than " + s.Wins + ")"})
 		return s
@@ -361,4 +381,71 @@ func (r *settingsRead) nodeCeiling(s setting, row settings.Row) setting {
 	s.Value, s.Wins = node, settings.LayerPolicy
 	s.Levels = []level{{Layer: settings.LayerPolicy, Value: node, Outcome: "wins"}, loser}
 	return s
+}
+
+// settingsAllowedModelsKey is the one ceiling key whose layers combine by set
+// intersection rather than by a comparison of two values (spec §2.2). It is
+// named here because the rule below is the only place in this read that has to
+// know it: settingsLoosens asks the same key the same question for the write
+// path, so a second key of this kind would be a second rule there too.
+const settingsAllowedModelsKey = "budget.allowed_models"
+
+// nodeAllowedModels is the ceiling rule for budget.allowed_models: a run may
+// call the models both lists carry, so the effective value is the intersection
+// and not the file's list — a list neither of them contains is neither of them
+// either, which is what the comparison every other key uses cannot say (it can
+// only pick one side or the other).
+//
+// The intersection is policy.Merge's own (intersectAllowList, the rule the
+// spec states once and the runner applies), called rather than restated: a
+// second implementation here would be a second answer to "which models may
+// this run call", and the row exists to answer that question.
+//
+// --why keeps both real lists: the ceiling is marked as the level a run is
+// admitted by and shows what the node carries, and the file's list is shown as
+// ignored because it names models outside the admitted set. The one row whose
+// winner's value is not the row's own is the mixed case below — the effective
+// list is then no layer's list, and the row prints what a run gets.
+func (r *settingsRead) nodeAllowedModels(s setting, node string) setting {
+	file := level{Layer: s.Wins, Value: s.Value}
+	eff := strings.Join(policy.Merge(
+		policy.Layer{AllowedModels: settingsListItems(node)},
+		policy.Layer{AllowedModels: settingsListItems(s.Value)},
+	).AllowedModels, ", ")
+	switch eff {
+	case node:
+		// The file's list is not narrower than the node's: the node's is what
+		// a run may use, and the file's loses to it.
+		s.Value, s.Wins = node, settings.LayerPolicy
+		file.Outcome = "ignored (looser than " + settings.LayerPolicy + ")"
+		s.Levels = []level{{Layer: settings.LayerPolicy, Value: node, Outcome: "wins"}, file}
+	case s.Value:
+		// The node's list is the wider one: the file's is the effective list,
+		// and the ceiling is the level that loses to it.
+		s.Levels = append(s.Levels, level{Layer: settings.LayerPolicy, Value: node, Outcome: "ignored (looser than " + s.Wins + ")"})
+	default:
+		// Neither list contains the other: what a run gets is the intersection,
+		// which is no layer's own list, and both are printed as the levels that
+		// were read.
+		s.Value, s.Wins = eff, settings.LayerPolicy
+		file.Outcome = "ignored (looser than " + settings.LayerPolicy + ")"
+		s.Levels = []level{{Layer: settings.LayerPolicy, Value: node, Outcome: "wins"}, file}
+	}
+	return s
+}
+
+// settingsListItems reads a rendered list back into its entries. The read
+// prints a list joined with ", ", and every comparison of two of them splits on
+// the comma (settingsListSubset, the write path's own rule), so no entry carries
+// one. An empty rendering is no list at all — policy.Layer's AllowedModels nil,
+// which admits every model — and not an empty list, which would admit none.
+func settingsListItems(rendered string) []string {
+	if strings.TrimSpace(rendered) == "" {
+		return nil
+	}
+	items := strings.Split(rendered, ",")
+	for i := range items {
+		items[i] = strings.TrimSpace(items[i])
+	}
+	return items
 }
