@@ -331,12 +331,13 @@ var yamlMeta = map[string]Row{
 // `fugaro.yaml` rows from config.Scopes (so the two cannot drift), the project
 // layer's from config.ProjectLayer, the local config's from localcfg.Config.
 func buildRows() []Row {
-	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows)+len(config.RunStages))
+	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows)+len(cloudRows)+len(config.RunStages))
 	for _, s := range config.Scopes {
 		out = append(out, yamlRow(s))
 	}
 	out = append(out, layerRows...)
 	out = append(out, localRows...)
+	out = append(out, cloudRows...)
 	out = append(out, stageAccountRows()...)
 	for i := range out {
 		out[i].Sensitive = sensitiveKeys[out[i].Key]
@@ -992,6 +993,31 @@ var localRows = []Row{
 	// update_check's does, rather than from an "unset means" sentence.
 	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
 	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
+}
+
+// cloudRows are the Realtime Database's own keys (spec §2.1, §2.2): the mode a
+// lease compares against, the two cap scopes, the reserve limit and the global
+// kill switch. The caps layer is their only store — no file carries them and no
+// layer above them exists — so a read with --offline answers every one of them
+// `unread: offline`, and the value a run gets is what the node holds.
+//
+// Each default is the sentence saying what an absent node means, because an
+// absent node is not a value: no cap, no reserve limit, no run stopped, and the
+// mode that behaviour is named by (observe). A row that claimed a value here
+// would have the read print it for a database nobody asked (spec §2.5).
+//
+// The per-repository nodes (`config/caps/repos/<slug>`, `config/kill/repos/
+// <slug>`) have no row: their key varies with a repository, and the level those
+// two scopes combine at is `caps.repo`, a name `$defs.decider` does not carry —
+// so a row claiming one would print a WINS word the schema refuses.
+var cloudRows = []Row{
+	{Key: "caps.mode", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("observe"), Owner: "budget", Doc: docSetup},
+	{Key: "caps.global.per_run_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no global cap"), Owner: "budget", Doc: docSetup},
+	{Key: "caps.global.per_day_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no global cap"), Owner: "budget", Doc: docSetup},
+	{Key: "caps.defaults.per_run_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no default cap"), Owner: "budget", Doc: docSetup},
+	{Key: "caps.defaults.per_day_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no default cap"), Owner: "budget", Doc: docSetup},
+	{Key: "caps.max_reserve_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no reserve limit"), Owner: "budget", Doc: docSetup},
+	{Key: "kill.global.on", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("false: no run is stopped"), Owner: "budget", Doc: docSetup},
 }
 
 // stageAccountRows are the concrete spellings of the stages.*.claude_account

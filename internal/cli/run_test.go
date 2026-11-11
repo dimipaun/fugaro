@@ -1749,19 +1749,39 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
 		}
 	})
-	// A workflow that keeps its own image definition is not the catalog's job
-	// at all (D1155): the deploy gave it the image this project builds for the
-	// repository, which no catalog entry is, so the launcher must not judge it
-	// — here the catalog's default is the docker entry, which would otherwise
-	// refuse this launch on Cloud Run and ask a VM for a socket.
+	// A workflow that keeps its own image definition keeps the image THIS
+	// project builds for the repository: while the project's default is an
+	// entry such a job cannot run — the docker-tagged dind here, which a baked
+	// job would be refused at deploy time for carrying (D1191) — the resolver
+	// sets the default aside for that workflow (catalog.JobImage, D1900), so
+	// the catalog does not speak for this job and the launcher must not judge
+	// the tag of an entry the job does not run. What a deploy of this release
+	// gives such a workflow is the derived image, which no entry is, and that
+	// is the state the two backends below are asked about: neither refuses the
+	// launch nor asks a VM for a socket.
+	//
+	// The second state — the job deployed with the entry's own image — is
+	// asserted too, and it is one no deploy of this release produces: the entry
+	// it runs is the one the workflow's definition key is set aside in favour
+	// of, so a job carrying it was deployed by a release that gave it the entry
+	// or had its file edited afterwards. The launcher answers it as it answers
+	// a workflow this project never spoke for (the release before this one's
+	// catalog.Applies, on the same fixture): nothing is refused and nothing is
+	// asked for, because the file this launcher reads is not the one the job
+	// was deployed from and no entry of the catalog is this job's.
 	t.Run("its own image definition is not the catalog's", func(t *testing.T) {
+		const defined = "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }"
 		derived := gcp.ImageName(gcp.DefaultRegistryHost("us-east5", "proj-1234")+"/"+gcp.RegistryRepoID(appSlug), appSlug, "web") + ":latest"
-		for name, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
-			f := newCloudFixture(t)
-			dockerCheckout(t, "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }")
-			ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, derived), appSlug, spec)
-			if err != nil || ask {
-				t.Fatalf("%s: ask = %v, err = %v, want neither", name, ask, err)
+		for name, deployed := range map[string]string{"the repository's own image": derived, "the entry's own image": "ghcr.io/acme/dind:1"} {
+			for backendName, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
+				t.Run(name+", "+backendName, func(t *testing.T) {
+					f := newCloudFixture(t)
+					dockerCheckout(t, defined)
+					ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, deployed), appSlug, spec)
+					if err != nil || ask {
+						t.Fatalf("ask = %v, err = %v, want neither: a workflow that wrote an image definition of its own is not the catalog's job while the project's default is one its job cannot run, so the entry's docker tag is not this run's", ask, err)
+					}
+				})
 			}
 		}
 	})
@@ -1845,6 +1865,88 @@ func TestACatalogMoveBetweenDeployAndLaunchIsRefused(t *testing.T) {
 		ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML, "us-east5-docker.pkg.dev/proj-1234/acme-app/tiny:latest"), appSlug, spec)
 		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
 			t.Fatalf("ask = %v, err = %v, want a refusal naming fugaro update", ask, err)
+		}
+	})
+}
+
+// The configuration this launcher has in its working tree is judged at launch
+// like every other claim about the deployed job (F7): a workflow that names an
+// entry the project's catalog does not hold is refused by the deploy-time arm,
+// so the job cannot have been deployed with what this file names, and the run
+// must not start on the image the job happens to carry — the reference may
+// have been edited after the deploy, and nothing here can redeploy the job.
+//
+// The refusal is the one every other catalog move gets, naming `fugaro update`,
+// and it carries the resolver's own sentence: a pin and a map entry are both
+// answered by catalog.JobImage, whose error for both is ErrUnknownEntry, and
+// the launcher is where a person reads why the launch stopped.
+//
+// Mutation (drop the selErr arm at deployedCatalogEntry): both subtests below
+// launch, silently, on the previously deployed job — the guard this replaces in
+// main read the workflow's own image_name and refused it.
+//
+// Mutation (drop the Reference arm beside it): the third subtest launches on an
+// image the project's configuration does not name for this job.
+func TestALaunchTheResolverRefusesIsRefused(t *testing.T) {
+	// A repository that pins an entry the catalog does not hold: the refusal is
+	// the resolver's, and the job it would start is deployed with another
+	// entry — the state the deploy refuses and the reason this launch must too.
+	t.Run("a pin to an entry the catalog does not hold", func(t *testing.T) {
+		f := newCloudFixture(t)
+		f.appendConfig(t, dockerCatalogYAML)
+		dockerCheckout(t, "{ image_name: gone, commands: { build: sh b.sh, test: sh t.sh } }")
+		f.run.SetJob(gcp.JobName(appSlug, "web"), nil, "ghcr.io/acme/minimal:1")
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261103-100000-a1b2", "Add a feature")
+		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
+			t.Fatalf("err = %v, want a refusal naming fugaro update", err)
+		}
+		if !strings.Contains(err.Error(), "gone") {
+			t.Errorf("err = %v: the refusal does not name the entry the workflow pins, so a person cannot see which reference to fix", err)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("the refusal is not a user error: %v", err)
+		}
+		if startedAny(f) {
+			t.Fatal("a job was started for a run whose own configuration the project's image catalog refuses")
+		}
+	})
+	// The other side of the same error: the project's map points this repository
+	// at an entry the catalog does not hold. It is written by a command and
+	// published, so the sentence that reaches the person names the map.
+	t.Run("a map entry the catalog does not hold", func(t *testing.T) {
+		f := newCloudFixture(t)
+		f.appendConfig(t, dockerCatalogYAML)
+		f.appendConfig(t, "image_map: { acme/app: gone }\n")
+		// The workflow names no entry of its own: the map is what the project
+		// gives this repository, and a workflow that pins or lists needs: is
+		// answered by the reference arm before the map is asked at all (T1 b).
+		dockerCheckout(t, "{ commands: { build: sh b.sh, test: sh t.sh } }")
+		f.run.SetJob(gcp.JobName(appSlug, "web"), nil, "ghcr.io/acme/minimal:1")
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261103-100000-a1b2", "Add a feature")
+		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
+			t.Fatalf("err = %v, want a refusal naming fugaro update", err)
+		}
+		if !strings.Contains(err.Error(), "image_map") {
+			t.Errorf("err = %v: the refusal does not name the map, which is where this person's fix is", err)
+		}
+		if startedAny(f) {
+			t.Fatal("a job was started for a run the project's image_map points at no entry")
+		}
+	})
+	// A pin the catalog holds and the job does not run: the workflow names
+	// another entry than the image the job was deployed with, which is the same
+	// move the docker tag's rule is refused for.
+	t.Run("a pin the deployed job does not run", func(t *testing.T) {
+		f := newCloudFixture(t)
+		f.appendConfig(t, dockerCatalogYAML)
+		dockerCheckout(t, "{ image_name: minimal, commands: { build: sh b.sh, test: sh t.sh } }")
+		f.run.SetJob(gcp.JobName(appSlug, "web"), nil, "ghcr.io/acme/dind:1")
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261103-100000-a1b2", "Add a feature")
+		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
+			t.Fatalf("err = %v, want a refusal naming fugaro update", err)
+		}
+		if startedAny(f) {
+			t.Fatal("a job was started for a run whose workflow pins an entry its deployed job does not run")
 		}
 	})
 }

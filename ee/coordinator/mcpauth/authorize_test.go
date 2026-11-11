@@ -75,6 +75,16 @@ func (ts *testServer) authorizeRequest(t *testing.T, q url.Values) *httptest.Res
 	return ts.do(t, httptest.NewRequest(http.MethodGet, AuthorizePath+"?"+q.Encode(), nil))
 }
 
+// authorizeFrom is authorizeRequest from one source, which is the header the
+// platform's own front end sets (registerSource) and what the endpoint's own
+// bound is counted by.
+func (ts *testServer) authorizeFrom(t *testing.T, q url.Values, source string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, AuthorizePath+"?"+q.Encode(), nil)
+	req.Header.Set("X-Forwarded-For", source)
+	return ts.do(t, req)
+}
+
 // The two things the consent page carries and an approval has to present back.
 // They are read out of the page the way a person reads them: the test does not
 // know either value in advance and must not.

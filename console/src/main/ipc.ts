@@ -558,7 +558,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Thirty-seven operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Thirty-eight operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -963,7 +963,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'source',
         kind: 'graphSource',
         required: false,
-        why: '`newGraphCmd` has this flag and its set is closed: `all` (the command’s own default, the union of the scopes that exist), `coordinator` (the stored view), and `orchestrator:<id>` / `local:<id>` for the scopes a later release adds -- both of which today answer "no orchestrator is installed in this build", which is a refusal and not an empty graph. The pattern is the CLI’s own (`graph.ParseScope`), so a value this surface admits is a value that command reads. It is optional because the command has a default of its own (`all`), so a caller that names no scope is answered rather than refused.',
+        why: '`newGraphCmd` has this flag and its set is closed: `all` (the command’s own default, the union of the scopes that exist), `coordinator` (the stored view), and `orchestrator:<id>` / `local:<id>`, which read one orchestrator’s own state node (CG4 and CG5). An id no scope of that name exists for is a refusal and not an empty graph: the database holds no node for it, and for `local:` this machine holds no cached brief either. The pattern is the CLI’s own (`graph.ParseScope`), so a value this surface admits is a value that command reads. It is optional because the command has a default of its own (`all`), so a caller that names no scope is answered rather than refused.',
       },
     ],
   },
@@ -994,7 +994,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'source',
         kind: 'graphSource',
         required: false,
-        why: 'the scope the stream is about, on `graph.read`’s own terms: `all` (the command’s default, the union of the scopes that exist), `coordinator`, or `orchestrator:<id>` / `local:<id>` for the scopes a later release adds. It is the same closed grammar the read above is held to (`GRAPH_SCOPE_RE`) and, at the source, the same membership rule: a scope no previous document of this installation listed is refused before a child exists (F21), so a renderer cannot hold a stream open on a scope that exists nowhere. It is optional because the command has a default of its own, exactly as the read’s is.',
+        why: 'the scope the stream is about, on `graph.read`’s own terms: `all` (the command’s default, the union of the scopes that exist), `coordinator`, or `orchestrator:<id>` / `local:<id>`, which read one orchestrator’s own state node (CG4 and CG5). It is the same closed grammar the read above is held to (`GRAPH_SCOPE_RE`) and, at the source, the same membership rule: a scope no previous document of this installation listed is refused before a child exists (F21), so a renderer cannot hold a stream open on a scope that exists nowhere. It is optional because the command has a default of its own, exactly as the read’s is.',
       },
       {
         key: 'visible',
@@ -1718,6 +1718,36 @@ export const CONSOLE_OPERATIONS = [
         why: 'the pasted key — the one argument on this surface whose value is a credential, and the only one the console never answers back. It is bounded before anything decodes it and passed nowhere but the verifier; what it can reach is the child’s environment and never an argv.',
       },
     ],
+  },
+  // The Project tab's seat estimate (subscriptions plan S4.2; the read behind
+  // it is `fugaro seats --json`, S4.1, and the rulings are D439, D433 and
+  // T14). It is the console's **thirty-eighth** operation, and it is a read of
+  // core data and nothing else: the command reads this machine's own launcher
+  // and operator lists and the requesters of the last 90 days of runs, sends
+  // nothing, stores nothing and consults no key, licence or server.
+  //
+  // **It is not on a reduced view.** The reduced mode withholds the screens
+  // that read money an operator's runs spent (`REDUCED_VIEW_OPERATIONS`), and
+  // this document carries no money at all: a seat is a contract pricing rule of
+  // the Subscription Terms and not a figure of this installation's spend, and
+  // the estimate the CLI publishes is a count of people. It is not gated by a
+  // lapse either, and for the same reason a read is never gated: only the two
+  // writes that walk an installation out of a lapse carry
+  // `refusedAfterLapse` (`docs/design/lapse-read-only.md`).
+  //
+  // **No argument at all**, the strongest form of this rule's closed schema:
+  // the command takes no positional word, `--json` is a fixed word of the spawn
+  // row and the cloud group's `--project`/`--config` are the installation's --
+  // so there is no field a renderer could fill. The window is the ruling's own
+  // 90 days and no flag moves it: an estimate over a window the caller chose
+  // would be a different count wearing the same name.
+  {
+    name: 'seats.read',
+    method: 'readSeats',
+    command: 'seats',
+    flags: ['--json'],
+    summary: 'the advisory estimate of who launches jobs on this installation, and the identities the estimate cannot count',
+    args: [],
   },
 ] as const satisfies readonly ConsoleOperation[]
 

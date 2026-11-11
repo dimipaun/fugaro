@@ -171,12 +171,12 @@ func NoticesFor(path string) []string {
 	return Notices(path, data)
 }
 
-// NoticeText is the change's notices for the diff screen, one "heads-up" line
-// each, then the caveat that the list is not exhaustive (always: a clean
-// screen must not read as assurance).
-func (c *Change) NoticeText() string {
+// NoticeText is the notices for a screen showing what the file says, one
+// "heads-up" line each, then the caveat that the list is not exhaustive
+// (always: a clean screen must not read as assurance).
+func NoticeText(notices []string) string {
 	var b strings.Builder
-	for _, n := range c.Notices {
+	for _, n := range notices {
 		b.WriteString("heads-up: " + n + "\n")
 	}
 	b.WriteString("heads-up: " + NoticesCaveat + "\n")
