@@ -1150,6 +1150,77 @@ func TestBootstrapSaysNothingForATaskThatNamesNoImage(t *testing.T) {
 	}
 }
 
+// TestBootstrapSaysNothingForAnArtifactRunThatNamesItsOutput (V5, D2005): an
+// artifact run's task names the picture the render is asked to produce —
+// `render out/banner.png` is the shape the mode exists for, and its
+// outputs.globs are often pictures — but no stage of the run reads a file:
+// the plan stage writes the plan and the runner renders. The remedy the
+// refusal gives (set agent.models.vision, price its images) would add a model
+// this run never runs, so the refusal is not one it may carry.
+//
+// Mutation (drop `r.artifact` from checkImages' mode guard): this run is
+// refused at bootstrap as config_invalid and reaches no stage at all.
+func TestBootstrapSaysNothingForAnArtifactRunThatNamesItsOutput(t *testing.T) {
+	g := newGWFiles(t, renderProviderPinned(t), "enforce", "50", renderScript(sizzleScript))
+	spec := artifactSpec(sizzlePlanRenderYAML)
+	spec.Task = "Render out/banner.png for the release page from the site's title and share card"
+	g.setSpec(t, spec)
+	wireProviders(t, g, nil, "acme/app")
+	rec, err := g.run(t, planStage)
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("an artifact run whose task names the picture it renders was refused: rec = %+v, err = %v", rec, err)
+	}
+	if rec.Outcome != runstore.OutcomeArtifacts {
+		t.Errorf("outcome = %q, want %q: the run rendered rather than stopping at bootstrap", rec.Outcome, runstore.OutcomeArtifacts)
+	}
+	if len(g.agent.calls) == 0 {
+		t.Fatal("the run reached no stage")
+	}
+}
+
+// TestBootstrapSaysNothingForAReviewRunThatNamesAnImage (V5, D2005): a review
+// run runs no coder stage — every stage it runs is a review stage, and a
+// review stage's image reads are denied outright (denyBinaryReads) — so a
+// task naming a file the pull request touched is not the run that dies at
+// implement, and the remedy the refusal gives would add a model it never
+// runs.
+//
+// Mutation (drop `r.review` from checkImages' mode guard): the run is refused
+// at bootstrap as config_invalid, before it reads the pull request.
+func TestBootstrapSaysNothingForAReviewRunThatNamesAnImage(t *testing.T) {
+	g := newGW(t, providerPinned(t), "enforce", "50")
+	spec := reviewTaskSpec("reviewonly", reviewOnlyYAML, 7)
+	spec.Task = "Review the pull request: check the new docs/banner.png before it ships"
+	g.setSpec(t, spec)
+	wireProviders(t, g, nil, "acme/app")
+	pushReviewBranch(t, g.harness, "someone-elses-change", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(g.harness, 7, "someone-elses-change", "")
+	rec, err := g.run(t, review("changes", 1))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a review run whose task names a picture was refused: rec = %+v, err = %v", rec, err)
+	}
+	if rec.Outcome != runstore.OutcomeReviewed {
+		t.Errorf("outcome = %q, want %q: the run reviewed the pull request rather than stopping at bootstrap", rec.Outcome, runstore.OutcomeReviewed)
+	}
+}
+
+// renderProviderPinned is providerPinned with the workflow's render command
+// added: the configuration an artifact run needs (renderCfg's own insertion,
+// on the gateway's fixture, so the run has a provider coder with no image
+// rate for the check to judge).
+func renderProviderPinned(t *testing.T) string {
+	t.Helper()
+	old := "      build: sh build.sh\n"
+	cfg := providerPinned(t)
+	out := strings.Replace(cfg, old, old+"      render: sh render.sh\n", 1)
+	if out == cfg {
+		t.Fatal("the fixture has no commands.build line to add commands.render beside")
+	}
+	return out
+}
+
 // withVision is cfg with the vision slot set (V1): the model a stage runs
 // instead when its own cannot read an image.
 func withVision(t *testing.T, cfg, model string) string {

@@ -226,7 +226,14 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 // checks read it (checkImages), and the harness's default names no file.
 func (h *harness) setTask(t *testing.T, text string) {
 	t.Helper()
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: text}
+	h.setSpec(t, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: text})
+}
+
+// setSpec is setTask for a task of another shape: the run reads its mode and
+// its pull requests off the spec too, and a test about what a mode does with
+// the same text has to hand the run both.
+func (h *harness) setSpec(t *testing.T, spec *task.Spec) {
+	t.Helper()
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

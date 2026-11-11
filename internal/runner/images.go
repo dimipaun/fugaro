@@ -149,6 +149,22 @@ func imageFilesInTree(ctx context.Context, repo *gitops.Repo) ([]string, bool) {
 // model with an image rate in every configuration this program ships
 // (denyBinaryReads' own two rules).
 func (r *run) checkImages(ctx context.Context) error {
+	// Only a run whose coder stage will run is judged, because the failure
+	// this check prevents is that stage's: it is the one that is handed the
+	// task's text and reads the file the task names. An artifact run's plan
+	// stage renders the picture rather than reading it — `render
+	// out/banner.png` is the shape the mode exists for, and outputs.globs are
+	// often pictures — a review run runs no coder stage at all and every
+	// stage it does run is a review stage, whose image reads are denied
+	// outright (denyBinaryReads), and a digest recipe's step is the runner's
+	// own report work, where a rebase's is that work plus one stage for the
+	// conflicts, whose task is the branch rather than a picture. None of the
+	// four meets the failure, and the refusal's remedy — set
+	// agent.models.vision and price its images — would add a model the run
+	// never runs.
+	if r.artifact || r.review || r.digest || r.rebase {
+		return nil
+	}
 	coder := r.cfg.Agent.ModelFor(config.RoleCoder)
 	if coder == "" || r.cfg.Agent.VisionModel() != "" || r.modelTakesImages(coder) {
 		return nil
