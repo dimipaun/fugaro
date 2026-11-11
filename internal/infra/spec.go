@@ -1856,10 +1856,20 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 		SchedulerRegion: region,
 		Schedule:        Schedule(c.slug),
 		Paused:          true,
-		DeployJob:       true,
-		Env:             env,
-		SecretEnv:       map[string]string{gitEnv: c.gitSecret},
-		Workflows:       checked,
+		// The job's shape, and not the decision to deploy it: that is
+		// Readiness's (readiness.go), which after D1900 answers the live
+		// cloud -- a repository whose cloud holds no check job is given none
+		// (IS2), one whose cloud holds one keeps it, because the state holds
+		// its three addresses and a spec that stopped producing them would
+		// plan a retirement (retire.go), not a quiet release. True here is
+		// what keeps that fail-safe: every ungated reader -- Addresses() on
+		// the fixture specs, `fugaro update --repo --print-vars` -- still
+		// describes the job, so the only way to lose it is Readiness saying
+		// so about the cloud.
+		DeployJob: true,
+		Env:       env,
+		SecretEnv: map[string]string{gitEnv: c.gitSecret},
+		Workflows: checked,
 	}, nil
 }
 
