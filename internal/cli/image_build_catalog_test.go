@@ -903,11 +903,12 @@ func TestCatalogBuildBakesTheMappedReposCheckout(t *testing.T) {
 // whose operator answered the switch no — is byte for byte what it was: no
 // stage is composed, the copy is the entry's own definition, the smoke is the
 // spec it was, and no line about the bake is printed. A repository the map
-// does put on a quiet entry is baked (that is the default's own case), and
-// TestCatalogBuildBakesASharedEntryAndNamesTheReaders and
-// TestCatalogBuildBakesTheEntryTheCheckoutNames are the two the switch decides
-// in the other direction: a shared entry, and a checkout that runs this entry
-// by its own workflow's reference.
+// does put on a quiet entry is baked (that is the default's own case). The
+// other two ways a build bakes nothing are the ones the map cannot answer for,
+// and TestCatalogBuildBakesNothingIntoASharedEntry and
+// TestCatalogBuildRefusesABakeTheMapDoesNotConfirm pin them: an entry other
+// repositories run, and a checkout that names this entry by its own workflow's
+// reference with no map to say who else runs it.
 //
 // This is the half of the HARD RULE that keeps `fugaro update` a one-command
 // upgrade: no path under it writes a definition at all (O1), so nothing about

@@ -593,8 +593,9 @@ func doctorChecks(t *testing.T, root string) doctorOutput {
 // only at a build an operator runs, and a project that never mapped anything
 // and whose checkouts name no entry keeps byte for byte what it had. What such
 // a build then writes is pinned by TestCatalogBuildBakesTheMappedReposCheckout
-// and TestCatalogBuildBakesTheEntryTheCheckoutNames, and the same bytes are
-// what the nightly rebuild reads
+// and TestCatalogBuildBakesTheEntryAWorkflowsNeedsChoose, what it leaves alone
+// by TestCatalogBuildBakesNothingWithoutTheMap, and the same bytes are what the
+// nightly rebuild reads
 // (TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt).
 func TestUpdateConvergesImageBake(t *testing.T) {
 	r := newConvergeRig(t, v4Node())
