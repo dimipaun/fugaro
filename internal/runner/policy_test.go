@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -402,5 +403,100 @@ func TestPolicyOutputLimitMergedWithDefaultBranch(t *testing.T) {
 	}
 	if len(st) != 2 || st[0] == 200 || st[1] != 200 {
 		t.Fatalf("statuses %v: want the 4000-token call refused and the 1000-token one served", st)
+	}
+}
+
+// ref is a pointer to v: the four chain limits a task carries are pointers,
+// and a nil one is a dimension the launch left unbounded (task.Overrides).
+func ref[T any](v T) *T { return &v }
+
+// limitTask writes the chain limits a launch asked for into the run's stored
+// task, which is what bootstrap reads: what the four --max-* flags leave
+// there, and what a hand-written task or an older CLI's may leave there
+// instead of a remaining (D1041, D1044).
+func limitTask(t *testing.T, h *harness, o task.Overrides) {
+	t.Helper()
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature", Overrides: o}
+	if err := h.store.WriteTask(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPolicyMergesTheChainRemaining: the runner resolves the chain again at
+// bootstrap and merges what is left of it as the last layer (D1044, D1047).
+// The task carries the launch's own token limit of 1000 — the figure a
+// hand-written task, or one an older CLI wrote, holds instead of a remaining
+// — and the run's ledger says it already holds 400 of them, so the cap the
+// run halts at is 600. A merge that does not consult the chain would halt at
+// the task's 1000, which is the hole D1052 closes.
+func TestPolicyMergesTheChainRemaining(t *testing.T) {
+	b := newBK(t, gwConfig(t, ""), "observe", "")
+	limitTask(t, b.harness, task.Overrides{MaxTokens: ref(int64(1000))})
+	b.db.Set(budget.PathRun(repoSlug, runID), budget.RunLedger{Tokens: 400})
+	rec, err := b.run(t, big(implement("feature"), 700), review("ship", 0))
+	if rec.Policy == nil || rec.Policy.Sources[policy.KeyMaxRunTokens] != policy.SourceChain {
+		t.Fatalf("the run's token cap is not the chain's remaining: policy = %+v", rec.Policy)
+	}
+	tokenHalt(t, rec, err, "run used 700 tokens of 600")
+}
+
+// TestSpendCapIsTheRemaining: the cap the gateway holds is the chain's
+// remaining and not the launch's limit (D1059, D1050). The task asks for
+// $0.10 and the run's ledger holds $0.04 of it, so the cap the gateway
+// refuses a call against is $0.06 — the gateway itself is unchanged, and the
+// figure it names in the refusal is the merge's.
+func TestSpendCapIsTheRemaining(t *testing.T) {
+	b := newBK(t, gwConfig(t, ""), "enforce", "50", capScript(3)...)
+	limitTask(t, b.harness, task.Overrides{MaxUSD: ref(0.10)})
+	b.db.Set(budget.PathRun(repoSlug, runID), budget.RunLedger{Reserved: 40_000})
+	var st []int
+	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
+	if err != nil || len(st) != 3 || st[2] != 403 {
+		t.Fatalf("statuses %v, err = %v", st, err)
+	}
+	if rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap || !strings.Contains(rec.Halt.Detail, "$0.06") {
+		t.Fatalf("the gateway's refusal does not name the remaining: %+v", rec.Halt)
+	}
+}
+
+// TestHaltedOpenLedgerChargesTheHeldAmount: a restart charges exactly what
+// the run still holds — reserved less released (D1050 case 3, D1046). The
+// task asks for $0.10 and the ledger holds $0.03: $0.05 reserved with $0.02
+// released, the shape a run killed between its halt and its release leaves —
+// so the remaining the run carries is $0.07.
+func TestHaltedOpenLedgerChargesTheHeldAmount(t *testing.T) {
+	b := newBK(t, gwConfig(t, ""), "enforce", "50", capScript(3)...)
+	limitTask(t, b.harness, task.Overrides{MaxUSD: ref(0.10)})
+	b.db.Set(budget.PathRun(repoSlug, runID), budget.RunLedger{Reserved: 50_000, Released: 20_000})
+	var st []int
+	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
+	if err != nil || len(st) != 3 || st[2] != 403 {
+		t.Fatalf("statuses %v, err = %v", st, err)
+	}
+	if rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap || !strings.Contains(rec.Halt.Detail, "$0.07") {
+		t.Fatalf("the cap is not what the ledger still holds: %+v", rec.Halt)
+	}
+}
+
+// TestChainZeroRemainingRefusesAtLaunch: a chain with nothing left is refused
+// at bootstrap (D1050 case 1) — an outcome and not a failure, like every
+// other halt, and before anything is locked, pushed or opened. The task asks
+// for $0.10 and the run's own ledger already holds all of it.
+func TestChainZeroRemainingRefusesAtLaunch(t *testing.T) {
+	b := newBK(t, gwConfig(t, ""), "enforce", "50", capScript(1)...)
+	limitTask(t, b.harness, task.Overrides{MaxUSD: ref(0.10)})
+	b.db.Set(budget.PathRun(repoSlug, runID), budget.RunLedger{Reserved: 100_000})
+	rec, err := b.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatalf("a bootstrap halt returned %v, want nil so exec exits 0", err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeNone || rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap {
+		t.Fatalf("record = %+v, halt = %+v", rec, rec.Halt)
+	}
+	if !strings.Contains(rec.Halt.Detail, runID) || !strings.Contains(rec.Halt.Detail, "dollar") {
+		t.Fatalf("the halt does not name the chain and the dimension: %q", rec.Halt.Detail)
+	}
+	if len(b.agent.calls) != 0 || b.fake.Count() != 0 {
+		t.Fatal("the agent or the gateway ran")
 	}
 }

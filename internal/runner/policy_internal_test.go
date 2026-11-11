@@ -9,8 +9,13 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"gocloud.dev/blob"
+	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -434,5 +439,90 @@ func TestPolicyCeilingCarriesTheBinariesList(t *testing.T) {
 	}
 	if rec := policyRecord(cleared.policy, 0); rec == nil || rec.Sources[policy.KeyBinariesAllow] != policy.SourcePolicy {
 		t.Errorf("result.json's policy.sources = %+v, want %s = %q", rec, policy.KeyBinariesAllow, policy.SourcePolicy)
+	}
+}
+
+// ref is a pointer to v: the four chain limits a task carries are pointers,
+// and a nil one is a dimension the launch left unbounded (task.Overrides).
+func ref[T any](v T) *T { return &v }
+
+// chainAround writes a chain of two runs into bucket — the one that began it,
+// whose stored task is the chain's own limit and whose record is what it
+// spent (D1041, D1046), and the one this test resolves the policy of, linked
+// to it — and returns the run, ready for resolvePolicy. Its store is the
+// bucket, which is the whole point of the read: one record at a time, by
+// name (F21).
+func chainAround(t *testing.T, bucket *blob.Bucket) *run {
+	t.Helper()
+	ctx := context.Background()
+	const root = "20261001-090000-abcd"
+	rs := runstore.Open(bucket, svcSlug, root)
+	if err := rs.WriteTask(ctx, &task.Spec{Version: 1, RunID: root, Repo: "acme/app", Ref: "main", Workflow: "app",
+		Task: "Begin the work", Overrides: task.Overrides{MaxReviewRounds: ref(6), MaxTime: "1h"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: root, Repo: "acme/app", Status: runstore.StatusSucceeded,
+		Reviews: []runstore.ReviewSummary{{Round: 1}, {Round: 2}, {Round: 3}, {Round: 4}, {Round: 5}},
+		Stages:  []runstore.StageTiming{{Name: "implement", DurationS: 2400}}}); err != nil {
+		t.Fatal(err)
+	}
+	spec := &task.Spec{Version: 1, RunID: svcRunID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Carry on",
+		Branch: "fugaro/" + root, PR: 1, PreviousRun: root,
+		Overrides: task.Overrides{MaxReviewRounds: ref(9), MaxTime: "3h"}}
+	r := &run{cfg: &config.Config{}, spec: spec, rec: &runstore.Record{},
+		d: Deps{Store: runstore.Open(bucket, svcSlug, svcRunID), Log: slog.New(slog.DiscardHandler), Now: time.Now}}
+	r.projPolicy = policyRead{done: true}
+	return r
+}
+
+// TestPolicyChainRemainingCannotLoosen: the chain is the merge's last layer,
+// so a hand-written task's looser figure cannot survive it (D1044, D1047).
+// The task asks for 9 review rounds and a 3-hour wall clock, the run that
+// began the chain was launched with 6 rounds and 1 hour, and its record says
+// it spent 5 rounds and 40 minutes, so what is left is 1 round and 20 minutes
+// — and neither the task's 9 nor its 3 hours is what the run carries.
+func TestPolicyChainRemainingCannotLoosen(t *testing.T) {
+	bucket := memblob.OpenBucket(nil)
+	defer bucket.Close()
+	r := chainAround(t, bucket)
+	if err := r.resolvePolicy(context.Background(), r.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.policy.MaxReviewRounds; got != 1 {
+		t.Errorf("max_review_rounds = %d, want the chain's 1 (its 6 less the 5 spent), not the task's 9", got)
+	}
+	if got := r.policy.MaxRunTime; got != 20*time.Minute {
+		t.Errorf("max_run_time = %v, want the chain's 20m (its 1h less the 40m spent), not the task's 3h", got)
+	}
+	for _, key := range []string{policy.KeyMaxReviewRounds, policy.KeyMaxRunTime} {
+		if got := r.policy.Sources[key]; got != policy.SourceChain {
+			t.Errorf("sources[%s] = %q, want %q", key, got, policy.SourceChain)
+		}
+	}
+}
+
+// TestChainRecordsAreReadByNameNotListed: the chain is followed one record at
+// a time, by name (F21): the job's account holds storage.objects.get on its
+// own prefix and no list, so a bucket that answers every listing with 403
+// still resolves the chain, and the fake's log of the calls shows not one of
+// them was a listing.
+func TestChainRecordsAreReadByNameNotListed(t *testing.T) {
+	const runsBucket = "fugaro-runs-proj-1234"
+	g := gcpfake.NewGCS(t)
+	bucket := g.Bucket(t, runsBucket).Bucket
+	g.FailListings(runsBucket)
+	r := chainAround(t, bucket)
+	before := len(g.Requests())
+	if err := r.resolvePolicy(context.Background(), r.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.policy.MaxReviewRounds; got != 1 {
+		t.Fatalf("max_review_rounds = %d, want the chain's 1: the records behind the link were not read", got)
+	}
+	reqs := g.Requests()
+	for _, req := range reqs[min(before, len(reqs)):] {
+		if strings.Contains(req.Query, "prefix=") || strings.Contains(req.Query, "delimiter=") {
+			t.Errorf("the chain was listed: %s %s?%s", req.Method, req.Path, req.Query)
+		}
 	}
 }
