@@ -47,9 +47,10 @@ import (
 // where it lives.
 //
 // **Nothing here is served.** RegisterRoadmapTools is called by nothing in this
-// repository: the front door is off on every installation (D934) and this
-// group waits on P9e, which waits on M12 (the front door mounted on a binary)
-// and, through it, on M12b's delivery to a paired phone (D2126). What this file
+// repository: the front door is mounted (M12) and off on every installation
+// (D934 — no released `fugaro update` writes the switch), and a door is enabled
+// only once M12b has delivered the flow to a paired phone (D2126), which is
+// what P9e — the task that serves this group — waits behind. What this file
 // fixes is the shape the served door will have, and the catalogue rows in
 // tools.go are what make the scope of each name decided rather than chosen by
 // whichever task registers it first.
@@ -150,11 +151,10 @@ type RoadmapRequest struct {
 	// Document instead, because the document names its own plan.
 	Plan string `json:"plan,omitempty"`
 	// Document is the plan document a publish carries, trimmed to P9a's shape
-	// and carrying its provenance in Source (D2111).
+	// and carrying its own provenance in Source (D2111) — one place the value
+	// is written, so the document and the request cannot come to disagree about
+	// where it came from.
 	Document *coordinator.Plan `json:"document,omitempty"`
-	// Source is where the document was read from (D2111's provenance: D2123's
-	// one sentence reads it, and nothing else does).
-	Source *coordinator.PlanSource `json:"source,omitempty"`
 	// Expect is the version the request was built on: the document's own for a
 	// publish, an unpublish or a release write, and the release the record
 	// holds for a move (NoneRelease for a task with no assignment, D2114).
@@ -396,16 +396,19 @@ func (t roadmapTools) publishPlan(ctx context.Context, call Call) (any, error) {
 		return nil, err
 	}
 	doc := a.Plan
+	// The shape version is this build's and never the caller's: the record reads
+	// one schema, and a document that named another is a document this build
+	// would skip when it read it back (P9b sets the same field, which is what
+	// makes the two agree).
+	doc.Schema = coordinator.RoadmapSchema
 	if err := checkPlanDocument(doc); err != nil {
 		return nil, err
 	}
 	if err := t.expectDocument(ctx, coordinator.PathPlan(doc.Plan), a.Expect); err != nil {
 		return nil, err
 	}
-	doc.Schema = coordinator.RoadmapSchema
-	source := doc.Source
 	return t.submit(ctx, call, RoadmapRequest{
-		Kind: RequestPublishPlan, Document: &doc, Source: &source, Expect: a.Expect,
+		Kind: RequestPublishPlan, Document: &doc, Expect: a.Expect,
 	})
 }
 

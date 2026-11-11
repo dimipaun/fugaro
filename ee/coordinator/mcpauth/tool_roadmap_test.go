@@ -953,7 +953,7 @@ func TestARoadmapRequestIsQueuedWithItsKindAndNotTheToolsName(t *testing.T) {
 		t.Errorf("the queued release write is %+v; want the document with the shape version the record reads", rel.Release)
 	}
 	pub := f.queue.submitted[0]
-	if pub.Document == nil || pub.Document.Schema != coordinator.RoadmapSchema || pub.Source == nil || pub.Source.Repo != "acme/app" {
+	if pub.Document == nil || pub.Document.Schema != coordinator.RoadmapSchema || pub.Document.Source.Repo != "acme/app" {
 		t.Errorf("the queued publish is %+v; want the trimmed document and its provenance (D2111)", pub)
 	}
 }
