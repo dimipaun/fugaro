@@ -394,6 +394,154 @@ func TestAdminRefusesAMintTheFactorDidNotConfirm(t *testing.T) {
 	}
 }
 
+// TestAdminRefusesAMintWithNowhereToSendTheKey: the last guard in front of the
+// minter, and the only one between an edited form and a key nobody is told
+// about. A key is mailed and never stored (§7.3), so a form whose address is not
+// one — the field the owner can edit on an approval, and the one field of an
+// Order-Form mint nothing else fills in — would reach `s.mint` with `to` empty:
+// the minter signs, `s.mint` skips the mail it has no address for and records
+// the key against §5.2's source, and the page answers 303 as if it had been
+// delivered. What the owner is left with is a licence in the audit line and the
+// record and in nobody's hands. The organisation is the same guard's other half:
+// it is written into the key's own payload, and a mint that does not say who it
+// is for is one the owner cannot answer either.
+func TestAdminRefusesAMintWithNowhereToSendTheKey(t *testing.T) {
+	f := newFixture(t)
+	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a multi-seat trial"}}))
+	open := f.open()
+	if len(open) != 1 {
+		t.Fatalf("the manual form left %d open request(s), want one", len(open))
+	}
+	// The request carries the applicant's own address, so what the refusals below
+	// read is the edited field and not a request that never had one.
+	if open[0].Email != applicantAddress {
+		t.Fatalf("the request carries %q, want the applicant's address", open[0].Email)
+	}
+	fields := url.Values{
+		"application": {open[0].ID}, "plan": {paidPlanName}, "seats": {"2"},
+		"term_days": {"365"}, "organisation": {"acme.example"},
+	}
+
+	for _, raw := range []string{
+		"not an address", "acme.example", "owner@", "dev@acme", "two addresses@acme.example",
+	} {
+		form := url.Values{"email": {raw}}
+		for name, values := range fields {
+			form[name] = values
+		}
+		rec := f.adminPost(RouteAdminMint, f.mintForm(form))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("a mint to %q answered %d, want 400: %s", raw, rec.Code, rec.Body.String())
+		}
+		if body := strings.TrimSpace(rec.Body.String()); body != refuseFields {
+			t.Errorf("a mint to %q was refused with %q, want the sentence that names what a mint needs", raw, body)
+		}
+	}
+
+	// The organisation's half of the guard, on the branch that has no request to
+	// take one from (§5.5's Order-Form mint), with everything else in the form.
+	unowned := f.adminPost(RouteAdminMint, f.mintForm(url.Values{
+		"plan": {enterprisePlanName}, "seats": {"40"}, "term_days": {"365"},
+		"organisation": {"   "}, "email": {"licensing@acme.example"},
+	}))
+	if unowned.Code != http.StatusBadRequest {
+		t.Errorf("a mint naming no organisation answered %d, want 400: %s", unowned.Code, unowned.Body.String())
+	}
+
+	// Nothing was signed, written down, mailed or recorded — and the request the
+	// refusals named is still the owner's to answer.
+	if got := f.signer.calls; got != 0 {
+		t.Errorf("a refused mint signed %d time(s), want none: a key signed for a form with nowhere to send it is a key nothing accounts for", got)
+	}
+	if got := len(f.mintedKeys()); got != 0 {
+		t.Errorf("a refused mint produced %d key(s), want none", got)
+	}
+	if got := len(f.auditor.lines); got != 0 {
+		t.Errorf("a refused mint wrote %d audit line(s), want none: no key was returned", got)
+	}
+	if got := len(f.mail.sent); got != 0 {
+		t.Errorf("a refused mint mailed %d message(s), want none", got)
+	}
+	if got := len(f.records()); got != 0 {
+		t.Errorf("a refused mint recorded %d issuance(s), want none", got)
+	}
+	if got := f.open(); len(got) != 1 || got[0].Decision != Undecided {
+		t.Errorf("a refused mint changed the queue: %+v", got)
+	}
+
+	// And the same form with the request's own address is the mint the refusals
+	// above held back, so they are the field's answers and not the route's silence.
+	if rec := f.adminPost(RouteAdminMint, f.mintForm(fields)); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the same form with an address answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.mintedKeys()); got != 1 {
+		t.Errorf("the mint that was allowed produced %d key(s), want one", got)
+	}
+	if got := len(f.mail.sent); got != 1 || f.mail.sent[0].To != applicantAddress {
+		t.Errorf("the key went to %+v, want the request's own address (%q)", f.mail.sent, applicantAddress)
+	}
+}
+
+// TestAdminRefusesAMintForARequestThatIsNotInTheQueue: the form names the
+// request it answers, and an id that names none is refused rather than minted.
+// The two branches of the one action differ in what makes a mint repeat
+// (§5.5): an approval keys on the request it answers and an Order-Form mint on
+// the page render, so an id with no request behind it that fell through to the
+// form's branch would mint against a source carrying that id — a key issued
+// under a name the page cannot read back, for a request the owner meant to
+// answer and which stays in the queue.
+func TestAdminRefusesAMintForARequestThatIsNotInTheQueue(t *testing.T) {
+	f := newFixture(t)
+	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a multi-seat trial"}}))
+	open := f.open()
+	if len(open) != 1 {
+		t.Fatalf("the manual form left %d open request(s), want one", len(open))
+	}
+
+	for _, id := range []string{"app-00000000-0000-4000-8000-000000000000", "a-request-that-was-never-made"} {
+		rec := f.adminPost(RouteAdminMint, f.mintForm(url.Values{
+			"application": {id}, "plan": {paidPlanName}, "seats": {"2"},
+			"term_days": {"365"}, "organisation": {"acme.example"}, "email": {applicantAddress},
+		}))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("a mint for the unknown request %q answered %d, want 404: %s", id, rec.Code, rec.Body.String())
+		}
+		if body := strings.TrimSpace(rec.Body.String()); body != refuseUnknown {
+			t.Errorf("a mint for %q was refused with %q, want the sentence that names the missing request", id, body)
+		}
+	}
+	if got := f.signer.calls; got != 0 {
+		t.Errorf("a mint for a request that is not there signed %d time(s), want none", got)
+	}
+	if got := len(f.mintedKeys()); got != 0 {
+		t.Errorf("a mint for a request that is not there produced %d key(s), want none", got)
+	}
+	if got := len(f.records()); got != 0 {
+		t.Errorf("a mint for a request that is not there recorded %d issuance(s), want none: a key under an id the page cannot read back is one the queue never shows", got)
+	}
+	if got := len(f.auditor.lines); got != 0 {
+		t.Errorf("a mint for a request that is not there wrote %d audit line(s), want none", got)
+	}
+	if got := len(f.mail.sent); got != 0 {
+		t.Errorf("a mint for a request that is not there mailed %d message(s), want none", got)
+	}
+	if got := f.open(); len(got) != 1 || got[0].Decision != Undecided {
+		t.Errorf("a refused mint changed the queue: %+v", got)
+	}
+
+	// The request the queue does hold is still mintable, which is what makes the
+	// two refusals above the id's and not the route's.
+	if rec := f.adminPost(RouteAdminMint, f.mintForm(url.Values{
+		"application": {open[0].ID}, "plan": {paidPlanName}, "seats": {"2"},
+		"term_days": {"365"}, "organisation": {"acme.example"},
+	})); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the request the queue holds answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.mintedKeys()); got != 1 {
+		t.Errorf("the mint that was allowed produced %d key(s), want one", got)
+	}
+}
+
 // TestEveryMintIsAudited: §6's audit row and Check 173 step 3 — every mint
 // writes one line naming the tier, the seats, the plan and the actor, and it is
 // written **before the key is returned**, so a key that exists is a key that was
