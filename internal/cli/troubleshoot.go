@@ -72,10 +72,10 @@ var (
 
 type troubleshootOptions struct {
 	asJSON bool
-	// maxTurns and maxBudgetUSD are D1613's cap, left at zero to take
-	// diagnoseagent.DefaultCap (30 turns, one dollar). Zero is not "no cap":
-	// a diagnosis that ran unbounded on a metered key is the thing the cap
-	// exists to refuse.
+	// maxTurns and maxBudgetUSD are D1613's cap. They are flags rather than
+	// constants because a hard failure may need a longer look, and they are
+	// never absent: a diagnosis that ran unbounded on a metered key is the
+	// thing the cap exists to refuse.
 	maxTurns     int
 	maxBudgetUSD float64
 }
@@ -521,8 +521,8 @@ func troubleshootOffline(cmd *cobra.Command, o *troubleshootOptions, ev diagnose
 	d.Offline, d.Reason = true, oneLine(reason.Error())
 	d.LogTail = troubleshootLogTail(ev)
 	d.Doctor = troubleshootEvidenceFile(ev, "doctor.txt")
-	// The model and the source note are not printed: no agent ran, so nothing
-	// read either of them.
+	// The model is printed with the rest of the header and no answer is: no
+	// agent ran, so there is none to print.
 	if werr := printTroubleshoot(cmd.OutOrStdout(), d, o.asJSON); werr != nil {
 		return werr
 	}
