@@ -370,7 +370,21 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 // seatChanged reissues inside the term the customer already paid for: `seats`
 // is a claim in the key, and the term is not (§5.3). The new key covers what is
 // left of the term, so it ends where the key it replaces ends.
+//
+// A cancelled subscription gets nothing here, as it gets nothing from Renew: the
+// key the customer holds keeps working until it expires and no second one is
+// minted (S2.1, §5.3).
 func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) error {
+	if sub.Cancelled {
+		// §5.3's "a cancellation stops the reissue" is not the renewal's rule
+		// alone: a seat change is a reissue, and this is the only paid path that
+		// reissues inside a term the customer has already been given a key for, so
+		// without this guard it is the one that hands a second key to a customer
+		// who has left. It is dropped and not refused, like the redelivery it is
+		// the near-twin of: a seat change that lands after the cancellation is late
+		// ordinary traffic, and a 500 would have the merchant retry it forever.
+		return nil
+	}
 	if e.Seats < 1 {
 		// The same refusal a purchase without seats gets, and for the same
 		// reason: a seat change that names no seats is one this service cannot

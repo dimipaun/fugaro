@@ -639,6 +639,51 @@ func TestCancellationStopsReissue(t *testing.T) {
 	}
 }
 
+// TestACancellationStopsTheSeatChangeToo: §5.3's "a cancellation stops the
+// reissue" is not the renewal's rule alone, and the seat change is the path that
+// shows it — a seat change is a reissue, it mints a second key inside the term
+// the customer already holds one for, and a customer who has left has left
+// whichever event arrives afterwards. The late seat change is dropped the way a
+// redelivery is: the merchant's events are ordinary traffic, a late one is not an
+// error to retry forever, and nothing about the subscription moves — not the
+// seats, and not its instant.
+func TestACancellationStopsTheSeatChangeToo(t *testing.T) {
+	f := newFixture(t)
+	f.purchase("evt-1", "acme.example", 5, 365)
+	f.advance(day)
+	f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example"})
+	minted, mailed := f.signer.calls, len(f.mail.sent)
+	cancelled := f.now
+
+	f.advance(day)
+	if rec := f.event(Event{ID: "evt-3", Type: EventSeatChange, Organisation: "acme.example", Seats: 9, TermDays: 365}); rec.Code != http.StatusOK {
+		t.Fatalf("the seat change was answered %d, want 200: a dropped event is the merchant's ordinary traffic and not one to retry", rec.Code)
+	}
+
+	if got := f.signer.calls; got != minted {
+		t.Errorf("a seat change delivered after the cancellation signed %d key(s), want none: a cancellation stops the reissue", got-minted)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("a seat change delivered after the cancellation mailed %d message(s), want none", got-mailed)
+	}
+	if got := len(f.records()); got != 1 {
+		t.Errorf("the record holds %d key(s), want the one the customer holds", got)
+	}
+	sub, held, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil || !held {
+		t.Fatalf("reading the subscription: held=%v, err=%v", held, err)
+	}
+	if !sub.Cancelled {
+		t.Error("the subscription is no longer cancelled, want it as the cancellation left it")
+	}
+	if sub.Seats != 5 {
+		t.Errorf("the subscription holds %d seat(s), want the 5 it was cancelled with: a dropped event moves nothing", sub.Seats)
+	}
+	if !sub.At.Equal(cancelled) {
+		t.Errorf("the subscription's instant is %s, want the cancellation's %s: a dropped event moves nothing", sub.At, cancelled)
+	}
+}
+
 // TestTestModeEventsMintStagingKeysOnly: §5.4 and Check 179 — a merchant event
 // in test mode mints a staging key and nothing else, and the key id is what
 // makes a production verifier refuse it rather than half-accept it (§2).
