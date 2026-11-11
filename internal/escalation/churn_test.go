@@ -56,6 +56,37 @@ func TestChurnSameFinding(t *testing.T) {
 	}); got != KindSame {
 		t.Errorf("the key coming back two rounds later = %q; want %q", got, KindSame)
 	}
+
+	// The latest round is the one the ladder acts on, and a repeat it does not
+	// raise is an issue the item has moved past: a rung 2 run that cleared the
+	// finding leaves the old repeat in the history, and answering same on it
+	// would take the item to D2036's rung 4 split on the next tick, whichever
+	// way rung 2 went.
+	if got := Churn([]Round{
+		round(rigor.Pro, tolerated("k-1", "internal/a.go")),
+		round(rigor.Pro, tolerated("k-1", "internal/a.go")),
+		round(rigor.Pro),
+	}); got != KindNone {
+		t.Errorf("a repeat the latest round did not raise = %q; want %q", got, KindNone)
+	}
+	if got := Churn([]Round{
+		round(rigor.Pro, tolerated("k-1", "internal/a.go")),
+		round(rigor.Pro, tolerated("k-1", "internal/a.go")),
+		round(rigor.Pro, tolerated("k-2", "internal/b.go")),
+	}); got != KindNone {
+		t.Errorf("a repeat behind a new finding = %q; want %q", got, KindNone)
+	}
+
+	// And it is still the same one when the latest round raises it again, past
+	// the round that did not.
+	if got := Churn([]Round{
+		round(rigor.Pro, tolerated("k-1", "internal/a.go")),
+		round(rigor.Pro, tolerated("k-1", "internal/a.go")),
+		round(rigor.Pro, tolerated("k-2", "internal/b.go")),
+		round(rigor.Pro, tolerated("k-1", "internal/a.go")),
+	}); got != KindSame {
+		t.Errorf("the repeat coming back after a new finding = %q; want %q", got, KindSame)
+	}
 }
 
 // TestChurnNewMinorEveryRound: a reviewer raising a new, minor finding every

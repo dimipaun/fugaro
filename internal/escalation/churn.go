@@ -72,21 +72,33 @@ type Finding struct {
 //
 //   - Fewer than two rounds answer KindNone: one round is compared with
 //     nothing, and an item reviewed once has not churned.
+//
 //   - A round in a mode whose triage stage fills no key answers KindNone.
 //     D1851 runs the stage for Startup and Pro only, so POC, Critical and
 //     Hotfix — and every mode outside the vocabulary — are off, which is the
 //     spec's fallback to the normal path rather than an identity guessed from a
 //     key that was never written (F11).
+//
 //   - A round holding a finding with no key answers KindNone for the same
 //     reason: a record older than the key, or a finding the stage could not
 //     place, is not one this code compares.
-//   - A finding matching one of any earlier round is "same": the keys are
-//     equal, or the file and the class are. The second half is D1246's rule and
-//     what keeps a reviewer's paraphrase of the finding it keeps raising from
-//     reading as new work — it is asked of every earlier round and not only of
-//     the one before, because the issue need not repeat in consecutive rounds,
-//     and it needs a file on both findings: two file-less findings of one class
-//     are not held to be the same one on the strength of a path neither has.
+//
+//   - "Same" is the latest round raising a finding an earlier round already
+//     raised: the keys are equal, or the file and the class are. The second
+//     half is D1246's rule and what keeps a reviewer's paraphrase of the finding
+//     it keeps raising from reading as new work; it is asked of every earlier
+//     round and not only of the one before, because the issue need not repeat
+//     in consecutive rounds; and it needs a file and a class the vocabulary
+//     knows on both findings, because a path or a class neither of them carries
+//     is no evidence that they are one finding.
+//
+//     It is the latest round alone that is asked, because that is the round the
+//     ladder is acting on: a repeat the history holds while the latest round
+//     has moved past it is an issue the item left behind, and answering same
+//     there would take an item to D2036's split on the tick after the rung 2
+//     run that cleared the finding — ReasonR2Clean and ReasonR2Findings would
+//     never be reached for an item the comparator had once called churning.
+//
 //   - Otherwise "new, minor" is every round — the first included — raising at
 //     least one finding and none of them blocking at its own round's mode, with
 //     every round after the first raising only findings no earlier round
@@ -99,9 +111,9 @@ type Finding struct {
 //     churning, and answering new-minor there would merge at rung 3 an item
 //     whose own first review left a finding the mode blocks.
 //
-// Same wins over new-minor, because a round raising both is a round where the
-// unresolved finding is still there — the spec's "same unresolved issue" — and
-// a comparison that answered new-minor there would take the item to rung 3
+// Same wins over new-minor, because a latest round raising both is a round where
+// the unresolved finding is still there — the spec's "same unresolved issue" —
+// and a comparison that answered new-minor there would take the item to rung 3
 // while its rung 2 had not run (D2036).
 func Churn(rounds []Round) Kind {
 	if len(rounds) < 2 {
@@ -118,6 +130,13 @@ func Churn(rounds []Round) Kind {
 		}
 	}
 
+	latest, history := rounds[len(rounds)-1], rounds[:len(rounds)-1]
+	for _, f := range latest.Findings {
+		if sameAsAny(history, f) {
+			return KindSame
+		}
+	}
+
 	newMinor := true
 	for i, r := range rounds {
 		if len(r.Findings) == 0 {
@@ -126,7 +145,7 @@ func Churn(rounds []Round) Kind {
 		}
 		for _, f := range r.Findings {
 			if i > 0 && sameAsAny(rounds[:i], f) {
-				return KindSame
+				newMinor = false
 			}
 			if rigor.Blocks(r.Mode, f.Score) {
 				newMinor = false
