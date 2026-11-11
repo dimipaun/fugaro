@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The anonymiser (A5.1): what the judge is handed, what it is never handed,
@@ -85,6 +88,22 @@ func TestBundleCarriesNoIdentifier(t *testing.T) {
 			}
 		})
 	}
+
+	// The shape the shape scan searches for is spelled out of task, whose own
+	// pattern is unexported: this is what holds the two together. A run ID
+	// task itself mints has to be one the scan finds, and it is checked as
+	// another run's ID so the pair's own spellings cannot answer for it.
+	t.Run("a run ID task mints is refused", func(t *testing.T) {
+		for i := range 4 {
+			id, err := task.NewRunID(time.Date(2026, 3, 3, 3, 3, i, 0, time.UTC), strings.NewReader(string(rune('a'+i))+"\x00"))
+			if err != nil {
+				t.Fatalf("task.NewRunID: %v", err)
+			}
+			if _, _, err := Bundle(champPatch("+// from run "+id+"\n"+diffBody), challPatch(diffBody), champRunID); !errors.Is(err, ErrIdentified) {
+				t.Fatalf("a diff carrying %s, a run ID task minted: Bundle err = %v, want %v", id, err, ErrIdentified)
+			}
+		}
+	})
 
 	t.Run("a clean pair is judged whole", func(t *testing.T) {
 		challDiff := diffBody + "+var name = \"app\"\n"
@@ -263,25 +282,29 @@ func TestBundleRedactsModelIDInBothArms(t *testing.T) {
 // judge reads.
 func TestBundleRedactsTheArmsOwnModel(t *testing.T) {
 	// Off the build's tables on purpose: no Claude row, no catalog row, and a
-	// vendor word ("acme") the family fold of this ID alone knows.
+	// vendor word ("acme") the family fold of this ID alone knows. The
+	// challenger's name ends in "pro", a word that appears inside provider,
+	// process and property: the vocabulary takes it from the model the pair
+	// was run with, and minModelWord is what keeps it out of the diff.
 	const (
-		champModel = "acme/atlas-9"
-		challModel = "acme/atlas-9-pro"
+		champModel = "acme/atlas"
+		challModel = "acme/atlas-pro"
 	)
 	arm := func(patch Patch, model string) Patch {
 		patch.Model = model
 		return patch
 	}
 
-	champDiff := "+agent.models.coder: " + champModel + "\n"
-	challDiff := "+agent.models.coder: " + challModel + "\n"
+	const prose = "+// process the provider list (task3)\n"
+	champDiff := "+agent.models.coder: " + champModel + "\n" + prose
+	challDiff := "+agent.models.coder: " + challModel + "\n" + prose
 	in, _, err := Bundle(arm(champPatch(champDiff), champModel), arm(challPatch(challDiff), challModel), champRunID)
 	if err != nil {
 		t.Fatalf("a pair whose diffs pin the models it was run with: %v", err)
 	}
-	want := "+agent.models.coder: " + modelPlaceholder + "\n"
+	want := "+agent.models.coder: " + modelPlaceholder + "\n" + prose
 	if in.A != want || in.B != want {
-		t.Fatalf("judge input = (%q, %q), want (%q, %q): the arms' own models are still in it", in.A, in.B, want, want)
+		t.Fatalf("judge input = (%q, %q), want (%q, %q): the arms' own models are still in it, or a word of the diff was redacted with them", in.A, in.B, want, want)
 	}
 
 	// The vocabulary is the pair's, not the diff's own arm's: each diff here
@@ -298,6 +321,18 @@ func TestBundleRedactsTheArmsOwnModel(t *testing.T) {
 	}
 	if crossed.A != "+coder: "+modelPlaceholder+"\n" || crossed.A != crossed.B {
 		t.Fatalf("the arms are told apart by the model they name: %q and %q", crossed.A, crossed.B)
+	}
+
+	// A model ID that is only a vendor ("acme/") has no name after the slash.
+	// The empty word must not reach the alternation: an empty alternative
+	// matches at every offset, so the judge would be handed two shredded
+	// diffs and the pair would still count as judged.
+	empty, _, err := Bundle(arm(champPatch(diffBody), "acme/"), arm(challPatch(diffBody), "acme/"), champRunID)
+	if err != nil {
+		t.Fatalf("Bundle with a model ID that names no model: %v", err)
+	}
+	if empty.A != diffBody || empty.B != diffBody {
+		t.Fatalf("a vendor-only model ID rewrote the diff: %q and %q", empty.A, empty.B)
 	}
 
 	// The build's tables alone do not carry either ID, which is why the field

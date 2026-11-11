@@ -93,6 +93,16 @@ var (
 // to remove.
 const modelPlaceholder = "[model]"
 
+// minModelWord is the shortest word the redaction replaces, and it is what
+// keeps the vocabulary from eating the diff: the match is a substring, so a
+// two- or three-letter word lands inside ordinary text — "pro" in provider and
+// process, "k3" in task3 — and a judge handed "ap[model]ve" is reading a diff
+// the pair is judged on. internal/redact's redactor draws the same line at 4
+// bytes for the same reason. What it costs is the shortest spelling of a name
+// alone: the ID and the vendor word that carry it are longer and stay in the
+// vocabulary, so a diff that spells the model out is still redacted whole.
+const minModelWord = 4
+
 // Bundle builds the judge's input for one pair from its two patch objects.
 // The champion's patch is the first argument.
 //
@@ -256,25 +266,28 @@ func modelRedactor(words []string) func(string) string {
 // rest is the gap named above rather than one this function can close.
 func modelWords(armModels ...string) ([]string, error) {
 	words := map[string]bool{}
+	put := func(word string) {
+		if len(word) >= minModelWord {
+			words[strings.ToLower(word)] = true
+		}
+	}
 	add := func(id string) {
 		id = strings.TrimSpace(id)
 		if id == "" {
 			return
 		}
-		words[strings.ToLower(id)] = true
+		put(id)
 		name := id
 		if i := strings.LastIndexByte(id, '/'); i >= 0 {
 			name = id[i+1:]
 		}
-		words[strings.ToLower(name)] = true
-		if family := config.ModelFamily(id); family != "" {
-			words[strings.ToLower(family)] = true
-		}
+		put(name)
+		put(config.ModelFamily(id))
 		for _, w := range strings.FieldsFunc(name, isNameSep) {
 			if versionWord(w) {
 				break
 			}
-			words[strings.ToLower(w)] = true
+			put(w)
 		}
 	}
 	for _, model := range armModels {
