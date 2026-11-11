@@ -830,6 +830,11 @@ against — moved the table's row from 117 to 118.
 Amended 2026-11-10: `660112bd` (#2213, the triage stage and its switch) added the
 image-skew `Since` constant the triage stage's carrier is gated by and left the
 image-skew row at 34, so it moves to 35.
+Amended 2026-11-11: `slotSince`, the A/B pair's slot gate the review-levels work's
+B1.1 adds to `internal/cli/recipes_skew.go` (that folder's ruling of 2026-10-30: a
+pair that names a reviewer slot needs a runner that replays the champion's patch,
+B1.2 there), added one more image-skew `Since` constant and left the image-skew
+row at 35, so it moves to 36.
 Amended 2026-11-10: `internal/cli/docs_issue_test.go`, the issue-mine folder's pin
 over `docs/issues.md`'s `fugaro issue mine` section (T-IM7), moved the table's
 pin row from 118 to 119.
@@ -855,7 +860,7 @@ stale has found a merge that did not.
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 35 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 36 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 124 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
