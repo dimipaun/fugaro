@@ -788,6 +788,15 @@ either half (D2021, answered (a) on 2026-11-10).
   release before converges in one `fugaro update`, a second writes nothing), `TestEventsAreReadOneWayByTheCLIAndTheFrontDoor`.
 - **Runs in flight:** the binding is on the front door's account, which no run holds; a run in flight reads and writes exactly what it did.
 - **Serializes after** the open #2207 (`fugaro orchestrator ls`, which edits `internal/cli/orchestrator_state.go`).
+- **Amended 2026-11-11 (two owner rulings, recorded by the coordinator's roadmap work).** (1) The wiring
+  task this half waits on is now written: **M12** of `docs/mcp-server/implementation-plan.md` (the
+  coordinator plan's D2119), and O16b registers `RegisterStateTools` in the file M12 names. (2) The
+  owner answered the coordinator plan's **D2118** with a database **write** role on the same
+  `mcp_server` account (its P9e: a custom role of `instances.get` and `instances.update`), so the
+  get-only role named above and `TestFrontDoorStateRoleHoldsNoDatabaseWrite` cannot both stand once
+  P9e lands: **one role per account** — whichever of O16b and P9e lands second removes the other's
+  binding, and the test becomes "exactly get and update". Until P9e is approved, O16b is built as
+  written.
 - **OWNER-RUN, Check 305** (O16b writes its text into the register's reserved section): with the front door on, a real MCP client holding
   `state:read` reads `get_state` and `get_events` for the installation's orchestrator; a token holding only `tasks:*` is refused both; the
   front door's role in the real project holds no database write; `apply_patch` is absent from `tools/list`. Never against `belong`.

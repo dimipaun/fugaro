@@ -298,7 +298,7 @@ func TestSpentApprovalAtIsBookkeepingAndSurvivesMigrate(t *testing.T) {
 		t.Fatalf("the spent approval marker came back as %v", back.WorkItems[0].SpentApprovalAt)
 	}
 
-	previous := bytes.Replace(raw, []byte(`"schema_version":1`), []byte(`"schema_version":0`), 1)
+	previous := bytes.Replace(raw, []byte(`"schema_version":2`), []byte(`"schema_version":0`), 1)
 	raised, err := orchestrator.DecodeState(previous)
 	if err != nil {
 		t.Fatalf("a document from the previous schema version carrying a spent approval did not decode: %v", err)
@@ -405,13 +405,15 @@ func TestSchemasMatchTheStructs(t *testing.T) {
 			file: "orchestrator-state.schema.json",
 			root: reflect.TypeOf(orchestrator.State{}),
 			defs: map[string]reflect.Type{
-				"work_item": reflect.TypeOf(orchestrator.WorkItem{}),
-				"approval":  reflect.TypeOf(orchestrator.Approval{}),
-				"decision":  reflect.TypeOf(orchestrator.Decision{}),
-				"fact":      reflect.TypeOf(orchestrator.Fact{}),
-				"archived":  reflect.TypeOf(orchestrator.Archived{}),
-				"intent":    reflect.TypeOf(orchestrator.Intent{}),
-				"counters":  reflect.TypeOf(orchestrator.Counters{}),
+				"work_item":  reflect.TypeOf(orchestrator.WorkItem{}),
+				"escalation": reflect.TypeOf(orchestrator.Escalation{}),
+				"transition": reflect.TypeOf(orchestrator.Transition{}),
+				"approval":   reflect.TypeOf(orchestrator.Approval{}),
+				"decision":   reflect.TypeOf(orchestrator.Decision{}),
+				"fact":       reflect.TypeOf(orchestrator.Fact{}),
+				"archived":   reflect.TypeOf(orchestrator.Archived{}),
+				"intent":     reflect.TypeOf(orchestrator.Intent{}),
+				"counters":   reflect.TypeOf(orchestrator.Counters{}),
 			},
 		},
 		{
@@ -420,6 +422,8 @@ func TestSchemasMatchTheStructs(t *testing.T) {
 			extra: []string{"op"},
 			defs: map[string]reflect.Type{
 				"work_item_op": reflect.TypeOf(orchestrator.WorkItemOp{}),
+				"escalation":   reflect.TypeOf(orchestrator.Escalation{}),
+				"transition":   reflect.TypeOf(orchestrator.Transition{}),
 				"intent_op":    reflect.TypeOf(orchestrator.IntentOp{}),
 				"approve_op":   reflect.TypeOf(orchestrator.ApproveOp{}),
 				"archive_op":   reflect.TypeOf(orchestrator.ArchiveOp{}),
@@ -519,7 +523,7 @@ func checkFreshStateMatchesTheSchema(t *testing.T, sch *jsonschema.Schema) {
 
 // TestSpecDigestCoversEveryFieldButTheBookkeepingList is what makes an
 // approval mean one spec and not another. Every field that describes the work
-// moves the digest when it changes, the six bookkeeping fields move it not at
+// moves the digest when it changes, the seven bookkeeping fields move it not at
 // all, and the two sets together are every field of the struct — so a field
 // added to a work item is digested by default and only leaves the digest on
 // purpose. That is what an edit to a brief, a repository or a dependency does:
@@ -529,7 +533,7 @@ func checkFreshStateMatchesTheSchema(t *testing.T, sch *jsonschema.Schema) {
 // digest stops moving for it; add one to bookkeepingFields by mistake and the
 // same assertion fails from the other side.
 func TestSpecDigestCoversEveryFieldButTheBookkeepingList(t *testing.T) {
-	want := []string{"approved", "attempts", "note", "phase", "run_id", "spent_approval_at"}
+	want := []string{"approved", "attempts", "escalation", "note", "phase", "run_id", "spent_approval_at"}
 	got := orchestrator.BookkeepingFields()
 	sort.Strings(got)
 	if !slices.Equal(got, want) {
