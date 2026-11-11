@@ -170,8 +170,8 @@ func runIssueSubmit(cmd *cobra.Command, ref string, ask bool) error {
 	if state := readIssueGHState(ctx, issueGH); !state.ok {
 		return issueFallback(cmd, todo, names, state)
 	}
-	for _, i := range todo {
-		if err := issueSubmit(cmd, store, sh, i, names, ask); err != nil {
+	for _, t := range todo {
+		if err := issueSubmit(cmd, store, sh, t, names, ask); err != nil {
 			return err
 		}
 	}
@@ -182,6 +182,26 @@ func runIssueSubmit(cmd *cobra.Command, ref string, ask bool) error {
 		return err
 	}
 	return nil
+}
+
+// issueTarget is one issue a run is about to file, as the two records this
+// machine holds of it: the project's own copy, which the post, the preview and
+// the claim are built from (F13), and this machine's own file for the same
+// issue, which is the one the answer is written back to.
+//
+// They are one record until the upload attaches this machine's issue to a
+// teammate's — the one whose fingerprint matched — and then they are not: the
+// store's copy is the teammate's record, with the teammate's run stem and
+// reporter, while this machine's file took the teammate's number and kept its
+// own. The file name is built from the run (issues.Issue.FileName), so writing
+// the store's copy here would put a second file for that number beside this
+// machine's own and leave it saying `pending` with no URL: two rows for one
+// issue in `issue list`, one of them still waiting to be filed, and `show` and
+// `submit` of `local-<mine>` answering with a record that never was filed
+// (F13, F23).
+type issueTarget struct {
+	project issues.Issue
+	mine    issues.Issue
 }
 
 // issueSubmittable is the issues a run would file: the one a reference names,
@@ -213,7 +233,7 @@ func runIssueSubmit(cmd *cobra.Command, ref string, ask bool) error {
 // repository as they are. It says so rather than filing: the person is the one
 // who can select the project the record belongs to, and this run is the one
 // that would have published what only that project knows how to take out.
-func issueSubmittable(ctx context.Context, store *issues.Store, sh *issueShared, ref, installation string) ([]issues.Issue, error) {
+func issueSubmittable(ctx context.Context, store *issues.Store, sh *issueShared, ref, installation string) ([]issueTarget, error) {
 	if ref != "" {
 		i, err := store.Get(issueRefArg(ref))
 		if err != nil {
@@ -246,13 +266,13 @@ func issueSubmittable(ctx context.Context, store *issues.Store, sh *issueShared,
 			}
 			return nil, userErr("nothing was filed: the project's own record of %s is %s, and submit files an issue once", issueRef(i), why)
 		}
-		return []issues.Issue{stored}, nil
+		return []issueTarget{{project: stored, mine: i}}, nil
 	}
 	all, err := store.List()
 	if err != nil {
 		return nil, userErr("nothing was listed: %v", err)
 	}
-	var todo []issues.Issue
+	var todo []issueTarget
 	for _, i := range all {
 		if i.Status != issues.StatusPending || issueForeign(i, installation) {
 			continue
@@ -268,7 +288,7 @@ func issueSubmittable(ctx context.Context, store *issues.Store, sh *issueShared,
 			// already decided about.
 			continue
 		}
-		todo = append(todo, stored)
+		todo = append(todo, issueTarget{project: stored, mine: i})
 	}
 	return todo, nil
 }
@@ -351,8 +371,9 @@ func issueForeign(i issues.Issue, installation string) bool {
 // issueSubmit is one issue's whole submission: the post built once, the
 // preview printed from it, and — with `--ask` and a yes at the owner's
 // terminal — that post filed under the project's claim (D1720, F19, F22).
-func issueSubmit(cmd *cobra.Command, store *issues.Store, sh *issueShared, i issues.Issue, names []string, ask bool) error {
+func issueSubmit(cmd *cobra.Command, store *issues.Store, sh *issueShared, t issueTarget, names []string, ask bool) error {
 	out := cmd.OutOrStdout()
+	i := t.project
 	p := issues.BuildPost(i, names)
 	// The preview goes out first and decides nothing: it is what the person
 	// reads before answering, and it is the same text whether or not the flag
@@ -375,7 +396,7 @@ func issueSubmit(cmd *cobra.Command, store *issues.Store, sh *issueShared, i iss
 		_, err := fmt.Fprintf(out, "\nNothing was filed for %s.\n", issueRef(i))
 		return err
 	}
-	return issueFile(cmd, store, sh, i, p)
+	return issueFile(cmd, store, sh, t, p)
 }
 
 // issueFile files exactly the bytes that were previewed and records what
@@ -390,9 +411,10 @@ func issueSubmit(cmd *cobra.Command, store *issues.Store, sh *issueShared, i iss
 // the preview came from (issueStored): a record that changed in between is
 // refused and the claim given back, so the bytes one person read are the bytes
 // one person files, and two people filing at the same moment file once.
-func issueFile(cmd *cobra.Command, store *issues.Store, sh *issueShared, i issues.Issue, p issues.Post) error {
+func issueFile(cmd *cobra.Command, store *issues.Store, sh *issueShared, t issueTarget, p issues.Post) error {
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
+	i := t.project
 	var c *issues.Claimed
 	if i.Number != 0 {
 		var err error
@@ -422,14 +444,20 @@ func issueFile(cmd *cobra.Command, store *issues.Store, sh *issueShared, i issue
 			return userErr("the issue was filed, but the project's store could not record it: %v", err)
 		}
 	}
-	i.URL, i.Status = url, issues.StatusSubmitted
-	if err := store.Save(i); err != nil {
+	// The answer goes on this machine's own file, which is the record a person
+	// reads back here (issueTarget): the copy the post and the claim came from
+	// is the project's, and for an issue the upload attached to a teammate's it
+	// is not this machine's, so saving it here would write a second file for
+	// that number and leave this machine's own saying `pending`.
+	mine := t.mine
+	mine.URL, mine.Status = url, issues.StatusSubmitted
+	if err := store.Save(mine); err != nil {
 		// The issue IS on GitHub, so this is reported the same way the store's
 		// own failure is (F19): with the URL.
-		fmt.Fprintf(out, "Filed %s as %s.\n", issueRef(i), url)
+		fmt.Fprintf(out, "Filed %s as %s.\n", issueRef(mine), url)
 		return userErr("the issue was filed, but its record could not be written: %v", err)
 	}
-	_, err = fmt.Fprintf(out, "Filed %s as %s.\n", issueRef(i), url)
+	_, err = fmt.Fprintf(out, "Filed %s as %s.\n", issueRef(mine), url)
 	return err
 }
 
@@ -551,13 +579,13 @@ func issueAskRefusal(c initflow.Conditions) string {
 //
 // Nothing is filed and the run exits non-zero: the person asked for a filing
 // and did not get one, and a zero would tell a script the issue is on GitHub.
-func issueFallback(cmd *cobra.Command, todo []issues.Issue, names []string, state issueGHState) error {
+func issueFallback(cmd *cobra.Command, todo []issueTarget, names []string, state issueGHState) error {
 	out := cmd.OutOrStdout()
 	if _, err := fmt.Fprintln(out, state.line); err != nil {
 		return err
 	}
-	for _, i := range todo {
-		p := issues.BuildPost(i, names)
+	for _, t := range todo {
+		p := issues.BuildPost(t.project, names)
 		if _, err := fmt.Fprintf(out, "\n%s\nOpen this link to file it in a browser:\n%s\n\nThe whole issue is on this machine: fugaro issue show %s\n",
 			issues.Preview(p), issues.NewIssueURL(p), p.Ref); err != nil {
 			return err

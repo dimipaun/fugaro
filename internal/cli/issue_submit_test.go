@@ -1111,6 +1111,58 @@ func TestIssueSubmitAskResolvesALocalIDAfterTheUpload(t *testing.T) {
 	}
 }
 
+// TestIssueSubmitAttachedIssueKeepsItsOwnFile: the filing is written back to
+// this machine's own record and not to the project's copy of it. An upload that
+// finds a teammate's issue with the same fingerprint attaches this machine's
+// issue to it: this machine's file takes the teammate's number and keeps its own
+// run stem, while the store's record is the teammate's (F13, F23). The file name
+// is built from the run (issues.Issue.FileName), so writing the store's copy
+// here leaves this machine's own file saying `pending` with no URL and puts a
+// second file for that number beside it — two rows for one issue, one of them
+// still waiting to be filed, and `issue show local-<mine>` answering with the
+// wrong one.
+func TestIssueSubmitAttachedIssueKeepsItsOwnFile(t *testing.T) {
+	rig := newMineRig(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+
+	up := rig.upload(mineRec("11111", "sig-attached"), "user:bo@example.test")
+	mine := rig.save(mineRec("22222", "sig-attached"))
+
+	out, _, err := executeStdin(t, "y\n", "issue", "submit", mine.LocalID, "--ask")
+	if err != nil {
+		t.Fatalf("submit --ask of an issue the upload attached to a teammate's: %v\n%s", err, out)
+	}
+	if got := len(spy.creates()); got != 1 {
+		t.Fatalf("an attached issue was filed %d time(s), want once", got)
+	}
+	back, err := rig.store.Get(mine.LocalID)
+	if err != nil {
+		t.Fatalf("reading this machine's own copy back: %v", err)
+	}
+	if back.Number != up.Number || !back.Uploaded {
+		t.Errorf("this machine's own copy is numbered %d (uploaded %t), want the teammate's number %d", back.Number, back.Uploaded, up.Number)
+	}
+	if back.Status != issues.StatusSubmitted || back.URL != filedIssueURL {
+		t.Errorf("this machine's own copy is %q with URL %q, want %q with %q", back.Status, back.URL, issues.StatusSubmitted, filedIssueURL)
+	}
+	all, err := rig.store.List()
+	if err != nil {
+		t.Fatalf("listing this machine's folder: %v", err)
+	}
+	if len(all) != 1 {
+		t.Errorf("this machine's folder holds %d record(s), want the one issue it has: %+v", len(all), all)
+	}
+	filed, err := issues.SharedIssue(context.Background(), rig.bucket, up.Number)
+	if err != nil {
+		t.Fatalf("reading the shared issue back: %v", err)
+	}
+	if filed.Status != issues.StatusSubmitted || filed.URL != filedIssueURL {
+		t.Errorf("the project's record is %q with URL %q, want %q with %q", filed.Status, filed.URL, issues.StatusSubmitted, filedIssueURL)
+	}
+}
+
 // TestIssueSubmitAgentSessionRefusesBeforeAnyPreview: the refusal a coding
 // agent's session gets comes before anything is shown or written (F10). `--ask`
 // is the half of the command that uploads and files, so the guard is answered
