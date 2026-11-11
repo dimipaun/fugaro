@@ -1228,6 +1228,50 @@ func TestGraphDrawsTheRoadmapRecord(t *testing.T) {
 	}
 }
 
+// TestGraphTextNamesTheRecordsBoxes: the table's group headings are the
+// release's own words. A task of the roadmap record names its release by a
+// **key**, and `coordinator.ReleaseID` folds two strings into a hash, so a
+// heading read off the node alone is 64 hex characters where the release's name
+// belongs — and the box's state, which is the only state a record task has
+// (GV4.1, §6.22), would not be printed at all.
+//
+// Hand mutation this fails on: heading a group with n.Release, which puts the
+// hash in the table and drops `CLI 1.5 (open)` from it.
+func TestGraphTextNamesTheRecordsBoxes(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	target := "1.6.0"
+	cli := coordinator.Release{Schema: coordinator.RoadmapSchema, ID: "v1.5.0", Stream: "cli",
+		Name: "CLI 1.5", State: coordinator.ReleaseOpen, Order: 2}
+	key := coordinator.ReleaseID(cli.Stream, cli.ID)
+	f.writeRoadmap(t,
+		[]coordinator.Plan{{Schema: coordinator.RoadmapSchema, Plan: "plans/cli", Stream: "cli",
+			Tasks: []coordinator.Task{{ID: "place", Title: "a task of the record", Version: &target}}}},
+		[]coordinator.Release{cli},
+		[]coordinator.Assignment{{Schema: coordinator.RoadmapSchema, Task: "plans/cli/place", Release: key}},
+		nil,
+	)
+
+	out, errOut, err := execute(t, "graph")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	if !strings.Contains(out, "CLI 1.5 (open)") {
+		t.Errorf("the table does not head the record's group with the box's name and state:\n%s", out)
+	}
+	if strings.Contains(out, key) {
+		t.Errorf("the table printed the box's key, which is a hash and not a name:\n%s", out)
+	}
+	if !strings.Contains(out, "plans/cli/place") {
+		t.Errorf("the record's task is not in the table:\n%s", out)
+	}
+	// The stored view's own groups keep the release string its repository wrote:
+	// only a task of the record names a key.
+	if !strings.Contains(out, "0.11.0") {
+		t.Errorf("the stored view's own group is gone from the table:\n%s", out)
+	}
+}
+
 // TestGraphSaysWhatItCannotReadOfTheRecord: a document of another schema is
 // skipped and counted rather than read as empty — "the record holds nothing" and
 // "the record holds something this build cannot read" must not look alike

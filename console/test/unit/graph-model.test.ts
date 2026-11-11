@@ -859,6 +859,46 @@ describe('the coordinator scope over the roadmap record (GV4.1)', () => {
     expect(older.releases.map((release) => release.release)).toEqual(['v1.4.0'])
     expect(scopeNodeIn(older, 'coordinator:acme/widgets#42').needs).toEqual([])
   })
+
+  it('draws a box the record holds with no task in it, in the record’s own order', () => {
+    // A lane and its boxes come from the record's own releases and not from the
+    // tasks that landed in them (D2113): a drawing seeded from the nodes alone
+    // would lose a release nobody has been placed in, and a stream whose every
+    // box is empty would vanish -- lane, tab and all -- leaving the screen to say
+    // the scope has nothing to draw about a project whose record is full.
+    const scope = buildScopeModel(
+      recordDocument({
+        ...RECORD_RAW,
+        releases: [
+          { key: 'release-cli-camel', stream: 'cli', id: 'v1.5.0', name: 'Camel', state: 'open', order: 2 },
+          { key: 'release-cli-badger', stream: 'cli', id: 'v1.4.0', name: 'Badger', state: 'finished', order: 1 },
+          { key: 'release-mobile-robin', stream: 'mobile', id: 'v0.3.0', name: 'Robin', state: 'open', order: 3 },
+        ],
+        nodes: [recordNode('plans/cli/place', 'cli', 'release-cli-camel', '1.6.0', 'waiting', 'place the loader')],
+      }),
+    )
+
+    // The record's `order` is the order its boxes are drawn in, and never the
+    // order the document happened to list them in: Badger is listed second and is
+    // drawn first, whatever array the two arrived in.
+    const cli = laneIn(scope, 'cli')
+    expect(cli.boxes.map((box) => [text(box.heading), text(box.state)])).toEqual([
+      ['Badger', 'finished'],
+      ['Camel', 'open'],
+    ])
+    // An empty box is drawn and holds nothing, which is the fact a reader acts
+    // on: the release is open and no task is in it.
+    expect(cli.boxes[0]?.nodes).toEqual([])
+    expect(cli.boxes[1]?.nodes.map((node) => node.key)).toEqual(['coordinator:plans/cli/place'])
+    // A stream whose only box holds no task is a lane and a tab of its own.
+    expect(scope.lanes.map((lane) => lane.stream)).toEqual(['cli', 'mobile'])
+    expect(laneIn(scope, 'mobile').boxes.map((box) => box.nodes)).toEqual([[]])
+    expect(scope.tabs.map((option) => option.tab)).toEqual(['cli', 'mobile', null])
+    // An empty box is not an unassigned task: the console's own word is for a
+    // task the record has placed nowhere, and no task is here to draw in it.
+    expect(laneIn(scope, 'cli').unassigned).toEqual([])
+    expect(laneIn(scope, 'mobile').unassigned).toEqual([])
+  })
 })
 
 describe('the graph layout cache', () => {

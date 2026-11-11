@@ -527,14 +527,15 @@ func cachedBriefs() (map[string]time.Time, error) {
 // draw its runs rather than nothing — and the record is read from the same store
 // with the same credential (D2117, `coordinator.Store.ReadRoadmap`).
 //
-// Two answers this build cannot read become the scope's state and never a
-// refusal: a stored node the decoding refuses (coordinator.ErrUnreadable), and
-// a record whose identity sanitising would rewrite, which the source refuses
-// rather than printing a key that could merge two things (D1356, Sanitise).
-// Both are `unreadable` (§6.22), because a refusal is exactly what the console
-// reads as "this CLI has no graph" (T3) and it would say that about a project
-// whose database this CLI can read and whose coordinator has simply written
-// something this build does not know.
+// An answer this build cannot read becomes the scope's state and never a
+// refusal: a stored node the decoding refuses, and a stored view whose identity
+// sanitising would rewrite, which the source refuses rather than printing a key
+// that could merge two things (D1356, Sanitise), are both `unreadable` (§6.22),
+// because a refusal is exactly what the console reads as "this CLI has no graph"
+// (T3) and it would say that about a project whose database this CLI can read
+// and whose coordinator has simply written something this build does not know.
+// The record's own half is the one thing that does not take this door, and the
+// paragraph below is why.
 //
 // **A record this build could not read is a warning and not a state**: the
 // stored view above it was read, so the scope is not unreadable, and the record
@@ -649,6 +650,11 @@ const graphTitleRunes = 60
 // The edges are the last thing, and only when there are any: a document of the
 // coordinator's scope alone has none (F17), and a section headed "edges" with
 // nothing under it would say the opposite of what it means.
+//
+// A group's heading is the release's own words where the document carries them
+// (`graphReleaseHeading`): a task of the roadmap record names its release by a
+// key and the key is a hash, so the node's own string is the last resort rather
+// than the heading.
 func writeGraphText(w io.Writer, doc graph.Document) error {
 	for _, s := range doc.Sources {
 		line := s.Source + ": " + s.State
@@ -664,6 +670,10 @@ func writeGraphText(w io.Writer, doc graph.Document) error {
 		fmt.Fprintln(w, "no nodes")
 		return writeGraphEdges(w, doc)
 	}
+	boxes := make(map[string]graph.Release, len(doc.Releases))
+	for _, box := range doc.Releases {
+		boxes[box.Key] = box
+	}
 	var releases []string
 	byRelease := map[string][]graph.Node{}
 	for _, n := range doc.Nodes {
@@ -677,11 +687,7 @@ func writeGraphText(w io.Writer, doc graph.Document) error {
 		releases = append(releases, "")
 	}
 	for _, rel := range releases {
-		head := rel
-		if head == "" {
-			head = "no release"
-		}
-		fmt.Fprintln(w, head)
+		fmt.Fprintln(w, graphReleaseHeading(rel, boxes))
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		for _, n := range byRelease[rel] {
 			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", n.Kind, graphCell(n.State), n.ID, graphCell(fcli.ClipRunes(n.Title, graphTitleRunes)))
@@ -691,6 +697,35 @@ func writeGraphText(w io.Writer, doc graph.Document) error {
 		}
 	}
 	return writeGraphEdges(w, doc)
+}
+
+// graphReleaseHeading is one group's heading: the release's name and state where
+// the document carries the box the group is keyed by, and the key itself where it
+// does not.
+//
+// **A task of the roadmap record carries its box's *key*, and the key is a
+// hash** (`coordinator.ReleaseID` folds two strings into one, D2113), so a
+// heading printed from the node alone is 64 hex characters where the release's
+// name belongs -- and the box's state, which is the only state a record task has
+// (GV4.1, §6.22), would not be printed at all. Both come from the box.
+//
+// The state is a word in parentheses, the shape `plan status` already qualifies a
+// name with (`printPlanStatusPlan`): `CLI 1.5 (open)` is one line a reader scans,
+// and the state travels as a word rather than as a tone (§3.5). A box that names
+// nothing keeps its key, where an empty heading would leave a group with nothing
+// to name it.
+func graphReleaseHeading(key string, boxes map[string]graph.Release) string {
+	if key == "" {
+		return "no release"
+	}
+	box, held := boxes[key]
+	if !held || box.Name == "" {
+		return key
+	}
+	if box.State == "" {
+		return box.Name
+	}
+	return box.Name + " (" + box.State + ")"
 }
 
 // writeGraphEdges prints the document's edges, one line each, under the nodes

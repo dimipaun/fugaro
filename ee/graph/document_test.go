@@ -24,13 +24,20 @@ func assertClean(t *testing.T, what, s string) {
 	}
 }
 
-// TestDocumentTextIsSanitised: every string a node, a source, an edge or a
-// warning carries is untrusted text — a title, a repo, a release, a state, a
-// kind, a note, a scope name out of a document someone else wrote — and
+// TestDocumentTextIsSanitised: every string a node, a source, a release box, an
+// edge or a warning carries is untrusted text — a title, a repo, a release, a
+// state, a kind, a note, a scope name out of a document someone else wrote, and
+// the roadmap record's own words about a task (its plan, its stream, its plan's
+// version) and about a box (its stream, its id, its state) since GV4.1 — and
 // Sanitise makes each one fit to print with safetext.Field, rebuilding each
 // node's key from its source and id so the key and the fields it names cannot
 // disagree (H2). Every field below is fed hostile text and asserted clean, so
 // dropping the safetext.Field call on any one of them fails here.
+//
+// The two fields that are **identity** rather than prose are not in the list and
+// must not be: a node's source and id, and a release box's key, are refused when
+// sanitising would rewrite them (TestNodeIdentifierIsRefusedWhenSanitisingWouldMergeIt,
+// and the box's own case below).
 //
 // Hand mutation this fails on: dropping the safetext.Field call on any one
 // field (its escape sequence, bidi override or bell survives into the
@@ -58,6 +65,19 @@ func TestDocumentTextIsSanitised(t *testing.T) {
 			Repo:    "owner/repo" + bidi,
 			State:   "open" + bell,
 			Release: "0.113" + esc,
+			// The roadmap record's own words about a task (GV4.1): the plan it
+			// belongs to, the lane it is drawn in and the plan's version.
+			Plan:    "plans/cli" + bell,
+			Stream:  "cli" + bidi,
+			Version: "1.6.0" + esc,
+		}},
+		Releases: []Release{{
+			Key:    "9c1f", // a key is an identity: a rewriteable one is refused, not cleaned (below)
+			Stream: "cli" + esc,
+			ID:     "v1.5.0" + bidi,
+			Name:   "Camel" + bell,
+			State:  "open" + esc,
+			Order:  2,
 		}},
 		Edges: []Edge{{
 			From: "coordinator:1" + esc,
@@ -82,6 +102,14 @@ func TestDocumentTextIsSanitised(t *testing.T) {
 		{"Nodes[0].Repo", d.Nodes[0].Repo, "owner/repo"},
 		{"Nodes[0].State", d.Nodes[0].State, "open"},
 		{"Nodes[0].Release", d.Nodes[0].Release, "0.113"},
+		{"Nodes[0].Plan", d.Nodes[0].Plan, "plans/cli"},
+		{"Nodes[0].Stream", d.Nodes[0].Stream, "cli"},
+		{"Nodes[0].Version", d.Nodes[0].Version, "1.6.0"},
+		{"Releases[0].Key", d.Releases[0].Key, "9c1f"},
+		{"Releases[0].Stream", d.Releases[0].Stream, "cli"},
+		{"Releases[0].ID", d.Releases[0].ID, "v1.5.0"},
+		{"Releases[0].Name", d.Releases[0].Name, "Camel"},
+		{"Releases[0].State", d.Releases[0].State, "open"},
 		{"Edges[0].From", d.Edges[0].From, "coordinator:1"},
 		{"Edges[0].To", d.Edges[0].To, "coordinator:2"},
 		{"Edges[0].Kind", d.Edges[0].Kind, "depends_on"},
@@ -148,6 +176,39 @@ func TestNodeIdentifierIsRefusedWhenSanitisingWouldMergeIt(t *testing.T) {
 	}
 }
 
+// TestReleaseKeyIsRefusedWhenSanitisingWouldMergeIt: a release box's Key is what
+// a task's own `release` is compared with, so it is an identity like a node's id
+// and Sanitise refuses one that safetext.Field would change rather than rewriting
+// it — two boxes whose keys collapsed to one string would otherwise draw as one
+// box holding both releases' tasks (D2113, GV4.1).
+//
+// Hand mutation this fails on: sanitising Key instead of refusing it, which makes
+// every value below pass with a rewritten key.
+func TestReleaseKeyIsRefusedWhenSanitisingWouldMergeIt(t *testing.T) {
+	for _, key := range []string{"9c1f\x07", "9c1f\n", "9c1f‮", " 9c1f", "9c1f ", strings.Repeat("a", 513)} {
+		d := Document{Version: DocumentVersion, Releases: []Release{{Key: key, Stream: "cli", Name: "Camel"}}}
+		if err := d.Sanitise(); err == nil {
+			t.Errorf("Sanitise accepted release key %q, which safetext.Field would change", key)
+		}
+	}
+
+	// A clean key is kept, and the task that names it still names it.
+	d := Document{
+		Version:  DocumentVersion,
+		Releases: []Release{{Key: "9c1f", Stream: "cli", Name: "Camel", State: "open"}},
+		Nodes: []Node{{
+			Source: "coordinator", ID: "plans/cli/place", Kind: NodeTask,
+			Plan: "plans/cli", Stream: "cli", Release: "9c1f",
+		}},
+	}
+	if err := d.Sanitise(); err != nil {
+		t.Fatalf("Sanitise: %v", err)
+	}
+	if d.Releases[0].Key != "9c1f" || d.Nodes[0].Release != "9c1f" {
+		t.Errorf("a clean key was rewritten: box %q, task %q", d.Releases[0].Key, d.Nodes[0].Release)
+	}
+}
+
 // TestDocumentRoundTripsAndIsStrict: the document is a wire shape, so it
 // marshals to one versioned JSON object and reads back equal, and a decoder
 // refuses a field this build does not know rather than dropping it (CLAUDE.md,
@@ -172,6 +233,10 @@ func TestDocumentRoundTripsAndIsStrict(t *testing.T) {
 			Key: NodeKey("coordinator", "1"), Source: "coordinator", Kind: NodePullRequest,
 			ID: "1", Title: "Fix the thing", Repo: "owner/repo", State: "open",
 			Release: "0.113", Updated: &updated,
+			// The record's own members (GV4.1), `dangling` included: it is
+			// written only when true, so the round trip is what proves the tag
+			// reads back as the field it was written from.
+			Plan: "plans/cli", Stream: "cli", Version: "1.6.0", Dangling: true,
 		}},
 		Edges:    []Edge{{From: NodeKey("coordinator", "1"), To: NodeKey("coordinator", "2"), Kind: "depends_on"}},
 		Warnings: []string{"a source was stale"},
@@ -217,7 +282,7 @@ func TestDocumentRoundTripsAndIsStrict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{`"sources":[]`, `"nodes":[]`, `"edges":[]`, `"warnings":[]`} {
+	for _, key := range []string{`"sources":[]`, `"releases":[]`, `"nodes":[]`, `"edges":[]`, `"warnings":[]`} {
 		if !strings.Contains(string(empty), key) {
 			t.Errorf("an empty document does not write %s: %s", key, empty)
 		}

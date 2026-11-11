@@ -2218,6 +2218,40 @@ describe('the graph screen and its scope', () => {
     ).toEqual(['needs style · Mango'])
   })
 
+  it('draws the record’s boxes with no task in them, and calls that an empty box and not an empty scope', async () => {
+    // A document whose record holds releases and no task at all: the boxes are
+    // the record's own documents (D2113), so the drawing is the lanes and their
+    // boxes -- not the sentence a scope with nothing to draw is answered with,
+    // which is a claim about the *scope* and would be false here.
+    const { screen } = screenWith()
+    const decoded = decodeGraphDocument({ ...RECORD_RAW, nodes: [], edges: [] }, 'graph.read')
+    if (!decoded.ok) throw new Error(decoded.skew.because)
+    await screen.loadScope(decoded.value)
+    const drawn = drawingOf(screen)
+
+    expect(classedIn(drawn, 'graph-scope-empty')).toHaveLength(0)
+    expect(classedIn(drawn, 'graph-scope-node')).toHaveLength(0)
+    expect(classedIn(drawn, 'graph-scope-lane').map((each) => each.getAttribute('data-stream'))).toEqual([
+      'style',
+      'cli',
+    ])
+    expect(classedIn(drawn, 'graph-scope-box-name').map((each) => each.textContent)).toEqual(['Mango', 'Camel'])
+    expect(classedIn(drawn, 'graph-scope-box').map((each) => each.getAttribute('data-state'))).toEqual([
+      'finished',
+      'open',
+    ])
+    // The streams are still the filter: a lane with no task in it is a stream a
+    // reader can still choose, and one that chose nothing leaves the same two.
+    expect(classedIn(drawn, 'graph-tab').map((each) => each.getAttribute('data-tab'))).toEqual([
+      'stream:style',
+      'stream:cli',
+      'all',
+    ])
+    // And there is no group of unplaced tasks, because there is no task: an
+    // empty box is not one.
+    expect(classedIn(drawn, 'graph-scope-unassigned')).toHaveLength(0)
+  })
+
   it('draws the as-of time beside a source state, and nothing where the source named none', async () => {
     // CG11's third interface clause: `source_state` is drawn as words **with**
     // the as-of time. The state word says which of the four states the source

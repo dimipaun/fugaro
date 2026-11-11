@@ -900,6 +900,12 @@ function scopeText(value: string, key: string, field: string): Sanitized {
  * by a stream and a box by the record's own key for it, while a group is keyed by
  * a version -- and a node's own `plan` is what decides which of the two draws it.
  *
+ * **A lane and its boxes come from the record's own releases, not from the tasks
+ * that landed in them** (D2113): a box holding no task is a box a reader sees
+ * empty, and a stream whose every box is empty is a lane and a tab of its own
+ * rather than a stream the drawing lost. The record's own `order` is what orders
+ * a stream's boxes, and not the order the tasks happen to be listed in.
+ *
  * **The record's edges are read as markers rather than as lines.** The
  * coordinator's stored view holds none (F17) and needs an engine to place what it
  * had; the record's own edges are between its tasks and are drawn as the word
@@ -981,7 +987,18 @@ export function buildScopeModel(view: GraphView, previous: ScopeModel | null = n
   })
 
   const groups = new Map<string, ScopeNode[]>()
-  const lanes = new Map<string, { box: GraphReleaseBox | null; nodes: ScopeNode[] }[]>()
+  // The record's boxes are the lanes' skeleton (D2113): a lane exists because the
+  // record has a release in that stream, so a box nobody has been placed in is
+  // drawn empty rather than dropped, and a stream whose every box is empty still
+  // draws its lane and its tab.
+  const laneBoxes = new Map<string, { box: GraphReleaseBox; nodes: ScopeNode[] }[]>()
+  for (const box of recordBoxes(view.releases)) {
+    const lane = laneBoxes.get(box.stream)
+    const inBox = { box, nodes: [] as ScopeNode[] }
+    if (lane === undefined) laneBoxes.set(box.stream, [inBox])
+    else lane.push(inBox)
+  }
+  const loose = new Map<string, ScopeNode[]>()
   for (const node of nodes) {
     // A node that names a plan is the record's (GV4.1): it is drawn in its
     // stream's lane, in its release's box or in the lane's unassigned group. Every
@@ -993,26 +1010,38 @@ export function buildScopeModel(view: GraphView, previous: ScopeModel | null = n
       else group.push(node)
       continue
     }
-    laneOf(lanes, boxes, node)
+    const box = node.release === '' ? undefined : boxes.get(node.release)
+    // The box's own stream and not the node's: the two agree for a task the
+    // record has placed, and the box is what the row is drawn inside.
+    const inBox = box === undefined ? undefined : laneBoxes.get(box.stream)?.find((each) => each.box.key === box.key)
+    if (inBox !== undefined) {
+      inBox.nodes.push(node)
+      continue
+    }
+    // A task whose `release` names no box this document carries is unassigned in
+    // its own stream's lane rather than dropped: a box the record dropped between
+    // two reads is no reason to lose the task that was in it, and the record
+    // marks that task dangling (D2115).
+    const lane = loose.get(node.stream)
+    if (lane === undefined) loose.set(node.stream, [node])
+    else lane.push(node)
+  }
+  for (const stream of loose.keys()) {
+    if (!laneBoxes.has(stream)) laneBoxes.set(stream, [])
   }
 
-  const drawnLanes: ScopeLane[] = [...lanes].map(([stream, held]) => {
-    const heldBoxes: ScopeBox[] = []
-    const unassigned: ScopeNode[] = []
-    for (const each of held) {
-      if (each.box === null) {
-        unassigned.push(...each.nodes)
-        continue
-      }
-      heldBoxes.push({
-        key: each.box.key,
-        heading: scopeText(each.box.name, 'name', 'releases[].name'),
-        state: scopeText(each.box.state, 'state', 'releases[].state'),
-        nodes: each.nodes,
-      })
-    }
-    return { stream, heading: streamText(stream), boxes: heldBoxes, unassignedHeading: own(GRAPH_SCOPE_UNASSIGNED), unassigned }
-  })
+  const drawnLanes: ScopeLane[] = [...laneBoxes].map(([stream, inLane]) => ({
+    stream,
+    heading: streamText(stream),
+    boxes: inLane.map((each) => ({
+      key: each.box.key,
+      heading: scopeText(each.box.name, 'name', 'releases[].name'),
+      state: scopeText(each.box.state, 'state', 'releases[].state'),
+      nodes: each.nodes,
+    })),
+    unassignedHeading: own(GRAPH_SCOPE_UNASSIGNED),
+    unassigned: loose.get(stream) ?? [],
+  }))
 
   const tabs: GraphTabOption[] =
     drawnLanes.length === 0
@@ -1074,30 +1103,18 @@ function streamText(stream: string): Sanitized {
   return scopeText(stream, 'stream', 'nodes[].stream')
 }
 
-/** laneOf files one record task in its lane: the box its `release` names, or the
- * lane's unassigned group. A `release` that names no box the document carries is
- * unassigned rather than dropped -- a task whose box is gone is a task a reader
- * must still see, and the record marks it dangling (D2115). */
-function laneOf(
-  lanes: Map<string, { box: GraphReleaseBox | null; nodes: ScopeNode[] }[]>,
-  boxes: Map<string, GraphReleaseBox>,
-  node: ScopeNode,
-): void {
-  let lane = lanes.get(node.stream)
-  if (lane === undefined) {
-    lane = []
-    lanes.set(node.stream, lane)
-  }
-  const box = node.release === '' ? undefined : boxes.get(node.release)
-  if (box === undefined) {
-    const unassigned = lane.find((each) => each.box === null)
-    if (unassigned === undefined) lane.push({ box: null, nodes: [node] })
-    else unassigned.nodes.push(node)
-    return
-  }
-  const found = lane.find((each) => each.box?.key === box.key)
-  if (found === undefined) lane.push({ box, nodes: [node] })
-  else found.nodes.push(node)
+/** recordBoxes is the document's release boxes in the order the record draws them:
+ * by the box's own `order` -- its position in its stream, which is the record's
+ * number and not a version -- and then by the record's id for it, so two boxes the
+ * record gave one order to still draw in one order in two consoles, and never in
+ * the order a map happened to iterate in.
+ *
+ * The stream is the last key rather than the first: `order` is a box's position
+ * **in its stream**, so a project whose streams both have a first release orders
+ * its lanes by the first box each of them appears as, which is the record's own
+ * order and not the console's guess at which stream matters. */
+function recordBoxes(releases: readonly GraphReleaseBox[]): GraphReleaseBox[] {
+  return [...releases].sort((a, b) => a.order - b.order || compare(a.id, b.id) || compare(a.stream, b.stream))
 }
 
 /** needsOf is every record edge as the marker its task's row carries: the edge's
