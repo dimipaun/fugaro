@@ -52,10 +52,14 @@ func ResolveAccountAlias(aliases map[string]string, name string) (account, alias
 // The account axis's non-account values are refused in the same words as the
 // choice keys refuse them (NonAccountChoiceMessage is the shared half of it):
 // they name no account of any run's, so an alias pointing at one would be a key
-// that chooses a run's account naming a credential no job mounts. The sentence
-// here never prescribes a claude_accounts entry of such a name — that entry is
-// the one ValidateClaudeAccounts refuses — which is the trap the choice keys'
-// own sentence exists to avoid.
+// that chooses a run's account naming a credential no job mounts.
+//
+// No arm of it prescribes a claude_accounts entry that ValidateClaudeAccounts
+// refuses — the trap the choice keys' own sentence exists to avoid. The axis
+// values are the arm that answers a name that rule admits and this one does
+// not; a target that could not be an account's name at all is the other, and
+// credentialNameProblem answers it, so the operator reads the sentence that
+// entry would be refused with rather than an entry to write.
 func aliasTargetProblem(target string, aliases map[string]string, accounts map[string]ClaudeAccount, creds []Credential, pools []Pool) string {
 	switch {
 	case target == "":
@@ -79,6 +83,16 @@ func aliasTargetProblem(target string, aliases map[string]string, accounts map[s
 			return fmt.Sprintf("this name is a credential's (type %s) and no account's: an alias stands for one account of this file's claude_accounts block, whose own allow_data_to decides which repositories may use its token — point the alias at the account, or at %q for the unsuffixed account",
 				pluginwire.Printable(c.Type), DefaultClaudeAccount)
 		}
+	}
+	// A target the name rule refuses can never be an account's — the reserved
+	// bundle spelling, a name ending in the review variant's suffix, a bad shape,
+	// an over-long name — so the sentence below would send the operator to an
+	// entry ValidateClaudeAccounts refuses. The sentence here is
+	// credentialNameProblem's (D2092's rule, shared with a credential and a pool)
+	// so that the refusal is one rule in two places rather than two rules.
+	if msg := credentialNameProblem(target); msg != "" {
+		return fmt.Sprintf("the name %q is no account's, and an alias stands for one account of this file's claude_accounts block: %s",
+			pluginwire.Printable(target), msg)
 	}
 	return fmt.Sprintf("the account %q is not defined here: an alias stands for one account of this file's claude_accounts block, where the account's own allow_data_to decides which repositories may use its token, or for %q for the unsuffixed account — define it as claude_accounts: {%s: {allow_data_to: [owner/name]}}, or drop the alias",
 		pluginwire.Printable(target), DefaultClaudeAccount, pluginwire.Printable(target))

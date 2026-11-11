@@ -89,8 +89,9 @@ func TestAliasNameCollisionsRefused(t *testing.T) {
 //
 // The remedy is part of the rule here: the two axis values are refused in the
 // same words the choice keys refuse them (NonAccountChoiceMessage's claim), and
-// the refusal never prescribes a claude_accounts entry of one of them — that
-// entry is the one ValidateClaudeAccounts refuses.
+// no refusal prescribes a claude_accounts entry that ValidateClaudeAccounts
+// would then refuse — of an axis value, or of a name the account name rule
+// refuses at all.
 func TestAliasTargetRules(t *testing.T) {
 	accounts := map[string]ClaudeAccount{"team-a": {}, "team-b": {}}
 	creds := []Credential{
@@ -110,6 +111,8 @@ func TestAliasTargetRules(t *testing.T) {
 		{"a credential that is no account", "claude-oauth-two", "a credential's (type claude-oauth) and no account's"},
 		{"the project's Anthropic key", AnthropicKeyAccount, "names no Claude account"},
 		{"the project's provider key", ProviderKeyAccount, "names no Claude account"},
+		{"the bundle's reserved spelling", BitbucketSecret, "is no account's"},
+		{"a review-variant name", "team-a" + ReviewVariantSuffix, "is no account's"},
 		{"an undefined account", "team-z", "is not defined here"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,8 +124,18 @@ func TestAliasTargetRules(t *testing.T) {
 			if ps[0].Path != "claude_account_aliases.reviewer" || !strings.Contains(ps[0].Message, tc.want) {
 				t.Errorf("the refusal does not name the target's own defect (%q): %+v", tc.want, ps[0])
 			}
-			if AxisNonAccountValue(tc.target) && strings.Contains(ps[0].Message, "claude_accounts: {") {
-				t.Errorf("the refusal prescribes a claude_accounts entry of an axis value, which ValidateClaudeAccounts refuses: %+v", ps[0])
+			// The remedy is part of the rule: a target no claude_accounts entry
+			// could carry — an axis value, the bundle's reserved spelling, a
+			// review-variant name — is refused as itself and never with an entry
+			// to write, because that entry is the one ValidateClaudeAccounts
+			// refuses. The premise is asserted rather than assumed.
+			if credentialNameProblem(tc.target) != "" {
+				if strings.Contains(ps[0].Message, "claude_accounts: {") {
+					t.Errorf("the refusal prescribes a claude_accounts entry ValidateClaudeAccounts refuses: %+v", ps[0])
+				}
+				if refused := ValidateClaudeAccounts(map[string]ClaudeAccount{tc.target: {}}); len(refused) == 0 {
+					t.Errorf("ValidateClaudeAccounts admits an entry of %q, so the refusal of it has a remedy after all", tc.target)
+				}
 			}
 			// And the alias whose target IS an account is left alone: the
 			// chain's other half is the proof that only the target is refused.
@@ -130,6 +143,20 @@ func TestAliasTargetRules(t *testing.T) {
 				t.Error("the alias a chain points at was refused on its own")
 			}
 		})
+	}
+
+	// The name rule is credentialNameProblem's here too (D2092, one rule spelled
+	// once): a target it refuses is answered with its own sentence, so the
+	// operator reads what writing that claude_accounts entry would be refused
+	// with instead of an entry to write.
+	for _, target := range []string{BitbucketSecret, "team-a" + ReviewVariantSuffix, "Team-A", strings.Repeat("a", MaxClaudeAccountNameLen+1)} {
+		ps := ValidateAccountAliases(map[string]string{"reviewer": target}, accounts, creds, pools)
+		if len(ps) != 1 {
+			t.Fatalf("alias -> %q: problems = %v, want one: no such name can be an account's", target, ps)
+		}
+		if want := credentialNameProblem(target); !strings.Contains(ps[0].Message, want) {
+			t.Errorf("alias -> %q: message = %q, want credentialNameProblem's %q: a name rule spelled twice is two rules", target, ps[0].Message, want)
+		}
 	}
 
 	for _, target := range []string{"team-a", DefaultClaudeAccount} {
