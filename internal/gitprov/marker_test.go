@@ -172,3 +172,35 @@ func TestSameCommit(t *testing.T) {
 		}
 	}
 }
+
+// TestReportRunIsNarrowerThanFugaroRun is the split the runner needs: a report
+// and a ladder transition are both Fugaro's own and both name a run, but only
+// one of them answers "has this run posted its report". A transition comment
+// can name a run that has posted nothing (E10a writes it before the run
+// finishes, if it finishes at all), and reading it as that run's report would
+// silently suppress the report the pull request is waiting for.
+func TestReportRunIsNarrowerThanFugaroRun(t *testing.T) {
+	const mine = "20261111-172557-dabe"
+	for _, c := range []struct {
+		name, body     string
+		wantRun        string
+		wantReport     bool
+		wantFugaroOwns bool
+	}{
+		{"the run's own report", "### Report\n\nbody\n" + ReportMarker(mine) + "\n", mine, true, true},
+		{"a report quoting a transition marker", "quoted: " + TransitionMarker(mine, "R2") + "\n\n" + ReportMarker(mine) + "\n", mine, true, true},
+		{"a transition comment naming the run", "R1 → R2: churn_same.\n\n" + TransitionMarker(mine, "R2") + "\n", "", false, true},
+		{"the legacy report heading", "### Fugaro run `" + mine + "`\n\n**Outcome:** ready\n", mine, true, true},
+		{"the legacy not-ready note", "**Fugaro:** this pull request is not ready.\n", "", true, true},
+		{"somebody else's comment", "LGTM\n", "", false, false},
+		{"a transition marker alone, with no report", TransitionMarker(mine, "R4"), "", false, true},
+	} {
+		run, ok := ReportRun(c.body)
+		if run != c.wantRun || ok != c.wantReport {
+			t.Errorf("%s: ReportRun = %q, %v; want %q, %v", c.name, run, ok, c.wantRun, c.wantReport)
+		}
+		if _, owns := FugaroRun(c.body); owns != c.wantFugaroOwns {
+			t.Errorf("%s: FugaroRun ok = %v, want %v", c.name, owns, c.wantFugaroOwns)
+		}
+	}
+}

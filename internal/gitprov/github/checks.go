@@ -2,10 +2,13 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 )
 
 // checksPage is what one page of the check-runs listing holds. GitHub's own
@@ -45,6 +48,16 @@ const (
 // The read needs no write credential and is made with the provider's own
 // installation token (E8): the checks are the host's own report about a
 // commit, and reading them changes nothing.
+//
+// It does need a READ permission a run's installation token does not ask for.
+// GitHub requires the App's "Checks: read" for the check runs and "Commit
+// statuses: read" for the statuses, and tokenPermissions names neither, so on
+// an installation that has not granted both this call gets 403 — which
+// checksErr reports as ErrChecksPermission rather than as a bare refusal. The
+// grant is the owner's (Check 231 of docs/gcp-live-checklist.md, B2 of
+// docs/forge-authorship-images/implementation-plan.md, which widens
+// tokenPermissions and RequiredPermissions together); until it lands, this
+// call fails closed and the ladder's gate waits for a person.
 func (p *Provider) Checks(ctx context.Context, number int, sha string) ([]gitprov.CheckRun, error) {
 	if number <= 0 {
 		return nil, fmt.Errorf("reading the checks of pull request #%d: not a pull request number", number)
@@ -58,16 +71,32 @@ func (p *Provider) Checks(ctx context.Context, number int, sha string) ([]gitpro
 	}
 	runs, err := p.checkRuns(ctx, number, sha)
 	if err != nil {
-		return nil, err
+		return nil, checksErr(err)
 	}
 	statuses, err := p.commitStatuses(ctx, number, sha)
 	if err != nil {
 		// Half a set is not a smaller set: a caller that took the check runs
 		// and dropped this error would read a commit whose commit statuses
 		// were never read as one whose checks all passed.
-		return nil, err
+		return nil, checksErr(err)
 	}
 	return append(runs, statuses...), nil
+}
+
+// checksErr is the refusal a checks read reports, with the one failure this
+// host explains: a 403 is GitHub refusing the CREDENTIAL rather than the read,
+// because both of these endpoints need the App's "Checks: read" and "Commit
+// statuses: read" and a run's installation token asks for neither
+// (tokenPermissions). The read is already wrapped with the pull request and
+// the commit by the caller, so this only adds the sentinel and the grant it
+// names; every other failure is reported as it came.
+func checksErr(err error) error {
+	var se *httpjson.StatusError
+	if errors.As(err, &se) && se.Status == http.StatusForbidden {
+		return fmt.Errorf("%w: %w; the App must be granted Checks: read and Commit statuses: read, and each installation must accept them",
+			gitprov.ErrChecksPermission, err)
+	}
+	return err
 }
 
 // checkRuns reads every check run GitHub reports at commit sha, following the

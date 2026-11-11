@@ -40,6 +40,23 @@ var (
 	// with no checks: the caller sees an error and never a state it could
 	// mistake for green.
 	ErrChecksUnsupported = errors.New("this provider cannot read a commit's checks")
+	// ErrChecksPermission is a Checks read the host refused for want of a
+	// permission the credential does not hold: GitHub answers 403 to both of
+	// the endpoints this read uses without the App's "Checks: read" and
+	// "Commit statuses: read", and a run's installation token asks for
+	// neither (apptoken.go's tokenPermissions). It is the same fail-closed
+	// answer as any other failed read — the caller sees an error, never a
+	// state — but it names the cause, so an operator reads "the App must be
+	// granted these two" instead of a bare HTTP 403.
+	//
+	// Granting them is the owner's, on the App's settings page and accepted
+	// on each installation: Check 231 of docs/gcp-live-checklist.md, which is
+	// B2 of docs/forge-authorship-images/implementation-plan.md — a gated
+	// task that also widens tokenPermissions and RequiredPermissions. E8's own
+	// plan says "config: none", so this call reports the gap rather than
+	// pre-empting that task and making every installation's doctor report a
+	// missing permission for a read nothing calls yet.
+	ErrChecksPermission = errors.New("this credential does not hold the permission the host needs to report a commit's checks")
 	// ErrMintNotApplicable is a provider's own answer to where its ready and
 	// merge calls take their credential from: the provider's own installation
 	// token, because its host has no merge mint to gate. The mint is the

@@ -75,6 +75,33 @@ func FugaroRun(body string) (runID string, ok bool) {
 	if id, found := lastMarkerRun(body); found {
 		return id, true
 	}
+	return legacyReportRun(body)
+}
+
+// ReportRun reports whether body is a run's REPORT — the comment a run posts
+// when it finishes — and which run posted it. It is deliberately narrower than
+// FugaroRun, which answers for every kind of comment Fugaro posts: a ladder
+// transition comment is Fugaro's own and names the run that wrote it (E10a),
+// but it is not a report, and a caller asking "has THIS run already posted its
+// report" (the runner's before-posting check) must not be answered yes by one.
+// A transition write can name a run that has posted nothing, so the two
+// questions have to be two functions.
+//
+// It reads the marker ReportMarker writes, and, for a report from before
+// markers existed, the heading such a report opened with (and the older
+// not-ready note, which names no run).
+func ReportRun(body string) (runID string, ok bool) {
+	if ms := markerRE.FindAllStringSubmatch(body, -1); len(ms) > 0 {
+		last := ms[len(ms)-1]
+		return last[1], true
+	}
+	return legacyReportRun(body)
+}
+
+// legacyReportRun reads a report written before markers existed: one opening
+// with the old heading names its run, and one opening with the old not-ready
+// note is Fugaro's with an unknown run ("").
+func legacyReportRun(body string) (runID string, ok bool) {
 	start := strings.TrimLeft(body, " \t\r\n")
 	if m := legacyHeadingRE.FindStringSubmatch(start); m != nil {
 		return m[1], true

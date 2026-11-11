@@ -1,9 +1,11 @@
 package github
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -216,5 +218,65 @@ func TestGithubChecksRefusesAValueThatIsNotACommit(t *testing.T) {
 		if _, err := p.Checks(ctx, 12, sha); err == nil {
 			t.Errorf("Checks(%q) did not refuse", sha)
 		}
+	}
+}
+
+// TestGithubChecksRefusesForWantOfThePermission pins the one 403 this host
+// explains. Both endpoints need the App's "Checks: read" and "Commit
+// statuses: read", and a run's installation token asks for neither, so an
+// installation that has not granted them answers 403 — which must arrive as
+// ErrChecksPermission, naming the grant, rather than as a bare HTTP refusal an
+// operator has to decode. It stays a failed read: the caller sees an error and
+// never a state, so nothing reads a commit as green because the read was
+// refused.
+func TestGithubChecksRefusesForWantOfThePermission(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		h    func(http.ResponseWriter, *http.Request) bool
+	}{
+		{"the check-runs read", func(w http.ResponseWriter, r *http.Request) bool {
+			if r.URL.Path == "/repos/acme/web/commits/"+checksSHA+"/check-runs" {
+				http.Error(w, `{"message": "Resource not accessible by integration"}`, http.StatusForbidden)
+				return true
+			}
+			return false
+		}},
+		{"the commit-statuses read", func(w http.ResponseWriter, r *http.Request) bool {
+			switch r.URL.Path {
+			case "/repos/acme/web/commits/" + checksSHA + "/check-runs":
+				io.WriteString(w, `{"total_count": 1, "check_runs": [{"status": "completed", "conclusion": "success"}]}`)
+				return true
+			case statusPath:
+				http.Error(w, `{"message": "Resource not accessible by integration"}`, http.StatusForbidden)
+				return true
+			}
+			return false
+		}},
+	} {
+		p := fakeAPI(t, c.h)
+		runs, err := p.Checks(ctx, 12, checksSHA)
+		if !errors.Is(err, gitprov.ErrChecksPermission) {
+			t.Errorf("%s: Checks = %+v, %v; want ErrChecksPermission", c.name, runs, err)
+		}
+		if runs != nil {
+			t.Errorf("%s: a refused read returned %+v; want no runs at all", c.name, runs)
+		}
+		if !strings.Contains(err.Error(), "Checks: read") || !strings.Contains(err.Error(), "Commit statuses: read") {
+			t.Errorf("%s: the refusal %q does not name the grants it needs", c.name, err)
+		}
+	}
+}
+
+// TestGithubChecksReportsOtherFailuresAsTheyCame keeps the 403 mapping from
+// swallowing everything else: a 500 is an outage the caller may retry, not a
+// permission an operator changes, and it must not read as one.
+func TestGithubChecksReportsOtherFailuresAsTheyCame(t *testing.T) {
+	p := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+		http.Error(w, "boom", http.StatusInternalServerError)
+		return true
+	})
+	_, err := p.Checks(ctx, 12, checksSHA)
+	if err == nil || errors.Is(err, gitprov.ErrChecksPermission) {
+		t.Fatalf("Checks = %v; want a plain failure, not a permission one", err)
 	}
 }

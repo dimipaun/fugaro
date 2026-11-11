@@ -467,7 +467,11 @@ type Provider interface {
 	// with more than one way to report CI reports all of them: a commit is
 	// green only if every report on it passed, so a read that took one
 	// report and not the other would read a failing commit as a passing one
-	// (GitHub has two: check runs and commit statuses).
+	// (GitHub has two: check runs and commit statuses). Reading them takes a
+	// permission the run's installation token does not ask for, so a host
+	// that refuses the read for that reason reports
+	// ErrChecksPermission — the same refusal as any other failed read, named
+	// so it is not read as a commit with no checks.
 	Checks(ctx context.Context, number int, sha string) ([]CheckRun, error)
 }
 
