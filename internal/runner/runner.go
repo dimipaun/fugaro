@@ -503,6 +503,12 @@ type run struct {
 	// what bounds and clips it and a second append would build on the bounded
 	// list.
 	triageRounds []runstore.TriageRound
+	// deferred is the deferrals that took effect, in the order the findings were
+	// first deferred in, across every round and level (T-TR7b, D1850). It is the
+	// raw list the record's block is rebuilt from on each round, for the reason
+	// triageRounds is: NewDeferred is what bounds and clips it, and a second
+	// append would build on the bounded list.
+	deferred []runstore.DeferredFinding
 	// rigorRaise is the last raise the run's mode took during the run, set by
 	// the moment that took it (noteRigorRaise, rigor.go) and nil while the mode
 	// has never risen above the one bootstrap resolved. It is kept here because
@@ -3553,23 +3559,39 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			return false
 		}
 		// The judge weighs this round's findings (T-TR7a, D1840): it is called
-		// after the round is recorded and before anything acts on it, and what
-		// it answers is logged and nothing else — the fix below, Decide above
-		// the loop and the pull request's body all read the round exactly as
-		// they did before it existed. A judge the run could not make is a
-		// stage failure like any other, and the loop stops on it: nothing of
-		// the round is acted on by a run that is already over.
-		if !r.triageRound(ctx, round, policy.LevelL2, v) {
+		// after the round is recorded and before anything acts on it. A judge
+		// the run could not make is a stage failure like any other, and the loop
+		// stops on it: nothing of the round is acted on by a run that is already
+		// over.
+		triaged, ok := r.triageRound(ctx, round, policy.LevelL2, v)
+		if !ok {
 			return false
+		}
+		// The round's deferrals are kept beside its findings, on the round
+		// readiness and the held-back rule read it through: a round whose
+		// findings a judge deferred whole is not a round the mode blocks on, and
+		// neither rule can read that off the recorded verdict word, which is
+		// still `changes` (F21).
+		r.lastSenior.Deferred = triaged.Deferred
+		r.seniorLevelLast.Deferred = triaged.Deferred
+		// Every finding of the round is a follow-up: there is nothing left for
+		// this level to fix and nothing left to review, so the level ends on
+		// this round and readiness reads it as the tolerated one it is (F21).
+		// The loop goes on to the next enabled level, which this return does not
+		// skip: the plan walks its steps, and level 3's is one of them.
+		if triaged.Judged && triaged.AllDeferred {
+			return true
 		}
 		// OD1: a round that asks for changes and names nothing but decisions
 		// only the owner can make is where the loop stops. No fix round is
 		// dispatched — there is nothing a coder could change — and no further
 		// round is bought, because the reviewer would be asked the same
 		// question about the same unchanged code. The decisions are recorded
-		// and the run ends waiting for them (ownerStop).
-		if v.Verdict != "ship" && allOwner(v.Findings) {
-			r.ownerStop(ctx, v.Findings)
+		// and the run ends waiting for them (ownerStop). What it names is what
+		// the round still blocks on, so a round that defers a finding beside a
+		// needs_owner one does not read as a round of the owner's alone.
+		if v.Verdict != "ship" && allOwner(triaged.fixable(v)) {
+			r.ownerStop(ctx, triaged.fixable(v))
 			return false
 		}
 		// hand_over: this review is where the run ends (recipe.Step.HandOver,
@@ -3612,7 +3634,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.timeStop()
 			return false
 		}
-		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
+		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sys, sessionID); !ok {
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
@@ -3679,15 +3701,23 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		// rounds: level 3's findings are judged too (D1847), whichever level
 		// decides readiness. A judge that failed the run stops this loop the
 		// same way.
-		if !r.triageRound(ctx, round, policy.LevelL3, v) {
+		triaged, ok := r.triageRound(ctx, round, policy.LevelL3, v)
+		if !ok {
 			return false
+		}
+		// Level 3's own deferrals, kept on the round readiness reads it through
+		// exactly as level 2's are (seniorLoop): it is the deciding level of a
+		// run whose mode enabled it.
+		r.lastSenior.Deferred = triaged.Deferred
+		if triaged.Judged && triaged.AllDeferred {
+			return true
 		}
 		// OD1, exactly as seniorLoop stops: level 3 is the deciding level of a
 		// run whose mode enabled it, so a round that names only the owner's
 		// decisions stops the run here rather than buying a fix round and a
 		// further adversarial review of code that cannot change.
-		if v.Verdict != "ship" && allOwner(v.Findings) {
-			r.ownerStop(ctx, v.Findings)
+		if v.Verdict != "ship" && allOwner(triaged.fixable(v)) {
+			r.ownerStop(ctx, triaged.fixable(v))
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
@@ -3708,7 +3738,7 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			r.timeStop()
 			return false
 		}
-		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
+		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sys, sessionID); !ok {
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
@@ -3889,13 +3919,20 @@ func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (
 	return Verdict{}, false, true
 }
 
-// fix runs a fix stage for review v in the implement session and reports the
-// session to go on with, and whether the loop may continue.
-func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string, bool) {
+// fix runs a fix stage for the findings a review round still blocks on, in the
+// implement session, and reports the session to go on with and whether the loop
+// may continue.
+//
+// It takes the findings and not the round (T-TR7b): a deferred finding is a
+// follow-up and never this round's work, and the caller is what knows which
+// findings those are — the judge's answer and the mode's table, applied inside
+// the floor (triageOutcome.fixable). A round that deferred everything never
+// reaches here at all; the loop ends on it.
+func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string) (string, bool) {
 	if r.sessionID != "" {
 		sessionID = r.sessionID
 	}
-	req := agent.Request{Prompt: FixPrompt(v), AppendSystemPrompt: sys}
+	req := agent.Request{Prompt: FixPrompt(findings), AppendSystemPrompt: sys}
 	if sessionID == "" {
 		// No session exists to resume: a Fixed check gate (gate.go) skipped
 		// implement entirely, so this fix is the run's first real agent
@@ -4006,13 +4043,32 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		// round that answered no verdict has none to weigh, so it is skipped
 		// rather than judged on findings nothing named. A judge that failed
 		// the run ends this loop, which is the session's own return.
-		if parsed && !r.triageRound(ctx, round, policy.LevelL1, v) {
-			return sessionID, false
+		var triaged triageOutcome
+		if parsed {
+			var ok bool
+			if triaged, ok = r.triageRound(ctx, round, policy.LevelL1, v); !ok {
+				return sessionID, false
+			}
+			// The cheap round's deferrals are kept wherever the round is kept,
+			// for the reason firstLineLast itself is: a run the stop ends before
+			// level 2 starts has only this round for readiness — and for the
+			// held-back rule — to read.
+			r.firstLineLast.Deferred = triaged.Deferred
+			if decides {
+				r.lastSenior.Deferred = triaged.Deferred
+			}
 		}
 		if sum.Verdict != "changes" {
 			return sessionID, true
 		}
-		if allOwner(v.Findings) {
+		// Every finding of the cheap round is a follow-up: this level ends on
+		// the round, no fix is bought for it, and the loop goes on to the outer
+		// level, whose review is what decides (F21). The stop's rounds half is
+		// not set here — the level did not spend its rounds, it settled them.
+		if triaged.Judged && triaged.AllDeferred {
+			return sessionID, true
+		}
+		if allOwner(triaged.fixable(v)) {
 			// OD1: the round names nothing but decisions only the owner can
 			// make, so the cheap loop fixes nothing here. Where it decides
 			// readiness — a run whose level 2 and level 3 are both off (POC) —
@@ -4020,7 +4076,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			// handed on and that level's review is what decides, the first line
 			// advising it and never overruling it (seniorReview).
 			if decides {
-				r.ownerStop(ctx, v.Findings)
+				r.ownerStop(ctx, triaged.fixable(v))
 				return sessionID, false
 			}
 			return sessionID, true
@@ -4036,7 +4092,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			return r.firstLineStop(sessionID)
 		}
 		var more bool
-		if sessionID, more = r.fix(ctx, v, sys, sessionID); !more {
+		if sessionID, more = r.fix(ctx, triaged.fixable(v), sys, sessionID); !more {
 			return sessionID, false
 		}
 	}

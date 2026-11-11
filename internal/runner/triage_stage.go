@@ -9,21 +9,30 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/triage"
 )
 
-// The triage stage: one judge call after each review round, its verdict
-// recorded and nothing yet acted on (docs/post-review-triage, D1840, D1850).
+// The triage stage: one judge call after each review round, whose verdict now
+// decides where each finding goes (docs/post-review-triage, D1840, D1850).
 //
-// This slice is the shadow half. What the judge answered is written to the
-// record's triage block and to nothing else: the fixer is handed the round's
-// findings exactly as it is today, Decide reads the recorded verdict word as it
-// always has, and the pull request's body carries no deferred section — so a
-// bug in this path can mislabel a round's log and cannot merge anything
-// (T-TR7b enforces, T-TR8 reads the cap, T-TR9 writes the section). The one
-// thing the stage must not do is act, and TestShadowTriageDoesNotChangeTheFix
-// Prompt and TestShadowTriageWritesNoDeferred pin that.
+// T-TR7a logged the verdict and acted on nothing; this slice acts on it, and
+// three things follow from an outcome. The fixer is handed the round's blocking
+// findings and never a deferred one (F4, F16, acceptance 2); a round whose
+// findings are all deferred ends its level and buys no fix round, and the loop
+// ends ready on it (F21, acceptance 1); and the deferrals that took effect are
+// filed in the record's own block, which is what the report, the pull request's
+// body (T-TR9) and `fugaro followups` read.
+//
+// What T-TR7a pinned still holds wherever the table alone decides: the mode's
+// threshold table stays the authority and the fallback (D1840). A judge may
+// only move the findings the table blocks and the floor does not name (D1857),
+// a failed call blocks every finding the table blocks (D1846), and with the
+// switch off, in POC or Critical, or for a repository that never opted in, the
+// stage makes no call and the loop and the fixer are the ones they were before
+// it existed (F32). T-TR8 reads the cap, and only T-TR9 writes the pull
+// request's deferred section.
 
 // TriageSchema is passed to claude --json-schema for the triage stage, and it
 // is schemas/triage.schema.json's shape: one entry per finding the brief
@@ -84,13 +93,80 @@ func (r *run) triageOn() bool {
 	return r.baseCfg.Agent.TriageOn(r.reachedRigor())
 }
 
-// triageRound is the step itself: it judges the findings of one review round
-// and records what it answered. It never changes what the run does with a
-// verdict — a call that could not be made or could not be read is recorded as
-// a failed round and the loop goes on (D1846) — and it reports whether the loop
-// may go on at all: false is a stage failure that already ended the run, and
-// the caller returns into its own loop the way it does after any other stage
-// that failed.
+// triageOutcome is what one triage round settled, as the loops read it: the
+// findings the round still blocks on, the ones a judge deferred, and whether a
+// judge was asked at all.
+type triageOutcome struct {
+	// Judged is false where the stage did not run — the switch is off, the mode
+	// is POC, Critical or Hotfix, or the repository never opted in to modes at
+	// all — and every field below is empty then. The loops read it to tell "this
+	// round's findings are all deferred" from "no judge was asked", which is
+	// F32's whole content: the two leave the same empty blocking list, and only
+	// the first ends the loop.
+	Judged bool
+	// Blocking is the round's findings that hold the merge, in the round's own
+	// order and as the reviewer wrote them — Apply answers entries, which carry
+	// an index and not the finding, so the two are paired back here. It is what
+	// the fixer is handed and what the owner check reads.
+	Blocking []Finding
+	// Deferred is the scores of the findings a *judge* deferred, and not the
+	// ones the mode's table tolerated: those are already in rigor.Split's
+	// tolerated half of the same round, and a policy that read them here as well
+	// would count one finding twice and tolerate no round at all
+	// (FindingsPolicy.Deferred).
+	Deferred []rigor.Score
+	// AllDeferred is the round the loop ends on: it named findings and every one
+	// of them is deferred. A round that named none is not one of them — a `ship`
+	// verdict is the loop's own end, and a `changes` verdict naming nothing is a
+	// review that failed to say what it wanted, which no tolerance covers (D4).
+	AllDeferred bool
+}
+
+// fixable is what the fixer may be handed for this round: the blocking subset
+// where a judge was asked, the round's own findings where none was. The second
+// half is F32 as much as the first is F4 — with the stage off, in POC or
+// Critical, or for a repository that never opted in, the fixer is handed
+// exactly what it was handed before the stage existed.
+func (o triageOutcome) fixable(v Verdict) []Finding {
+	if !o.Judged {
+		return v.Findings
+	}
+	return o.Blocking
+}
+
+// triageOutcomeOf pairs one round's verdict back with Apply's answer: the
+// findings the round still blocks on, and the scores of the ones a judge's own
+// verdict deferred. A placement whose index is outside the round cannot name a
+// finding of it, so it is passed over rather than read as the zero finding —
+// Apply answers only indexes the round it was given, and this is the guard that
+// keeps that true if it ever stops being.
+func triageOutcomeOf(v Verdict, out triage.Outcome) triageOutcome {
+	o := triageOutcome{Judged: true}
+	for _, p := range out.Blocking {
+		if p.Index >= 0 && p.Index < len(v.Findings) {
+			o.Blocking = append(o.Blocking, v.Findings[p.Index])
+		}
+	}
+	for _, p := range out.Deferred {
+		if p.Source != triage.SourceAgent || p.Index < 0 || p.Index >= len(v.Findings) {
+			continue
+		}
+		o.Deferred = append(o.Deferred, scoreOf(v.Findings[p.Index]))
+	}
+	o.AllDeferred = len(v.Findings) > 0 && len(o.Blocking) == 0
+	return o
+}
+
+// triageRound is the step itself: it judges the findings of one review round,
+// records what it answered, and reports what the round's findings are now worth
+// to the loop that asked. It reports whether the loop may go on at all beside
+// that: false is a stage failure that already ended the run, and the caller
+// returns into its own loop the way it does after any other stage that failed.
+//
+// A judge the run could not reach or could not read is not a failure of the
+// round: the outcome is the fail-safe one — every finding the table blocks
+// blocks (D1846) — and the loop goes on with it, exactly as it does with a
+// verdict that was read.
 //
 // The distinction is the run's and not the stage's. A stage the run may do
 // without (Skippable) is skipped and the round logged as failed; a stage the
@@ -108,9 +184,9 @@ func (r *run) triageOn() bool {
 // (D1847): a level 1 round and a level 2 round of the same run are two triage
 // rounds, and which level's question the judge answered is what the record
 // says beside each.
-func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v Verdict) bool {
+func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v Verdict) (triageOutcome, bool) {
 	if !r.triageOn() {
-		return true
+		return triageOutcome{}, true
 	}
 	mode := r.reachedRigor()
 	in, findings := triageInputs(v.Findings)
@@ -125,8 +201,9 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 	if err != nil {
 		r.d.Log.Warn("the triage stage's own working directory could not be made; the round is recorded as failed",
 			"round", round, "err", r.redact(err.Error()))
-		r.recordTriage(ctx, round, level, triage.Apply(mode, in, triage.Verdict{}, false), false)
-		return true
+		out := triage.Apply(mode, in, triage.Verdict{}, false)
+		r.recordTriage(ctx, round, level, v, out, false)
+		return triageOutcomeOf(v, out), true
 	}
 	defer os.RemoveAll(dir)
 
@@ -156,27 +233,35 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 		// A halt, a cancellation, a spent budget or a violation ended the run:
 		// the run's own reason is already recorded and there is no round left
 		// to log, exactly as the review loop itself returns here.
-		return false
+		return triageOutcome{}, false
 	}
 	verdict, parsed := readTriageVerdict(res)
 	if !parsed {
 		r.d.Log.Warn("the triage round produced no readable verdict; every finding the mode's table blocks blocks",
 			"round", round, "failed", !ok)
 	}
-	r.recordTriage(ctx, round, level, triage.Apply(mode, in, verdict, parsed), parsed)
-	return true
+	out := triage.Apply(mode, in, verdict, parsed)
+	r.recordTriage(ctx, round, level, v, out, parsed)
+	return triageOutcomeOf(v, out), true
 }
 
-// recordTriage writes one round to the record's triage block. The block is the
-// run's log of what the judge decided, and the only place this stage writes
-// anything: Record.Deferred — what took effect — stays empty until T-TR7b, so
-// no shadow verdict can reach a follow-up task or the pull request's body.
+// recordTriage writes one round to the record's triage block and folds its
+// deferrals into the run's own. The two are the record's two halves of the same
+// decision: Triage is the log of what the judge was asked and answered, round
+// by round, and Deferred is what took effect — the findings a follow-up task is
+// filed for, and the block the report and the pull request's body read (T-TR9).
+//
+// v is the round the placements were made on, and it is read for the one thing
+// an entry does not carry: the reviewer's own words for the finding. Apply
+// answers entries — index, key, word, reason, group — and the summary a
+// follow-up task opens with is the finding's, so the two are paired here, by
+// the same index the brief numbered and Apply placed on (D1850).
 //
 // A round is recorded whether or not the call answered, which is what makes a
 // failed one visible rather than absent (runstore.TriageRound.Failed): the
 // outcome it carries is Apply's fail-safe one, every finding the table blocks
 // blocking.
-func (r *run) recordTriage(ctx context.Context, round int, level policy.Level, out triage.Outcome, read bool) {
+func (r *run) recordTriage(ctx context.Context, round int, level policy.Level, v Verdict, out triage.Outcome, read bool) {
 	placed := make(map[int]triage.Placed, len(out.Blocking)+len(out.Deferred))
 	for _, p := range out.Blocking {
 		placed[p.Index] = p
@@ -212,7 +297,65 @@ func (r *run) recordTriage(ctx context.Context, round int, level policy.Level, o
 		Entries: entries,
 	})
 	r.rec.Triage = runstore.NewTriage(r.triageRounds)
+	r.noteDeferred(v, out)
+	r.rec.Deferred = runstore.NewDeferred(r.deferred)
 	r.save(ctx)
+}
+
+// noteDeferred folds one round's placements into the run's deferral ledger:
+// what took effect, across every round and level of the run so far.
+//
+// A finding is filed by its key and never by its position (D1850): the same
+// finding a later round raises again is the same entry, so a second deferral
+// replaces the first's text rather than filing it twice, and a round that
+// blocked it takes it back out — the finding is this round's work again, and a
+// follow-up saying it was filed would send a reader after code the pull request
+// carries. The order is the order the findings were first deferred in.
+//
+// The text comes from the finding and from the placement, redacted like every
+// other model-written string the record keeps (agent.Redact): a reviewer's
+// summary and a judge's reason both reach a follow-up task's prompt and the
+// pull request's body.
+func (r *run) noteDeferred(v Verdict, out triage.Outcome) {
+	for _, p := range out.Blocking {
+		r.forgetDeferred(p.Key)
+	}
+	for _, p := range out.Deferred {
+		if p.Index < 0 || p.Index >= len(v.Findings) {
+			continue
+		}
+		f := v.Findings[p.Index]
+		r.rememberDeferred(runstore.DeferredFinding{
+			Key:     p.Key,
+			Summary: r.redact(f.Summary),
+			Reason:  r.redact(p.Reason),
+			Group:   r.redact(p.Group),
+			Source:  runstore.TriageSource(p.Source),
+		})
+	}
+}
+
+// rememberDeferred files one deferral, replacing the entry the same finding
+// already has.
+func (r *run) rememberDeferred(e runstore.DeferredFinding) {
+	for i := range r.deferred {
+		if r.deferred[i].Key == e.Key {
+			r.deferred[i] = e
+			return
+		}
+	}
+	r.deferred = append(r.deferred, e)
+}
+
+// forgetDeferred takes a finding back out of the ledger: the round it is read
+// in blocked it, so it is not a follow-up any more.
+func (r *run) forgetDeferred(key string) {
+	for i := range r.deferred {
+		if r.deferred[i].Key == key {
+			r.deferred = append(r.deferred[:i], r.deferred[i+1:]...)
+			return
+		}
+	}
 }
 
 // maxIndex is the largest index placed, or -1 for a round nothing was placed
