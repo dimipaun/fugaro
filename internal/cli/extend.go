@@ -19,11 +19,12 @@ import (
 // The seams one binary ships with (design ee-boundary-moves.md §5). One
 // binary carries the released CLI and the commands the owner moves out of the
 // core, and the moved code reaches this tree through this file alone: a
-// registry that adds commands, and a hook for the one call the launch makes
-// into the coordinator's record. Everything here is inert — with nothing
-// registered and nothing set, the tree and every launch are exactly what the
-// core builds. `ee/register` is what fills them (§5.5), and no core caller
-// sets either.
+// registry that adds commands, a hook for the one call the launch makes into
+// the coordinator's record, and the launch planner model A/B testing asks
+// before a first run's task is written. Everything here is inert — with
+// nothing registered and nothing set, the tree and every launch are exactly
+// what the core builds. `ee/register` is what fills them (§5.5), and no core
+// caller sets any of them.
 
 // RegisterCommand adds a command to the root tree. One binary ships (T21), so
 // a command the owner moves out of the core joins the tree the released CLI
@@ -174,9 +175,16 @@ type PlannedRun struct {
 	// could read none (a --repo launch from outside a checkout of the
 	// repository, with no project layer to stand in for the file).
 	Config *config.Config
-	// Policy is the run's own merged policy, which is what the runner
-	// re-reads at bootstrap; Providers and Prices are the routing table and
-	// the price table this launch resolves, both nil when there is none.
+	// Policy is the policy this launch resolves — the launcher's own merge of
+	// the deployed ceiling, the default branch's fugaro.yaml, this
+	// repository's file at the ref and this launch's chain limits
+	// (chainLimitPolicyOf) — which is the merge a challenger's admission is
+	// judged by (D556). It is not the runner's whole bootstrap merge: a
+	// project that publishes a policy after this job's environment was
+	// deployed has the node's own keys applied there and not here, and the
+	// runner re-checks every challenger at bootstrap (A2.1). Providers and
+	// Prices are the routing table and the price table this launch resolves,
+	// both nil when there is none.
 	Policy    policy.Effective
 	Providers map[string]config.ModelProvider
 	Prices    *pricing.Table
@@ -187,8 +195,9 @@ type PlannedRun struct {
 	ServiceHeldKey bool
 }
 
-// Pair is what a planner returns for a launch it means to sample: the
-// champion's ab block and the challenger's task. The champion's block is
+// Pair is what a planner answers about a launch: the pair it means to sample
+// — the champion's ab block and the challenger's task — or, with no
+// Challenger, the reason it sampled none (Skip). The champion's block is
 // written onto the task the launch was already building; the challenger's
 // task is read for the arm's own two facts — its run id and its ab block —
 // and the launcher starts it from the champion's launched task, so the arms
@@ -226,18 +235,15 @@ func RegisterLaunchPlanner(p LaunchPlanner) error {
 	return nil
 }
 
-// planLaunch asks the build's planner whether this launch samples a pair. The
-// launch path calls this rather than the planner itself, so a build whose
-// planner moved can register its own. With none registered it answers
-// (nil, nil) without a call: an untagged build samples nothing, prints
-// nothing and launches exactly what the core builds (D550).
+// planning reports whether this build has a planner at all. The launch path
+// asks it first, so an untagged build's launch does none of the work a pair
+// would need — no price table, no credential read, no budget read — and
+// prints nothing of its own (D550).
 func planning() bool { return launchPlanner != nil }
 
-// planLaunch asks the build's planner whether this launch samples a pair. The
-// launch path calls this rather than the planner itself, so a build whose
-// planner moved can register its own. With none registered it answers
-// (nil, nil) without a call: an untagged build samples nothing, prints
-// nothing and launches exactly what the core builds (D550).
+// planLaunch asks the build's planner whether this launch samples a pair,
+// handing it the launch's own resolved facts and the environment behind
+// Cloud. A build with no planner never reaches it.
 func planLaunch(ctx context.Context, env *cloudEnv, run PlannedRun) (*Pair, error) {
 	p := launchPlanner
 	if p == nil {
