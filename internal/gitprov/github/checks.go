@@ -161,23 +161,36 @@ func (p *Provider) checkRuns(ctx context.Context, number int, sha string) ([]git
 // CIGreen, and the ladder's gate would merge red CI, so both are read.
 //
 // The combined status is the latest status of each context rather than every
-// status ever posted, so one request is the whole set and there is nothing to
-// follow. A repository that uses neither report answers an empty array.
+// status ever posted, but it is still a listing with the host's own page size
+// (30), so it is paged and bounded exactly as the check runs above are: a
+// repository where every package of a monorepo posts its own context has more
+// than one page of them, and a failing context left on the second page would
+// be read as a commit whose reported statuses all passed. A repository that
+// uses neither report answers an empty array.
 func (p *Provider) commitStatuses(ctx context.Context, number int, sha string) ([]gitprov.CheckRun, error) {
-	var out struct {
-		Statuses []struct {
-			State string `json:"state"`
-		} `json:"statuses"`
+	var runs []gitprov.CheckRun
+	path := p.repoPath(fmt.Sprintf("/commits/%s/status?per_page=%d", url.PathEscape(sha), checksPage))
+	for page := 0; ; page++ {
+		if page >= checksMaxPages {
+			return nil, fmt.Errorf("reading the commit statuses of pull request #%d at %s: more than %d pages of commit statuses", number, sha, checksMaxPages)
+		}
+		var out struct {
+			Statuses []struct {
+				State string `json:"state"`
+			} `json:"statuses"`
+		}
+		next, err := p.api.DoPage(ctx, "GET", path, nil, &out)
+		if err != nil {
+			return nil, fmt.Errorf("reading the commit statuses of pull request #%d at %s: %w", number, sha, err)
+		}
+		for _, s := range out.Statuses {
+			runs = append(runs, statusRun(s.State))
+		}
+		if next == "" {
+			return runs, nil
+		}
+		path = next
 	}
-	path := p.repoPath("/commits/" + url.PathEscape(sha) + "/status")
-	if err := p.api.Do(ctx, "GET", path, nil, &out); err != nil {
-		return nil, fmt.Errorf("reading the commit statuses of pull request #%d at %s: %w", number, sha, err)
-	}
-	runs := make([]gitprov.CheckRun, 0, len(out.Statuses))
-	for _, s := range out.Statuses {
-		runs = append(runs, statusRun(s.State))
-	}
-	return runs, nil
 }
 
 // statusRun maps one commit status onto the CheckRun shape ChecksState reads.

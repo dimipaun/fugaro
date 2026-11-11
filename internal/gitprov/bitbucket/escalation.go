@@ -38,8 +38,11 @@ func (p *Provider) MergeMintExemption() error { return gitprov.ErrMintNotApplica
 // difference from GitHub's adapter is deliberate rather than an oversight.
 //
 // The head is re-read and checked first, exactly as the GitHub adapter does
-// it (G2): the draft state is a write, and a write that lands on a head other
-// than the one the gate readied is the one thing this call exists to prevent.
+// it (G2), so the call acts only on the commit the gate read. The readying
+// write itself carries no head — on this host readying is an ordinary pull
+// request update — so a push landing between that read and that write is not
+// what this check catches; the head-bound call is the merge, and this host
+// refuses that one outright (ErrMergeNoHeadPrecondition below).
 func (p *Provider) MarkReady(ctx context.Context, number int, expectedHeadSHA string) error {
 	info, err := p.PullRequest(ctx, number)
 	if err != nil {

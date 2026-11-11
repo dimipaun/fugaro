@@ -88,6 +88,49 @@ func TestGithubChecksReadsEveryPage(t *testing.T) {
 	}
 }
 
+// TestGithubChecksReadsEveryStatusPage is the same bound on the other report.
+// The combined status is a list with the host's own page size (30), so a
+// repository whose contexts span more than one page — a monorepo where every
+// package posts its own — can hold its failing context on a page a single
+// request never sees. Reading only the first would report a commit whose
+// reported statuses all passed as one whose checks passed.
+func TestGithubChecksReadsEveryStatusPage(t *testing.T) {
+	var pages int
+	p := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.Method == "GET" && r.URL.Path == statusPath:
+			pages++
+			switch r.URL.Query().Get("page") {
+			case "":
+				if got := r.URL.Query().Get("per_page"); got != "100" {
+					t.Errorf("per_page = %q", got)
+				}
+				w.Header().Set("Link", fmt.Sprintf(`<http://%s/repos/acme/web/commits/%s/status?per_page=100&page=2>; rel="next"`, r.Host, checksSHA))
+				io.WriteString(w, `{"state": "success", "total_count": 2, "statuses": [{"context": "ci/one", "state": "success"}]}`)
+			case "2":
+				io.WriteString(w, `{"state": "failure", "total_count": 2, "statuses": [{"context": "codecov/project", "state": "failure"}]}`)
+			default:
+				t.Errorf("unexpected page %q", r.URL.Query().Get("page"))
+			}
+			return true
+		case r.Method == "GET" && r.URL.Path == "/repos/acme/web/commits/"+checksSHA+"/check-runs":
+			io.WriteString(w, `{"total_count": 0, "check_runs": []}`)
+			return true
+		}
+		return false
+	})
+	runs, err := p.Checks(ctx, 12, checksSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pages != 2 || len(runs) != 2 {
+		t.Fatalf("pages = %d, runs = %+v; want both pages and both commit statuses", pages, runs)
+	}
+	if got := gitprov.ChecksState(runs); got != gitprov.CIRed {
+		t.Errorf("ChecksState = %v, want red: the failing context was on the second page", got)
+	}
+}
+
 // TestGithubChecksNoRunsIsAnEmptySet is F25's shape: Fugaro's own repository
 // reports nothing on a pull request, and that is an empty set with no error —
 // never a state the caller could read as green by accident.

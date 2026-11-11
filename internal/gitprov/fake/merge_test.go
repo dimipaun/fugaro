@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // head is the commit a test's fake pull request is at, full-length so the
@@ -73,6 +74,41 @@ func TestFakeMarkReadyRefusesOnHeadChange(t *testing.T) {
 	}
 	if info, err := p.PullRequest(ctx, 1); err != nil || info.Draft {
 		t.Fatalf("PullRequest = %+v, %v; want ready", info, err)
+	}
+}
+
+// TestFakeHeadBoundCallBindsTheHeadItsReadsReport is the other half of the head
+// check. A state that records no Head is at the tip of its branch in Remote,
+// which is the head PullRequest reports, so a call at that commit must land and
+// one at another must refuse. Without this the double refuses the very head its
+// own read just handed the caller, and a ladder test written against it could
+// not ready or merge the pull request it had just read.
+func TestFakeHeadBoundCallBindsTheHeadItsReadsReport(t *testing.T) {
+	testutil.IsolateGit(t)
+	ctx := context.Background()
+	remote := testutil.NewRemote(t, map[string]string{"a.txt": "a\n"})
+	tip := testutil.Git(t, remote, "rev-parse", "refs/heads/main")
+	testutil.Git(t, remote, "update-ref", "refs/heads/"+runBranch, tip)
+
+	p := &Provider{Repo: "acme/app", Remote: remote, SelfID: "fugaro-bot"}
+	if _, err := p.EnsurePR(ctx, gitprov.PRSpec{Branch: runBranch, Base: "main", Draft: true}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := p.PullRequest(ctx, 1)
+	if err != nil || info.HeadSHA != tip {
+		t.Fatalf("PullRequest = %+v, %v (tip %s)", info, err, tip)
+	}
+	if err := p.MarkReady(ctx, 1, info.HeadSHA); err != nil {
+		t.Fatalf("MarkReady at the head PullRequest reported = %v", err)
+	}
+	if err := p.Merge(ctx, 1, headTwo); !errors.Is(err, gitprov.ErrHeadMoved) {
+		t.Fatalf("Merge at another commit = %v, want ErrHeadMoved", err)
+	}
+	if err := p.Merge(ctx, 1, info.HeadSHA); err != nil {
+		t.Fatalf("Merge at the head PullRequest reported = %v", err)
+	}
+	if info, err := p.PullRequest(ctx, 1); err != nil || info.State != gitprov.PRMerged {
+		t.Fatalf("PullRequest = %+v, %v; want merged", info, err)
 	}
 }
 

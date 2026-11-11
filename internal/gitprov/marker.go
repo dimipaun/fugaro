@@ -51,9 +51,14 @@ func TransitionMarker(runID, rung string) string {
 	return transitionPrefix + runID + " rung=" + rung + markerSuffix
 }
 
-// TransitionOf reports whether body is a ladder transition comment Fugaro
-// posted, naming the run that posted it and the rung it moved the item to.
-// The last transition marker in the body wins, for FugaroRun's reason.
+// TransitionOf reports whether body carries a ladder transition marker,
+// naming the run that posted it and the rung it moved the item to. It reads
+// the marker, so it reports a marker somebody typed as readily as one Fugaro
+// wrote: whether the comment is really Fugaro's is the caller's call, the
+// same one FugaroRun leaves to its caller (Comment.Self), and a caller that
+// acts on the rung has to make it. A rung the ladder has no name for is not a
+// transition this reads. The last transition marker in the body wins, for
+// FugaroRun's reason.
 func TransitionOf(body string) (runID, rung string, ok bool) {
 	if ms := transitionRE.FindAllStringSubmatch(body, -1); len(ms) > 0 {
 		last := ms[len(ms)-1]

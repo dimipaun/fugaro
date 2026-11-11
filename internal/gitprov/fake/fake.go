@@ -534,19 +534,11 @@ func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo,
 		return info, err
 	}
 	// git runs outside the lock: the branch is read from the PR's own spec.
-	cmd := exec.CommandContext(ctx, "git", "--git-dir", p.Remote, "rev-parse", "--verify", "--quiet", "refs/heads/"+head+"^{commit}")
-	cmd.WaitDelay = gitWaitDelay
-	out, err := cmd.Output()
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(bytes.TrimSpace(out)) == 0 {
-		// --verify --quiet: the branch is gone (a merge closed it). A real
-		// host still shows the PR, so the fake does too, without a head.
-		return info, nil
-	}
+	tip, err := p.branchTip(ctx, head)
 	if err != nil {
 		return gitprov.PRInfo{}, fmt.Errorf("fake provider: PR #%d's branch %s is not in %s: %w", number, head, p.Remote, err)
 	}
-	info.HeadSHA = strings.TrimSpace(string(out))
+	info.HeadSHA = tip
 	return info, nil
 }
 
@@ -802,7 +794,7 @@ func (p *Provider) MergeMintExemption() error { return gitprov.ErrMintNotApplica
 // head-bound call can be checked against, so it refuses too: a mock that
 // answered "yes, that head" for a head nobody recorded would let a test pass
 // a gate the real provider never would.
-func (p *Provider) MarkReady(_ context.Context, number int, expectedHeadSHA string) error {
+func (p *Provider) MarkReady(ctx context.Context, number int, expectedHeadSHA string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err := p.load(); err != nil {
@@ -817,7 +809,7 @@ func (p *Provider) MarkReady(_ context.Context, number int, expectedHeadSHA stri
 	if state := stateOf(st); state != gitprov.PROpen {
 		return fmt.Errorf("PR #%d is %s: %w", st.Number, state, gitprov.ErrPRNotOpen)
 	}
-	if err := p.checkHeadLocked(st, expectedHeadSHA); err != nil {
+	if err := p.checkHeadLocked(ctx, st, expectedHeadSHA); err != nil {
 		return err
 	}
 	p.setDraftLocked(st, false)
@@ -831,7 +823,7 @@ func (p *Provider) MarkReady(_ context.Context, number int, expectedHeadSHA stri
 // merges what a real host would merge at the head it was given. There is no
 // credential either: the gate is the caller's, and the mint that would refuse
 // an unbound merge is the real adapter's (E16, D2049).
-func (p *Provider) Merge(_ context.Context, number int, expectedHeadSHA string) error {
+func (p *Provider) Merge(ctx context.Context, number int, expectedHeadSHA string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err := p.load(); err != nil {
@@ -846,7 +838,7 @@ func (p *Provider) Merge(_ context.Context, number int, expectedHeadSHA string) 
 	if state := stateOf(st); state != gitprov.PROpen {
 		return fmt.Errorf("PR #%d is %s: %w", st.Number, state, gitprov.ErrPRNotOpen)
 	}
-	if err := p.checkHeadLocked(st, expectedHeadSHA); err != nil {
+	if err := p.checkHeadLocked(ctx, st, expectedHeadSHA); err != nil {
 		return err
 	}
 	if st.Draft {
@@ -875,13 +867,53 @@ func (p *Provider) Checks(_ context.Context, number int, sha string) ([]gitprov.
 }
 
 // checkHeadLocked refuses a head-bound call that the state cannot bind: no
-// recorded head, or one that is not the commit the caller named.
-func (p *Provider) checkHeadLocked(st *PRState, expected string) error {
-	if st.Head == "" {
+// head at all, or one that is not the commit the caller named.
+//
+// The head it binds to is the one PullRequest reports (Head's own doc): the
+// state's recorded Head when one is set, and otherwise the tip of the PR's
+// branch in Remote. Reading it any other way would have the fake refuse the
+// very head its own read had just handed the caller — a ladder test could not
+// then ready or merge the pull request it had just read — and a double that
+// refuses a call production accepts is worse than none.
+//
+// git runs while the lock is held, unlike PullRequest's read: what this binds
+// to must be the head the state is at when the write below happens, which is
+// the atomicity the real host has and this mutex stands in for.
+func (p *Provider) checkHeadLocked(ctx context.Context, st *PRState, expected string) error {
+	head := st.Head
+	if head == "" {
+		tip, err := p.branchTip(ctx, st.Spec.Branch)
+		if err != nil {
+			return fmt.Errorf("fake provider: PR #%d's branch %s is not in %s: %w", st.Number, st.Spec.Branch, p.Remote, err)
+		}
+		head = tip
+	}
+	if head == "" {
 		return fmt.Errorf("fake provider: PR #%d records no head, so a head-bound call cannot be checked", st.Number)
 	}
-	if err := gitprov.CheckExpectedHead(st.Head, expected); err != nil {
+	if err := gitprov.CheckExpectedHead(head, expected); err != nil {
 		return fmt.Errorf("fake provider: PR #%d: %w", st.Number, err)
 	}
 	return nil
+}
+
+// branchTip is the commit refs/heads/branch names in this provider's Remote,
+// "" when there is no remote or the branch is gone (a merge closed it), and
+// the git failure otherwise. It does not take the lock: PullRequest reads
+// outside it, checkHeadLocked inside.
+func (p *Provider) branchTip(ctx context.Context, branch string) (string, error) {
+	if p.Remote == "" || branch == "" {
+		return "", nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "--git-dir", p.Remote, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch+"^{commit}")
+	cmd.WaitDelay = gitWaitDelay
+	out, err := cmd.Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(bytes.TrimSpace(out)) == 0 {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
