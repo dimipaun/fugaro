@@ -38,8 +38,12 @@ package cli
 //     and a withdrawal before the opening put ever arrived, which is a document
 //     rather than a wait for a bound that nothing can beat.
 //   - TestWatchOneDeadFeedIsNotClearedByAnotherSubtree: the subtrees of `all`
-//     are separate feeds, so a put on one is no evidence about another and the
-//     document says so per scope rather than per child (H6, §10.6).
+//     are separate feeds, so a put on one is no evidence about another (H6,
+//     §10.6).
+//   - TestWatchADeadFeedDoesNotFreezeTheLiveOne: a feed that is over does not
+//     stop the read, so a change on the subtree that is still listening still
+//     reaches a reader while the other scope stays down in the same document
+//     (H3, H4).
 //   - TestWatchRefusedReadIsTerminalAndNamesTheCommand: the listen *refused* —
 //     a 401 or 403 on the subscription itself — ends the child, its sentence
 //     carrying the database's own cause and naming the command that fixes it
@@ -268,6 +272,24 @@ func (c *watchChild) stillRunning(t *testing.T, within time.Duration) {
 	}
 }
 
+// watchConn is the connection a hand-driven child writes through: the fixture's
+// project, the database client its subscriptions would be on, and the store the
+// coordinator scope is read from — one credential for the stream and every read
+// behind it (runGraphWatch).
+func watchConn(t *testing.T, f *graphFixture) (*fcli.Cloud, *rtdb.Client, *coordinator.Store) {
+	t.Helper()
+	env, err := fcli.OpenCloud(context.Background(), &fcli.CloudFlags{})
+	if err != nil {
+		t.Fatalf("opening the fixture's project: %v", err)
+	}
+	t.Cleanup(env.Close)
+	db, err := rtdb.New(f.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env, db, coordinator.NewStore(db)
+}
+
 // changedView and newestView are the fixture's repository reconciled again: the
 // same pull request, another number and title, on another release. A stream's
 // documents are compared across a write, and a view that differed in nothing
@@ -400,15 +422,7 @@ func TestWatchFirstSnapshotIsBoundedWhenTheListenIsSilent(t *testing.T) {
 func TestWatchFirstWaitsForEverySubtree(t *testing.T) {
 	f := newGraphFixture(t)
 	f.writeStoredView(t, storedView())
-	env, err := fcli.OpenCloud(context.Background(), &fcli.CloudFlags{})
-	if err != nil {
-		t.Fatalf("opening the fixture's project: %v", err)
-	}
-	t.Cleanup(env.Close)
-	db, err := rtdb.New(f.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
-	if err != nil {
-		t.Fatal(err)
-	}
+	env, db, store := watchConn(t, f)
 	st, err := graph.NewStream()
 	if err != nil {
 		t.Fatal(err)
@@ -423,7 +437,7 @@ func TestWatchFirstWaitsForEverySubtree(t *testing.T) {
 
 	sink := newWatchSink()
 	all := graph.Scope{Kind: graph.ScopeAll}
-	w := &watcher{env: env, out: sink, st: st, store: coordinator.NewStore(db), db: db, scope: all, subs: subs}
+	w := &watcher{env: env, out: sink, st: st, store: store, db: db, scope: all, subs: subs}
 	events := make(chan streamEvent, len(subs))
 	done := make(chan error, 1)
 	go func() { done <- w.first(context.Background(), events) }()
@@ -447,7 +461,7 @@ func TestWatchFirstWaitsForEverySubtree(t *testing.T) {
 	// nothing can beat.
 	events2 := make(chan streamEvent, len(subs))
 	done2 := make(chan error, 1)
-	withdrawing := &watcher{out: sink, st: st, scope: all, subs: subs}
+	withdrawing := &watcher{env: env, out: sink, st: st, store: store, db: db, scope: all, subs: subs}
 	go func() { done2 <- withdrawing.first(context.Background(), events2) }()
 	events2 <- streamEvent{subtree: subs[0], ev: rtdb.Event{Type: "cancel"}}
 	events2 <- streamEvent{subtree: subs[1], ev: rtdb.Event{Type: "put", Path: "/"}}
@@ -1194,6 +1208,9 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 	})
 
 	t.Run("before the opening put", func(t *testing.T) {
+		f := newGraphFixture(t)
+		f.writeStoredView(t, storedView())
+		env, db, store := watchConn(t, f)
 		closed := make(chan streamEvent)
 		close(closed)
 
@@ -1204,7 +1221,7 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 		var out bytes.Buffer
 		// One subtree, because the wait is one opening put per subtree: the
 		// closed channel is every subscription this child holds.
-		w := &watcher{out: &out, st: st, subs: []string{coordpath.PathRoot}}
+		w := &watcher{env: env, out: &out, st: st, store: store, db: db, subs: []string{coordpath.PathRoot}}
 		if err := w.first(context.Background(), closed); err != nil {
 			t.Fatalf("a withdrawn listen ended the child with %v, want the first document, its scope down", err)
 		}
@@ -1216,10 +1233,15 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 			t.Errorf("the first document's sources are %+v, want the one scope down", doc.Sources)
 		}
 		if got := doc.Sources[0].Source; got != "coordinator" {
-			t.Errorf("the first document's source is %q, want coordinator: a child with no last document still names the scope it holds", got)
+			t.Errorf("the first document's source is %q, want coordinator: `all` is a selector and not a source, so its documents list the scopes it covers", got)
 		}
 		if got := doc.Sources[0].Reason; got != withdrawnListen {
 			t.Errorf("the reason is %q, want %q", got, withdrawnListen)
+		}
+		// The document behind the down scope is the read's: a withdrawn listen
+		// is one subscription, and the read never was that subscription.
+		if len(doc.Nodes) != 1 || doc.Nodes[0].Title != "the stored title" {
+			t.Errorf("the first document drew %+v, want the stored graph the read answers", doc.Nodes)
 		}
 		if doc.Seq != 1 || doc.StreamID == "" {
 			t.Errorf("the first document is seq %d under stream %q, want seq 1 under this child's stream", doc.Seq, doc.StreamID)
@@ -1245,7 +1267,10 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		w := &watcher{out: &out, st: st, scope: scope, subs: []string{node}}
+		f := newGraphFixture(t)
+		f.writeOrchestratorState(t, "o1", "land the state migration", "move the sweep onto the daemon")
+		env, db, store := watchConn(t, f)
+		w := &watcher{env: env, out: &out, st: st, store: store, db: db, scope: scope, subs: []string{node}}
 		if err := w.first(context.Background(), closed); err != nil {
 			t.Fatalf("a withdrawn listen ended the child with %v, want the first document, its scope down", err)
 		}
@@ -1259,16 +1284,48 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 		if doc.Sources[0].State != graph.SourceDown || doc.Sources[0].Reason != withdrawnListen {
 			t.Errorf("the scope is %+v, want it down because %q", doc.Sources[0], withdrawnListen)
 		}
+		if len(doc.Nodes) != 2 {
+			t.Errorf("the first document drew %d nodes, want the node's two work items: the read answered, and the listen is not the read", len(doc.Nodes))
+		}
+	})
+
+	t.Run("no read behind it, and the scope is the one asked for", func(t *testing.T) {
+		// The other way a document with nothing behind it is named: the first
+		// read failed, so there is no graph to render over and the scope the
+		// child holds is all it can name (downDoc). Driving the renderer
+		// directly is what reaches that instant for a named scope: a read that
+		// fails for one answers a state, and only a child that never got an
+		// answer at all has none.
+		scope := mustScope(t, "orchestrator:o1")
+		node, err := orchestrator.PathNode(scope.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := &watcher{scope: scope, subs: []string{node}}
+		w.feedDead(node, withdrawnListen)
+		doc := w.downDoc(graph.Document{}, w.down)
+		if len(doc.Sources) != 1 || doc.Sources[0].Source != "orchestrator:o1" {
+			t.Errorf("the document's sources are %+v, want the one scope the child holds", doc.Sources)
+		}
+		if doc.Sources[0].State != graph.SourceDown || doc.Sources[0].Reason != withdrawnListen {
+			t.Errorf("the scope is %+v, want it down because %q", doc.Sources[0], withdrawnListen)
+		}
+		if len(doc.Nodes) != 0 || len(doc.Edges) != 0 {
+			t.Errorf("the document drew %d nodes and %d edges, want none: there was no read", len(doc.Nodes), len(doc.Edges))
+		}
 	})
 }
 
 // TestWatchOneDeadFeedIsNotClearedByAnotherSubtree: `all` holds one
-// subscription per subtree (H6), so each subtree's feed is a fact of its own
-// and the document a reader draws says so per scope: a put on a subtree that is
-// listening is evidence about that subtree and about nothing else. A listen the
-// server withdrew stays over — no subscription is left to deliver the put that
-// would bring it back — while a transport that fell over comes back on its own
-// subtree's next put, and neither of the two may be read as the other's.
+// subscription per subtree (H6), so each subtree's feed is a fact of its own: a
+// put on a subtree that is listening is evidence about that subtree and about
+// nothing else. A listen the server withdrew stays over — no subscription is
+// left to deliver the put that would bring it back — while a transport that
+// fell over comes back on its own subtree's next put, and neither of the two
+// may be read as the other's.
+//
+// What the states do to a document is
+// TestWatchADeadFeedDoesNotFreezeTheLiveOne's; this is the bookkeeping under it.
 func TestWatchOneDeadFeedIsNotClearedByAnotherSubtree(t *testing.T) {
 	subs, err := graph.ScopeSubtrees(graph.Scope{Kind: graph.ScopeAll})
 	if err != nil {
@@ -1278,59 +1335,24 @@ func TestWatchOneDeadFeedIsNotClearedByAnotherSubtree(t *testing.T) {
 		t.Fatalf("`all` covers %v, want at least two subtrees: this test is about one feed being over while another is live", subs)
 	}
 
-	// The child's last read: two scopes, both up, one under each subtree.
-	base := graph.Document{
-		Version: graph.DocumentVersion,
-		Sources: []graph.SourceState{
-			{Source: "coordinator", State: graph.SourceUp},
-			{Source: "orchestrator:o1", State: graph.SourceUp},
-		},
-		Nodes: []graph.Node{}, Edges: []graph.Edge{},
-	}
-
-	// write prints one document, which is all a scope that is down needs: the
-	// read is skipped while a feed is over, and this child has no connection to
-	// read through (snapshot).
-	write := func(t *testing.T, w *watcher) graph.Document {
-		t.Helper()
-		if len(w.down) == 0 {
-			t.Fatalf("every feed is live, so this document is a read and this child has no connection for one")
-		}
-		st, err := graph.NewStream()
-		if err != nil {
-			t.Fatal(err)
-		}
-		var out bytes.Buffer
-		w.st, w.out = st, &out
-		if err := w.write(context.Background(), time.Now()); err != nil {
-			t.Fatalf("writing the document ended the child with %v", err)
-		}
-		doc, err := graph.ParseDocument(bytes.TrimSpace(out.Bytes()))
-		if err != nil {
-			t.Fatalf("the child wrote a line that is not a document: %v: %s", err, out.String())
-		}
-		return doc
-	}
-
 	t.Run("a withdrawn listen outlives a put on the other subtree", func(t *testing.T) {
-		w := &watcher{scope: graph.Scope{Kind: graph.ScopeAll}, subs: subs, base: base}
+		w := &watcher{scope: graph.Scope{Kind: graph.ScopeAll}, subs: subs}
 		if err := w.observe(subs[1], rtdb.Event{Type: "cancel"}); err != nil {
 			t.Fatalf("the cancel ended the child with %v, want a scope that is down", err)
 		}
 		if err := w.observe(subs[0], rtdb.Event{Type: "put", Path: "/"}); err != nil {
 			t.Fatalf("the put ended the child with %v", err)
 		}
-		doc := write(t, w)
-		if got := doc.Sources[0]; got.State != graph.SourceUp {
-			t.Errorf("the listening subtree's scope is %+v, want it up", got)
+		if got := w.down[subs[1]]; got != withdrawnListen {
+			t.Errorf("the withdrawn listen is over because %q, want %q: a put on the other subtree says nothing about this one", got, withdrawnListen)
 		}
-		if got := doc.Sources[1]; got.State != graph.SourceDown || got.Reason != withdrawnListen {
-			t.Errorf("the withdrawn listen's scope is %+v, want it down because %q: a put on the other subtree says nothing about this one", got, withdrawnListen)
+		if got, live := w.down[subs[0]]; live {
+			t.Errorf("the listening subtree is marked down because %q, want it live: it proved it with a put", got)
 		}
 	})
 
 	t.Run("a put clears its own subtree and no other", func(t *testing.T) {
-		w := &watcher{scope: graph.Scope{Kind: graph.ScopeAll}, subs: subs, base: base}
+		w := &watcher{scope: graph.Scope{Kind: graph.ScopeAll}, subs: subs}
 		for _, sub := range subs {
 			if err := w.observe(sub, rtdb.Event{Type: "error", Err: errors.New("the connection fell over")}); err != nil {
 				t.Fatalf("the transport error on %s ended the child with %v", sub, err)
@@ -1341,14 +1363,114 @@ func TestWatchOneDeadFeedIsNotClearedByAnotherSubtree(t *testing.T) {
 		if err := w.observe(subs[0], rtdb.Event{Type: "put", Path: "/"}); err != nil {
 			t.Fatalf("the put ended the child with %v", err)
 		}
-		doc := write(t, w)
-		if got := doc.Sources[0]; got.State != graph.SourceUp {
-			t.Errorf("the reconnected subtree's scope is %+v, want it up", got)
+		if got, dead := w.down[subs[0]]; dead {
+			t.Errorf("the reconnected subtree is still marked down because %q, want its own put to have cleared it", got)
 		}
-		if got := doc.Sources[1]; got.State != graph.SourceDown || got.Reason == "" {
-			t.Errorf("the subtree whose transport has not come back is %+v, want it down with a reason", got)
+		if w.down[subs[1]] == "" {
+			t.Error("the subtree whose transport has not come back is not marked down, want it down with a reason")
 		}
 	})
+}
+
+// TestWatchADeadFeedDoesNotFreezeTheLiveOne: the read behind every document is
+// not the subscription's, so a subtree whose listen the server withdrew — which
+// nothing clears while the child lives (H6, §10.6) — does not stop the scopes
+// that are still listening from answering. A document is the read's graph with
+// the sources under a feed that is over marked down on top of it, so a change on
+// the live subtree still reaches a reader, with the next sequence, while the
+// dead one stays down in the same document (H3, H4).
+//
+// The two subtrees are driven by hand, as the withdrawal can only be: the fake's
+// cancel is a broadcast and it always closes the stream it cancels, and a
+// refused listen is the child's own refusal and not a scope that is down
+// (TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand).
+func TestWatchADeadFeedDoesNotFreezeTheLiveOne(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	f.writeOrchestratorState(t, "o1", "land the state migration", "move the sweep onto the daemon")
+	env, db, store := watchConn(t, f)
+
+	subs, err := graph.ScopeSubtrees(graph.Scope{Kind: graph.ScopeAll})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subs) < 2 {
+		t.Fatalf("`all` covers %v, want at least two subtrees: this test is about one of them being over", subs)
+	}
+	st, err := graph.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	w := &watcher{env: env, out: &out, st: st, store: store, db: db, scope: graph.Scope{Kind: graph.ScopeAll}, subs: subs}
+
+	// write prints the document this instant makes, which is what a reader sees.
+	write := func(t *testing.T) graph.Document {
+		t.Helper()
+		out.Reset()
+		if err := w.write(context.Background(), time.Now()); err != nil {
+			t.Fatalf("writing the document ended the child with %v", err)
+		}
+		doc, err := graph.ParseDocument(bytes.TrimSpace(out.Bytes()))
+		if err != nil {
+			t.Fatalf("the child wrote a line that is not a document: %v: %s", err, out.String())
+		}
+		return doc
+	}
+	stateOf := func(t *testing.T, doc graph.Document, source string) graph.SourceState {
+		t.Helper()
+		for _, s := range doc.Sources {
+			if s.Source == source {
+				return s
+			}
+		}
+		t.Fatalf("the document lists %+v, want a source %q", doc.Sources, source)
+		return graph.SourceState{}
+	}
+
+	// The listen to /orchestrator is withdrawn, and /coordinator is listening
+	// and says something changed.
+	if err := w.observe(subs[1], rtdb.Event{Type: "cancel"}); err != nil {
+		t.Fatalf("the cancel ended the child with %v, want a scope that is down", err)
+	}
+	if err := w.observe(subs[0], rtdb.Event{Type: "put", Path: "/"}); err != nil {
+		t.Fatalf("the put ended the child with %v", err)
+	}
+	first := write(t)
+	if got := stateOf(t, first, "coordinator"); got.State != graph.SourceUp {
+		t.Errorf("the coordinator scope is %+v, want it up: its own listen is not the one that went away", got)
+	}
+	if got := stateOf(t, first, "orchestrator:o1"); got.State != graph.SourceDown || got.Reason != withdrawnListen {
+		t.Errorf("the scope under the withdrawn listen is %+v, want it down because %q", got, withdrawnListen)
+	}
+	if len(first.Nodes) != 3 {
+		t.Errorf("the document drew %d nodes, want the stored record's one and the node's two work items: the read answers for the scope whose feed is over too", len(first.Nodes))
+	}
+
+	// The change on the live subtree is the one the dead feed must not swallow:
+	// the read is made, so the document carries it, and the scope whose listen
+	// is gone stays down in the same document.
+	f.writeStoredView(t, changedView())
+	if err := w.observe(subs[0], rtdb.Event{Type: "put", Path: "/"}); err != nil {
+		t.Fatalf("the put ended the child with %v", err)
+	}
+	second := write(t)
+	if second.Seq != first.Seq+1 {
+		t.Errorf("the document after the change is seq %d, want the next one, %d", second.Seq, first.Seq+1)
+	}
+	if got := stateOf(t, second, "coordinator"); got.State != graph.SourceUp {
+		t.Errorf("the coordinator scope is %+v, want it up", got)
+	}
+	titles := make([]string, 0, len(second.Nodes))
+	for _, n := range second.Nodes {
+		titles = append(titles, n.Title)
+	}
+	if !strings.Contains(strings.Join(titles, ", "), "the changed title") {
+		t.Errorf("the document drew %v, want the change the live subtree announced: a dead feed is one subscription and not the read", titles)
+	}
+	if got := stateOf(t, second, "orchestrator:o1"); got.State != graph.SourceDown || got.Reason != withdrawnListen {
+		t.Errorf("the scope under the withdrawn listen is %+v, want it still down because %q", got, withdrawnListen)
+	}
 }
 
 // TestWatchRefusedReadIsTerminalAndNamesTheCommand: a refusal is what ends the
@@ -1401,7 +1523,13 @@ func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
 	t.Run("the listen is refused on a reconnect", func(t *testing.T) {
 		f := newGraphFixture(t)
 		f.writeStoredView(t, storedView())
-		fast(t, testFloor, testKeep)
+		// The floor is deliberately longer than the transport's own wait before
+		// it reconnects — the stream backoff, a second — so the refusal that
+		// ends this child is the reconnect's and its sentence is the listen's.
+		// The other order is a refusal too and its own test's: a read refused
+		// while the listen stands is what
+		// TestWatchRefusedReadIsTerminalWhileTheListenStands holds.
+		fast(t, 4*time.Second, testKeep)
 
 		sink := newWatchSink()
 		child := startWatch(t, sink, "graph", "--watch", "--json")
@@ -1410,9 +1538,9 @@ func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
 		}
 
 		// The grant is withdrawn while the console is watching: the connection
-		// dies without a word — a scope that is down, a document and not an
-		// exit — and the reconnect that follows is refused with 403, which is
-		// the other thing entirely.
+		// dies without a word, and the reconnect that follows is refused with
+		// 403, which is this CLI being refused the graph rather than a scope
+		// whose transport fell over.
 		f.db.Refuse(http.StatusForbidden, "403", "Forbidden", "Permission denied")
 		f.db.DropStreams()
 
@@ -1420,15 +1548,21 @@ func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
 		if err == nil {
 			t.Fatalf("the child kept streaming after the listen was refused")
 		}
-		for _, want := range []string{"refused this CLI's credential", "403", "Permission denied", "roles/firebasedatabase.viewer"} {
+		for _, want := range []string{"refused this CLI's credential", "403", "Permission denied", "roles/firebasedatabase.viewer", "gcloud auth application-default login"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal is %q, want it to carry %q", err, want)
 			}
 		}
-		// The down document came first, and it is what tells a reader the two
-		// apart: the transport fell over, and then this CLI was refused.
-		if written := sink.text(); !strings.Contains(written, `"state":"down"`) {
-			t.Errorf("the child never said the scope was down before it was refused; it wrote:\n%s", written)
+		// The refusal is an exit and never a document: the graph the child had
+		// when the grant went is the last thing it wrote, and nothing about it
+		// is marked down for a listen it was refused rather than one that fell
+		// away (H3, T3, contract §6.22).
+		written := strings.TrimSpace(sink.text())
+		if strings.Contains(written, `"state":"down"`) {
+			t.Errorf("the refused listen was drawn as a scope whose transport is down:\n%s", written)
+		}
+		if n := strings.Count(written, "\n") + 1; n != 1 {
+			t.Errorf("the child wrote %d documents, want the first snapshot and nothing after it:\n%s", n, written)
 		}
 	})
 

@@ -390,9 +390,17 @@ func (w *watcher) write(ctx context.Context, now time.Time) error {
 	return graph.WriteDoc(w.out, w.st.Next(doc, now))
 }
 
-// snapshot is the document this instant's read makes, or the last one with its
-// sources marked down when the read cannot be made: a scope that is down is a
+// snapshot is the document this instant's read makes — with the sources under a
+// feed that is over marked down on top of it — or, when the read cannot be made,
+// the last one it made with every source marked down: a scope that is down is a
 // state, and the last thing it said is what a reader still draws beside it (H3).
+//
+// The read is made whether or not a subscription is still delivering. A feed
+// that is over is one subscription, and the read is not that subscription's: a
+// withdrawn listen leaves the scope behind it frozen, and skipping the read
+// would freeze the scopes that are still listening with it — under `all`, one
+// dead feed would stop every change on the live one from ever reaching a reader
+// (H3, H4, H6).
 //
 // A read that *fails* is such a state, and never the end of the child: an
 // unreachable database, a bucket that refused a listing, a server that answered
@@ -409,9 +417,6 @@ func (w *watcher) write(ctx context.Context, now time.Time) error {
 // shows the refusal's sentence as "this CLI has no graph"; a state it draws as a
 // graph that is down.
 func (w *watcher) snapshot(ctx context.Context, now time.Time) (graph.Document, error) {
-	if len(w.down) > 0 {
-		return w.downDoc(w.base, w.down), nil
-	}
 	var warned bytes.Buffer
 	// The read's own instant is the age the stream can give (contract §6.22):
 	// it is the caller that read the views and knows when (CG7), where the
@@ -420,7 +425,11 @@ func (w *watcher) snapshot(ctx context.Context, now time.Time) (graph.Document, 
 	switch {
 	case err == nil:
 		w.base = doc
-		return doc, nil
+		// A source under a feed that is over is drawn from this answer and
+		// marked down over it: the read still answers for it, but the
+		// subscription that would have said it changed is gone, so that scope
+		// is not being kept up to date (H3, §10.6).
+		return w.downDoc(doc, w.down), nil
 	case fcli.ExitCode(err) != fcli.ExitUserError:
 		// A read that failed is every source's: the read covers every scope the
 		// child draws, so there is no subtree whose data is still fresh. It is
@@ -490,11 +499,11 @@ func (w *watcher) sourceSubtree(source string) string {
 	return ""
 }
 
-// downDoc is the document of a scope that is down: the last thing the scope
-// said, the sources whose feed is over marked down and why, and no age on those,
-// because nothing was re-read (H3, contract §6.22). The nodes stay, so a screen
-// draws the graph it last had and says beside it that it is not being kept up to
-// date.
+// downDoc renders a document over the graph a scope that is down still has: the
+// sources whose feed is over are marked down and why, with no age on them,
+// because the subscription that would have kept them up to date is gone (H3,
+// contract §6.22). The nodes stay as the document had them, so a screen draws
+// the graph it last had and says beside it that it is not being kept up to date.
 //
 // Only the sources whose own subtree is over are marked: a child of `all` holds
 // two subscriptions, and one of them being dead is not a fact about the scope
@@ -502,17 +511,22 @@ func (w *watcher) sourceSubtree(source string) string {
 // and a source drawn down while its feed is still delivering would hide a graph
 // that is up to date (H3, H6).
 //
-// Before the child has written anything there is no last graph, and the scope
-// itself is still what is known: one source, down, with the read's own words as
-// its reason and no nodes. That is a scope whose first read failed, which is a
-// document a console draws rather than the child ending with no graph at all —
-// which is the whole of H3, at the one instant a child has no last document.
+// What is rendered over is either this instant's read or — when the read itself
+// failed — the last one it made, and the states are copied before they are
+// marked, so neither of those is changed by the rendering.
+//
+// Before the child has read anything there is no graph to render over, and the
+// scope itself is still what is known: one source, down, with the read's own
+// words as its reason and no nodes. That is a scope whose first read failed,
+// which is a document a console draws rather than the child ending with no graph
+// at all — which is the whole of H3, at the one instant a child has no document
+// behind it.
 // That source is the scope the child was asked for and never the coordinator by
 // default: `all` is a selector and not a source, so it is named by the scope its
 // documents list first (contract §6.22), and a child of `orchestrator:<id>` or
 // `local:<id>` names that scope, which is the only one it holds.
-func (w *watcher) downDoc(last graph.Document, down map[string]string) graph.Document {
-	doc := last
+func (w *watcher) downDoc(over graph.Document, down map[string]string) graph.Document {
+	doc := over
 	if len(doc.Sources) == 0 {
 		doc = graph.Document{
 			Version: graph.DocumentVersion,
@@ -524,6 +538,12 @@ func (w *watcher) downDoc(last graph.Document, down map[string]string) graph.Doc
 		}
 		return doc
 	}
+	// The states are the caller's to keep: what is rendered over is the read's
+	// own answer, which is also the base a failed read is drawn from, and a mark
+	// written into its slice would stay in it (snapshot).
+	sources := make([]graph.SourceState, len(doc.Sources))
+	copy(sources, doc.Sources)
+	doc.Sources = sources
 	for i := range doc.Sources {
 		reason, dead := down[w.sourceSubtree(doc.Sources[i].Source)]
 		if !dead {
