@@ -985,6 +985,90 @@ func TestADeclineAndAnApprovalDoNotCross(t *testing.T) {
 	}
 }
 
+// parkedApplications is the store with the first read of the queue held open
+// inside it, holding what it read: how a test leaves an action standing on a
+// snapshot without waiting on a clock. The list is a copy (§Memory returns one)
+// and the caller goes on with that copy, so a second action that answers a
+// request inside the window is exactly the one the parked caller does not see.
+type parkedApplications struct {
+	*Memory
+	gate    time.Duration
+	reached chan struct{}
+
+	mu   sync.Mutex
+	used bool
+}
+
+func (p *parkedApplications) Applications(ctx context.Context) ([]Application, error) {
+	held, err := p.Memory.Applications(ctx)
+	p.mu.Lock()
+	first := !p.used
+	p.used = true
+	p.mu.Unlock()
+	if first {
+		close(p.reached)
+		time.Sleep(p.gate)
+	}
+	return held, err
+}
+
+// TestAnApprovalDoesNotMintOnAStaleRequest: an approval reads the request the
+// form names to know which branch it is on and whether the owner has already
+// said no, and §4.5's queue is drawn from that same flag. A decline landing
+// between that read and the mint would otherwise be answered twice: the key is
+// issued for a request the owner has just declined, and the decline the page
+// recorded is written over with Approved, so a request the owner answered "no"
+// ends up licensed and the queue says "yes".
+//
+// The read is parked with the answer it took, which is what makes it stale: the
+// decline lands inside the window and what the approval goes on with is the
+// list it was given before it did.
+func TestAnApprovalDoesNotMintOnAStaleRequest(t *testing.T) {
+	var parked *parkedApplications
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		parked = &parkedApplications{Memory: f.store, gate: burstGate, reached: make(chan struct{})}
+		f.deps.Store = parked
+	})
+	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a multi-seat trial"}}))
+	open := f.open()
+	if len(open) != 1 {
+		t.Fatalf("the manual form left %d open request(s), want one", len(open))
+	}
+	id := open[0].ID
+	approve := f.mintForm(url.Values{
+		"application": {id}, "plan": {paidPlanName}, "seats": {"3"},
+		"term_days": {"365"}, "organisation": {"acme.example"},
+	})
+	decline := f.decideForm(id)
+
+	codes := make([]int, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		codes[0] = f.adminPost(RouteAdminMint, approve).Code
+	}()
+	go func() {
+		defer wg.Done()
+		<-parked.reached
+		codes[1] = f.adminPost(RouteAdminDecide, decline).Code
+	}()
+	wg.Wait()
+
+	if got := answered(codes, http.StatusSeeOther); got != 1 {
+		t.Errorf("%d of the two answers were the page's own, want one: a request is declined or approved and not both (%v)", got, codes)
+	}
+	if got := answered(codes, http.StatusConflict); got != 1 {
+		t.Errorf("%d of the two answers refused the other's ground, want one (%v)", got, codes)
+	}
+	// And what the page leaves behind is one of those answers: the key with the
+	// request approved, or no key with it declined. A request the page answers
+	// with anything else is one the owner declined and the record licensed.
+	if held := f.queued(); len(f.records()) > 0 && len(held) == 1 && held[0].Decision != Approved {
+		t.Errorf("a key was issued for a request the page answers %q: %+v", held[0].Decision, held[0])
+	}
+}
+
 // failingApplications is the store as a deployment that cannot answer a
 // request: the write §5.2 puts **after** the mint, which is the one failure that
 // leaves a key issued for a request the queue still shows as open.

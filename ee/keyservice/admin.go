@@ -272,6 +272,19 @@ func (s *Service) adminMint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The page's one action stands on one request at a time, from the read of it
+	// to the record: what is below reads the request the form names, and the
+	// record §5.2 writes after the key, and a decline (adminDecide) reads and
+	// writes that same request. An approval that read the queue outside this turn
+	// would decide against a snapshot — minting for a request the owner has
+	// already declined and then writing its own answer over that decline, which
+	// is a key issued for a "no" and a queue that no longer says so — and a burst
+	// of approvals would each read a record that does not hold the other's key
+	// yet (TestAnApprovalDoesNotMintOnAStaleRequest,
+	// TestConcurrentApprovalsMintOnce, TestConcurrentMintsRespectTheCap).
+	s.pageMu.Lock()
+	defer s.pageMu.Unlock()
+
 	var queued Application
 	if id := strings.TrimSpace(form.Get("application")); id != "" {
 		held, found, err := s.application(ctx, id)
@@ -319,15 +332,6 @@ func (s *Service) adminMint(w http.ResponseWriter, r *http.Request) {
 	// re-issue impossible and answer it as a success, which is the one thing a
 	// page that cannot tell the two apart must not do
 	// (TestAnOrderFormMintCanBeIssuedAgain).
-	//
-	// And it is checked and acted on one click at a time, from here to the
-	// record: both of the checks below read the record and §5.2 puts the write
-	// of it after the key, so a burst of this action would have every request in
-	// it read the same record and mint against it
-	// (TestConcurrentApprovalsMintOnce, TestConcurrentMintsRespectTheCap).
-	s.pageMu.Lock()
-	defer s.pageMu.Unlock()
-
 	source := sourceApproval + queued.ID
 	if queued.ID == "" {
 		source = sourceOrder + organisation + ":" + strconv.Itoa(seats) + ":" + pageNonce(form.Get("token"))
