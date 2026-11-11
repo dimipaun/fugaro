@@ -74,8 +74,10 @@ type Cost struct {
 	// repricing of the run reads, so `fugaro estimate` can price the run's
 	// own usage again on another model (F8). A model ID here is one the
 	// run's own path keyed usage under, never a string an upstream response
-	// claimed. CacheReadTokens and CacheWriteTokens are the sums of these
-	// per-model figures.
+	// claimed. On a run with a gateway these counts are what
+	// CacheReadTokens and CacheWriteTokens sum; a run without one records
+	// no such totals -- they are the gateway's -- so its per-model counts
+	// stand alone and a reader that wants a total sums these entries.
 	//
 	// The split is what each path could tell, so a zero is "this path had
 	// none or could not tell", never a guess: the gateway prices every call
@@ -109,10 +111,10 @@ type Cost struct {
 
 // ModelTokenCounts is one model's token counts on a run (F8): what the gateway
 // priced for it, or what the agent reported for it on a run with no gateway.
-// Every count is written, zero included, so a reader never has to tell "used
-// none" from "not recorded" -- the record as a whole says which paths filled
-// it, through model_source. Web searches are not here: they are priced apart
-// and a repricing of the run's tokens does not carry them.
+// Every count is written, zero included, so a member is never absent: a zero is
+// a count, and which paths could tell one from "used none" is ModelTokens' own
+// note. Web searches are not here: they are priced apart and a repricing of the
+// run's tokens does not carry them.
 type ModelTokenCounts struct {
 	Input        int64 `json:"input"`
 	Output       int64 `json:"output"`
