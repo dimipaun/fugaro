@@ -590,9 +590,13 @@ the setup door is the door that writes the first one. The consequence, stated ra
 the person nothing.** No covered stage has anything to change in that release, so the run's single confirmation — asked lazily, only when a stage in
 front of it has something to do — is never printed, and the unit is re-rendered and the service reloaded on the strength of the plan line alone. That is
 the trade the ruling makes: one command, no questions, on a write to the person's own file under their own home that names the same program it already
-named. The reversal is one place — `internal/cli/update_unit_stage.go`'s `Apply` — plus this document and the pin that holds the ruling;
-`TestDocsStatelessOrchestratorUnitRerenderAsksNothing` is that pin, and `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged` holds the behavior
-(`askedSomething` fails the test if the step ever prints a question).
+named. **Where this comes from, because the record has to say so rather than leave a reader to guess**: it is not this plan's reading and not the
+implementing task's — the owner's instruction of **2026-11-10** carried it into task O9 as one of that task's hard rules (`fugaro update` stays the
+whole upgrade **with no extra confirmation prompt**), which is the same objection Q2's answer raised for a managed project. The plan's `Typed` sentence
+above is therefore **left standing rather than deleted**: the amendment below it is the ruling, and a reader who disagrees with the ruling reverses it in
+the one place named here rather than hunting for the text that was removed. The reversal is one place — `internal/cli/update_unit_stage.go`'s `Apply` —
+plus this document and the pin that holds the ruling; `TestDocsStatelessOrchestratorUnitRerenderAsksNothing` is that pin, and
+`TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged` holds the behavior (`askedSomething` fails the test if the step ever prints a question).
 
 **Open items T8's ruling leaves (reported, not decided).** (1) `fugaro setup`'s first install and T8's re-render are the same stage under one name and now
 answer a plan line the same way, so the class T7 asked for exists nowhere: a unit is code that runs at every login, and the step that writes or
@@ -600,6 +604,22 @@ re-renders one is fenced by the session (no marker, a person at the terminal, no
 what the security review of the write path was given, and **whether the typed word comes back is the owner's to rule, not this task's**. (2) The update
 door's step and the setup door's step are one name in `initflow`'s order and two implementations (`initStages` picks by door), so a rule that has to hold
 for both — the fence above — is stated twice. **Reported** (O9).
+
+**The program a re-render writes (the implementation's own narrowing, 2026-11-11; reported, NOT an owner ruling).** T7's re-render and T8's no-prompt
+reading both compare the file on disk with the text this release renders, and that text carries **one binary path: the one this process is running**. Both
+of them say "the same program it already named" (T8, above) — and the code did not: an `update` run from a checkout's `go build`, from `go run`'s
+temporary binary, or from a copy in a scratch directory re-pointed the installed unit at that path, silently, with nothing asking and the plan line
+naming only the unit's file. A unit runs its program at every login and restarts it whenever it stops (the template's keep-alive), so the unit would then
+restart a program a `go clean`, a reboot or a deleted checkout takes away — and since both doors compare the file's **text**, the next `update` would find
+it current and nothing would ever repair it. **The narrowing: the update door re-points an installed unit only at a fugaro a release installed** — a
+versioned build (`internal/cli.Version`, which the release's ldflags stamp and a checkout's `go build`, `go run` and every test leave as `dev`) in a
+directory that is not the system's temporary directory. Anything else writes nothing, prints **both paths** (the one the unit names, read back out of the
+file, and the one this run is) and names `fugaro orchestrator install`, which is the command that points a unit at another program deliberately. What is
+**not** narrowed: a re-render that keeps the program the unit already names still happens from any build, so a release that changes the template still
+converges under one `fugaro update` (the HARD RULE), and the `setup` door keeps the re-point — the person is at a terminal, the plan line names both
+paths, and the run they confirmed is the run that asked for the unit. The pins are `TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow` and
+`TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall`, with `TestDocsStatelessOrchestratorUnitRepointRule` holding this paragraph. **The reversal
+is one place**: `unitMayNameThisBinary` in `internal/cli/init_orchestrator_stage.go`, plus this paragraph and that pin.
 
 **Open items BF2's triage rule leaves (2026-11-08; reported, not decided).** (1) **The findings file is BF1's, and BF1 is not on `main`** (U10), so
 the rule's third input does not exist yet: until it lands the triage fails closed on every long run — it cancels nothing, merges nothing and recommends

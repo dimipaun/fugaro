@@ -305,6 +305,60 @@ func TestDocsStatelessOrchestratorUnitRerenderAsksNothing(t *testing.T) {
 	}
 }
 
+// The program a re-render writes is the one place this implementation narrowed
+// T7's and T8's reading on its own, so the record has to say so in as many words:
+// who decided it (the implementation, not the owner), what it decided (only a
+// fugaro a release installed may be written into a unit that restarts its
+// program forever), what it did not decide (a re-render that keeps the program
+// still happens from any build, and the setup door keeps the re-point), and
+// where to reverse it. The code side is pinned with it: both clauses of the rule
+// and the two tests that hold it.
+func TestDocsStatelessOrchestratorUnitRepointRule(t *testing.T) {
+	plan := soRead(t, soPlan)
+	rec := soRead(t, soReconciled)
+	flat := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	for _, want := range []string{
+		"The program a re-render writes (the implementation's own narrowing, 2026-11-11; reported, NOT an owner ruling)",
+		"the update door re-points an installed unit only at a fugaro a release installed",
+		"prints **both paths**",
+		"`fugaro orchestrator install`",
+		"the `setup` door keeps the re-point",
+		"converges under one `fugaro update` (the HARD RULE)",
+		"TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow",
+		"TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall",
+		"TestDocsStatelessOrchestratorUnitRepointRule",
+		"`unitMayNameThisBinary` in `internal/cli/init_orchestrator_stage.go`",
+	} {
+		if !strings.Contains(flat(rec), want) {
+			t.Errorf("%s: the re-point rule's %q is gone", soReconciled, want)
+		}
+	}
+	for _, want := range []string{
+		"The program a re-render writes is one a release installed",
+		"prints **both paths**",
+		"the `setup` door keeps the re-point",
+		"This narrowing is the implementation's and not an owner's",
+		"TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow",
+		"TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall",
+		"TestUpdateNeverRepoints",
+	} {
+		if !strings.Contains(flat(plan), want) {
+			t.Errorf("%s: the re-point rule's %q is gone", soPlan, want)
+		}
+	}
+	// The test the rule replaced is named nowhere: a plan that still lists it is
+	// one whose Tests line describes a behavior the code no longer has.
+	if strings.Contains(plan, "TestUpdateRerendersWhenTheBinaryPathChanged") {
+		t.Errorf("%s: the plan still names the test the re-point rule replaced", soPlan)
+	}
+	src := stageSource(t, "init_orchestrator_stage.go")
+	for _, want := range []string{"unitMayNameThisBinary(", "unitStepLeavesAnotherProgram(", `Version != "dev"`, "os.TempDir()"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("init_orchestrator_stage.go no longer carries the re-point rule's %q", want)
+		}
+	}
+}
+
 // The retry rule is the newest thing the plan builds, so the rule and the
 // tests that hold it are pinned by name: a later edit that drops the retry, or
 // the refusals it must not retry, is the change this design cannot afford.

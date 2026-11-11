@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/orchestrator/service"
@@ -117,6 +119,18 @@ const (
 // left for the user by the loop — a step --yes never covers, in the shape every
 // other such step has — so an unattended `fugaro update` reports the drift
 // instead of quietly skipping it (unitStepTodo).
+//
+// The third difference is the program the write names. A unit's text is its
+// template plus one binary path, so a file that differs from what this release
+// renders differs by the template, by that path, or by both — and the path is
+// the one this process is running, which is not always a fugaro a release
+// installed. The update door re-points an installed unit only at a program
+// unitMayNameThisBinary accepts; a run from a development build, or from a
+// binary in a temporary directory, writes nothing and says so, because a unit
+// that restarts its program forever (the template's keep-alive) must not be
+// pointed at a program that will not be there tomorrow. The `setup` door keeps
+// the re-point: the person is at a terminal, the plan line names both paths, and
+// the run they confirmed is the run that asked for the unit.
 func unitStepRead(e *initEngine, installs bool) (service.Unit, initflow.Status, error) {
 	u, err := orchestratorUnit()
 	if err != nil {
@@ -145,8 +159,97 @@ func unitStepRead(e *initEngine, installs bool) (service.Unit, initflow.Status, 
 		return u, initflow.Status{State: initflow.Done, Detail: "No changes: the login unit at " + safetext.Field(u.Path) +
 			" is this release's template"}, nil
 	}
-	return u, unitStepTodo(e, installs, "re-renders the login unit at "+safetext.Field(u.Path)+
-		": the template or the binary path changed, and it is one file under your home — no system path, no root, no sudo and no network"), nil
+	binary, err := orchestratorBinaryPath()
+	if err != nil {
+		return service.Unit{}, initflow.Status{}, err
+	}
+	if !installs && unitRepointsTheProgram(u, binary, was) && !unitMayNameThisBinary(binary) {
+		return u, initflow.Status{State: initflow.Skipped, Detail: unitStepLeavesAnotherProgram(u, binary, was)}, nil
+	}
+	return u, unitStepTodo(e, installs, unitStepRerenderDetail(u, binary, was)), nil
+}
+
+// unitRepointsTheProgram is whether writing this release's unit over the file on
+// disk would change the program the unit runs: the one thing about a re-render
+// that is not the release's to decide by itself.
+func unitRepointsTheProgram(u service.Unit, binary, was string) bool {
+	if old, ok := unitOtherProgramPath(u, binary, was); ok {
+		return old != binary
+	}
+	// The file is not this release's template, so the path in it cannot be read
+	// back out (below). The unit already runs this program when its text carries
+	// the path, and a file that does not is one the write would re-point.
+	return !strings.Contains(was, binary)
+}
+
+// unitOtherProgramPath is the binary path the file on disk names, when the file
+// is this release's template rendered for a path other than binary. A unit's
+// text is the template plus that one path, named twice, so the file is this
+// release's template with its own path substituted and the path can be read back
+// out of it: the head and the tail around the two occurrences are this
+// release's, and what stands between them is the path, twice. ok is false for a
+// file this release's template cannot account for — an older release's template,
+// an edit by hand — where the path in it is not this code's to guess.
+func unitOtherProgramPath(u service.Unit, binary, was string) (string, bool) {
+	const probe = "\x00unit\x00"
+	parts := strings.Split(strings.ReplaceAll(u.Text, binary, probe), probe)
+	if len(parts) != 3 {
+		return "", false
+	}
+	head, mid, tail := parts[0], parts[1], parts[2]
+	if !strings.HasPrefix(was, head) || !strings.HasSuffix(was, tail) {
+		return "", false
+	}
+	body := was[len(head) : len(was)-len(tail)]
+	if len(body) < len(mid) || (len(body)-len(mid))%2 != 0 {
+		return "", false
+	}
+	n := (len(body) - len(mid)) / 2
+	if body[n:n+len(mid)] != mid || body[:n] != body[n+len(mid):] {
+		return "", false
+	}
+	return body[:n], true
+}
+
+// unitStepRerenderDetail is the plan line of a re-render. It names what changed
+// — the template, or the program the unit runs, both paths when it is the
+// program — and the one property of the write a reader has to know: it stays
+// under their own home.
+func unitStepRerenderDetail(u service.Unit, binary, was string) string {
+	what := "the template changed"
+	if old, ok := unitOtherProgramPath(u, binary, was); ok {
+		what = "it named " + safetext.Field(old) + " and now names " + safetext.Field(binary) + ", the fugaro this run is"
+	}
+	return "re-renders the login unit at " + safetext.Field(u.Path) + ": " + what +
+		", and it is one file under your home — no system path, no root, no sudo and no network"
+}
+
+// unitStepLeavesAnotherProgram is the plan line of a re-render the update door
+// will not make, because the write would point the login unit at the binary this
+// run is and that is not a fugaro a release installed. Nothing is written, the
+// two paths are named so the difference is not a mystery, and the command that
+// points the unit at another program deliberately is named with them.
+func unitStepLeavesAnotherProgram(u service.Unit, binary, was string) string {
+	names := " names another program than this run"
+	if old, ok := unitOtherProgramPath(u, binary, was); ok {
+		names = " names " + safetext.Field(old)
+	}
+	return "leaves the login unit at " + safetext.Field(u.Path) + names + ", and this run is " + safetext.Field(binary) +
+		" — a development build or a binary in a temporary directory, not a fugaro a release installed: " +
+		"nothing was re-rendered here, and `" + selfCommand() + " orchestrator install` is the command that points the unit at another program"
+}
+
+// unitMayNameThisBinary is whether a login unit may be pointed at the binary
+// this process is running: a fugaro a release installed, in a place that is not
+// the system's temporary directory. A unit runs its program at every login and
+// restarts it whenever it stops (the template's keep-alive), so one pointed at a
+// checkout's `go build`, at `go run`'s temporary binary, or at a copy in a
+// scratch directory would restart a program that is not there tomorrow — and
+// both doors compare the file's text, so nothing would repair it afterwards
+// either.
+func unitMayNameThisBinary(binary string) bool {
+	temp := filepath.Clean(os.TempDir()) + string(filepath.Separator)
+	return Version != "dev" && !strings.HasPrefix(filepath.Clean(binary), temp)
 }
 
 // unitStepTodo is the read's answer when the step has something to do, under the

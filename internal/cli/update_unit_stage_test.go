@@ -25,6 +25,23 @@ func updateUnitEngine(t *testing.T, o *initOptions) (*initEngine, *syncBuf) {
 	return stageEngine(t, "", o)
 }
 
+// releaseUpdate makes this process the fugaro a release installed: a versioned
+// build, at a path a person installed it to. The update door re-points an
+// installed unit only at one of those — a login unit must not be pointed at a
+// build that will not be there tomorrow — so every test that expects the step to
+// write the file says which kind of run it is, and the tests that pin what a
+// development build does leave the process as the test binary is: "dev", under
+// the temporary directory the test binary is built in.
+func releaseUpdate(t *testing.T) string {
+	t.Helper()
+	oldVersion, oldExe := Version, orchestratorExecutable
+	Version = "1.2.3"
+	installed := "/usr/local/bin/fugaro"
+	orchestratorExecutable = func() (string, error) { return installed, nil }
+	t.Cleanup(func() { Version, orchestratorExecutable = oldVersion, oldExe })
+	return installed
+}
+
 // unitFileAt writes text at the unit's own path and returns it, with the file's
 // time pinned so that a test can tell a write from a leave-alone.
 func unitFileAt(t *testing.T, text string, at time.Time) string {
@@ -50,6 +67,7 @@ func TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged(t *testing.T) {
 	unitHome(t)
 	f := fakeUnitService(t)
 	typed(t)
+	releaseUpdate(t)
 	e, _ := updateUnitEngine(t, &initOptions{})
 	path := unitFileAt(t, previousTemplate, time.Now())
 	res, out := runUnitStage(t, e, newUpdateUnitStage(e))
@@ -130,18 +148,20 @@ func TestUpdateLeavesACurrentUnitAlone(t *testing.T) {
 	}
 }
 
-// TestUpdateRerendersWhenTheBinaryPathChanged: the render carries the stable
-// binary path, so a unit written under another prefix — a moved Homebrew
-// installation — is one the step re-renders.
-func TestUpdateRerendersWhenTheBinaryPathChanged(t *testing.T) {
+// TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall: the render
+// carries the stable binary path, so a unit written under another prefix — a
+// moved Homebrew installation, a machine whose fugaro moved — is one the step
+// re-renders, and the plan line says which two paths it is choosing between.
+func TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall(t *testing.T) {
 	unitHome(t)
 	f := fakeUnitService(t)
 	typed(t)
+	installed := releaseUpdate(t)
 	e, _ := updateUnitEngine(t, &initOptions{})
 	u := currentUnit(t)
 	moved := "/opt/homebrew/opt/fugaro/bin/fugaro"
-	path := unitFileAt(t, strings.ReplaceAll(u.Text, stableBinaryPath(exePath(t)), moved), time.Now())
-	res, _ := runUnitStage(t, e, newUpdateUnitStage(e))
+	path := unitFileAt(t, strings.ReplaceAll(u.Text, installed, moved), time.Now())
+	res, out := runUnitStage(t, e, newUpdateUnitStage(e))
 	if got := stateOf(res, initflow.Unit); got != initflow.Changed {
 		t.Fatalf("the step is %s, want changed:\n%+v", got, res.Stages)
 	}
@@ -154,6 +174,75 @@ func TestUpdateRerendersWhenTheBinaryPathChanged(t *testing.T) {
 	}
 	if len(f.reloads) != 1 {
 		t.Errorf("the service was reloaded %d times, want once", len(f.reloads))
+	}
+	for _, want := range []string{moved, installed} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the plan line does not name %s, so the person cannot see which program the unit is being pointed at:\n%s", want, out)
+		}
+	}
+}
+
+// TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow: a unit runs its
+// program at every login and restarts it when it stops, so the one path a
+// re-render may not write is the binary this update happens to be running — a
+// checkout's `go build`, `go run`'s temporary binary, a copy in a scratch
+// directory. The step writes nothing, leaves the installed unit exactly as it
+// was, and names both paths and the command that points the unit at another
+// program deliberately. This is the hazard the review of this work named: the
+// unit would otherwise be re-pointed at a temporary binary that a `go clean`, a
+// reboot or a checkout's deletion takes away, and both doors compare the file's
+// text, so nothing would ever repair it.
+func TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		build func(t *testing.T) string
+	}{
+		{"a development build", func(t *testing.T) string {
+			// What the test binary is: Version is "dev" unless a release's
+			// ldflags put a version in it.
+			return exePath(t)
+		}},
+		{"a release build in a temporary directory", func(t *testing.T) string {
+			old := Version
+			Version = "1.2.3"
+			t.Cleanup(func() { Version = old })
+			return exePath(t)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			unitHome(t)
+			f := fakeUnitService(t)
+			typed(t)
+			e, _ := updateUnitEngine(t, &initOptions{})
+			running := tc.build(t)
+			if !strings.HasPrefix(filepath.Clean(running), filepath.Clean(os.TempDir())) {
+				t.Skipf("this checkout's test binary is at %s, which is not a temporary directory", running)
+			}
+			installed := "/opt/homebrew/opt/fugaro/bin/fugaro"
+			u := currentUnit(t)
+			path := unitFileAt(t, strings.ReplaceAll(u.Text, running, installed), time.Now())
+			res, out := runUnitStage(t, e, newUpdateUnitStage(e))
+			if got := stateOf(res, initflow.Unit); got != initflow.Skipped {
+				t.Fatalf("the step is %s running from %s, want skipped:\n%+v", got, running, res.Stages)
+			}
+			if data, err := os.ReadFile(path); err != nil || string(data) != strings.ReplaceAll(u.Text, running, installed) {
+				t.Errorf("the step wrote the unit (err %v):\n%s", err, data)
+			}
+			if len(f.reloads) != 0 {
+				t.Errorf("the step reloaded the service although it wrote nothing: %v", f.reloads)
+			}
+			if len(res.Left) != 0 {
+				t.Errorf("the step left something for the user: %v", res.Left)
+			}
+			if askedSomething(out) {
+				t.Errorf("the step asked a question:\n%s", out)
+			}
+			for _, want := range []string{installed, running, "orchestrator install"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("the plan line does not name %q:\n%s", want, out)
+				}
+			}
+		})
 	}
 }
 
@@ -172,6 +261,7 @@ func TestUpdateUnitStepAsksNothingAndIsLeftForThePerson(t *testing.T) {
 	unitHome(t)
 	f := fakeUnitService(t)
 	typed(t)
+	releaseUpdate(t)
 	if initflow.YesCovers(initflow.Unit) {
 		t.Error("--yes covers the login unit's step: a unit runs code at every login")
 	}
@@ -222,6 +312,7 @@ func TestUpdateUnitStepWritesNothingWithoutAPersonTheStepCovers(t *testing.T) {
 	unitHome(t)
 	f := fakeUnitService(t)
 	typed(t)
+	releaseUpdate(t)
 	terminal(t, true)
 	e, _ := updateUnitEngine(t, &initOptions{ask: true})
 	path := unitFileAt(t, previousTemplate, time.Now())
@@ -247,6 +338,7 @@ func TestUpdateUnitStepTouchesNoSystemPath(t *testing.T) {
 	dir := unitHome(t)
 	f := fakeUnitService(t)
 	typed(t)
+	releaseUpdate(t)
 	e, _ := updateUnitEngine(t, &initOptions{})
 	path := unitFileAt(t, previousTemplate, time.Now())
 	_, out := runUnitStage(t, e, newUpdateUnitStage(e))
@@ -287,6 +379,7 @@ func TestUpdateUnitStepUsesTheInstallersRenderer(t *testing.T) {
 	unitHome(t)
 	f := fakeUnitService(t)
 	typed(t)
+	releaseUpdate(t)
 	e, _ := updateUnitEngine(t, &initOptions{})
 	path := unitFileAt(t, previousTemplate, time.Now())
 	runUnitStage(t, e, newUpdateUnitStage(e))

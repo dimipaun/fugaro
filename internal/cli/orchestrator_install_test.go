@@ -77,7 +77,10 @@ func unitHome(t *testing.T) string {
 // renderer the command uses.
 func currentUnit(t *testing.T) service.Unit {
 	t.Helper()
-	exe, err := os.Executable()
+	// Through the seam, not os.Executable: a test that says which binary this
+	// process is (releaseUpdate, the update door's rule) has to get the unit the
+	// command renders for it, and not the one the test binary would render.
+	exe, err := orchestratorExecutable()
 	if err != nil {
 		t.Fatal(err)
 	}

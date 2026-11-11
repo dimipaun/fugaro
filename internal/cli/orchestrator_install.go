@@ -51,15 +51,34 @@ var orchestratorReload = func(ctx context.Context, m service.Manager, u service.
 	return m.Reload(ctx, u)
 }
 
+// orchestratorExecutable is the path of the binary this process is running, as
+// a variable so that the one rule that turns on it — `fugaro update` re-points
+// an installed unit only at a fugaro a release installed, never at the binary
+// the person happens to be running the update from — is testable from a
+// checkout, the way orchestratorGOOS makes both platforms testable and
+// orchestratorService keeps launchctl and systemctl out of every test.
+var orchestratorExecutable = os.Executable
+
+// orchestratorBinaryPath is the path a unit written by this process names: the
+// package manager's stable link rather than the versioned path this process
+// resolved.
+func orchestratorBinaryPath() (string, error) {
+	exe, err := orchestratorExecutable()
+	if err != nil {
+		return "", fmt.Errorf("finding the binary this %s is: %w", selfCommand(), err)
+	}
+	return stableBinaryPath(exe), nil
+}
+
 // orchestratorUnit is the unit this release would install on this machine: the
 // platform's template, rendered for the stable path of the binary this process
 // is running.
 func orchestratorUnit() (service.Unit, error) {
-	exe, err := os.Executable()
+	binary, err := orchestratorBinaryPath()
 	if err != nil {
-		return service.Unit{}, fmt.Errorf("finding the binary this %s is: %w", selfCommand(), err)
+		return service.Unit{}, err
 	}
-	u, err := service.Render(os.Getenv, orchestratorGOOS, stableBinaryPath(exe))
+	u, err := service.Render(os.Getenv, orchestratorGOOS, binary)
 	if err != nil {
 		return service.Unit{}, err
 	}

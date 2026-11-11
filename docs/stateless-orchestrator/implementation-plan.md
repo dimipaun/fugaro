@@ -462,6 +462,14 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   byte-for-byte alone (a re-render that churns an identical file, or a reload with nothing to reload, would make the one command noisy on every run);
   and **reload** the login service (`launchctl` at the user's own login level on macOS, `systemctl --user` on Linux, the same interface
   `install` uses, faked in tests) so the running daemon picks the re-rendered unit up.
+  **The program a re-render writes is one a release installed**: a unit runs its program at every login and restarts it whenever it stops, so the update
+  door re-points an installed unit only at a versioned build outside the system's temporary directory, and an `update` run from a checkout's `go build` or
+  from `go run`'s temporary binary writes nothing, prints **both paths** (the one the unit names and the one this run is) and names
+  `fugaro orchestrator install` — the command that points a unit at another program deliberately. A re-render that keeps the program the unit already
+  names still happens from any build, so a release that changes only the template still converges under one `fugaro update` (the HARD RULE), and the
+  `setup` door keeps the re-point. **This narrowing is the implementation's and not an owner's**: it is recorded, with its date and its one-place
+  reversal, in the reconciliation's T8 section (T7's re-render and T8's reading both say the re-render names the program the unit already named, and the
+  code did not).
   **It is a write to the person's own home and their own service manager, never to a system path and never to the cloud**, and it is stated as such in
   the plan line: no root, no `sudo`, no network. **It never installs a unit**: a machine without one — a project that did not choose the daemon, or a
   person who skipped `setup` — gets no daemon from `update`, and that is a boundary of the ruling rather than an oversight. **It follows the same
@@ -499,13 +507,17 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   previous template converges under **one `fugaro update`** — the file is re-rendered from the current template and the service reloaded — with no
   second command, which is the HARD RULE), `TestUpdateNeverInstallsAUnit` (no unit installed: `update` writes none and the plan line says why, so a
   project that did not choose the daemon never gets one), `TestUpdateLeavesACurrentUnitAlone` (the rendered text equals the file: no write and no
-  reload, so a repeated `update` is quiet), `TestUpdateRerendersWhenTheBinaryPathChanged` (the render carries the stable path, so a moved Homebrew
-  prefix re-renders), `TestUpdateUnitStepAsksNothingAndIsLeftForThePerson` (the step asks nothing at a terminal, and `--yes` still does not cover it:
+  reload, so a repeated `update` is quiet), `TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall` (the render carries the stable path, so a
+  unit written under another prefix — a moved Homebrew installation — re-renders, and the plan line names both paths),
+  `TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow` (the program a re-render writes is one a release installed: a unit naming
+  `/opt/homebrew/opt/fugaro/bin/fugaro`, met by an `update` running from a `dev` build or from a build in the temporary directory, is left exactly as
+  it is — no write, no reload, no question — and the plan line names both paths and `fugaro orchestrator install`),
+  `TestUpdateUnitStepAsksNothingAndIsLeftForThePerson` (the step asks nothing at a terminal, and `--yes` still does not cover it:
   an agent-marker run writes no unit), `TestUpdateUnitStepTouchesNoSystemPath` (the write stays under the person's home and no `sudo` is asked for), and
   `TestUpdateUnitStepUsesTheInstallersRenderer` (the step calls `service.Render` and the installer's reload, so there is no second renderer). Tests
   render into `t.TempDir()` and never call
   `launchctl` or `systemctl` (an interface is faked).
-- **Command:** `go test ./internal/orchestrator/service/ -count=1 && go test ./internal/cli/ -run 'TestLaunchd|TestSystemd|TestInstall|TestUninstall|TestWindows|TestSetup|TestUpdateRerenders|TestUpdateNeverInstalls|TestUpdateLeaves|TestUpdateUnitStep|TestDoctorReportsAnOutOfDateUnitTemplate' -count=1`
+- **Command:** `go test ./internal/orchestrator/service/ -count=1 && go test ./internal/cli/ -run 'TestLaunchd|TestSystemd|TestInstall|TestUninstall|TestWindows|TestSetup|TestUpdateRerenders|TestUpdateNeverInstalls|TestUpdateNeverRepoints|TestUpdateLeaves|TestUpdateUnitStep|TestDoctorReportsAnOutOfDateUnitTemplate' -count=1`
 - **Depends on:** O8. **Level 4.**
 - **Commit:** `feat(cli): install the orchestrator unit from fugaro setup and re-render it from fugaro update (O9)`
 - **Red step:** `TestInstallWritesOnlyUnderTheUserHome` fails to build, then fails when a path outside the home is accepted; **and, for T7's ruling,
