@@ -6,7 +6,8 @@
 //
 // **The rule, in two halves.** A call site passes a **constant from the list
 // below**, or a call to `breadcrumb` itself -- the scan refuses every other
-// argument at `crashlytics().log(` -- and a value built at run time becomes a
+// argument at any log the crash path writes, whatever receiver it is written
+// through -- and a value built at run time becomes a
 // breadcrumb only through `breadcrumb` below, which is `shared/digest`'s
 // `redact`: the same function the mailbox client redacts an utterance with
 // before it is written or spoken (D118). The app therefore has **one**
@@ -23,9 +24,9 @@
 //
 // **What this module is NOT.** It is not a second telemetry module: it holds a
 // list and one function, and it never reaches the SDK. The call site is what
-// `analytics-calls.test.js` fences -- a `crashlytics().log(` whose argument is
-// neither a literal from `BREADCRUMBS` nor a call to `breadcrumb` is refused
-// there.
+// `analytics-calls.test.js` fences -- a `log(` or a `recordError(` whose
+// argument is neither a literal from `BREADCRUMBS` nor a call to `breadcrumb`
+// is refused there.
 
 import { redact } from '../../../shared/digest/redact.js';
 

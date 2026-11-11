@@ -16,18 +16,29 @@
 //
 // **The rules, and what each is for.**
 //
-//   1. `logEvent(` -- the SDK's own way to send an event. §7.2's allow-list is
-//      seven names and no eighth, so every call site must name one of them as a
-//      **literal** from the module's own list: a variable would be a name this
-//      scan cannot read, and a rule it could only take on trust. The telemetry
-//      module is where those seven call sites live, one per event, which is
-//      what makes the allow-list non-vacuous rather than a promise.
-//   2. `setUserId(`, `setUserProperty(` and `setAttribute(`/`setAttributes(` --
-//      refused at any call site. D256's answer refuses free text outright, and
-//      these are the SDK's doors for a value the app chose.
-//   3. `crashlytics().log(` -- the crash path's breadcrumb. §7.3 makes a
-//      breadcrumb a constant from the module's own list, or a value that has
-//      been through `shared/digest`'s redactor first, so a call site may pass
+//   1. `logEvent(` and every other helper the SDK sends an event through
+//      (`logScreenView(`, `logSearch(`, `logSelectContent(`, any `logX(`).
+//      §7.2's allow-list is seven names and no eighth, so every call site must
+//      name one of them as a **literal** from the module's own list: a variable
+//      would be a name this scan cannot read, and a rule it could only take on
+//      trust. A helper that sends an event of its own is refused by the same
+//      reader, because its argument is that helper's own object and not one of
+//      the seven literals. The telemetry module is where those seven call sites
+//      live, one per event, which is what makes the allow-list non-vacuous
+//      rather than a promise.
+//   2. `setUserId(`, `setUserProperty(`/`setUserProperties(`,
+//      `setAttribute(`/`setAttributes(` and `setDefaultEventParameters(` --
+//      refused at any call site, whatever they are passed. D256's answer
+//      refuses free text outright, and these are the SDK's doors for a value the
+//      app chose; the last of them is the one that rides on every event the app
+//      sends afterwards.
+//   3. `log(` on anything, and `recordError(` -- the crash path's breadcrumb.
+//      The receiver is deliberately not read: `crashlytics().log(`, the SDK
+//      object kept in a variable and logged through later, and the modular
+//      API's `log(instance, ...)` are one door reached three ways, and the
+//      fence is about the argument. §7.3 makes a breadcrumb a constant from the
+//      module's own list, or a value that has been through `shared/digest`'s
+//      redactor first, so a call site may pass
 //      exactly two things: a literal named in `BREADCRUMBS`, and a call to
 //      **`breadcrumb` the file that calls it binds from the telemetry module**
 //      -- not merely a function of that name, and not that name bound from
@@ -208,34 +219,46 @@ function importsBreadcrumb(body, file) {
 const RULES = [
   {
     name: 'every event sent is one the allow-list names',
-    pattern: /logEvent\s*\(/g,
+    // Every helper that sends an event, not only the one the module calls: the
+    // SDK's `logScreenView` and friends send an event of their own, and the
+    // reader below refuses them for what they are passed.
+    pattern: /\blog[A-Z]\w*\s*\(/g,
     argument: (read) => read.kind === 'literal' && EVENT_NAMES.includes(read.value),
     controls: [
       "analytics().logEvent('account_exported', { size: 1 });",
       "analytics().logEvent(name, parameters);",
       'analytics().logEvent(`screen_${screen}`, {});',
       'analytics().logEvent();',
+      'analytics().logScreenView({ screen_name: message.text });',
+      'analytics().logSearch({ search_term: message.text });',
     ],
     accepted: [
       { file: 'src/telemetry/allowed.js', source: "analytics().logEvent('app_launch', { first: true });" },
     ],
-    why: 'D256: §7.2 is a closed allow-list of seven names, and a name the app invents is one nobody reviewed',
+    why: 'D256: §7.2 is a closed allow-list of seven names, and a name the app invents — or a helper that sends an event of its own — is one nobody reviewed',
   },
   {
-    name: 'no identifier or free-text key is set on the crash path',
-    pattern: /setUserId\s*\(|setUserProperty\s*\(|setAttributes?\s*\(/g,
+    name: 'no identifier or free-text key is set, and no parameter is set as a default',
+    pattern:
+      /setUserId\s*\(|setUserPropert(?:y|ies)\s*\(|setAttributes?\s*\(|setDefaultEventParameters\s*\(/g,
     controls: [
       "crashlytics().setUserId(account.authUid);",
       "crashlytics().setUserProperty('project', account.fugaroProject);",
+      "analytics().setUserProperties({ project: account.fugaroProject });",
       "crashlytics().setAttribute('screen', screen);",
       "crashlytics().setAttributes({ outcome });",
+      "analytics().setDefaultEventParameters({ project: account.fugaroProject });",
     ],
     accepted: [],
-    why: 'D256: a free value beside a report is a third channel off the device, and the app has no use for one',
+    why: 'D256: a free value beside a report is a third channel off the device, and a default parameter rides on every event the app sends besides',
   },
   {
     name: 'a crash log names a breadcrumb from the module’s list, or comes from the redactor',
-    pattern: /crashlytics\s*\(\s*\)\s*\.\s*log\s*\(/g,
+    // Any `log(`, not the one spelling of the receiver: the SDK object kept in a
+    // variable and logged through later is the way a port is wired, and the
+    // modular API's `log(instance, ...)` is the same door again. The argument is
+    // what this rule is about, so the receiver is not read.
+    pattern: /\blog\s*\(|recordError\s*\(/g,
     argument: (read, body, file) =>
       (read.kind === 'literal' && BREADCRUMBS.includes(read.value)) ||
       (read.kind === 'call' && read.callee === 'breadcrumb' && importsBreadcrumb(body, file)),
@@ -249,6 +272,17 @@ const RULES = [
       // A call, but not the module's own redactor: a screen's own wrapper is
       // not the app's one redaction rule, and §7.3 says there is exactly one.
       "crashlytics().log(buildBreadcrumb(message.text));",
+      // The same door by another route: the SDK object in a variable, logged
+      // through a line later -- the way a crash port actually gets wired.
+      {
+        file: 'src/app/offender.js',
+        source: 'const c = crashlytics();\nc.log(message.text);',
+      },
+      // ... and the modular API, where the instance is the first argument.
+      'log(getCrashlytics(), message.text);',
+      // The crash path's other door: an error's own message is text the app
+      // built, so it is held to the same rule as a breadcrumb.
+      'crashlytics().recordError(new Error(message.text));',
       // The module's own name, but not the module's own function: a file that
       // imports nothing has whatever `breadcrumb` of its own it likes.
       "crashlytics().log(breadcrumb(message.text, secrets));",
@@ -281,6 +315,9 @@ const RULES = [
     ],
     accepted: [
       { file: 'src/app/allowed.js', source: "crashlytics().log('screen_mailbox');" },
+      // The receiver is not what this rule reads: the same constant through a
+      // held object is the same breadcrumb.
+      { file: 'src/app/allowed.js', source: "const c = crashlytics();\nc.log('screen_mailbox');" },
       {
         file: 'src/app/allowed.js',
         source:
