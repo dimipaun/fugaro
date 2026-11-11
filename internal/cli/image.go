@@ -194,9 +194,7 @@ func runImageBuild(cmd *cobra.Command, name string, o imageBuildOptions) error {
 }
 
 // runImageBuildLocal builds the derived image of the workflow the checkout
-// declares with the local Docker daemon. Under D1900 it answers the notice
-// instead: the image it builds is the repository's own, which no job runs
-// while the project has one of its own for the job.
+// declares with the local Docker daemon.
 func runImageBuildLocal(cmd *cobra.Command, o imageBuildOptions) error {
 	ctx := cmd.Context()
 	if o.repo != "" {
