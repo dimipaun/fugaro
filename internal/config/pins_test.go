@@ -21,15 +21,15 @@ func paths(ps []Problem) string {
 	return strings.Join(s, ",")
 }
 
-// TestPinnedModelsAreTheThreePins pins the one list of a run's pins: the
-// models PinnedModels returns are the three the paths above name, in the same
+// TestPinnedModelsAreTheFourPins pins the one list of a run's pins: the
+// models PinnedModels returns are the four the paths above name, in the same
 // order, with an empty name where the config pins nothing rather than the
-// entry dropped. The runner asks for those three to decide what a stale
+// entry dropped. The runner asks for those four to decide what a stale
 // catalog means for a run (internal/runner/gateway.go), so a set that drifted
 // from the one CheckPins and PinWarnings judge would judge some other run.
-func TestPinnedModelsAreTheThreePins(t *testing.T) {
+func TestPinnedModelsAreTheFourPins(t *testing.T) {
 	a := pinnedAgent()
-	want := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	want := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5", ""}
 	if got := a.PinnedModels(); !slices.Equal(got, want) {
 		t.Errorf("PinnedModels() = %q, want %q", got, want)
 	}
@@ -42,15 +42,41 @@ func TestPinnedModelsAreTheThreePins(t *testing.T) {
 		t.Fatalf("the fixture is not pinnable (%s): %q", got, ps)
 	}
 	// An agent.model with no role overrides pins the coder and the reviewer
-	// to it, and the background model to nothing: the empty entry stays.
+	// to it, and the background model and the vision slot to nothing: the
+	// empty entries stay.
 	b := Agent{Model: "claude-sonnet-5-5"}
-	want = []string{"claude-sonnet-5-5", "claude-sonnet-5-5", ""}
+	want = []string{"claude-sonnet-5-5", "claude-sonnet-5-5", "", ""}
 	if got := b.PinnedModels(); !slices.Equal(got, want) {
 		t.Errorf("an agent.model-only config pinned %q, want %q", got, want)
 	}
 	ps = CheckPins(b, pricing.Embedded())
 	if got := paths(ps); got != "agent.models.background" {
 		t.Errorf("CheckPins reported %q, want the background pin only", got)
+	}
+}
+
+// TestPinPathsNameTheVisionSlot (V1, D2007): the fourth pin path is
+// agent.models.vision, and it is the one pin a run may do without. pins() drops
+// it while it is empty rather than handing it to the checks, which is what
+// makes the slot's absence unjudged everywhere the three roles' absences are
+// judged ("is required with a budget") — and it hands it over the moment the
+// repository writes a model, so the price rule and the allow-list reach it as
+// they reach a role.
+func TestPinPathsNameTheVisionSlot(t *testing.T) {
+	if len(pinPaths) != 4 || pinPaths[3] != "agent.models.vision" {
+		t.Fatalf("pinPaths = %q, want the vision slot as the fourth", pinPaths)
+	}
+	if got := pins(pinnedAgent()); len(got) != 3 {
+		t.Errorf("pins() of a run with no vision model = %v, want the three roles", got)
+	}
+	a := pinnedAgent()
+	a.Models.Vision = "deepseek/deepseek-v4.1-flash"
+	got := pins(a)
+	if len(got) != 4 || got[3].path != pinPaths[3] || got[3].model != a.Models.Vision {
+		t.Fatalf("pins() = %v, want the vision model at %s", got, pinPaths[3])
+	}
+	if ps := CheckPins(a, pricing.Embedded()); paths(ps) != "agent.models.vision" {
+		t.Errorf("an unpriced vision model: CheckPins reported %q, want agent.models.vision", paths(ps))
 	}
 }
 

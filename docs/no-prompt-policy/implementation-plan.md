@@ -260,10 +260,16 @@ and T8 waits on the spike only.
 
 ### T15 — the non-money `Typed` steps get the owner-session-only fence (D1555)
 - **Files:** `internal/cli/update_managed.go` (`workspaceStage.gateStep`, the `p.widens` step), `update_workspace.go`
-  (`confirmRemoval`, `confirmTypedStrict`), `init_credentials.go`, `init_compute.go`, their tests.
+  (`confirmRemoval`, `confirmTypedStrict`), `init_credentials.go`, `init_compute.go`, `workspace_create.go`, their tests.
 - Each of these steps refuses in an agent session with the owner's command printed and asks nothing at the owner's
   terminal. **Tests:** `TestWorkspaceMemberPublishRefusesInAnAgentSession`, `TestCredentialsOptInRefusesInAnAgentSession`,
   `TestComputeStageRefusesInAnAgentSession`, `TestWorkspaceRemovalAsksNothingAtATerminal`.
+- `workspace_create.go` is the workspace-project stage of W3 (`docs/workspaces`), which landed after this plan was
+  written: it confirms the workspace's own service account and its one IAM grant by the project's name typed at a real
+  terminal (`askTyped`), which is the same non-money widening as the four sites above — so the ask goes with theirs and
+  the fence that is left is the session's. Its reading of stdin is already the lint's `init.go:typed` at T7, and the
+  `fugaro update` leaf is already in the closed-stdin harness's unreached ledger at this task; what this task adds is
+  the ask itself, and the line that names it.
 - **Depends on:** T1, T3 (`update_managed.go` is T3's at level 1, T9's at level 3). **Reviewer:** opus + mandatory
   independent review (it is the fence that replaces `Typed` for membership and credential minting).
 - **Commit:** `cli: membership, credential minting and compute are owner-session-only (T15)`.

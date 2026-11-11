@@ -67,12 +67,15 @@ import (
 // FIRST, before a single cloud call; then restorePreflight's refusals on the
 // merits; then the creation, whose postcondition (verifyCreated) reads the
 // NEW project's creation fact through the same budget gate the managed apply
-// opens on (managedBudgetGateOf: ReadBudget, and a valid version-2 marker or
-// a refusal) before the checkout line moves; and then the apply, which opens
-// that gate again, itself, on the new project (managedApply ->
-// managedBudgetGate). A restore whose creation wrote no valid budget stops
-// before the checkout moves, rather than leaving a half-restored
-// installation the apply would then refuse.
+// opens on (managedBudgetGateOf: ReadBudget) before the checkout line moves;
+// and then the apply, which opens that gate again, itself, on the new project
+// (managedApply -> managedBudgetGate). A creation whose fact does not open
+// that gate — an unreadable object, one read as another project's, a figure
+// Budget.Check refuses — stops before the checkout moves, rather than leaving
+// a half-restored installation the apply would then refuse. A fact that
+// records no amount is not one of those (T9, D1545): the gate opens on it with
+// a warning, so the restore proceeds, and the apply's own gate raises that
+// warning again (managed.ApplyGate, Enable.Warning).
 
 // restoreOptions are fugaro restore's own flags, besides the cloud flags.
 //
@@ -524,11 +527,12 @@ func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients, made 
 	}
 	// The read is the managed apply's own budget gate on the NEW project
 	// (ReadBudget, through managedBudgetGateOf), not IsManaged alone: a
-	// creation that wrote no valid version-2 marker — a version 1, a figure
-	// that fails Budget.Check, one naming another project, an unreadable
-	// object — is a project the apply at the end would refuse, so it is
-	// refused here, while the config can still be put back and before the
-	// checkout's gcp_project: line moves.
+	// creation fact the apply at the end would refuse — a figure that fails
+	// Budget.Check, one naming another project, an unreadable object — is
+	// refused here too, while the config can still be put back and before the
+	// checkout's gcp_project: line moves. A fact that records no amount is not
+	// one of those (T9, D1545): the gate opens on it with a warning, so the
+	// restore proceeds and the apply's own gate raises the warning again.
 	if _, _, err := managedBudgetGateOf(ctx, s, r, rr.lc.Name, rr.newID); err != nil {
 		return &createdNotOpenError{err: userErr("the creation of %s ended and its creation fact does not open the managed apply: %v", rr.newID, err)}
 	}

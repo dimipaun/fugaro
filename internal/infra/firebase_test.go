@@ -491,11 +491,14 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 		paths = append(paths, a.Path)
 	}
 	// The rules are last of the database's own writes; the actions after them
-	// are the generation markers, one per family, and none of them may be
-	// written unless the deploy succeeded (TestRulesMarkerOnlyAfterTheRulesDeploy
-	// in internal/cli drives the failing case through init).
+	// are the generation markers, one per family — this binary's rules, the
+	// credentials children, the workspace family and the orchestrator subtree —
+	// none of which may be written unless the deploy succeeded
+	// (TestRulesMarkerOnlyAfterTheRulesDeploy in internal/cli drives the failing
+	// case through init).
 	wantPaths := []string{"fugaro/mark", "fugaro/project", "config/mode", "config/limits", "rules",
-		projectpolicy.PathRulesMarker(), rules.PathCredsRulesMarker(), rules.PathOrchestratorRulesMarker()}
+		projectpolicy.PathRulesMarker(), rules.PathCredsRulesMarker(), rules.PathWorkspaceRulesMarker(),
+		rules.PathOrchestratorRulesMarker()}
 	if !slices.Equal(paths, wantPaths) {
 		t.Fatalf("actions = %v, want %v (the rules last, their marker after them)", paths, wantPaths)
 	}
@@ -508,12 +511,15 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	if got := f.Value(rules.PathCredsRulesMarker()); got != json.Number(strconv.Itoa(rules.CredsRulesVersion)) {
 		t.Errorf("%s = %#v, want %d (CredsRulesVersion): the credentials children's generation", rules.PathCredsRulesMarker(), got, rules.CredsRulesVersion)
 	}
+	if got := f.Value(rules.PathWorkspaceRulesMarker()); got != json.Number(strconv.Itoa(rules.WorkspaceRulesVersion)) {
+		t.Errorf("%s = %#v, want %d (WorkspaceRulesVersion): the workspace family's generation", rules.PathWorkspaceRulesMarker(), got, rules.WorkspaceRulesVersion)
+	}
 	if got := f.Value(rules.PathOrchestratorRulesMarker()); got != json.Number(strconv.Itoa(rules.OrchestratorRulesVersion)) {
 		t.Errorf("%s = %#v, want %d (OrchestratorRulesVersion): the orchestrator subtree's generation", rules.PathOrchestratorRulesMarker(), got, rules.OrchestratorRulesVersion)
 	}
 	lim, _ := f.Value(budget.PathLimits).(map[string]any)
-	if len(lim) != 4 || lim["maxReserveMicros"] == nil {
-		t.Errorf("config/limits = %v, want the three markers beside maxReserveMicros", lim)
+	if len(lim) != 5 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the four markers beside maxReserveMicros", lim)
 	}
 	want, _ := rules.Generate()
 	if !SameJSON(f.Rules(), want) {
@@ -817,6 +823,52 @@ func TestFirebasePlanRefusesNewerCredsMarker(t *testing.T) {
 	}
 }
 
+// A workspace marker above this binary's WorkspaceRulesVersion is a newer
+// Fugaro's, and the refusal is the same one the other two markers give: this
+// binary's document does not carry the workspace family that marker describes,
+// so deploying it would take the record, the admitted-token hashes, the meter
+// and the rollup out from under a database that runs with them. Nothing is
+// planned and nothing is written.
+func TestFirebasePlanRefusesNewerWorkspaceMarker(t *testing.T) {
+	d, f := newDB(t, "")
+	deploy(t, d)
+	newer := rules.WorkspaceRulesVersion + 1
+	f.Set(rules.PathWorkspaceRulesMarker(), newer)
+	before, _ := json.Marshal(f.Value(""))
+	puts := len(f.Requests())
+
+	acts, _, err := d.Plan(context.Background())
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("Plan = (%v, %v), want a refusal: this binary must not deploy over a newer workspace generation", acts, err)
+	}
+	for _, want := range []string{rules.PathWorkspaceRulesMarker(), strconv.Itoa(newer), strconv.Itoa(rules.WorkspaceRulesVersion)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if len(acts) != 0 {
+		t.Errorf("acts = %v, want none", acts)
+	}
+	after, _ := json.Marshal(f.Value(""))
+	if string(before) != string(after) || f.RulePuts() != 1 {
+		t.Errorf("the refusal wrote: database %s -> %s, rules put %d times", before, after, f.RulePuts())
+	}
+	for _, q := range f.Requests()[puts:] {
+		if q.Method == "PUT" || q.Method == "PATCH" {
+			t.Errorf("the refused plan wrote %s /%s", q.Method, q.Path)
+		}
+	}
+	// A marker at this generation plans normally, and one below it is a database
+	// whose rules predate the family: that is the deploy this binary is for.
+	for _, seed := range []int{rules.WorkspaceRulesVersion, rules.WorkspaceRulesVersion - 1} {
+		f.Set(rules.PathWorkspaceRulesMarker(), seed)
+		if _, _, err := NewDB(d.c, "aurora", "proj-1234", "").Plan(context.Background()); err != nil {
+			t.Errorf("a workspace marker at %d is refused: %v", seed, err)
+		}
+	}
+}
+
 // The refusals below each prescribe a remedy, and a remedy has to be a command
 // that runs: the retired verb is a hidden tombstone that prints one sentence and
 // exits 1 (internal/cli/retired.go, W1.2), so a refusal that says "re-run init"
@@ -855,6 +907,13 @@ func TestRefusalsPrescribeACommandThatRuns(t *testing.T) {
 	_, _, err = d2.Plan(context.Background())
 	collect("a credentials marker above this binary's generation", err)
 
+	// The workspace marker above this binary's generation.
+	d3, f3 := newDB(t, "")
+	deploy(t, d3)
+	f3.Set(rules.PathWorkspaceRulesMarker(), rules.WorkspaceRulesVersion+1)
+	_, _, err = d3.Plan(context.Background())
+	collect("a workspace marker above this binary's generation", err)
+
 	// A Firestore release that is not deny-all.
 	fr := gcpfake.NewFirebaseRules(t, "aurora")
 	fr.SeedRelease("rules_version = '2';\nservice cloud.firestore { match /databases/{d}/documents { match /{x=**} { allow read, write: if true; } } }")
@@ -866,8 +925,8 @@ func TestRefusalsPrescribeACommandThatRuns(t *testing.T) {
 	// compare a run against.
 	collect("--budget-mode enforce without the database's global caps", NoCapsForEnforce())
 
-	if len(messages) != 4 {
-		t.Fatalf("collected %d refusal(s), want 4", len(messages))
+	if len(messages) != 5 {
+		t.Fatalf("collected %d refusal(s), want 5", len(messages))
 	}
 	for _, msg := range messages {
 		if !strings.Contains(msg, "fugaro update --firebase-project") {
@@ -961,6 +1020,29 @@ func TestDBRefusals(t *testing.T) {
 	}
 }
 
+// TestDBRefusesADatabaseWhoseRootIsNotAnObject: a root that holds a value is
+// not an empty database, and setup may not adopt one and write over it. Check
+// asks the root's keys first, and the client refuses a root it cannot decode as
+// one node's keys — a database root is an object, so a scalar one is another
+// program's — so the refusal happens before anything is written, not after the
+// first node goes in.
+func TestDBRefusesADatabaseWhoseRootIsNotAnObject(t *testing.T) {
+	d, f := newDB(t, "")
+	f.Set("", "a database this installation did not write")
+
+	if _, err := d.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "decoding the root's keys") {
+		t.Fatalf("Check = %v, and a root holding a value is not a database with no keys", err)
+	}
+	before, _ := json.Marshal(f.Value(""))
+	if _, _, err := d.Plan(context.Background()); err == nil {
+		t.Fatal("the plan went ahead over a database whose root is not an object")
+	}
+	after, _ := json.Marshal(f.Value(""))
+	if string(before) != string(after) || f.RulePuts() != 0 {
+		t.Error("a refusal wrote")
+	}
+}
+
 // Apply stops at a node that changed since the plan, and leaves the rest.
 func TestDBApplyStopsOnAChangedNode(t *testing.T) {
 	d, f := newDB(t, "")
@@ -1038,5 +1120,73 @@ func TestFirebaseOutputsMustBelongToOneProject(t *testing.T) {
 	loop.RTDBURL = "http://127.0.0.1:9000"
 	if CheckFirebaseOutputsFor(loop, "aurora-fp", false) == nil || CheckFirebaseOutputsFor(loop, "aurora-fp", true) != nil {
 		t.Error("loopback rule")
+	}
+}
+
+// W7: the member's own pin is the ONLY source of the workspace's read of this
+// project's database. The Firebase root's tfvars carry the account the pin
+// names — under the module's variable name, so the value a plan binds can be
+// read back to the config it came from — and the module's own count reads ""
+// as "no workspace", so a member of none creates neither the role nor the
+// binding.
+//
+// Fails when the wiring defaults the account from anything of this
+// installation's (a job account, a history account, an output): a workspace is
+// another project's Fugaro installation and its credentials service is its
+// own, so only what the member wrote down can be bound.
+func TestTheWorkspaceReadIsTheMembersPinAndNothingElse(t *testing.T) {
+	inst := installationSpec(t)
+	account := "fugaro-credentials@ws-1234.iam.gserviceaccount.com"
+
+	for _, in := range []FirebaseInputs{
+		{FP: "aurora-fp"},
+		{FP: "aurora-fp", WorkspaceServiceAccount: account},
+	} {
+		fs, err := Firebase(inst, in)
+		if err != nil {
+			t.Fatalf("%+v: %v", in, err)
+		}
+		if fs.WorkspaceServiceAccount != in.WorkspaceServiceAccount {
+			t.Errorf("the Firebase spec carries the account %q for a pin of %q", fs.WorkspaceServiceAccount, in.WorkspaceServiceAccount)
+		}
+		data, err := FirebaseVars(fs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var vars map[string]any
+		if err := json.Unmarshal(data, &vars); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := vars[tf.WorkspaceAccessVariable].(string)
+		if got != in.WorkspaceServiceAccount {
+			t.Errorf("the Firebase root's %s = %q for a pin of %q, want the pin's value: the module binds it and an empty one creates nothing", tf.WorkspaceAccessVariable, got, in.WorkspaceServiceAccount)
+		}
+		// And no other account of this installation is in the vars under any
+		// name: a member's own pin is the only principal that reaches the
+		// workspace's read, so a first apply's outputs cannot move it.
+		if in.WorkspaceServiceAccount == "" {
+			for _, v := range vars {
+				if s, ok := v.(string); ok && strings.Contains(s, "credentials@") {
+					t.Errorf("a pin that names no workspace carries %q", s)
+				}
+			}
+		}
+	}
+
+	// The shape is checked here rather than at the plan, and for the same
+	// reason every other account is: IAM refuses a member it cannot find, and
+	// a value the module's variable refuses would fail the apply after the
+	// member's owner has confirmed it.
+	for _, bad := range []string{
+		"ws-1234",
+		"fugaro-credentials@ws-1234",
+		"user:someone@example.com",
+		"fugaro-credentials@ws-1234.iam.gserviceaccount.com ",
+	} {
+		if _, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp", WorkspaceServiceAccount: bad}); err == nil {
+			t.Errorf("%q was taken for the workspace's account", bad)
+		} else if !strings.Contains(err.Error(), "workspace service account") {
+			t.Errorf("the refusal of %q is %v, and it does not name what was wrong", bad, err)
+		}
 	}
 }

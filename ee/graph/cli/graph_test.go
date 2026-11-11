@@ -9,10 +9,27 @@ package cli
 //   - TestGraphRefusesAnInvalidScopeBeforeAnyRead is H1. --source reaches argv
 //     from the console's renderer, so every value outside graph.ParseScope's
 //     closed set is refused before the project is even selected — no header on
-//     stderr, no call to the database, nothing on stdout — and a scope this
-//     build has no reader for is refused with the honest sentence rather than
-//     answered with an empty graph. The control at the end keeps the "no read"
-//     half from passing vacuously.
+//     stderr, no call to the database, nothing on stdout — and an id nothing
+//     here knows is refused, as a fact about the id rather than about a missing
+//     reader (CG5), rather than answered with an empty graph. The control at the
+//     end keeps the "no read" half from passing vacuously.
+//   - TestGraphRefusedOrchestratorReadIsTerminal: the one failure of an
+//     orchestrator read that is the command's rather than the scope's — a
+//     database that refuses the read, which is exit 1 with no document and
+//     never a scope that is down or a cached brief (CG5, H3, T3).
+//   - TestGraphReadsTheOrchestratorAndLocalScopes: CG5's scopes through the
+//     command — one orchestrator's work items and their `depends_on`, a local
+//     scope falling back to this machine's cached brief, and `all` as the union
+//     keyed by source (D1356, D1358, §6.22).
+//   - TestGraphAllWarnsAboutAnUnreadableCache: a cache file this release cannot
+//     read is the warning of a read that still answers for every scope the
+//     database holds, and it refuses only the `local:<id>` that asked for that
+//     file — never a document-less exit for the console's default scope.
+//   - TestGraphAnswersAnOrchestratorWhoseStateIsNotWrittenYet: existence is the
+//     question `fugaro orchestrator ls` asks — a key under `orchestrator/` — so
+//     an id the database holds with no state node yet is a scope that is down in
+//     `all` and named on the command line alike, and never a scope dropped or
+//     refused (H3, §6.22).
 //   - TestGraphAllIsTheCoordinatorToday: `all` is the union of the scopes that
 //     exist, which today is the coordinator alone, and the document names it as
 //     itself — `coordinator` is the source half of every key it produced and the
@@ -45,6 +62,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +76,7 @@ import (
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -250,6 +269,96 @@ func (f *graphFixture) writeStoredView(t *testing.T, v coordinator.View) {
 	}
 }
 
+// writeOrchestratorState leaves one orchestrator's state node in the fixture's
+// database: two work items, the second waiting on the first, written through
+// the daemon's own encoder so the reader decodes what a daemon writes.
+func (f *graphFixture) writeOrchestratorState(t *testing.T, id, first, second string) {
+	t.Helper()
+	item := func(itemID, title string, deps ...string) orchestrator.WorkItem {
+		return orchestrator.WorkItem{
+			ID: itemID, Title: title, Repo: "acme/app",
+			Recipe: "standard", RigorTier: "medium",
+			Brief: "The brief of " + itemID + ".", DependsOn: deps, Phase: orchestrator.PhaseQueued,
+		}
+	}
+	raw, err := orchestrator.EncodeState(orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion,
+		AgentID:       id, Role: orchestrator.RoleOrchestrator,
+		WorkItems: []orchestrator.WorkItem{item("wi-1", first), item("wi-2", second, "wi-1")},
+	})
+	if err != nil {
+		t.Fatalf("the fixture state is not one this release writes: %v", err)
+	}
+	path, err := orchestrator.PathState(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(path, json.RawMessage(raw))
+}
+
+// writeOrchestratorLease leaves one orchestrator's lease node in the fixture's
+// database and no state node with it: the shape a daemon that is beating its
+// lease and whose cycles have all failed leaves behind — `orchestrator run`
+// writes the lease first and saves a state at the end of a successful cycle — so
+// the id is one `fugaro orchestrator ls` lists with nothing to draw for it.
+func (f *graphFixture) writeOrchestratorLease(t *testing.T, id, holder string, at time.Time) {
+	t.Helper()
+	path, err := orchestrator.PathLease(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(path, map[string]any{"holder": holder, "at": at.UTC().Format(time.RFC3339)})
+}
+
+// writeCachedBrief leaves one cached brief where the daemon writes it, placed
+// through the writer's own path builder so the test cannot disagree with the
+// reader about the file's name or its directory (D1243).
+func (f *graphFixture) writeCachedBrief(t *testing.T, id string, at time.Time) {
+	t.Helper()
+	path, err := orchestrator.BriefCachePath(os.Getenv, runtime.GOOS, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(orchestrator.BriefCache{
+		Version: orchestrator.BriefCacheVersion, Brief: "the cached brief of " + id + ".", WrittenAt: at.UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeUnreadableBrief leaves a file where the daemon writes a cached brief,
+// holding a document this release does not read — a brief another release's
+// daemon wrote, which is what a machine that has upgraded the CLI around a
+// daemon it did not restart has. It answers the path it wrote, so a test can
+// name the file in the sentence the read gives about it.
+func (f *graphFixture) writeUnreadableBrief(t *testing.T, id string) string {
+	t.Helper()
+	path, err := orchestrator.BriefCachePath(os.Getenv, runtime.GOOS, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(orchestrator.BriefCache{
+		Version: orchestrator.BriefCacheVersion + 1, Brief: "a brief another release wrote.", WrittenAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // seedRun leaves one run of the fixture's repository in the fixture's bucket: a
 // run still in flight that has opened no pull request, which is what the runs
 // half of the view holds, and which is dated against the listing's own clock so
@@ -354,8 +463,11 @@ func TestGraphRefusesAnInvalidScopeBeforeAnyRead(t *testing.T) {
 		})
 	}
 
-	// The scopes this build has no reader for are the other refusal: an honest
-	// sentence naming the scope, and still nothing read (contract §6.22).
+	// The other refusal is an id nothing here knows: the closed set holds the
+	// value — CG5 registers both readers — and the scope is refused because it
+	// does not exist, naming itself and where the ids that do are listed, rather
+	// than answered with an empty document a screen could not tell from a scope
+	// with no work in it (§6.22).
 	for _, absent := range []string{"orchestrator:o1", "local:o1"} {
 		t.Run(absent, func(t *testing.T) {
 			if _, err := graph.ParseScope(absent); err != nil {
@@ -364,19 +476,24 @@ func TestGraphRefusesAnInvalidScopeBeforeAnyRead(t *testing.T) {
 			before := len(f.db.Requests())
 			out, errOut, err := execute(t, "graph", "--source", absent, "--json")
 			if err == nil {
-				t.Fatalf("graph --source %q was answered rather than refused", absent)
+				t.Fatalf("graph --source %q was answered rather than refused: nothing here holds an orchestrator o1", absent)
 			}
-			if !strings.Contains(err.Error(), "no orchestrator is installed in this build") {
-				t.Errorf("the refusal is %q, want it to say no orchestrator is installed in this build", err)
+			for _, want := range []string{absent, "fugaro orchestrator ls"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %q does not name %s: an id that is not there is told from one that is", err, want)
+				}
 			}
 			if out != "" {
 				t.Errorf("the refused scope wrote %q to stdout, want no document at all", out)
 			}
-			if errOut != "" {
-				t.Errorf("the refused scope wrote %q to stderr: the project was selected before the scope was refused", errOut)
+			// The project is selected before the scope is read — the refusal is
+			// about the id that is not there, not about a reader this build lacks
+			// — so the header is on stderr and the database was asked.
+			if errOut == "" {
+				t.Error("the refused scope wrote nothing to stderr: the scope was refused before the project was selected")
 			}
-			if got := len(f.db.Requests()); got != before {
-				t.Errorf("the refused scope made %d database calls, want none", got-before)
+			if got := len(f.db.Requests()); got == before {
+				t.Errorf("graph --source %q read nothing, so the refusal is not about the id: this build has no reader for it", absent)
 			}
 		})
 	}
@@ -452,6 +569,305 @@ func TestGraphAllIsTheCoordinatorToday(t *testing.T) {
 			t.Errorf("the runs half's node is %+v, want the in-flight run %s", n, id)
 		}
 	})
+}
+
+// TestGraphReadsTheOrchestratorAndLocalScopes: CG5's scopes, through the
+// command. The red step this test replaces is the refusal every build before it
+// gave — "no orchestrator is installed in this build" — and what is held here
+// is the three things that refusal was standing in for: `orchestrator:<id>`
+// reads that id's state node and draws its work items and their `depends_on`,
+// `local:<id>` reads the same node and falls back to this machine's cached brief
+// when there is none, and `all` is the union of the scopes that exist, keyed by
+// source so two orchestrators can each carry a `wi-1` (D1356, §6.22).
+func TestGraphReadsTheOrchestratorAndLocalScopes(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	f.writeOrchestratorState(t, "o1", "land the state migration", "move the sweep onto the daemon")
+	written := time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC)
+	f.writeCachedBrief(t, "o2", written)
+
+	// One orchestrator: its scope, its work items, and the one edge the
+	// coordinator's view has none of (F17, F18).
+	one := graphDocument(t, "graph", "--source", "orchestrator:o1", "--json")
+	if len(one.Sources) != 1 || one.Sources[0].Source != "orchestrator:o1" || one.Sources[0].State != graph.SourceUp {
+		t.Fatalf("the orchestrator scope is %+v, want orchestrator:o1 up", one.Sources)
+	}
+	if one.Sources[0].AsOf != nil {
+		t.Errorf("the scope carries as_of %v, want null: the state node has no time of its own", one.Sources[0].AsOf)
+	}
+	if len(one.Nodes) != 2 {
+		t.Fatalf("the scope drew %d nodes, want the node's two work items: %+v", len(one.Nodes), one.Nodes)
+	}
+	if got := one.Nodes[0]; got.Kind != graph.NodeTask || got.Key != graph.NodeKey("orchestrator:o1", "wi-1") || got.State != "queued" {
+		t.Errorf("the first work item is %+v, want a queued task keyed by its source", got)
+	}
+	want := graph.Edge{From: graph.NodeKey("orchestrator:o1", "wi-2"), To: graph.NodeKey("orchestrator:o1", "wi-1"), Kind: graph.DependsOnEdge}
+	if len(one.Edges) != 1 || one.Edges[0] != want {
+		t.Errorf("the scope's edges are %+v, want the one dependency %+v", one.Edges, want)
+	}
+
+	// `all`: every scope that exists — the stored view, the orchestrator the
+	// database holds, and the local one this machine holds a cached brief for
+	// (CG4's union, D1358) — each node keyed by the source it came from.
+	all := graphDocument(t, "graph", "--json")
+	if len(all.Sources) != 3 || all.Sources[0].Source != "coordinator" ||
+		all.Sources[1].Source != "orchestrator:o1" || all.Sources[2].Source != "local:o2" {
+		t.Fatalf("`all` covers %+v, want the coordinator, orchestrator:o1 and local:o2", all.Sources)
+	}
+	// Under `all` a local id with no node is a scope that is down, not a
+	// refusal: the id is one this installation has, and only a scope named on
+	// the command line is refused for not existing (H3).
+	if all.Sources[2].State != graph.SourceDown {
+		t.Errorf("`all` lists local:o2 as %+v, want it down with the cached brief's stamp", all.Sources[2])
+	}
+	if len(all.Nodes) != 3 {
+		t.Fatalf("`all` drew %d nodes, want the stored record's one and the two work items: %+v", len(all.Nodes), all.Nodes)
+	}
+	seen := map[string]bool{}
+	for _, n := range all.Nodes {
+		if seen[n.Key] {
+			t.Errorf("`all` carries the key %q twice", n.Key)
+		}
+		seen[n.Key] = true
+		if n.Key != graph.NodeKey(n.Source, n.ID) {
+			t.Errorf("the node %+v is not keyed by the source it came from", n)
+		}
+	}
+	if len(all.Edges) != 1 {
+		t.Errorf("`all`'s edges are %+v, want the orchestrator's one dependency", all.Edges)
+	}
+
+	// A local scope with a live node reads the node: the cache is only what it
+	// has when the node is not there (D1358).
+	local := graphDocument(t, "graph", "--source", "local:o1", "--json")
+	if local.Sources[0].State != graph.SourceUp || len(local.Nodes) != 2 {
+		t.Errorf("a local scope whose node is there is %+v with %d nodes, want it up with the node's items", local.Sources[0], len(local.Nodes))
+	}
+
+	// A local scope with no node falls back to the cached brief: down, with the
+	// cache's own stamp as the age and no nodes, because a brief is not a graph
+	// (T5(a), D1243).
+	fallback := graphDocument(t, "graph", "--source", "local:o2", "--json")
+	if len(fallback.Sources) != 1 || fallback.Sources[0].State != graph.SourceDown {
+		t.Fatalf("the local scope is %+v, want it down", fallback.Sources)
+	}
+	if got := fallback.Sources[0].AsOf; got == nil || !got.Equal(written) {
+		t.Errorf("the fallback's as_of is %v, want the cached brief's own stamp %s", got, written)
+	}
+	if !strings.Contains(fallback.Sources[0].Reason, written.Format(time.RFC3339)) {
+		t.Errorf("the reason is %q, want it to name when the cached brief was written", fallback.Sources[0].Reason)
+	}
+	if len(fallback.Nodes) != 0 || len(fallback.Edges) != 0 {
+		t.Errorf("the fallback drew %d nodes and %d edges, want none", len(fallback.Nodes), len(fallback.Edges))
+	}
+
+	// A local scope with neither is the refusal, not a fourth kind of state: a
+	// cached brief for another id is not this id's.
+	if _, _, err := execute(t, "graph", "--source", "local:o3", "--json"); err == nil {
+		t.Error("a local scope with no node and no cached brief was answered rather than refused")
+	} else if !strings.Contains(err.Error(), "fugaro orchestrator ls") {
+		t.Errorf("the refusal is %q, want it to say where the ids this installation has are listed", err)
+	}
+
+	// And the cache is the local scope's fallback alone: the same id asked for
+	// as an orchestrator scope is the project's node read through the caller's
+	// credential, so a brief this machine happens to hold beside it does not
+	// answer that scope (D1358).
+	if _, _, err := execute(t, "graph", "--source", "orchestrator:o2", "--json"); err == nil {
+		t.Error("an orchestrator scope was answered from this machine's cached brief, want the refusal: only a local scope falls back to the cache")
+	} else if !strings.Contains(err.Error(), "fugaro orchestrator ls") {
+		t.Errorf("the refusal is %q, want it to say where the ids this installation has are listed", err)
+	}
+}
+
+// TestGraphAnswersAnOrchestratorWhoseStateIsNotWrittenYet: `all` enumerates ids
+// the way `fugaro orchestrator ls` does — the keys under `orchestrator/`, with no
+// values — and `orchestrator run` writes the lease node before the cycle that
+// saves a state, so an installation can list an id whose state node is not there
+// at all. That id is an orchestrator this installation has, and `all` is one
+// scope per orchestrator the database holds (CG4's union, §6.22), so its scope is
+// down: dropping it silently would draw a graph that disagrees with the listing
+// the console got its ids from, and refusing would take the whole document away
+// from a machine with one half-started daemon (H3, T3).
+//
+// The same id named by hand is asked the same question — does the database hold
+// it — and answers with the same scope, while an id no key is under is still the
+// refusal. The `local:` kind is the third answer and is its own: it names a daemon
+// on this machine, a cached brief is what says this machine runs one, and a scope
+// that asked for that daemon and has neither a brief nor a node is refused over
+// those and not over the database's listing (§6.22).
+func TestGraphAnswersAnOrchestratorWhoseStateIsNotWrittenYet(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	f.writeOrchestratorLease(t, "o1", "run-1", time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC))
+
+	all := graphDocument(t, "graph", "--json")
+	if len(all.Sources) != 2 || all.Sources[0].Source != "coordinator" || all.Sources[1].Source != "orchestrator:o1" {
+		t.Fatalf("`all` covers %+v, want the coordinator and the orchestrator the database lists", all.Sources)
+	}
+	if got := all.Sources[1]; got.State != graph.SourceDown || got.AsOf != nil {
+		t.Errorf("the orchestrator's scope is %+v, want it down and claiming no age: nothing has written a state", got)
+	}
+	if !strings.Contains(all.Sources[1].Reason, "state node is not written yet") {
+		t.Errorf("the reason is %q, want it to say the state node is not written", all.Sources[1].Reason)
+	}
+	if len(all.Nodes) != 1 {
+		t.Errorf("`all` drew %d nodes, want the stored record's one: an id with no state node has nothing to draw", len(all.Nodes))
+	}
+	if len(all.Warnings) != 0 {
+		t.Errorf("the document's warnings are %q, want none: nothing was left out of it", all.Warnings)
+	}
+
+	// Named by hand: the database is asked whether it holds the id at all, which
+	// is the read `ls` makes, and it does.
+	one := graphDocument(t, "graph", "--source", "orchestrator:o1", "--json")
+	if len(one.Sources) != 1 || one.Sources[0].State != graph.SourceDown {
+		t.Fatalf("the named scope is %+v, want orchestrator:o1 down", one.Sources)
+	}
+
+	// The control, and the half that keeps the two apart: an id no key is under
+	// is refused, not answered with a third kind of down, because a screen has to
+	// tell "nothing here" from "not asked" (§6.22).
+	if _, _, err := execute(t, "graph", "--source", "orchestrator:o2", "--json"); err == nil {
+		t.Error("an id the database does not hold was answered with a scope, want the refusal")
+	} else if fcli.ExitCode(err) != fcli.ExitUserError {
+		t.Errorf("the refusal is %v, want the user error the console reads", err)
+	}
+
+	// And the local kind of the same id: refused, because a brief on this machine
+	// is what makes an orchestrator local, and there is none — the database's
+	// listing does not stand in for it (D1358).
+	if _, _, err := execute(t, "graph", "--source", "local:o1", "--json"); err == nil {
+		t.Error("a local scope with no cached brief was answered, want the refusal")
+	} else if !strings.Contains(err.Error(), "cached brief") {
+		t.Errorf("the refusal is %q, want it to say this machine holds no cached brief for the id", err)
+	}
+
+	// The state node is what the scope is about: written, the same id reads up.
+	f.writeOrchestratorState(t, "o1", "land the state migration", "move the sweep onto the daemon")
+	live := graphDocument(t, "graph", "--source", "orchestrator:o1", "--json")
+	if len(live.Sources) != 1 || live.Sources[0].State != graph.SourceUp || len(live.Nodes) != 2 {
+		t.Errorf("the scope is %+v with %d nodes, want it up with the node's two work items", live.Sources, len(live.Nodes))
+	}
+}
+
+// TestGraphAllWarnsAboutAnUnreadableCache: the ids this machine runs are one of
+// the two ways `all` names the scopes that exist, and a cache file this release
+// cannot read — a daemon of another release wrote it, which is what a machine
+// whose CLI was upgraded around a daemon that was not has — takes that way away
+// without taking the read away with it. `all` is the console's default read, so
+// the scopes the database answers for are still in the document, the ids only
+// the cache knew about are left out, and the sentence saying so is the
+// document's warning (H3, T3).
+//
+// A scope that *asks* for that file is the other thing, and it is still refused:
+// `local:<id>` is a request for the brief at that id, and a caller that asked
+// for one scope and got a document without it could not tell that from an
+// orchestrator this installation does not have (§6.22, cachedBriefs).
+func TestGraphAllWarnsAboutAnUnreadableCache(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	f.writeOrchestratorState(t, "o1", "land the state migration", "move the sweep onto the daemon")
+	path := f.writeUnreadableBrief(t, "o9")
+
+	doc := graphDocument(t, "graph", "--json")
+	if len(doc.Sources) != 2 || doc.Sources[0].Source != "coordinator" || doc.Sources[1].Source != "orchestrator:o1" {
+		t.Fatalf("`all` covers %+v, want the coordinator and the orchestrator the database holds", doc.Sources)
+	}
+	if len(doc.Nodes) != 3 {
+		t.Errorf("`all` drew %d nodes, want the stored record's one and the node's two work items", len(doc.Nodes))
+	}
+	for _, src := range doc.Sources {
+		if strings.HasPrefix(src.Source, "local:") {
+			t.Errorf("`all` lists %q, want no local scope: the cache one would have come from cannot be read", src.Source)
+		}
+	}
+	if len(doc.Warnings) != 1 {
+		t.Fatalf("the document's warnings are %q, want the one sentence about the cache", doc.Warnings)
+	}
+	if !strings.Contains(doc.Warnings[0], filepath.Base(path)) || !strings.Contains(doc.Warnings[0], "left out") {
+		t.Errorf("the warning is %q, want it to name %s and say what was left out for it", doc.Warnings[0], filepath.Base(path))
+	}
+
+	// The table is the same read with the warnings on stderr, which is where a
+	// person reading it is told what the read could not do.
+	out, errOut, err := execute(t, "graph")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	if !strings.Contains(out, "coordinator") {
+		t.Errorf("the table is\n%s\nwant the coordinator scope", out)
+	}
+	if !strings.Contains(errOut, filepath.Base(path)) {
+		t.Errorf("stderr is %q, want the warning naming %s", errOut, filepath.Base(path))
+	}
+
+	// The one scope that asked for that file: refused, with no document at all.
+	out, _, err = execute(t, "graph", "--source", "local:o9", "--json")
+	if err == nil {
+		t.Fatalf("graph --source local:o9 answered for a cached brief this release cannot read")
+	}
+	if got := fcli.ExitCode(err); got != fcli.ExitUserError {
+		t.Errorf("the refusal exits %d, want %d: it is a file this machine cannot read, not a database that failed", got, fcli.ExitUserError)
+	}
+	if !strings.Contains(err.Error(), filepath.Base(path)) {
+		t.Errorf("the refusal is %q, want it to name the file it is about", err)
+	}
+	if out != "" {
+		t.Errorf("the refused scope wrote %q to stdout, want no document at all", out)
+	}
+}
+
+// TestGraphRefusedOrchestratorReadIsTerminal: a read the database *refuses* is
+// the command's and not the scope's, and the orchestrator scopes are the ones
+// that can get it wrong. A read that failed is a scope that is down (H3); a read
+// this CLI may not make at all is exit 1 with **no document**, which is what a
+// console reads as "this CLI has no graph" rather than as a graph that is down
+// (T3, §6.22, `graphSources`' classification).
+//
+// Both kinds are held, because the local one is where the fallback is: a cached
+// brief is what a local scope draws with when the node cannot be read, and it is
+// never what it draws with when the read was refused — there is no failed read
+// here to answer, and putting a brief beside a refusal would turn "you may not
+// read this" into a scope that is merely down.
+func TestGraphRefusedOrchestratorReadIsTerminal(t *testing.T) {
+	written := time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC)
+	state, err := orchestrator.PathState("o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, src := range []string{"orchestrator:o1", "local:o1"} {
+		t.Run(src, func(t *testing.T) {
+			f := newGraphFixture(t)
+			f.writeStoredView(t, storedView())
+			// A cached brief the local kind could fall back to, and must not:
+			// the brief is the answer to a read that failed, and this is a read
+			// that was refused (D1358, H3).
+			f.writeCachedBrief(t, "o1", written)
+			f.db.DenyRead(state)
+
+			before := len(f.db.Requests())
+			out, _, err := execute(t, "graph", "--source", src, "--json")
+			if err == nil {
+				t.Fatalf("graph --source %s answered with a document for a node this CLI may not read", src)
+			}
+			if got := fcli.ExitCode(err); got != fcli.ExitUserError {
+				t.Errorf("the refusal exits %d, want %d: a read the database refuses is the caller's, not a remote failure", got, fcli.ExitUserError)
+			}
+			for _, want := range []string{"refused the read", "Viewer role"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal is %q, want it to carry %q: the sentence says what fixes it", err, want)
+				}
+			}
+			if out != "" {
+				t.Errorf("the refused scope wrote %q to stdout, want no document at all: a refusal is not a scope that is down", out)
+			}
+			if got := len(f.db.Requests()); got == before {
+				t.Errorf("graph --source %s read nothing: the refusal is not about this node", src)
+			}
+		})
+	}
 }
 
 // TestGraphJSONIsOneVersionedDocument: the document is a wire format a reader

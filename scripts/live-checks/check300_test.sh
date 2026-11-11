@@ -347,7 +347,7 @@ setup_case() {
   write_doctor "$dir"
   write_config "$dir"
   write_store "$dir" 1
-  write_update "$dir" "rules: deploys the security rules (59411 bytes, generated)
+  write_update "$dir" "rules: deploys the security rules (60309 bytes, generated)
 config/limits/orchestratorRules: records the orchestrator rules generation (config/limits/orchestratorRules = 1)"
 }
 

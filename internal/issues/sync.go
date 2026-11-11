@@ -7,6 +7,23 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 )
 
+// SharedIssue reads one issue as the project's store has it (F13): the record
+// every teammate reads, which is the truth about an issue once it is uploaded.
+// `issue show` prints it in place of this machine's own copy, so a teammate's
+// dismissal reaches the person reading the issue instead of the stale file
+// their machine wrote.
+//
+// The record is read through the same strict decode and link check as every
+// other read of the store (F28): the prefix is writable by any launcher, and a
+// record that fails either is an error here rather than a record printed.
+func SharedIssue(ctx context.Context, b *blobx.Bucket, number int) (Issue, error) {
+	rec, _, err := readShared(ctx, b, number)
+	if err != nil {
+		return Issue{}, err
+	}
+	return rec.Issue, nil
+}
+
 // SyncResult is what one `SyncPending` did: how many issues reached the shared
 // store, and one line per issue this run left where it was. The lines are for a
 // caller to print; nothing here writes to a terminal or an error stream.
