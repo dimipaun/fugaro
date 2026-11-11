@@ -4,6 +4,7 @@
 package ab
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1007,6 +1008,33 @@ func TestJudgeCallFailureLeavesThePairUnjudged(t *testing.T) {
 	}
 	if v2 := f2.verdictsOf(t); len(v2.Pairs) != 1 || v2.Pairs[0].Skipped != skipCallFailed {
 		t.Errorf("verdicts = %+v, want the skip the failed call left", v2.Pairs)
+	}
+}
+
+// TestJudgeInputOverTheCapIsLoggedAndLeftOut: the input object is the evidence
+// for a verdict, not the verdict, so an input too large for a run record is
+// left out and the pair keeps its verdict — and the run's log is the only place
+// that says so: the verdict names no input, so a reader who found none would
+// otherwise have nothing to read about why.
+//
+// Mutation (verified, run and restored): return the error instead of nil — the
+// step fails over a pair it judged; drop the log line — the second assertion
+// fails, and the omission is silent again.
+func TestJudgeInputOverTheCapIsLoggedAndLeftOut(t *testing.T) {
+	f := newJudgeFixture(t)
+	var logs bytes.Buffer
+	v := f.view()
+	v.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	in := judgeInput{Version: judgeVersion, PairID: judgePairOne, JudgeModel: judgeModel,
+		Passes: []judgeInputPass{{Swap: false, System: judgeSystem, Prompt: strings.Repeat("a", runstore.MaxRecordBytes), Answer: judgeLabelA}}}
+	if err := storeJudgeInput(context.Background(), v, judgePairOne, in); err != nil {
+		t.Fatalf("an input over the reader's cap failed the pair: %v", err)
+	}
+	if _, err := f.store.ReadFile(context.Background(), judgeInputName(judgePairOne)); !errors.Is(err, runstore.ErrNotFound) {
+		t.Errorf("an over-cap input was written anyway: %v", err)
+	}
+	if !strings.Contains(logs.String(), "larger than a run record may be") || !strings.Contains(logs.String(), judgePairOne) {
+		t.Errorf("log = %q, want the line that says the input was left out, naming the pair", logs.String())
 	}
 }
 

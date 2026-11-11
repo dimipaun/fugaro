@@ -107,9 +107,9 @@ var registeredSteps = map[StepKind]string{}
 var stepKindRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
 
 // RegisterStepKind adds a step kind to version 1's closed set, as a step of
-// one mode: a recipe may hold it exactly where that mode's own rules allow,
-// and nowhere else. The production caller is ee/register (§5.5), in the same
-// init that hands over the recipe holding the step; the core registers
+// mode: evaluate: a recipe may hold it exactly where that mode's own rules
+// allow, and nowhere else. The production caller is ee/register (§5.5), in the
+// same init that hands over the recipe holding the step; the core registers
 // nothing, which is what makes an untagged build refuse a recipe naming a kind
 // it does not carry (paidStepKinds). A test that owns such a step registers it
 // the same way, so the text it parses is the text a build with that step
@@ -117,9 +117,17 @@ var stepKindRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
 //
 // A kind is refused when it is empty, when version 1 already knows the name
 // (a built-in kind, a reserved key like goto, the near-miss spelling of one
-// built-in), when it is already registered, or when mode is not one of the
-// four. Everything is refused rather than patched over: a kind that silently
-// took over a name would change what an existing recipe means.
+// built-in), when it is already registered, or when mode is not evaluate.
+// Everything is refused rather than patched over: a kind that silently took
+// over a name would change what an existing recipe means.
+//
+// Evaluate is the only mode a kind can be registered for because it is the
+// only mode whose sequence reads registered kinds at all (orderEvaluate): the
+// implement, review and artifact shapes are version 1's own loops, and none of
+// them has a rule for where a step they do not carry would sit — a kind
+// registered under one of those would be a step Parse accepts and the run
+// drops, which is the one outcome a kind may never have. Registering for them
+// is refused until their own order functions learn to place one.
 func RegisterStepKind(kind StepKind, mode string) error {
 	switch {
 	case kind == "":
@@ -137,7 +145,9 @@ func RegisterStepKind(kind StepKind, mode string) error {
 		return fmt.Errorf("recipe: the step kind %s is already registered", kind)
 	}
 	switch mode {
-	case ModeImplement, ModeReview, ModeArtifact, ModeEvaluate:
+	case ModeEvaluate:
+	case ModeImplement, ModeReview, ModeArtifact:
+		return fmt.Errorf("recipe: the step kind %s is registered for mode %s, and a registered step kind is a step of mode: %s alone: the %s shape is version 1's own loop and has no rule for where one sits", kind, mode, ModeEvaluate, mode)
 	default:
 		return fmt.Errorf("recipe: the step kind %s is registered for mode %q, and %s", kind, mode, modeMsg)
 	}
@@ -1242,6 +1252,15 @@ func (p *parser) order(r *Recipe, src []int) {
 			// Refused here rather than in steps(), which reads a step
 			// before the recipe's mode is necessarily known.
 			p.add(path, 0, "%s is only for mode: artifact", s.Kind)
+		default:
+			// A registered step kind (RegisterStepKind): steps() reads any
+			// of them, and orderEvaluate is the order function that places
+			// one. Accepted here it would be a step this loop has no rule
+			// for — the run would drop it and open an ordinary pull
+			// request, which is what a step kind may never come to.
+			if mode, ok := registeredStepMode(s.Kind); ok {
+				p.add(path+"."+string(s.Kind), 0, "%s is a step of mode: %s, not of mode: %s", s.Kind, mode, r.Mode)
+			}
 		}
 	}
 	// The digest step writes the pull request the review then judges: a
@@ -1284,8 +1303,9 @@ func (p *parser) order(r *Recipe, src []int) {
 // runs no implement loop, no gate, no review and no render, so every one of
 // version 1's own steps is refused here by name — a check step would run a
 // repository command, and first_line, review and digest would start an agent —
-// and a kind registered as another mode's step is refused for the same reason:
-// what a step does is a property of the mode it was registered for.
+// and the registration's own mode is read rather than the bare fact that the
+// kind is registered: a kind another mode grew a placement rule for is not one
+// this sequence may run.
 func (p *parser) orderEvaluate(steps []Step, src []int) {
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
@@ -1310,6 +1330,13 @@ func (p *parser) orderArtifact(steps []Step, src []int) {
 			// gate to judge, no report to write and no review to give a
 			// ship verdict.
 			p.add(path+"."+string(s.Kind), 0, "%s is not a step of mode: artifact", s.Kind)
+		default:
+			// A registered step kind, refused for order's own reason: the
+			// artifact shape is a render and optionally a plan, and has no
+			// rule for a step it does not carry.
+			if mode, ok := registeredStepMode(s.Kind); ok {
+				p.add(path+"."+string(s.Kind), 0, "%s is a step of mode: %s, not of mode: artifact", s.Kind, mode)
+			}
 		}
 	}
 	if len(steps) == 1 && steps[0].Kind == StepRender {

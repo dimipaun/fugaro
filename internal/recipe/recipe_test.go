@@ -1014,3 +1014,51 @@ func TestEvaluateModeRefusesCommandsAndImplement(t *testing.T) {
 		t.Errorf("problems = %s, want the two-step refusal as well", text)
 	}
 }
+
+// TestRegisteredStepKindIsOnlyItsMode: a registered kind is a step of the one
+// mode it was registered for, and it is refused in the other three rather than
+// accepted and dropped. Nothing in version 1's implement, review or artifact
+// loop has a rule for a kind it does not carry, so a recipe the parser read and
+// the run ignored would be a step that never runs with no line anywhere saying
+// so — and a mode: evaluate step is the one kind whose whole meaning is the
+// mode it is registered for.
+//
+// Mutation (verified, run and restored): drop the default arm of order's switch
+// — the implement and review subtests stop being refused; drop orderArtifact's
+// — the artifact subtest does; accept any of the four modes in
+// RegisterStepKind — the second half fails naming the mode.
+func TestRegisteredStepKindIsOnlyItsMode(t *testing.T) {
+	const kind = StepKind("evaluate_fixture")
+	if err := RegisterStepKind(kind, ModeEvaluate); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ mode, want string }{
+		{ModeImplement, "evaluate_fixture is a step of mode: evaluate, not of mode: implement"},
+		{ModeReview, "evaluate_fixture is a step of mode: evaluate, not of mode: review"},
+		{ModeArtifact, "evaluate_fixture is a step of mode: evaluate, not of mode: artifact"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			_, ps := Parse([]byte("version: 1\nname: judge\nmode: " + tc.mode + "\nsteps:\n  - evaluate_fixture: {}\n"))
+			if text := ProblemsText(ps); !strings.Contains(text, tc.want) {
+				t.Errorf("problems = %s, want %q", text, tc.want)
+			}
+		})
+	}
+	// The same recipe in the kind's own mode parses, so the three refusals
+	// above are the mode and not the kind.
+	if r, ps := Parse([]byte("version: 1\nname: judge\nmode: evaluate\nsteps:\n  - evaluate_fixture: {}\n")); r == nil {
+		t.Fatalf("a recipe holding the registered kind in its own mode was refused: %v", ps)
+	}
+	// A mode whose sequence cannot place a registered step is refused where the
+	// two halves would otherwise drift apart: the kind registered, and the
+	// parser with no rule for where it sits.
+	for _, mode := range []string{ModeImplement, ModeReview, ModeArtifact} {
+		err := RegisterStepKind(StepKind("evaluate_fixture_"+mode), mode)
+		if err == nil || !strings.Contains(err.Error(), "a registered step kind is a step of mode: evaluate alone") || !strings.Contains(err.Error(), mode) {
+			t.Errorf("registering a kind for mode %s: err = %v", mode, err)
+		}
+	}
+	if err := RegisterStepKind("evaluate_fixture_none", "judge"); err == nil || !strings.Contains(err.Error(), modeMsg) {
+		t.Errorf("registering a kind for a mode that does not exist: err = %v", err)
+	}
+}

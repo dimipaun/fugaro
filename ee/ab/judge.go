@@ -726,7 +726,7 @@ func judgePairOnce(ctx context.Context, v runner.StepView, model string, p judge
 		reasons = append(reasons, reason)
 	}
 	out.Winner, out.Reason = decide(arms[0], arms[1], reasons[0])
-	if err := storeJudgeInput(ctx, v.Store, p.PairID, input); err != nil {
+	if err := storeJudgeInput(ctx, v, p.PairID, input); err != nil {
 		return out, err
 	}
 	out.Input = judgeInputName(p.PairID)
@@ -768,17 +768,21 @@ func readJudgePatch(ctx context.Context, v runner.StepView, arm judgeArm) (Patch
 // storeJudgeInput writes one judged pair's input under the judge run's own
 // prefix. An object that would not fit under the reader's cap is logged and
 // left out rather than failing the pair: the verdict is what a judge run is
-// for, and the input is the evidence for it.
-func storeJudgeInput(ctx context.Context, s *runstore.Store, pairID string, in judgeInput) error {
+// for, and the input is the evidence for it. The log line is the only place
+// that says so — the verdict names no input, and a reader who found none would
+// otherwise have nothing to read about why.
+func storeJudgeInput(ctx context.Context, v runner.StepView, pairID string, in judgeInput) error {
 	body, err := json.Marshal(in)
 	if err != nil {
 		return fmt.Errorf("writing the judge's input for pair %s: %w", oneLine(pairID), err)
 	}
 	if len(body) > runstore.MaxRecordBytes {
+		v.Log.Warn("a judged pair's input is larger than a run record may be; it is left out and the verdict stands",
+			"pair", pairID, "bytes", len(body), "cap", runstore.MaxRecordBytes)
 		return nil
 	}
 	name := judgeInputName(pairID)
-	if err := s.PutFile(ctx, name, append(body, '\n'), "application/json"); err != nil {
+	if err := v.Store.PutFile(ctx, name, append(body, '\n'), "application/json"); err != nil {
 		return fmt.Errorf("writing the judge's input at %s: %w", name, err)
 	}
 	return nil

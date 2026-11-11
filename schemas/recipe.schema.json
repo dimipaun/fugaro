@@ -85,7 +85,7 @@
       }
     },
     {
-      "$comment": "A registered step kind is its mode's own shape: recipe.Parse refuses ab_judge in every other mode with 'ab_judge is not a step of mode: <mode>' (orderEvaluate), so the steps oneOf's alternative for it must not admit an implement, review or artifact recipe. An artifact recipe is refused by this branch too, and by mode: artifact's own branch above, which is the shape it already had.",
+      "$comment": "A registered step kind is its mode's own shape: recipe.Parse refuses ab_judge in every other mode with 'ab_judge is a step of mode: evaluate, not of mode: <mode>' (order, orderArtifact), so the steps oneOf's alternative for it must not admit an implement, review or artifact recipe. An artifact recipe is refused by this branch too, and by mode: artifact's own branch above, which is the shape it already had.",
       "if": { "not": { "properties": { "mode": { "const": "evaluate" } }, "required": ["mode"] } },
       "then": { "properties": { "steps": { "not": { "$ref": "#/$defs/evaluateSteps" } } } }
     }
