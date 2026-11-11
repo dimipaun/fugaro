@@ -11,7 +11,9 @@ package plugin_test
 // Check 500, which the owner runs on the sandbox project. The code's own half of
 // the secrets rule is elsewhere: a Dockerfile whose ARG or ENV is named like a
 // credential, or whose clone URL carries userinfo, is refused when the catalog
-// reads it (IS11b, internal/catalog/fetch.go).
+// reads it (IS11b, internal/catalog/fetch.go). That is the whole of it: nothing
+// refuses a copied credential file on either build path, so the skill says the
+// `COPY` half is its rule alone.
 
 import (
 	"regexp"
@@ -226,6 +228,18 @@ func TestImagesSkillNoBuildArgSecrets(t *testing.T) {
 		if re.MatchString(mount) {
 			t.Errorf("the check refuses the secret-mount shape it exists to allow, as %s", name)
 		}
+	}
+	// The catalog's half of the rule is narrower than the skill's:
+	// refuseCredentialIn (internal/catalog/fetch.go) reads ARG and ENV names and
+	// URLs with userinfo, and a Dockerfile that copies a registry dotfile is
+	// accepted. A skill that told the agent the catalog refuses every shape it
+	// forbids would hand it a backstop that is not there, so both halves of the
+	// rule are pinned, and the copy is named as the skill's own.
+	if !strings.Contains(skill, "named like a credential") || !strings.Contains(skill, "URL with userinfo") {
+		t.Error("the skill does not say which two shapes the catalog refuses (a credential-shaped ARG or ENV name, and a URL with userinfo), so an agent cannot tell the catalog's rule from its own")
+	}
+	if !strings.Contains(skill, "is this rule's alone") {
+		t.Error("the skill does not say a copied credential file is its own rule rather than the catalog's, and refuseCredentialIn does not read a COPY")
 	}
 }
 
