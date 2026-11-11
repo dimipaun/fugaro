@@ -770,7 +770,17 @@ func TestUpdateRetryAppliesTheRunsBucket(t *testing.T) {
 // one question — and without the flag nothing changes. It is a function of its
 // own because the seam it feeds opens a gs:// URL, which no hermetic test can
 // reach: the answer is what is checked, not the open.
+//
+// The last two rows are that same rule seen from the other side: a config
+// whose endpoints are fakes answers with no bucket at all, so the seam opens
+// nothing real (the e2e upgrade tests run whole installations whose configs
+// carry fake endpoints, and the resolved-issues step reads this store).
+// skipGSOnFakeEndpoints is off for this package's tests, so the two rows turn
+// it on for themselves, exactly as the skip's own tests do.
 func TestUpdateRetryBucketURL(t *testing.T) {
+	old := skipGSOnFakeEndpoints
+	skipGSOnFakeEndpoints = true
+	t.Cleanup(func() { skipGSOnFakeEndpoints = old })
 	for _, tc := range []struct {
 		name       string
 		config     localcfg.Config
@@ -786,6 +796,10 @@ func TestUpdateRetryBucketURL(t *testing.T) {
 		// Unreachable through a selection (localcfg refuses a config with
 		// neither), and the guard the seam had before it: one silence more.
 		{"no bucket anywhere", localcfg.Config{}, "", ""},
+		// A test's or an emulator's installation: its endpoints stand for the
+		// gs:// bucket above, so that bucket is not opened for real.
+		{"fake endpoints over a runs_bucket", localcfg.Config{RunsBucket: "old", Endpoints: localcfg.Endpoints{NoAuth: true}}, "", ""},
+		{"fake endpoints over a bucket_url", localcfg.Config{Bucket: "gs://old", Endpoints: localcfg.Endpoints{Storage: "http://127.0.0.1:1/storage/v1/"}}, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lc := tc.config

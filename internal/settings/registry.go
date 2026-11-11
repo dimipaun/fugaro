@@ -1048,16 +1048,27 @@ var localRows = []Row{
 	// the shape a bare scalar cannot express (a whole `workflows` selection) is
 	// `fugaro project repos set`'s and is not a reason to give these four a
 	// second path. They are listed in the generic allowlist beside them
-	// (settingsGenericKeys), because an owner string is not an admission.
+	// (settingsGenericKeys), and their owner is the allowlist's own default
+	// token rather than a file's, because the two answer one question (D1178):
+	// a key the generic path writes is `settings set`'s, and these four are
+	// stated in the machine's own config rather than in the layer file, so the
+	// file-carriers' sentences are files they are not in (D1515).
+	//
+	// The owner is the allowlist's own token, `settings set`, for the reason
+	// D1178 gives it to every key the list carries. The file-carrier tokens name
+	// files these four keys are not in — the project layer `fugaro config
+	// publish` carries, and a checkout's own `fugaro.yaml` — so a row naming one
+	// has the read print that file's sentence beside a key stated in neither.
+	// max_parallel above is the same row shape and carries the same token.
 	//
 	// vertex and credentials_service_ready below keep the `project` owner and
 	// are NOT in that allowlist: they are not a person's settings at all — a
 	// run records what it read and applied (this file's row comments) — so the
 	// generic path's refusal is the right answer for them.
-	loc("repos.*.provider", "none", "config", docSetup),
-	loc("repos.*.base_branch", "the project's base_branch", "config", docSetup),
-	loc("repos.*.workflows", "every workflow the repository defines", "config", docSetup),
-	loc("repos.*.github_app_id", "none", "config", docSetup),
+	loc("repos.*.provider", "none", "settings set", docSetup),
+	loc("repos.*.base_branch", "the project's base_branch", "settings set", docSetup),
+	loc("repos.*.workflows", "every workflow the repository defines", "settings set", docSetup),
+	loc("repos.*.github_app_id", "none", "settings set", docSetup),
 	loc("repos.*.vertex", "false", "project", docSetup),
 	// The credentials service's switch, as `fugaro update` recorded it:
 	// written from the bundle it read AND the agent.auth the plan was built

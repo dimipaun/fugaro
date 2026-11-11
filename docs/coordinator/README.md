@@ -181,10 +181,11 @@ map it heads.
 ## Re-planned behind `ee/register` (2026-11-07)
 
 The owner's rulings of 2026-10-27 put this work in the business-licensed folder — **D434/T10** moved
-its **command and library** first (landed as the ee-reorg plan's E2.1b: `ee/coordinator/`,
-`ee/coordinator/cli/` and `ee/coordinator/mcpauth/`), and **D435/T20** re-targets what is still
-ahead: **P6–P8, the MCP front door included**, which is what the plan's own re-plan note of
-2026-11-07 records. In one place, what that means:
+its **command and library** first (landed as the ee-reorg plan's E2.1b: `ee/coordinator/`, its
+`ee/coordinator/cli/` package and its `ee/coordinator/testdata/` — and **not**
+`ee/coordinator/mcpauth/`, which is the front door's own package, built by `docs/mcp-server/`), and
+**D435/T20** re-targets what is still ahead: **P6–P8, the MCP front door included**, which is what
+the plan's own re-plan note of 2026-11-07 records. In one place, what that means:
 
 - The **Go half of each remaining part lands under `ee/coordinator/`**, reached only through
   `ee/register`; an untagged build's `fugaro coordinator` is the core's stub and says why (E1.1,
@@ -192,13 +193,14 @@ ahead: **P6–P8, the MCP front door included**, which is what the plan's own re
 - **The Terraform and the console do not move**: `deploy/terraform/` is embedded in the binary and
   applied by the MIT `fugaro update`, and the console half of P6 is `console/`, which is
   business-licensed already and still changes no credential, no network surface and no CSP.
-- **The front door has moved on since P7 and P8 were written**, and its MCP half is planned in
+- **The front door has moved on since P7 and P8 were written**, and its MCP half lives in
   `docs/mcp-server/` rather than here: that folder's front door serves this work's tools on one
-  endpoint, and its **D920** answer of 2026-11-04 (a public endpoint whose gate is the bearer token)
-  is the reading that replaced this plan's Cloud Run IAM invoker. **What the re-plan could not settle
-  from the documents is recorded under the part rather than decided here** — the service's own
-  Terraform layout and whose reading of the front door's authorization survives its build are the two
-  P7 names.
+  endpoint from `ee/coordinator/mcpauth/` (its tasks from M1 onward, and its M12 mounts the door on
+  the service, dormant), and its **D920** answer of 2026-11-04 (a public endpoint whose gate is the
+  bearer token) is the reading that replaced this plan's Cloud Run IAM invoker. **What the re-plan
+  could not settle from the documents is recorded under the part rather than decided here** — the
+  service's own Terraform layout and whose reading of the front door's authorization survives its
+  build are the two P7 names.
 - **#831 closes as superseded (T20), and that is OWNER-RUN.** The pull request is already closed —
   the census of 2026-11-07 (`docs/subscriptions/status-2026-11-07.md`) records it closed on
   2026-10-27 — but the comment T20 names, `gh pr close 831 --comment "Superseded: re-planned in ee/ (T20)"`,
