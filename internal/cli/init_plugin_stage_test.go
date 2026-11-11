@@ -277,7 +277,7 @@ func TestInitPluginStageInstallsWhereOnlyTheCheckoutHasAnInstall(t *testing.T) {
 	if st.State != initflow.Todo {
 		t.Fatalf("the checkout's own install alone reads as %q (%s): the plugin this stage installs is the machine's, and this machine has none (U2)\n%s", st.State, st.Detail, out)
 	}
-	if !strings.Contains(st.Detail, "installs the plugin in Claude Code") || !strings.Contains(st.Detail, "not in your own Claude Code at user scope") {
+	if !strings.Contains(st.Detail, "installs the plugin in Claude Code") || !strings.Contains(st.Detail, "not installed on this machine") {
 		t.Errorf("the plan says %q, which does not say what the machine is missing\n%s", st.Detail, out)
 	}
 }

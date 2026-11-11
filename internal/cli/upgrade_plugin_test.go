@@ -513,10 +513,11 @@ func TestUpgradePluginFailsWhenTheCallsLeaveNoUserScopeInstall(t *testing.T) {
 
 // TestUpgradeCheckLeavesThisCheckoutsProjectInstall: the same configuration on
 // the check side, which reads Claude Code's own record and runs no claude. The
-// version the report answers with is the machine's own install — the one the
-// step maintains — so a behind project install beside it is not "stale": the
-// update can never move that install, and a check that called it stale would
-// leave every run naming a state it cannot clear (D949, U2).
+// version this line answers with is the machine's own install — the one the
+// step maintains (pluginwire.Report.UserVersion) — so a behind project install
+// beside it is not "stale": the update can never move that install, and a check
+// that called it stale would leave every run naming a state it cannot clear
+// (D949, U2).
 func TestUpgradeCheckLeavesThisCheckoutsProjectInstall(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
@@ -542,7 +543,7 @@ func TestUpgradeCheckLeavesThisCheckoutsProjectInstall(t *testing.T) {
 // step plans that install, and fails after the calls when it did not happen
 // (TestUpgradePluginInstallsAtUserScopeBesideThisCheckoutsProjectInstall, from
 // the write side) — so the check answers about the machine's install
-// (pluginwire's Report.UserVersion, D949, U2) and says the plugin is not there.
+// (pluginwire's Report.UserInstall, D949, U2) and says the plugin is not there.
 func TestUpgradeCheckSeesNoUserScopeInstallBesideThisCheckoutsProjectInstall(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
@@ -558,8 +559,38 @@ func TestUpgradeCheckSeesNoUserScopeInstallBesideThisCheckoutsProjectInstall(t *
 	if strings.Contains(out, "plugin: current") {
 		t.Fatalf("the checkout's own install was read as the machine's:\n%s", out)
 	}
-	if !strings.Contains(out, "plugin: skipped: installed 0.5.2 in this checkout only, not in your own Claude Code at user scope") {
+	if !strings.Contains(out, "plugin: skipped: not installed on this machine (fugaro upgrade installs it through the claude CLI)") {
 		t.Fatalf("the check does not say the machine has no install:\n%s", out)
+	}
+}
+
+// TestUpgradeCheckReadsTheMachineOnACheckoutWithNoSettings: the same checkout
+// with no .claude/settings.json at all, which is what every checkout looks like
+// now that nothing writes a pin (D949, U2). The machine's own install is still
+// the step's subject, so a plugin a release behind is stale here and the run
+// exits 1 — read off the checkout's wiring instead, this checkout would come
+// out "cannot tell", the exit would be 0, and the upgrade skill would never run
+// the install it exists to run.
+func TestUpgradeCheckReadsTheMachineOnACheckoutWithNoSettings(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	root, settings := skillCheckout(t, "")
+	if _, err := os.Stat(settings); !os.IsNotExist(err) {
+		t.Fatalf("the fixture is wired: %v", err)
+	}
+	record := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json")
+	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plugins := `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`
+	if err := os.WriteFile(record, []byte(plugins), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := executeStdin(t, "", "upgrade", "--check", root)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, want 1 for a plugin a release behind\n%s", ExitCode(err), out)
+	}
+	if !strings.Contains(out, "plugin: stale: installed 0.5.1, this fugaro is 0.5.2") {
+		t.Fatalf("the check does not read the machine's own install off a checkout with no settings:\n%s", out)
 	}
 }
 
