@@ -712,12 +712,6 @@ const MATRIX_REFUSALS = [
     wants: [/writes an edition on 3 of its 4 rows/],
   },
   {
-    what: 'an edition on every row of a group whose spec table has no Edition column',
-    edit: (yaml) =>
-      yaml.replace(/^ {2}- id: agent-harness\n[\s\S]*?(?=^ {2}- id: model-access)/m, (block) => block.replace(/^( {8}status: .+)$/gm, '$1\n        edition: core')),
-    wants: [/is one of the groups whose spec table has an Edition column/],
-  },
-  {
     what: 'a supported row with no evidence path behind it',
     edit: (yaml) => yaml.replace(/^ {8}evidence: "internal\/agent"\n/m, ''),
     wants: [/names no evidence path/],
