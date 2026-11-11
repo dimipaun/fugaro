@@ -47,9 +47,11 @@ const (
 // repository's own rows out of its fugaro.yaml at the default branch's ref, and
 // the project layer's out of this machine's cached copy of the published layer
 // (modelsLayer). A machine that holds no cached layer for the project has its
-// rows missing from the count, which doctor cannot tell apart from a project
-// that wrote none — the layer is not on this machine to be read, and doctor is
-// an offline read (SC4).
+// rows missing from the count, which this check cannot tell apart from a project
+// that wrote none: the layer is not on this machine to be read, doctor is an
+// offline read (SC4), and the state of that read is the sibling `project-layer`
+// line's own subject (doctorLayerChecks), which says when a layer's state is
+// unknown rather than leaving it out.
 func doctorSecurityChecks(ctx context.Context, root string) []doctorCheck {
 	return doctorSecurityListChecks(
 		func() (*config.Security, *config.ProjectLayer) {
