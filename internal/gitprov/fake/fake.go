@@ -68,7 +68,7 @@ type PRState struct {
 
 // Call is one entry of the call log, which holds the calls that write
 // (reads leave the state file untouched): Op is the Provider method
-// (EnsurePR, UpdatePR, ApplyReady, Comment), PR the PR number involved
+// (EnsurePR, UpdatePR, ApplyReady, Comment, MarkReady, Merge), PR the PR number involved
 // (0 for an EnsurePR that finds or creates by branch, until it knows),
 // Detail what was asked, such as "draft=true" or "title,body".
 type Call struct {
@@ -106,6 +106,12 @@ type State struct {
 	// branch is at is a read of that branch — so a test that pins no tree
 	// and reads at a resolved commit reads the tree of the ref it came from.
 	Trees map[string]map[string]string `json:"trees,omitempty"`
+	// Checks is the checks reported at a commit (gitprov.Provider.Checks):
+	// a commit SHA -> what the host reports there. A commit this map does
+	// not name has no checks at all, which is not the same as checks that
+	// passed: the caller's ChecksState reads an empty set as CIUnknown, and
+	// a test that wants a green commit must say which checks said so.
+	Checks map[string][]gitprov.CheckRun `json:"checks,omitempty"`
 }
 
 // Provider is a fake git host.
@@ -221,6 +227,12 @@ func (p *Provider) Snapshot() State {
 		st.PRs[i] = pr
 	}
 	st.Calls = slices.Clone(p.State.Calls)
+	if p.State.Checks != nil {
+		st.Checks = make(map[string][]gitprov.CheckRun, len(p.State.Checks))
+		for sha, runs := range p.State.Checks {
+			st.Checks[sha] = slices.Clone(runs)
+		}
+	}
 	return st
 }
 
@@ -775,4 +787,86 @@ func (p *Provider) ApplyReady(_ context.Context, number int, reviewers, labels [
 		return err
 	}
 	return perr
+}
+
+// MarkReady implements gitprov.Provider: it refuses a PR whose head is not
+// the commit the call named (TestFakeMarkReadyRefusesOnHeadChange), and only
+// then clears the draft state. A state that records no head is a PR no
+// head-bound call can be checked against, so it refuses too: a mock that
+// answered "yes, that head" for a head nobody recorded would let a test pass
+// a gate the real provider never would.
+func (p *Provider) MarkReady(_ context.Context, number int, expectedHeadSHA string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return err
+	}
+	p.logLocked(Call{Op: "MarkReady", PR: number, Detail: "sha=" + expectedHeadSHA})
+	defer func() { _ = p.save() }()
+	st, err := p.findLocked(number)
+	if err != nil {
+		return err
+	}
+	if state := stateOf(st); state != gitprov.PROpen {
+		return fmt.Errorf("PR #%d is %s: %w", st.Number, state, gitprov.ErrPRNotOpen)
+	}
+	if err := p.checkHeadLocked(st, expectedHeadSHA); err != nil {
+		return err
+	}
+	p.setDraftLocked(st, false)
+	return nil
+}
+
+// Merge implements gitprov.Provider: the head is checked the same way and the
+// PR becomes merged only when it is the one asked for. There is no bypass to
+// model — the fake merges what a real host would merge at the head it was
+// given — and no credential: the gate is the caller's, and the mint that
+// would refuse an unbound merge is the real adapter's (E16, D2049).
+func (p *Provider) Merge(_ context.Context, number int, expectedHeadSHA string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return err
+	}
+	p.logLocked(Call{Op: "Merge", PR: number, Detail: "sha=" + expectedHeadSHA})
+	defer func() { _ = p.save() }()
+	st, err := p.findLocked(number)
+	if err != nil {
+		return err
+	}
+	if state := stateOf(st); state != gitprov.PROpen {
+		return fmt.Errorf("PR #%d is %s: %w", st.Number, state, gitprov.ErrPRNotOpen)
+	}
+	if err := p.checkHeadLocked(st, expectedHeadSHA); err != nil {
+		return err
+	}
+	st.State = gitprov.PRMerged
+	return nil
+}
+
+// Checks implements gitprov.Provider: what State.Checks reports at sha, and
+// nothing for a commit it does not name. The slice is a copy, so a caller
+// that appends to it does not change the state.
+func (p *Provider) Checks(_ context.Context, number int, sha string) ([]gitprov.CheckRun, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return nil, err
+	}
+	if _, err := p.findLocked(number); err != nil {
+		return nil, err
+	}
+	return slices.Clone(p.State.Checks[sha]), nil
+}
+
+// checkHeadLocked refuses a head-bound call that the state cannot bind: no
+// recorded head, or one that is not the commit the caller named.
+func (p *Provider) checkHeadLocked(st *PRState, expected string) error {
+	if st.Head == "" {
+		return fmt.Errorf("fake provider: PR #%d records no head, so a head-bound call cannot be checked", st.Number)
+	}
+	if err := gitprov.CheckExpectedHead(st.Head, expected); err != nil {
+		return fmt.Errorf("fake provider: PR #%d: %w", st.Number, err)
+	}
+	return nil
 }

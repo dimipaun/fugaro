@@ -41,6 +41,62 @@ func TestFugaroRunRecognizesMarkerAndLegacyHeading(t *testing.T) {
 	}
 }
 
+// TestMarkerRoundTripEscalation pins the ladder's own marker kind (E8, E10a):
+// a transition comment is Fugaro's, it names the run and the rung, and a body
+// that quotes one cannot pass it off as another run's.
+func TestMarkerRoundTripEscalation(t *testing.T) {
+	const id = "20261111-172557-dabe"
+	m := TransitionMarker(id, "R2")
+	if m != "<!-- fugaro:escalation run=20261111-172557-dabe rung=R2 -->" {
+		t.Fatalf("TransitionMarker = %q", m)
+	}
+	body := "R1 → R2: churn_same at deadbeef.\n\n" + m + "\n"
+	if run, rung, ok := TransitionOf(body); !ok || run != id || rung != "R2" {
+		t.Fatalf("TransitionOf = %q, %q, %v", run, rung, ok)
+	}
+	if got, ok := FugaroRun(body); !ok || got != id {
+		t.Fatalf("FugaroRun(transition) = %q, %v; a transition comment is Fugaro's own", got, ok)
+	}
+	if got := StripMarkers(body); strings.Contains(got, "fugaro:") || strings.Contains(got, id) {
+		t.Fatalf("StripMarkers left %q", got)
+	}
+	// A rung the ladder has no name for is not a transition, whatever else the
+	// comment looks like.
+	for _, bad := range []string{
+		"<!-- fugaro:escalation run=" + id + " rung=R9 -->",
+		"<!-- fugaro:escalation run=" + id + " -->",
+		"<!-- fugaro:escalation run=../../x rung=R2 -->",
+		"<!-- fugaro:escalation run=" + id + " rung =R2 -->",
+	} {
+		if _, _, ok := TransitionOf(bad); ok {
+			t.Errorf("TransitionOf(%q) read a marker it should not", bad)
+		}
+	}
+}
+
+// TestFugaroRunLastMarkerWinsAcrossKinds covers the rule that the last marker
+// of either kind decides which run a body names: a report quoting a transition
+// marker earlier must not be read as that transition's.
+func TestFugaroRunLastMarkerWinsAcrossKinds(t *testing.T) {
+	const mine = "20261111-172557-dabe"
+	body := "quoted: " + TransitionMarker("20260101-000000-dead", "R3") + "\n\n" + ReportMarker(mine) + "\n"
+	if got, ok := FugaroRun(body); !ok || got != mine {
+		t.Fatalf("FugaroRun = %q, %v; want the last marker's run", got, ok)
+	}
+	// And the other way round: the transition written last is the one that
+	// names the body.
+	body = "quoted: " + ReportMarker("20260101-000000-dead") + "\n\n" + TransitionMarker(mine, "R4") + "\n"
+	if got, ok := FugaroRun(body); !ok || got != mine {
+		t.Fatalf("FugaroRun = %q, %v; want the last marker's run", got, ok)
+	}
+	// A transition marker's rung is what TransitionOf reads, and it is the
+	// LAST one: an item that moved twice names where it ended.
+	body = TransitionMarker(mine, "R1") + "\n" + TransitionMarker(mine, "R3")
+	if _, rung, ok := TransitionOf(body); !ok || rung != "R3" {
+		t.Fatalf("TransitionOf = %q, %v; want R3", rung, ok)
+	}
+}
+
 func TestFugaroRunLastMarkerWins(t *testing.T) {
 	// An agent's text quoted earlier in a report can't name another run:
 	// Fugaro's own marker always comes last.

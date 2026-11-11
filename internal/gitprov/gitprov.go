@@ -435,6 +435,33 @@ type Provider interface {
 	// its head repository is a fork of the one this Provider was opened
 	// for. It never writes anything.
 	FetchPRHead(ctx context.Context, number int) (PRHead, error)
+	// MarkReady marks pull request number ready for review, bound to the
+	// head expectedHeadSHA (E8, D2041, G2): it re-reads the head, refuses
+	// with ErrHeadMoved when the pull request is not at that commit, and
+	// only then clears the draft state. The credential comes from the merge
+	// mint (UseMergeMint, E16/D2049); a provider without one refuses with
+	// ErrNoMergeMint rather than reaching for its own. It is not ApplyReady:
+	// that one adds reviewers and labels to a pull request somebody else
+	// made ready, and this one is the daemon's own new authority to un-draft
+	// a pull request a run left as a draft.
+	MarkReady(ctx context.Context, number int, expectedHeadSHA string) error
+	// Merge merges pull request number at exactly the head expectedHeadSHA
+	// (E8, G2, G14): it re-reads the head and refuses with ErrHeadMoved when
+	// it has moved, sends the expected head to the host as the merge's own
+	// precondition, and never sends an admin or bypass flag. The credential
+	// is the merge mint's (UseMergeMint), so a merge is a merge the gate
+	// minted for; a provider without one refuses with ErrNoMergeMint. A
+	// provider whose merge API has no expected-head precondition refuses
+	// with ErrMergeNoHeadPrecondition (F24): an unbound merge is the one
+	// thing this call exists to make impossible.
+	Merge(ctx context.Context, number int, expectedHeadSHA string) error
+	// Checks reads the checks reported at commit sha of pull request number
+	// (E8, F25). The state is ChecksState's to decide and the caller's to
+	// fail closed on: an empty slice is a commit whose checks report
+	// nothing, which is CIUnknown and never green, and an error is a read
+	// that did not happen rather than a commit that passed. A provider that
+	// cannot report checks at all refuses with ErrChecksUnsupported.
+	Checks(ctx context.Context, number int, sha string) ([]CheckRun, error)
 }
 
 // Opener opens the provider of kind (KindGitHub or KindBitbucket) for repo
