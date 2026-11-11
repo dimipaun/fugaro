@@ -74,9 +74,10 @@ import (
 // project reviewing less, which is why every rule above refuses rather than
 // repairs.
 //
-// The `fugaro rigor` group is created by whichever of this task, G7 (`fugaro
-// rigor floor`) and the settings design's S7 lands first, and each of the others
-// adds its own subcommand to it.
+// The `fugaro rigor` group was created by whichever of this task, G7 (`fugaro
+// rigor floor`) and the settings design's S7 landed first — this one — and each
+// of the others adds its own subcommand to it: G7's `floor` is in
+// rigor_floor.go, and S7 was closed as G7's duplicate on 2026-11-10.
 
 // rigorOptions are `fugaro rigor set`'s flags. It takes no --layer (D830: the
 // path is derived and there is nothing to choose) and no --dry-run (the
@@ -119,6 +120,7 @@ command to run at your own terminal, and your own terminal writes it and asks
 nothing.`,
 	}
 	cmd.AddCommand(newRigorSetCmd())
+	cmd.AddCommand(newRigorFloorCmd())
 	return cmd
 }
 
@@ -332,13 +334,12 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 		}
 	}
 	// The review floor is outside every layer, so this command cannot lower it
-	// and does not try: what it does is say where the floor stands (SD10, D1170's
-	// own separation of the two nouns). SD10 names the command that changes one,
-	// `fugaro rigor floor`, and that command is G7's and is not in this tree:
-	// naming it here would send a person to a command that prints this group's
-	// own help, so the line says the floor is where it is and that no command
-	// changes one yet. The name goes back when G7 lands, in its own words.
-	fmt.Fprintf(cmd.OutOrStdout(), "review floor: %s; this command cannot lower it: the floor is outside every layer, and the command that changes one is not built yet\n", rigorFloorLine(lc))
+	// and does not try: what it does is say where the floor stands and name the
+	// command that changes one (SD10, D1170's own separation of the two nouns).
+	// That command is `fugaro rigor floor`, G7's, and it landed beside this one:
+	// the line named no command while it did not exist, because sending a person
+	// to a name that printed this group's own help is worse than saying nothing.
+	fmt.Fprintf(cmd.OutOrStdout(), "review floor: %s; this command cannot lower it: the floor is outside every layer, and `fugaro rigor floor` is the command that changes one\n", rigorFloorLine(lc))
 	edit := settingsEdit{
 		Path:     target.path,
 		Old:      old,

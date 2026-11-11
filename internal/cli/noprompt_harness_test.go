@@ -301,6 +301,15 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "set defaults.rigor.default to critical in",
 		seed:    closedStdinRigorLayerSeed,
 	},
+	// The floor's two leaves, driven to the directions a closed stdin can reach.
+	// The world's project config carries no review_floor at all, so the set is an
+	// entry ADDED — the direction D1170 leaves unconfirmed, and the reason this
+	// leaf is a run at all rather than a question — and the unset is a mode with
+	// no floor, which returns with the sentence saying so before anything is
+	// asked. Neither may print a question here: the typed confirmation is only
+	// ever the answer to an edit that takes a floor away.
+	"fugaro rigor floor set":   {args: []string{"critical", "l2"}, reaches: "set review_floor.critical from none to l2 in"},
+	"fugaro rigor floor unset": {args: []string{"pro"}, reaches: "carries no floor, so there is nothing to remove"},
 	"fugaro settings get":         {args: []string{"a.b"}},
 	"fugaro stats runs":           {args: []string{"--project", "proj-1234"}},
 	"fugaro user add":             {args: []string{"someone@example.com"}},
