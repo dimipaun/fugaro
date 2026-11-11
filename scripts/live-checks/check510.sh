@@ -671,15 +671,15 @@ step_create() {
     # its two answers mean the two things the plan can be written as: a 403
     # beside an ADMITTED named create is create fenced by name in both
     # directions, so DS2.2 may condition the intake's create; an admitted create
-    # is no name fence at all, so the unconditioned create stays. Both are
-    # readings (the 403 PASSes when the pair says the fence holds), and neither
-    # makes the run fail — the owner decides which grant DS2.2 writes.
+    # is no name fence at all, so the unconditioned create stays. Both answers
+    # are readings, as the two rows beside it are, and neither makes the run
+    # fail — the owner decides which grant DS2.2 writes.
     name="fugaro-chk510-${STAMP}-made-outside"
     create_secret "$name"
     case "$API_STATUS" in
     403)
       if [ "$CREATE_CONDITIONED" = admitted ]; then
-        fact create-conditioned-outside PASS "secretmanager.secrets.create on ${name} — a name outside both prefixes, the fugaro-<slug>-... shape a repository's own mounted secret has — was REFUSED with 403 under the very grant that ADMITTED the prefixed name above: $(api_detail). Create IS fenced by name under the condition in both directions, so DS2.2 MAY condition the intake's create instead of holding it unconditioned — report this reading to the owner before that grant is written"
+        fact create-conditioned-outside REPORT "secretmanager.secrets.create on ${name} — a name outside both prefixes, the fugaro-<slug>-... shape a repository's own mounted secret has — was REFUSED with 403 under the very grant that ADMITTED the prefixed name above: $(api_detail). Create IS fenced by name under the condition in both directions, so DS2.2 MAY condition the intake's create instead of holding it unconditioned — report this reading to the owner before that grant is written"
       else
         fact create-conditioned-outside REPORT "secretmanager.secrets.create on ${name} (a name outside both prefixes) was REFUSED with 403, as was the name inside the prefix above (${CREATE_CONDITIONED:-not measured}): in this run the conditioned grant admits no create at all, so there is no name fence to write and the unconditioned create stays as DS2.2 has it. A reading for the owner, not a criterion"
       fi

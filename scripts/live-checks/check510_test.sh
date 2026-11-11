@@ -1064,7 +1064,7 @@ test_a_conditioned_create_admitted_inside_the_prefix_is_a_reading() {
   expect_status "$status" 0 "a conditioned create admitted inside the prefix"
   expect_contains "$out" "FACT create-conditioned: REPORT" "a conditioned create admitted inside the prefix: the row is a reading"
   expect_contains "$out" "contradicts it, and it is the reading the owner's 2026-11-11 run reported" "a conditioned create admitted inside the prefix: the row says what it means"
-  expect_contains "$out" "FACT create-conditioned-outside: PASS" "a conditioned create admitted inside the prefix: the outside row"
+  expect_contains "$out" "FACT create-conditioned-outside: REPORT" "a conditioned create admitted inside the prefix: the outside row is a reading like the two beside it"
   expect_contains "$out" "Create IS fenced by name under the condition in both directions" "a conditioned create admitted inside the prefix: what the pair means for DS2.2"
   expect_contains "$out" "FACT create-unconditioned: REPORT" "a conditioned create admitted inside the prefix: the control reading"
   expect_absent "$out" "FACT create-conditioned: FAIL" "a conditioned create admitted inside the prefix: no failure is claimed"
