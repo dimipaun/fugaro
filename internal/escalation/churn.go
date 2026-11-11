@@ -71,13 +71,16 @@ type Round []Finding
 //     "The same" is a match on the key, or on the file and the class — the
 //     latter is D1246's own rule, and it is what keeps a reworded finding from
 //     reading as a new one (F11).
-//   - Otherwise, every round after the first has to be new minor findings for
-//     the answer to be KindNewMinor: every finding in it new — absent from
-//     every round before it — and every one of them minor, which is
-//     rigor.Blocks' answer for the mode and not a second scale. A new finding
-//     the mode blocks on is the reviewer doing its job, so it answers
-//     KindNone: the spec's rule is about the reviewer raising new *minor*
-//     findings instead of converging, not about it raising anything at all.
+//   - Otherwise, every round has to be minor and every round after the first
+//     has to be new, for the answer to be KindNewMinor: minor is rigor.Blocks'
+//     answer for the mode and not a second scale, and new means absent from
+//     every round before it. The first round is the baseline for identity —
+//     there is nothing before it for a finding to be the same as — and not for
+//     severity: a finding the mode blocks on is the reviewer doing its job,
+//     whether the round that raised it is the first or the fourth, so it
+//     answers KindNone. The spec's rule is about the reviewer raising new
+//     *minor* findings instead of converging, not about it raising anything at
+//     all.
 //
 // A comparison the spec's rule does not reach is KindNone, which is rung 1 —
 // the item's own recipe loop, today's behaviour. That is the one answer here
@@ -98,9 +101,12 @@ func Churn(mode rigor.Mode, rounds []Round) Kind {
 		}
 	}
 
+	// The first round is the baseline for identity and not for severity: it
+	// has no earlier round, so rounds[:0] is empty and nothing can repeat in
+	// it, and its findings are read by rigor.Blocks like every other round's.
 	churning := true
-	for i := 1; i < len(rounds); i++ {
-		for _, f := range rounds[i] {
+	for i, round := range rounds {
+		for _, f := range round {
 			if repeated(f, rounds[:i]) {
 				return KindSame
 			}

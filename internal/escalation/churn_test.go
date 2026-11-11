@@ -20,6 +20,13 @@ func blockingScore() rigor.Score {
 	return rigor.Score{Likelihood: 1, Impact: 5, FixCost: 1, Class: rigor.Correctness}
 }
 
+// unscored is a finding whose class is outside rigor's vocabulary — a shape
+// the reviewer's own schema permits (D3). It is the unscored finding of D4:
+// there is no score the table can read, so every mode blocks on it.
+func unscored() rigor.Score {
+	return rigor.Score{Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Class("nitpick")}
+}
+
 // TestChurnSameFinding: the same finding raised round after round is "same" —
 // the spec's "the same unresolved issue repeating", which D2036 sends to rung
 // 2 once and then to D1246's split.
@@ -62,6 +69,34 @@ func TestChurnNewBlockingIsNone(t *testing.T) {
 	for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro} {
 		if got := Churn(mode, rounds); got != KindNone {
 			t.Errorf("Churn(%s, a new blocking finding every round) = %q; want %q", mode, got, KindNone)
+		}
+	}
+}
+
+// TestChurnBlockingFirstRoundIsNone: the spec's rule is that *each* round
+// raises new minor findings, and the first round is one of them. An item whose
+// first review raised something the mode blocks on is a reviewer that found
+// something real, so the new minor findings after it are not churn — the first
+// round is a baseline for identity, because there is nothing before it to be
+// the same as, and not for severity. An unscored finding is one of these: it
+// carries no score the table can read, so it blocks in every mode (D4).
+func TestChurnBlockingFirstRoundIsNone(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		first rigor.Score
+	}{
+		{"a finding the mode blocks on", blockingScore()},
+		{"an unscored finding, which blocks in every mode", rigor.Score{}},
+	} {
+		rounds := []Round{
+			{{Key: "k1", File: "internal/runner/a.go", Score: tc.first}},
+			{{Key: "k2", File: "internal/runner/b.go", Score: minorScore()}},
+			{{Key: "k3", File: "internal/runner/c.go", Score: minorScore()}},
+		}
+		for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro} {
+			if got := Churn(mode, rounds); got != KindNone {
+				t.Errorf("Churn(%s, a first round with %s) = %q; want %q", mode, tc.name, got, KindNone)
+			}
 		}
 	}
 }
@@ -129,6 +164,50 @@ func TestChurnRewordedSameFileClassIsSame(t *testing.T) {
 	for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro} {
 		if got := Churn(mode, rounds); got != KindSame {
 			t.Errorf("Churn(%s, the same finding reworded) = %q; want %q", mode, got, KindSame)
+		}
+	}
+}
+
+// TestChurnFallbackNeedsARealFileAndClass: D1246's fallback is "the same file
+// and class", and neither half is something a finding that has none can
+// supply. A finding the reviewer named no file for sits nowhere, and one whose
+// class is not in rigor's vocabulary carries no class at all — it is unscored
+// (rigor.Score.Scored) — so two of either are not one finding raised twice,
+// and the rounds are read on their keys alone. Both shapes are ones the
+// reviewer's own schema permits, so a guard here is a guard on records this
+// code really reads.
+func TestChurnFallbackNeedsARealFileAndClass(t *testing.T) {
+	const file = "internal/runner/runner.go"
+	for _, tc := range []struct {
+		name   string
+		rounds []Round
+		want   Kind
+	}{
+		{
+			// Two findings with no file and the same class sit in no place at
+			// all: matching them would be the fail-open direction, and these
+			// are new minor findings.
+			"no file",
+			[]Round{
+				{{Key: "k1", Score: minorScore()}},
+				{{Key: "k2", Score: minorScore()}},
+			},
+			KindNewMinor,
+		},
+		{
+			// An out-of-vocabulary class is no class, so "the same file and
+			// class" is not something two of these can be — and the finding
+			// blocks, so the answer is the normal path.
+			"a class outside the vocabulary",
+			[]Round{
+				{{Key: "k1", File: file, Score: unscored()}},
+				{{Key: "k2", File: file, Score: unscored()}},
+			},
+			KindNone,
+		},
+	} {
+		if got := Churn(rigor.Pro, tc.rounds); got != tc.want {
+			t.Errorf("Churn(Pro, keyed findings with %s) = %q; want %q", tc.name, got, tc.want)
 		}
 	}
 }
