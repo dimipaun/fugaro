@@ -162,6 +162,12 @@ func dropModelMounts(ws *WorkflowSpec) {
 //     covers has a build record, so no unattended build starts for an
 //     image nobody has built on purpose.
 //
+// door is the door the caller is running ("update", "setup"), and it names
+// the one command a missing secret's fix may print that is not a `secrets
+// set` line: the run's own door, for a name only the published node admits
+// (SecretFix). Every other fix is the same line whatever door reads it, so
+// this is the whole of what the caller's door decides.
+//
 // planOnly is fugaro update's --plan-only, and it exempts the refusals
 // that exist to stop a *change* rather than to describe a state: this function
 // returns one, for an existing job this apply would deploy without the backend
@@ -173,7 +179,7 @@ func dropModelMounts(ws *WorkflowSpec) {
 // problem: the gate above still reports MissingFirebase for that job, so the
 // plan prints the job as one that cannot be deployed until the backend is
 // configured.
-func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, planOnly bool) (RepoSpec, []Missing, error) {
+func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, planOnly bool, door string) (RepoSpec, []Missing, error) {
 	out := cloneRepoSpec(spec)
 	tg := target{project: spec.GCPProject, number: ex.ProjectNumber}
 	// A secret a repository's own Terraform module once created can stop
@@ -211,7 +217,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		// store, so it is what an operator is asked to type, and no longer
 		// the --project-wide synonym (plan Task 2.1 step 3, the message
 		// half of finding 13) -- and the repository-copy command otherwise.
-		fix = SecretFix(spec, logical, "fugaro", func(s string) string { return s })
+		fix = SecretFix(spec, logical, "fugaro", door, func(s string) string { return s })
 		cand, isCandidate := spec.ProjectSecretCandidates[logical]
 		if !isCandidate {
 			return false, fix, nil

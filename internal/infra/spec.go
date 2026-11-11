@@ -515,6 +515,23 @@ type RepoSpec struct {
 	// decides that against live state, and produces ProjectSecrets.
 	// json:"-": this map never reaches tfvars.
 	ProjectSecretCandidates map[string]string `json:"-"`
+	// ProjectSecretNodeOnly names the entries of ProjectSecretCandidates that
+	// only the published node admits: this machine's local config holds no
+	// entry and no list that makes the name project-wide for this repository,
+	// so the node's own block is the whole answer (SD17, G15).
+	//
+	// The distinction decides the command that stores such a name, and that is
+	// the only reason this map exists: `fugaro secrets set <name>` answers its
+	// scope from the local config alone (internal/cli's projectScopeName), so
+	// for a name only the node admits it refuses --project-wide and its bare
+	// form writes the repository's own copy -- the copy that then wins over
+	// the project's forever, the silent flip project-wide secrets exist to
+	// avoid (design docs/design/project-secrets.md §5). What such a name is
+	// given instead is the run's own door, whose secrets stage stores the
+	// value in the container its own node-read decision picks: SecretFix's
+	// node-only branch, and initsecrets' Left, which spells the same line.
+	// json:"-": this map never reaches tfvars.
+	ProjectSecretNodeOnly map[string]bool `json:"-"`
 	// ProjectSecrets are the logical names Readiness resolved to the
 	// project copy for this repository (repo has no version, project does),
 	// mapped to the project secret ID. This is the field that reaches
@@ -1541,7 +1558,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			return RepoSpec{}, err
 		}
 	}
-	rs.ProjectSecretCandidates = c.projectSecretCandidates(rs)
+	rs.ProjectSecretCandidates, rs.ProjectSecretNodeOnly = c.projectSecretCandidates(rs)
 	return rs, nil
 }
 
@@ -1552,16 +1569,32 @@ func Repo(in Inputs) (RepoSpec, error) {
 // name actually resolves to the project copy -- Readiness decides that
 // against live state (design docs/design/project-secrets.md §5).
 //
+// The second answer is the subset only the node admits (RepoSpec's
+// ProjectSecretNodeOnly), asked of each name only once the local config's own
+// answer is no: a name the local config already answers for keeps that answer,
+// and the node is asked about no other.
+//
 // It reads the two facts this context holds and no caller of the predicate
 // alone has -- the repository's provider and the published node -- so the
 // container a job mounts and the container update --repo's secrets stage
 // stores into are one answer and cannot disagree (SD17).
-func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
+func (c *repoCtx) projectSecretCandidates(rs RepoSpec) (map[string]string, map[string]bool) {
 	out := map[string]string{}
+	var nodeOnly map[string]bool
 	add := func(logical string) {
-		if id, ok := ProjectSecretCandidateFromNode(c.lc, logical, c.in.Repo, c.provider, c.in.Policy); ok {
+		if id, ok := ProjectSecretCandidate(c.lc, logical, c.in.Repo); ok {
 			out[logical] = id
+			return
 		}
+		id, ok := ProjectSecretCandidateFromNode(c.lc, logical, c.in.Repo, c.provider, c.in.Policy)
+		if !ok {
+			return
+		}
+		out[logical] = id
+		if nodeOnly == nil {
+			nodeOnly = map[string]bool{}
+		}
+		nodeOnly[logical] = true
 	}
 	for _, key := range slices.Sorted(maps.Keys(rs.Workflows)) {
 		for _, logical := range uniqueSecrets(rs.Workflows[key]) {
@@ -1574,9 +1607,9 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 		}
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, nil
 	}
-	return out
+	return out, nodeOnly
 }
 
 // ProjectSecretCandidate is the one place that answers "may this repository

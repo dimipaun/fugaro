@@ -4790,7 +4790,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			r.warn(n)
 		}
 	}
-	ready, missing, err := infra.Readiness(ctx, c, spec, ex, r.o.planOnly)
+	ready, missing, err := infra.Readiness(ctx, c, spec, ex, r.o.planOnly, r.o.doorName())
 	if err != nil {
 		return infra.RepoSpec{}, nil, initErr(err)
 	}
@@ -5133,7 +5133,7 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 // secrets set command, as the bootstrap printed them, and each workflow's
 // other gates.
 func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, missing []infra.Missing, needKey bool) {
-	steps := infra.SecretCommands(spec, versions, selfCommand(), quoteWord)
+	steps := infra.SecretCommands(spec, versions, selfCommand(), r.o.doorName(), quoteWord)
 	if !needKey {
 		// This run never calls Anthropic, so the key is not missing: it gates
 		// nothing (infra.NeedsBuild skips it), the job deploys without it, and
