@@ -429,7 +429,8 @@ unused.
   the binary carries code under the enterprise licence; a test (plan L2.1, from 0.11.0) refuses a
   non-empty tag list without those labels, and the label change is its own slice (plan L5) with an
   OWNER-RUN counsel review. (c) A user who wants a pure-MIT binary builds from source without the
-  tag; whether to also publish a pure-MIT artifact is open for that release. (d) The repository's
+  tag; whether to also publish a pure-MIT artifact was open for that release and **the owner ruled
+  2026-11-11: yes, publish a pure-MIT build** beside the mixed-licence one (plan L5.3). (d) The repository's
   `go vet -tags` loop in `ci.yml` does not vet `//go:build ee` files today; the workspaces plan adds
   the tag to it when the first such file lands. (e) The three published images
   (`images/base/Dockerfile`, `images/history/Dockerfile`, `images/credentials/Dockerfile`) each

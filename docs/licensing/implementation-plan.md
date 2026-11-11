@@ -603,6 +603,8 @@ The number is not reused.
 - **What:** with counsel, settle the wording every label carries once the release build sets the
   `ee` tag (T3 (b)), and whether a pure-MIT artifact is also published (T3 (c)).
 - **Depends on:** L4.1 (an `ee/LICENSE` exists to point at).
+- **Status 2026-11-11:** T3 (b) is settled (L5.2). T3 (c) is ruled by the owner: **yes, a pure-MIT
+  build is also published**; its task is L5.3, approved by the owner the same day.
 
 #### L5.2 — Label the mixed-licence release
 - **Files:** `.goreleaser.yaml` (`builds[0].tags: [ee]`; the cask's `license` per L5.1),
@@ -621,6 +623,24 @@ The number is not reused.
   `cmd/fugaro/ee_on.go`. **Reviewer tier:** opus + mandatory independent review (licence labels).
   **OWNER-RUN:** no (L5.1 is).
 - **Commit:** `release: the binary carries ee/ code, and every label says so`
+
+#### L5.3 — Publish a pure-MIT build beside the mixed-licence one
+- **What:** the owner's T3 (c) ruling of 2026-11-11. A second archive per platform built without
+  the `ee` tag, labelled MIT only, so a user who wants no `ee/` code downloads it instead of
+  building from source. The Homebrew cask stays on the mixed-licence binary.
+- **Files:** `.goreleaser.yaml` (a second build id without `tags: [ee]`, its own archive name, no
+  `ee/LICENSE` copy, checksums), `scripts/notices_test.go`, `README.md` and `LICENSING.md` (say which
+  archive is which), `website` downloads and licence elements with their tests, `docs/release.md`.
+- **Tests:** a test that the pure-MIT build lists no `ee` tag and its archive carries no
+  `ee/LICENSE`; `TestEETagNeedsTheLabels` still holds for the mixed build; the README, `LICENSING.md`
+  and website pins updated.
+- **Owner's answers, 2026-11-11:** the archive is named `fugaro-core` (files
+  `fugaro-core_<version>_<os>_<arch>.tar.gz`, the binary inside stays `fugaro`); `fugaro update`, the
+  console's CLI discovery and the plugin pin follow the mixed-licence build only; no second
+  Homebrew cask, the cask stays on the mixed build. The owner gave the go for this task.
+- **Depends on:** L5.2. **Reviewer tier:** opus + mandatory independent review (licence labels).
+  **OWNER-RUN:** no.
+- **Commit:** `release: publish a pure-MIT archive beside the mixed-licence one`
 
 ## Parallel execution
 
