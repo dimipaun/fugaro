@@ -21,6 +21,23 @@ var (
 // the API's own maximum, so a context costs as few requests as it can.
 const srcPageLen = 100
 
+// srcMaxDepth is how deep the src listing is asked to recurse. This API has no
+// "recursive" parameter: it takes max_depth, whose default of 1 answers the
+// requested directory's own entries and nothing below them, so a context with
+// a subdirectory would be listed as the subdirectory alone — and every file
+// under it would be missing from the digest the copy stages (D1401) and from
+// the ceilings the walk applies (D1398).
+//
+// It is asked for rather than left to the API's default — which is the one
+// answer that is certainly wrong for a context — and it is bounded because it
+// is what decides how much of a repository one request walks. The number is far
+// past any depth a context a person writes reaches, and past either reading of
+// where the count starts, from the requested directory or from the repository
+// root. A context nested deeper than it is listed without the files below, and
+// nothing in the reply says so: that is the one thing this read cannot tell
+// from a context that ends there.
+const srcMaxDepth = 100
+
 // maxSrcPages bounds the pages a listing walks. The caller's own ceiling is
 // checked as each page's entries arrive, so a directory over it stops the walk
 // on the page that took it over; this bound is for the case the caller's is
@@ -62,11 +79,14 @@ func (p *Provider) Commit(ctx context.Context, ref string) (string, error) {
 // read from the src endpoint's directory listing and then one file read each.
 //
 // The listing comes first and is where the limit is enforced: GET
-// /2.0/repositories/{workspace}/{repo}/src/{commit}/{path}/?pagelen=100&recursive=true
-// answers the directory's entries, each with its path, its type and its own
-// size, so a tree over the caller's ceiling is refused before a file of it is
-// read — the walk itself stops on the page that took it over, and maxSrcPages
-// bounds a listing the caller's ceiling does not.
+// /2.0/repositories/{workspace}/{repo}/src/{commit}/{path}/?pagelen=100&max_depth=100
+// answers the directory's entries and the entries below them, each with its
+// path, its type and its own size, so a tree over the caller's ceiling is
+// refused before a file of it is read — the walk itself stops on the page that
+// took it over, and maxSrcPages bounds a listing the caller's ceiling does not.
+// The depth is asked for rather than assumed (srcMaxDepth): this listing
+// answers one directory's own entries by default, and a context's
+// subdirectories are part of the context.
 //
 // What comes back is each file's path relative to path — the identity a
 // context's digest is taken over, which must not move when the context is
@@ -82,6 +102,14 @@ func (p *Provider) Commit(ctx context.Context, ref string) (string, error) {
 // directory, and the catalog's own grammar accepts one written the way its
 // example spells it ("ci/", D1391), where validContentsPath's rule is a file's
 // and refuses that slash.
+//
+// UNVERIFIED against the live API, like the commit read and the file read
+// beside it: the shape follows Bitbucket's documented src listing — its
+// max_depth parameter rather than a recursive flag, and the Link header its
+// paging answers with — not a recorded response. What this read asks the
+// listing for is what decides which files a context is made of, so it is a
+// live run of this read, against a context with a subdirectory in it, that
+// would confirm it.
 func (p *Provider) Tree(ctx context.Context, path, ref string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
 	at := pluginwire.Printable(path)
 	dir := strings.TrimSuffix(path, "/")
@@ -137,8 +165,9 @@ type srcEntry struct {
 
 // srcListing walks the src endpoint's listing of one directory at rev, page by
 // page, and answers every entry it holds. The listing is the directory's and
-// its subdirectories' (recursive=true), each entry carrying its path from the
-// repository root, which is the path a file read is made with.
+// its subdirectories' — asked for with max_depth (srcMaxDepth) — each entry
+// carrying its path from the repository root, which is the path a file read is
+// made with.
 //
 // The caller's ceiling is applied as the entries arrive, not after the walk:
 // the files under path are counted and their sizes summed page by page, and
@@ -189,14 +218,20 @@ func (p *Provider) srcListing(ctx context.Context, path, rev string, limit gitpr
 // on its own (contentsURL's own rule), the ref escaped the same way, and the
 // trailing slash the listing is read from. The repository root is asked for by
 // the ref alone, which is how this API names it.
+//
+// Both parameters are named on every listing: how many entries one page may
+// hold, and how deep it recurses. The API has a default for each, and its
+// default depth is the requested directory's own entries, so a context is read
+// whole only because both are asked for here.
 func (p *Provider) srcListingURL(path, rev string) string {
 	root := "/repositories/" + url.PathEscape(p.o.Workspace) + "/" + url.PathEscape(p.o.Slug) + "/src/" + url.PathEscape(rev) + "/"
+	query := "?pagelen=" + strconv.Itoa(srcPageLen) + "&max_depth=" + strconv.Itoa(srcMaxDepth)
 	if path == "" || path == "." {
-		return root + "?pagelen=" + strconv.Itoa(srcPageLen) + "&recursive=true"
+		return root + query
 	}
 	segs := strings.Split(strings.TrimSuffix(path, "/"), "/")
 	for i, s := range segs {
 		segs[i] = url.PathEscape(s)
 	}
-	return root + strings.Join(segs, "/") + "/?pagelen=" + strconv.Itoa(srcPageLen) + "&recursive=true"
+	return root + strings.Join(segs, "/") + "/" + query
 }

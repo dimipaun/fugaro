@@ -114,27 +114,55 @@ func TestCommitResolvesABranchAndTheDefaultBranch(t *testing.T) {
 // commit, each read from the src endpoint — with the paths relative to the
 // directory that was read, the entries that are not files left out, and the
 // repository's other files left out with them.
+//
+// The listing here holds a file two levels down, under a subdirectory, because
+// a context's subdirectories are part of it: that file is in the listing only
+// because the listing was asked to recurse to it (srcMaxDepth), and without
+// that depth it would be missing from the read — and so from the digest the
+// copy stages (D1401) and from the ceilings it applies (D1398).
 func TestTreeReadsTheFilesUnderThePathAtTheCommit(t *testing.T) {
 	def := "FROM example.invalid/base\n"
 	src := "package main\n"
+	deep := "package deep\n"
 	f := newCommitsServer(t)
-	f.routes[srcBase+"ci/?pagelen=100&recursive=true"] = commitsReply{status: 200, ctype: "application/json", body: fmt.Sprintf(
-		`{"pagelen": 100, "values": [{"path": "ci/Dockerfile", "type": "commit_file", "size": %d}, {"path": "ci/src", "type": "commit_directory"}, {"path": "ci/src/main.go", "type": "commit_file", "size": %d}, {"path": "web/index.html", "type": "commit_file", "size": 5}]}`,
-		len(def), len(src))}
+	f.routes[srcBase+"ci/?pagelen=100&max_depth=100"] = commitsReply{status: 200, ctype: "application/json", body: fmt.Sprintf(
+		`{"pagelen": 100, "values": [{"path": "ci/Dockerfile", "type": "commit_file", "size": %d}, {"path": "ci/src", "type": "commit_directory"}, {"path": "ci/src/main.go", "type": "commit_file", "size": %d}, {"path": "ci/src/pkg", "type": "commit_directory"}, {"path": "ci/src/pkg/deep.go", "type": "commit_file", "size": %d}, {"path": "web/index.html", "type": "commit_file", "size": 5}]}`,
+		len(def), len(src), len(deep))}
 	f.routes[srcBase+"ci/Dockerfile"] = commitsReply{status: 200, ctype: "application/octet-stream", body: def}
 	f.routes[srcBase+"ci/src/main.go"] = commitsReply{status: 200, ctype: "application/octet-stream", body: src}
+	f.routes[srcBase+"ci/src/pkg/deep.go"] = commitsReply{status: 200, ctype: "application/octet-stream", body: deep}
 	p := f.provider(t)
 	files, err := p.Tree(ctx, "ci", commitSHA, gitprov.TreeLimit{MaxFiles: 10, MaxBytes: 1 << 20})
 	if err != nil {
 		t.Fatalf("Tree: %v", err)
 	}
-	want := []gitprov.TreeFile{{Path: "Dockerfile", Data: []byte(def)}, {Path: "src/main.go", Data: []byte(src)}}
+	want := []gitprov.TreeFile{{Path: "Dockerfile", Data: []byte(def)}, {Path: "src/main.go", Data: []byte(src)}, {Path: "src/pkg/deep.go", Data: []byte(deep)}}
 	if len(files) != len(want) {
 		t.Fatalf("Tree = %d files (%v), want %d", len(files), files, len(want))
 	}
 	for i, g := range files {
 		if g.Path != want[i].Path || string(g.Data) != string(want[i].Data) {
 			t.Errorf("Tree[%d] = %q %q, want %q %q", i, g.Path, g.Data, want[i].Path, want[i].Data)
+		}
+	}
+}
+
+// TestTreeAsksTheListingForItsDepthAndPageLength: the listing URL is the
+// request that decides which files a context is made of, so both of its
+// parameters are written out here rather than left to the API's own defaults —
+// this API's src listing answers one directory's own entries unless a depth is
+// asked for, and the subdirectories of a context are part of the context.
+func TestTreeAsksTheListingForItsDepthAndPageLength(t *testing.T) {
+	p := newCommitsServer(t).provider(t)
+	repo := "/repositories/acme/web/src/" + commitSHA + "/"
+	for _, tc := range []struct{ path, want string }{
+		{"", repo + "?pagelen=100&max_depth=100"},
+		{"ci", repo + "ci/?pagelen=100&max_depth=100"},
+		{"ci/", repo + "ci/?pagelen=100&max_depth=100"},
+		{"ci/src/pkg", repo + "ci/src/pkg/?pagelen=100&max_depth=100"},
+	} {
+		if got := p.srcListingURL(tc.path, commitSHA); got != tc.want {
+			t.Errorf("srcListingURL(%q) = %q, want %q", tc.path, got, tc.want)
 		}
 	}
 }
@@ -146,10 +174,10 @@ func TestTreeWalksEveryPageOfAListing(t *testing.T) {
 	one := "one\n"
 	two := "two\n"
 	f := newCommitsServer(t)
-	f.routes[srcBase+"ci/?pagelen=100&recursive=true"] = commitsReply{status: 200, ctype: "application/json",
+	f.routes[srcBase+"ci/?pagelen=100&max_depth=100"] = commitsReply{status: 200, ctype: "application/json",
 		body:   fmt.Sprintf(`{"values": [{"path": "ci/a", "type": "commit_file", "size": %d}]}`, len(one)),
-		header: map[string]string{"Link": "<{{server}}/2.0/repositories/acme/web/src/" + commitSHA + "/ci/?pagelen=100&recursive=true&page=2>; rel=\"next\""}}
-	f.routes[srcBase+"ci/?pagelen=100&recursive=true&page=2"] = commitsReply{status: 200, ctype: "application/json",
+		header: map[string]string{"Link": "<{{server}}/2.0/repositories/acme/web/src/" + commitSHA + "/ci/?pagelen=100&max_depth=100&page=2>; rel=\"next\""}}
+	f.routes[srcBase+"ci/?pagelen=100&max_depth=100&page=2"] = commitsReply{status: 200, ctype: "application/json",
 		body: fmt.Sprintf(`{"values": [{"path": "ci/b", "type": "commit_file", "size": %d}]}`, len(two))}
 	f.routes[srcBase+"ci/a"] = commitsReply{status: 200, ctype: "application/octet-stream", body: one}
 	f.routes[srcBase+"ci/b"] = commitsReply{status: 200, ctype: "application/octet-stream", body: two}
@@ -171,7 +199,7 @@ func TestTreeWalksEveryPageOfAListing(t *testing.T) {
 func TestTreeReadsADirectoryWrittenWithItsTrailingSlash(t *testing.T) {
 	def := "FROM example.invalid/base\n"
 	f := newCommitsServer(t)
-	f.routes[srcBase+"ci/?pagelen=100&recursive=true"] = commitsReply{status: 200, ctype: "application/json",
+	f.routes[srcBase+"ci/?pagelen=100&max_depth=100"] = commitsReply{status: 200, ctype: "application/json",
 		body: fmt.Sprintf(`{"values": [{"path": "ci/Dockerfile", "type": "commit_file", "size": %d}]}`, len(def))}
 	f.routes[srcBase+"ci/Dockerfile"] = commitsReply{status: 200, ctype: "application/octet-stream", body: def}
 	p := f.provider(t)
@@ -195,14 +223,14 @@ func TestTreeStopsTheWalkOnThePageThatIsOverItsLimit(t *testing.T) {
 		r := commitsReply{status: 200, ctype: "application/json",
 			body: fmt.Sprintf(`{"values": [{"path": "ci/%s", "type": "commit_file", "size": %d}]}`, name, len(one))}
 		if link {
-			r.header = map[string]string{"Link": fmt.Sprintf("<{{server}}%sci/?pagelen=100&recursive=true&page=%d>; rel=\"next\"", srcBase, n+1)}
+			r.header = map[string]string{"Link": fmt.Sprintf("<{{server}}%sci/?pagelen=100&max_depth=100&page=%d>; rel=\"next\"", srcBase, n+1)}
 		}
 		return r
 	}
 	f := newCommitsServer(t)
-	f.routes[srcBase+"ci/?pagelen=100&recursive=true"] = page(1, true, "a")
-	f.routes[srcBase+"ci/?pagelen=100&recursive=true&page=2"] = page(2, true, "b")
-	f.routes[srcBase+"ci/?pagelen=100&recursive=true&page=3"] = page(3, false, "c")
+	f.routes[srcBase+"ci/?pagelen=100&max_depth=100"] = page(1, true, "a")
+	f.routes[srcBase+"ci/?pagelen=100&max_depth=100&page=2"] = page(2, true, "b")
+	f.routes[srcBase+"ci/?pagelen=100&max_depth=100&page=3"] = page(3, false, "c")
 	for _, name := range []string{"a", "b", "c"} {
 		f.routes[srcBase+"ci/"+name] = commitsReply{status: 200, ctype: "application/octet-stream", body: one}
 	}
@@ -211,7 +239,7 @@ func TestTreeStopsTheWalkOnThePageThatIsOverItsLimit(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), gitprov.ErrTreeTooLarge.Error()) {
 		t.Fatalf("Tree over its file limit = %v, want %v", err, gitprov.ErrTreeTooLarge)
 	}
-	if f.asked(srcBase + "ci/?pagelen=100&recursive=true&page=3") {
+	if f.asked(srcBase + "ci/?pagelen=100&max_depth=100&page=3") {
 		t.Error("the walk went past the page that took it over the ceiling")
 	}
 	for _, name := range []string{"a", "b", "c"} {
@@ -232,13 +260,13 @@ func TestTreeRefusesAListingThatNeverEnds(t *testing.T) {
 	page := func(n int) commitsReply {
 		return commitsReply{status: 200, ctype: "application/json",
 			body:   fmt.Sprintf(`{"values": [{"path": "ci/dir%d", "type": "commit_directory"}]}`, n),
-			header: map[string]string{"Link": fmt.Sprintf("<{{server}}%sci/?pagelen=100&recursive=true&page=%d>; rel=\"next\"", srcBase, n+1)}}
+			header: map[string]string{"Link": fmt.Sprintf("<{{server}}%sci/?pagelen=100&max_depth=100&page=%d>; rel=\"next\"", srcBase, n+1)}}
 	}
 	at := func(n int) string {
 		if n == 1 {
-			return srcBase + "ci/?pagelen=100&recursive=true"
+			return srcBase + "ci/?pagelen=100&max_depth=100"
 		}
-		return fmt.Sprintf("%sci/?pagelen=100&recursive=true&page=%d", srcBase, n)
+		return fmt.Sprintf("%sci/?pagelen=100&max_depth=100&page=%d", srcBase, n)
 	}
 	for n := 1; n <= maxSrcPages; n++ {
 		f.routes[at(n)] = page(n)
@@ -267,7 +295,7 @@ func TestTreeRefusesADirectoryOverItsLimit(t *testing.T) {
 	first := "one\n"
 	second := "two\n"
 	f := newCommitsServer(t)
-	f.routes[srcBase+"ci/?pagelen=100&recursive=true"] = commitsReply{status: 200, ctype: "application/json", body: fmt.Sprintf(
+	f.routes[srcBase+"ci/?pagelen=100&max_depth=100"] = commitsReply{status: 200, ctype: "application/json", body: fmt.Sprintf(
 		`{"values": [{"path": "ci/a", "type": "commit_file", "size": %d}, {"path": "ci/b", "type": "commit_file", "size": %d}]}`,
 		len(first), len(second))}
 	f.routes[srcBase+"ci/a"] = commitsReply{status: 200, ctype: "application/octet-stream", body: first}
@@ -285,7 +313,7 @@ func TestTreeRefusesADirectoryOverItsLimit(t *testing.T) {
 func TestTreeRefusesMoreFilesThanItsLimit(t *testing.T) {
 	one := "one\n"
 	f := newCommitsServer(t)
-	f.routes[srcBase+"ci/?pagelen=100&recursive=true"] = commitsReply{status: 200, ctype: "application/json", body: fmt.Sprintf(
+	f.routes[srcBase+"ci/?pagelen=100&max_depth=100"] = commitsReply{status: 200, ctype: "application/json", body: fmt.Sprintf(
 		`{"values": [{"path": "ci/a", "type": "commit_file", "size": %d}, {"path": "ci/b", "type": "commit_file", "size": %d}]}`,
 		len(one), len(one))}
 	f.routes[srcBase+"ci/a"] = commitsReply{status: 200, ctype: "application/octet-stream", body: one}

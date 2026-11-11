@@ -225,9 +225,12 @@ const (
 
 // contextFiles is the context tree a commit holds, keyed by the path the read
 // answers with: relative to the context root, which is what the digest is
-// taken over.
+// taken over. One of its files is under a subdirectory and one is two levels
+// down, because a context is its whole tree: a read that answered a directory's
+// own entries would leave those files out of the digest, and the nightly check
+// would not see them move (D1401).
 func contextFiles() map[string]string {
-	return map[string]string{"Dockerfile": agentDockerfile, "src/main.go": "package main\n"}
+	return map[string]string{"Dockerfile": agentDockerfile, "src/main.go": "package main\n", "src/pkg/deep.go": "package deep\n"}
 }
 
 // contextProvider is a fake provider whose branch "main" resolves to one
