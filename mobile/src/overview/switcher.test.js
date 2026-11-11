@@ -24,10 +24,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { COMMAND, ROUTE, routeUtterance } from '../../../shared/command/index.js';
-import { ResourceRegistry } from '../accounts/resources.js';
-import { MemorySecureStore, SecretStore } from '../accounts/secure-store.js';
-import { MemorySettingsStore, SettingsStore } from '../accounts/settings.js';
-import { AccountStore } from '../accounts/store.js';
+import { AccountStore, MemorySecureStore, MemorySettingsStore, ResourceRegistry, SecretStore, SettingsStore } from '../accounts/index.js';
 import { SWITCH_CODES, createSwitcher } from './switcher.js';
 
 const LAPTOP = Object.freeze({ id: 'laptop', firebaseProjectId: 'fp-laptop', authUid: 'uid-laptop', fugaroProject: 'aurora' });

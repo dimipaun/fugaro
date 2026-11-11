@@ -34,16 +34,16 @@
 // directly would be that forgotten check, so this module reads the one field
 // the view built for drawing and never the document underneath it.
 //
-// **And when there is nothing drawable, the figure is `gap()`.** `gap()`'s own
-// doc comment names exactly two producers: "a changed `day`, a document that is
-// not a measurement" -- which are the view's `broken` and its `degraded`, the
-// two reasons `drawable` is `null` on a feed that has arrived. So the day break
-// prints as `—`, the contract's broken-series mark, and not as `n/a` (a value
-// that was never there) and not as `0`. The one case that is *not* a gap is a
-// feed that never delivered at all: there is no series to break, so its figures
-// are `unavailable()` and its `liveness` is `no-document`.
+// **And when there is nothing drawable, the figures are `unavailable()` and
+// the reason is on the tile.** A day break and a degraded document both make
+// `drawable` `null`, and both are the view's own flags (`broken`, `degraded`),
+// which the tile carries unchanged. The mark a screen prints for them is
+// `GAP_MARK` -- the contract's broken-series mark -- and it is the *screen's*
+// to print (`screen.js` says why), because `feed/index.js` deliberately puts
+// the mark on its door and keeps the `gap()` figure off it: this app has one
+// producer of a gap, and it is `view.js`'s `drawable: null`.
 
-import { STATE, gap, isFigure, unavailable } from '../feed/availability.js';
+import { isFigure, isEmpty, unavailable } from '../feed/index.js';
 
 /** How this module refuses. */
 export const TILE_CODES = Object.freeze({
@@ -82,16 +82,27 @@ function refuse(code, field) {
 
 /**
  * The four figures of one snapshot: from `drawable`'s total when the view has
- * something to draw, and otherwise the figure that says why it does not.
+ * something to draw, and otherwise `unavailable()`.
  *
  * A total that omits a field -- `runs` and `run_hours` are the total's alone
  * and a document may not carry them -- leaves that figure `unavailable()`, by
  * `document.js`'s own rule: an absent key is "not known", never a zero.
+ *
+ * **Why `unavailable` and not a gap when `drawable` is `null`.** `feed/index.js`
+ * is deliberate about this: `gap()` is **not** on its door, and `GAP_MARK` is.
+ * The feed has no producer of a gap figure -- `view.js` draws the day break as
+ * `drawable: null`, "rather than as a figure, because there is no number to
+ * carry and a figure is a number's shape" -- and a gap's *mark* is what a
+ * screen prints when the view says there is nothing to draw. So the tile says
+ * the one thing it can say about a number it does not have (`unavailable`), and
+ * carries `broken`/`degraded`/`liveness` -- the view's own facts -- for the
+ * screen to print the mark from. A tile that invented a gap figure here would
+ * be a second producer of a state this app deliberately has one of.
  */
 function figuresOf(snapshot) {
   const drawable = snapshot.drawable;
   if (drawable === null || drawable === undefined || typeof drawable !== 'object') {
-    const none = snapshot.liveness === 'no-document' ? unavailable() : gap();
+    const none = unavailable();
     return Object.freeze({ spend: none, dailyCap: none, percent: none, runs: none });
   }
   const total = drawable.total;
@@ -170,15 +181,16 @@ export function overviewTiles({ installations, nowMs } = {}) {
 }
 
 /**
- * Whether a tile's named figure is a number the screen may draw, rather than a
- * state that says why it is not.
+ * Whether a tile's named figure carries a number, rather than a state saying
+ * there is none.
  *
  * The screen asks this rather than reading `.state` itself, so the two cannot
- * disagree about what "measured" means -- and so that a later sixth state is
- * one edit here rather than a hunt through a render function.
+ * disagree about what "a number" means -- and `isEmpty` is `availability.js`'s
+ * own answer to that question, so a later sixth state is one edit there rather
+ * than a hunt through a render function here.
  */
 export function hasFigure(tile, field) {
   if (tile === null || typeof tile !== 'object') return false;
   const fig = tile[field];
-  return isFigure(fig) && fig.state !== STATE.UNAVAILABLE && fig.state !== STATE.GAP;
+  return isFigure(fig) && !isEmpty(fig);
 }

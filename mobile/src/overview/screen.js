@@ -13,9 +13,20 @@
 // Fugaro project it is in, how alive its feed is and how old the reading is,
 // the day those figures belong to, and the four figures themselves -- printed
 // by `feed/availability.js`'s `shown()`, which is the one function in this app
-// that turns a figure into text: a measurement is its number, a day break is
-// `—`, and a value nothing measured is `n/a`. This screen never formats a
-// figure itself, so it cannot print the zero §10.7 forbids.
+// that turns a figure into text, so a value nothing measured is `n/a` and this
+// screen cannot print the zero §10.7 forbids.
+//
+// **And the day break is a mark, not a number.** `feed/view.js` makes
+// `drawable` `null` on a day break and on a degraded document -- "rather than
+// as a figure, because there is no number to carry and a figure is a number's
+// shape" -- so there is no figure for this screen to print, and the tile's
+// figures are `unavailable()` for exactly that reason. What the screen prints
+// there is `GAP_MARK`, the contract's broken-series mark, chosen from the
+// tile's own `broken`/`degraded` flags. It is the screen's call rather than the
+// tile's because the feed's door offers the mark and deliberately not the
+// `gap()` figure: one producer of a gap, and it is the view's `drawable: null`.
+// A feed that has read nothing yet is *not* a gap -- there is no series to
+// break -- so `no-document` prints `n/a`, which is what the tile says.
 //
 // **Why the label and not the project name is the heading.** Two installations
 // may be in the same Fugaro project (a second laptop, a phone paired again),
@@ -32,7 +43,7 @@
 // React and react-native are not installed in this environment, so the four
 // primitives are injected and the tests walk the tree this repository builds.
 
-import { shown } from '../feed/index.js';
+import { GAP_MARK, shown } from '../feed/index.js';
 
 /** The named elements of this screen's tree. A test looks elements up by these
  * names rather than by position, so a row can move without rewriting it. */
@@ -144,11 +155,23 @@ export function freshnessSentence(tile) {
   return age === '' ? words : `${words}, read ${age}`;
 }
 
-/** One figure's text: `shown()`'s, plus this screen's suffix. `shown` is the
- * app's only figure formatter, so a `—` stays a `—` and never becomes `—%`. */
-function figureText(figure, suffix) {
-  const text = shown(figure);
-  if (suffix === '' || text === 'n/a' || text === '—') return text;
+/** Whether this tile's figures are a broken series: the day has turned and its
+ * counter has not arrived, or the document is not a measurement at all. A feed
+ * that has delivered nothing is neither -- nothing broke, nothing was read --
+ * and it is `liveness` that says which. */
+function isBrokenSeries(tile) {
+  if (tile === null || typeof tile !== 'object') return false;
+  if (tile.liveness === 'no-document') return false;
+  return tile.broken === true || tile.degraded === true;
+}
+
+/** One figure's text: the contract's mark for a broken series, `shown()`'s text
+ * otherwise, plus this screen's suffix. `shown` is the app's only figure
+ * formatter, so `n/a` stays `n/a`, and the mark is checked before the suffix so
+ * that a `—` never becomes `—%`. */
+function figureText(tile, figure, suffix) {
+  const text = isBrokenSeries(tile) ? GAP_MARK : shown(figure);
+  if (suffix === '' || text === 'n/a' || text === GAP_MARK) return text;
   return `${text}${suffix}`;
 }
 
@@ -169,11 +192,11 @@ export function createOverviewScreen({ React, View, Text, Pressable }) {
   }
 
   /** One figure row. */
-  function figure(spec, fig) {
+  function figure(tileValue, spec) {
     return React.createElement(
       Text,
       { key: spec.field, type: SCREEN.FIGURE, field: spec.field },
-      `${spec.label} ${figureText(fig, spec.suffix)}`,
+      `${spec.label} ${figureText(tileValue, tileValue[spec.field], spec.suffix)}`,
     );
   }
 
@@ -188,7 +211,7 @@ export function createOverviewScreen({ React, View, Text, Pressable }) {
       React.createElement(Text, { key: 'project', type: SCREEN.PROJECT }, tileValue.project === null ? UNKNOWN_PROJECT : tileValue.project),
       React.createElement(Text, { key: 'freshness', type: SCREEN.FRESHNESS }, freshnessSentence(tileValue)),
       React.createElement(Text, { key: 'day', type: SCREEN.DAY }, tileValue.day === null ? NO_DAY : tileValue.day),
-      ...FIGURES.map((spec) => figure(spec, tileValue[spec.field])),
+      ...FIGURES.map((spec) => figure(tileValue, spec)),
     ];
     if (tileValue.note !== null) {
       children.push(React.createElement(Text, { key: 'note', type: SCREEN.NOTE }, tileValue.note));

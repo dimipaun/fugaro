@@ -186,9 +186,18 @@ test('a day break is a mark and an unmeasured day is n/a, never a zero', () => {
   // The mark survives the percentage suffix: `—%` is not a thing.
   assert.equal(rows.includes('of the cap —%'), false);
 
+  // **A feed that has read nothing is not a broken series.** `view.js` sets
+  // `broken` for *any* snapshot without a measurement, `no-document` included
+  // (it is `!degraded && !measured`), so a screen that printed the mark on
+  // `broken` alone would draw `—` for a phone that was paired a second ago --
+  // a broken series where there is no series at all. `liveness` is what tells
+  // the two apart, and this is the case that pins it.
   const nothing = overviewTiles({
     installations: [
-      { account: account('laptop', 'aurora'), snapshot: snapshot({ liveness: 'no-document', document: null, day: null, drawable: null, ageMs: null }) },
+      {
+        account: account('laptop', 'aurora'),
+        snapshot: snapshot({ liveness: 'no-document', document: null, day: null, broken: true, drawable: null, ageMs: null }),
+      },
     ],
   });
   assert.deepEqual(stringsOf(screen, SCREEN.FIGURE, { overview: nothing, current: null }), [

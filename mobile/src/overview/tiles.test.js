@@ -98,19 +98,26 @@ test('the tile is frozen, and the account’s own fields are not carried whole',
   assert.equal(JSON.stringify(tile).includes('authUid'), false);
 });
 
-test('a day break and a degraded document are a gap, and a feed that never arrived is n/a', () => {
+test('a day break and a degraded document carry no figure, and say why on the tile', () => {
   // §10.7: the day has turned and its counter has not arrived. `view.js` makes
-  // `drawable` null so nothing can draw the zero; the tile prints the contract's
-  // broken-series mark rather than a number.
+  // `drawable` null so nothing can draw the zero -- "rather than as a figure,
+  // because there is no number to carry and a figure is a number's shape" --
+  // so the tile has no figure to carry either. What it carries instead is the
+  // view's own reason (`broken`, `degraded`, `liveness`), which is what the
+  // screen prints the contract's mark from. A tile that minted a gap figure
+  // here would be a second producer of a state the feed deliberately has one
+  // of: `feed/index.js` puts `GAP_MARK` on its door and keeps `gap()` off it.
   const broken = tileOf({ account: account(), snapshot: snapshot({ broken: true, dayChanged: true, drawable: null }) }).tile;
   assert.equal(broken.dayChanged, true);
-  assert.equal(broken.spend.state, STATE.GAP);
-  assert.equal(shown(broken.spend), '—');
+  assert.equal(broken.broken, true);
+  assert.equal(broken.liveness, 'live');
+  assert.equal(broken.spend.state, STATE.UNAVAILABLE);
+  assert.equal(shown(broken.spend), 'n/a');
   assert.equal(hasFigure(broken, 'spend'), false);
 
   const degraded = tileOf({ account: account(), snapshot: snapshot({ degraded: true, drawable: null, day: null }) }).tile;
   assert.equal(degraded.degraded, true);
-  assert.equal(degraded.spend.state, STATE.GAP);
+  assert.equal(degraded.spend.state, STATE.UNAVAILABLE);
   assert.equal(degraded.day, null);
 
   // A feed that has delivered nothing has no series to break: "not known" is

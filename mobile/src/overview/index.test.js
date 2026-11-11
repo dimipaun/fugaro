@@ -16,10 +16,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import * as overview from './index.js';
-import { MemorySecureStore, SecretStore } from '../accounts/secure-store.js';
-import { MemorySettingsStore, SettingsStore } from '../accounts/settings.js';
-import { AccountStore } from '../accounts/store.js';
-import { ResourceRegistry } from '../accounts/resources.js';
+import { AccountStore, MemorySecureStore, MemorySettingsStore, ResourceRegistry, SecretStore, SettingsStore } from '../accounts/index.js';
 
 /** The surface, sorted: the module's contract with the rest of the app. */
 const SURFACE = Object.freeze([
