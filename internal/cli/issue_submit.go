@@ -155,6 +155,13 @@ func runIssueSubmit(cmd *cobra.Command, ref string, ask bool) error {
 // answer `mine` gives it: it was saved by a build that had no field to stamp,
 // and dropping it would hide the user's own issue rather than attribute it to
 // the wrong project.
+//
+// A run with no project selected files nothing a project stamped, for a second
+// reason on top of the first: it has no names to scrub with (issueNames), so
+// that project's name, GCP project and repositories would reach a public
+// repository as they are. It says so rather than filing: the person is the one
+// who can select the project the record belongs to, and this run is the one
+// that would have published what only that project knows how to take out.
 func issueSubmittable(store *issues.Store, ref, installation string) ([]issues.Issue, error) {
 	if ref != "" {
 		i, err := store.Get(issueRefArg(ref))
@@ -162,6 +169,9 @@ func issueSubmittable(store *issues.Store, ref, installation string) ([]issues.I
 			return nil, userErr("nothing was filed: %v", err)
 		}
 		if issueForeign(i, installation) {
+			if installation == "" {
+				return nil, userErr("nothing was filed: %s belongs to another installation, and no project is selected here to scrub what it carries; select the project it belongs to, and file it there", issueRef(i))
+			}
 			return nil, userErr("nothing was filed: %s belongs to another installation, and submit files this project's issues only", issueRef(i))
 		}
 		if at := issueURL(i.URL); i.Status == issues.StatusSubmitted || at != "" {
@@ -187,15 +197,26 @@ func issueSubmittable(store *issues.Store, ref, installation string) ([]issues.I
 	return todo, nil
 }
 
-// issueForeign reports whether a record belongs to an installation other than
-// this run's: the one condition under which it is neither filed nor read here.
-// It is the test `mine` makes of its own rows (F8b), word for word, including
-// the half that matters more than the name suggests — a record that names no
-// installation and a run that has none are both "not foreign", so an
-// unselected project files what it can and a pre-field record is never
-// orphaned.
+// issueForeign reports whether a record belongs to an installation this run
+// does not file for: the one condition under which it is neither filed nor
+// previewed here.
+//
+// A record that names no installation is never foreign. It was saved by a build
+// that had no field to stamp, so it is the user's own issue and there is no
+// other project to attribute it to: a run with a project files it and stamps
+// it, and a run with none files it as it is, which is what makes `submit` work
+// in a directory that selects no project at all.
+//
+// A record that names one is foreign unless this run names the same one. That
+// includes the run that names none, and it is the half worth spelling out: with
+// no project selected there are no names to scrub the post with (F4, F8b), so
+// filing another project's record from there would put that project's name, GCP
+// project and repositories into a public issue with nothing taken out. `mine`
+// is looser than this — it prints an unattributable row rather than hiding it —
+// and rightly so: printing a local row files nothing, and `submit` is the one
+// command here that publishes.
 func issueForeign(i issues.Issue, installation string) bool {
-	return i.Installation != "" && installation != "" && i.Installation != installation
+	return i.Installation != "" && i.Installation != installation
 }
 
 // issueSubmit is one issue's whole submission: the post built once, the
@@ -380,7 +401,9 @@ func readIssueGHState(ctx context.Context, gh issues.GH) issueGHState {
 // the names a config nobody selected would have listed survive. That is the
 // same answer a machine with no config has for every other command here — the
 // issues folder is the user's own, and `submit` works in a directory that names
-// no project at all.
+// no project at all. It works there on the records that name no project either
+// (issueForeign): the names that survive are the ones of an issue no config
+// here wrote, and not another project's, which is not filed from here at all.
 func issueNames(lc *localcfg.Config) []string {
 	if lc == nil {
 		return nil

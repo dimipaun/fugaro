@@ -62,6 +62,20 @@ func issueSubmitState(t *testing.T) *issues.Store {
 	return store
 }
 
+// issueSubmitStoreWithoutAProject is issueSubmitState with no project selected
+// at all: the isolated environment and the store in it, and no config file
+// anywhere, so selectedProjectConfig answers nil and this run has no names to
+// scrub a post with (F4) and no installation of its own (F8b).
+func issueSubmitStoreWithoutAProject(t *testing.T) *issues.Store {
+	t.Helper()
+	isolateProjects(t, t.TempDir())
+	store, err := issues.OpenStore(os.Getenv, runtime.GOOS)
+	if err != nil {
+		t.Fatalf("opening the store: %v", err)
+	}
+	return store
+}
+
 // ghSpy is the `gh` these tests file with: it records every call and answers
 // `gh issue create` with filedIssueURL, so nothing here runs a binary and
 // nothing reaches GitHub. lookPathErr and authErr are the two answers a
@@ -416,6 +430,74 @@ func TestIssueSubmitLeavesAnotherInstallationAlone(t *testing.T) {
 	}
 	if got := len(spy.creates()); got != 2 {
 		t.Errorf("a refused submit filed %d issue(s), want the 2 that were this project's", got)
+	}
+}
+
+// TestIssueSubmitWithNoProjectSelectedLeavesStampedIssuesAlone: a run in a
+// directory that selects no project has no names to scrub a post with (F4) and
+// no installation of its own (F8b), so a record a project stamped is the one
+// thing it must not file: that project's name, GCP project and repository names
+// would reach a public repository as they are, which is the whole of what the
+// scrub and the stamp are for (D1722). The sweep steps over it, a reference
+// that names it is refused with what to do about it, and the record is
+// untouched.
+//
+// The record that names no installation is the other half, and the one this
+// command exists for in a directory like this: nobody's config wrote it, it is
+// the user's own issue, and it is filed — with no names to scrub, which is the
+// best this run can do and all it claims.
+func TestIssueSubmitWithNoProjectSelectedLeavesStampedIssuesAlone(t *testing.T) {
+	store := issueSubmitStoreWithoutAProject(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+
+	stamped := savedIssue("48213", issues.StatusPending, false)
+	stamped.Summary = "the one a project wrote"
+	stamped.Installation = issues.Digest(issueSubmitBucket)
+	unstamped := savedIssue("48214", issues.StatusPending, false)
+	unstamped.Summary = "the one saved before there was a field"
+	for _, i := range []issues.Issue{stamped, unstamped} {
+		if err := store.Save(i); err != nil {
+			t.Fatalf("saving: %v", err)
+		}
+	}
+
+	out, _, err := executeStdin(t, "y\ny\ny\n", "issue", "submit", "--ask")
+	if err != nil {
+		t.Fatalf("issue submit --ask: %v\n%s", err, out)
+	}
+	if got := len(spy.creates()); got != 1 {
+		t.Fatalf("the sweep filed %d issue(s), want the one that names no installation: %v\n%s", got, spy.creates(), out)
+	}
+	if _, body := spy.filed(t, 0); !strings.Contains(body, unstamped.Summary) {
+		t.Errorf("the sweep filed the wrong issue, want the one saved before there was a field:\n%s", body)
+	}
+	if strings.Contains(out, stamped.Summary) {
+		t.Errorf("a run with no project selected previewed a record a project stamped:\n%s", out)
+	}
+	back, err := store.Get(stamped.LocalID)
+	if err != nil {
+		t.Fatalf("reading the stamped record back: %v", err)
+	}
+	if back.Status != issues.StatusPending || back.URL != "" || back.Installation != stamped.Installation {
+		t.Errorf("the stamped record became %q with URL %q and installation %q, want it untouched", back.Status, back.URL, back.Installation)
+	}
+
+	// Named on its own it is refused, and the refusal says what this run cannot
+	// do and who can: the project it belongs to is the one holding the names.
+	out, _, err = execute(t, "issue", "submit", stamped.LocalID)
+	if err == nil || !strings.Contains(err.Error(), "another installation") {
+		t.Fatalf("submit of a record a project stamped, with none selected: err = %v, want the refusal naming it\n%s", err, out)
+	}
+	if !strings.Contains(err.Error(), "select the project it belongs to") {
+		t.Errorf("the refusal does not say what to do about it: %q", err.Error())
+	}
+	if strings.Contains(out, stamped.Summary) {
+		t.Errorf("a refused submit previewed the record a project stamped:\n%s", out)
+	}
+	if got := len(spy.creates()); got != 1 {
+		t.Errorf("a refused submit filed %d issue(s), want the 1 that names no installation", got)
 	}
 }
 
