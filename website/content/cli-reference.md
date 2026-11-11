@@ -4737,6 +4737,15 @@ Remove the review floor MODE carries: from the next `fugaro update` the
 mode's runs are held to what their rigor mode and the repository ask for, and
 to nothing the owner requires.
 
+That is what the removal of one of several modes does. Removing the file's LAST
+entry leaves the file naming no floor at all, and a publish keeps the node's
+floor when the config is silent about one — the floor is the member a publish
+must not lower by accident — so that removal takes the file's floor and not the
+published one, and the command says so after the write. `review_floor: {}`
+written into the document by hand is what takes the published floor away; this
+command cannot write it, because an empty flow mapping is a shape the editor
+refuses to splice into.
+
 A removal is the owner's own step — what it deletes is a floor, and taking it
 away is a whole project reviewing less — and it asks nothing: `--yes` does
 not stand in for the owner's own hand, and neither does anything else. A
@@ -4782,8 +4791,8 @@ your own terminal, `--yes` included, and your own terminal writes it and asks
 nothing. `hotfix` is refused in either form, naming `fugaro run --mode hotfix`.
 
 The command prints the review floor beside the write, and it cannot lower it:
-the floor is outside every layer, and the command that changes one is not built
-yet.
+the floor is outside every layer, and `fugaro rigor floor` is the command that
+changes one.
 
 It writes one file: this machine's own project layer file, whose path is
 derived from the selected project's name. A project that has published no layer

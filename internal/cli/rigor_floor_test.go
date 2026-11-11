@@ -229,6 +229,48 @@ func TestRigorFloorRefusesAnEmptyLevelList(t *testing.T) {
 	}
 }
 
+// The three arguments refused before the document is read: a mode the rigor
+// vocabulary does not carry, a level the policy vocabulary does not carry, and
+// a level named twice. The first two are the loaders' own rules — rigor.Known
+// and policy.ParseFloor refuse the same names — so a file carrying them could
+// not be read back either; the third is the set-shaped argument's own, since a
+// floor is a set and naming one level twice asks for nothing the once does.
+// Each refusal names the offending word and the vocabulary to pick from, says
+// nothing was written, and leaves the file as it was.
+func TestRigorFloorRefusesAnArgumentOutsideTheVocabulary(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"a mode the vocabulary does not carry", []string{"rigor", "floor", "set", "fast", "l2"}, `"fast" is not a rigor mode`},
+		{"a mode the vocabulary does not carry, on a removal", []string{"rigor", "floor", "unset", "fast"}, `"fast" is not a rigor mode`},
+		{"a level the vocabulary does not carry", []string{"rigor", "floor", "set", "pro", "l9"}, `"l9" is not a review level`},
+		{"a level named twice", []string{"rigor", "floor", "set", "pro", "l2,l2"}, "review level l2 is listed twice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := rigorFloorHome(t, "review_floor:\n  pro: [l2]\n")
+			before := readFileString(t, path)
+			noAgentSession(t)
+			fakeTerminal(t)
+
+			out, _, err := executeStdin(t, "", tc.args...)
+			if err == nil {
+				t.Fatalf("%v was accepted:\n%s", tc.args, out)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("%v: the refusal does not say %q: %v", tc.args, tc.want, err)
+			}
+			if !strings.Contains(err.Error(), "nothing was written") {
+				t.Errorf("%v: the refusal does not say nothing was written: %v", tc.args, err)
+			}
+			if got := readFileString(t, path); got != before {
+				t.Errorf("%v: the refused run wrote the document:\n%s", tc.args, got)
+			}
+		})
+	}
+}
+
 // A floor a person wrote as one flow mapping cannot be edited at all, and the
 // refusal owes the person the two things this one carries: the shape the editor
 // will not touch and the way out of it (block style, one item per line). The

@@ -146,8 +146,8 @@ your own terminal, ` + "`--yes`" + ` included, and your own terminal writes it a
 nothing. ` + "`hotfix`" + ` is refused in either form, naming ` + "`fugaro run --mode hotfix`" + `.
 
 The command prints the review floor beside the write, and it cannot lower it:
-the floor is outside every layer, and the command that changes one is not built
-yet.
+the floor is outside every layer, and ` + "`fugaro rigor floor`" + ` is the command that
+changes one.
 
 It writes one file: this machine's own project layer file, whose path is
 derived from the selected project's name. A project that has published no layer

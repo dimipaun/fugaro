@@ -175,6 +175,15 @@ func newRigorFloorUnsetCmd() *cobra.Command {
 mode's runs are held to what their rigor mode and the repository ask for, and
 to nothing the owner requires.
 
+That is what the removal of one of several modes does. Removing the file's LAST
+entry leaves the file naming no floor at all, and a publish keeps the node's
+floor when the config is silent about one — the floor is the member a publish
+must not lower by accident — so that removal takes the file's floor and not the
+published one, and the command says so after the write. ` + "`review_floor: {}`" + `
+written into the document by hand is what takes the published floor away; this
+command cannot write it, because an empty flow mapping is a shape the editor
+refuses to splice into.
+
 A removal is the owner's own step — what it deletes is a floor, and taking it
 away is a whole project reviewing less — and it asks nothing: ` + "`--yes`" + ` does
 not stand in for the owner's own hand, and neither does anything else. A
