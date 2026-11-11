@@ -112,7 +112,7 @@ but Firebase's signing keys are one global set, so a token from any customer's p
 it proves is "someone controls that project", not who bought. **Recorded as: Firebase Auth in the
 owner's licence-service project (email link plus Google), not the customer's.** Using a workspace's own
 Firebase token to prove the `workspace_id` binding at `licence login` is a possible later claim check
-and is Open tension TN3 for the owner to confirm this reading.
+(TN3, answered: fugaro-prod).
 
 **F15 (Gap): the admin page and the manual queue.** §13 (reseller, comped, revoke, reissue, override
 policy) and the design's §6 exist as a design (`docs/design/key-signing-service.md` §6) but `ee/keyservice`
@@ -139,7 +139,7 @@ poll answers the same for unknown and expired codes. (5) *Email delivery of keys
 credential in mail; the mail carries the key text only to the verified purchaser and the account page
 re-issues it, so a mailbox leak is the same exposure the built key service already accepts (T25). (6) *The
 project-level store* is a licence-grade object readable by every identity that reads the runs bucket;
-a viewer **can** copy the key; with an optional `workspace_id` (D2134) the copy works elsewhere, an accepted limit (the plan's "Limits this plan accepts"). It cannot renew: the key holds only the secret's hash and the renewal call sends the secret itself. Round 1 amended F7's fix, because an HMAC keyed by that hash would have been forgeable by any bucket reader.
+a viewer **can** copy the key; with the required `workspace_id` (D2134 as amended by TN2) the copy is refused in any other workspace, so the limit is the same workspace only (the plan's "Limits this plan accepts"). It cannot renew: the key holds only the secret's hash and the renewal call sends the secret itself. Round 1 amended F7's fix, because an HMAC keyed by that hash would have been forgeable by any bucket reader.
 
 ## Decisions
 
@@ -149,7 +149,7 @@ a viewer **can** copy the key; with an optional `workspace_id` (D2134) the copy 
 | D2131 | Revocation via a visible job, overturning D308/T25 for revocable keys (F2) | Yes, only where `check_interval` is set; offline keys never check (alternatives: keep T25; defer) | **2026-11-11: the recommendation.** |
 | D2132 | Seat enforcement, overturning D439 (F13) | Enforce in `ee` surfaces only; the MIT CLI unaffected (alternatives: advisory; core check, which D524 forbids) | **2026-11-11: the recommendation**, subject to TN1 (the owner's enforcement go) |
 | D2133 | Grace | `grace_days` carried by the key, server default **30** (B17, T26) (alternatives: 14; fixed 30 outside the key) | **2026-11-11: the recommendation.** The spec's 14 becomes 30 |
-| D2134 | What `workspace_id` names | Recommended: a checked installation id | **2026-11-11: NOT the recommendation.** Keep `organisation`, add an optional `workspace_id`, checked only when present. See TN2 |
+| D2134 | What `workspace_id` names | Recommended: a checked installation id | **2026-11-11: NOT the recommendation.** Keep `organisation`, add an optional `workspace_id`. **Amended by the owner the same day (TN2): `workspace_id` is REQUIRED on every key and is checked offline against the Firebase project id of the workspace** (a project outside a workspace: its own Firebase project id) |
 | D2135 | Renewal authentication (F7) | A per-key renewal secret, hash in the key, secret sent over TLS and held in the installation's Secret Manager (alternatives: the scheduler SA's identity; none) | **2026-11-11: the recommendation.** **Amended after review:** the call sends the secret and the server compares its hash, with no HMAC (a hash in the key is readable by every bucket reader). Owner to confirm. |
 | D2136 | Trials | Add the 14-day Team trial beside D440's plans (alternatives: replace D440; none) | **2026-11-11: the recommendation.** One per installation |
 | D2137 | Where the key lives per project (F9) | The runs bucket beside the published policy (alternatives: Secret Manager; per machine) | **2026-11-11: the recommendation.** |
@@ -170,13 +170,10 @@ a viewer **can** copy the key; with an optional `workspace_id` (D2134) the copy 
   enforcement. Options: (a) build everything now, hold the *effect* (K3.4, K4.1's drop-to-lapse) until
   the owner says enforcement ships (the plan's reading); (b) ship the effect with the key. (a) holds
   back revocation from the first key; (b) reverses T27(b).
-- **TN2: D2134 leaves a binding that checks nothing by default, and `workspace_id` holds an installation's project id** (a later workspaces feature cannot reuse the name for a group without changing its meaning; rename to `project_id` now if the owner prefers). With `workspace_id` optional and
-  `organisation` unchecked (F47), a key still works in any project unless it carries `workspace_id`.
-  Options: keep as ruled and state the limit (the plan does); or require `workspace_id` on `team`,
-  `enterprise` and `trial` keys only.
-- **TN3: Firebase Auth for the licence site.** Confirm it is the owner's own licence-service project and
-  not each customer's (F14), and whether a workspace's own token should later prove the binding.
-- **TN5: installations without a coordinator.** The renewal job reuses the coordinator's key-gated image, which exists only where the coordinator is deployed; elsewhere there is no auto renewal or revocation and renewal is by hand. Options: accept (the plan does) or give the job its own image built by `update`.
+- **TN1: answered 2026-11-11 (the recommendation).** Build everything, hold the effect (K3.4 and revocation's lapse effect) until the owner says enforcement ships.
+- **TN2: answered 2026-11-11, amends D2134.** `workspace_id` is required on every key and names the Firebase project id of the workspace; the verifier compares it with the project's own Firebase project id, read from the same place as the key. Consequences the plan carries: a free-seat or open-source key's web form asks for the project's Firebase project id; a key is tied to one workspace (moving it is a reissue); `community` keys are bound too. Nothing else about the binding changes (`organisation` stays, unchecked).
+- **TN3: answered 2026-11-11.** Firebase Auth in the owner's own project, `fugaro-prod`; a customer's workspace Firebase token is not trusted by the server.
+- **TN5: answered 2026-11-11 (the recommendation).** An installation without a coordinator renews by hand (`licence refresh`) and gets no automatic revocation check.
 - **TN4: D2135 was amended after review** (see its cell); the owner confirms the amended text.
 - **Pending the owner's go:** no task is approved. K0.1 (counsel: the Terms' refund and the privacy text
   for the renewal contact) and K0.2 (production signing keys, S3.8) are owner-run.

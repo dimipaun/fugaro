@@ -4,7 +4,7 @@ Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)
 findings F1–F18). **Nothing is implemented and no task is approved**: each task needs the owner's own
 go, and answering a decision is not a go. Owner answers that shape the plan: one `fgk_` v1 format replaces the
 built one (D2130); revocation through a visible job (D2131); seats enforced on `ee` surfaces only
-(D2132, held by TN1); per-key `grace_days`, default 30 (D2133); an optional `workspace_id` beside
+(D2132, held by TN1); per-key `grace_days`, default 30 (D2133); a required `workspace_id` (the workspace's Firebase project id, TN2) beside
 `organisation` (D2134, not the recommendation); a per-key renewal secret (D2135); the 14-day trial beside
 D440's plans (D2136); the key in the runs bucket (D2137); Firebase Auth in the owner's licence project
 (D2144, not the recommendation).
@@ -52,7 +52,7 @@ S2.7–S2.10, S3.1–S3.4 and S6.1 where they name the old claims; K7.2 writes t
 
 Revocation is **advisory**: the customer's operators can write the runs bucket and delete the job, so a
 determined holder keeps a revoked key until it expires. The key is readable by every identity that reads the
-bucket, so with `workspace_id` optional (D2134) a copied key works in another project; it cannot renew, since
+bucket, a copy is refused in another workspace by the required `workspace_id` but works inside the same one; it cannot renew, since
 the key holds only the secret's hash. "One trial per installation" rests on a caller-supplied id and a free
 Firebase account, so it is a speed bump (K2.7 also throttles per domain). The device approve page names the
 requesting installation and codes expire quickly, against phishing of the code. The loopback listener binds
@@ -73,7 +73,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
 ### Slice K1: the key and its verifiers (inert until a key exists)
 
 - **K1.1 The v1 verifier. SECURITY.** Files: `ee/licence/keyv1.go` (new), `ee/licence/keyv1_test.go` (new), `ee/licence/testdata/vectors_v1.json` (new). **Additive: the old `key.go`, `store.go` and their tests stay untouched so `-tags ee` keeps compiling on `main` until K7.3 removes them.** Interfaces: produces `ClaimsV1`
-  (`v`, `kid`, `key_id`, `workspace_id` optional, `organisation`, `tier` (`community|team|enterprise`),
+  (`v`, `kid`, `key_id`, `workspace_id` (required: the workspace's Firebase project id), `organisation`, `tier` (`community|team|enterprise`),
   `seats`, `issued_at`, `paid_through`, `grace_days`, `renewal_mode`, `renew_before_days`,
   `check_interval`, `renewal_secret_hash`, `warnings`, `kind`, `note`), the text `fgk_<payload>.<sig>`,
   `State` (`active|grace|expired`), the refusal for a higher `v`, ISO durations `P<n>D|P<n>W`
@@ -82,7 +82,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   `TestNoClaimIsReadBeforeTheSignatureVerifies`, `TestHigherPolicyVersionIsRefusedNotFree`,
   `TestUnknownFieldsInASignedKeyAreIgnored`, `TestUnsignedFormatsStayStrict`,
   `TestStagingKeyIDIsRefused`, `TestKeyBeyondTheTierLifetimeIsRefused`, `TestGraceUsesTheKeysOwnDays`,
-  `TestWorkspaceIDIsCheckedOnlyWhenPresent` (the claim holds the installation's GCP project id until the workspaces feature claims the name, TN2), against a `ProjectID` the caller passes in (the installation's GCP project id, supplied by K3.1 and the console; the claim names that id and nothing broader). Command: `go test ./ee/licence/... -tags ee -run 'Test(VerifyFgk|NoClaim|Higher|Unknown|Unsigned|Staging|KeyBeyond|Grace|Workspace)' -count=1`.
+  `TestKeyWithoutWorkspaceIDIsRefused`, `TestWorkspaceIDMustMatchTheFirebaseProject` (the verifier takes a `FirebaseProjectID` the caller passes in, read by K3.1 and the console from the project's own config in the same read as the key). Command: `go test ./ee/licence/... -tags ee -run 'Test(VerifyFgk|NoClaim|Higher|Unknown|Unsigned|Staging|KeyBeyond|Grace|KeyWithout|Workspace)' -count=1`.
   Depends on: none. Commit: `ee: the v1 licence key (fgk_) and its verifier (D2130)`. Red step:
   `TestHigherPolicyVersionIsRefusedNotFree` fails against the old verifier (it has no `v`). The `v1` types are named `ClaimsV1`/`VerifyV1`; K7.3 renames them to `Claims`/`Verify` when the old ones go.
 - **K1.3 The mint tool.** Files: `ee/licence/mint/main.go`, `mint.go`, `mint_test.go`. Flags for every v1 field,
@@ -141,7 +141,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   Commit: `ee: the founder's admin page`.
 - **K2.7 The 14-day Team trial. SECURITY.** Files: `ee/keyservice/trial.go` (new), `service.go`,
   `trial_test.go` (new). A signed-in account asks for a trial for an installation (`kind: trial`, 14 days,
-  grace 0, `check_interval` `P1D`); one per installation and account. Tests: `TestSecondTrialIsRefused`,
+  grace 0, `check_interval` `P1D`); one per installation and account. Trial uniqueness is keyed by the Firebase project id, which is harder to mint than a caller-supplied name. Tests: `TestSecondTrialIsRefused`,
   `TestTrialIsTeamTierFourteenDays`. Depends on: K2.6 (`service.go`), K2.2. Command: `go test ./ee/keyservice/ -tags ee -run 'TestSecondTrial|TestTrialIs' -count=1`.
   Commit: `ee: the Team trial`.
 
