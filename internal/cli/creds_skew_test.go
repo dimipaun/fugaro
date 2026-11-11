@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/streams"
 )
 
 // This file is AK10, folded into MC6: the bundle write refuses a document the
@@ -511,5 +512,30 @@ func TestProviderEntrySinceHasAReleaseBullet(t *testing.T) {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's providerEntrySince bullet does not say %q", want)
 		}
+	}
+}
+
+// TestProviderEntrySinceIsNotAheadOfTheReleaseTheTreeIsOn: the constant names a
+// release whose credentials service already reads the entry, so it names a
+// version the tree is at or behind and never a slot ahead of it.
+//
+// The direction is the one that bites. What the guard judges is the service an
+// installation has **deployed**, so a value above the release the cli stream is
+// at refuses `fugaro creds set provider-key` on every installation whose
+// service already reads the entry — which is every installation on that
+// release — and the refusal's remedy, `fugaro update`, changes nothing for
+// them. No fixture in this file can catch it: every revision it builds is named
+// from the constant itself.
+func TestProviderEntrySinceIsNotAheadOfTheReleaseTheTreeIsOn(t *testing.T) {
+	cat, err := streams.Parse("docs/release-streams.yaml", []byte(readDoc(t, "docs/release-streams.yaml")))
+	if err != nil {
+		t.Fatalf("docs/release-streams.yaml: %v", err)
+	}
+	cli, ok := cat.Lookup(streams.CLI)
+	if !ok {
+		t.Fatal("docs/release-streams.yaml carries no cli stream, so the release this tree is on cannot be read")
+	}
+	if imagePredates(cli.Current.String(), providerEntrySince) {
+		t.Errorf("providerEntrySince = %q is ahead of the cli stream's %s: the entry is read by the credentials service of the release that shipped it, so a value above the release this tree is on refuses the write on installations whose service already reads the entry", providerEntrySince, cli.Current)
 	}
 }
