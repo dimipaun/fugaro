@@ -478,7 +478,25 @@ func danglingIDs(r Roadmap) []string {
 		}
 	}
 	slices.Sort(out)
-	return slices.Compact(out)
+	// Nothing dangling is the ordinary case, and it is an empty list rather
+	// than a null: see nonNil.
+	return nonNil(slices.Compact(out))
+}
+
+// nonNil answers a list nothing was declared in as the empty list it means
+// rather than the null it happened to spell. A node is not only what this
+// build's writer puts in it -- a hand-written document, an older build's or
+// one whose list was omitted is read here too -- and the record's own promise
+// is that a list it declares nothing in is empty and never a null a reader has
+// to interpret. It is the promise cleanList keeps for the intents' own lists
+// (ReadRepoIntents), and the reason it is kept here is a consumer: a screen
+// that iterates a list throws on a null, and the console accepts a newer CLI
+// on this contract, so the two spellings would be a defect no reader sees.
+func nonNil[T any](in []T) []T {
+	if in == nil {
+		return []T{}
+	}
+	return in
 }
 
 // The read's half of the record's promise about its text. Every string here is
@@ -493,6 +511,12 @@ func (p Plan) sanitised() Plan {
 	for i := range p.Tasks {
 		p.Tasks[i].Title = safetext.Field(p.Tasks[i].Title)
 	}
+	// A plan document that omits its tasks or its own edges is read as the
+	// lists it means rather than carried as the nulls it happened to spell
+	// (nonNil): the artifact is written by a publish, and a reader that had to
+	// tell "this plan has no tasks" from "this plan's tasks are null" would be
+	// reading a shape the record never promises.
+	p.Tasks, p.Edges = nonNil(p.Tasks), nonNil(p.Edges)
 	return p
 }
 

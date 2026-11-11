@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -119,6 +120,54 @@ func seedRoadmap(t *testing.T, f *gcpfake.RTDB) roadmapFixture {
 
 // roadmapPtr is a pointer to v, for the record's optional fields.
 func roadmapPtr[T any](v T) *T { return &v }
+
+// requireNoNullLists walks v through its own JSON and fails for every list it
+// finds marshalled as null, naming where it found it. It reads the wire shape
+// rather than the Go value on purpose: a nil slice is exactly what a consumer
+// of the record's document sees, and a reader that iterates one throws where a
+// Go caller merely ranges over nothing.
+//
+// It walks the struct's fields rather than naming the lists, because a rule
+// that named the fields it knows about would pass the day a later shape adds
+// one, which is the day it would matter.
+func requireNoNullLists(t *testing.T, v any, where string) {
+	t.Helper()
+	blob, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("%s does not marshal: %v", where, err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(blob, &fields); err != nil {
+		t.Fatalf("%s does not marshal to an object: %v", where, err)
+	}
+	rv, rt := reflect.ValueOf(v), reflect.TypeOf(v)
+	for i := range rt.NumField() {
+		f := rt.Field(i)
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		raw, ok := fields[name]
+		if name == "" || name == "-" || !ok {
+			continue
+		}
+		switch f.Type.Kind() {
+		case reflect.Slice:
+			if string(raw) == "null" {
+				t.Errorf("%s marshals %s as null, want the empty list it means: the record declares a list and never a null a reader has to interpret (nonNil)", where, name)
+			}
+			if f.Type.Elem().Kind() == reflect.Struct {
+				for j := range rv.Field(i).Len() {
+					requireNoNullLists(t, rv.Field(i).Index(j).Interface(), fmt.Sprintf("%s.%s[%d]", where, name, j))
+				}
+			}
+		case reflect.Struct:
+			// Only an object is walked: a struct that marshals to a scalar --
+			// a time.Time, which is a string on the wire -- has no fields to
+			// ask about, and decoding its JSON as a map would fail.
+			if len(raw) > 0 && raw[0] == '{' {
+				requireNoNullLists(t, rv.Field(i).Interface(), where+"."+name)
+			}
+		}
+	}
+}
 
 // TestRoadmapDocumentsRoundTripStrictly: the record's four kinds of document
 // survive a write and a read unchanged, and the read is strict — a document
@@ -502,6 +551,78 @@ func TestRoadmapTextIsSanitisedOnRead(t *testing.T) {
 			t.Errorf("%s read back as it was stored (%q): the text of a document this process did not write is a field", c.what, c.readBack)
 		}
 	}
+}
+
+// TestRoadmapListsAreNeverNull: every list the record declares is a list on
+// the way out, whether or not the record holds anything in it. An empty list
+// and a null are two spellings of one fact to a Go caller and two different
+// documents to a consumer: a screen that iterates the record's `dangling`
+// throws on a null, and the console accepts a newer CLI on this contract, so a
+// read that answered null for the ordinary case — a record holding plans with
+// nothing dangling — would be a defect no Go reader sees.
+//
+// The three reads that answer a list with nothing in it are the three a test
+// that seeds a document never reaches: a populated record with nothing
+// dangling, a project whose record was never written, and a hand-written plan
+// document that omits its own lists. A node is not only what this build's
+// writer puts in it, and the sibling reader keeps the same promise through
+// cleanList (TestReadRepoIntentsCleansTheListsItReads).
+//
+// Hand mutation this fails on: returning danglingIDs' slice as it is built,
+// which is nil whenever nothing dangles, and dropping the nonNil pair in
+// Plan.sanitised.
+func TestRoadmapListsAreNeverNull(t *testing.T) {
+	t.Run("a populated record with nothing dangling", func(t *testing.T) {
+		s, f := testStoreAndFake(t)
+		seedRoadmap(t, f)
+		got, err := s.ReadRoadmap(testCtx(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Dangling) != 0 {
+			t.Fatalf("the fixture's record read as dangling %q, so this is not the ordinary case it means to pin", got.Dangling)
+		}
+		requireNoNullLists(t, got, "the record")
+	})
+
+	t.Run("an absent record", func(t *testing.T) {
+		s, _ := testStoreAndFake(t)
+		got, err := s.ReadRoadmap(testCtx(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireNoNullLists(t, got, "the absent record")
+		blob, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The one spelling, said out loud: the two branches of the read -- the
+		// record found and the record absent -- answer the same document.
+		if !strings.Contains(string(blob), `"dangling":[]`) {
+			t.Errorf("an absent record marshals as %s, want \"dangling\":[]", blob)
+		}
+	})
+
+	t.Run("a plan document that omits its own lists", func(t *testing.T) {
+		s, f := testStoreAndFake(t)
+		f.Set(PathPlan("plans/hand-written"), map[string]any{
+			"schema": RoadmapSchema,
+			"plan":   "plans/hand-written",
+			"stream": "cli",
+			"source": map[string]any{
+				"repo": "acme/app", "path": "docs/hand-written.graph.json",
+				"commit": "1111", "graph_schema": 3,
+			},
+		})
+		got, err := s.ReadRoadmap(testCtx(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Plans) != 1 {
+			t.Fatalf("the record read its plans as %+v, want the one hand-written document", got.Plans)
+		}
+		requireNoNullLists(t, got.Plans[0], "the hand-written plan")
+	})
 }
 
 // TestRoadmapPathsStayInTheSubtree: every path helper answers a path under the
