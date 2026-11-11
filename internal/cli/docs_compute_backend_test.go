@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -217,9 +218,10 @@ var computeBackendSymbols = map[string][]string{
 	"internal/cli/root.go":          {"AddCommand"},
 	"internal/localcfg/localcfg.go": {"BackendName", "func (c *Config) Backend"},
 	"internal/localcfg/localcfg_test.go": {
-		// Task 10 turns this test into the acceptance it replaced, so the plan
-		// naming it is the plan naming what it must not leave stale.
-		"TestCloudBatchIsRefused",
+		// Task 10 turned this test into the acceptance it replaced, and the
+		// name follows the assertion: a pin called "is refused" that asserts
+		// the acceptance is a name that has stopped being true.
+		"TestCloudBatchIsAccepted", "TestBatchSectionDoesNotSelectTheBackend",
 	},
 	"internal/infra/compute.go": {
 		"ComputeNames", "ComputeSpec", "ComputeVars", "ComputeServiceAgents",
@@ -722,7 +724,7 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 		// Task 14 and Task 8, whose second half this branch's commits are, and
 		// Task 9 -- and nothing else.
 		"Three tasks have been built since: Task 14",
-		"**Task 14 is built, and so are Task 8 and Task 9, and nothing else here is**",
+		"**Task 14 is built, and so are Task 8, Task 9 and Task 10, and nothing else here is**",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q", computeBackendPlan, want)
@@ -737,7 +739,7 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	for _, want := range []string{
 		"**Status: the owner APPROVED this plan on 2026-10-19 (\"Approve and start\")",
 		"Three tasks have been built since: **Task 14**",
-		"**No task's commit exists except Task 14's, Task 8's and Task 9's**",
+		"**No task's commit exists except Task 14's, Task 8's, Task 9's and Task 10's**",
 	} {
 		if !strings.Contains(status, want) {
 			t.Errorf("%s's Status line no longer says %q", computeBackendPlan, want)
@@ -841,20 +843,21 @@ func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
 	gate := doc[i:]
 	for _, want := range []string{
 		"Task 8's first half, begun under that approval",
-		"**No other task has a commit",
-		"`backend: cloud-batch` is still refused by `internal/localcfg`",
+		"**No other task has a commit, and Task 10 is the one that lifted the refusal",
+		"`backend: cloud-batch` is a name `internal/localcfg` accepts",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q: the gate is what tells a reviewer which tasks have started", computeBackendPlan, want)
 		}
 	}
-	// The one refusal the account promises is still there, checked against
-	// localcfg's behaviour rather than against its prose: a gate that says the
-	// name is still refused over a config this build accepts would be the
-	// worst of the two failures.
-	if _, err := localcfg.Parse([]byte("version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
-		"backend: cloud-batch\nrepos:\n  acme/app: { provider: github, workflows: [web] }\n")); err == nil {
-		t.Errorf("%s's gate says `backend: cloud-batch` is still refused, and this build accepts the config that names it", computeBackendPlan)
+	// The enable the account now promises is there, checked against localcfg's
+	// behaviour rather than against its prose: a gate that says the name is
+	// accepted over a config this build refuses would be the worst of the two
+	// failures.
+	c, err := localcfg.Parse([]byte("version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
+		"backend: cloud-batch\nrepos:\n  acme/app: { provider: github, workflows: [web] }\n"))
+	if err != nil || c.Backend() != backend.CloudBatch {
+		t.Errorf("%s's gate says Task 10 lifted the refusal, and this build answers %v, %v for the config that names the backend: the account and the tree disagree", computeBackendPlan, c, err)
 	}
 }
 

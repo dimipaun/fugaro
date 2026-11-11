@@ -434,37 +434,42 @@ func TestBackendDefaultsToCloudRun(t *testing.T) {
 	}
 }
 
-// Cloud Batch is a backend this build can speak but must not select yet: the
-// seam and the fake exist (design compute-backend.md §8.1 Task 2), while the
-// tasks that make a Batch run safe -- the log sink, the cost of a VM and the
-// reaper that stops a leaked one -- come after the owner's Check 57a
-// measurement (design §9). So `backend: cloud-batch` stays refused, and this
-// is the single place that refuses it: every command that reads a project
-// config, `fugaro update` included, goes through Parse.
-func TestCloudBatchIsRefused(t *testing.T) {
+// Cloud Batch is a backend this build accepts as a name, and what makes a
+// Batch run safe is not this file: it is `fugaro doctor`'s gate, which refuses
+// an installation that selects the name until its provisioning, IAM, logs,
+// cost and reaper checks all pass (design compute-backend.md §4.4, §8.1 task
+// 9). This test is the acceptance TestCloudBatchIsRefused became in the enable
+// task (plan 2026-10-19-compute-backend.md Task 10): the refusal it replaced
+// held the name back while the tasks that make a Batch run safe were unwritten
+// (design §8.1 Task 2), and every one of them -- the opener and its config,
+// the offline and live checks, the reaper's role and its provisioning, the
+// reaper itself -- is merged. What did NOT change with it is the artifact
+// boundary Global Constraint 13 leaves standing: `artifacts:` is not a key of
+// this file (an artifact-producing run is a recipe's `mode: artifact`), so
+// that refusal lives in internal/cli's validate_batch.go and the launch's own
+// gate, and its cases are there.
+func TestCloudBatchIsAccepted(t *testing.T) {
 	if backend.CloudBatch != "cloud-batch" {
 		t.Fatalf("backend.CloudBatch = %q: the constant and the config value must not drift", backend.CloudBatch)
 	}
 	c, err := Parse([]byte(sample + "backend: " + backend.CloudBatch + "\n"))
-	if err == nil || !strings.Contains(err.Error(), backend.CloudBatch) {
-		t.Fatalf("err = %v, want it to name %s", err, backend.CloudBatch)
+	if err != nil {
+		t.Fatalf("backend: %s is refused: %v", backend.CloudBatch, err)
 	}
-	// It is refused as a name this build knows and has not enabled, not as
-	// one it has never heard of: the two are different claims and only the
-	// first is true (design §8.1 Task 2).
-	if !strings.Contains(err.Error(), "not enabled yet") || strings.Contains(err.Error(), "not a known backend") {
-		t.Fatalf("err = %q, want the refusal of a known backend that is not enabled", err)
+	if c.Backend() != backend.CloudBatch {
+		t.Fatalf("Backend() = %q, want %s: the name must select what the operator wrote rather than fall back to %s", c.Backend(), backend.CloudBatch, backend.CloudRun)
 	}
-	// A name this build does not know at all is refused as such.
-	if _, err := Parse([]byte(sample + "backend: ecs-fargate\n")); err == nil || !strings.Contains(err.Error(), "not a known backend") {
+	if c.BackendName != backend.CloudBatch {
+		t.Fatalf("BackendName = %q, want the name as written", c.BackendName)
+	}
+	// An unknown name is still refused, and the refusal names both backends
+	// this build knows, so the fix is in the message.
+	_, err = Parse([]byte(sample + "backend: ecs-fargate\n"))
+	if err == nil || !strings.Contains(err.Error(), "not a known backend") {
 		t.Fatalf("err = %v, want an unknown backend", err)
 	}
-	// The refusal names the only backend this build runs, so the fix is in
-	// the message; and nothing rewrites the name on the way out, so a caller
-	// that ignored the error still sees what the operator asked for rather
-	// than a silent fallback to Cloud Run.
-	if c != nil && c.BackendName != backend.CloudBatch {
-		t.Fatalf("a refused config rewrote its backend to %q", c.BackendName)
+	if err != nil && (!strings.Contains(err.Error(), backend.CloudRun) || !strings.Contains(err.Error(), backend.CloudBatch)) {
+		t.Fatalf("err = %q, want it to name both known backends", err)
 	}
 }
 
@@ -670,22 +675,23 @@ func TestBatchSectionValidation(t *testing.T) {
 	}
 }
 
-// TestBatchSectionDoesNotEnableTheBackend: the block is what the opener would
-// read, not what selects it. `backend: cloud-batch` stays refused with the
-// block present, so an installation that writes the whole section still runs
-// on Cloud Run and TestCloudBatchIsRefused above stays the single place that
-// decides it.
-func TestBatchSectionDoesNotEnableTheBackend(t *testing.T) {
-	_, err := Parse([]byte(sample + batchSample + "backend: " + backend.CloudBatch + "\n"))
-	if err == nil || !strings.Contains(err.Error(), "not enabled yet") {
-		t.Fatalf("err = %v, want the block to leave the backend refused as not enabled yet", err)
-	}
+// TestBatchSectionDoesNotSelectTheBackend: the block is what the opener reads,
+// not what selects it. An installation that writes the whole section and no
+// `backend` key still runs on Cloud Run, and `backend` is the one key that
+// selects the other name (TestCloudBatchIsAccepted above).
+func TestBatchSectionDoesNotSelectTheBackend(t *testing.T) {
 	c, err := Parse([]byte(sample + batchSample))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Backend() != backend.CloudRun {
 		t.Fatalf("a config with a batch block selects %q, want %s", c.Backend(), backend.CloudRun)
+	}
+	// The whole section with the name on the line above it is the installation
+	// an operator enables, and it parses: what refuses it, when it is not
+	// provisioned, is `fugaro doctor` and not this file.
+	if c, err := Parse([]byte(sample + batchSample + "backend: " + backend.CloudBatch + "\n")); err != nil || c.Backend() != backend.CloudBatch {
+		t.Fatalf("the batch section with backend: %s parses to %v, %v, want it accepted and selected", backend.CloudBatch, c, err)
 	}
 	// And the block must not be a way to smuggle a second selection path in:
 	// there is one key that names a backend, and it is `backend`. A `backend`

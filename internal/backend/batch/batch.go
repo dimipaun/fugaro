@@ -149,6 +149,13 @@ const defaultBootDiskGB = 50
 // decision to make rather than a silent one.
 const defaultMachineType = "e2-standard-8"
 
+// DefaultMachineType is that type, for a caller that has to ask a question
+// about the VM a run gets without building a backend: `fugaro doctor`'s cost
+// check prices the installation's region and machine type against this build's
+// table, and an installation whose batch block names no type is priced at the
+// type its runs actually get rather than at a second guess at the default.
+func DefaultMachineType() string { return defaultMachineType }
+
 // Docker is the VM's Docker daemon as a run reaches it: the socket, mounted
 // from the host (design §2.2, C2). It is the installation's, not the run's --
 // the gid belongs to the boot image, so every run of an installation reads the
