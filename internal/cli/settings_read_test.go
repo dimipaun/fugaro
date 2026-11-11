@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -521,6 +522,62 @@ func TestSettingsOfflineReadsNoCloudLayer(t *testing.T) {
 		t.Error("a read without --offline never entered the cloud layers, so --offline guards nothing")
 	} else if calls != 1 {
 		t.Errorf("the cloud layers were read %d times, want once", calls)
+	}
+}
+
+// TestSettingsOfflineLeavesTheTableShape: --offline is not a narrower read of
+// the registry — it is the same table with the cloud layers marked `unread:
+// offline` (spec §2.6) — so a consumer that reads offline sees every key, in the
+// same order, and a cloud row reads the word rather than a default a database
+// nobody asked is supposed to hold.
+//
+// The same fixture is read both ways, so the two documents are the same read:
+// a shape that differed by a flag would be a second table, and the rows a
+// --offline consumer filters out would be the rows it most needs to see.
+func TestSettingsOfflineLeavesTheTableShape(t *testing.T) {
+	f := settingsCloudFixture(t)
+	f.db.Set(budget.PathMode, "enforce")
+
+	online := readSettingsJSON(t, "--all-repos")
+	offline := readSettingsJSON(t, "--offline", "--all-repos")
+	if len(offline.Settings) != len(online.Settings) {
+		t.Fatalf("--offline read %d rows and the same read without it %d: the table changes shape with the flag", len(offline.Settings), len(online.Settings))
+	}
+	for i := range online.Settings {
+		if online.Settings[i].Key != offline.Settings[i].Key || online.Settings[i].Scope != offline.Settings[i].Scope {
+			t.Fatalf("row %d is %s in %s online and %s in %s offline", i,
+				online.Settings[i].Key, online.Settings[i].Scope, offline.Settings[i].Key, offline.Settings[i].Scope)
+		}
+	}
+
+	// The database is there and --offline did not ask it: the value column says
+	// so, and the state carries the reason the flag is.
+	for _, key := range settingsCloudRowKeys {
+		row := rowOf(t, offline, key, "project")
+		if row.State != "unread: offline" || deref(row.Value) != "unread" || row.Wins != "caps" {
+			t.Errorf("%s offline = %q/%q/%q, want the word and the reason", key, deref(row.Value), row.Wins, row.State)
+		}
+	}
+	if row := rowOf(t, online, "caps.mode", "project"); deref(row.Value) != "enforce" {
+		t.Errorf("caps.mode online = %q, want the database's own mode: the fixture holds it", deref(row.Value))
+	}
+	// `unpublished` compares the file with the cloud, so it is not claimed where
+	// no cloud side was read (spec §2.5).
+	for _, s := range offline.Settings {
+		if s.State == stateUnpublished {
+			t.Errorf("%s in %s reads unpublished offline, and --offline read no published value to differ from", s.Key, s.Scope)
+		}
+	}
+	// The sources list carries the two layers either way, each with the state it
+	// answered — a consumer shows the reason once rather than per row.
+	layers := map[string]string{}
+	for _, src := range offline.Sources {
+		layers[src.Layer] = src.Status
+	}
+	for _, l := range []string{"policy", "caps"} {
+		if layers[l] != "unread: offline" {
+			t.Errorf("the offline document's %s source is %q, want the state the rows read (%v)", l, layers[l], layers)
+		}
 	}
 }
 

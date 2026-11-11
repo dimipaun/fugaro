@@ -99,12 +99,18 @@ func (s setting) matches(re *regexp.Regexp) bool {
 // lsNow's are, so such a test must not be parallel.
 var settingsNow = time.Now
 
-// settingsCloudLayers is the read's cloud half: the shared config's refresh,
-// the published policy node and the Realtime Database caps (spec §2.7). It is
-// the one place a read leaves this machine, and it is empty until S2 fills it.
-// --offline is the gate in front of it, so the flag's promise — no bucket, no
-// database — is a property of the read and not of a comment.
-var settingsCloudLayers = func(_ context.Context, _ *settingsRead, _ settingsOptions) error { return nil }
+// settingsCloudLayers is the read's cloud half: the published policy node and
+// the Realtime Database's caps (spec §2.7), read by settings_cloud.go. It is the
+// one place a read leaves this machine — the shared config's refresh is not on
+// this path — and --offline is the gate in front of it, so the flag's promise —
+// no database — is a property of the read and not of a comment.
+//
+// It is a variable rather than a plain call for the same reason settingsNow is:
+// it is the seam a test holds the read's only cloud call by
+// (TestSettingsOfflineReadsNoCloudLayer), and the read's answer for a cloud that
+// cannot be reached is a state on the row, so the seam's error is the one
+// failure that ends the read rather than a note.
+var settingsCloudLayers = readCloudLayers
 
 // settingsRead is one run of the read: the documents it read, the clock it
 // read them at, and what each of them cost.
@@ -122,6 +128,13 @@ type settingsRead struct {
 	layerMS  int64
 
 	repos []repoRead
+
+	// policy and caps are the two cloud layers, each carrying its own state:
+	// one source that cannot be read says nothing about the other. drift is the
+	// keys the published node does not carry what the local config says.
+	policy cloudLayer
+	caps   cloudLayer
+	drift  map[string]bool
 }
 
 // repoRead is one repository scope: its fugaro.yaml resolved, or the reason it
@@ -181,10 +194,14 @@ func readSettings(ctx context.Context, o settingsOptions, now time.Time) (*setti
 	if err := r.readRepos(o); err != nil {
 		return nil, err
 	}
-	if !o.offline {
-		if err := settingsCloudLayers(ctx, r, o); err != nil {
-			return nil, err
-		}
+	if o.offline {
+		// The flag's promise is that every cloud row reads `unread: offline`
+		// rather than disappearing, so the table keeps its shape (spec §2.6):
+		// the two layers are marked here, where the flag is, and the read above
+		// never reaches for one.
+		r.unreadCloud("offline")
+	} else if err := settingsCloudLayers(ctx, r, o); err != nil {
+		return nil, err
 	}
 	return r, nil
 }
@@ -444,7 +461,7 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 	if s.Wins != settings.LayerDefault {
 		s.Levels = append(s.Levels, level{Layer: s.Wins, Value: s.Value, Outcome: "wins"})
 	}
-	return s
+	return r.cloudProjectRow(s, row)
 }
 
 // repoRow is the key at a repository scope. A key of fugaro.yaml is resolved
@@ -456,8 +473,13 @@ func (r *settingsRead) repoRow(row settings.Row, repo repoRead) setting {
 	s.Scope = "repo:" + repo.name
 	s.Levels = nil
 	if repo.state != stateOK {
-		s.State = repo.state
-		return s
+		// A repository's own read says nothing about the database's caps: a
+		// checkout that is missing or refused does not make kill.global.on
+		// unknown, and those rows keep the state their own layer answered.
+		if !settingsCapsKey(row.Key) {
+			s.State = repo.state
+		}
+		return r.nodeCeiling(s, row)
 	}
 	if !isYAMLKey(row) || repo.config == nil {
 		return s
@@ -496,7 +518,7 @@ func (r *settingsRead) repoRow(row settings.Row, repo repoRead) setting {
 	if s.Wins != settings.LayerDefault {
 		s.Levels = append(s.Levels, level{Layer: s.Wins, Value: s.Value, Outcome: "wins"})
 	}
-	return s
+	return r.nodeCeiling(s, row)
 }
 
 // localPath is the path a local row's key takes into the local config file:
