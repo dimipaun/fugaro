@@ -972,6 +972,18 @@ with today's remaining daily caps. It is a ceiling, not a forecast: a run
 is bounded by the smaller of budget.per_run_usd and the recipe's most
 stages times the repository's agent.max_budget_usd.
 
+--mode asks for a rigor mode for the figures, as fugaro run --mode asks
+for one for a run, and takes the same vocabulary. It may raise the mode
+the repository resolves (its rigor: block, the project layer) and never
+lower it, so a request below the resolved mode changes nothing and the
+preview says so rather than quoting a cheaper ceiling than the run would
+be held to. The mode is an input to the two terms the tool can compute
+and to nothing else: the recipe's stage bound, through the rounds the
+mode's own row gives the knobs the checkout leaves unset, and the per-run
+cap, through the fraction of the deployed ceiling the mode carries.
+That is not the mode budget set --mode takes, which is the accounting
+mode (observe or enforce). The output is a ceiling all the same.
+
 That figure is the model ceiling and nothing else: a run also bills for
 the machine it asked for, and no budget key bounds compute at all --
 the run's own timeout is the cap.
@@ -1018,7 +1030,7 @@ and the ceiling with it. The typical line's own read of the bucket is
 the one that costs the line and nothing else: a bucket it cannot read
 leaves the ceiling standing. It writes nothing.
 
-Usage: `fugaro budget preview --recipe NAME --runs N [--repo R]`
+Usage: `fugaro budget preview --recipe NAME --runs N [--repo R] [--mode MODE]`
 
 Flags:
 
@@ -1028,6 +1040,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for preview |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--mode` | string | "" | no | the rigor mode to preview: poc, startup, pro, critical, hotfix; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--recipe` | string | "" | yes | the recipe to preview (default, lint-fix, pick, premium, review-only, run-digest, solo, standard, test-and-fix) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
