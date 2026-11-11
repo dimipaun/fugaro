@@ -460,9 +460,14 @@ func TestWorkspaceCapGivesUpOnAContendedMeter(t *testing.T) {
 // The meter is written under the subtree the workspace's own rules document
 // denies (internal/budget/rules.WorkspaceMeterPath): the document and the
 // writer name ONE node, because a second spelling of it is a node the document
-// a database runs under does not name. The two packages cannot hold each other
-// to it in code — the rules package's own tests import this one, so an import
-// the other way is a cycle — so the agreement is pinned here.
+// a database runs under does not name. What is compared is the subtree ROOT and
+// not a node below it: a rule at the root denies every descendant, so the
+// document's own `meter/$month` is one illustrative level rather than the
+// writer's shape, and the writer's deeper `meter/<workspace>/<month>`
+// (PathWorkspaceSpend) is denied with the subtree — only the root has to agree.
+// The two packages cannot hold each other to it in code — the rules package's
+// own tests import this one, so an import the other way is a cycle — so the
+// agreement is pinned here.
 func TestWorkspaceMeterLivesUnderTheSubtreeTheRulesDeny(t *testing.T) {
 	path := budget.PathWorkspaceSpend(wsMeterName, budget.MonthKey(wsMeterNow))
 	subtree, rest, found := strings.Cut(path, "/")
