@@ -610,6 +610,25 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		// zero Verdict it returns is not OK either.
 		return Result{}, fmt.Errorf("gating the plan of %s: %w", r.what(), safetext.FieldErr(err))
 	}
+	// D1545's split is the gate's; what a content finding means is the
+	// COMMAND's, and this command's answer is the one it has always given.
+	// `fugaro managed apply` is not among the commands the gate stands in for
+	// (D1011, the spec's "not a change to managed apply"): it writes no audit
+	// record, so the half of the ruling that reads "records and warns
+	// (AuditRecord, doctor)" has nothing to stand on here, and a finding that
+	// neither refuses nor reaches `fugaro doctor` would leave the plan applied
+	// with nothing kept in the finding's place. A content finding is therefore
+	// a refusal of THIS command, exactly as it was before the gate told the two
+	// kinds apart, and it is folded into the verdict's refusals rather than
+	// printed beside them so that the refusal the session reads lists the
+	// reasons the way it lists every other refusal of this gate — same lines,
+	// same cap, same advice, and no second rendering of a finding to keep in
+	// step with the first.
+	if len(v.Warnings) > 0 {
+		v.Refusals = append(v.Refusals, v.Warnings...)
+		v.Warnings = nil
+		v.OK = false
+	}
 	res := Result{Changed: true, PlanPath: planPath, PlanHash: before, Verdict: v, Warning: r.Enable.Warning()}
 	if !v.OK {
 		// The refusal is a hard return: there is no "apply anyway" here, and
@@ -620,20 +639,14 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		// owner's object and not a flag of this command.
 		return res, &RefusedError{Verdict: v, Advice: r.advice(v)}
 	}
-	// D1545: the verdict can carry warnings — content findings the gate
-	// recorded and did not refuse on — and the session is told them before
-	// anything is asked or applied, so a plan that goes ahead with a finding
-	// against it is never one nobody was warned about. It names no flag and no
-	// environment variable.
-	if r.Out != nil && len(v.Warnings) > 0 {
-		printWarnings(r.Out, v.Warnings)
-	}
 	// The session's own leg of D55's rule, asked here because this is the one
 	// moment all three of its inputs exist: the fact was read before terraform
 	// ran, the verdict that admits the plan has just been read, and Conditions
-	// is what the session says about who is there. A verdict that is OK only
-	// because its refusals were content ones is still OK here (Admitted), which
-	// is D1545's ruling: the content findings do not keep a confirmation.
+	// is what the session says about who is there. Only a verdict this command
+	// admits reaches it: the content findings are refusals here (above), so no
+	// confirmation ever carries a finding past the gate, and what is asked
+	// about is a plan whose only findings left are the cost list's flag-only
+	// ones, which are there for whoever confirms it.
 	if err := r.confirm(v, before); err != nil {
 		return res, err
 	}
@@ -655,39 +668,6 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		return res, safetext.FieldErr(err)
 	}
 	return res, nil
-}
-
-// printWarnings writes the gate's recorded content findings (D1545): a line in
-// this program's own words first, then one line per warning, each cut like a
-// refusal line (refusalWhy) and the listing capped (safetext.FieldListMax, the
-// rest counted in this program's own words) — a plan chooses how many changes
-// it carries, and a listing nobody can read to the end is a warning that hides
-// the line that matters. It names no flag and no environment variable: these
-// lines are read by the session the gate opened for, and a recipe for reaching
-// past a check has no business in them (DeleteAdvice's own rule).
-//
-// Its first line says what happens to the findings HERE and not what the audit
-// family holds, because its only caller is `fugaro managed apply` — the one
-// command this design cites rather than touches (spec.md §"not a change to
-// managed apply", D1011): it is not in the converge set, so no record of this
-// apply exists for `fugaro doctor` to read, and a line promising one would send
-// the reader to a family that holds nothing about them.
-func printWarnings(w io.Writer, warnings []Refusal) {
-	fmt.Fprintf(w, "the managed gate found %d warning(s) about this plan and applies it anyway (D1545); this command keeps no audit record of them:\n", len(warnings))
-	listed := warnings
-	if len(listed) > safetext.FieldListMax {
-		listed = listed[:safetext.FieldListMax]
-	}
-	for _, r := range listed {
-		fmt.Fprintf(w, "  %s: ", safetext.Field(r.Gate))
-		if r.Address != "" {
-			fmt.Fprintf(w, "%s: ", safetext.Field(r.Address))
-		}
-		fmt.Fprintln(w, refusalWhy(r.Why))
-	}
-	if n := len(warnings) - len(listed); n > 0 {
-		fmt.Fprintf(w, "  (%s)\n", safetext.FieldListNote(n))
-	}
 }
 
 // advice is the sentence a refusal ends with, when the mode has one: a

@@ -1182,6 +1182,34 @@ func TestGateWarnsARemovalAtAnAddressApprovedForAnotherObject(t *testing.T) {
 	}
 }
 
+// TestGateListsAWarnedRemovalTheOwnerCouldApprove is the same verdict read the
+// other way, and it is what the caller that refuses a warned removal needs: the
+// warning above is a REFUSAL for `fugaro managed apply` — the one command the
+// gate stands in for that writes no audit record (D1011, apply.go's
+// gateAndApply) — and that refusal ends with the one thing its reader can act
+// on, the owner's own list. Listable is where the advice reads it, so the field
+// is filled from the delete rule's answer whether the rule refused or warned
+// (Gate), and this removal is one a new entry would admit: a warning-only
+// verdict that left it empty would refuse the plan and tell its reader nothing
+// about the command that clears it.
+func TestGateListsAWarnedRemovalTheOwnerCouldApprove(t *testing.T) {
+	const addr = "module.managed.google_cloud_run_v2_job.fmgd_job"
+	r := newRig(t)
+	r.managedShow(t, deleted(addr, "google_cloud_run_v2_job", map[string]any{
+		"name": tf.ManagedPrefix + "job",
+		"uid":  "1234567890",
+		"template": []any{map[string]any{"template": []any{map[string]any{
+			"service_account": tf.ManagedPrefix + "run@" + gcpProject + ".iam.gserviceaccount.com"}}}},
+	}))
+	v := gate(t, r, spec(t, r, managedCover(), entry(addr, "type=google_cloud_run_v2_job name=fmgd-other")))
+	if len(v.Refusals) != 0 || !v.OK {
+		t.Fatalf("a removal of a classified, non-data-bearing type gives refusals %v, OK %v: D1545 records and warns it", v.Refusals, v.OK)
+	}
+	if !slices.Contains(v.Listable, addr) {
+		t.Errorf("Listable = %v, want %s: the removal is one a new entry would admit, and the caller that refuses the warned ones reads the list for the advice its refusal ends with", v.Listable, addr)
+	}
+}
+
 // A listed address with no resource in the plan changes nothing: the list is
 // read per change, so a stale entry — an address the plan no longer carries —
 // neither admits nor refuses anything.

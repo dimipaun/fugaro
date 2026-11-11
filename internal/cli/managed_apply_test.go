@@ -352,30 +352,34 @@ func TestManagedApplyRunsPastAnOpenGate(t *testing.T) {
 	}
 }
 
-// TestManagedApplyPrintsAContentWarningAndKeepsNoRecordOfIt is D1545's other
-// warning, the one the plan itself raises: a delete of a type D1551 does not
-// call data-bearing and no list of the owner's admits is a content finding, so
-// the gate admits the plan with it in Warnings and `fugaro managed apply`
-// prints them (printWarnings) before it asks anything. What the session reads
-// is the sentence's own account of what happens to them HERE: this command
-// keeps no audit record of them, because it is not in the converge set (D1011,
-// the spec's "not a change to managed apply") and the family `fugaro doctor`
-// reads holds nothing about this apply. The sentence and the family are read
-// back together, so a wording that went on promising a record — or the first
-// record this command ever wrote — fails here rather than in a reader's
-// search for an object that is not there.
-func TestManagedApplyPrintsAContentWarningAndKeepsNoRecordOfIt(t *testing.T) {
+// TestManagedApplyRefusesAContentFindingAndKeepsNoRecordOfIt is D1545's split
+// as this command answers it, and it is the answer the command has always
+// given: a delete of a type D1551 does not call data-bearing and no list of the
+// owner's admits is a content finding, which the gate records in Warnings for
+// the commands it stands in for. `fugaro managed apply` is not one of them
+// (D1011, the spec's "not a change to managed apply"): it writes no audit
+// record, so the ruling's other half — the finding is recorded and `fugaro
+// doctor` flags it — has nothing to stand on here, and a finding that neither
+// refuses nor reaches doctor would apply the plan with nothing kept in the
+// finding's place. So it is folded into the verdict's refusals (apply.go's
+// gateAndApply) and the session reads it as the refusal it is, in the same
+// lines a refusal is always rendered in. The audit family is read back beside
+// it: this command still writes no record, and a version that started writing
+// one — or that went back to applying the warned plan — fails here rather than
+// in a reader's search for an object that is not there.
+func TestManagedApplyRefusesAContentFindingAndKeepsNoRecordOfIt(t *testing.T) {
 	r, root, _ := managedOpenGateRig(t)
 	// The plan a managed cover can read — the configuration it reads the
 	// provisioners, providers and data sources of, and the provider's own
 	// project — whose one change is the removal of a Run job no entry of the
-	// owner's list approves (the rig's allow list holds nothing), which is a
-	// warning and not a refusal because google_cloud_run_v2_job is classified
-	// and not data-bearing (D1551). The job the removal takes away is the
-	// managed project's own — its name carries the prefix and it runs as one of
-	// the project's managed accounts — because a delete is read as the resource
-	// it removes (removed), so a before view that was not this project's would
-	// be refused for that reason instead of warning.
+	// owner's list approves (the rig's allow list holds nothing). That removal
+	// is the gate's content half because google_cloud_run_v2_job is classified
+	// and not data-bearing (D1551), which is exactly the finding this command
+	// refuses and the converge set would record. The job the removal takes away
+	// is the managed project's own — its name carries the prefix and it runs as
+	// one of the project's managed accounts — because a delete is read as the
+	// resource it removes (removed), so a before view that was not this
+	// project's would be refused for that reason instead.
 	b, err := json.Marshal(map[string]any{
 		"format_version": "1.2",
 		"configuration": map[string]any{"provider_config": map[string]any{"google": map[string]any{
@@ -399,23 +403,23 @@ func TestManagedApplyPrintsAContentWarningAndKeepsNoRecordOfIt(t *testing.T) {
 	out, errOut, _ := execute(t, "managed", "apply", root)
 	got := out + errOut
 	for _, want := range []string{
-		"the managed gate found ",
-		" warning(s) about this plan and applies it anyway (D1545); this command keeps no audit record of them:",
+		"nothing was applied: the gate refused the plan of ",
+		"the managed gate refused the plan, so nothing is applied",
 		"module.managed.google_cloud_run_v2_job.worker",
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("the session does not read the plan's own warning, missing %q:\n%s", want, got)
+			t.Errorf("the session does not read the content finding as a refusal, missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "recorded (D1545)") {
-		t.Errorf("the warning still promises a record this command does not write:\n%s", got)
+	if strings.Contains(got, "applies it anyway") {
+		t.Errorf("the session is told the warned plan is applied, which this command does not do:\n%s", got)
 	}
 	list, err := managedStorage(t, r.gcs).Objects.List(initRunsBucket).Prefix(managedmode.AuditPrefix).Context(context.Background()).Do()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(list.Items) != 0 {
-		t.Errorf("a managed apply wrote %d object(s) under %s, and its own warning says it keeps no record (D1011): %v", len(list.Items), managedmode.AuditPrefix, list.Items)
+		t.Errorf("a managed apply wrote %d object(s) under %s, and this command keeps no record (D1011): %v", len(list.Items), managedmode.AuditPrefix, list.Items)
 	}
 }
 

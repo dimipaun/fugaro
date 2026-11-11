@@ -142,10 +142,11 @@ type Verdict struct {
 	// (D1545): the guard's content removals (a delete or a replace of a
 	// classified, non-data-bearing type no list admits), the cover's content
 	// refusals (the type and grant tables) and the cost list's blocked
-	// attributes. They never affect OK, and they are not dropped: the apply
-	// prints them before it asks (apply.go's gateAndApply) and the audit record
-	// holds them (D1025), so the cover tables stay a tripwire that tells the
-	// owner what left them rather than vanishing.
+	// attributes. They never affect OK, and they are not dropped: the command
+	// the gate stands in for records them in the audit record and prints them
+	// (D1025), and `fugaro managed apply` — which writes no record, D1011 —
+	// refuses a plan carrying any of them, folding them into this verdict's
+	// Refusals before it decides (apply.go's gateAndApply).
 	Warnings []Refusal
 	// Flags are the findings of entries that only flag (Task 1.3, D62): recorded
 	// here for whoever confirms, from the cost list's non-blocking findings. They
@@ -155,19 +156,19 @@ type Verdict struct {
 	// question a person is asked before the apply (Request.Ask). It never
 	// affects OK.
 	Changes Changes
-	// Listable is the addresses the guard refused that a new entry in the
-	// owner's delete list would admit (tf.ListableEntries, which is what the
-	// gate below assigns here, and not the address-only tf.Listable it once
-	// called): a delete or replace of the address's own object that no entry
-	// the list holds already approves. An entry that names an address for
-	// another object is one of these — that removal is refused because the
-	// entry is about a different object, and an entry about this one clears
-	// it, which is what keeps the advice true. The list is empty when the
-	// guard refused only what no entry clears: a moved object, an action it
-	// does not know, a change with no actions, and a removal whose before view
-	// identifies nothing (tf.Identifies), which no entry can be matched
-	// against. When it is empty a refusal must not point at the owner's list
-	// (Request.advice). It never affects OK.
+	// Listable is the addresses the guard's delete rule named — refused or, since
+	// D1545, warned about — that a new entry in the owner's delete list would
+	// admit (tf.ListableEntries, which is what the gate below assigns here, and
+	// not the address-only tf.Listable it once called): a delete or replace of
+	// the address's own object that no entry the list holds already approves. An
+	// entry that names an address for another object is one of these — that
+	// removal is refused because the entry is about a different object, and an
+	// entry about this one clears it, which is what keeps the advice true. The
+	// list is empty when the delete rule named only what no entry clears: a
+	// moved object, an action it does not know, a change with no actions, and a
+	// removal whose before view identifies nothing (tf.Identifies), which no
+	// entry can be matched against. When it is empty a refusal must not point at
+	// the owner's list (Request.advice). It never affects OK.
 	Listable []string
 }
 
@@ -309,9 +310,12 @@ type Refusal struct {
 // way: the guard's refusals and the cover's integrity half are the plan's
 // Refusals and OK is false when either is non-empty; the guard's warned
 // removals, the cover's content refusals and the cost list's blocked attributes
-// are the plan's Warnings and never affect OK. Nothing here applies anything —
-// Gate reads a plan and returns, and applying the saved plan is a separate step
-// with its own caller (Tasks 3.1 and 3.2).
+// are the plan's Warnings and never affect OK. That split is the gate's; what a
+// warning MEANS is the caller's, and the caller whose command writes no audit
+// record refuses the warned plan rather than applying it (apply.go's
+// gateAndApply). Nothing here applies anything — Gate reads a plan and returns,
+// and applying the saved plan is a separate step with its own caller (Tasks 3.1
+// and 3.2).
 //
 // A plan that cannot be read is an error, never a verdict: the caller must not
 // read "no verdict" as "admitted", and a returned Verdict is zero-valued
@@ -330,6 +334,14 @@ func Gate(ctx context.Context, planPath string, spec Spec) (Verdict, error) {
 	refused, warned := guardManaged(plan, spec.AllowDelete, spec.Upgrade)
 	if len(refused) > 0 {
 		v.Refusals = append(v.Refusals, refusals(guardGate, refused)...)
+	}
+	// Listable is read off the delete rule's own answers and not off the half
+	// that stops the plan: a caller that refuses the warned removals too —
+	// `fugaro managed apply`, apply.go's gateAndApply, the one reader of this
+	// field — needs the addresses a new entry would admit for exactly those,
+	// and a warning-only verdict leaves them nothing to point at otherwise
+	// (Request.advice).
+	if len(refused) > 0 || len(warned) > 0 {
 		v.Listable = tf.ListableEntries(plan, spec.AllowDelete)
 	}
 	v.Warnings = append(v.Warnings, refusals(guardGate, warned)...)
