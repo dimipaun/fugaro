@@ -995,8 +995,8 @@ var localRows = []Row{
 }
 
 // cloudRows are the Realtime Database's own keys (spec §2.1, §2.2): the mode a
-// lease compares against, the two cap scopes, the reserve limit and the two kill
-// switches. The caps layer is their only store — no file carries them and no
+// lease compares against, the two cap scopes, the reserve limit and the global
+// kill switch. The caps layer is their only store — no file carries them and no
 // layer above them exists — so a read with --offline answers every one of them
 // `unread: offline`, and the value a run gets is what the node holds.
 //
