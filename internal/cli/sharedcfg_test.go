@@ -711,6 +711,31 @@ func TestSharedConfigRefusesOrchestrator(t *testing.T) {
 	}
 }
 
+// TestSharedConfigRefusesCloneURLs: the clone URL is where a repository's runs
+// clone from, and it is the local config's block (SD5, D842) published through
+// the policy node the runner reads — the file the runner computes the URL from
+// and fails closed on — rather than read from the shared config, which any
+// launcher with objectAdmin on the runs bucket can write. An entry there would
+// let a launcher point every teammate's runs at a URL of its choosing, which is
+// the whole of what the node's own rule (projectpolicy.ValidCloneURLs) exists to
+// refuse. The reader refuses the key by name before the file is parsed, the way
+// review_floor and the catalog are refused.
+func TestSharedConfigRefusesCloneURLs(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "clone_urls") {
+		t.Fatal("sharedForbidden does not name clone_urls, so a published block would be read")
+	}
+	data := validShared() + "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying clone_urls: was accepted")
+	}
+	for _, want := range []string{"clone_urls", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
 // TestSharedConfigRefusesEveryForbiddenSection: the list is the fence, and a
 // name dropped from it is a section the commands would read from a file any
 // launcher with objectAdmin on the runs bucket can write. Each name is put in
@@ -765,6 +790,7 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"image_map", "image_map:\n    acme/app: tools\n"},
 		{"bake_repos", "bake_repos: false\n"},
 		{"triage", "triage: false\n"},
+		{"clone_urls", "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := localcfg.Parse([]byte(validShared() + tc.yaml))

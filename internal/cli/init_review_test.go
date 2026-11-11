@@ -398,24 +398,20 @@ func (r *initRig) markedRuns(t *testing.T, name, gcp string) {
 // screen the run's one confirmation is shown in, and the banner of a step
 // that asks its own. Only the ordinary steps' banner names both projects (the
 // Firestore location's names the project alone, and the tests that expect it
-// count it themselves), and a step the run's confirmation covered says so on
-// the line under its banner — which is what tells the two apart.
+// count it themselves).
 //
-// The covered line is counted with its own indentation, which is how the step
-// prints it (init_review.go's askOrdinary). The same phrase sits inside the
-// other sentence a step prints, "note: this step is not covered by the run
-// confirmation: …", so the bare phrase counts that one too: a step that asked
-// its own would read as a covered step, and a run with one of each as none.
+// A step the run's confirmation covered prints no banner at all now: it is a
+// step nothing is asked about, and "will do" is what the run has for those
+// (init_review.go's askOrdinary, initRun.willDo).
 func prompts(out string) (run, step int) {
 	run = strings.Count(out, "share ONE confirmation")
-	step = strings.Count(out, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+")") -
-		strings.Count(out, "\n  covered by the run confirmation (")
+	step = strings.Count(out, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+")")
 	return
 }
 
 // A marked project takes the run's one confirmation (the review screen, shown
 // once) for the Viewer-read removal and the apply and the local config; each
-// step still prints its banner and says it was covered.
+// step says what it will do and that the run's confirmation covered it.
 func TestMarkedProjectTakesOneConfirmation(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)

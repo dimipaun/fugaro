@@ -232,6 +232,29 @@ type Config struct {
 	// refused by the publish that builds the node, before anything is written,
 	// with a sentence naming the entry.
 	BitbucketAPIRoots []string `yaml:"bitbucket_api_roots,omitempty"`
+	// CloneURLs are the URLs the project's repositories clone from, keyed by
+	// the canonical repository name (projectpolicy's clone_urls, which
+	// `fugaro project policy publish` copies this into — the runner computes a
+	// project job's clone URL from the node, so this file is where the owner
+	// writes it). Only the owner sets it, here or in the published node, and
+	// the shared config never carries it: a launcher who could write it into
+	// the runs bucket's shared file would be choosing where every teammate's
+	// runs clone from.
+	//
+	// It is a copy and not a derivation, and it is held to the node's rule
+	// alone (projectpolicy.ValidCloneURLs): an https URL without credentials
+	// that names exactly this repository on its own provider's host. There is
+	// no second copy of that rule here on purpose — an entry the node would
+	// refuse is refused by the publish that builds the node, before anything is
+	// written, with a sentence naming the entry, and by `fugaro project
+	// clone-url` where it is typed.
+	//
+	// A map and not a pointer, like ImageMap: nil is "this file states
+	// nothing", which keeps the node's block (CloneURLsEffective), and a
+	// written block with no entry in it is a statement of its own — the
+	// project gives no repository a URL, which is how a published block is
+	// taken away on purpose.
+	CloneURLs map[string]string `yaml:"clone_urls,omitempty"`
 	// VerifierAccounts are the identities that may ask the installation's
 	// credentials service whether a verdict's signature is its own (C3.9g3,
 	// D1068, D1075): the coordinator's own account once it exists, and the
@@ -1829,6 +1852,32 @@ func (c *Config) ImageMapEffective(published map[string]string) map[string]strin
 	effective := published
 	if c.ImageMap != nil {
 		effective = c.ImageMap
+	}
+	if len(effective) == 0 {
+		return nil
+	}
+	return effective
+}
+
+// CloneURLsEffective is the keep rule for the clone URLs (SD5, D842, D844): the
+// block this file states when it writes one — a written block with no entry
+// included, which is how a published one is taken away on purpose — and the
+// published node's otherwise.
+//
+// The second half is what makes the import's refusal harmless: a machine whose
+// file predates the block, or an owner who declined the import, publishes the
+// node's own entries rather than dropping them, so the node is left exactly as
+// it was (§6.4's "a declined import leaves the file and the node exactly as
+// they were"). A nil answer is the whole of the answer, as it is for the image
+// map: the publisher omits the key when the effective block names no entry, so
+// a project that gives no repository a URL has a node byte for byte what it had
+// before the key existed. The two halves cannot be one field for the image
+// map's reason: "this file says nothing" must keep the node's block, and "this
+// file says nothing is in it" must take it away.
+func (c *Config) CloneURLsEffective(published map[string]string) map[string]string {
+	effective := published
+	if c.CloneURLs != nil {
+		effective = c.CloneURLs
 	}
 	if len(effective) == 0 {
 		return nil

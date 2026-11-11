@@ -92,32 +92,11 @@ func (p *Provider) Contents(ctx context.Context, path, ref string) ([]byte, erro
 		}
 		rev = name
 	}
-	tok, _, err := p.tokens.Token(ctx, apiMinValid)
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: authenticating: %w", at, err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.contentsURL(path, rev), nil)
+	data, ctype, err := p.srcFile(ctx, path, rev, gitprov.MaxContentsBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", at, err)
 	}
-	// The file itself, not the API's JSON: this adapter reads a reply's body
-	// as the file's bytes, and asking for them is what says so.
-	req.Header.Set("Accept", "application/octet-stream")
-	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := p.contentsClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", at, secretFree(err, tok))
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, gitprov.MaxContentsBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: reading the reply: %w", at, err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("reading %s: %s: HTTP %d: %s", at, http.MethodGet, resp.StatusCode,
-			secretsFree(replyExcerpt(data), tok))
-	}
-	if jsonContentType(resp.Header.Get("Content-Type")) {
+	if jsonContentType(ctype) {
 		return nil, fmt.Errorf("reading %s: the repository holds a directory there, not a file", at)
 	}
 	switch {
@@ -127,6 +106,50 @@ func (p *Provider) Contents(ctx context.Context, path, ref string) ([]byte, erro
 		return nil, fmt.Errorf("reading %s: it is more than the %d bytes a definition may be: %w", at, gitprov.MaxContentsBytes, gitprov.ErrContentsTooLarge)
 	}
 	return data, nil
+}
+
+// srcFile is one file of this repository read raw, through the src endpoint
+// at rev: the bytes the API serves, and the content type it answered with.
+// max is the caller's ceiling, and a reply over it is read one byte past it so
+// the caller can tell a file of exactly max bytes from one that is larger.
+//
+// It is the read Contents and Tree share, and the two differ in what they
+// refuse on top of it: Contents refuses an empty file and a directory's JSON
+// listing, while a tree read keeps both -- a build context holds files of no
+// bytes (an empty .gitkeep) and files that are themselves JSON (a
+// package.json), and reading either as a definition is Contents' own rule and
+// not the API's.
+//
+// What it returns is the API's answer, not a checked one: the caller wraps the
+// error in its own sentence about the path it asked for, which is why nothing
+// here names one.
+func (p *Provider) srcFile(ctx context.Context, path, rev string, max int64) ([]byte, string, error) {
+	tok, _, err := p.tokens.Token(ctx, apiMinValid)
+	if err != nil {
+		return nil, "", fmt.Errorf("authenticating: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.contentsURL(path, rev), nil)
+	if err != nil {
+		return nil, "", err
+	}
+	// The file itself, not the API's JSON: this adapter reads a reply's body
+	// as the file's bytes, and asking for them is what says so.
+	req.Header.Set("Accept", "application/octet-stream")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := p.contentsClient().Do(req)
+	if err != nil {
+		return nil, "", secretFree(err, tok)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("reading the reply: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, "", fmt.Errorf("%s: HTTP %d: %s", http.MethodGet, resp.StatusCode,
+			secretsFree(replyExcerpt(data), tok))
+	}
+	return data, resp.Header.Get("Content-Type"), nil
 }
 
 // defaultBranch is the repository's own default branch, the ref a source that

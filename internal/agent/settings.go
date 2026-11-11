@@ -30,29 +30,82 @@ func IsManagedSettingsTmp(name string) bool {
 // the gateway refuses it anyway; denying them keeps the agent from trying.
 var deniedWebTools = []string{"WebSearch", "WebFetch"}
 
-// deniedBinaryReads are denied in a review stage's managed settings: reads
-// of the file kinds the review input never carries as bytes, one rule per
-// extension rather than a brace pattern, since a rule's specifier is a path
-// pattern Claude Code matches and a list of plain extensions is what this
-// settings shape is known to take.
+// imageReadExtensions are the file kinds whose reads a stage that cannot send
+// an image is denied, and the one list of these kinds this program has:
+// DenyRules spells them as Read rules, and the runner's own scan of a task and
+// a repository asks for them. One list, because a kind the deny rules cover
+// and the scan forgets is a file a run with no image rate meets unprepared.
 //
-// The review stage's prompt already says so — reviewinput.go's binaryRule,
-// carried by the built input and by PickPrompt — but a prompt is not a
-// permission. The reviewer runs with --dangerously-skip-permissions and a
-// full Read tool, and one Read of a changed PNG is enough: Claude Code puts
-// what it read into the next Messages body as a base64 image block, and the
-// gateway refuses an image for a model with no image rate
-// (internal/gateway/forward.go), which a model priced by the project's
-// model_prices never has. Run 20261021-002046-31cc ended exactly there —
-// `stage review: images aren't priced for model deepseek/deepseek-v4.1-flash`
-// — after its pull request added two PNGs, which is the failure the built
-// review input fixes on the builder's side and this rule fixes on the
-// reviewer's side. These kinds are the ones the rule is for; a text file the
-// reviewer wants to read is not one of them.
-var deniedBinaryReads = []string{
-	"Read(**/*.png)", "Read(**/*.jpg)", "Read(**/*.jpeg)", "Read(**/*.gif)",
-	"Read(**/*.webp)", "Read(**/*.bmp)", "Read(**/*.ico)", "Read(**/*.pdf)",
-	"Read(**/*.heic)", "Read(**/*.tiff)",
+// The coder's brief (internal/runner's SystemPrompt) names ImageBlockExtensions
+// rather than the whole list: the reason it gives is the gateway's refusal, and
+// that reason is the image's alone — a PDF is not refused, it is priced at the
+// model's whole context window and served (documentReadExtensions). The deny
+// itself is unchanged: one list, and the review path's own reason for it
+// (reviewinput.go's binaryRule, below) covers every kind in it.
+//
+// Two stages are denied them. A REVIEW stage, whose prompt already says so —
+// reviewinput.go's binaryRule, carried by the built input and by PickPrompt —
+// but a prompt is not a permission: the reviewer runs with
+// --dangerously-skip-permissions and a full Read tool, and one Read of a
+// changed PNG is enough. Claude Code puts what it read into the next Messages
+// body as a base64 image block, and the gateway refuses an image for a model
+// with no image rate (internal/gateway/forward.go), which a model priced by
+// the project's model_prices never has. Run 20261021-002046-31cc ended exactly
+// there — `stage review: images aren't priced for model
+// deepseek/deepseek-v4.1-flash` — after its pull request added two PNGs, which
+// is the failure the built review input fixes on the builder's side and this
+// rule fixes on the reviewer's side.
+//
+// And every other stage whose OWN model has no image rate, whatever its role
+// (D2014): the same read, the same refused request, one stage earlier — at
+// `implement`, where the coder's brief names the image kinds and says why, and
+// where a run that dies has already spent its plan and its implement. A coder
+// whose price row HAS an image rate sends the image itself and keeps its reads
+// (D2016). These kinds are the ones the rule is for; a text file either stage
+// wants to read is not one of them.
+var imageReadExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "pdf", "heic", "tiff"}
+
+// ImageReadExtensions is imageReadExtensions, as a copy: a caller that appends
+// to what it was given cannot change what the next stage is denied.
+func ImageReadExtensions() []string { return slices.Clone(imageReadExtensions) }
+
+// documentReadExtensions are the kinds in that list Claude Code reads as a
+// document rather than as an image. The gateway serves a request carrying one
+// whatever the model's image rate: it counts an image and a document apart and
+// refuses the image alone (internal/gateway's blocks and its refusal), and
+// reserves the model's whole context window for a document instead
+// (internal/pricing's HasPDF). The deny list carries them all the same — it is
+// one list, and the review path's reason for denying a binary is not the image
+// rate (reviewinput.go's binaryRule) — so a caller whose reason IS the refusal
+// asks for ImageBlockExtensions rather than for the list.
+var documentReadExtensions = []string{"pdf"}
+
+// ImageBlockExtensions are the kinds in imageReadExtensions a Read of which
+// Claude Code puts into the next request as an image block, and so the kinds
+// the gateway refuses for a model priced without an image rate: the list a
+// caller names when the refusal is the reason it gives (internal/runner's
+// brief). A copy, as ImageReadExtensions is.
+func ImageBlockExtensions() []string {
+	exts := make([]string, 0, len(imageReadExtensions))
+	for _, ext := range imageReadExtensions {
+		if !slices.Contains(documentReadExtensions, ext) {
+			exts = append(exts, ext)
+		}
+	}
+	return exts
+}
+
+// binaryReadRules is those kinds as deny rules: one rule per extension rather
+// than a brace pattern, since a rule's specifier is a path pattern Claude Code
+// matches and a list of plain extensions is what this settings shape is known
+// to take.
+func binaryReadRules() []string {
+	exts := ImageReadExtensions()
+	rules := make([]string, 0, len(exts))
+	for _, ext := range exts {
+		rules = append(rules, "Read(**/*."+ext+")")
+	}
+	return rules
 }
 
 // deniedReviewTools are denied in the managed settings of the independent
@@ -84,19 +137,20 @@ var deniedBinaryReads = []string{
 var deniedReviewTools = []string{"Bash", "Edit", "Write", "NotebookEdit", "Read(/proc/**)"}
 
 // DenyRules is the permissions deny list a stage's managed settings carry:
-// the web tools when denyWeb, and the review stage's binary reads when
-// review. The two are independent, and how a stage is recognised as a review
-// stage is the caller's business (the runner's config.IsReviewStage): this
-// package knows what a stage may not do, not what a stage is. deniedReviewTools
-// is not here: it is the review job's, and ReviewJobDenyRules is what carries
-// it to the one caller that has that job.
-func DenyRules(denyWeb, review bool) []string {
+// the web tools when denyWeb, and the image reads when denyBinaries. The two
+// are independent, and whether a stage's reads of image files are denied is
+// the caller's answer (the runner's run.denyBinaryReads: a review stage, or a
+// stage whose own model is priced without an image rate): this package knows
+// what a stage may not do, not what a stage is. deniedReviewTools is not
+// here: it is the review job's, and ReviewJobDenyRules is what carries it to
+// the one caller that has that job.
+func DenyRules(denyWeb, denyBinaries bool) []string {
 	var deny []string
 	if denyWeb {
 		deny = append(deny, deniedWebTools...)
 	}
-	if review {
-		deny = append(deny, deniedBinaryReads...)
+	if denyBinaries {
+		deny = append(deny, binaryReadRules()...)
 	}
 	return deny
 }

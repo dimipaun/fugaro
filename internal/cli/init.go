@@ -169,6 +169,17 @@ type initOptions struct {
 	// the command the user is actually running rather than one that no longer
 	// exists.
 	door string
+
+	// resolvedPrinted is what this run has already said about its own issues,
+	// by the pair that names one project's issue (F8): the ones whose fixed
+	// line the resolved-issues step printed from this machine's own file
+	// (update_resolved.go). The retry offer below the step says the same
+	// sentence about the same issue, and one run says it once — the two
+	// memories that would otherwise say so are both writes, and neither is
+	// made in a coding agent's session (F16d). It is the run's own, so it is
+	// read by the offer and reset by nothing: a door's options live for one
+	// run.
+	resolvedPrinted map[resolvedKey]bool
 }
 
 // convergeDoor is one of the two front doors of the converge (setup.go,
@@ -760,6 +771,12 @@ type initResult struct {
 	RTDBURL  string `json:"rtdb_url,omitempty"`
 	// Anchor is set by update --anchor.
 	Anchor *anchorResult `json:"anchor,omitempty"`
+	// ResolvedIssues is what `fugaro update` found this release fixes about
+	// the project's filed issues (update_resolved.go, T-RU5): the additive
+	// field the console, the mobile app and the history read, so its entries
+	// carry new names and no field here changes meaning (U4). It is absent
+	// when the update fixes none of them.
+	ResolvedIssues []resolvedIssueJSON `json:"resolved_issues,omitempty"`
 }
 
 func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
@@ -797,6 +814,20 @@ func (w runWriter) Write(p []byte) (int, error) {
 		w.r.rep.Resume()
 	}
 	return n, err
+}
+
+// notes is the run's stderr for the lines a stage prints itself rather than
+// through its own writer: the project header every cloud command starts with
+// and the notes a selection carries. They are the same rule as the run's own
+// lines (runWriter) because they land on the same terminal: a stage of a
+// converge selects the config for its own checkout while a step is in flight,
+// and on stdout the frame is drawn at the start of a line it never ends, so a
+// header written between two frames reads as the stage's name run into it.
+func (r *initRun) notes() io.Writer {
+	if r.rep == nil {
+		return r.cmd.ErrOrStderr()
+	}
+	return runWriter{r: r, out: r.cmd.ErrOrStderr()}
 }
 
 // endsLine reports whether a write left the cursor at the start of a line.
@@ -994,6 +1025,12 @@ func runInit(r *initRun) error {
 		if r.repLog != nil {
 			defer func() { _ = r.repLog.Close() }()
 		}
+		// The run's stderr is the reporter's too, from here on: a stage that
+		// selects the project config for its own checkout prints the header and
+		// the selection's notes while a step is in flight, and a frame and a
+		// header written on one terminal without the line coming down first
+		// read as one run-together line (see initRun.notes).
+		o.cloud.stderr = r.notes
 		return e.converge(cmd.Context())
 	}
 
@@ -2038,6 +2075,17 @@ func (r *initRun) confirm(what, undone string) error {
 	return nil
 }
 
+// willDo prints the note of a step that no confirmation is asked for, in the
+// words the run has for exactly that: "will do" is the converge's own status
+// for a stage with work to do that nobody is asked about (initflow's
+// stateLabel). The ⚠ CONFIRM banner is what a question is shown under, so the
+// two may not be printed for one step — a managed project's own sentence says
+// no confirmation is taken, two lines under a banner that announced one (the
+// owner's feedback of 2026-11-10).
+func (r *initRun) willDo(what string) {
+	fmt.Fprintf(r.w, "will do (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+}
+
 // confirmNow is the confirmation a step of this run asks now, and it asks
 // nothing: the policy removes the confirmations a person had to type
 // (docs/no-prompt-policy, D1540 and T7), and what answers for the step is what
@@ -2122,20 +2170,20 @@ func (r *initRun) yesRoute() string {
 	return ", or pass --yes once you have read what it does"
 }
 
-// ask shows the banner and reports whether the step is confirmed; without
-// a terminal and without --yes it isn't. In a coding agent's session it is
-// an *initflow.AgentError before anything is shown as confirmed: nothing a
-// run applies is confirmed there.
+// ask reports whether the step is confirmed, under the banner a question is
+// shown under; without a terminal and without --yes it isn't. In a coding
+// agent's session it is an *initflow.AgentError before anything is shown as
+// confirmed: nothing a run applies is confirmed there.
 //
-// The one session that is shown the banner and asked nothing is the owner's
-// own, in a managed project, at the step of the one command whose gate is its
-// own: `fugaro image refresh`'s non-build steps (r.refresh). The banner and
-// the diff above it are the whole of what the owner reads there, the sentence
-// says why, and the step goes on — the ruling of 2026-11-01, and the same
-// shape the plugin wiring's y/N and the IAM removals already have
-// (gateUnderway). Nothing else moves: a project that is not managed, a mark
-// that did not answer and a session with no terminal or with --yes reach the
-// lines below exactly as they always did.
+// The one session that is asked nothing at all is the owner's own, in a managed
+// project, at the step of the one command whose gate is its own: `fugaro image
+// refresh`'s non-build steps (r.refresh). What the owner reads there is the diff
+// above, the step's own note under the run's words for exactly that (willDo),
+// and the sentence that says why — and the step goes on. It is the ruling of
+// 2026-11-01, and the same shape the plugin wiring's y/N and the IAM removals
+// already have (gateUnderway). Nothing else moves: a project that is not
+// managed, a mark that did not answer and a session with no terminal or with
+// --yes reach the lines below exactly as they always did.
 func (r *initRun) ask(what string) (bool, error) {
 	// The banner and the name typed under it are one question: the line in
 	// flight is down across both (initRun.asking), or the frame drawn when the
@@ -2153,15 +2201,20 @@ func (r *initRun) ask(what string) (bool, error) {
 // banner is a note now, not a prompt: what answers for the step is the reader
 // of it (confirmNow), and the only arm that reads is --ask's, which asks the
 // step's own [y/N] through the one sanctioned confirmation helper.
+//
+// The banner is printed only where something follows it that answers for the
+// step: a question, a flag, or a person whose presence is the answer. An arm
+// that asks nothing at all prints the step's note under willDo instead.
 func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
-	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	if r.refresh.asksNothing(r.conditions()) {
+		r.willDo(what)
 		fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 		return true, nil
 	}
+	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	ok, err := r.confirmNow(what + "?")
 	if err != nil {
 		return false, err
@@ -3339,6 +3392,36 @@ func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) 
 	}
 }
 
+// updateResolved is the door's resolved-issues step (update_resolved.go,
+// T-RU5), and it is the last thing an update that converged does with the
+// installation: it records which two releases this update spans and prints
+// what this release fixes about the project's filed issues.
+//
+// It sits here, beside publishSharedConfig and after the loop rather than at
+// the door, because of the one thing it owes that the offer beside it does
+// not: the --json document. --json prints initResult the moment the converge
+// ends (printResult, from the loop's own outcome), so a step that added a
+// field to it after the run had returned would add it to a document already on
+// stdout. Everything else about it is built to be missed rather than felt (the
+// hard rule): the run reaches here only with every stage applied and nothing
+// left for the person, every failure inside it is a line not printed, and the
+// pass it runs is bounded to twenty seconds.
+func (r *initRun) updateResolved(ctx context.Context) {
+	if !updateResolvedRuns(r.o) || len(r.res.LeftForYou) > 0 {
+		return
+	}
+	// The bucket the run converged against, opened through the retry offer's
+	// own seam: the question is the same one — which project did this run
+	// converge, and where is its store — and a second seam would be a second
+	// answer to it.
+	b, err := updateRetryBucket(ctx, r.o.cloud, updateRetryProject(r.o, nil))
+	if err != nil {
+		return
+	}
+	defer func() { _ = b.Close() }()
+	r.res.ResolvedIssues = r.printResolvedIssues(ctx, b)
+}
+
 // writeLocalConfig writes next to path, showing the diff first and backing
 // up the file it replaces. A diff is confirmed by an apply's confirmation
 // (confirmed), else it asks on its own. An unchanged file isn't written.
@@ -4376,7 +4459,7 @@ func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	keyID := spec.Secrets[config.GitHubAppKeySecret]
 	if r.o.checkApp {
-		id, err := gitSecretID(ctx, lc, spec, "the GitHub App pre-check of "+spec.Name)
+		id, err := gitSecretID(ctx, lc, spec, nodePolicy(ctx, &r.policy, lc), "the GitHub App pre-check of "+spec.Name)
 		if err != nil {
 			// One line, and for a drift the short form of it: oneLineCLI
 			// prints through pluginwire.Printable, which would cut the
@@ -4819,7 +4902,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			r.warn(n)
 		}
 	}
-	ready, missing, err := infra.Readiness(ctx, c, spec, ex, r.o.planOnly)
+	ready, missing, err := infra.Readiness(ctx, c, spec, ex, r.o.planOnly, r.o.doorName())
 	if err != nil {
 		return infra.RepoSpec{}, nil, initErr(err)
 	}
@@ -5167,7 +5250,7 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 // secrets set command, as the bootstrap printed them, and each workflow's
 // other gates.
 func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, missing []infra.Missing, needKey bool) {
-	steps := infra.SecretCommands(spec, versions, selfCommand(), quoteWord)
+	steps := infra.SecretCommands(spec, versions, selfCommand(), r.o.doorName(), quoteWord)
 	if !needKey {
 		// This run never calls Anthropic, so the key is not missing: it gates
 		// nothing (infra.NeedsBuild skips it), the job deploys without it, and

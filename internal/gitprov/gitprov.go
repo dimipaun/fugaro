@@ -307,6 +307,71 @@ var (
 	ErrContentsTooLarge = errors.New("the file is larger than a contents read returns")
 )
 
+// CommitReader is implemented by a provider that can resolve a ref to the
+// commit it names, which is what a catalog entry's Dockerfile and its build
+// context are read at (D1394, D1395). A source names a branch, and a read at
+// that branch answers whatever the branch is at the moment of the read, so the
+// copy resolves it once and reads both at the commit it got: one read, one
+// commit, and the record's value is the commit the definition was taken from
+// rather than the operator's own checkout.
+//
+// ref is a branch or a tag, "" for the repository's default branch; the caller
+// validates it, because it comes from a published catalog. What comes back is
+// a full commit, and a caller that puts it in a build, a record or a label
+// holds it to that shape: the value reaches `git fetch` and the revision
+// label, where a ref that is not a commit means something else.
+//
+// It is not part of Provider, for ContentsReader's own reason: a host without
+// a commit read has no way to answer it, and a caller that does not need one
+// must keep working there. The GitHub and Bitbucket adapters and the
+// file-backed test provider implement it.
+type CommitReader interface {
+	Commit(ctx context.Context, ref string) (string, error)
+}
+
+// TreeReader is implemented by a provider that can read a directory of its
+// repository at one commit, which is how a catalog entry's build context is
+// read before a build: the files under path, at ref, each with the bytes the
+// context's identity is taken over (D1401).
+//
+// path is a repository-relative directory — the catalog's own rule allows ".",
+// the repository root — ref is the commit the caller resolved (CommitReader),
+// and the paths that come back are relative to path, so moving a context
+// inside its repository does not move its identity. limit bounds the read
+// before anything is fetched: a tree over it is refused with ErrTreeTooLarge
+// rather than carried, and a caller that puts these bytes into a build gets a
+// bounded tree or an error.
+//
+// It is not part of Provider: a host without a tree read has no way to answer
+// it, and a caller that does not need one must keep working there. The GitHub
+// and Bitbucket adapters and the file-backed test provider implement it.
+type TreeReader interface {
+	Tree(ctx context.Context, path, ref string, limit TreeLimit) ([]TreeFile, error)
+}
+
+// TreeFile is one file of a tree read: its path relative to the directory that
+// was read, and its bytes. A file of no bytes is a file (a repository holds
+// them), which is why a tree read keeps one where a definition read refuses
+// one.
+type TreeFile struct {
+	Path string
+	Data []byte
+}
+
+// TreeLimit bounds one Tree read: how many files it may return and how many
+// bytes they may hold together. Both are read off the host's own listing
+// before a file is fetched, so a tree over the limit costs one listing and no
+// content, and the refusal names the ceiling rather than a build that grew
+// past it.
+type TreeLimit struct {
+	MaxFiles int
+	MaxBytes int64
+}
+
+// ErrTreeTooLarge means a Tree read was refused because the tree is over the
+// limit its caller gave: more files, or more bytes, than the read returns.
+var ErrTreeTooLarge = errors.New("the tree is larger than a tree read returns")
+
 // Provider is what the runner needs from the git host.
 type Provider interface {
 	// EnsurePR creates the pull request for spec.Branch or, if one already

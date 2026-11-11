@@ -424,3 +424,77 @@ func TestPolicyShowAndPublishDiffPrintACatalogChange(t *testing.T) {
 		t.Errorf("the diff does not show the catalog entry that changed:\n%s", out)
 	}
 }
+
+// TestBuildProjectPolicyPublishesTheLocalBlocksAndNotTheNodesCopy: the
+// clone_urls block moved out of the node and into the local config (SD5,
+// D842), so what the node holds is not the source any more — the file is. An
+// entry the file states is what this publish writes, even where the node
+// carried another value for the same repository and a member of its own that
+// this binary does not model beside it, and an entry only the node carries is
+// still kept, because a config that states no block states nothing to publish
+// (`localcfg.Config.CloneURLsEffective`). The two halves are one test because
+// they are one rule: a publish that took the block from the node in both cases
+// would ignore the operator's own file, and one that took it from the file in
+// both would drop the entries of every installation whose config predates the
+// key.
+func TestBuildProjectPolicyPublishesTheLocalBlocksAndNotTheNodesCopy(t *testing.T) {
+	const (
+		canonical = "github/acme/app"
+		member    = "github%2Facme%2Fapp"
+	)
+	f := newProjectFixture(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The node now carries a different value for the same repository, and one
+	// member beside it that this binary reads as no canonical name at all:
+	// both belong to the source the file has just replaced.
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["clone_urls"] = map[string]any{
+		member:                  "https://github.com/acme/app.git",
+		"github%2Facme%2Fother": "https://github.com/acme/other.git",
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol := publishedPolicy(t, f)
+	if got := pol.CloneURL(canonical); got != "https://github.com/acme/app" {
+		t.Errorf("CloneURL(%q) = %q, want the URL this machine's config states, not the node's copy", canonical, got)
+	}
+	if got := pol.CloneURL("github/acme/other"); got != "" {
+		t.Errorf("CloneURL(github/acme/other) = %q, want none: the config states no entry for it and the node's copy is the source the file replaced", got)
+	}
+	if strings.Contains(out, "clone_urls "+canonical+" kept") {
+		t.Errorf("the diff says the entry is kept when it is this config's:\n%s", out)
+	}
+	if !strings.Contains(out, "clone_urls "+canonical+": https://github.com/acme/app") {
+		t.Errorf("the diff does not name the entry this publish wrote:\n%s", out)
+	}
+	// The entry the file replaced is a removal the operator has to read: the
+	// repository whose runs cloned from a URL of their own goes back to the
+	// provider's own clone URL, which is a difference in where a run's code
+	// comes from.
+	if !strings.Contains(out, "clone_urls github/acme/other removed (was https://github.com/acme/other.git)") {
+		t.Errorf("the diff does not name the entry it removed:\n%s", out)
+	}
+
+	// The other half of the rule: a config that states no block keeps the
+	// node's entries, so an installation whose file predates the key — and an
+	// owner who declines the import (§6.4) — is left exactly as it was.
+	rewriteProjectConfig(t, f, "")
+	node["clone_urls"] = map[string]any{member: "https://github.com/acme/app.git"}
+	f.db.Set(projectpolicy.PathShared(), node)
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := publishedPolicy(t, f).CloneURL(canonical); got != "https://github.com/acme/app.git" {
+		t.Errorf("CloneURL(%q) = %q, want the node's own entry: this config states no clone_urls block", canonical, got)
+	}
+	if !strings.Contains(out, "clone_urls "+canonical+" kept: https://github.com/acme/app.git") {
+		t.Errorf("the diff does not say the node's entry is kept:\n%s", out)
+	}
+}
