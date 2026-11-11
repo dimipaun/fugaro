@@ -556,7 +556,10 @@ func (r records) SweepExpired(ctx context.Context) (Swept, error) {
 		// reason: the record an operator writes by hand carries no CreatedAt
 		// (D929's pre-registered client), and a client nobody registered
 		// through this endpoint is not one this endpoint's bound may end.
-		if named[c.ID] || c.CreatedAt.IsZero() || now.Sub(c.CreatedAt) < RegistrationTTL {
+		// A record at its own moment is kept for that reason too — the
+		// moment has to have passed, which is the same strict reading the two
+		// single-use shapes get below.
+		if named[c.ID] || c.CreatedAt.IsZero() || !now.After(c.CreatedAt.Add(RegistrationTTL)) {
 			continue
 		}
 		if err := r.objs.delete(ctx, key); err != nil {

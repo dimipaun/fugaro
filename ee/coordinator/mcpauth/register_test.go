@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 )
@@ -341,5 +342,304 @@ func TestRedirectURIMustBeLoopbackOrAllowlisted(t *testing.T) {
 		if rec := ts.postJSON(t, RegisterPath, registrationRequest{RedirectURIs: []string{uri}}); rec.Code == http.StatusCreated {
 			t.Errorf("POST %s registered %q: the match is exact and the loopback forms are the two D928 names, so a near miss is a URI the project never wrote down", RegisterPath, uri)
 		}
+	}
+}
+
+// postRegistration posts one registration from one source, which is the header
+// the platform's own front end sets: registerSource reads the rightmost entry
+// of X-Forwarded-For, so a test has to be able to put one there. An empty
+// source leaves the header off, which is the request a peer that is not behind
+// a front end makes — an httptest request's own RemoteAddr.
+func (ts *testServer) postRegistration(t *testing.T, source string) *httptest.ResponseRecorder {
+	t.Helper()
+	data, err := json.Marshal(registrationRequest{RedirectURIs: []string{testClientRedirect}, ClientName: "a client"})
+	if err != nil {
+		t.Fatalf("marshalling the request body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, RegisterPath, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	if source != "" {
+		req.Header.Set("X-Forwarded-For", source)
+	}
+	return ts.do(t, req)
+}
+
+// TestRegistrationIsRateLimitedPerSource is M12's first bound (spec.md §8,
+// reconciliation.md §4a): the endpoint is open to everyone, and a source may
+// make a bounded number of registrations in a window.
+//
+// Three properties are the bound and each is asserted on its own: it counts a
+// *source*, so one source's window is not another's and not everybody's; the
+// source is the one the platform's front end appended rather than one the
+// caller wrote, so varying a spoofed header buys no fresh window; and it is a
+// *window*, so the refusal is temporary and the same source is admitted again
+// after it. What the refusal must not do is write anything or say anything
+// about the caller, which the last two assertions hold.
+func TestRegistrationIsRateLimitedPerSource(t *testing.T) {
+	const (
+		oneSource = "198.51.100.7"
+		spoofed   = "203.0.113.9"
+		otherOne  = "192.0.2.44"
+	)
+	now := testNow
+	clock := func() time.Time { return now }
+	ts := newTestServerOver(t, testConfig(), clock, nil)
+
+	for i := range registerPerWindow {
+		if rec := ts.postRegistration(t, oneSource); rec.Code != http.StatusCreated {
+			t.Fatalf("registration %d of %d from one source answered %d (%s); want 201: the bound is a window's worth of registrations and not one per source", i+1, registerPerWindow, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+	}
+	held := len(ts.store.objects(t))
+	rec := ts.postRegistration(t, oneSource)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("registration %d from one source answered %d (%s); want 429: an endpoint open to everyone with no bound on one source is a store a stranger fills", registerPerWindow+1, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if got := rec.Header().Get("Retry-After"); got == "" {
+		t.Error("the refusal carries no Retry-After: the bound is a window, and a client told only 'no' has nothing to do about it")
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "temporarily_unavailable") {
+		t.Errorf("the refusal answered %s; want RFC 6749 §5.2's code for a bound that is temporary", strings.TrimSpace(body))
+	}
+	// Nothing about the caller is in the answer, the source least of all.
+	for _, secret := range []string{oneSource, spoofed, otherOne} {
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Errorf("the refusal quotes %s: a refusal is not a place an address is written down, and one caller's answer is not another's to read", secret)
+		}
+	}
+	// A refused registration writes nothing: the bound is about what reaches
+	// the store, and a refusal that had already written a record would be a
+	// bound that bounded nothing.
+	if after := len(ts.store.objects(t)); after != held {
+		t.Errorf("the refused registration left %d records behind", after-held)
+	}
+
+	// The rightmost entry is the source, so a caller that puts a fresh name of
+	// its own at the front of the chain is still the same source — which is
+	// the whole reason the leftmost entry is not the one counted, since that
+	// is the one a caller writes.
+	if rec := ts.postRegistration(t, spoofed+", "+oneSource); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("a registration whose chain ends in a source past its window answered %d; want 429: the entry that counts is the one the platform's front end appended, not the one the caller sent", rec.Code)
+	}
+	// And the bound is per source and not global: one source's window must not
+	// refuse everybody else's registration, which is a denial of service this
+	// door would be performing on itself.
+	if rec := ts.postRegistration(t, otherOne); rec.Code != http.StatusCreated {
+		t.Errorf("another source answered %d (%s) while a different source was past its window; want 201: a global bound would let one caller stop every other client from registering", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	// The window rolls: the same source is admitted again in the next one.
+	now = now.Add(registerWindow)
+	if rec := ts.postRegistration(t, oneSource); rec.Code != http.StatusCreated {
+		t.Errorf("the same source answered %d (%s) in the window after its own; want 201: the bound is a rate and not a ban", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	// The header is the platform's and not the only source there is: a request
+	// with none is counted by its peer address, and those count together.
+	for i := range registerPerWindow {
+		if rec := ts.postRegistration(t, ""); rec.Code != http.StatusCreated {
+			t.Fatalf("registration %d of %d from a peer with no forwarded header answered %d (%s); want 201", i+1, registerPerWindow, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+	}
+	if rec := ts.postRegistration(t, ""); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("a peer with no forwarded header answered %d past its window; want 429: a request whose source is only its address is not a request with no source", rec.Code)
+	}
+	// And the two are two sources: the peer's window is not the spoofed one's.
+	if rec := ts.postRegistration(t, spoofed); rec.Code != http.StatusCreated {
+		t.Errorf("a source the header names answered %d while the peer address was past its window; want 201: the two are counted apart", rec.Code)
+	}
+}
+
+// TestRegistrationsExpireAndAreSwept is M12's second bound (spec.md §8,
+// reconciliation.md §4a), and it is the one that has to reach the three shapes
+// the store holds for somebody who has proved nothing: the registration, the
+// pending authorize request and the code.
+//
+// **What is asserted is what stays as much as what goes**, because the two
+// directions are not symmetric: a record kept too long is the growth this bound
+// exists to end, and a record removed too early is a person's sign-in ended by
+// housekeeping. So every plant below has a twin: a registration with no family
+// goes and one a family names stays, an expired flow goes and a live one stays,
+// a spent record goes with its unspent twin, and a record whose moment has not
+// *passed* — equal to now — stays for all three.
+func TestRegistrationsExpireAndAreSwept(t *testing.T) {
+	ctx := t.Context()
+	now := testNow
+	fs := newFakeStoreOver(t, func() time.Time { return now }, nil)
+	store := fs.Store
+
+	old := now.Add(-RegistrationTTL - time.Hour)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []Client{
+		{ID: "a-registration-nobody-signed-in-through", CreatedAt: old},
+		{ID: "a-client-a-family-still-names", CreatedAt: old},
+		{ID: "a-registration-made-just-now", CreatedAt: now.Add(-time.Hour)},
+		{ID: "a-registration-exactly-at-its-lifetime", CreatedAt: now.Add(-RegistrationTTL)},
+		{ID: "an-operators-own-client"},
+	} {
+		must(store.PutClient(ctx, c))
+	}
+	must(store.PutFamily(ctx, Family{
+		ID:          "the-family-a-client-still-has",
+		ClientID:    "a-client-a-family-still-names",
+		Identity:    "user:person@example.com",
+		RefreshHash: TokenHash("the refresh token that family holds"),
+		CreatedAt:   now.Add(-time.Hour),
+	}, 0))
+
+	for _, r := range []Request{
+		{ID: "a-flow-a-stranger-abandoned", ExpiresAt: now.Add(-time.Minute)},
+		{ID: "a-flow-that-was-answered", ExpiresAt: now.Add(-time.Minute)},
+		{ID: "a-flow-exactly-at-its-moment", ExpiresAt: now},
+		{ID: "a-flow-waiting-for-its-consent", ExpiresAt: now.Add(time.Minute)},
+	} {
+		must(store.PutRequest(ctx, r))
+	}
+	if _, err := store.TakeRequest(ctx, "a-flow-that-was-answered"); err != nil {
+		t.Fatalf("answering a flow: %v", err)
+	}
+
+	expired := TokenHash("a code that expired")
+	redeemed := TokenHash("a code that expired and was redeemed")
+	live := TokenHash("a code still redeemable")
+	for _, code := range []Code{
+		{Hash: expired, ClientID: "a-registration-made-just-now", ExpiresAt: now.Add(-time.Minute)},
+		{Hash: redeemed, ClientID: "a-registration-made-just-now", ExpiresAt: now.Add(-time.Minute)},
+		{Hash: live, ClientID: "a-registration-made-just-now", ExpiresAt: now.Add(time.Minute)},
+	} {
+		must(store.PutCode(ctx, code))
+	}
+	if _, err := store.ConsumeCode(ctx, redeemed); err != nil {
+		t.Fatalf("redeeming a code: %v", err)
+	}
+	must(store.BindCodeFamily(ctx, redeemed, "the-family-a-client-still-has"))
+	// A spent record is a marker and not the record any more, so the moment it
+	// was readable at is the one field that has to survive both writes: the
+	// sweep below can only remove it by that field.
+	marker := spentMarkerIn(fs.objects(t)[codePrefix+redeemed])
+	if !marker.Consumed || !marker.ExpiresAt.Equal(now.Add(-time.Minute)) {
+		t.Errorf("the spent code's marker is %+v; want the moment the code stopped being redeemable kept across the spend and the bind", marker)
+	}
+
+	swept, err := store.SweepExpired(ctx)
+	if err != nil {
+		t.Fatalf("SweepExpired: %v", err)
+	}
+	if want := (Swept{Registrations: 1, Requests: 2, Codes: 2}); swept != want {
+		t.Errorf("the sweep removed %+v; want %+v", swept, want)
+	}
+	held := fs.objects(t)
+	for _, key := range []string{
+		clientPrefix + "a-client-a-family-still-names",
+		clientPrefix + "a-registration-made-just-now",
+		clientPrefix + "a-registration-exactly-at-its-lifetime",
+		clientPrefix + "an-operators-own-client",
+		familyPrefix + "the-family-a-client-still-has",
+		requestPrefix + "a-flow-waiting-for-its-consent",
+		requestPrefix + "a-flow-exactly-at-its-moment",
+		codePrefix + live,
+	} {
+		if _, ok := held[key]; !ok {
+			t.Errorf("the sweep removed %s; a registration a family names, an operator's own record, a live flow, a code still redeemable and a record whose moment has not passed are all records this bound does not reach", key)
+		}
+	}
+	for _, key := range []string{
+		clientPrefix + "a-registration-nobody-signed-in-through",
+		requestPrefix + "a-flow-a-stranger-abandoned",
+		requestPrefix + "a-flow-that-was-answered",
+		codePrefix + expired,
+		codePrefix + redeemed,
+	} {
+		if _, ok := held[key]; ok {
+			t.Errorf("the sweep left %s: it is a record nobody has asked for since its own moment passed, which is exactly what a sweep is for", key)
+		}
+	}
+
+	// A second sweep finds nothing, and that is what makes the interval safe:
+	// a sweep running every fifteen minutes over a store that has already been
+	// swept must be a list and a read of what is left rather than a second
+	// round of removals.
+	again, err := store.SweepExpired(ctx)
+	if err != nil {
+		t.Fatalf("the second SweepExpired: %v", err)
+	}
+	if again != (Swept{}) {
+		t.Errorf("the second sweep removed %+v; want nothing", again)
+	}
+}
+
+// TestTheDoorSweepsTheRecordsItsOwnTrafficWrites is how the sweep above is
+// reached at all: nobody schedules it, so it is the unauthenticated writes —
+// the registration and the authorize request, the two places a stranger can
+// leave a record — that trigger it, at most once per interval.
+//
+// The interval is asserted as well as the trigger, and it is the half that
+// matters under a loop: a sweep per request would be a full list of the store
+// performed for whoever is knocking, which is a bound the endpoint's own traffic
+// could turn into the load it was written to prevent.
+func TestTheDoorSweepsTheRecordsItsOwnTrafficWrites(t *testing.T) {
+	ctx := t.Context()
+	now := testNow
+	clock := func() time.Time { return now }
+	// The store reads the server's clock here, because an installation is one
+	// process with one clock and this test is about records one half stamps
+	// and the other removes.
+	ts := newTestServerClocked(t, testConfig(), clock, clock, nil)
+
+	held := func(key string) bool {
+		_, ok := ts.store.objects(t)[key]
+		return ok
+	}
+	plant := func(id string) string {
+		t.Helper()
+		if err := ts.store.PutRequest(ctx, Request{ID: id, ExpiresAt: now.Add(-time.Minute)}); err != nil {
+			t.Fatalf("planting an expired flow: %v", err)
+		}
+		return requestPrefix + id
+	}
+
+	// The first registration is the first trigger, and the record a stranger
+	// abandoned before it is what it removes.
+	first := plant("a-flow-a-stranger-abandoned-before-anybody-registered")
+	if rec := ts.postRegistration(t, ""); rec.Code != http.StatusCreated {
+		t.Fatalf("the first registration answered %d (%s)", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if held(first) {
+		t.Errorf("%s is still there after a registration: the sweep is triggered by the traffic that writes the records it removes, and nothing else runs it", first)
+	}
+
+	// A registration inside the same interval does not run a second sweep.
+	second := plant("a-flow-a-stranger-abandoned-inside-the-interval")
+	if rec := ts.postRegistration(t, ""); rec.Code != http.StatusCreated {
+		t.Fatalf("the second registration answered %d (%s)", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if !held(second) {
+		t.Errorf("%s was removed by a second registration in the same interval: a sweep per request is a full list of the store performed for whoever is knocking", second)
+	}
+
+	// The next interval runs it again, on the same trigger.
+	now = now.Add(sweepInterval)
+	if rec := ts.postRegistration(t, ""); rec.Code != http.StatusCreated {
+		t.Fatalf("the third registration answered %d (%s)", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if held(second) {
+		t.Errorf("%s survived the interval after it was abandoned: the interval is a bound on how often the sweep runs and never a claim that its work is done", second)
+	}
+
+	// And the authorization request is the other trigger: it is the other
+	// unauthenticated write of the flow, so a loop that registers one client
+	// and then asks for a flow forever is a loop the registration endpoint
+	// never sees again.
+	clientID, _ := ts.register(t, "a client that asks for flows", testClientRedirect)
+	now = now.Add(sweepInterval)
+	third := plant("a-flow-a-stranger-abandoned-between-authorizations")
+	if binding, _ := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect)); binding == "" {
+		t.Fatalf("the authorization request rendered no consent page")
+	}
+	if held(third) {
+		t.Errorf("%s survived an authorization request: the flow a stranger abandons is written by that path and has to be swept by it too", third)
 	}
 }
