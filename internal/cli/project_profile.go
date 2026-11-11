@@ -28,10 +28,15 @@ import (
 // the one editor and the one write path (settings plan F4): yamledit splices
 // the keys it changes and keeps every comment and every other byte, and
 // applySettingsEdit carries the diff, the coding-agent-session refusal, the
-// backup and the atomic write. A profile this door writes is held to the rule
-// the publisher itself applies (projectpolicy.CheckProfiles over the accounts
-// the same config derives), so a profile the next `fugaro update` would refuse
-// cannot be written here.
+// backup and the atomic write. A profile this door writes is held to the rules
+// the publisher itself applies to the profiles it publishes
+// (projectpolicy.CheckProfiles over the accounts the same config derives, and
+// CheckBitbucketProfileRepos over the token it derives), so a profile the next
+// publish would refuse cannot be written here. That is parity with the
+// publisher, not with `fugaro update` as a whole: the deployer holds each job
+// it builds to rules of its own on top of these — a secret a job mounts has to
+// be one project_secrets stores project-wide, and only the local config can
+// answer that — and refuses them there, where the job is built.
 
 func newProjectProfileCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -147,7 +152,10 @@ func newProjectProfileSetCmd() *cobra.Command {
 			"where a written empty one is ambiguous and refused.\n\n" +
 			"Every other key and every comment of the file is kept. The edited block is\n" +
 			"held to the rules the publisher applies to the published policy, so a profile\n" +
-			"this writes is one `fugaro update` deploys.",
+			"this writes is one `fugaro update` publishes. The deployer then holds the\n" +
+			"jobs it builds to rules of its own beyond those — a secret a job mounts has\n" +
+			"to be one stored project-wide, which project_secrets decides — so a profile\n" +
+			"that publishes is not always one whose job deploys.",
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runProjectProfileSet(cmd, args[0], args[1], args[2], yes)

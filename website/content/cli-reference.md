@@ -4215,7 +4215,10 @@ where a written empty one is ambiguous and refused.
 
 Every other key and every comment of the file is kept. The edited block is
 held to the rules the publisher applies to the published policy, so a profile
-this writes is one `fugaro update` deploys.
+this writes is one `fugaro update` publishes. The deployer then holds the
+jobs it builds to rules of its own beyond those — a secret a job mounts has
+to be one stored project-wide, which project_secrets decides — so a profile
+that publishes is not always one whose job deploys.
 
 Usage: `fugaro project profile set NAME KEY VALUE`
 
