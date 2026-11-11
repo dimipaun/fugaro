@@ -25,8 +25,10 @@
 //   5. **The "as of" stamp** (CM3, D1538). `as_of.cli` names the newest `docs/releases/vX.Y.Z.md`
 //      and `as_of.console` the newest `docs/releases/console/vX.Y.Z.md`, so a tree whose stamp is
 //      behind either fails here rather than publishing a page whose "as of" names the wrong
-//      release. The release PR writes the notes and moves the stamp with them, in one commit
-//      (`docs/release.md`, "Before you tag").
+//      release. The PR that makes a notes file the newest moves the stamp with it, in one commit
+//      (`docs/release.md`, "Before you tag") — the release's own PR, or the one that writes the
+//      next release's notes ahead of it, since the rule is the newest file of each half and not
+//      the newest released one.
 //
 // The reader below is this file's own and reads the data file **literally**, the way
 // `test/mobile.mjs` reads `mobile-claims.yaml` and `test/caps-and-costs.mjs` reads
@@ -385,7 +387,9 @@ export function stampProblems(doc, newest = newestReleases()) {
     if (stamp === newest[key]) continue
     out.push(
       `${DATA} writes as_of.${key} as ${JSON.stringify(stamp)}; the newest ${dir}/vX.Y.Z.md is ${newest[key]}, ` +
-        `and the stamp names the release each half of the matrix was last read against (D1538)`,
+        `and the stamp names the release each half of the matrix was last read against (D1538): the PR that made ` +
+        `that file the newest — a release's own, or one writing the next release's notes ahead of it — moves the ` +
+        `stamp with it (docs/release.md, "Before you tag")`,
     )
   }
   return out

@@ -18,7 +18,11 @@
 #     newest `docs/releases/vX.Y.Z.md` and `console` the newest
 #     `docs/releases/console/vX.Y.Z.md` (D1538). The release procedure moves both in the
 #     release it cuts, in the same PR as the notes file (docs/release.md, "Before you tag"),
-#     and `website/test/compatibility.mjs` refuses a stamp behind the newest file.
+#     and `website/test/compatibility.mjs` refuses a stamp behind the newest file. A notes
+#     file written ahead of its release counts as the newest like any other — the next
+#     release's notes are written before it is cut, and a file above the stream's `current`
+#     is asked for no summary line and is not rendered by the changelog — so whichever PR
+#     makes one the newest moves the stamp with it, ahead of the release or not.
 #   - `never_say` is the phrases the page may not be made of — the ones the reconciliation
 #     marked Wrong, which a reader of the spec would otherwise expect to find here. The
 #     page-wide test reads this list rather than repeating it.
@@ -39,7 +43,7 @@
 #     exists today, and a claim with no path behind it is a claim the page cannot back.
 version: 1
 as_of:
-  cli: v0.22.0
+  cli: v0.23.0
   console: v0.121.0
 never_say:
   - "any model"
