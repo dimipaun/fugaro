@@ -40,15 +40,25 @@ const (
 // deliverable is a file set rather than a pull request (design
 // artifact-runs.md §3), with no git token in the agent's environment, one
 // optional plan stage, one render step and a top-level outputs: block.
+//
+// ModeEvaluate is the judge run's mode (docs/model-ab-testing A5.2, U6): the
+// run's whole work is one registered step's, on material the run's own bucket
+// already holds. It has no implement loop, no gate, no review, no render and
+// no checkout of the branch it reads, so it never pushes anything and opens no
+// pull request. Its step kinds are registered rather than built in
+// (RegisterStepKind): the code behind them is the Subscription Edition's, and
+// this build refuses a recipe naming one it does not carry with D522's
+// capability statement (paidStepKinds).
 const (
 	ModeImplement = "implement"
 	ModeReview    = "review"
 	ModeArtifact  = "artifact"
+	ModeEvaluate  = "evaluate"
 )
 
-// modeMsg is the mode refusal. It names all three values, so a 0.7 recipe
+// modeMsg is the mode refusal. It names all four values, so a 0.7 recipe
 // that wrote one of the two it knew still gets a message it can act on.
-const modeMsg = "must be implement, review or artifact"
+const modeMsg = "must be implement, review, artifact or evaluate"
 
 // NameRE is a recipe name: the shape of a project name.
 var NameRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`)
@@ -85,6 +95,106 @@ const (
 	// implement stage and reviews nothing.
 	StepRebase StepKind = "rebase"
 )
+
+// registeredSteps are the step kinds this build adds to version 1's closed
+// set, by kind, each with the one mode it is a step of (RegisterStepKind).
+// They are read by the parser and by neither reader's own list: a step kind
+// whose code lives outside this tree is a step kind the format has.
+var registeredSteps = map[StepKind]string{}
+
+// stepKindRE is the shape of a step kind: the spelling of the built-in ones
+// (first_line), so a registered kind is read like any other.
+var stepKindRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
+
+// RegisterStepKind adds a step kind to version 1's closed set, as a step of
+// one mode: a recipe may hold it exactly where that mode's own rules allow,
+// and nowhere else. The production caller is ee/register (§5.5), in the same
+// init that hands over the recipe holding the step; the core registers
+// nothing, which is what makes an untagged build refuse a recipe naming a kind
+// it does not carry (paidStepKinds). A test that owns such a step registers it
+// the same way, so the text it parses is the text a build with that step
+// parses.
+//
+// A kind is refused when it is empty, when version 1 already knows the name
+// (a built-in kind, a reserved key like goto, the near-miss spelling of one
+// built-in), when it is already registered, or when mode is not one of the
+// four. Everything is refused rather than patched over: a kind that silently
+// took over a name would change what an existing recipe means.
+func RegisterStepKind(kind StepKind, mode string) error {
+	switch {
+	case kind == "":
+		return errors.New("recipe: a step kind with no name")
+	case !stepKindRE.MatchString(string(kind)):
+		return fmt.Errorf("recipe: the step kind %q is not a step kind: 1 to 40 of a-z, 0-9 and '_', starting with a letter", kind)
+	}
+	if _, ok := builtinStepKinds[kind]; ok {
+		return fmt.Errorf("recipe: %s is a built-in step kind of version 1, and a registration adds a kind rather than replacing one", kind)
+	}
+	if msg, ok := reserved[string(kind)]; ok {
+		return fmt.Errorf("recipe: %s is reserved, and a registered step kind may not take the name: %s", kind, msg)
+	}
+	if _, dup := registeredSteps[kind]; dup {
+		return fmt.Errorf("recipe: the step kind %s is already registered", kind)
+	}
+	switch mode {
+	case ModeImplement, ModeReview, ModeArtifact, ModeEvaluate:
+	default:
+		return fmt.Errorf("recipe: the step kind %s is registered for mode %q, and %s", kind, mode, modeMsg)
+	}
+	registeredSteps[kind] = mode
+	return nil
+}
+
+// registeredStepMode is the mode a registered kind is a step of, and whether
+// the kind is registered at all.
+func registeredStepMode(kind StepKind) (string, bool) {
+	mode, ok := registeredSteps[kind]
+	return mode, ok
+}
+
+// registeredKind reports whether a step kind was registered by this build
+// (RegisterStepKind). The parser asks it for a name that is not one of version
+// 1's own.
+func registeredKind(name string) bool {
+	_, ok := registeredSteps[StepKind(name)]
+	return ok
+}
+
+// builtinStepKinds are version 1's own step kinds, the names a registration
+// may not take over. "checks" is in the set for the same reason it has a
+// message of its own in steps(): it is a spelling of check, and a registered
+// kind of that name would make `checks:` mean something else.
+var builtinStepKinds = map[StepKind]bool{
+	StepFirstLine:   true,
+	StepReview:      true,
+	StepAdversarial: true,
+	StepCheck:       true,
+	StepDigest:      true,
+	StepPlan:        true,
+	StepRender:      true,
+	StepRebase:      true,
+	"checks":        true,
+}
+
+// paidStepKinds are the step kinds whose code Fugaro Subscription Edition
+// carries and this build does not (D522): the judge run's ab_judge step and
+// whatever follows it. An untagged build names them in the refusal rather than
+// reporting the generic "is not a step type", because the difference matters
+// to the person reading it — the step exists, this build cannot run it, and
+// nothing can run (D522's "nothing can run" case), so the message is a
+// capability statement and never a licence notice (D523). A build that
+// registers the kind never reaches this list: the parser answers a registered
+// kind first.
+var paidStepKinds = map[string]bool{
+	"ab_judge": true,
+}
+
+// paidStepMsg is the refusal an untagged build answers a paid step kind with,
+// the same sentence the absent paid commands' stub prints
+// (internal/cli/extend.go, D522, D523).
+func paidStepMsg(kind string) string {
+	return kind + " is part of Fugaro Subscription Edition; this build does not include it"
+}
 
 // CheckCommand is the commands.* key a check step runs.
 type CheckCommand string
@@ -565,6 +675,7 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 				case ModeImplement, ModeReview:
 				case ModeArtifact:
 					r.newKeysV08 = true
+				case ModeEvaluate:
 				default:
 					p.add("mode", v.Line, "%s", modeMsg)
 				}
@@ -604,6 +715,11 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 		if r.ReviewerIsCoder || r.CoderIsReviewer {
 			p.add("roles", 0, "mode: artifact has no agent steps to map roles onto: remove roles")
 		}
+	case r.Mode == ModeEvaluate && (r.ReviewerIsCoder || r.CoderIsReviewer):
+		// The same rule, for the mode with no agent at all: an evaluate run
+		// starts no coder and no reviewer, so there is no role for a mapping
+		// to change (U6).
+		p.add("roles", 0, "mode: evaluate has no agent steps to map roles onto: remove roles")
 	case seenOutputs:
 		p.add("outputs", 0, "is only for mode: artifact")
 	}
@@ -722,14 +838,31 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			p.add(kpath, k.Line, "the step type is check, not checks")
 			continue
 		default:
-			if msg, ok := reserved[k.Value]; ok {
-				p.add(kpath, k.Line, "%s", msg)
-			} else {
+			switch {
+			case registeredKind(k.Value):
+				kind = StepKind(k.Value)
+			case reserved[k.Value] != "":
+				p.add(kpath, k.Line, "%s", reserved[k.Value])
+				continue
+			case paidStepKinds[k.Value]:
+				p.add(kpath, k.Line, "%s", paidStepMsg(k.Value))
+				continue
+			default:
 				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render and rebase)")
+				continue
 			}
-			continue
 		}
 		s := Step{Kind: kind}
+		if _, ok := registeredStepMode(kind); ok {
+			// A registered step's body holds nothing, like digest, plan and
+			// render: it is not a loop, so there is no max_rounds to set and
+			// no bounce, and a key written here is refused as an unknown
+			// recipe key.
+			p.emptyStepBody(kpath, body)
+			out = append(out, s)
+			idx = append(idx, i)
+			continue
+		}
 		if kind == StepCheck {
 			p.checkBody(kpath, body, &s)
 			out = append(out, s)
@@ -1003,6 +1136,10 @@ func (p *parser) order(r *Recipe, src []int) {
 		p.orderArtifact(r.Steps, src)
 		return
 	}
+	if r.Mode == ModeEvaluate {
+		p.orderEvaluate(r.Steps, src)
+		return
+	}
 	steps := r.Steps
 	checks, firsts, reviews, adversarials, rebases := 0, 0, 0, 0, 0
 	sawOther, firstSeen := false, false
@@ -1131,6 +1268,26 @@ func (p *parser) order(r *Recipe, src []int) {
 		case steps[len(steps)-1].HandOver:
 			p.add("steps", 0, "mode: review has no fix round to skip: remove hand_over")
 		}
+	}
+}
+
+// orderEvaluate checks a mode: evaluate recipe's steps: exactly one, and it is
+// a step this build registered as evaluate's own (RegisterStepKind). The mode
+// runs no implement loop, no gate, no review and no render, so every one of
+// version 1's own steps is refused here by name — a check step would run a
+// repository command, and first_line, review and digest would start an agent —
+// and a kind registered as another mode's step is refused for the same reason:
+// what a step does is a property of the mode it was registered for.
+func (p *parser) orderEvaluate(steps []Step, src []int) {
+	for i, s := range steps {
+		path := fmt.Sprintf("steps[%d]", src[i])
+		if mode, ok := registeredStepMode(s.Kind); ok && mode == ModeEvaluate {
+			continue
+		}
+		p.add(path+"."+string(s.Kind), 0, "%s is not a step of mode: evaluate", s.Kind)
+	}
+	if len(steps) != 1 {
+		p.add("steps", 0, "mode: evaluate takes exactly one step")
 	}
 }
 
