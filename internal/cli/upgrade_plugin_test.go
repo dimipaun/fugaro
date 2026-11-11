@@ -487,6 +487,29 @@ func TestUpgradePluginInstallsAtUserScopeBesideThisCheckoutsProjectInstall(t *te
 	}
 }
 
+// TestUpgradePluginFailsWhenTheCallsLeaveNoUserScopeInstall: the check after
+// the calls asks about the machine's own install (claudeplugin.UserVersion,
+// D949, U2), and this is the machine that tells the two questions apart: the
+// checkout's own project install is at this release and the install call the
+// step planned left it standing alone. Read through Effective (D942) — what
+// applies to the checkout — the step would report "done" having installed
+// nothing on the machine, which is the install every reader of the report can
+// act on.
+func TestUpgradePluginFailsWhenTheCallsLeaveNoUserScopeInstall(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	project := `{"id":"fugaro@fugaro","version":"0.5.2","scope":"project","projectPath":"` + root + `"}`
+	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), "["+project+"]")
+	useFakeClaude(t, f) // the install call leaves the checkout's own install standing
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, want the step to fail\n%s", ExitCode(err), out)
+	}
+	if !strings.Contains(out, "plugin: failed: after the update claude lists no install of fugaro@fugaro at user scope") {
+		t.Fatalf("output lacks the failure naming the user-scope install:\n%s", out)
+	}
+}
+
 // TestUpgradeCheckLeavesThisCheckoutsProjectInstall: the same configuration on
 // the check side, which reads Claude Code's own record and runs no claude. The
 // version the report answers with is the machine's own install — the one the
