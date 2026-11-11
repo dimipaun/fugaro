@@ -49,7 +49,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | model-ab-testing | 3/18 | the sampler and the pair launch |
 | bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7 left; T2.9 closed as replaced by the secrets-brokering proxy chain (D1981, 2026-11-10); T2.11's step 5 now a dated amendment to the shipped 0.14.0 operator notes (D1984); T2.6's three corrections landed (D1983); D1980–D1984 answered 2026-11-10 as recommended (its reconciliation-secrets-brokering.md) |
 | run-limit-carry-over | 4/10 | L0 to L3 merged, L4 in a run, L5 onward waiting |
-| binary-allow-rule | 2/11 | NV1 and NV2 merged, AR0 (draft #2202) held on the update-ordering fix; AR1 and AR3 to AR5 wait behind it |
+| binary-allow-rule | 2/11 | NV1 and NV2 merged, AR0 (draft #2202) held on the update-ordering fix; its policy bump renumbered 5 → 6, since 0.22.0 took version 5 with the pools' owner and roster (2026-11-11); AR1 and AR3 to AR5 wait behind it |
 | plugin-user-scope | 1/10 | U1 merged, U2 in a run; `fugaro upgrade` is still on main |
 | run-without-checkout | 3/8 | A0 to A2 merged, A3 (draft #2233) in a run, A4 behind it |
 
