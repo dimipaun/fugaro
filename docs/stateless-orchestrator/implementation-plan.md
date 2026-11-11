@@ -1,5 +1,12 @@
 # The stateless orchestrator: the implementation plan
 
+**Status (2026-11-10): twelve of the plan's twenty tasks are merged on `main`** — O0 (#1823), O1 (#1822), O2 (#1945), O3 (#1954), O4 (#1825),
+O5 (#2043), O6 (#1950), O7 (#2040), O8 (#2064), O10 (#2191), O17 (#2024) and O18 (#2112). Open as drafts: O9 (#2193) and O12 (#2290). Not
+started: O11, O13, O14 (it follows #2193 and #2207), and the three this revision writes — **O16 is now two tasks**: **O16a** (the state scopes,
+the catalogue rows and the read handlers, dormant; launchable on the owner's go, gated by no open decision) and **O16b** (serving them; waits
+on D2020 and the MCP folder's wiring task), and **O19** (a workspace's refusal pauses the queue; waits on D2022 and on W7, #2275). **No task
+is approved by this revision, and D2020-D2022 are open** (reconciliation section 8). The paragraph below is the status of 2026-11-08, kept.
+
 **Status (2026-11-08): six tasks of this plan are built, all merged on `main`.** **Task O0, the state schema, the typed patch and the validator, is merged on `main`** on
 2026-11-07 — pull request #1823, commit `36abeffc` — whose eleven files `internal/orchestrator/state.go`, `patch.go`, `validate.go`, `summary.go`, their tests,
 `testdata/state-a.json` and the two `schemas/` documents are on `main`. **Task O1, the deterministic security-sensitive classifier, is merged too** — pull request
@@ -68,15 +75,17 @@ Findings are cited as F#, decisions as D#, open tensions as T# (reconciliation s
 | **T7 (2026-11-05, not the recommendation; amends Q2)** | **`fugaro update` re-renders the daemon's unit when the rendered template changed, so the HARD RULE is literally true**: it only ever re-renders and reloads a unit that is **already installed** (never installs one, never creates one for a project that did not choose it), behind the same plan-and-confirm rules as every other `update` step (a managed project's gate stays, a terminal asks for the step's class); `fugaro setup` still installs the first one (Q2); `fugaro orchestrator install` stays the explicit command but no release's `### For operators` ever needs it; the daemon's self-restart and its start-up `Migrate` stay | O8, O9, G11 |
 | Q3 | The macOS notification plus the owner's existing mobile push; Linux falls back to the desktop notifier. What the tree actually carries is U9: no push implementation, and the mailbox is a foreground channel | O7, O9 |
 | Q4 | Slice 2 (O12, O13) is approved only after slice 1 has run 14 days and Check 303 measured the cycle cost | O12, O13, D1228 |
+| **D2020-D2022 (2026-11-10, OPEN — not answered)** | Asked when O16 and O19 were made tasks: the front door's read of the node (D2020), whether `apply_patch` is served (D2021), what O19 delivers (D2022). Each recommendation is what O16a, O16b and O19 are written to; reconciliation section 8 | O16a (D2021), O16b (D2020), O19 (D2022) |
 
 **Tensions** (reconciliation section 6): the ones the plan must not resolve are T2 (the launch in v1 is the local `fugaro run` path, never an MCP
 `spawn_task`; the state group must not depend on it), T3 (the new scopes are an edit to the MCP design), T4 (MCP-dependent work waits for the MCP
-threat-model amendment) and T5 (the workspace design reuses MCP). T1 was ruled on 2026-11-04 (no shadow week; the scripts are kept 14 days and the
+threat-model amendment) and T5 (the workspace design reuses MCP). **2026-11-10:** T3 and T4 are written into `docs/mcp-server` by the pull
+request that split O16 (O16, reconciliation section 8), and T5 is re-read as D2022. T1 was ruled on 2026-11-04 (no shadow week; the scripts are kept 14 days and the
 rollback is the manual one the owner ruled). **T6 — Q2's offer against the managed no-prompt rule — was closed by the owner's second answer of
 2026-11-04** (the install moved to `fugaro setup`, so the question of what an offer does in a managed project no longer arises). **T7 — the carve-out
 of the HARD RULE that answer left behind — was ruled on 2026-11-05, and not the recommendation: `fugaro update` re-renders an installed unit when the
-rendered template changed, so the HARD RULE is literally true and no second operator command is ever needed** (O9, G11). **No question here is left
-open.** **BF1 is not a tension but an external input**: the triage rule BF2 adds (O14) reads the findings file BF1's runner writes when it finalizes at
+rendered template changed, so the HARD RULE is literally true and no second operator command is ever needed** (O9, G11). **No question of 2026-11-04 to 2026-11-08 is left
+open; the pass of 2026-11-10 that made O16 and O19 tasks put three new ones to the owner, D2020-D2022, all OPEN** (section 6). **BF1 is not a tension but an external input**: the triage rule BF2 adds (O14) reads the findings file BF1's runner writes when it finalizes at
 80% of the budget, BF1 is not on `main` (reconciliation U10), and O14 fails closed without it.
 
 ## 2. Conventions
@@ -691,14 +700,98 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   backend, and the first real automatic merge happens on the owner's own installation, which is where a Check would go if the owner wants one.
 - **Reviewer:** security (code that merges to the default branch without a person, and the fence that keeps it to non-critical findings).
 
-### O16. The MCP state group and its scopes (slice 3; waits)
+### O16. The MCP state group and its scopes (slice 3): split into O16a and O16b on 2026-11-10
 
-- **Files:** the MCP design's own tool registry and scope files, **to be named when M7 lands** (none exist on `main`, F9); this task writes
-  `get_state`, `get_events`, `apply_patch` over O0 to O3 only, with `state:read` and `state:write`, `apply_patch` also gated by D1225. **It must not
-  call or depend on `spawn_task`** (T2).
-- **Depends on:** O0, O3, O5, and externally **M7 (the registry)**, the amendment adding the scopes to the MCP design (T3, D927 amended), and the MCP
-  threat-model amendment (T4). **Not startable until those land.** Level: after the MCP chain; outside this plan's levels.
-- **Red step, tests, Check 305:** written when the files are named. **Reviewer:** security.
+**Why two.** O16 waited for M7's registry and for the two MCP amendments T3 and T4 (reconciliation section 6). On 2026-11-10 the registry is on
+`main` (`ee/coordinator/mcpauth/tools.go:74-96`, the catalogue; `Register` refuses a name it does not map and `Call`, `tools.go:303`, checks
+the scope before a handler runs), the review T4 waited on merged as `docs/mcp-server/reconciliation.md` §4a, and this pull request writes
+T3 and T4 into `docs/mcp-server/spec.md` §5, §8 and §11 (reconciliation section 8, F24). What is **not** there is a way for the front door to
+reach the `orchestrator/` node: its account holds no database grant (`deploy/terraform/gcp/modules/installation/coordinator.tf:300-322`,
+F27), and **M8's own read tools are built and served by no binary** (`docs/mcp-server/README.md`, the status line). So the task splits
+where the MCP folder's own tasks split: **O16a** builds the scopes, the catalogue rows and the read handlers over an interface, registered
+by a function nothing calls yet — the way M8's `RegisterReadTools` (`ee/coordinator/mcpauth/tool_status.go:112`) is — and **O16b** serves
+them, which waits on an owner decision and on the MCP wiring. `apply_patch` is catalogued and **not served** by either half (D2021's
+recommendation, open).
+
+#### O16a. The state scopes, the catalogue rows and the read handlers, dormant (`ee/`; launchable on the owner's go)
+
+- **Files (7):** `ee/coordinator/mcpauth/limits.go` (edit: the two scopes, the vocabulary, the refusal's message, a `DefaultScopes` list),
+  `ee/coordinator/mcpauth/limits_test.go` (edit: the vocabulary pin at `:414` names four scopes), `ee/coordinator/mcpauth/authorize.go`
+  (edit: `requestedScopes`' no-scope answer, `:504-507`), `ee/coordinator/mcpauth/authorize_test.go` (edit), `ee/coordinator/mcpauth/tools.go`
+  (edit: three catalogue rows), `ee/coordinator/mcpauth/tool_state.go` (new), `ee/coordinator/mcpauth/tool_state_test.go` (new). Every new
+  file carries the two-line `ee/` notice (`.claude/rules/ee.md`).
+- **Interfaces:** `ScopeStateRead = "state:read"`, `ScopeStateWrite = "state:write"`; `ScopeVocabulary` becomes `tasks:read, tasks:write,
+  state:read, state:write` (D1227's answer, which amends D927: `docs/mcp-server/reconciliation.md` §4a); **`DefaultScopes = tasks:read,
+  tasks:write`**, which is what `requestedScopes` answers for an authorization that names no scope, so a default sign-in never holds a state
+  scope (R1: D1227's own reason, "a `tasks:write` token must not silently become a state editor", read one step further). Catalogue rows:
+  `get_state` and `get_events` map to `state:read`, `apply_patch` to `state:write`. `type StateReach interface{ Load(ctx, id string)
+  (orchestrator.State, error); Events(ctx, id string, since time.Duration) ([]orchestrator.Entry, error) }` — **no write method**, so the
+  state group as built can neither write the node nor reach a launch (T2, D2021). `func RegisterStateTools(reg *Registry, reach StateReach)
+  error` registers `get_state` and `get_events` and **never** `apply_patch`. `get_state` takes `{"id": string}` (required; checked with
+  `orchestrator.PathState`, `internal/orchestrator/store.go:278`, before any read) and answers **the same fields, with the same meanings, as
+  `fugaro orchestrator state --json`** (`internal/cli/orchestrator_state.go:61-72`: `version` 1, `kind` `"state"`, `id`, `source` `"node"`,
+  `rev`, `schema_version`, `brief`), where `brief` is `orchestrator.Summarize` (`internal/orchestrator/summary.go:49`, fenced and capped, G3);
+  `get_events` takes `{"id": string, "since": duration}` and answers `fugaro orchestrator events --json`'s fields
+  (`orchestrator_state.go:233-239`), each entry's `text` cleaned on the way out (`internal/safetext`), the order the server stamp's
+  (D1230), and no cursor (D1229). The caller's identity is read for the audit line only: every admitted role reads every orchestrator id of the
+  project (the spec's read-all), and nothing here is a write.
+- **Schema/rules/config change:** the scope vocabulary is a **wire contract** (a token record in the store carries its scopes, and the
+  metadata document's `scopes_supported` lists them, `metadata.go:107`), changed **additively**: no stored record changes shape and no name
+  changes meaning. No rules, no Terraform, no policy.
+- **Tests:** `TestScopeVocabularyNamesTheStateScopes` (with the pin at `limits_test.go:414` moved to four names),
+  `TestAnAuthorizationWithNoScopeGetsOnlyTheTaskScopes` (R1), `TestATaskScopeTokenCannotReachTheStateTools` (D1227),
+  `TestAStateScopeTokenCannotReachTheTaskTools`, `TestATokenMintedBeforeTheStateScopesStillServes` (**the HARD RULE's converge test**: a
+  token record holding `tasks:read tasks:write` as the store holds it today is served unchanged and gains no state scope),
+  `TestApplyPatchIsCataloguedAndNotServed` (its scope is decided, `tools/list` does not name it, a call is `ErrNoSuchTool`),
+  `TestStateReachHasNoWriteMethod` (reflective), `TestGetStateAnswersTheFencedBrief`, `TestGetEventsCleansStoredText` (G3),
+  `TestStateToolsRefuseAnIDTheDatabaseWouldRefuse`, `TestStateToolsFailClosedOnAnUnreadableNode` (a reach error is the tool's refusal, never a
+  partial answer), `TestStateToolAnswersMatchTheOrchestratorOutputSchema` (both answers validate against
+  `schemas/orchestrator-output.schema.json`, so the two surfaces cannot drift); the existing `scopes_test.go` catalogue test and
+  `metadata_test.go:93` stay green unchanged.
+- **Command:** `go test ./ee/coordinator/mcpauth/ -run 'Scope|State|ApplyPatch|Authoriz|Catalogue|Metadata|Vocabulary' -count=1 && go test ./internal/eeboundary/ -count=1`
+- **Depends on:** O0, O3 and O5 (merged: the state, the store's paths and the output schema), M7 (merged), and **this docs pull request**
+  (the amendment it implements). **Serializes after the open #1994** (roles-scopes RS3, which edits `ee/coordinator/mcpauth/authorize.go` and
+  `identity.go`): the later of the two rebases; no other open pull request touches `ee/coordinator/mcpauth/` on 2026-11-10. **Level 2.**
+- **Commit:** `feat(mcpauth): the orchestrator state scopes and the state group's read tools, dormant (O16a)`
+- **Red step:** `TestScopeVocabularyNamesTheStateScopes` fails to build (`ScopeStateRead` undefined); then
+  `TestAnAuthorizationWithNoScopeGetsOnlyTheTaskScopes` fails once the vocabulary grows and `requestedScopes` still answers the whole of it —
+  the silent widening R1 exists to stop.
+- **`fugaro update` and runs in flight:** nothing to migrate — the store's records keep their shape, and the front door is **off on every
+  installation** (D934: no released `fugaro update` writes its flag), so there is no deployed door to converge; the converge test above is
+  the proof that a record minted before this change is served after it. The release note adds no operator line. **Rollout residual, stated:**
+  while two revisions of a turned-on front door serve, the older refuses a token carrying a state scope **whole** (`scopes.go:38-48`) — a
+  refusal, never a wrong answer; no run reads a scope.
+- **Owner-run:** none (nothing is served; Check 305 is O16b's).
+- **Reviewer:** **security, level 3 in the run** (`--review-levels`): an authorization server's scope vocabulary and default.
+
+#### O16b. The state group served: the front door's reach into the node (`ee/` + Terraform; WAITS)
+
+- **Waits on, and the trigger for each:** (1) **D2020** answered (how the front door reads the node; recommendation (a), a read-only role);
+  (2) **an MCP-folder task that serves M8's read tools from a binary** — `docs/mcp-server/README.md` says M8 is built "except the wiring
+  that would serve its four read tools, which no binary has and no task of this plan carries"; the trigger is the owner assigning that
+  wiring task, and O16b registers `RegisterStateTools` beside `RegisterReadTools` in whatever file that task names; (3) O16a merged.
+  `apply_patch` stays out unless **D2021** is answered other than its recommendation, in which case O16b is rewritten, not extended.
+- **What can be named now (for D2020 (a)):** `ee/coordinator/mcpauth/state_reach.go` (new: `StateReach` over `internal/rtdb`, read-only,
+  as the front door's own account) and its test; a custom role holding **`firebasedatabase.instances.get` and nothing else**, bound to the
+  `mcp_server` account under the same `var.mcp_server` switch, in a file of `deploy/terraform/gcp/modules/installation/` beside
+  `mcpauth_store.tf` (never `coordinator.tf`, whose comment pins that it names the account exactly twice, `coordinator.tf:316-322`);
+  a `grantRules` row in `internal/infra/tf/cover.go` added on purpose (`.claude/rules/terraform.md`); the golden plans regenerated by
+  `scripts/gen-golden-plans.sh`; the events read that `fugaro orchestrator events` does inline (`internal/cli/orchestrator_state.go:255-275`)
+  moved into `internal/orchestrator` so the CLI and the front door read the log one way (CLAUDE.md, "search before you write a helper");
+  `docs/gcp-live-checklist.md` (Check 305's text); `docs/releases/vX.Y.Z.md` (`### For operators`: "run `fugaro update`", and that the managed
+  plan gate refuses an IAM loosening, so the step asks its own typed confirmation at the operator's terminal, the precedent
+  `docs/workspaces/implementation-plan.md` W7 states).
+- **Tests named now:** `TestFrontDoorStateRoleHoldsNoDatabaseWrite` (the role holds `instances.get` and not `instances.update`; a later
+  change that added the write fails here first), `TestStateReachReadsAsTheFrontDoorsOwnAccount`, `TestCoverAdmitsTheStateReadGrantOnPurpose`,
+  `TestUpdateGrantsTheStateReadFromThePreviousRelease` (**the HARD RULE's converge test**: an installation with the front door on at the
+  release before converges in one `fugaro update`, a second writes nothing), `TestEventsAreReadOneWayByTheCLIAndTheFrontDoor`.
+- **Runs in flight:** the binding is on the front door's account, which no run holds; a run in flight reads and writes exactly what it did.
+- **Serializes after** the open #2207 (`fugaro orchestrator ls`, which edits `internal/cli/orchestrator_state.go`).
+- **OWNER-RUN, Check 305** (O16b writes its text into the register's reserved section): with the front door on, a real MCP client holding
+  `state:read` reads `get_state` and `get_events` for the installation's orchestrator; a token holding only `tasks:*` is refused both; the
+  front door's role in the real project holds no database write; `apply_patch` is absent from `tools/list`. Never against `belong`.
+- **Commit (when written):** `feat(mcpauth): serve the orchestrator state group over a read-only grant (O16b)`. **Reviewer:** security,
+  level 3 (IAM, a public endpoint's reach). **Level:** gated.
 
 ### O17. `ee/`: a project-owned agent and handoff (slice 3)
 
@@ -721,10 +814,56 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Depends on:** O17. **Level 3.** **Commit:** `feat(ee): batch approval for orchestrator work items (O18)`. **Red step:** `TestBatchDefaultIsTenAndOnlyAPersonRaisesIt`.
   **Reviewer:** security.
 
-### O19. `ee/`: workspace caps (slice 3; blocked)
+### O19. `ee/`: a workspace's refusal pauses the queue (slice 3; WAITS on D2022 and W7)
 
-Blocked by the workspaces design (T5), which reuses the MCP server and was amended the same day. Not specified further here; no files are named until
-that design's tasks are. **Depends on:** O18 and the workspaces plan. Reviewer: security.
+**What "workspace caps" can mean, read against `main` on 2026-11-10** (reconciliation section 8, F29). D1222 put "workspace caps" in `ee/`
+and said nothing more. The workspaces work is now mostly on `main`: W0-W6 and W8 are merged and **W7 — the cap's meter, its alarm and the
+member's binding — is the open draft #2275**, with W9 (the docs) after it. Its money fence is metered at the workspace's credentials service
+(W7) and its stop is `budget.PathKillGlobal` **in the workspace's own database** (`internal/cli/budget_kill_workspace.go:7-12`), whose rules
+are closed to every reader (`internal/budget/rules/workspace.json.tmpl`); the headroom reaches a member's **job service account** only (W7's
+interface). The daemon runs on the **person's** credential and reads its own project's kill switch (`internal/cli/orchestrator_run.go:351-378`).
+So **no read path from the daemon to the workspace's stop or room exists or is planned**, and a run the daemon starts into a stopped workspace is
+a started run whose refusal counts as an attempt (G4) — it spends its approval's allowance, and the breaker pauses the daemon only after three
+such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** puts the choice to the owner; **this task is written for its
+recommendation (a)** and is rewritten, not patched, if another option is chosen.
+
+- **Files (13):** `internal/orchestrator/hooks.go` (edit: a `WorkspaceFuncs` seam, `Refused func(RunReport) bool`, set once by
+  `ee/register`; **the core default answers false**, so an untagged build behaves exactly as today), `internal/orchestrator/hooks_test.go`
+  (edit), `internal/orchestrator/runview.go` (edit: `RunReport` carries the refusal's source as the run record states it — **the field's name
+  and spelling are W7's, written when #2275 merges**), `internal/cli/orchestrator_run.go` (edit: the reader fills that field from the run
+  record) with `internal/cli/orchestrator_run_test.go` (edit), `internal/orchestrator/breaker.go` (edit: a trip at once, which raises the **same** `breaker-tripped` decision with the
+  workspace's reason, so the pause is the one `Plan` already refuses over through `BreakerOpen`, `breaker.go:126`, and no new pause
+  mechanism or decision kind exists), `internal/orchestrator/breaker_test.go` (edit), `internal/orchestrator/tick.go` (edit: the fold asks
+  the seam about a refused run and trips at once), `internal/orchestrator/tick_test.go` (edit), `ee/orchestrator/workspace.go` (new),
+  `ee/orchestrator/workspace_test.go` (new), `ee/register/orchestrator.go` (edit: installs the seam), `ee/register/orchestrator_test.go` (edit).
+- **Interfaces:** `orchestrator.SetWorkspace(WorkspaceFuncs) error` on the pattern of `SetHandoff` and `SetBatch` (`hooks.go:108`, `:187`:
+  refuses a second call and a nil function); `ee/orchestrator.WorkspaceRefused(RunReport) bool` answers true only for a run whose record
+  says the workspace's credentials service refused it (its stop or its cap); the trip's decision is `waiting_on: person` (only a person
+  resolves it, D1225) and the audit line is `<run>:workspace-refused` (D1230). Nothing new is read from any database, no cap number is added,
+  and the money fence stays W7's and W8's.
+- **Schema/rules/config change:** **none** — the decision is the existing breaker decision (the prefix only the daemon may write,
+  `breaker.go`'s `BreakerDecisionID`), the audit transition is a name the existing pattern admits, and `RunReport` is in-process. Stated so a
+  reviewer checks it: **if W7's record field turns out to need a run-record change, that change is W7's (or a W-task's) and not this task's**,
+  and this task waits for it.
+- **Tests:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` (one refused run, and the next tick plans no launch for any item),
+  `TestAWorkspaceRefusalRaisesOnePersonDecision`, `TestOnlyAPersonLiftsTheWorkspacePause`, `TestAnOrdinaryRefusalStillCountsTowardTheBreaker`
+  (a refusal the seam does not claim keeps O6's rule), `TestTheCoreDefaultClaimsNoRefusal` (an untagged build: unchanged behaviour),
+  `TestSetWorkspaceRefusesASecondCall`, `TestWorkspaceRefusedReadsOnlyTheRunRecord` (no database, no network), `TestRunViewCarriesTheWorkspaceRefusal` (the CLI reader), `TestCoreBuildsWithoutEE`
+  (the eeboundary guard is run).
+- **Command:** `go test ./internal/orchestrator/ -run 'Workspace|Breaker|Tick' -count=1 && go test ./internal/cli/ -run TestRunViewCarriesTheWorkspaceRefusal -count=1 && go test ./ee/orchestrator/ ./ee/register/ -run 'Workspace|Orchestrator' -count=1 && go test ./internal/eeboundary/ -count=1`
+- **Depends on:** O6, O7, O8 and O18 (merged), **O14** (it writes `tick.go` at level 7), and externally **D2022 answered (a)** and **W7
+  merged** (#2275). **Serializes after** the open #2207 (`internal/cli/orchestrator_run.go`) and #2202 (`internal/cli/orchestrator_run_test.go`), and after O13 and O14 (`tick.go`,
+  `orchestrator_run.go`). **Level 8**, and gated until both external triggers fire.
+- **What waits, exactly, and the trigger:** the `RunReport` field and the reader's mapping wait for **W7's merge**: the trigger is #2275
+  landing, and the first act is reading how a call the workspace refused (its stop, its cap or a failed settle) reaches the run record. **If
+  it does not reach it distinguishably**, O19 cannot be built as written and that is reported to the owner as a gap in W7, not worked around
+  here. W9 (docs) is not a dependency: O19 edits no `SECURITY.md` sentence.
+- **Commit:** `feat(ee): a workspace's refusal pauses the orchestrator's queue (O19)`
+- **Red step:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` fails to build (no seam), then fails while a refused run is folded as an ordinary
+  refusal and the next approved item is launched into the same stop.
+- **`fugaro update` and runs in flight:** no format changes, so nothing to migrate; a run in flight keeps its record, its ledger and its
+  counters, and the daemon reads its outcome only after it ends.
+- **Owner-run:** none claimed (Checks 306-309 stay reserved). **Reviewer:** security, level 3 in the run (a guard on the launch path).
 
 ## 4. Parallel execution
 
@@ -732,19 +871,23 @@ Edges (a task depends on the tasks to its left): O2 <- O0; O3 <- O0; O6 <- O0, O
 O10 <- O5, O8 (**D1243's answer: the cache is O8's writer**); O17 <- O0, O3, O4; O9 <- O8 (**T7 moved `Migrate` and the binary check into O8, so
 O9 no longer needs O0 or O3**); O13 <- O8, O12, O11; O18 <- O17; O11 <- O5, O8, O9; **O14 <- O0, O1, O3, O7, O8** (the rule),
 **and O14 <- O9, O11, O13** — not for anything the rule needs, but because all four regenerate the same `website/content/cli-reference.md`, which has one
-writer per level. O16 and O19 are external-gated.
+writer per level. **Added 2026-11-10:** **O16a <- O0, O3, O5** (all merged; it shares no file with any task of this plan, and outside it
+serializes after the open #1994 on `ee/coordinator/mcpauth/authorize.go`); **O16b <- O16a**, plus D2020 and the MCP folder's wiring task
+(external); **O19 <- O6, O7, O8, O18** (the rule) **and O19 <- O14** (both write `internal/orchestrator/tick.go`, and O13 before it writes
+`internal/cli/orchestrator_run.go`), plus D2022 and W7 (#2275) external.
 
 | Level | Tasks (can all run at once) |
 | --- | --- |
 | 0 | O0, O1, O4 |
 | 1 | O2, O3, O6 |
-| 2 | O5, O7, O12, O17 |
+| 2 | O5, O7, O12, O17, **O16a** |
 | 3 | O8, O18 |
 | 4 | O9, O10 |
 | 5 | O11 |
 | 6 | O13 |
 | 7 | O14 (BF2) |
-| gated | O16 (MCP M7, scopes amendment, T4), O19 (workspaces, T5) |
+| 8 | **O19** (gated: D2022, W7) |
+| gated | **O16b** (D2020 and the MCP wiring task) |
 
 **Critical path:** O0 -> O3 -> O5 -> O8 -> O9 -> O11, six levels, unchanged by D1243 (O10's own path is O0 -> O3 -> O5 -> O8 -> O10, five). Slice 1
 (O0-O11 minus O12/O13) completes at level 5; slice 2 adds O12 at level 2 and O13 at level 6 (after O11, because both regenerate `cli-reference.md`),
@@ -758,14 +901,18 @@ which regenerates that file, lands last.
 | File | Writers (level) | Same level? |
 | --- | --- | --- |
 | `internal/cli/orchestrator_cmd.go` | O5 (2), O8 (3), O9 (4), O11 (5) | no, one per level |
-| `internal/cli/orchestrator_run.go` | O8 (3), O13 (6) | no |
-| `internal/orchestrator/tick.go` | O7 (2), O13 (6), O14 (7) | no |
+| `internal/cli/orchestrator_run.go` and its test | O8 (3), O13 (6), **O19 (8)**; outside, the open #2207 (the file) and #2202 (the test) | no; O19 after both |
+| `internal/orchestrator/tick.go` | O7 (2), O13 (6), O14 (7), **O19 (8)** | no |
 | `internal/cli/root.go` | O5 (2) | one writer |
 | `docs/releases/vX.Y.Z.md` | O2 (1), O11 (5) | no |
-| `docs/gcp-live-checklist.md` | O2 (1) only (Checks 300-305 as written; 300 has since run, **PASSED 2026-11-10**); no other task edits it | one writer |
+| `docs/gcp-live-checklist.md` | O2 (1) (Checks 300-305 as written; 300 has since run, **PASSED 2026-11-10**) and **O16b (gated: Check 305's text)** | no, one per level |
+| `ee/coordinator/mcpauth/limits.go`, `authorize.go`, `tools.go`, their tests, `tool_state.go` and its test | **O16a (2)** in this plan; outside it, the open #1994 (RS3) edits `authorize.go` and `identity.go` | one writer here; serialized with #1994 |
+| `ee/coordinator/mcpauth/state_reach.go`, the front door's read role, `internal/infra/tf/cover.go`, the golden plans | O16b (gated) | one writer |
+| `internal/cli/orchestrator_state.go` | O5 (2), O16b (gated: the events read moves into `internal/orchestrator`); outside, the open #2207 | no; O16b after #2207 |
+| `internal/orchestrator/hooks.go` and its test, `ee/register/orchestrator.go` and its test | O17 (2), O18 (3), **O19 (8)** | no |
+| `internal/orchestrator/breaker.go` and its test, `internal/orchestrator/runview.go` | O6 (1, `breaker.go`), O7 (2, `runview.go`), **O19 (8)** | no |
 | `internal/budget/rules/rules_test.go`, `internal/budget/rules/testdata/rules.golden.json` | O2 (1) | one writer |
 | `internal/orchestrator/runview.go` | O7 (2); O6 (1) defines the `RunView` type in `launch.go`, not there | one writer |
-| `ee/register/orchestrator.go` and its test | O17 (2), O18 (3) | no |
 | `plugin/plugin_test.go`, `plugin/readme_test.go` | O10 (4) | one writer |
 | `internal/budget/rules/*` (other than the two rows above), `internal/infra/firebasedb.go`, `internal/cli/update_converge_test.go` | O2 (1) | one writer |
 | `internal/projectpolicy/policy.go`, `internal/policy/merge.go` | O4 (0), O14 (7) — O14 adds the local-only `TriageAfter` field to `policy.Orchestrator` and the by-name refusal of it on the project path | no |
@@ -815,6 +962,13 @@ reference, which is why the rule is stated as ready at level 3 and the plan carr
 claim has nothing that makes it true — the field would be a member of the shared block, its default would be missing from `$defs.keyDefaults` (which
 `TestSettingsSchema` fails on) and a published policy could set the person's own threshold.
 
+**Re-checked for O16a, O16b and O19 (2026-11-10):** O16a's seven files are all under `ee/coordinator/mcpauth/` and no other task of this plan writes
+there, so level 2 gains no shared writer (its one outside writer is the open #1994, serialized above). O19 at level 8 is alone at its level, and each file
+it shares — `tick.go` (O7, O13, O14), `orchestrator_run.go` (O8, O13), `hooks.go` and `ee/register/orchestrator.go` (O17, O18), `breaker.go` (O6),
+`runview.go` (O7) — is written at a level nothing else writes it at. O16b is gated and outside the levels; its one shared file inside the plan is
+`docs/gcp-live-checklist.md` (O2, merged) and its one outside writer is #2207. **The critical path (O0 -> O3 -> O5 -> O8 -> O9 -> O11) does not move**:
+O16a is off it and O19 hangs off level 7.
+
 ## 5. Owner-run items, exactly
 
 Checks 300 (O2: rules and `fugaro update` on a real installation, not `belong`), 301 (O9: the daemon under launchd and systemd across a reboot and
@@ -823,16 +977,16 @@ binary and hand over to it with no command typed — and T7's own half, a releas
 alone, with a second `update` writing nothing**), 302 (O11: the cutover on the owner's own installation **and, inside the 14 days, the manual rollback** — stop the daemon with
 `fugaro orchestrator uninstall`, re-arm the sweep, the watcher and the queue scripts, and see one launch through them), 303 (O12: one real decision
 call and the measured cost, **which is Q4's gate for slice 2 together with slice 1's 14 days**), 304 (O17:
-a two-person handoff), 305 (O16: the MCP state group, when it exists). 306-309 are reserved. **BF2's O14 claims none of them**: its merge and cancel
+a two-person handoff), 305 (**O16b**: the MCP state group, served — O16b writes its text; O16a serves nothing and claims none). 306-309 are reserved. **BF2's O14 claims none of them**: its merge and cancel
 paths are exercised against the fake provider and the fake backend, and the first real automatic merge happens on the owner's own installation, which is
 where a Check would go if the owner wants one. No agent performs any of them. **Check 300 is the one of these that has run — PASSED
-2026-11-10, on installation `fugaro` — so 301 to 304 stay the owner's and 305 waits for O16.** **The manual rollback is
+2026-11-10, on installation `fugaro` — so 301 to 304 stay the owner's and 305 waits for O16b.** **The manual rollback is
 the one owner action here that has no command behind it** (T1, answered 2026-11-04): it is the three steps Check 302 names, run by hand. **After T7's
 ruling (2026-11-05) no upgrade asks for a command at all**: a binary upgrade is the daemon's own hand-over, a template change is `fugaro update`'s
 re-render, and `fugaro orchestrator install` is the explicit command for a machine that skipped `setup` or needs a repair — **`update` never installs a
 unit, so Check 301's template half starts from a machine that has one**.
 
-## 6. Owner questions: the answers, and nothing left open
+## 6. Owner questions: the answers, and the three left open on 2026-11-10
 
 **Q1-Q4 were all answered on 2026-11-04, and D1241-D1243 with them. Q2 was answered a second time on the same day, which closed T6, and the last
 tension the answers left open, T7, was ruled on 2026-11-05** (reconciliation section 6): **the ruling is not the recommendation — `fugaro update`
@@ -880,6 +1034,14 @@ follows the ruling through O9, G11 and the conventions above.
   person's own credential writes the node, so **O2's gate is lifted**; D1242 the terminal Typed confirmation now and a paired-device channel later, so
   **nothing is gated**; D1243 the session-start print reads a local cache, so **O8 gains the cache writer and O10 depends on O8 (level 4)**.
   **D1248-D1249 stay reserved.**
+- **OPEN, put to the owner on 2026-11-10 (reconciliation section 8; none answered, and answering one approves no task):**
+  **D2020** — how the front door reads the `orchestrator/` node once the state group is served; recommendation (a), a custom role holding
+  `firebasedatabase.instances.get` alone on the `mcp_server` account, which costs a whole-database read on a public service (U11); it gates
+  O16b only. **D2021** — whether `apply_patch` is served through the front door; recommendation (a), catalogued and not served (the CLI's
+  `patch` stays the write), because serving it needs a database write on the public service and the owner's D935 answer keeps database admin
+  off it; it shapes O16a's `TestApplyPatchIsCataloguedAndNotServed` and nothing else. **D2022** — what O19 ("workspace caps") delivers;
+  recommendation (a), a workspace's refusal pauses the queue at once, with no new read and no new cap number; it gates O19. **D2023-D2029
+  are reserved.** **O16a is gated by none of them** and is launchable on the owner's go.
 - **BF2, 2026-11-08: the long-run triage rule (D1244-D1247), one task, O14, all four the recommendation.** A run past the local threshold
   `orchestrator.triage_after` (default `2h`, under the run's budget) is triaged by code from three reads — the run's record, the pull request's state and
   **its CI state** (through the provider read this task adds), and BF1's open-findings file — and the outcome is one of four: **merge as-is plus a follow-up task** (the owner's default, and automatic **only** on

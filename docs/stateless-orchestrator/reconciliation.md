@@ -530,13 +530,18 @@ was amended the same day to defer `spawn_task` out of its first slice (H2: it ne
 the MCP state group must not depend on `spawn_task`.
 
 **T3. D1227's new scopes need the MCP design to add them** (D927 amended). That edit belongs to the `docs/mcp-server` folder and is a
-later task, not this one.
+later task, not this one. **Written 2026-11-10** (section 8): the amendment is in `docs/mcp-server/spec.md` §5 and §11 and as a dated note
+on D927 in `docs/mcp-server/reconciliation.md` §4a; the code half is task O16a.
 
 **T4. The MCP server is unbuilt and its threat model was just re-reviewed** (an amendment to `docs/mcp-server` is in flight, run
-20261104-224808-fe80). The MCP-dependent slice (slice 3 of the plan) waits for it.
+20261104-224808-fe80). The MCP-dependent slice (slice 3 of the plan) waits for it. **Overtaken 2026-11-10** (section 8): that review
+merged as `docs/mcp-server/reconciliation.md` §4a, the registry it waited for is on `main` (`ee/coordinator/mcpauth/tools.go`), and the
+state group's own threat-model paragraph is now `docs/mcp-server/spec.md` §8; what still waits is the front door's reach into the
+database (D2020, D2021), not the review.
 
 **T5. The workspaces design reuses the MCP server** and was amended the same day; anything this design says about workspace caps
-(D1222's `ee/` part) waits on that design as well.
+(D1222's `ee/` part) waits on that design as well. **Re-read 2026-11-10** (section 8, F29): W0-W6 and W8 are on `main` and W7 is open as
+#2275; what O19 can be is D2022, and what it waits on is named there.
 
 **T6. Q2, ruled a second time: the install moves to `fugaro setup` (CLOSED — the owner ruled it on 2026-11-04).** The answer this pull request first
 recorded put an **offer** in `fugaro update` behind a Typed confirmation, and that collided with the owner's standing **no prompts on a managed
@@ -611,3 +616,88 @@ BF1 is not in this tree (U10), so this is a requirement this plan places on it r
 
 It writes no code, no Terraform and no rules change, and it does not approve any task. It keeps one rule from the folders it
 reads: **no agent handles a credential**, and the daemon is not allowed to turn a refusal into an action.
+
+## 8. The pass of 2026-11-10: O16 and O19 made tasks
+
+Checked against `origin/main` at `d51ada6d5` on 2026-11-10, with the pull requests open that day. It makes O16 and O19 of the plan launchable
+or says exactly what they wait on, writes the two MCP amendments T3 and T4 asked for into `docs/mcp-server`, and puts three new questions to
+the owner. **It approves no task and answers none of its own questions.**
+
+**Numbers.** The highest decision number on `main` is D2019; the open #2285 holds D2030-D2069. This pass takes **D2020-D2029**: it uses
+**D2020-D2022** and **D2023-D2029 are reserved**. Findings continue at **F24** and the UNVERIFIED list at **U11**; the resolutions are
+**R1-R3**.
+
+### Findings
+
+**F24. Exists. The registry O16 waited for is on `main`, and so is the review T4 waited for.** The catalogue is
+`ee/coordinator/mcpauth/tools.go:74-96`: `Register` refuses a name it does not map, and `Call` (`tools.go:303`) checks the token's scope
+before a handler runs. The read tools M8 built are registered by `RegisterReadTools` (`ee/coordinator/mcpauth/tool_status.go:112`), which
+**no binary calls** — `docs/mcp-server/README.md` says M8 is built "except the wiring that would serve its four read tools, which no binary
+has and no task of this plan carries". The threat-model amendment T4 named is `docs/mcp-server/reconciliation.md` §4a. *Consequence:* F9's
+"no registry" is overtaken; O16's files can be named, and it lands the way M8 did, built and registered by a function nothing calls yet
+(the plan's O16a), with the serving half (O16b) waiting.
+
+**F25. Rule. The scope vocabulary is closed, and every door refuses a name outside it.** `ScopeVocabulary` is `tasks:read, tasks:write`
+(`ee/coordinator/mcpauth/limits.go:65-79`); an unknown scope is refused at the mint (`limits.go:182-189`), at the authorize step
+(`authorize.go:504-519`), on the audit line (`audit.go:369`) and at the door, where `CheckScopes` refuses the **whole token**
+(`scopes.go:38-48`); `limits_test.go:414` pins the two names. *Consequence:* D1227's two scopes are an additive change to one list and its
+pin, and no stored record changes shape. During a rollout of a turned-on front door, an older revision refuses a token carrying a state scope
+whole: a refusal, never a wrong answer.
+
+**F26. Gap. An authorization that names no scope gets the whole vocabulary.** `requestedScopes` answers `slices.Clone(ScopeVocabulary)`
+when the request carries none (`authorize.go:504-507`). With the state scopes in the vocabulary, every default sign-in would hold
+`state:write`. *Resolution R1:* the default stays `tasks:read tasks:write`; a state scope is held only when asked for by name. This has one
+defensible reading — D1227's own reason, "a `tasks:write` token must not silently become a state editor" — so it is stated, not asked.
+
+**F27. Gap. The front door cannot reach the `orchestrator/` node, by design.** Its account `mcp_server` holds two grants, the runs bucket's
+read and its own store, "and nothing else in this tree or the Firebase root grants it anything: no secret, no database, no actAs"
+(`deploy/terraform/gcp/modules/installation/coordinator.tf:300-322`, the account at `:324`); the owner's D935 answer keeps database admin off
+the public service (`docs/mcp-server/README.md`, finding H3); the Realtime Database has no path-level IAM, so any database grant reaches every
+node (`docs/workspaces/implementation-plan.md` W7, citing `credentials.tf`); and O2's rules refuse every token writer, with the person's own
+credential writing the node (D1241). *Consequence:* the state group's handlers can be built and tested against a fake, but **serving them
+needs a grant nobody has decided** — D2020 for the read, D2021 for the write.
+
+**F28. Gap. A call through the front door is never a person at a terminal.** D1225 lets only a person-class identity approve a work item,
+set the goal or close a person's decision, and the CLI's person class is a Typed confirmation at a real terminal (G2). An MCP token is held
+by a client program; the sign-in's paired-device approval carries the accepted residual H1 (any launcher can mint a device token,
+`docs/mcp-server/README.md`), and D1242 put the stronger device channel later. *Resolution R2:* a state-group call is
+`Actor{Class: Session}`, always; the person-only ops are refused through the front door, and only D1242's later channel could raise that.
+Separately, the state node carries no owner (`internal/orchestrator/state.go:352-353`: `agent_id` and `role`; the `Owner` of
+`internal/orchestrator/hooks.go:36-58` is a value the handoff takes, not a field it persists), so the spec's "write only to its own agent"
+cannot be checked from the node — a cost carried by D2021's option (b).
+
+**F29. Gap. Nothing gives the daemon a read of the workspace's stop or room.** The workspace's stop is `budget.PathKillGlobal` in the
+workspace's own database (`internal/cli/budget_kill_workspace.go:7-12`), whose rules close every node to every reader
+(`internal/budget/rules/workspace.json.tmpl`); W7 (open as #2275) delivers the headroom to a member's **job service account** only; the
+daemon runs on the person's credential and reads its own project's kill switch (`internal/cli/orchestrator_run.go:351-378`). A run the daemon
+starts into a stopped workspace is a started run, so its refusal counts as an attempt (G4) and spends its approval's allowance; the breaker
+pauses the daemon only after `BreakerThreshold`, three cycles (`internal/orchestrator/breaker.go`). *Consequence:* "workspace caps" (D1222)
+has no defined content that the tree can carry without a choice — D2022.
+
+### Resolutions with one defensible answer
+
+- **R1** (F26): the no-scope default stays the task pair.
+- **R2** (F28): a front-door call is a `Session` actor; person-only ops are refused there.
+- **R3:** `get_events` has **no cursor** (D1229, level-triggered) and takes `since` as `fugaro orchestrator events --since` does
+  (`internal/cli/orchestrator_state.go:241-290`); both tools answer the CLI's `--json` fields with the same meanings
+  (`orchestrator_state.go:61-72`, `:233-239`), and stored free text is cleaned on the way out (G3).
+
+### DECISIONS (open)
+
+| # | Question | Recommendation and reason | Alternatives and their cost | Answer |
+| --- | --- | --- | --- | --- |
+| D2020 | When the state group is served (O16b), how does the front door read the `orchestrator/` node? (F27) | **(a) A custom role holding `firebasedatabase.instances.get` and nothing else**, bound to `mcp_server` under the same `var.mcp_server` switch, a `cover.go` row added on purpose, applied by `fugaro update`. Why: it is the spec's MCP surface for the state, the account still holds no write and no admin (D935's line holds), and the role is the read half the credentials service's own custom role already holds (`deploy/terraform/gcp/modules/installation/credentials.tf:242-246`, as W7 reads it). **Cost:** the public service gains a read of **the whole database** — `pairing/`, `mailbox/`, `config/`, `spend/`, `runs/` and the rest of the rules' top-level nodes — because IAM has no path scope; a compromised front door reads all of it (U11). | **(b) No grant:** the state group stays registered by nothing and the CLI (D1223) is the only surface. Cost: MCP clients (the phone, hosted agents) never see orchestrator state. **(c) The coordinator's sweep copies** each orchestrator's fenced brief and event tail into an object the front door reads: the sweep's account already holds `firebasedatabase.admin` (`coordinator.tf:10-24`). Cost: a new object writer and grant, a copy as stale as the sweep's schedule, and the mirror the spec wants to retire. | **OPEN** |
+| D2021 | Is `apply_patch` served through the front door? (F27, F28) | **(a) Not in this plan:** catalogued under `state:write` and registered by nothing, the way `spawn_task` is (D936); `fugaro orchestrator patch` (D1223) stays the write, revisited with D1242's paired-device channel. Why: serving it needs a database write on the public service, and under R2 what it would add is a session's ops, which the CLI already gives a local session. **Cost:** a remote MCP client can read the state and cannot change it. | **(b) Serve it with a custom write role (`instances.update`):** a whole-database write from a public endpoint, the shape D935 answered against, and write-own needs an owner field on the state node (a `schema_version` bump and a `Migrate` step, converged at the daemon's start-up and proved from the previous version). **(c) A relay** the person's daemon applies: a store both the front door and the person reach, which D935's single-member store refuses, so a second store and a queue to own. | **OPEN** |
+| D2022 | What does O19 ("workspace caps", D1222's `ee/` part) deliver? (F29) | **(a) A workspace's refusal pauses the queue:** when a run the daemon launched ends refused by the workspace (its stop or its cap), the daemon trips its breaker at once — the existing `breaker-tripped` decision, `waiting_on: person` — so no further item is launched into the same refusal. No new read, no new cap number; W7 and W8 stay the money fence. **Cost:** it reacts after one wasted start, and it needs W7's run record to say the workspace refused (U12). | **(b) A pre-spawn read** of the workspace's stop and headroom: needs a read path that does not exist (a W-side route answering a person, or IAM on the workspace project for every member's person) — a `docs/workspaces` design change. **(c) Workspace-wide spawn caps** (running, rate) in the workspace node: a new published shape (a version bump and an `update` migration) and counting across projects a per-project daemon cannot see. **(d) Retire O19:** W7 and W8 are the whole fence; cost up to three starts into a stopped workspace per orchestrator, each spending an approval's allowance, before the breaker pauses. | **OPEN** |
+
+**D2023-D2029 are reserved.** No tension between answers arises, because none of D2020-D2022 is answered; if D2020 is answered (a) and
+D2021 (b), their costs compound (a public service with whole-database read and write), and that would be put to the owner as a tension.
+
+### UNVERIFIED
+
+- **U11.** What a whole-database read exposes, node by node: `pairing/<uid>` holds a payload sealed to the phone
+  (`internal/budget/token/device.go:253`, its additional data) and the mailbox is MACed on the phone's side (`mobile/src/mailbox/mac.js`), but no node-by-node reading that no
+  credential sits in the clear was done here. O16b's review reads it before D2020's grant is bound.
+- **U12.** Whether a run the workspace refused (its stop, its cap, or a failed settle) is distinguishable in the run record once W7 merges.
+  #2275 is a draft; its diff names the refusals inside the credentials service, and how they reach the run's record was not established.
+  O19's first act after the trigger is this reading.

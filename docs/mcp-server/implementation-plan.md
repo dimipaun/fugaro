@@ -1389,6 +1389,12 @@ here is small enough to pull forward.
   whether any of them needs a scope of its own, is that design's to decide — D927 keeps v1 to two
   scopes, and a tool the two do not cover brings the scope question back as D927's. M7 is the task
   the registry lives in, so it is the one that changes if the group's names arrive after this plan.
+  **The names and the scopes arrived (recorded 2026-11-10):** D1224's `get_state`, `get_events` and
+  `apply_patch` under D1227's `state:read` and `state:write`, which amends D927
+  ([reconciliation.md](reconciliation.md) §4a). M7 is merged, so **no task of this plan changes for it**:
+  the registry, the vocabulary and the default-scope rule are edited by the stateless plan's **O16a**, and
+  serving the group is its **O16b**, which waits on its D2020 and on a task that wires this front door's
+  read tools into a binary — the same wiring M8 waits for.
 - **The managed gate's decisions.** The gate landed while this design was open
   (`internal/cli/managed_gate.go`, `docs/managed-agent-converge/`), and M4's operator path runs
   through it: `fugaro update` is one of the commands the gate covers, so the front door's switch is
