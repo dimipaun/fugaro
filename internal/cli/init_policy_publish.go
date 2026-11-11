@@ -168,6 +168,20 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	if lc.Triage != nil {
 		add("triage", lc.TriageEffective(p.Triage), p.Triage, false)
 	}
+	// The pools' subscription switch reaches a run off this node too (F22,
+	// D1636), so a config that states it where the node states the other answer
+	// is a difference a publish closes, and it is compared the triage switch's
+	// way: the node's value is handed to the publisher's keep rule, so a config
+	// that writes nothing is not reported as a difference — nil would read as
+	// one against a node that states either answer — while a written true
+	// against a node that says nothing (or false) is exactly the edit this
+	// stage exists to carry. Without the row the owner's own act would reach no
+	// run: `settings set subscription_spread true` writes the local config, and
+	// `fugaro update` — the one command that brings an installation forward —
+	// is where the node learns it.
+	if lc.SubscriptionSpread != nil {
+		add("subscription_spread", lc.SubscriptionSpreadEffective(p.SubscriptionSpread), p.SubscriptionSpread, false)
+	}
 	// The orchestrator block is compared by the publisher's own keep rule
 	// (D1239, D1234): a config that states a block that sets a key differs from
 	// a node carrying another — or none — so a guardrail-only edit reaches the

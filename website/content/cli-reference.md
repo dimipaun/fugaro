@@ -41,6 +41,7 @@ Subcommands:
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
+- `fugaro followups` -- File the findings a merged run deferred as follow-up tasks
 - `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
@@ -2320,6 +2321,52 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
 | `--strict` | bool | `false` | no | fail on a stale, unpinned, foreign or unwired plugin (CI mode) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro followups`
+
+File the findings a merged run deferred as follow-up tasks
+
+File the review findings RUN deferred as tasks of their own, one per group the
+triage tied together and one per finding when it tied none.
+
+The parent pull request has to be merged: a deferral is work the review left
+behind on purpose, and the merge is what says so. The pull request is found on
+the code host by the branch the run's launcher wrote -- fugaro/<run id> for a
+first run, the branch its task carries for a follow-up -- and never by a number
+the run's record names, because the record is written by the job: a job that
+could name somebody else's merged pull request would have this command file
+tasks from its own text (F30).
+
+By default the plan is printed and nothing is written. --launch files them,
+at most --max of them (10 by default), as debt tasks: each carries the parent
+run and the finding keys it settles (follow_up_of), the debt mark
+(fugaro runs ls --debt), and the mode the parent's own record resolved, which
+the run re-resolves through its floors -- never a recorded hotfix, which is an
+operator's own run and not a task's (D1844). The finding text and the triage's
+reason are fenced and indented as data in the brief.
+
+A group a run already covers is skipped, found through the run list, so a
+second call files only what is left and an interrupted one can simply be run
+again.
+
+Usage: `fugaro followups RUN`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for followups |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--launch` | bool | `false` | no | launch the tasks this call plans; without it the plan is printed and nothing is written |
+| `--max` | int | `10` | no | file at most N tasks in this call |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -4731,6 +4778,7 @@ Subcommands:
 - `fugaro project repos add` -- Enroll a repository: add it to the policy's allow-list
 - `fugaro project repos ls` -- List the allow-list and the repositories that have run here
 - `fugaro project repos rm` -- Un-enroll a repository: remove it from the allow-list
+- `fugaro project repos set` -- Write a repository's workflow selection or a job profile, in this machine's project config
 
 ## `fugaro project repos add`
 
@@ -4803,6 +4851,72 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--yes` | bool | `false` | no | confirm the removal without typing the project's name (not while a run is in flight) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project repos set`
+
+Write a repository's workflow selection or a job profile, in this machine's project config
+
+Write one of the two shapes the generic writer cannot express, in this
+machine's project config:
+
+    fugaro project repos set acme/app --workflows web,docs
+    fugaro project repos set --job-profile gpu --provider github --cpu 4 \
+        --memory 8Gi --timeout-class 12h --secrets acme-db --allow-repos acme/app
+
+A repository's workflows selection says which of the repository's own workflows
+this project runs, and it is written WHOLE: the names given are the selection,
+so a second run replaces it rather than adding to it. The repository is one the
+project's config lists (fugaro update --repo onboards one); a name it does not
+list is refused, because a selection stored under a name nothing looks up is a
+line nobody sees fail.
+
+A job profile is what a Cloud Run job is deployed as, addressed by name
+(D1163): the seven keys are provider, cpu, memory, timeout_class, secrets,
+allow_repos and claude_accounts, and the flags below write them. The block is
+created when the config does not hold one under that name, and a NEW profile
+must name its own --provider: a profile with no provider is one no job of it can
+be deployed, and fugaro project policy publish refuses such a policy.
+
+What a profile's values owe — a known provider, a cpu/memory shape Cloud Run
+serves, a duration timeout_class — is the policy's own rule
+(projectpolicy.validProfiles), applied by fugaro project policy publish and read
+back by every run; this command writes the file and refuses only what the file
+itself would not read.
+
+The repos.* scalars and lists are the generic writer's (D1173):
+
+    fugaro settings set repos.acme/app.base_branch main
+    fugaro settings set repos.acme/app.workflows --add docs
+
+This write is a person's own: fugaro update publishes it, and a coding agent's
+session is refused it, in a managed project by that project's gate.
+
+Every write ends with one line: next: fugaro update.
+
+Usage: `fugaro project repos set (REPO --workflows NAME[,NAME...]) | (--job-profile NAME [members])`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--allow-repos` | stringSlice | `[]` | no | profiles.NAME.allow_repos: the repositories the profile serves, comma-separated; the list is written whole |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--claude-accounts` | stringSlice | `[]` | no | profiles.NAME.claude_accounts: the Claude accounts the profile serves, comma-separated; the list is written whole |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--cpu` | int | `0` | no | profiles.NAME.cpu: the Cloud Run cpu count the job is deployed with |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--job-profile` | string | "" | no | the job profile to write, by name; with it, the members below write the block's keys |
+| `--memory` | string | "" | no | profiles.NAME.memory: the Cloud Run memory the job is deployed with, e.g. 4Gi |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--provider` | string | "" | no | profiles.NAME.provider: the git provider the profile's job holds a credential for (required for a new profile) |
+| `--secrets` | stringSlice | `[]` | no | profiles.NAME.secrets: the Secret Manager names the profile's job mounts, comma-separated; the list is written whole |
+| `--timeout-class` | string | "" | no | profiles.NAME.timeout_class: the job's task timeout as a duration, e.g. 6h or 90m |
+| `--workflows` | stringSlice | `[]` | no | repos.REPO.workflows: which of the repository's own workflows this project runs, comma-separated; the selection is written whole |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 

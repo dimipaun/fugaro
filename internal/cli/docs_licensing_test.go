@@ -97,7 +97,7 @@ func TestDocsLicensingStatement(t *testing.T) {
 		"`mobile/`",
 		"0.113.0",
 		"up to and including 0.112.0",
-		"not published yet",
+		"subscription terms (published at",
 	} {
 		if !strings.Contains(flat, strings.ToLower(want)) {
 			t.Errorf("%s never says %q: the statement exists to name the parts the MIT licence does not cover, and a reader who has to infer them from the directory listing is the reader it is written for", path, want)
@@ -140,10 +140,10 @@ func TestDocsLicensingStatement(t *testing.T) {
 		"business-licensed features",
 		"moved out of the core",
 		"released mit versions stay mit",
-		"not published yet",
+		"subscription terms (published at",
 	} {
 		if !strings.Contains(eePage, want) {
-			t.Errorf("ee/README.md, the page %s links for what `ee/` is, never says %q: the statement and the page it points at have to agree on what the folder holds -- the business-licensed features, new ones and those the owner moved out of the core -- and on the Subscription Terms being the document the licence names and does not publish, or one of the two is describing a directory that does not exist", path, want)
+			t.Errorf("ee/README.md, the page %s links for what `ee/` is, never says %q: the statement and the page it points at have to agree on what the folder holds -- the business-licensed features, new ones and those the owner moved out of the core -- and on the Subscription Terms being the document the licence names and the site publishes, or one of the two is describing a directory that does not exist", path, want)
 		}
 	}
 }

@@ -325,6 +325,13 @@ func MaxOf(a, b Rates) Rates {
 // an ID and its alias, are refused); a model the table doesn't have is added
 // with only its rates, so its images are refused and a PDF reserves the
 // default context window.
+//
+// The image ceiling is the one price a model carries beside its rates, and an
+// override sets it only where it writes the member: a row's own ceiling
+// survives an override that leaves it out, and an explicit 0 takes the images
+// away (Override.ImageTokens). A model the table doesn't have gets no ceiling
+// from an override that leaves the member out, which is the "images refused"
+// its added row already had.
 func (t *Table) With(o Overrides) (*Table, error) {
 	if err := o.validate(); err != nil {
 		return nil, err
@@ -350,9 +357,13 @@ func (t *Table) With(o Overrides) (*Table, error) {
 		byID[id] = key
 	}
 	for _, key := range keys {
-		r := o[key].clone()
+		ov := o[key]
+		r := ov.Rates.clone()
 		if m, ok := out.Lookup(key); ok {
 			m.Rates = r
+			if ov.ImageTokens != nil {
+				m.ImageTokens = *ov.ImageTokens
+			}
 			m.Unverified, m.PriceSource, m.PriceCheckedAt, m.Catalog = false, "", "", nil
 			m.CacheDefaulted = defaultCacheRates(m.ID, &m.Rates)
 			out.Models[m.ID] = m
@@ -360,6 +371,9 @@ func (t *Table) With(o Overrides) (*Table, error) {
 			continue
 		}
 		m := Model{ID: key, Rates: r}
+		if ov.ImageTokens != nil {
+			m.ImageTokens = *ov.ImageTokens
+		}
 		m.CacheDefaulted = defaultCacheRates(key, &m.Rates)
 		out.Models[key] = m
 		// An owner who prices a model the catalog refused has answered

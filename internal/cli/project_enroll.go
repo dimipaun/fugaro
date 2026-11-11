@@ -58,7 +58,7 @@ func newProjectReposCmd() *cobra.Command {
 		Short: "The project's allow-list: which repositories may run",
 		Args:  cobra.NoArgs,
 	}
-	cmd.AddCommand(newProjectReposLsCmd(), newProjectReposAddCmd(), newProjectReposRmCmd())
+	cmd.AddCommand(newProjectReposLsCmd(), newProjectReposAddCmd(), newProjectReposRmCmd(), newProjectReposSetCmd())
 	return cmd
 }
 
