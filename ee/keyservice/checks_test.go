@@ -10,6 +10,7 @@ package keyservice
 // (S3.3, website/src/pages/keys.astro).
 
 import (
+	"context"
 	"net/url"
 	"strings"
 	"testing"
@@ -104,6 +105,97 @@ func TestDomainWithAPaidSubscriptionGetsNoFreeKey(t *testing.T) {
 	}
 }
 
+// TestAFreeSeatIsRecheckedWhenTheLinkIsFollowed: §4.2 and §4.3 are read again at
+// the moment of minting and not only when the form was submitted. The window
+// between an application and its link is a window in which the domain can have
+// bought and in which another applicant on it can have been verified, and the
+// link that was legitimate when it was mailed is not entitled to a key when it
+// is followed — a link whose plan the deploy no longer serves is the third shape
+// of the same thing, an application the store no longer says this service may
+// mint from.
+//
+// Each of the three is refused the way the application-time refusals are: the
+// one page, no key, no record, and a link that keeps nothing about the applicant
+// (§7.3) and cannot be followed again. What a test reads here is the store and
+// the signer rather than the answer alone, because the answer is the same page
+// whether a key was minted or not.
+func TestAFreeSeatIsRecheckedWhenTheLinkIsFollowed(t *testing.T) {
+	// refused is the whole of what each outcome has to read: the counts the
+	// fixture stood at before the follow, unchanged, and a spent link with no
+	// personal data left on it.
+	refused := func(t *testing.T, f *fixture, token string, keys, records, mails int) {
+		t.Helper()
+		answerBody(t, f.verify(token))
+		if got := f.signer.calls; got != keys {
+			t.Errorf("the follow signed %d key(s), want none: the entitlement the application was for is not the one the store holds", got-keys)
+		}
+		if got := len(f.records()); got != records {
+			t.Errorf("the follow recorded %d key(s), want none", got-records)
+		}
+		if got := len(f.mail.sent); got != mails {
+			t.Errorf("the follow mailed %d message(s), want none", got-mails)
+		}
+		for _, v := range f.verifications() {
+			if v.ID != digest(token) {
+				continue
+			}
+			if !v.Used {
+				t.Error("the refused link was handed back, want it spent: a link this service has decided against is not one an applicant can follow until it mints")
+			}
+			if v.Email != "" || v.Domain != "" || v.Organisation != "" || len(v.Repositories) != 0 {
+				t.Errorf("the refused link kept %+v, want the address, the domain, the organisation and the repositories dropped (§7.3)", v)
+			}
+			return
+		}
+		t.Error("the refused link is not in the store at all, want it spent with nothing about the applicant left on it")
+	}
+
+	t.Run("the domain has bought since the application", func(t *testing.T) {
+		f := newFixture(t)
+		f.apply(applicantAddress)
+		token := f.mailedToken()
+		f.purchase("evt-buy", "acme.example", 5, 365)
+
+		refused(t, f, token, f.signer.calls, len(f.records()), len(f.mail.sent))
+	})
+
+	t.Run("the domain holds a free key since the application", func(t *testing.T) {
+		f := newFixture(t)
+		// Two applications on one domain, both before either link is followed:
+		// the second is legitimate when it is submitted and the first is not when
+		// it comes back, because the domain holds a free key by then.
+		f.apply(applicantAddress)
+		token := f.mailedToken()
+		f.apply("other@acme.example")
+		answerBody(t, f.verify(f.mailedToken()))
+		if len(f.records()) != 1 {
+			t.Fatalf("the domain's free seat minted %d key(s), want one", len(f.records()))
+		}
+
+		refused(t, f, token, f.signer.calls, len(f.records()), len(f.mail.sent))
+	})
+
+	t.Run("the plan is no longer one the deploy serves", func(t *testing.T) {
+		f := newFixture(t)
+		// A link the deploy's own configuration has moved on from: what mints from
+		// a plan name is the plan, and a name this service cannot answer for is one
+		// it mints nothing from.
+		token := "a-token-this-test-holds"
+		if err := f.store.SaveVerification(context.Background(), Verification{
+			ID:           digest(token),
+			Plan:         "a-plan-this-deploy-no-longer-serves",
+			Email:        applicantAddress,
+			Domain:       "acme.example",
+			Organisation: "acme.example",
+			Expires:      f.now.Add(time.Hour),
+		}); err != nil {
+			t.Fatalf("storing the link: %v", err)
+		}
+
+		refused(t, f, token, 0, 0, 0)
+	})
+}
+
 // TestOpenSourceCheckNeedsProofOfControl: visibility and licence prove nothing
 // about who is asking (F47), so the check mints nothing until proof of control
 // is given — and what counts as proof is D452, which is why the check is an
@@ -181,13 +273,13 @@ func TestOpenSourceCheckRefusesAPrivateOrNonOSIRepository(t *testing.T) {
 //
 // It is a test rather than a comment because the rule is a data set with an
 // update path, and the failure it guards is a permissive-looking id being added
-// because it looks permissive: `0BSD`, `BSD-3-Clause-Clear`, `OpenSSL` and `X11`
-// are the ones that were here and are not approved. SPDX's own `isOsiApproved`
-// field is the comparison the list should be held to, and it is not in this tree
-// and not reachable from a hermetic run — so the four are pinned by name and the
-// owner's update is what re-checks the rest.
+// because it looks permissive: `0BSD`, `BSD-3-Clause-Clear`, `OpenSSL`,
+// `Unlicense` and `X11` are the ones that were here and are not approved. SPDX's
+// own `isOsiApproved` field is the comparison the list should be held to, and it
+// is not in this tree and not reachable from a hermetic run — so the five are
+// pinned by name and the owner's update is what re-checks the rest.
 func TestTheLicenceTableIsTheOSIsApprovedList(t *testing.T) {
-	for _, id := range []string{"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "GPL-3.0-only", "LGPL-2.1-or-later", "MPL-2.0", "ISC", "Unlicense", "PostgreSQL", "OFL-1.1", "EUPL-1.2"} {
+	for _, id := range []string{"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "GPL-3.0-only", "LGPL-2.1-or-later", "MPL-2.0", "ISC", "PostgreSQL", "OFL-1.1", "EUPL-1.2"} {
 		if !osiApproved[id] {
 			t.Errorf("%s is not admitted, want it in the table: it is on the OSI's approved list, and a refusal here is an honest maintainer refused", id)
 		}
@@ -197,6 +289,9 @@ func TestTheLicenceTableIsTheOSIsApprovedList(t *testing.T) {
 		"0BSD",
 		"BSD-3-Clause-Clear",
 		"OpenSSL",
+		// A public-domain dedication rather than a grant, and not an approval the
+		// OSI gave: SPDX records it as not approved, and §4.4 admits the OSI's list.
+		"Unlicense",
 		"X11",
 		// And what is not an id at all, which a host's metadata can still say.
 		"",

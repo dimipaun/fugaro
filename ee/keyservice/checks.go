@@ -167,12 +167,12 @@ type Proofs interface {
 // wrong admission is a licence nobody granted (§4.6).
 //
 // That asymmetry is why the list holds what it holds and no more: an id SPDX
-// records as not approved — `0BSD`, `BSD-3-Clause-Clear`, `OpenSSL` and `X11`
-// among the permissive ones a code host's metadata actually carries — is absent
-// rather than admitted on the strength of how permissive it looks, and an id
-// whose approval is in doubt is absent for the same reason until the owner's
-// update adds it. `TestTheLicenceTableIsTheOSIsApprovedList` holds both halves
-// of that.
+// records as not approved — `0BSD`, `BSD-3-Clause-Clear`, `OpenSSL`,
+// `Unlicense` and `X11` among the permissive ones a code host's metadata
+// actually carries — is absent rather than admitted on the strength of how
+// permissive it looks, and an id whose approval is in doubt is absent for the
+// same reason until the owner's update adds it. Both halves of that are what
+// `TestTheLicenceTableIsTheOSIsApprovedList` holds.
 var osiApproved = map[string]bool{
 	"AGPL-3.0-only":     true,
 	"AGPL-3.0-or-later": true,
@@ -200,7 +200,6 @@ var osiApproved = map[string]bool{
 	"OFL-1.1":           true,
 	"PostgreSQL":        true,
 	"Python-2.0":        true,
-	"Unlicense":         true,
 	"Zlib":              true,
 }
 
