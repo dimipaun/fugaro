@@ -1459,7 +1459,7 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		if err := json.Unmarshal(craw, &p.CloneURLs); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: clone_urls: %w", err)
 		}
-		if err := validCloneURLs(p.CloneURLs); err != nil {
+		if err := ValidCloneURLs(p.CloneURLs); err != nil {
 			return nil, true, err
 		}
 	}
@@ -1604,7 +1604,7 @@ func ValidVerifierAccounts(accounts []string) error {
 	return policy.ValidVerifierAccounts(accounts)
 }
 
-// validCloneURLs checks the clone_urls block, entry by entry: each key a
+// ValidCloneURLs checks the clone_urls block, entry by entry: each key a
 // canonical repository name, and each value an https URL without credentials
 // that names exactly that repository on that repository's own provider's host
 // — the rules the deployer applies to a repository URL (repourl.CloneURL, the
@@ -1617,7 +1617,7 @@ func ValidVerifierAccounts(accounts []string) error {
 // cache and its budget session name — the very thing the run's own remote
 // checks refuse when a launcher sets FUGARO_REMOTE, and the reason the node
 // is checked here rather than trusted.
-func validCloneURLs(urls CloneURLs) error {
+func ValidCloneURLs(urls CloneURLs) error {
 	for _, key := range sortedStringKeys(urls) {
 		at := fmt.Sprintf("projectpolicy: clone_urls[%s]", key)
 		provider, repo, ok := strings.Cut(key, "/")

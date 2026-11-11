@@ -56,7 +56,7 @@ const (
 // plugin's own writes unmoved over a build that is asked for after them.
 func NeedsBilling(name string) bool {
 	switch name {
-	case Preflight, Project, Plugin, Checkout:
+	case Preflight, Project, Plugin, Checkout, Unit:
 		return false
 	}
 	return true
@@ -132,6 +132,16 @@ const (
 	// It comes after the repository stage, whose onboarding is what the
 	// images it refreshes belong to, and before compute, which stays last.
 	Checkout = "checkout"
+	// Unit is the login unit that runs the orchestrator daemon
+	// (internal/cli/init_orchestrator_stage.go for `setup`, which installs the
+	// first one, and internal/cli/update_unit_stage.go for `update`, which
+	// re-renders one already installed and never installs one). The two are
+	// one stage because the loop takes one stage per name and the door decides
+	// which of them it is (initStages): the owner's ruling Q2 of 2026-11-04
+	// gives the first install to `setup`, and T7's of 2026-11-05 makes
+	// `fugaro update` re-render an installed unit so that one command stays
+	// the whole upgrade.
+	Unit = "unit"
 	// Compute is the Batch backend's installation-level provisioning
 	// (design docs/design/compute-backend.md §8.1 task 6). It is last
 	// because it is the only stage that may not run before everything else
@@ -249,6 +259,26 @@ var order = []slot{
 	// does not write that (accounts_add_converge_test.go is the door that says
 	// so).
 	{name: Checkout, needs: []string{Repository, Layer}, pastStops: []string{Repository}},
+	// The login unit that runs the daemon. It comes after the checkout's own
+	// steps and before compute: the daemon it starts drives the project the
+	// repository stage published and re-reads the policy node every stage
+	// before it wrote, so a run that installed a unit ahead of those would
+	// start a daemon that cannot read what it drives. Like Plugin and
+	// Checkout it writes only this machine's own files — one file under the
+	// person's home — so billing does not gate it (NeedsBilling).
+	//
+	// noYes: --yes never covers it. A unit is code that runs at every login, so
+	// neither door may take a flag for it (the owner's Q2 answer of 2026-11-04
+	// and T7's ruling of 2026-11-05). Neither door asks a question of its own
+	// either: Q2's first install has no confirmation beside the plan line the
+	// person already read, and T7's re-render has none either — the owner's
+	// rule of 2026-11-10 is that `fugaro update` carries no extra prompt — so
+	// the step the run cannot make is a step --yes does not cover, which the
+	// loop leaves for the user (the update door) or skips with the sentence
+	// that says nobody was at the terminal (the setup door). What fences the
+	// write is the session, not a question: a coding agent's run writes no
+	// unit at all, and the drift stays visible through `fugaro doctor`.
+	{name: Unit, needs: []string{Repository, Policy}, noYes: true},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
 	// builds the identity, the registry and the installation it reads.

@@ -764,6 +764,13 @@ var pendingSites = map[string]string{
 	// of 2026-11-06 leaves typed where --yes does not stand in, so no task of
 	// the plan removes them and this entry is not theirs.
 	"project_cmd.go:confirmRemoval": "T6's file, whose callers T6 and T15 remove",
+	// The login unit's own command (O9, Q2): a unit is code that runs at every
+	// login, so the confirmation the owner's answer asked for is the Typed
+	// class and stands while that class does. It is a non-money Typed step,
+	// which is exactly what T15 gives the owner-session-only fence to, so the
+	// entry names that task rather than a file of its own: T12 deletes the
+	// class only once every step that relies on it is fenced, and this is one.
+	"orchestrator_install.go:confirmUnitInstall": "T15 (the non-money Typed steps, whose fence replaces this confirmation)",
 }
 
 // forms is the shapes found at one site, in a stable order, for a failure's

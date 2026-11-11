@@ -595,5 +595,5 @@ func (w *watcher) scopeName() string {
 // never asked to read — and, for a scope whose own node is the only one it
 // holds, name a scope the caller did not ask for at all.
 func refusedStream(subtree string, err error) error {
-	return fcli.UserErr("graph: the database refused this CLI's credential and it may not listen to /%s: that read is a signed-in reader's and the database role its caller holds (roles/firebasedatabase.viewer, which terraform.launchers and terraform.operators have), so run gcloud auth application-default login if the grant has expired, and otherwise ask an owner to add the role (%v)", subtree, err)
+	return fcli.UserErr("graph: the database refused this CLI's credential and it may not listen to /%s: that read is a signed-in reader's and the database role its caller holds (roles/firebasedatabase.viewer, which terraform.operators and terraform.admins have), so run gcloud auth application-default login if the grant has expired, and otherwise ask an owner to add the role (%v)", subtree, err)
 }

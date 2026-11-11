@@ -68,7 +68,7 @@ func newProjectCmd() *cobra.Command {
 		Short: "The project's policy, its allow-list and the repositories enrolled",
 		Args:  cobra.NoArgs,
 	}
-	cmd.AddCommand(newProjectPolicyCmd(), newProjectShowCmd(), newProjectReposCmd(), newProjectSyncCmd())
+	cmd.AddCommand(newProjectPolicyCmd(), newProjectShowCmd(), newProjectReposCmd(), newProjectSyncCmd(), newProjectCloneURLCmd())
 	return cmd
 }
 
@@ -384,7 +384,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			// while this ran, or the credential may not write it — left the
 			// node exactly as it was, so a diff printed first would have the
 			// operator reading a change that did not happen.
-			printPolicyDiff(out, old, pol, sources)
+			printPolicyDiff(out, old, pol, sources, lc.CloneURLs == nil)
 			fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
 			// The generation this write moved the node to is recorded in the file
 			// it was built from, the same record the policy stage keeps (D854): the
@@ -778,14 +778,16 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 // (D1a), and `repos add|rm` edits the node as the document it is
 // (patchPolicyJSON) so it cannot drop what this publisher writes.
 //
-// The clone_urls block is kept from the node being replaced, not dropped: this
-// Fugaro reads it (the runner computes a project job's clone URL from it, plan
-// task 3.3 step 3, design §4.1(1)) but no command of this release writes one, so
-// a publish that built the node without it would drop an entry an operator put
-// there — and a dropped entry is a repository that starts cloning from its
-// provider's usual host instead of the mirror the project chose. There is no
-// writer here, so "kept" is all this publisher can promise; printPolicyDiff
-// says so.
+// The clone_urls block is the local config's (SD5, D842): `fugaro project
+// clone-url` writes it and this publish carries it, so the node no longer holds
+// a value the file does not. A config that states no block keeps the node's
+// entries (localcfg.Config.CloneURLsEffective), which is what leaves a machine
+// whose config predates the key, and an owner who declines the import, with the
+// node exactly as it was (§6.4) — the block is where a repository's runs clone
+// from (the runner computes a project job's clone URL from it, plan task 3.3
+// step 3, design §4.1(1)), and a publish that dropped an entry would silently
+// move them to the provider's usual URL. printPolicyDiff says which side each
+// entry came from.
 func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy, removeRouting bool) (*projectpolicy.Policy, bool, error) {
 	if lc.Budget == nil || lc.Budget.Mode == "" {
 		return nil, false, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
@@ -1066,10 +1068,23 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// over byte for byte on top of this (policyNodeBytes, keepRouting).
 		pol.Routing = old.Routing
 	}
-	// clone_urls is kept whatever the routing switch does: no command of this
-	// release writes it (see above), so the node's entries are the only ones.
+	// clone_urls moved out of the node and into the local config (SD5, D842):
+	// `fugaro project clone-url` is the block's writer, and this file is its
+	// source, so the node is published from what the file states. A file that
+	// states nothing still keeps the node's entries (CloneURLsEffective), which
+	// is what leaves a machine whose config predates the key, and an owner who
+	// declines the import, with the node exactly as it was (§6.4) — the block
+	// is where a repository's runs clone from, and a publish that dropped an
+	// entry would move them back to the provider's usual URL silently. The
+	// member is carried over byte for byte only while the file states nothing
+	// (policyNodeBytes, keepCloneURLs): once it states the block, the file is
+	// what the operator's own edit wrote.
+	var oldCloneURLs map[string]string
 	if old != nil {
-		pol.CloneURLs = old.CloneURLs
+		oldCloneURLs = old.CloneURLs
+	}
+	pol.CloneURLs = lc.CloneURLsEffective(oldCloneURLs)
+	if old != nil {
 		// The credentials block is kept too, and for the same reason plus a
 		// stronger one: D153 makes every member of it operator-written policy
 		// (the cascade's fallback, its threshold, its backoff and D142's two
@@ -1266,7 +1281,7 @@ func policyPrices(lc *localcfg.Config) projectpolicy.Prices {
 // A node with no routing member, and one whose member is written as null, are
 // both written without one — that is direct (D1b), and the policy's own decode
 // reads the two the same way.
-func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouting bool) ([]byte, error) {
+func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouting, keepCloneURLs bool) ([]byte, error) {
 	node, err := json.Marshal(pol)
 	if err != nil {
 		return nil, userErr("building the policy: %v", err)
@@ -1274,16 +1289,20 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouti
 	if !exists {
 		return node, nil
 	}
-	// The clone_urls member is carried over byte for byte: no command of this
-	// release writes it (the runner reads it, plan task 3.3 step 3), so a key
-	// inside it that this binary does not model (a clone_urls field of a newer
-	// release) would be dropped by a re-encode of the decoded value.
+	// The clone_urls member is carried over byte for byte while this machine's
+	// config states no block of its own: the member is then the node's, and a
+	// key inside it that this binary does not model (a clone_urls field of a
+	// newer release) would be dropped by a re-encode of the decoded value. Once
+	// the config states the block the member is that block — every entry the
+	// operator's own file names — and a key the node holds beside them belongs
+	// to the source the file just replaced, so the encoded value is what is
+	// written.
 	if member, ok, err := jsonMember(oldRaw, "clone_urls"); err != nil {
 		// The node decoded as a policy a moment ago (publishedPolicyOf), so a
 		// member of it cannot be unreadable; refuse rather than write a node
 		// that silently lost the block.
 		return nil, userErr("%s cannot be read back as a document, so its clone_urls block cannot be kept: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
-	} else if ok {
+	} else if ok && keepCloneURLs {
 		if node, err = patchPolicyJSON(node, "clone_urls", member); err != nil {
 			return nil, userErr("building the policy: %v", err)
 		}
@@ -1842,7 +1861,7 @@ func repoAdmissions(pol *projectpolicy.Policy) (map[string][]string, error) {
 // allow-list, every field of every provider entry, and every price override —
 // so the operator reads the values about money and data sharing that this
 // publish replaces rather than a count of them.
-func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[string]string) {
+func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[string]string, keepCloneURLs bool) {
 	if old == nil {
 		fmt.Fprintf(out, "%s: not published yet; writing version %d\n", projectpolicy.PathShared(), new.Version)
 	} else {
@@ -1901,13 +1920,34 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// can reach here is the deliberate one, --remove-routing (or a config that
 	// writes via: direct), and then the "-" line is the whole point of the diff.
 	diffLines(out, routingLines(old), routingLines(new))
-	// The clone URLs a project job clones from (plan task 3.3 step 3): kept,
-	// because no command of this release writes one, and worth a line because a
-	// dropped entry changes where a repository's runs clone from. The URL is
-	// credential-free by the node's own validation (repourl.CloneURL), so
-	// printing it is not printing a secret.
+	// The clone URLs a project job clones from (plan task 3.3 step 3; the block
+	// moved into the local config with SD5, D842): worth a line because an
+	// entry decides where a repository's runs clone from, and it says which
+	// side it came from — `kept` when this machine's config states no block, so
+	// the entry is the node's own and this publish only leaves it standing, and
+	// nothing when the block is the config's, because then the line is what
+	// this publish wrote. The URL is credential-free by the node's own
+	// validation (repourl.CloneURL), so printing it is not printing a secret.
 	for _, canonical := range slices.Sorted(maps.Keys(new.CloneURLs)) {
-		fmt.Fprintf(out, "  clone_urls %s kept: %s\n", canonical, new.CloneURLs[canonical])
+		if keepCloneURLs {
+			fmt.Fprintf(out, "  clone_urls %s kept: %s\n", canonical, new.CloneURLs[canonical])
+			continue
+		}
+		fmt.Fprintf(out, "  clone_urls %s: %s\n", canonical, new.CloneURLs[canonical])
+	}
+	// An entry the node carried that this config does not is a removal the
+	// operator reading the diff has to see, for the reason its own line exists:
+	// the repository whose runs cloned from a URL of its own goes back to the
+	// provider's own clone URL. Only a config that states a block removes
+	// anything — one that states none keeps every entry, which is the line
+	// above.
+	if !keepCloneURLs && old != nil {
+		for _, canonical := range slices.Sorted(maps.Keys(old.CloneURLs)) {
+			if _, held := new.CloneURLs[canonical]; held {
+				continue
+			}
+			fmt.Fprintf(out, "  clone_urls %s removed (was %s)\n", canonical, old.CloneURLs[canonical])
+		}
 	}
 	// The credentials block is operator-written policy about spending (D152,
 	// D153, D142) and no command of this release writes one, so a publish keeps

@@ -705,7 +705,7 @@ func TestM5FieldsValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Terraform.StateBucket != "fugaro-tfstate-my-project" || c.Terraform.AlertEmail != "ops@example.com" ||
-		len(c.Terraform.Launchers) != 2 || len(c.Terraform.Operators) != 2 ||
+		len(c.Terraform.Operators) != 2 || len(c.Terraform.Admins) != 2 ||
 		c.LogView != "projects/my-project/locations/global/buckets/fugaro/views/runs" || c.SchedulerRegion != "us-east4" {
 		t.Fatalf("parsed = %+v", c)
 	}
@@ -717,10 +717,13 @@ func TestM5FieldsValidation(t *testing.T) {
 		t.Fatalf("round trip = %+v, %v", again, err)
 	}
 	for name, tc := range map[string]struct{ yaml, msg string }{
-		"state bucket":     {"terraform: { state_bucket: Bad_Bucket }\n", "terraform.state_bucket"},
-		"alert email":      {"terraform: { alert_email: nobody }\n", "terraform.alert_email"},
-		"launcher":         {"terraform: { launchers: [\"a@example.com\"] }\n", "terraform.launchers"},
-		"operator":         {"terraform: { operators: [\"owner:a@example.com\"] }\n", "terraform.operators"},
+		"state bucket": {"terraform: { state_bucket: Bad_Bucket }\n", "terraform.state_bucket"},
+		"alert email":  {"terraform: { alert_email: nobody }\n", "terraform.alert_email"},
+		// Both spellings come back as the version-1 list they are: v1's
+		// `launchers` folds into this version's operators, v1's `operators`
+		// into its admins (foldLegacyLists).
+		"launcher":         {"terraform: { launchers: [\"a@example.com\"] }\n", "terraform.operators"},
+		"operator":         {"terraform: { operators: [\"owner:a@example.com\"] }\n", "terraform.admins"},
 		"log view":         {"log_view: projects/my-project/buckets/fugaro/views/runs\n", "log_view"},
 		"log view project": {"log_view: projects/My_Project/locations/global/buckets/fugaro/views/runs\n", "log_view"},
 		"scheduler region": {"scheduler_region: us_east4\n", "scheduler_region"},
@@ -2600,5 +2603,78 @@ func TestIssuesNudgeKeysDecodeStrictly(t *testing.T) {
 		if _, err := Parse([]byte(sample + y)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// TestLocalConfigCloneURLsDecode: the block is read as the operator wrote it —
+// keyed by the canonical repository name a run looks the entry up by, under the
+// spelling of the file and not the node's escaping (D842).
+func TestLocalConfigCloneURLsDecode(t *testing.T) {
+	c, err := Parse([]byte(sample + "clone_urls:\n  github/acme/app: https://github.com/acme/app\n"))
+	if err != nil {
+		t.Fatalf("a config carrying the block: %v", err)
+	}
+	if got := c.CloneURLs["github/acme/app"]; got != "https://github.com/acme/app" {
+		t.Errorf("clone_urls = %v, want the URL the file names for github/acme/app", c.CloneURLs)
+	}
+}
+
+// TestLocalConfigCloneURLsKeepsThePublishedBlockWhenSilent: the block's own keep
+// rule, written out the way the map's is (ImageMapEffective). A machine whose
+// config predates the key must not publish a node that takes the project's clone
+// URLs away, and a written empty block is how the operator says there are none
+// on purpose — which is the only spelling that removes the published one.
+func TestLocalConfigCloneURLsKeepsThePublishedBlockWhenSilent(t *testing.T) {
+	published := map[string]string{"github/acme/app": "https://github.com/acme/app"}
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.CloneURLsEffective(published); !reflect.DeepEqual(got, published) {
+		t.Errorf("a silent config takes %v, want the published block", got)
+	}
+	if got := silent.CloneURLsEffective(nil); got != nil {
+		t.Errorf("a silent config beside a node with no block takes %v, want nothing published", got)
+	}
+	stated, err := Parse([]byte(sample + "clone_urls:\n  github/acme/app: https://github.com/acme/app\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stated.CloneURLsEffective(published); !reflect.DeepEqual(got, stated.CloneURLs) {
+		t.Errorf("a config that states a block takes %v, want its own", got)
+	}
+	empty, err := Parse([]byte(sample + "clone_urls: {}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := empty.CloneURLsEffective(published); got != nil {
+		t.Errorf("a written empty block takes %v, want none: it is how a published block is removed on purpose", got)
+	}
+}
+
+// TestCloneURLsNotInShared: the block is the owner's policy — the URL is where
+// a run clones from, and a launcher who could write it into the runs bucket's
+// shared file would be choosing the code every teammate's runs execute — so it
+// travels the image map's way and never reaches the shared file.
+// internal/cli's ParseShared refuses the key besides.
+func TestCloneURLsNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + "clone_urls:\n  github/acme/app: https://github.com/acme/app\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.CloneURLs != nil {
+			t.Errorf("%s: clone_urls = %v", name, got.CloneURLs)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "clone_urls") {
+			t.Errorf("%s: output carries clone_urls:\n%s", name, out)
+		}
+	}
+	if c.CloneURLs == nil {
+		t.Error("Shared/MergeShared cleared the local block")
 	}
 }

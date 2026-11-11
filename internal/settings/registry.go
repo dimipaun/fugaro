@@ -451,7 +451,8 @@ const (
 	// docOrchestrator's reason: the stage, its default and the switch's home on
 	// the published node are stated there and nowhere else yet, and a document
 	// of the stage's own would take the row over.
-	docTriage = "docs/post-review-triage/implementation-plan.md"
+	docTriage    = "docs/post-review-triage/implementation-plan.md"
+	docCloneURLs = "docs/project-claude-accounts.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -748,8 +749,8 @@ var localRows = []Row{
 
 	loc("terraform.state_bucket", "the installation's state bucket", "setup", docSetup),
 	loc("terraform.alert_email", "none: no budget alert is mailed", "setup", docSetup),
-	loc("terraform.launchers", "none", "setup", docSetup),
 	loc("terraform.operators", "none", "setup", docSetup),
+	loc("terraform.admins", "none", "setup", docSetup),
 	loc("terraform.budget_admins", "none", "setup", docSetup),
 	loc("terraform.registry_cleanup", "Fugaro's own cleanup rule", "setup", docSetup),
 	loc("terraform.no_log_isolation", "false: each run's logs are isolated", "setup", docSetup),
@@ -924,6 +925,16 @@ var localRows = []Row{
 	// pull request back (D1854), and no command writes it beyond the publish: an
 	// operator states it in the file and runs the update.
 	loc("triage", "true: a review round's findings are judged by the triage stage in the modes that triage at all, and a written false turns the stage off for the project", "project", docTriage),
+	// The clone URLs the project's repositories clone from (settings spec
+	// §5.6, SD5, D842). The block moved out of the policy node and into the
+	// owner's local config, and `fugaro project clone-url` is the family that
+	// writes it: an entry's key is a canonical repository name and its value is
+	// held to the node's own rule (projectpolicy.ValidCloneURLs), which is a
+	// check no generic scalar write can make. One row for the whole map, like
+	// the image map above, and local-only: a launcher who could write the block
+	// into the shared file would be choosing the code every teammate's runs
+	// execute.
+	locLocal("clone_urls", "none: a run clones from its provider's own URL for its repository (https://github.com/owner/name.git)", "project clone-url", docCloneURLs),
 
 	// The orchestrator daemon's own guardrails (D1239, D1234) are the owner's
 	// policy like the catalog above, and one row per member for the catalog's
@@ -1056,10 +1067,11 @@ var defaultValues = map[string]Default{
 	"update_check":       value("true", "config.DefaultUpdateCheck"),
 	"max_parallel":       value("20", "localcfg.DefaultMaxParallel"),
 	"build.machine_type": value("E2_HIGHCPU_8", "localcfg.DefaultBuildMachineType"),
-	// The local file's own format version: the loader fills 1 for a file that
-	// sets it nowhere (localcfg.Parse) and no constant holds it, so the value
-	// is written here and read back out of a parsed config like the two above.
-	"local.version": value("1", ""),
+	// The local file's own format version: the loader fills the version this
+	// release writes for a file that sets it nowhere (localcfg.Parse), which is
+	// localcfg.ConfigVersion, so the value is written here and read back out of
+	// a parsed config like the two above.
+	"local.version": value("2", "localcfg.ConfigVersion"),
 	// The Issues section's nudge thresholds (T-IS15): the loader answers the
 	// constants for a file that sets neither, through the accessors rather
 	// than the fields, so "the file wrote nothing" and "the file wrote the

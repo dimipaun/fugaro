@@ -158,8 +158,17 @@ const (
 // family and so is refused by a family command like the rows above, but the
 // block it sits in is a wildcard block no prefix reaches either, so it is one
 // of the rows with no generic writer — one more of them.
+//
+// The settings design's S6 moved the registry's figure once more, by one row
+// and not the allowlist's: the clone URLs a run clones its repository from
+// (settings spec §5.6, SD5, D842) left the policy node for a block of the
+// owner's local config, and its row is one for the whole map whose owner is the
+// `project clone-url` family -- `settings set` can make no cross-key check
+// between an entry's canonical name and its URL, which is the node's own rule
+// (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
+// list does not.
 const (
-	cfmRegistryRows   = 408
+	cfmRegistryRows   = 409
 	cfmAllowlistNamed = 96
 )
 

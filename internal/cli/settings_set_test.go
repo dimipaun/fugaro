@@ -43,7 +43,10 @@ func settingsWriteHomeWith(t *testing.T, extra string) (home, localPath string) 
 // takes the current directory's checkout, which is what these tests exercise.
 func settingsWriteCheckout(t *testing.T, fugaroYAML string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	testutil.Git(t, dir, "init", "-q")
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(fugaroYAML), 0o600); err != nil {
 		t.Fatal(err)

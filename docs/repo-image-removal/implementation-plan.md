@@ -487,7 +487,7 @@ readiness branches that decide between them.
      (it is what the sandbox runs from now on), and the check's own dollars recorded.
 
 - **Red step.** The register row and the section are the deliverable; `registerRow`-shaped pins
-  (`internal/cli/docs_check96_test.go:221`) and the ordering pin that a check is written above the
+  (`internal/cli/docs_check96_test.go:231`) and the ordering pin that a check is written above the
   highest written section (`internal/cli/docs_checks_145_149_test.go:179`) fail until both are written,
   and `website/test/checklist.mjs` reads the file's sections. Nothing here is `go test`-provable beyond
   that: **the check's own result is the owner's**, and the 0.20.0 tag follows it (§7).

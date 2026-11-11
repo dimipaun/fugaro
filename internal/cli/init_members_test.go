@@ -53,7 +53,7 @@ func members(v any) []string {
 	return out
 }
 
-// A new project config grants the launcher and operator roles to the person
+// A new project config grants the operator and admin roles to the person
 // running init, before the plan; the config records them.
 func TestFirstRunDefaultsMembersToTheUser(t *testing.T) {
 	r := newInitRig(t)
@@ -70,7 +70,7 @@ func TestFirstRunDefaultsMembersToTheUser(t *testing.T) {
 	if got := members(v["operators"]); !slices.Equal(got, []string{"user:me@example.com"}) {
 		t.Errorf("operators %v", got)
 	}
-	if !strings.Contains(out, "launchers: user:me@example.com (you); operators: user:me@example.com (you); change with --launcher/--operator") {
+	if !strings.Contains(out, "operators: user:me@example.com (you); admins: user:me@example.com (you); change with --operator/--admin") {
 		t.Errorf("not said:\n%s", out)
 	}
 	data, err := os.ReadFile(e.path)
@@ -78,26 +78,27 @@ func TestFirstRunDefaultsMembersToTheUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	lc, err := localcfg.Parse(data)
-	if err != nil || !slices.Equal(lc.Terraform.Launchers, []string{"user:me@example.com"}) || !slices.Equal(lc.Terraform.Operators, []string{"user:me@example.com"}) {
+	if err != nil || !slices.Equal(lc.Terraform.Operators, []string{"user:me@example.com"}) || !slices.Equal(lc.Terraform.Admins, []string{"user:me@example.com"}) {
 		t.Fatalf("the config does not record them: %v\n%s", err, data)
 	}
 }
 
 // Flags win, and any of them leaves the defaults alone (no lookup at all).
-// The launchers an apply grants are the launchers and the operators together.
+// The launchers an apply grants are the operators and the admins together (the
+// Terraform variables kept their version-1 names, D1589).
 func TestMemberFlagsOverrideTheDefault(t *testing.T) {
 	for name, tc := range map[string]struct {
 		o         initOptions
 		launchers []string // the granted launchers (launchers and operators together)
 		operators []string
 	}{
-		"--launcher": {initOptions{yes: true, launchers: []string{"user:ann@example.com"}, launchersChanged: true},
+		"--operator": {initOptions{yes: true, operators: []string{"user:ann@example.com"}, operatorsChanged: true},
 			[]string{"user:ann@example.com"}, []string{}},
-		"--operator": {initOptions{yes: true, operators: []string{"group:ops@example.com"}, operatorsChanged: true},
+		"--admin": {initOptions{yes: true, admins: []string{"group:ops@example.com"}, adminsChanged: true},
 			[]string{"group:ops@example.com"}, []string{"group:ops@example.com"}},
-		"both": {initOptions{yes: true, launchers: []string{"user:a@example.com"}, operators: []string{"user:b@example.com"}, launchersChanged: true, operatorsChanged: true},
+		"both": {initOptions{yes: true, operators: []string{"user:a@example.com"}, admins: []string{"user:b@example.com"}, operatorsChanged: true, adminsChanged: true},
 			[]string{"user:a@example.com", "user:b@example.com"}, []string{"user:b@example.com"}},
-		"--launcher '' (nobody)": {initOptions{yes: true, launchers: []string{}, launchersChanged: true}, []string{}, []string{}},
+		"--operator '' (nobody)": {initOptions{yes: true, operators: []string{}, operatorsChanged: true}, []string{}, []string{}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newInitRig(t)
@@ -133,7 +134,7 @@ func TestExistingConfigIsNotDefaulted(t *testing.T) {
 	}
 }
 
-// Adopting an installation keeps its own launchers: the default is not made.
+// Adopting an installation keeps its own members: the default is not made.
 func TestAdoptKeepsTheInstallationsMembers(t *testing.T) {
 	r := newInitRig(t)
 	r.installationState(t)
@@ -161,7 +162,7 @@ func TestNoUserNeedsTheFlags(t *testing.T) {
 				t.Fatalf("%+v\n%s", res, out)
 			}
 			lf := res.Left[0]
-			if len(lf.Commands) != 1 || !strings.Contains(lf.Commands[0], "--launcher user:<your-email>") || !strings.Contains(lf.Commands[0], "--operator user:<your-email>") || strings.Contains(lf.Commands[0], "\n") {
+			if len(lf.Commands) != 1 || !strings.Contains(lf.Commands[0], "--operator user:<your-email>") || !strings.Contains(lf.Commands[0], "--admin user:<your-email>") || strings.Contains(lf.Commands[0], "\n") {
 				t.Errorf("left %+v", lf)
 			}
 			if !strings.Contains(lf.Text, "nobody can run anything") || n(r.ran(t, "apply")) != 0 {
@@ -187,7 +188,7 @@ func TestReviewScreenNamesDefaultedMembers(t *testing.T) {
 	}
 	out.Reset()
 	e.reviewScreen(t.Context(), "test")
-	if !strings.Contains(out.String(), "launchers:      user:me@example.com (default: you)") {
+	if !strings.Contains(out.String(), "operators:      user:me@example.com (default: you)") {
 		t.Errorf("\n%s", out.String())
 	}
 }
@@ -266,7 +267,7 @@ func TestDefaultMembersRefusesAnExistingConfig(t *testing.T) {
 	n := fakeUser(t, "me@example.com", nil)
 	e := rigEngine(t, r, &initOptions{})
 	before := e.spec
-	if err := e.defaultMembers(t.Context()); err != nil || *n != 0 || e.defaulted != "" || e.r.o.launchersChanged || !slices.Equal(e.spec.Launchers, before.Launchers) {
+	if err := e.defaultMembers(t.Context()); err != nil || *n != 0 || e.defaulted != "" || e.r.o.operatorsChanged || !slices.Equal(e.spec.Launchers, before.Launchers) {
 		t.Fatalf("err %v, lookups %d, defaulted %q", err, *n, e.defaulted)
 	}
 }
