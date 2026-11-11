@@ -10,7 +10,6 @@ As of 2026-11-11, read from `main`, the open pull requests and each plan's task 
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
 | console-dependency-graph | 13/17 | GV3.1, GV3.2, GV4.1 |
 | bitbucket-credentials | 11/12 | owner Checks 149 and 145, and 148's read half (S2, D1961; its script landed with T2.6 and T2.11 in #2270); S3 superseded by the secrets-brokering proxy chain (2026-11-10), except T3.3's trust paths; Check 147 retired (D1960) and T2.6 unblocked (D1962); D1960–D1962 answered 2026-11-10 as recommended (its reconciliation-secrets-brokering.md) |
-| mcp-server | 10/12 | nothing left to build: M9 parked (D936, the fence declined), no release schedules it; M11 declined (2026-11-09); M4's store half (#2117) and M5b (#2114) merged |
 | contract-first-decoupling | 6/7 | CD5 (in a run, #2273) |
 | task-governance | 25/31 | 6 left: T3.4 (docs), and the rest in `ee/governance`; T8.3 merged (#2209) |
 | mobile | about 35/45 | P5.x, P7.2 to P7.5; owner P2.3 and P4.4 |
@@ -66,6 +65,7 @@ As of 2026-11-11, read from `main`, the open pull requests and each plan's task 
 | Spec | Left |
 | --- | --- |
 | compatibility-matrix | owner CM4 (the read of the copy); CM3 merged (#2194) |
+| mcp-server | M9 parked (D936, the fence declined, no release schedules it) and M11 declined (2026-11-09); M4's store half (#2117) and M5b (#2114) merged |
 | api-key-review | owner Check 330 (AK8); AK6b (#2172) and AK7 (#2263) merged; AK9 and AK10 are folded into model-crafts MC6 (F26, D1638) |
 | console-managed-screens | none (console 0.121.0) |
 | console-settings-edit | none (console 0.120.0) |
