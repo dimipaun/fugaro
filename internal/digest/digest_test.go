@@ -1289,6 +1289,16 @@ func TestDigestCountsChallengersApart(t *testing.T) {
 	if len(with.Flags) != 0 {
 		t.Errorf("the period's flags = %+v, want none: the run that raised the one flag is a challenger's", with.Flags)
 	}
+
+	// A period whose every record is a challenger: the repository ran nothing
+	// of its own, and the report says so and counts the arms on their line.
+	only := Build([]runstore.Record{halted, plain}, p)
+	if only.Total.Runs != 0 || only.Challengers.Runs != 2 {
+		t.Errorf("a period of challengers alone = %+v with %+v, want no run of the repository's own and both arms counted apart", only.Total, only.Challengers)
+	}
+	if out := string(Markdown(only)); !strings.Contains(out, "No run of this repository finished in this period.") || !strings.Contains(out, wantLine) {
+		t.Errorf("a period of challengers alone does not read as one:\n%s", out)
+	}
 }
 
 // TestDigestUnchangedWithoutAB (A4.5): a run the launcher did not sample is the
