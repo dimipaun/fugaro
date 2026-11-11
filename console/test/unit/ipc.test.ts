@@ -2102,6 +2102,30 @@ describe('the argument schemas', () => {
     expect(CONSOLE_OPERATIONS.map((row) => row.command)).not.toContain('project show')
   })
 
+  it('pins `seats.read`’s empty schema, which is the whole of what it may send', () => {
+    // **S4.2's estimate has no argument at all** (the subscriptions plan,
+    // D439), and its emptiness is a privacy claim rather than a tidiness one:
+    // the count is measured over the installation's own records -- the launcher
+    // list, the operator lists, and the run requesters of the last ninety days
+    // -- and every one of those is the command's own reading, so a payload that
+    // could name a day, a window, a project, a run or a person would be
+    // pointing the child at somebody else's records. The ninety days are the
+    // command's; no flag moves them. `seats.read` is also a read of the active
+    // installation's own config and bucket, which is why its row takes the
+    // project flag -- from the screened context and never from a payload
+    // (`src/main/spawn.ts`), and the pin below refuses `project` as a key too.
+    expect(operationFor('seats.read').command).toBe('seats')
+    expect(operationFor('seats.read').flags).toEqual(['--json'])
+    expect(operationFor('seats.read').args).toEqual([])
+    // The empty payload is accepted, and it is the only accepted payload.
+    expect(validateArguments('seats.read', WELL_FORMED['seats.read']).ok).toBe(true)
+    for (const key of ['days', 'window', 'since', 'project', 'config', 'run', 'person']) {
+      const decision = validateArguments('seats.read', { [key]: 'x' })
+      expect(decision.ok, `seats.read accepted ${key}`).toBe(false)
+      expect(decision.ok ? '' : decision.reason).toBe(`seats.read takes no ${key}`)
+    }
+  })
+
   it('pins `settings.edit`’s three keys, which are the whole of what a write may send', () => {
     // **C3's write is the second operation here whose subject is a document**
     // (the settings-edit plan's C3, D1103), so its payload is the whole of what

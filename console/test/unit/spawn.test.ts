@@ -1105,6 +1105,45 @@ describe('the spawn table and the argv it builds', () => {
     expect(SPAWN_COMMANDS.map((row) => row.words.slice(0, 3).join(' '))).toContain('project policy show')
   })
 
+  it('spawns the seats estimate as its command, `--json` and nothing else', () => {
+    // **S4.2's row, word for word** (the subscriptions plan; the design
+    // allow-list's `seats --json`). It is the managed reads' shape again -- the
+    // argv is the row's own words and the caller fills none of them -- and the
+    // emptiness is what keeps the estimate an estimate *of this installation*:
+    // the ninety days, the launcher list and the requesters are the command's
+    // own reading, so a payload that could name a day, a window or a person
+    // would be pointing the child at records that are not the window's. Spelled
+    // out here rather than read off the row, so a change to the row is a
+    // failing test.
+    expect(argvFor('seats.read', {}, safeContext({ project: 'chosen' }))).toEqual([
+      'seats',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === 'seats.read')
+    expect(row?.args).toEqual([])
+    expect(row?.dirFlag).toBe(false)
+    // A key the row does not declare never reaches an element, which is the rule
+    // that keeps a payload from smuggling a flag in -- and the words the CLI
+    // owns but this console fills from the chosen installation rather than from
+    // a payload (`--project`, `--config`) are keys on no row either, so a
+    // payload that names one is refused like any other.
+    for (const key of ['days', 'window', 'since', 'project', 'config', 'run', 'person', 'json']) {
+      expect(
+        () => argvFor('seats.read', { [key]: 'x' }, safeContext()),
+        `seats.read accepted ${key}`,
+      ).toThrow(/does not declare/)
+    }
+    // The argv's whole flag list is the row's one word plus the console's own
+    // `--project`: no credential, no host, no path and no other command's flag.
+    expect(
+      argvFor('seats.read', {}, safeContext({ project: 'chosen' })).filter((word) =>
+        word.startsWith('--'),
+      ),
+    ).toEqual(['--json', '--project'])
+  })
+
   it('emits one array element per value, in the operation’s own order', () => {
     const argv = argvFor(
       'runs.list',
