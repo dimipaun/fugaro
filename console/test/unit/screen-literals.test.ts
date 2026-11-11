@@ -404,6 +404,25 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'read.sentence':
       'the sentence `licenceSaveOutcomeOf` read out of one `licence.save` reply: this file\'s own word for a write that happened (`LICENCE_SAVED_WORD`), the store\'s refusal **through `sanitizeRefusal`** (the verifier\'s own sentence for a key that does not verify, which is the one thing an operator has to be able to read unparaphrased), or this file\'s `LICENCE_UNREADABLE_WORD` for a reply nobody can read -- so no string a document chose reaches the sink',
   },
+  // The seats section (S4.2) draws the estimate `fugaro seats --json` publishes
+  // beside the seats the licence key carries. It reads its own reply, takes the
+  // key's seat count from the licence section's own model rather than decoding
+  // the key twice, and writes every sentence about the figures itself; the
+  // document's strings reach the window through `putText` (a person, a member,
+  // the sources that named them, the window) and `putReading` (the two figures).
+  'seats.ts': {
+    'model.because':
+      'the section\'s one reason sentence, **through `sanitizeRefusal`** in `drawnRefusal` before it is stored on the model: the CLI\'s own refusal for the read (`SourceRefusal`), or one of this file\'s own sentences for a reply this build cannot read (`SEATS_ABSENT_BECAUSE`, `SEATS_SHAPE_BECAUSE`) -- or `REFUSAL_UNREADABLE` when the sentence cannot be drawn at all, the same three-way door `licence.ts`\'s `model.because` keeps for the same channel',
+    "model.drawn === 'answer' ? 'read' : 'not read'":
+      'whether this section drew an answer at all, in this file\'s own two words: `model.drawn` is the flag `buildSeats` set from the reply it read -- an answer, a refusal, or a shape this build does not know -- so the pair is the console\'s vocabulary and never a string a document chose',
+    'row.why':
+      'a `not_counted` row\'s reason, which `buildSeats` takes from this file\'s own table (`SEATS_WHY_WORDS`, the document\'s two codes -- `unknown_size` and `account` -- in the console\'s words) or answers with `SEATS_WHY_UNREADABLE`; the document\'s code is matched against that closed table and never stored, so a reason a later CLI grew is a console sentence rather than a word an operator would have to interpret',
+    term: {
+      within: 'figure',
+      reason:
+        'the parameter of the `figure` helper itself; every call site passes one of this file\'s own term constants (`SEATS_USED_TERM`, `SEATS_LICENSED_TERM`), which are the console\'s words for the figure beside them',
+    },
+  },
 })
 
 /** blankComments replaces every comment with spaces, keeping strings and line
@@ -899,6 +918,19 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason: 'the class list of the `make` helper; every call site passes one of this file\'s own class constants',
     },
   },
+  // The seats section (S4.2) draws one document -- `fugaro seats --json` --
+  // and its strings reach the window through the two doors every screen uses:
+  // `putText` for a person, a member and the sources that named them, and
+  // `putReading` for the two figures. Its own hooks are the operation, the
+  // class list of `make` and the window, which is the document's own days
+  // (through `putText`). What is left is the class list and the section's three
+  // own sentences.
+  'seats.ts': {
+    "classes.join(' ')": {
+      within: 'make',
+      reason: 'the class list of the `make` helper; every call site passes one of this file\'s own class constants',
+    },
+  },
 })
 
 const STRING_LITERAL = /^(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")$/
@@ -1313,6 +1345,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       'reading.ts',
       'retirements.ts',
       'run.ts',
+      'seats.ts',
       'spend.ts',
     ])
   })
@@ -1659,6 +1692,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/reading.ts',
       'screens/retirements.ts',
       'screens/run.ts',
+      'screens/seats.ts',
       'screens/spend.ts',
       'section.ts',
       'skeleton.ts',

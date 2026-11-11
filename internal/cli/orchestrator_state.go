@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -129,14 +127,16 @@ type orchestratorBriefCache struct {
 }
 
 // orchestratorCachePath is the daemon's cached brief for one orchestrator id:
-// $XDG_CACHE_HOME/fugaro/orchestrator/<id>.json, placed through
-// localcfg.UserDir the way the name check's cache is.
+// $XDG_CACHE_HOME/fugaro/orchestrator/<id>.json. The place is the writer's own
+// — internal/orchestrator.BriefCachePath, which the daemon writes through — so
+// the two ends of the file cannot drift into reading one path and writing
+// another.
 func orchestratorCachePath(getenv func(string) string, id string) (string, error) {
-	dir, err := localcfg.UserDir(getenv, runtime.GOOS, localcfg.DirCache)
+	path, err := orchestrator.BriefCachePath(getenv, runtime.GOOS, id)
 	if err != nil {
 		return "", userErr("the daemon's cached brief cannot be placed: %v", err)
 	}
-	return filepath.Join(dir, "fugaro", "orchestrator", id+".json"), nil
+	return path, nil
 }
 
 // readOrchestratorBriefCache reads the cached brief, with the path it read so

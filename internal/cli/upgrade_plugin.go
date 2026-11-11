@@ -1,13 +1,10 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/dimipaun/fugaro/internal/claudeplugin"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -41,9 +38,9 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 	fail := func(err error) stepResult {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
-	// The pin the checkout's own settings carry, and the one Claude Code's
-	// marketplace is declared at: releaseVersion is X.Y.Z, so Tag cannot fail
-	// here, and a marketplace is never pinned to anything but a release tag.
+	// The tag Claude Code's marketplace is declared at: releaseVersion is
+	// X.Y.Z, so Tag cannot fail here. Nothing reads a pin off the checkout any
+	// more (D949): the marketplace this step declares is Fugaro's own.
 	tag, err := pluginwire.Tag(ver)
 	if err != nil {
 		return fail(err)
@@ -55,10 +52,7 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 	if err != nil {
 		return fail(err)
 	}
-	repo, why := marketRepo(u)
-	if repo == "" {
-		return stepResult{state: stepSkipped, reason: why}
-	}
+	repo := pluginwire.Repo
 	fmt.Fprintf(u.w, "  using claude at %s\n", pluginwire.Printable(bin))
 	run := &claudeplugin.Runner{Bin: bin, Dir: u.loc.Root, Out: u.w}
 	markets, err := run.Markets(ctx)
@@ -74,9 +68,12 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return fail(err)
 	}
 	if len(plan.Calls) == 0 {
+		// plan.Before is the machine's own install (claudeplugin.UserVersion),
+		// which is the one this step maintains and the one pluginCheck reads off
+		// Claude Code's record (D949, U2): a checkout-scoped install standing at
+		// another version is not reported here as if it were the machine's.
 		return stepResult{state: stepCurrent, reason: "installed " + pluginwire.Printable(plan.Before)}
 	}
-	before, _ := os.ReadFile(u.loc.Settings)
 	// cleared is whether a Clear ran, and so whether a failed add has anything
 	// to put back: claude's removal takes the marketplace declaration and every
 	// install of it, so a failed step must not leave the machine without either
@@ -146,63 +143,63 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 			return fail(err)
 		}
 	}
-	note := ""
-	if after, _ := os.ReadFile(u.loc.Settings); !bytes.Equal(before, after) {
-		note = "; claude changed " + pluginwire.Printable(u.loc.Settings) + ": review it with git diff"
-	}
+	// The read of the installs can fail on its own (the record is unreadable,
+	// say), and that stop is after the clear like any other.
 	if installed, err = run.Installed(ctx); err != nil {
-		// The read of the installs can fail on its own (the record is
-		// unreadable, say), and that stop is after the clear like any other.
 		putBack()
 		return fail(err)
 	}
-	got := claudeplugin.Effective(u.loc.Root, installed)
+	// What the step converged is the install it maintains: the machine's own,
+	// at user scope. A checkout-scoped install is not this step's to move any
+	// more (D949, U2), so one standing behind this release — a person's, or one
+	// a trusted folder made from the pin it carried — is not a failure here:
+	// what applies to the checkout is a question no reader of this line asks,
+	// and nothing in the tree asks it (claudeplugin.Effective has no caller).
+	got := claudeplugin.UserVersion(installed)
 	c, ok := claudeplugin.Compare(got, ver)
 	switch {
 	case !ok:
 		putBack()
-		return fail(fmt.Errorf("after the update claude lists no install of %s that applies to this checkout", pluginwire.PluginID))
+		return fail(fmt.Errorf("after the update claude lists no install of %s at user scope", pluginwire.PluginID))
 	case c < 0:
 		putBack()
 		return fail(fmt.Errorf("after the update the installed plugin is still %s, older than this fugaro %s", pluginwire.Printable(got), ver))
 	case c > 0:
-		return stepResult{state: stepDone, reason: fmt.Sprintf("installed %s, newer than this fugaro %s (Claude Code's marketplace is pinned to a newer release, and the pin is never moved down): brew upgrade dimipaun/tap/fugaro, then fugaro upgrade; restart running Claude Code sessions to apply it%s",
-			pluginwire.Printable(got), ver, note)}
+		return stepResult{state: stepDone, reason: fmt.Sprintf("installed %s, newer than this fugaro %s (Claude Code's marketplace is pinned to a newer release, and the pin is never moved down): brew upgrade dimipaun/tap/fugaro, then fugaro upgrade; restart running Claude Code sessions to apply it",
+			pluginwire.Printable(got), ver)}
 	}
-	return stepResult{state: stepDone, reason: "installed " + ver + "; restart running Claude Code sessions to apply it" + note}
+	return stepResult{state: stepDone, reason: "installed " + ver + "; restart running Claude Code sessions to apply it"}
 }
 
 // pluginCheck is the plugin step under --check: Claude Code's record of
-// installed plugins compared with this fugaro, no claude run.
+// installed plugins compared with this fugaro, no claude run. It answers about
+// the install the write path maintains, the machine's own at user scope
+// (claudeplugin.UserVersion), which Status reads off the record whether or not
+// the checkout carries a pin (pluginwire.Report.UserInstall): what applies to
+// the checkout is another question — doctor's, and the staleness warning's —
+// and a checkout-scoped install with nothing at user scope would answer it with
+// a version while the machine's own Claude Code has no plugin, which is the
+// install this step's write still makes (D949, U2).
 func pluginCheck(u *upgradeCtx, ver string) stepResult {
 	r := pluginwire.Status(u.loc.Settings, Version, installedPlugins())
-	if r.Install == pluginwire.NotInstalled {
+	switch r.UserInstall {
+	case pluginwire.NotInstalled:
 		return stepResult{state: stepSkipped, reason: "not installed on this machine (fugaro upgrade installs it through the claude CLI)"}
+	case pluginwire.OK, pluginwire.InstalledDiffers:
+		// Only these two carry a version read out of the record; anything else
+		// about it — a file that cannot be read, a build with no release tag —
+		// is what the line below says it cannot tell.
+	default:
+		return stepResult{state: stepSkipped, reason: "cannot tell from Claude Code's record of installed plugins (fugaro upgrade asks claude itself)"}
 	}
-	c, ok := claudeplugin.Compare(r.Version, ver)
+	c, ok := claudeplugin.Compare(r.UserVersion, ver)
 	switch {
 	case !ok:
 		return stepResult{state: stepSkipped, reason: "cannot tell from Claude Code's record of installed plugins (fugaro upgrade asks claude itself)"}
 	case c < 0:
-		return stepResult{state: stepStale, reason: fmt.Sprintf("installed %s, this fugaro is %s", r.Version, ver)}
+		return stepResult{state: stepStale, reason: fmt.Sprintf("installed %s, this fugaro is %s", r.UserVersion, ver)}
 	case c > 0:
-		return stepResult{state: stepCurrent, reason: fmt.Sprintf("installed %s, newer than this fugaro %s (brew upgrade dimipaun/tap/fugaro)", r.Version, ver)}
+		return stepResult{state: stepCurrent, reason: fmt.Sprintf("installed %s, newer than this fugaro %s (brew upgrade dimipaun/tap/fugaro)", r.UserVersion, ver)}
 	}
-	return stepResult{state: stepCurrent, reason: "installed " + r.Version}
-}
-
-// marketRepo is the marketplace repository the plugin step passes to claude:
-// dimipaun/fugaro, or, with --allow-fork, the fork the checkout's pin names
-// when it is a valid owner/name; "" and the reason otherwise.
-func marketRepo(u *upgradeCtx) (repo, why string) {
-	r := pluginwire.Status(u.loc.Settings, Version, "")
-	switch {
-	case r.Repo == "" || strings.EqualFold(r.Repo, pluginwire.Repo):
-		return pluginwire.Repo, ""
-	case !u.o.allowFork:
-		return "", "the checkout's marketplace is " + pluginwire.Printable(r.Repo) + ", not " + pluginwire.Repo + ": pass --allow-fork if that fork is yours"
-	case !claudeplugin.ValidRepo(r.Repo):
-		return "", "the checkout's marketplace " + pluginwire.Printable(r.Repo) + " is not a GitHub owner/name fugaro passes to claude"
-	}
-	return r.Repo, ""
+	return stepResult{state: stepCurrent, reason: "installed " + r.UserVersion}
 }

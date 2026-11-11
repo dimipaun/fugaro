@@ -13,12 +13,6 @@ import (
 	"unicode"
 )
 
-// Provider kinds, as git.provider names them in fugaro.yaml.
-const (
-	KindGitHub    = "github"
-	KindBitbucket = "bitbucket"
-)
-
 // PRSpec describes the pull request a run wants.
 type PRSpec struct {
 	// Number, when non-zero, makes EnsurePR update pull request Number's

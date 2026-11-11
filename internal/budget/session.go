@@ -133,6 +133,7 @@ type Session struct {
 	mu       sync.Mutex
 	entry    AgentEntry
 	noRecipe bool // the rules refused the recipe key at Start
+	noMode   bool // the rules refused the rigor mode's two children at Start
 
 	newKeysChecked bool // checkNewKeys has probed action/tokens once
 	newKeysRefused bool // the rules refused action/tokens; both are dropped
