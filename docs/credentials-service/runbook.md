@@ -186,3 +186,71 @@ fugaro secrets set bitbucket-token --repo <owner/name> < token-file    # the bui
 The bundle write is §6's read-modify-write, and the version it replaced is disabled afterwards. The repository's own copy is the ordinary one, or the project-wide one where the token really is one workspace token. Wait for the builds and executions using it to end, then revoke the old token at Bitbucket. The two copies must not disagree: the build and the proxy would authenticate with different tokens, and one of them is the one you meant to retire. A repository the node does not proxy has one copy only, the one it has always had.
 
 **A cold start and an outage land on the clone.** The service scales to zero (§3's second read), so for a proxied run the first git request after an idle period, the clone, pays the cold start before any work. It is one revision with **no redundancy** beyond Cloud Run's own, so a service that is never applied, a revision that fails to start and a caller IAM refuses leave every proxied run unable to clone — and §3's reads are what tells those apart. A proxied run that cannot reach the service fails or halts named and **never falls back to a token of its own** (D143): it has none to fall back to, which is the point. Every Bitbucket repository the node does not proxy is untouched by all of this: its runs mount and read their own token exactly as before.
+
+## 12. The Bitbucket read consumer: creating it, and stopping, rotating and transferring it
+
+§11 is the **proxy's** token — the one a run's git traffic reaches through the service. This section is the other Bitbucket credential the bundle holds: the **read consumer**, a read-scoped Bitbucket Cloud OAuth consumer stored as the bundle's `bitbucket-read-consumer` entry (D361, D362; `internal/credsvc/bundle.go`'s `BitbucketReadConsumerSecret` and `KindBitbucketReadConsumer`, read by that file's `Bundle.BitbucketReadConsumer`). The service's **read mint** is what spends it and the only thing that does: `POST /v1/bitbucket/read-token` — `internal/credsvc/bitbucket.go`'s `BitbucketReadPath`, served by `Server.bitbucketRead` — and it hands the token to a **person** or to the **coordinator job**, and to no run. A caller presenting a run identity on that route is refused by name, and a refusal there is audited like every other mint (§7's stop switch is read first, so a stopped service reads no consumer at all).
+
+**It is the installing person's consumer, and that is both its point and its limit (D367).** Create it under the **installing person's own account** at Bitbucket, with **read scopes only**. Every token it mints then acts as **that person**, read-only: the reads it makes are their reads, and it **stops working when that person leaves the workspace or loses access** — which is why §6's rotation is not the whole of keeping it alive, and why the ownership transfer below is a step of its own. Nothing here narrows what the token reaches: the mint picks **who receives a token**, never what the token can read (G11).
+
+**One fact about creating a consumer is UNVERIFIED, because Check 145 has not been run.** Bitbucket Cloud's own pages disagree with each other and with the token endpoint, and the reconciliation carries it as open rather than as a reading:
+
+- **U14** — whether creating an OAuth consumer needs **workspace-admin rights**, and whether the token then reaches admin endpoints beyond its scopes. If it does, the person who creates this consumer has to be an admin, and the scope allowlist below is the only thing holding the token's reach.
+
+**U14 is UNVERIFIED**, and `scripts/live-checks/check145.sh` is the owner-run check that settles it; it also records the token's lifetime (U1), its reach (U3), the plan the sandbox admits (U4), the seat count (U5), IP allowlisting (U8), the grant's scope listing (U11) and whether repeated grants are distinct (U12). Until it has run on a sandbox workspace, treat the clause above as unanswered rather than as either answer.
+
+**U15** — whether the consumer must be marked **private** — **is closed (2026-11-10)**, and it needs no step here: Check 145 ran, the create form offers no such choice, and the grant worked for the consumer it made ([bitbucket-credentials/reconciliation.md](../bitbucket-credentials/reconciliation.md), its "U15 (closed 2026-11-10)"), so there is nothing for this section to tell an operator to set.
+
+**Write it with `fugaro creds set`, and write it only after `fugaro update`.** The value is a YAML mapping of exactly `key`, `secret` and `workspace`, one field per line (`internal/cli/creds.go`'s `readConsumerShape`, read by `readConsumerNode`); the `workspace` is the workspace the installation's repositories are in, and the read mint refuses a repository whose workspace is not that one, by name (G11):
+
+```bash
+fugaro creds ls                                     # the names, never a value
+fugaro creds set bitbucket-read-consumer < <consumer-file>
+```
+
+The value comes in on **stdin only** and is never an argument, and the command is refused from a coding agent's session and from a run's process before it reads anything (the header). **Run `fugaro update` first, on every machine that writes:** the deployed service has to be a version that knows the entry's kind, because the bundle loader refuses the **whole** bundle on a key it does not know — writing this entry into a bundle an older service still reads halts every model call and every GitHub mint of the installation. And **never write a `bitbucket-run-consumer` entry by hand**: that kind is unknown until the parked run-mint slice returns, the loader refuses the whole bundle on it, and the writes above are the only ones that check what they write.
+
+**Who the consumer is minted to, one caller class per command (B1, B2, B5).** The read mint admits exactly two classes, and which one a call arrives as is decided by the verified email of the Google ID token it presents (`internal/credsvc/auth.go`'s `VerifyReadCaller` and `readCallerClass`; the people are the installation's operators, the `PersonAccounts` that file's `Authenticator` is built from):
+
+- the **person class** — a person, for `coordinator show` on a Bitbucket repository and for that person's **own local** `coordinator status --repo <owner/name>`. A user account's own `gcloud auth print-identity-token` is enough: that class admits the token's gcloud audience beside the service's own URL;
+- the **coordinator class** — **the coordinator account alone**, for the sweep the coordinator job runs. Every other account is refused by name, including the coordinator's planned resident service, and that class admits the service's URL as the token's audience and nothing else.
+
+**Nothing a person runs goes through the coordinator class, and nothing the coordinator runs goes through the person class.** The consumer itself is the same entry for both, and a class admits only while the bundle holds one.
+
+**The stop switch: take the consumer out of the bundle.** A bundle with no read consumer is a read mint that is refused with `state_unavailable` and *"the credentials bundle holds no Bitbucket read consumer"* — a refusal and **never a fallback to another entry**, so the model cascade and the proxy carry on untouched while every read of a Bitbucket repository through the service stops. Read the **sentence**, not only the status: `state_unavailable` is what the service answers for the states it cannot serve — the stop switches it cannot read, the kill switch, a bundle that fails to load, a failed Bitbucket exchange, a token carrying a scope this route will not hand on, a failed audit, and an answer it could not build, among others — and the message is the only thing that says which one you are looking at. The list is an example rather than the whole of it: nothing about the status and the error type tells this refusal from any other, so read the text. **No Fugaro command removes an entry from the bundle**: `fugaro creds set` writes one name and is a read-modify-write, and it writes nothing else, so this one step is a hand write of a new bundle version that omits the entry — and **the version it replaced has to be disabled by hand too**, because the command that normally does that is the one you are not using, and a superseded version that stays enabled keeps the consumer readable, which is the one thing removing it is for:
+
+```bash
+fugaro creds ls                                                          # the entry is there before you start
+gcloud secrets versions access latest --secret=<bundle-container> --project <gcp-project> > <bundle-file>
+# edit <bundle-file>: delete the bitbucket-read-consumer block and change nothing else
+gcloud secrets versions add <bundle-container> --project <gcp-project> --data-file=<bundle-file>
+gcloud secrets versions disable <the-version-you-replaced> --secret=<bundle-container> --project <gcp-project>
+fugaro creds ls                                                          # the name is gone
+rm -f <bundle-file>                                                      # that file held every credential in the bundle
+```
+
+Do this **on your own machine**, keep the file at mode 0600 while it exists, and delete it when you are done: it holds the whole document, not one credential. The container's id is the one `fugaro creds ls` prints, and the version to disable is the one `fugaro creds ls` shows as the version before the new one. The other stop switch is §7's and it is wider: `fugaro budget kill --all` stops the read mint with the rest of the service, because that route reads the operator's switches **before** the bundle, and it is the switch to reach for when you want issuing stopped now rather than the bundle changed.
+
+**Rotation: regenerate the secret at Bitbucket, write the bundle, confirm a mint.** Bitbucket regenerates the secret of the consumer you already have — the key and the workspace stay — and the write is §6's read-modify-write of the one document, with the version it replaced disabled afterwards:
+
+```bash
+# at Bitbucket: regenerate the consumer's secret (same key, same workspace)
+fugaro creds set bitbucket-read-consumer < <new-consumer-file>
+fugaro creds ls
+```
+
+**Bitbucket's regenerate step is what ends the secret you are replacing, and it ends it at Bitbucket rather than in the bundle.** The service presents the bundle's `key` and `secret` at Bitbucket's OAuth root on **every** mint, so the moment the secret is regenerated the credential the bundle holds is dead: until the write above lands, every read through the service is refused with a failed exchange rather than with the missing consumer, and the two refusals share their status and their error type, so read the message. Regenerate and write in one sitting: the gap between the two is a window in which every read through the service is refused.
+
+Then **confirm a mint**: `fugaro coordinator show --repo <owner/name> --pr <n>` for a Bitbucket repository (a person's read through the person class, which is the command that uses this consumer), or a sweep tick for the coordinator class. **U13** — whether a token already minted keeps working after the rotation — **is unsettled**: Check 148's own drill measures it on a sandbox (`scripts/live-checks/check148.sh`, the register's `## Check 148`). Until it has run, do not assume either answer: rotate when the reads are quiet, and revoke the old secret at Bitbucket as well once the new one has minted.
+
+**Ownership transfer, when the installing person leaves.** The consumer is theirs, so the transfer is a **new consumer under the new owner's account**, created with read scopes only, and a bundle write that replaces the entry — the `workspace` does not change, and no other entry is touched:
+
+```bash
+# at Bitbucket, as the new owner: create a read-scoped consumer for this workspace
+fugaro creds set bitbucket-read-consumer < <new-owners-consumer-file>
+fugaro creds ls
+```
+
+**Delete the old consumer at Bitbucket** once the new one has minted: the bundle's entry is what the read mint reads, and the consumer at Bitbucket is what Bitbucket authenticates, so an old consumer left alive is a credential that can still be exchanged for tokens for this workspace. Transfer it **before** the person's access ends, not after: while they still have access, the two consumers both work and the switch is a bundle write you can look at; after they lose it, every read through the service is refused until a new consumer exists, and the refusal names the missing credential rather than the person.
+
+**Check 148 is this section, run, and it asks for the regeneration.** `scripts/live-checks/check148.sh` is the owner-run drill on a sandbox installation — the stop, the rotation and the ownership transfer above, each confirmed by a read mint, with U13 measured — and its row and section are [docs/gcp-live-checklist.md](../gcp-live-checklist.md)'s. It takes three consumer files, and the third, the same consumer with the regenerated secret, is the one **you write during the run**: the drill asks for it at its rotation step, after its baseline and restore rows have minted on the consumer the bundle holds, waits for your answer, holds what you wrote to the consumer file's own key and workspace, and only then writes it. Do not regenerate the consumer before starting it — the baseline would spend a secret Bitbucket has already killed and the run would measure nothing — and the answer is needed whether or not you pass `--yes`. **No agent runs any step of it**, and no agent runs any step of this section either: the create, the stop, the rotation and the transfer are yours, and an agent reading this to help someone says which step is theirs and stops.

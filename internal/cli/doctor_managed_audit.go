@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // doctorManagedAudit is the check M7 adds (D1014, spec §6): the last managed
@@ -64,13 +65,16 @@ var doctorManagedAuditNow = time.Now
 // doctorManagedAuditID is the check's ID. It is a measurement when nothing is
 // wrong — an admission and a refusal alike are the gate working, not a fault —
 // so it prints under --all and in --json, and the default view neither prints
-// nor counts it.
+// nor counts it. The one record it does not measure is a `warned` one, and that
+// is D1545's own tripwire: a plan the gate applied with rules the cover tables
+// did not announce is a finding, and the default view prints it.
 const doctorManagedAuditID = "managed-audit"
 
 // doctorManagedAudit is the check: nil when there is nothing it can say about
 // this installation (a test configuration with no storage endpoint, a project
-// that is not managed), and otherwise one check that never fails doctor on the
-// state it reports — only on a read that did not answer.
+// that is not managed), and otherwise one check that fails doctor on nothing
+// but a read that did not answer — and on one state it reports, which D1545
+// puts there on purpose (see the warned branch below).
 func doctorManagedAudit(ctx context.Context, lc *localcfg.Config, c *crm.Service) *doctorCheck {
 	if lc.Endpoints.NoAuth && lc.Endpoints.Storage == "" {
 		// Fakes only, and no fake for Cloud Storage: an empty endpoint would
@@ -96,27 +100,38 @@ func doctorManagedAudit(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	if !marks.Managed {
 		return nil
 	}
+	// read is every record this check has looked at — today's and yesterday's,
+	// both of them always — and the warned branch below scans all of it and not
+	// the newest record alone. One `fugaro update` files a record per gated step
+	// it applies, so the step whose rules the cover tables did not announce is
+	// usually followed by clean ones: a check that read the newest alone would
+	// print nothing at all, in the default view and under --strict alike, for
+	// the very run that warned.
+	//
+	// Yesterday is read whether or not today holds anything, which is why the
+	// two listings below are not conditional. A warned record filed at 23:50 and
+	// a clean `fugaro update` at 00:10 are two days apart by the calendar and
+	// minutes apart in fact, and a scan that read yesterday only when today was
+	// empty would report the clean record and pass — a session hiding its own
+	// warning by running one clean step, from the one reader D1545's warning
+	// outlives the session for. The window is two days because that is what this
+	// check reads at all; the COUNT stays the day's own, which is the question
+	// "did anything run today" and not a second one about the record shown.
 	now := doctorManagedAuditNow().UTC()
 	today := managedmode.AuditDate(now)
 	records, err := managedmode.ListAuditRecords(ctx, s, bucket, today)
 	if err != nil {
 		return doctorManagedAuditUnread(bucket, "could not read the managed audit records of gs://"+bucket+": "+oneLineCLI(err.Error()))
 	}
-	last := newestAuditRecord(records)
-	if last == nil {
-		// Yesterday is read too, and only when today holds nothing: the last
-		// managed apply is the thing this check exists to name, and a session
-		// that ran it twenty minutes before UTC midnight is still the last one
-		// an owner reads about. The count stays the day's own, which is the
-		// question "did anything run today" and not a second one about the
-		// record shown.
-		yesterday := managedmode.AuditDate(now.AddDate(0, 0, -1))
-		older, err := managedmode.ListAuditRecords(ctx, s, bucket, yesterday)
-		if err != nil {
-			return doctorManagedAuditUnread(bucket, "could not read the managed audit records of gs://"+bucket+" for "+yesterday+": "+oneLineCLI(err.Error()))
-		}
-		last = newestAuditRecord(older)
+	yesterday := managedmode.AuditDate(now.AddDate(0, 0, -1))
+	older, err := managedmode.ListAuditRecords(ctx, s, bucket, yesterday)
+	if err != nil {
+		return doctorManagedAuditUnread(bucket, "could not read the managed audit records of gs://"+bucket+" for "+yesterday+": "+oneLineCLI(err.Error()))
 	}
+	read := make([]managedmode.AuditRecord, 0, len(records)+len(older))
+	read = append(read, records...)
+	read = append(read, older...)
+	last := newestAuditRecord(read)
 	if last == nil {
 		// The sentence names the window it read. "No managed apply has been
 		// recorded yet" would be a claim about the project's whole history, and
@@ -129,12 +144,78 @@ func doctorManagedAudit(ctx context.Context, lc *localcfg.Config, c *crm.Service
 			Fix: "nothing to do: a managed apply files its record under gs://" + bucket + "/" + managedmode.AuditPrefix +
 				", and a record older than this check's two-day window is listed with gcloud storage ls gs://" + bucket + "/" + managedmode.AuditPrefix}
 	}
+	if warned := newestWarnedAuditRecord(read); warned != nil {
+		return doctorManagedAuditWarned(bucket, last, warned, recordAge(now.Sub(warned.At)), len(records))
+	}
 	age := recordAge(now.Sub(last.At))
 	problem := fmt.Sprintf("the last managed agent apply is %s at %s (%s ago): %s, plan digest %s; %s filed in the last day",
 		pluginwire.Printable(last.Command), last.At.UTC().Format(time.RFC3339), age, last.Verdict,
 		pluginwire.Printable(last.PlanDigest), auditRecordCount(len(records)))
 	return &doctorCheck{ID: doctorManagedAuditID, OK: true, Severity: "info", Problem: problem,
 		Fix: "to read the day's records: gcloud storage ls gs://" + bucket + "/" + managedmode.AuditPrefix + today + "/"}
+}
+
+// doctorManagedAuditWarned is the one thing this check reports as a finding
+// rather than as a measurement: a record of the window the gate applied with
+// CONTENT rules recorded and not refused (D1545, T2's ruling of 2026-11-07 —
+// "harden the record (versioning, `doctor` reads)").
+//
+// Why it is a finding at all, when an admission and a refusal are both the gate
+// working. Under D1545 the warning the acting session read is the whole of the
+// control the tables still are, and that session is gone by the time an owner
+// looks: a record filed with `warned` and read by nobody is the refusal removed
+// with nothing in its place. This line is where the warning survives — it
+// carries the rules themselves and not a count, because the rule is what an
+// owner checks against the plan. It is a warning and never an error: the apply
+// was admitted by the gate D1545 keeps and D1549's integrity refusals all held,
+// so the installation is where the gate said it should be, and what the reader
+// has is a decision (was this change meant?) rather than a fault to repair —
+// which is also why --strict is the only thing it fails.
+//
+// shown is the newest record of the window and warned the newest one that
+// carries warnings; the two are told apart in the sentence because the warned
+// step of a `fugaro update` is usually not the last of its records, and a line
+// that called it "the last apply" would send a reader to the wrong one.
+//
+// Why the rules are read off the RECORD and not recomputed here. The plan the
+// gate judged is not on this machine (D1022's digest is what names it), so the
+// only description of what the tables did not announce that exists after the
+// fact is what the record's own writer put there.
+func doctorManagedAuditWarned(bucket string, shown, warned *managedmode.AuditRecord, age string, records int) *doctorCheck {
+	which := "the last managed agent apply"
+	if warned != shown {
+		which = "an earlier managed agent apply"
+	}
+	problem := fmt.Sprintf("%s is %s at %s (%s ago) and it applied with rules the cover tables did not announce (%s, plan digest %s); %s filed in the last day, and the rules it recorded are: %s",
+		which, pluginwire.Printable(warned.Command), warned.At.UTC().Format(time.RFC3339), age, warned.Verdict,
+		pluginwire.Printable(warned.PlanDigest), auditRecordCount(records), safetext.FieldListLine(warned.Warnings))
+	// The day the record is filed under is its own, and not the day this check
+	// ran: the window reaches back a day, so a warned record read from
+	// yesterday lives under yesterday's date and a fix line naming today would
+	// send the reader to a directory holding nothing.
+	return &doctorCheck{ID: doctorManagedAuditID, OK: false, Severity: "warning", Problem: problem,
+		Fix: "read those rules against the plan this record digests: a change the cover tables do not carry is applied only on purpose, so either add what they name to internal/infra/tf/cover.go and the grant table beside it, or undo it with the command the record names. The record and the plan's digest are filed under gs://" + bucket + "/" + managedmode.AuditPrefix + managedmode.AuditDate(warned.At) + "/"}
+}
+
+// newestWarnedAuditRecord is the newest record of the window the gate applied
+// with CONTENT rules recorded and not refused (D1545), nil when every record of
+// it admitted its plan under the tables. It is the newest and not simply the
+// last: one `fugaro update` files a record per gated step it applies, so the
+// step whose rules the tables did not announce is usually followed by clean
+// ones, and a check that read only the newest record would report nothing for
+// the run that warned (D1545's tripwire, which T2's ruling of 2026-11-07 put
+// here: the warning must outlive the session that read it).
+func newestWarnedAuditRecord(records []managedmode.AuditRecord) *managedmode.AuditRecord {
+	var warned *managedmode.AuditRecord
+	for i := range records {
+		if len(records[i].Warnings) == 0 {
+			continue
+		}
+		if warned == nil || records[i].At.After(warned.At) {
+			warned = &records[i]
+		}
+	}
+	return warned
 }
 
 // doctorManagedAuditUnread is the check for a read that did not answer: a

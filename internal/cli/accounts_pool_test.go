@@ -318,23 +318,42 @@ func TestPoolRmDropsThePoolAndAnEmptyBlock(t *testing.T) {
 	}
 }
 
-// TestPoolRmRefusesWhileACraftNamesThePool: a craft whose access names the pool
+// TestPoolRmClearsTheCraftThatNamedThePool: a craft whose access names the pool
 // would be left pointing at nothing — no credential would serve its calls, and
-// the config would load with an access that resolves to no grant. The refusal
-// names the craft, and nothing is written.
-func TestPoolRmRefusesWhileACraftNamesThePool(t *testing.T) {
+// the config would load with an access that resolves to no grant. The access is
+// cleared with the pool it named instead, because refusing here would name a
+// step the owner cannot take: nothing in this release writes a crafts key (the
+// migration is its only writer, and the generic settings path refuses a
+// family-owned row), so the only way through a refusal would be a hand edit.
+// It is the treatment `accounts rm` gives the crafts that named the credential
+// it removes.
+func TestPoolRmClearsTheCraftThatNamedThePool(t *testing.T) {
 	path := accountsPoolHomeWith(t, accountsPoolCredentials+accountsPoolCraftsOnPool+accountsPoolPools)
-	before := readFileString(t, path)
 
 	out, _, err := execute(t, "accounts", "pool", "rm", "claude", "--yes")
-	if err == nil {
-		t.Fatalf("the pool a craft names was removed:\n%s", out)
+	if err != nil {
+		t.Fatalf("accounts pool rm with a craft naming the pool: %v\n%s", err, out)
 	}
-	if !strings.Contains(err.Error(), "crafts.senior-review.access names pools.claude") {
-		t.Errorf("the refusal does not name the craft that would be left with nothing: %v", err)
+	lc, err := localcfg.Parse([]byte(readFileString(t, path)))
+	if err != nil {
+		t.Fatalf("the config this command wrote does not read back: %v", err)
 	}
-	if got := readFileString(t, path); got != before {
-		t.Errorf("the refused write changed the file:\n%s", got)
+	if _, ok := accountsPoolOf(lc, "claude"); ok {
+		t.Errorf("pools.claude is still declared after the removal: %+v", lc.Pools)
+	}
+	if got := lc.Crafts.Of(config.CraftSeniorReview).Access; got != "" {
+		t.Errorf("crafts.senior-review.access = %q, want the key cleared with the pool it named", got)
+	}
+	if got := lc.Crafts.Of(config.CraftSeniorReview).Model; got != "claude-opus-5-5" {
+		t.Errorf("crafts.senior-review.model = %q, want the model half left alone", got)
+	}
+	// The crafts that named something else are not this removal's: only the
+	// accesses naming the pool go.
+	if got := lc.Crafts.Of(config.CraftCoder).Access; got != "router-one" {
+		t.Errorf("crafts.coder.access = %q, want the credential it named before", got)
+	}
+	if !strings.Contains(out, "clear crafts.senior-review.access, which named it") {
+		t.Errorf("the sentence does not name the craft key it cleared:\n%s", out)
 	}
 }
 

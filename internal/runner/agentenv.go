@@ -460,12 +460,16 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 		}
 	}
 	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, r.denyBinaryReads(stage))
-	if r.review {
+	if r.review || stage == stageTriage {
 		// A review-mode run's stage reads a pull request's own head, so the
 		// settings it is launched under are the review posture (D894(a)):
 		// managed hooks only, no project MCP server, and setting sources
 		// from the user and managed levels alone. A coding run's own stages
-		// — its in-loop review rounds included — keep the file they had.
+		// — its in-loop review rounds included — keep the file they had, and
+		// the triage judge is the one stage of such a run that joins the
+		// review-mode one here: it reads a round's findings and must touch
+		// nothing, so no hook of the checkout it was shown text from runs
+		// while it reads (F25).
 		write = agent.WriteReviewManagedSettings
 		if r.reviewJob() {
 			// The independent review job is the one review stage that runs

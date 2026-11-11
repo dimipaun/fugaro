@@ -102,11 +102,12 @@ type WorkItemOp struct {
 	DependsOn *[]string `json:"depends_on,omitempty"`
 	Note      *string   `json:"note,omitempty"`
 
-	Phase           *Phase     `json:"phase,omitempty"`
-	RunID           *string    `json:"run_id,omitempty"`
-	SpentApprovalAt *time.Time `json:"spent_approval_at,omitempty"`
-	Attempts        *int       `json:"attempts,omitempty"`
-	Intent          *IntentOp  `json:"intent,omitempty"`
+	Phase           *Phase      `json:"phase,omitempty"`
+	RunID           *string     `json:"run_id,omitempty"`
+	SpentApprovalAt *time.Time  `json:"spent_approval_at,omitempty"`
+	Attempts        *int        `json:"attempts,omitempty"`
+	Intent          *IntentOp   `json:"intent,omitempty"`
+	Escalation      *Escalation `json:"escalation,omitempty"`
 }
 
 // IntentOp declares the attempt a launch is for, or records how one ended.
@@ -236,14 +237,16 @@ func applyOp(s *State, op Op, a Actor) error {
 
 // applyUpsert changes what the op carries and leaves the rest of the item
 // alone. The declaration is what a session and a person write; the phase, the
-// run id, the spent approval, the attempt count and the intent are the
-// daemon's, and an upsert carrying one of them from any other class is
-// refused — otherwise a session could requeue an approved item, mark a
-// dependency done or forge a spent approval.
+// run id, the spent approval, the attempt count, the intent and the ladder's
+// ledger are the daemon's, and an upsert carrying one of them from any other
+// class is refused — otherwise a session could requeue an approved item, mark
+// a dependency done, forge a spent approval or steer an item into rung 3,
+// where a merge happens (G12).
 func applyUpsert(s *State, op WorkItemOp, a Actor) error {
-	daemonOnly := op.Phase != nil || op.RunID != nil || op.SpentApprovalAt != nil || op.Attempts != nil || op.Intent != nil
+	daemonOnly := op.Phase != nil || op.RunID != nil || op.SpentApprovalAt != nil || op.Attempts != nil ||
+		op.Intent != nil || op.Escalation != nil
 	if daemonOnly && a.Class != Daemon {
-		return fmt.Errorf("%w: a %s may not write a work item's phase, run id, spent approval, attempts or intent", ErrActorNotAllowed, a.Class)
+		return fmt.Errorf("%w: a %s may not write a work item's phase, run id, spent approval, attempts, intent or escalation", ErrActorNotAllowed, a.Class)
 	}
 	i, exists := s.indexOf(op.ID)
 	w := WorkItem{ID: op.ID, Phase: PhaseQueued, DependsOn: []string{}}
@@ -308,6 +311,11 @@ func applyUpsert(s *State, op WorkItemOp, a Actor) error {
 	}
 	if op.Intent != nil {
 		if err := commitIntent(s, &w, *op.Intent, a); err != nil {
+			return err
+		}
+	}
+	if op.Escalation != nil {
+		if err := appendEscalation(&w, *op.Escalation); err != nil {
 			return err
 		}
 	}
@@ -415,6 +423,40 @@ func commitIntent(s *State, w *WorkItem, op IntentOp, a Actor) error {
 	return nil
 }
 
+// appendEscalation writes the ledger the op carries, and refuses anything but
+// an append. The transitions already on the item must be the first ones the op
+// carries, in order: a transition that happened is not rewritten, not
+// reordered and not dropped, and the rung and the run count only move forward.
+// That is the whole of the ledger's append-only rule, and it is here rather
+// than in the validator because it is a question about the item the op lands
+// on: the same block is a first write on one item and a rewrite on another.
+//
+// The block is copied, so the state never shares a slice with the patch a
+// caller still holds.
+func appendEscalation(w *WorkItem, next Escalation) error {
+	held := w.Escalation
+	if held != nil {
+		if len(next.Transitions) < len(held.Transitions) {
+			return fmt.Errorf("%w: the ledger of %q carries %d transitions and the patch carries %d, and a ledger is appended to and never rewritten", ErrInvalid, safetext.OneLine(w.ID), len(held.Transitions), len(next.Transitions))
+		}
+		for i, was := range held.Transitions {
+			if next.Transitions[i] != was {
+				return fmt.Errorf("%w: the transition %d of %q's ledger is not the one the patch carries, and a transition that happened is not rewritten", ErrInvalid, i+1, safetext.OneLine(w.ID))
+			}
+		}
+		if next.Rung.Rank() < held.Rung.Rank() {
+			return fmt.Errorf("%w: the ledger of %q is at %s and the patch moves it back to %s, and a rung passed is a rung spent", ErrInvalid, safetext.OneLine(w.ID), held.Rung, next.Rung)
+		}
+		if next.OuterAttempts < held.OuterAttempts {
+			return fmt.Errorf("%w: the ledger of %q counts %d ladder runs and the patch counts %d", ErrInvalid, safetext.OneLine(w.ID), held.OuterAttempts, next.OuterAttempts)
+		}
+	}
+	block := next
+	block.Transitions = copyOf(next.Transitions)
+	w.Escalation = &block
+	return nil
+}
+
 // applyApprove is a person's go, and only a person's (G2). The op carries the
 // digest the person was shown and it must be the item's digest now: the
 // approval binds the spec that was read, not whatever the item has become
@@ -477,12 +519,21 @@ func applyArchive(s *State, op ArchiveOp, a Actor) error {
 }
 
 // applyDecisionAdd writes a question. Adding one takes no class — the daemon
-// and its agents ask people things, and a person reads them — with one
-// exception: the breaker's own prefix is the daemon's, because a decision
-// carrying it stops every spawn on the node until a person resolves it
-// (BreakerOpen, which the plan refuses over). A read of the state cannot tell
-// who wrote a decision, so the class has to be settled here or the pause is
-// anyone's to raise (D1241 leaves the node writable by whoever holds the
+// and its agents ask people things, and a person reads them — with two
+// exceptions, both names rather than questions:
+//
+//   - the breaker's own prefix is the daemon's, because a decision carrying it
+//     stops every spawn on the node until a person resolves it (BreakerOpen,
+//     which the plan refuses over);
+//   - the call ledger's prefix is the daemon's, because every reader that shows
+//     a person the decisions reads a record carrying it as the loop's own
+//     bookkeeping and leaves it out of what it prints and out of what it caches
+//     (DecisionCallID, and Summarize, which filters it) — so a question written
+//     under that name by anyone else would be a question nobody is shown.
+//
+// A read of the state cannot tell who wrote a decision, so the class has to be
+// settled here: the pause would be anyone's to raise and a real question
+// anyone's to hide (D1241 leaves the node writable by whoever holds the
 // person's credential, which is what makes the class the fence rather than the
 // credential).
 func applyDecisionAdd(s *State, op DecisionOp, a Actor) error {
@@ -491,6 +542,9 @@ func applyDecisionAdd(s *State, op DecisionOp, a Actor) error {
 	}
 	if a.Class != Daemon && strings.HasPrefix(op.ID, BreakerDecisionID+"-") {
 		return fmt.Errorf("%w: a %s actor asked the breaker's question in %q, and the pause it carries is the daemon's to raise", ErrActorNotAllowed, a.Class, safetext.OneLine(op.ID))
+	}
+	if a.Class != Daemon && strings.HasPrefix(op.ID, DecisionCallID) {
+		return fmt.Errorf("%w: a %s actor asked a question under %q, and a decision named for the call ledger is one no reader shows", ErrActorNotAllowed, a.Class, safetext.OneLine(op.ID))
 	}
 	question := cleanText(op.Question, MaxQuestionRunes)
 	if question == "" {

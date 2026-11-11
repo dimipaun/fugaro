@@ -486,6 +486,27 @@ This report goes to the person who decides whether to continue the run, so say w
 // added as untrusted output: one block per failure, each wrapped against
 // prompt injection (gateBlock). task is the prompt the gate ran ahead of
 // (r.spec.Task for a first run, the follow-up's implement prompt otherwise).
+// RebasePrompt is the rebase step's conflict-resolution stage: what stopped
+// the rebase, the paths git could not merge on its own, and what the stage
+// has to leave behind. It asks for no commit and names no verification
+// command: the runner stages the paths git stopped on and carries the rebase
+// on itself (gitops.RebaseContinue), so what lands is the commit being
+// replayed with the resolution in it, and the workflow's tests run after the
+// whole branch is on its base, not between two conflicts.
+func RebasePrompt(base string, paths []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "This run is putting the branch back on its base, origin/%s, and git stopped on a conflict.", safetext.OneLine(base))
+	if len(paths) > 0 {
+		names := make([]string, 0, len(paths))
+		for _, p := range paths {
+			names = append(names, safetext.OneLine(p))
+		}
+		fmt.Fprintf(&b, " The paths it could not merge on its own:\n\n%s", strings.Join(names, "\n"))
+	}
+	b.WriteString("\n\nResolve them and leave the resolution in the working tree. Both sides' intent has to survive: neither this branch's own work nor the base's change may be dropped to make the conflict go away, and a resolution that deletes one of them is wrong even when it makes the file compile. Edit the files only — do not commit, and do not run `git rebase --continue`, `git rebase --abort`, `git checkout --theirs` or `git commit`: Fugaro stages the paths git stopped on and carries the rebase on itself, so a commit of your own would land inside the commit being replayed. Leave everything the conflict did not touch as it is.")
+	return b.String()
+}
+
 func GatePrompt(task string, g gateResult) string {
 	var b strings.Builder
 	b.WriteString(task)
