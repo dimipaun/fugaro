@@ -3292,7 +3292,10 @@ project therefore prints the floor's rows and the repository's without the
 project's, and no member above can carry that: the command says it on stderr, in
 both forms of the document. It is the one place this read can differ from a
 run's, and the run is the control — it resolves the published layer itself,
-while this document is the advisory read.
+while this document is the advisory read. A row a layer writes under a name an
+earlier layer's row already spends is not in force either, and it is said on
+stderr the same way (`config.SecurityIgnoredRow`, D1506): the row is what its
+author believes and the list in force is not.
 
 ## 7. The CLI gaps, settled against the code
 
