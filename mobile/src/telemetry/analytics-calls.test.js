@@ -29,8 +29,9 @@
 //      breadcrumb a constant from the module's own list, or a value that has
 //      been through `shared/digest`'s redactor first, so a call site may pass
 //      exactly two things: a literal named in `BREADCRUMBS`, and a call to
-//      **`breadcrumb` imported from the telemetry module by the file that calls
-//      it** -- not merely a function of that name. Both must be the WHOLE
+//      **`breadcrumb` the file that calls it binds from the telemetry module**
+//      -- not merely a function of that name, and not that name bound from
+//      anywhere else or renamed on the way in. Both must be the WHOLE
 //      argument: `'screen_mailbox' + message.text` and
 //      `breadcrumb(text, secrets).trim()` are refused, because either would put
 //      a runtime value beside a constant the list reviewed. Those two shapes are
@@ -156,18 +157,36 @@ function breadcrumbSpecifier(file) {
 }
 
 /**
- * Whether the `breadcrumb` a file calls is the module's own: a named import of
- * it from a specifier that file's own directory resolves to
- * `BREADCRUMBS_MODULE`. A file that wrote its own `breadcrumb` -- or imported
- * one from somewhere else -- is not the app's one redaction rule, and where the
- * import is present the local definition cannot also be: ESM refuses the
- * duplicate binding.
+ * Whether an import clause binds the name `breadcrumb` itself, which is the
+ * only thing that makes the call below it the module's own function: a named
+ * specifier whose imported AND local names are `breadcrumb`. `{ breadcrumb as
+ * redacted }` is not it -- the rename leaves `breadcrumb` free for a local
+ * helper, and a helper of that name is not a redaction rule -- and neither is a
+ * namespace or a default import, which bind some other name.
+ */
+function bindsBreadcrumb(clause) {
+  const braces = /\{([^}]*)\}/.exec(clause);
+  if (braces === null) return false;
+  for (const entry of braces[1].split(',')) {
+    const [imported, local] = entry.split(/\s+as\s+/).map((part) => part.trim());
+    if (imported === 'breadcrumb' && (local === undefined || local === 'breadcrumb')) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether the `breadcrumb` a file calls is the module's own: an import that
+ * binds that name from a specifier the file's own directory resolves to
+ * `BREADCRUMBS_MODULE`. Binding the name is what closes the shadowing hole --
+ * a module that imports `breadcrumb` cannot also declare one, so the name the
+ * call reaches is the import's -- and a file that bound the name from anywhere
+ * else, or declared its own, is not the app's one redaction rule.
  */
 function importsBreadcrumb(body, file) {
   const specifier = breadcrumbSpecifier(file);
   const wanted = new Set([specifier, specifier.replace(/\.js$/, '')]);
   for (const match of body.matchAll(/\bimport\s+([^;]*?)\s+from\s*['"]([^'"]+)['"]/g)) {
-    if (wanted.has(match[2]) && /\bbreadcrumb\b/.test(match[1])) return true;
+    if (wanted.has(match[2]) && bindsBreadcrumb(match[1])) return true;
   }
   return false;
 }
@@ -233,6 +252,23 @@ const RULES = [
       // The module's own name, but not the module's own function: a file that
       // imports nothing has whatever `breadcrumb` of its own it likes.
       "crashlytics().log(breadcrumb(message.text, secrets));",
+      // The module itself, imported under another name, which leaves the name
+      // `breadcrumb` free for a helper that redacts nothing.
+      {
+        file: 'src/app/offender.js',
+        source:
+          "import { breadcrumb as redacted } from '../telemetry/breadcrumbs.js';\n" +
+          'function breadcrumb(text) { return text; }\n' +
+          'crashlytics().log(breadcrumb(message.text));',
+      },
+      // Its own name from somewhere else: `breadcrumb` is a name any module may
+      // export, and one that does not redact is not the app's one rule.
+      {
+        file: 'src/app/offender.js',
+        source:
+          "import { breadcrumb } from './helpers.js';\n" +
+          'crashlytics().log(breadcrumb(message.text, secrets));',
+      },
       // ... and even the module's own redactor is refused when the call is not
       // the whole argument, which is the half the import cannot decide.
       {

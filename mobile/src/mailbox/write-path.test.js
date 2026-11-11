@@ -57,7 +57,10 @@
 //      `ad-id.test.js` holds; and it is spelled out instead of widening rule
 //      2's, because `@react-native-firebase/analytics` does not match
 //      `/['"]@?firebase\/[a-z-]+['"]/` and never did -- the gap the telemetry
-//      plan's §7.4 found and this rule closes.
+//      plan's §7.4 found and this rule closes. The specifier may also name a
+//      file INSIDE the package: the SDK's own entry points are not its only
+//      door, and `@react-native-firebase/crashlytics/lib/index` reaches the same
+//      object a screen is not allowed to hold.
 //
 // **What this scan does NOT claim.** It is about MOBILE's source. The consumer
 // (Go) writes the outbox, the heartbeat and everything else; the rules in
@@ -148,7 +151,7 @@ const RULES = [
   },
   {
     name: 'the telemetry SDK is imported in one file',
-    pattern: /(?:\bimport\b|\brequire\b|\bfrom\b)\s*\(?\s*['"]@react-native-firebase\/[a-z-]+['"]/,
+    pattern: /(?:\bimport\b|\brequire\b|\bfrom\b)\s*\(?\s*['"]@react-native-firebase\/[a-z-]+(?:\/[^'"]*)?['"]/,
     allow: ['index.js'],
     controls: [
       "import analytics from '@react-native-firebase/analytics';",
@@ -157,6 +160,9 @@ const RULES = [
       "const app = require('@react-native-firebase/app');",
       "await import('@react-native-firebase/analytics');",
       "export { default } from '@react-native-firebase/crashlytics';",
+      // A file inside the package is the same object by another specifier.
+      "import crashlytics from '@react-native-firebase/crashlytics/lib/index';",
+      "const { getAnalytics } = require('@react-native-firebase/analytics/lib/modular');",
     ],
     why: 'P7.1, D256: the entry is the one file that may reach the SDK, as rule 2 has it for the database; a screen that imported the analytics or the crashlytics package could report whatever it held',
   },
