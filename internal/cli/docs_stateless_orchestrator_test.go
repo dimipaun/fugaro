@@ -284,6 +284,11 @@ func TestDocsStatelessOrchestratorUnitRerenderAsksNothing(t *testing.T) {
 		"TestDocsStatelessOrchestratorUnitRerenderAsksNothing",
 		"TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged",
 		"`internal/cli/update_unit_stage.go`'s `Apply`",
+		// Where the ruling comes from, and what an owner who does not confirm it
+		// restores: a reader who doubts T8 has to be able to find both without
+		// reading this branch's history.
+		"the owner's instruction of **2026-11-10** carried it into task O9 as one of that task's hard rules",
+		"TestUpdateUnitStepNeedsATypedConfirmation",
 	} {
 		if !strings.Contains(flat(rec), want) {
 			t.Errorf("%s: T8's ruled follow-through %q is gone", soReconciled, want)

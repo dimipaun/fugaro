@@ -29,9 +29,9 @@ func updateUnitEngine(t *testing.T, o *initOptions) (*initEngine, *syncBuf) {
 // build, at a path a person installed it to. The update door re-points an
 // installed unit only at one of those — a login unit must not be pointed at a
 // build that will not be there tomorrow — so every test that expects the step to
-// write the file says which kind of run it is, and the tests that pin what a
-// development build does leave the process as the test binary is: "dev", under
-// the temporary directory the test binary is built in.
+// write the file says which kind of run it is, and the test that pins what a
+// build that will not be there tomorrow does says so itself, with the version
+// and the path it means spelled out rather than taken from the test binary.
 func releaseUpdate(t *testing.T) string {
 	t.Helper()
 	oldVersion, oldExe := Version, orchestratorExecutable
@@ -193,39 +193,35 @@ func TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall(t *testing.T) 
 // reboot or a checkout's deletion takes away, and both doors compare the file's
 // text, so nothing would ever repair it.
 func TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow(t *testing.T) {
+	// The two shapes a person runs an update *from* without installing one, one
+	// per clause of the rule: a `dev` build, wherever it was built, and a build
+	// in the system's temporary directory, whatever version it carries. Both
+	// paths are literal, so the test says what it means on any machine — the
+	// test binary's own path is neither (it is a `dev` build inside the
+	// temporary directory, which only one of the two clauses would catch).
 	for _, tc := range []struct {
-		name  string
-		build func(t *testing.T) string
+		name, version, exe string
 	}{
-		{"a development build", func(t *testing.T) string {
-			// What the test binary is: Version is "dev" unless a release's
-			// ldflags put a version in it.
-			return exePath(t)
-		}},
-		{"a release build in a temporary directory", func(t *testing.T) string {
-			old := Version
-			Version = "1.2.3"
-			t.Cleanup(func() { Version = old })
-			return exePath(t)
-		}},
+		{"a development build in a checkout", "dev", "/home/someone/src/fugaro/fugaro"},
+		{"a build in the temporary directory", "1.2.3", filepath.Join(os.TempDir(), "go-build123", "b001", "exe", "fugaro")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			unitHome(t)
 			f := fakeUnitService(t)
 			typed(t)
+			oldVersion, oldExe := Version, orchestratorExecutable
+			Version, orchestratorExecutable = tc.version, func() (string, error) { return tc.exe, nil }
+			t.Cleanup(func() { Version, orchestratorExecutable = oldVersion, oldExe })
 			e, _ := updateUnitEngine(t, &initOptions{})
-			running := tc.build(t)
-			if !strings.HasPrefix(filepath.Clean(running), filepath.Clean(os.TempDir())) {
-				t.Skipf("this checkout's test binary is at %s, which is not a temporary directory", running)
-			}
 			installed := "/opt/homebrew/opt/fugaro/bin/fugaro"
 			u := currentUnit(t)
-			path := unitFileAt(t, strings.ReplaceAll(u.Text, running, installed), time.Now())
+			want := strings.ReplaceAll(u.Text, tc.exe, installed)
+			path := unitFileAt(t, want, time.Now())
 			res, out := runUnitStage(t, e, newUpdateUnitStage(e))
 			if got := stateOf(res, initflow.Unit); got != initflow.Skipped {
-				t.Fatalf("the step is %s running from %s, want skipped:\n%+v", got, running, res.Stages)
+				t.Fatalf("the step is %s running from %s (version %s), want skipped:\n%+v", got, tc.exe, tc.version, res.Stages)
 			}
-			if data, err := os.ReadFile(path); err != nil || string(data) != strings.ReplaceAll(u.Text, running, installed) {
+			if data, err := os.ReadFile(path); err != nil || string(data) != want {
 				t.Errorf("the step wrote the unit (err %v):\n%s", err, data)
 			}
 			if len(f.reloads) != 0 {
@@ -237,7 +233,7 @@ func TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow(t *testing.T
 			if askedSomething(out) {
 				t.Errorf("the step asked a question:\n%s", out)
 			}
-			for _, want := range []string{installed, running, "orchestrator install"} {
+			for _, want := range []string{installed, tc.exe, "orchestrator install"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("the plan line does not name %q:\n%s", want, out)
 				}
@@ -404,15 +400,4 @@ func TestUpdateUnitStepUsesTheInstallersRenderer(t *testing.T) {
 			}
 		}
 	}
-}
-
-// exePath is the binary this test process runs as — what the unit's render is
-// built from, and so the path a test that changes the prefix has to name.
-func exePath(t *testing.T) string {
-	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return exe
 }

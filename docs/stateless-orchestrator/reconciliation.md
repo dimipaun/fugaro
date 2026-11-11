@@ -597,6 +597,10 @@ above is therefore **left standing rather than deleted**: the amendment below it
 the one place named here rather than hunting for the text that was removed. The reversal is one place — `internal/cli/update_unit_stage.go`'s `Apply` —
 plus this document and the pin that holds the ruling; `TestDocsStatelessOrchestratorUnitRerenderAsksNothing` is that pin, and
 `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged` holds the behavior (`askedSomething` fails the test if the step ever prints a question).
+**What an owner who does not confirm T8 restores, exactly**: the `askTyped` call in that `Apply` — the word `install`, the class T7 named and `install`
+already takes — with `TestUpdateUnitStepNeedsATypedConfirmation` beside the tests above, which is the pin a branch that puts the ask back writes with it.
+Until that ruling comes, the provenance above is what the record stands on: the task's hard rules carry the owner's instruction of 2026-11-10, and this
+document says which sentence of the plan it supersedes rather than deleting it.
 
 **Open items T8's ruling leaves (reported, not decided).** (1) `fugaro setup`'s first install and T8's re-render are the same stage under one name and now
 answer a plan line the same way, so the class T7 asked for exists nowhere: a unit is code that runs at every login, and the step that writes or
@@ -607,9 +611,8 @@ for both — the fence above — is stated twice. **Reported** (O9).
 
 **The program a re-render writes (the implementation's own narrowing, 2026-11-11; reported, NOT an owner ruling).** T7's re-render and T8's no-prompt
 reading both compare the file on disk with the text this release renders, and that text carries **one binary path: the one this process is running**. Both
-of them say "the same program it already named" (T8, above) — and the code did not: an `update` run from a checkout's `go build`, from `go run`'s
-temporary binary, or from a copy in a scratch directory re-pointed the installed unit at that path, silently, with nothing asking and the plan line
-naming only the unit's file. A unit runs its program at every login and restarts it whenever it stops (the template's keep-alive), so the unit would then
+of them say "the same program it already named" (T8, above) — and the code did not: an `update` run from a checkout's `go build` or from `go run`'s
+temporary binary re-pointed the installed unit at that path, silently, with nothing asking and the plan line naming only the unit's file. A unit runs its program at every login and restarts it whenever it stops (the template's keep-alive), so the unit would then
 restart a program a `go clean`, a reboot or a deleted checkout takes away — and since both doors compare the file's **text**, the next `update` would find
 it current and nothing would ever repair it. **The narrowing: the update door re-points an installed unit only at a fugaro a release installed** — a
 versioned build (`internal/cli.Version`, which the release's ldflags stamp and a checkout's `go build`, `go run` and every test leave as `dev`) in a
@@ -617,7 +620,10 @@ directory that is not the system's temporary directory. Anything else writes not
 file, and the one this run is) and names `fugaro orchestrator install`, which is the command that points a unit at another program deliberately. What is
 **not** narrowed: a re-render that keeps the program the unit already names still happens from any build, so a release that changes the template still
 converges under one `fugaro update` (the HARD RULE), and the `setup` door keeps the re-point — the person is at a terminal, the plan line names both
-paths, and the run they confirmed is the run that asked for the unit. The pins are `TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow` and
+paths, and the run they confirmed is the run that asked for the unit. **The residual, stated rather than hidden**: the rule reads two things — the version the
+release stamped into the binary and the system's temporary directory — so a *versioned* fugaro copied into an ordinary directory (a scratch folder, a build
+server's output directory) **is** written, because nothing this code can read tells it from an installation; what it catches is the two shapes an `update` is
+run *from* without installing one, a `dev` build wherever it sits and any build inside the temporary directory. The pins are `TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow` and
 `TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall`, with `TestDocsStatelessOrchestratorUnitRepointRule` holding this paragraph. **The reversal
 is one place**: `unitMayNameThisBinary` in `internal/cli/init_orchestrator_stage.go`, plus this paragraph and that pin.
 
