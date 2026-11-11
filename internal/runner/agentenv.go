@@ -132,11 +132,11 @@ func (r *run) imageEnv(declared []string) map[string]string {
 // its pins (stagePins) and its managed settings (writeManagedSettings).
 //
 // A node that names another account than the one this run was launched with
-// does not move the stage (D2094): the job mounts the launch's account and no
-// other, so the stage is served with the run's own account — held to the node's
-// own admission of it — and the difference is logged. That is the one window a
-// repoint leaves open (docs/account-aliases/reconciliation.md F3), and the same
-// window a hand edit of a stage key opens.
+// does not move the stage (D2094): a repoint moves new launches only, so the
+// stage is served with the run's own account — held to the node's own admission
+// of it — and the difference is logged. That is the one window a repoint leaves
+// open (docs/account-aliases/reconciliation.md F3), and the same window a hand
+// edit of a stage key opens.
 func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error) {
 	if r.cfg == nil || r.cfg.Agent.Auth != "api-key" {
 		// The mix exists to give an api-key run a Claude review credential it
@@ -179,14 +179,16 @@ func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error)
 			}
 			name = def
 		}
-		// The node may name an account this run's job holds no token for. The
-		// job mounts the account the run's launch resolved and never re-resolves
-		// it (spec §5, the owner's ruling: a repoint moves new launches only),
-		// so the stage keeps the run's own account and the difference is logged;
-		// the fallback is held to the node's admission of that account below.
-		// Serving the stage with the node's new name would put a credential in
-		// it that this job does not hold and write an account into the record
-		// that did not answer it.
+		// The node may name an account this run was not launched with: a
+		// repoint published between this run's launch and its bootstrap, or a
+		// hand edit of the key. A repoint moves new launches only (spec §5, the
+		// owner's ruling), so the stage keeps the account the run's launch
+		// resolved and the difference is logged; the fallback is held to the
+		// node's admission of that account below. Serving the stage with the
+		// node's new name would run it as an account this run holds no token of
+		// — the job this run is in is not that account's own job, which is the
+		// only one that mounts its token — and would write an account into the
+		// record that did not answer it.
 		if own := r.launchAccount(); own != "" && name != own {
 			if err := r.admitStageAccount(p, stage, own, name); err != nil {
 				return nil, err
@@ -214,9 +216,10 @@ func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error)
 
 // launchAccount is the Claude OAuth account this run was launched with: the
 // resolved account its task carries (spec.OAuthToken, mixedRunAccount in
-// internal/cli), which is what picked the job variant whose token this job
-// mounts. "" is a run that holds no named account — the unsuffixed default
-// included (claudeAccountOf) — and a run no task describes.
+// internal/cli), the account every gate of that launch was made for and the one
+// its stage accounts, its record and its budget were resolved under. "" is a
+// run that holds no named account — the unsuffixed default included
+// (claudeAccountOf) — and a run no task describes.
 func (r *run) launchAccount() string {
 	if r.spec == nil {
 		return ""
@@ -234,8 +237,15 @@ func (r *run) launchAccount() string {
 // its reach would then be bounded by nothing this run can read. stage and node
 // are the two names a refusal names, so an operator reading it sees which key
 // moved.
+//
+// The repository the list is read about is named the way this run's own job
+// names it, which is the pair the rest of the run reads: a project job's
+// provider is the one its own name pins (job.Provider, as checkProviderAdmission
+// and stageAccountCandidates read it) and a per-repository run's is the kind the
+// slug it was launched with derives (providerForSlug). A run admitted to a
+// project job is therefore judged by its job's provider and not by its slug.
 func (r *run) admitStageAccount(p *projectpolicy.Policy, stage, own, node string) error {
-	intro := fmt.Sprintf("the %s stage is %q in the published policy and this run was launched with %q, whose token its own job mounts: a run in flight keeps the account its launch resolved, and it may keep it only where the node still admits this repository to that account", stage, node, own)
+	intro := fmt.Sprintf("the %s stage is %q in the published policy and this run was launched with %q: a repoint moves new launches only (D2094), so this run keeps the account its launch resolved, and it may keep it only where the node still admits this repository to that account", stage, node, own)
 	acct, ok := p.Accounts[own]
 	if !ok {
 		return fmt.Errorf("%s, and accounts.%s is absent, so nothing bounds the repositories %q's token may be used by. The run stops rather than serving the stage with a token the node does not admit for this repository", intro, own, own)
@@ -259,7 +269,7 @@ func (r *run) admitStageAccount(p *projectpolicy.Policy, stage, own, node string
 	if projectpolicy.AdmitRepo(acct.AllowRepos, canonical) {
 		return nil
 	}
-	return fmt.Errorf("%s: accounts.%s.allow_repos is %s, and %s is not one of them. The run stops rather than serving the stage as an account its own job does not hold (%q) or with a token the node does not admit for this repository", intro, own, strings.Join(acct.AllowRepos, ", "), canonical, node)
+	return fmt.Errorf("%s: accounts.%s.allow_repos is %s, and %s is not one of them. The run stops rather than serving the stage as an account this run was not launched with (%q), whose token no job this run is in mounts, or with a token the node does not admit for this repository", intro, own, strings.Join(acct.AllowRepos, ", "), canonical, node)
 }
 
 // mixedDefaultAccount is rung 4's account for a stage: the project's
