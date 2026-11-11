@@ -10,8 +10,11 @@ service exists yet, and nothing in S3.2 has run outside a test. **The package is
 the two roots' `intake_image` and `minter_image` are built from it, and what builds one — a `main`
 per half and, behind it, the durable store, the code host's client, the mail provider, D452's proof
 check and the key ring's signing client — is S3.7's deploy, so this tree holds no entry point and no
-Dockerfile and there is nothing here to run. The admin page and the manual queue (§6) are **not**
-written either: they are S3.4's.
+Dockerfile and there is nothing here to run. The admin page and the manual queue (§6) are written
+too — `admin.go` and `queue.go` (S3.4, written 2026-11-11) — and what they leave to the owner is
+what §6 already names: **D454**'s caps are configuration New refuses to start without, and
+**D455**'s factor and **D456**'s destination are seams, so a deployment that names no factor renders
+the page read-only and mints nothing from it.
 No job runs that suite in CI: the change that would is staged
 ([pending-workflows/README.md](../pending-workflows/README.md) §`ci.yml`). Until the entity exists
 and the service runs (T13, S8.1) keys are **minted by hand** (S2.10), and every sentence below
@@ -491,7 +494,7 @@ T13's own list (item numbers below are its, [reconciliation.md](../subscriptions
 | 5 | Break into the project the service runs in | A **dedicated** project rather than an installation's, two identities, and least privilege (§3.3) | One operator, one boundary: an owner's account is the whole of the administrative surface (§6, D455) |
 | 6 | Impersonate a customer at the free seat | Email verification, the free-mail list, one per domain, the paid-domain lookup, the queue (§4) | The key binds to an organisation and nothing compares it with the installation (S2.1): a key can be shared |
 | 7 | Mint keys as the Licensor before there is a seller | The service waits for the entity (T13); until then the owner mints by hand (§11) | Hand-minted keys carry the `issued` hole (§2) |
-| 8 | Get at the admin page | Owner-only authentication, per-action step-up, CSRF defence, escaping, an audit line, per-tier limits (§6; **Check 173**) | The page is a second surface that can mint anything: D454's caps and D455's factor are the owner's answers, and until they exist the page is not built |
+| 8 | Get at the admin page | Owner-only authentication, per-action step-up, CSRF defence, escaping, an audit line, per-tier limits (§6; **Check 173**) | The page is a second surface that can mint anything: D454's caps and D455's factor are the owner's answers, and the page reads them from the deploy rather than holding them — the caps it refuses to start without, and the factor that, unnamed, leaves it read-only |
 | 9 | Forge or replay a purchase | Signature verification before the body is read, idempotency by event id, ordering (§5.2; **Check 179**) | A merchant secret leaked to the intake mints Team keys until it is rotated — a rotation path owned by the deploy (§11) |
 | 10 | Learn whether a domain holds a key | Uniform answers (§7.1), throttling (§7.2) | Timing still leaks in principle; the design's answer is the same sentence and the same work per request |
 | 11 | Read the checks and walk around them | Nothing — the code is published under `ee/` (§3.4) | Deliberate: the checks are visible and the Terms are the enforcement (§4.6) |
