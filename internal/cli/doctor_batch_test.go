@@ -234,28 +234,51 @@ func batchListerPolicy(launchers ...string) gcpfake.Binding {
 
 // TestDoctorBatchChecksPassOnAProvisionedInstallation: every check is OK for
 // an installation whose apply has run and whose preload build has published a
-// generation. The launchers' grant is read from the rig's own CRM fake, which
-// is why the policy is set here and not by batchProvisioned.
+// generation -- the precondition of the gate, and the state the property test's
+// whole world assumes.
 func TestDoctorBatchChecksPassOnAProvisionedInstallation(t *testing.T) {
 	r, f := newDoctorRig(t), newBatchFakes(t)
 	batchProvisioned(t, r, f)
-	r.withBatch(t, f, "terraform: { launchers: [\"user:a@example.com\"] }\n")
-	r.crm.SetPolicy("proj-1234", batchListerPolicy("user:a@example.com"))
+	r.withBatch(t, f, batchLists)
 
 	o := r.runDoctorJSON(t)
-	for _, id := range []string{"batch-apis", "batch-job-definition", "batch-image-family", "batch-network", "batch-subnetwork", "batch-log-sink", "batch-launcher-iam"} {
+	for _, id := range []string{
+		"batch-apis", "batch-job-definition", "batch-cost", "batch-image-family",
+		"batch-network", "batch-subnetwork", "batch-log-sink", "batch-log-exclusion",
+		"batch-job-image", "batch-run-accounts", "batch-run-account-roles",
+		"batch-run-account-actas", "batch-launcher-iam", "batch-reaper-role",
+		"batch-reaper-job", "batch-reaper-schedule",
+		// The boundary is the one line that is NOT ok and must not be: it
+		// describes the plan's own decision (Global Constraint 13) and takes
+		// info, so it is asserted here for its severity and not for a pass.
+		// TestDoctorBatchNamesTheArtifactBoundary is where its text is pinned.
+		"batch-artifact-boundary",
+	} {
 		c, ok := doctorCheckByID(o.Checks, id)
-		if !ok || !c.OK {
-			t.Errorf("check %s = %+v (%v), want ok", id, c, ok)
+		if !ok {
+			t.Errorf("doctor reports no %s check", id)
+			continue
 		}
+		if id == "batch-artifact-boundary" {
+			if c.OK || c.Severity != "info" {
+				t.Errorf("check %s = %+v, want the boundary's info line", id, c)
+			}
+			continue
+		}
+		if !c.OK {
+			t.Errorf("check %s = %+v, want ok", id, c)
+		}
+	}
+	if !o.OK {
+		t.Errorf("a provisioned installation is refused: %+v", failingChecks(o))
 	}
 }
 
 // TestDoctorBatchChecksAreSilentWithoutABatchBlock: an installation that
-// carries no batch block gets none of these checks. The backend's own name
-// cannot be selected in this build, so the block is the only signal there is
-// that an operator intends this backend, and a check on a project nobody
-// provisioned for Batch would be noise.
+// carries no batch block gets none of these checks. Nothing has published the
+// block, so no config could name the account a run's VMs run as, and the block
+// is what an installation's apply writes when the backend is provisioned -- a
+// check on a project nobody provisioned for Batch would be noise.
 //
 // Mutation (drop the lc.Batch == nil gate): this fails.
 func TestDoctorBatchChecksAreSilentWithoutABatchBlock(t *testing.T) {

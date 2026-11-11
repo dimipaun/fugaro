@@ -3244,10 +3244,17 @@ func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) e
 //   - a repository recipe (named, or the one agent.recipe names) is read from
 //     this launcher's working tree, while the runner reads it at the task's
 //     ref -- the repository's base branch unless the launch names another. A
-//     working tree whose recipe is not mode: artifact therefore passes this
-//     gate for a ref whose recipe is. That residual is recorded in the plan's
-//     Task 10 step 5 inventory, which closes it before the name is selectable,
-//     and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins it.
+//     working tree whose recipe is not mode: artifact used to pass this gate
+//     for a ref whose recipe is; since the enable (plan Task 10 step 5 entry 6)
+//     the ref is asked for the name this launcher resolved (repoRecipeAtRef),
+//     so the file the ref holds is judged on its own mode, and a ref this
+//     checkout does not hold is refused fail-closed
+//     (artifactRepoRecipeAtRefRefusal).
+//     TestTheArtifactLaunchGateJudgesTheRefNotTheWorkingTree pins it. That
+//     read is defence in depth and never the closure: it is of this checkout's
+//     last fetch, so a mode: artifact file pushed after it passes here and is
+//     refused by the runner, which reads the recipe the run actually uses
+//     (internal/runner's FUGARO_BACKEND refusal).
 //
 // It has three shapes of its own, because a launch can arrive without a recipe
 // this launcher can read at all: the refusal for a recipe known to be mode:
@@ -3306,6 +3313,27 @@ func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) er
 			return userErr("%s", msg)
 		}
 	}
+	if launchBackend(env.be) == backend.CloudBatch {
+		// The same read for the recipes that are a repository FILE rather than
+		// text: the recipe a task names as repo-sourced (fugaro run --recipe,
+		// read from the working tree by repoRecipeFrom) and the one the runner
+		// resolves for a task that names none at all (agent.recipe from the
+		// ref's own fugaro.yaml, else the default name -- resolveRecipe, which
+		// reads agent.recipe for a first run only). Both are read at the task's
+		// ref by the run and from this checkout's working tree here, so the ref
+		// is asked for the name this launcher resolved, as it is asked above for
+		// a carried one: the file it holds is judged on its own mode. This is
+		// defence in depth and not the boundary's closure, because the read is
+		// of this checkout's last fetch -- a same-named mode: artifact file
+		// pushed after it passes here and is refused by the runner.
+		refRcp, err := repoRecipeAtRef(ctx, spec)
+		if err != nil {
+			return userErr("%s", artifactRepoRecipeAtRefRefusal(err, spec.Repo, spec.Ref))
+		}
+		if msg, ok := artifactOnBatchRefusal(backend.CloudBatch, refRcp); ok {
+			return userErr("%s", msg)
+		}
+	}
 	if cfg == nil {
 		return nil
 	}
@@ -3351,6 +3379,58 @@ func carriedRecipeAtRef(ctx context.Context, spec *task.Spec) (*recipe.Recipe, e
 	}
 	if rcp.Name != spec.Recipe.Name {
 		return nil, fmt.Errorf("recipe %s at %s names itself %q; the file name and the name must agree", spec.Recipe.Name, spec.Ref, rcp.Name)
+	}
+	return rcp, nil
+}
+
+// repoRecipeAtRef is the recipe the run will resolve when the one this launch
+// names is a repository FILE rather than text the task carries: the name this
+// launcher resolved -- spec.Recipe's for a repo-sourced recipe, else the
+// default name for a follow-up, else agent.recipe out of the REF's own
+// fugaro.yaml for a first run that names none (internal/runner/recipe.go's
+// resolveRecipe) -- read at the task's ref, which is where the runner reads it
+// and not the working tree this launcher read it from.
+//
+// nil, nil for a launch whose recipe is not one of those: one that carries its
+// own text is carriedRecipeAtRef's, and answers above. A name the ref holds no
+// file for is nil as well, because the runner has its own answer for that (a
+// repo-sourced recipe with no file at the base is refused there, and a first
+// run with none falls back to the catalog). err is non-nil whenever the ref
+// cannot be read at all, which the caller refuses on: nothing here can then say
+// whether the run is an artifact one.
+func repoRecipeAtRef(ctx context.Context, spec *task.Spec) (*recipe.Recipe, error) {
+	name := recipe.DefaultName
+	switch {
+	case spec.Recipe != nil && spec.Recipe.YAML != "":
+		return nil, nil
+	case spec.Recipe != nil:
+		name = spec.Recipe.Name
+	case spec.IsFollowUp():
+		// A follow-up never reads agent.recipe (resolveRecipe), so the name is
+		// the default's and the layer it reads is origin/<ref>'s, which
+		// recipeAtRef tries first.
+	default:
+		cfg, err := refConfigAtRef(ctx, checkoutRoot(ctx, spec.Repo), spec.Ref)
+		if err != nil {
+			return nil, err
+		}
+		if cfg != nil && cfg.Agent.Recipe != "" {
+			name = cfg.Agent.Recipe
+		}
+	}
+	data, found, err := recipeAtRef(ctx, checkoutRoot(ctx, spec.Repo), spec.Ref, name)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+	rcp, ps := recipe.Parse(data)
+	if len(ps) > 0 {
+		return nil, fmt.Errorf("recipe %s at %s is invalid: %s", name, spec.Ref, recipe.ProblemsText(ps))
+	}
+	if rcp.Name != name {
+		return nil, fmt.Errorf("recipe %s at %s names itself %q; the file name and the name must agree", name, spec.Ref, rcp.Name)
 	}
 	return rcp, nil
 }

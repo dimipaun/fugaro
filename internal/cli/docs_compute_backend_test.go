@@ -1914,15 +1914,17 @@ func TestDocsComputeBackendTask10CarriesTheAccountRequirement(t *testing.T) {
 }
 
 // TestDocsComputeBackendTask10CarriesTheArtifactGatesRefResidual: the launch's
-// arm of the artifact boundary (run.go's checkArtifactLaunch) judges a
-// repository recipe by the file in the launcher's working tree, and the runner
-// reads it at the task's ref -- the repository's base branch unless the launch
-// names another. The plan does not ask Task 8 for more than validate's offline
-// refusal (Global Constraint 13 and Task 8 step 4 name the mechanisms), the
-// name is refused until Task 10, and Task 10's step 5 is the inventory a review
-// of the enable reads it against -- so the residual is a requirement there,
-// with its own test case, and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef
-// pins the code's side of the same sentence. A trim of either half fails here.
+// arm of the artifact boundary (run.go's checkArtifactLaunch) judged a
+// repository recipe by the file in the launcher's working tree, while the
+// runner reads it at the task's ref -- the repository's base branch unless the
+// launch names another. The plan does not ask Task 8 for more than validate's
+// offline refusal (Global Constraint 13 and Task 8 step 4 name the mechanisms),
+// the name is refused until Task 10, and Task 10's step 5 is the inventory a
+// review of the enable reads it against -- so the residual is a requirement
+// there, with its own test case, and it names the test that pinned it and the
+// one the enable flips to the refusal
+// (TestTheArtifactLaunchGateJudgesTheRefNotTheWorkingTree). A trim of either
+// half fails here.
 func TestDocsComputeBackendTask10CarriesTheArtifactGatesRefResidual(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	task := section(t, doc, "### Task 10: The enable", "## Phase C")
@@ -1930,6 +1932,7 @@ func TestDocsComputeBackendTask10CarriesTheArtifactGatesRefResidual(t *testing.T
 		"**And a sixth, of the artifact boundary's kind (Global Constraint 13): the launch's gate reads a repository recipe from the launcher's working tree, and the runner reads it at the task's ref.**",
 		"**A working-tree recipe may differ from the base branch's**",
 		"`TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef`",
+		"`TestTheArtifactLaunchGateJudgesTheRefNotTheWorkingTree`",
 		"**This task closes it before the name is selectable**",
 		"**step 5's sixth entry as its own case**",
 	} {
