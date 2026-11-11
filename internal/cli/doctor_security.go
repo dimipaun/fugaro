@@ -125,12 +125,12 @@ func doctorSecurityListChecks(layers func() (*config.Security, *config.ProjectLa
 
 // doctorSecurityWritten is the rows of the list in force this reader can fix, in
 // the list's own order: the repository's own, and no other layer's. The floor's
-// rows are not the reader's to edit, and a project layer's row is not either —
-// it is shared by every repository of the project, so the fix this finding asks
-// for would apply to none of them but the one that wrote it, and this checkout's
-// base is not the tree such a row was written for. Both are counted by the line
-// beside this one and neither is measured (D1503's finding is over a row a
-// person wrote for the tree it is measured against).
+// rows are not the reader's to edit, and a project layer's row is not either: it
+// is shared by every repository of the project, and the fix this finding asks
+// for — drop the row — would take it away from the repositories that do have the
+// tree it names. Both layers are counted by the line beside this one and neither
+// is measured (D1503's finding is over a row written for the tree it is measured
+// against).
 func doctorSecurityWritten(list config.SecurityList) []sensitivity.Pattern {
 	var written []sensitivity.Pattern
 	for _, row := range list {
