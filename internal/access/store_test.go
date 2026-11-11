@@ -52,8 +52,8 @@ func encoded(t *testing.T, grants ...Grant) []byte {
 
 // TestAccessNodeDecodesStrictly: the node's document is read whole or not at
 // all. Every case here is a document a reader could be handed and must not act
-// on: an unknown field (the older CLI that does not know a member must refuse
-// the node, F27), a field name that is a case variant of a known one or that is
+// on: an unknown field (a node carrying a member the reader does not know is
+// refused rather than half-read, F27), a field name that is a case variant of a known one or that is
 // written twice — a Realtime Database node holds those as children of their own,
 // and encoding/json matches a name case-insensitively and lets the later of two
 // spellings win, so without the spelling walk `{"role":"viewer",…,"Role":

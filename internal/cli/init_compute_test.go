@@ -10,7 +10,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -46,6 +48,18 @@ const computeSocketGIDLabel = "socket-gid"
 func computeRig(t *testing.T) *initRig {
 	t.Helper()
 	r := newInitRig(t)
+	computeReady(t, r)
+	return r
+}
+
+// computeReady is what a rig needs beyond the installation for this stage: the
+// state bucket (this root has a state of its own), the pinned base image, the
+// run account a repository root would have created, the preload rebuild's job,
+// and the root's own outputs. It is apart from computeRig so a test whose
+// installation is a rig of its own -- one whose roles the grants node holds --
+// can have the same extras.
+func computeReady(t *testing.T, r *initRig) {
+	t.Helper()
 	r.stateBucket()
 	// The installation's pin, recorded by the run that pinned it.
 	r.appendConfig(t, "base_images:\n  "+config.BaseKind+": "+computePin+"\n")
@@ -65,8 +79,14 @@ func computeRig(t *testing.T) *initRig {
 	// the installation's answer is a different one (a root's name is the
 	// script key's suffix).
 	r.script["output@compute"] = map[string]any{"stdout": computeOutputsJSON(t)}
+	// The machine's login unit is this release's, so the converge's unit step
+	// (O9) has nothing to do. It is part of the rig rather than of a test: a
+	// plan-only run plans the FIRST stage with something to do, so a rig whose
+	// unit were missing would take that slot from the compute stage and the
+	// guard these tests drive would never be planned — the refusal below would
+	// pass for a reason it does not name.
+	unitFileAt(t, currentUnit(t).Text, time.Now())
 	r.save(t)
-	return r
 }
 
 // computeOutputsJSON is what the compute root's `terraform output -json`
@@ -230,6 +250,87 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 			t.Errorf("tfvars[%q] = %v, want %v", k, got, want)
 		}
 	}
+}
+
+// TestComputeRootTakesTheLaunchersTheModuleGrants: the compute root's
+// var.launchers is the run's whole launcher list -- the operators the derive
+// builds, the admins among them, because an admin operates too -- and it is the
+// same list the installation and repository roots take
+// (infra.tfvars.go's launchersWithOperators). The two lists still reach this
+// root apart, and its var.operators hold actAs on the preload account and
+// nothing else (modules/compute/iam.tf, design compute-backend §8.1 task 6), but
+// the admins are NOT subtracted back out of var.launchers: a member on both
+// lists would lose roles/batch.jobsEditor relative to the shape before the
+// rename, and an installation whose two lists hold the same person -- the roster
+// defaultMembers writes for a one-person installation, and where the migration's
+// collapse to the highest role leaves every launcher who was also an operator
+// (update_access.go's highestProject) -- would provision a launcher list of
+// nobody.
+//
+// Mutation (subtract the admins here again, roles.go's removed launcherOnly):
+// the one-person case below plans a launcher list of nobody and fails, and the
+// first case loses the admin.
+func TestComputeRootTakesTheLaunchersTheModuleGrants(t *testing.T) {
+	t.Run("a launcher and an admin", func(t *testing.T) {
+		const launcher, admin = "user:run@example.com", "user:root@example.com"
+		// The installation's own outputs hold both, which is what an
+		// installation whose roles moved to the node looks like: the derive's
+		// two lists are the node's, and a run told about both is a run whose
+		// review announced them (update_access.go's heldAccess).
+		r, db := accessRig(t, nil, nil, []string{launcher, admin}, []string{admin})
+		db.Set(accesslib.PathNode, accessNodeDoc(
+			projectGrant(launcher, accesslib.RoleOperator),
+			projectGrant(admin, accesslib.RoleAdmin)))
+		computeReady(t, r)
+		fakeTerminal(t)
+		out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		// The compute root's own variable: the whole launcher list, which is
+		// what the module's launcher grant is for_each over, and the admins
+		// where the module expects the operators.
+		vars := computeTfvars(t, r)
+		if got := members(vars["launchers"]); !slices.Equal(got, []string{admin, launcher}) {
+			t.Errorf("the compute root's launchers are %v, want %v: the module grants roles/batch.jobsEditor and serviceAccountUser on the run accounts to this list, and an admin operates too\n%s",
+				got, []string{admin, launcher}, out)
+		}
+		if got := members(vars["operators"]); !slices.Equal(got, []string{admin}) {
+			t.Errorf("the compute root's operators are %v, want %v: they hold actAs on the preload account\n%s", got, []string{admin}, out)
+		}
+		// And the installation's own apply is untouched by that reading: its
+		// launchers are the two lists unioned, which is what they were before
+		// the rename and what an operator who may cancel a run needs
+		// (launchersWithOperators).
+		v := r.tfvars(t)
+		if got := members(v["launchers"]); !slices.Equal(got, []string{admin, launcher}) {
+			t.Errorf("the installation's launchers are %v, want %v: the rename moves no IAM there either\n%s",
+				got, []string{admin, launcher}, out)
+		}
+		if got := members(v["operators"]); !slices.Equal(got, []string{admin}) {
+			t.Errorf("the installation's operators are %v, want %v\n%s", got, []string{admin}, out)
+		}
+	})
+
+	t.Run("one person on both lists", func(t *testing.T) {
+		// The one-person installation: the migration collapses a launcher who
+		// was also an operator into the one admin grant, and the derive puts
+		// that member back in both lists, so the config's terraform.operators
+		// and terraform.admins name the same person.
+		const me = "user:me@example.com"
+		r, db := accessRig(t, nil, nil, []string{me}, []string{me})
+		db.Set(accesslib.PathNode, accessNodeDoc(projectGrant(me, accesslib.RoleAdmin)))
+		computeReady(t, r)
+		fakeTerminal(t)
+		out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if got := members(computeTfvars(t, r)["launchers"]); !slices.Equal(got, []string{me}) {
+			t.Errorf("the compute root's launchers are %v, want %v: a member on both lists keeps the launcher grant, or a one-person installation provisions nobody who can start a run\n%s",
+				got, []string{me}, out)
+		}
+	})
 }
 
 // The installation's own scheduler_region wins over the nearest location Cloud

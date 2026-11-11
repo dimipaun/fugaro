@@ -414,7 +414,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 			RunsBucket: initRunsBucket, Bucket: "gs://" + initRunsBucket,
 			Registry: "gcr.io/" + initProject, RegistryHost: "us-east5-docker.pkg.dev/" + initProject, LogView: initLogView,
 			Build:       localcfg.Build{ServiceAccount: "fugaro-build@" + initProject + ".iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8"},
-			Terraform:   localcfg.Terraform{StateBucket: initStateBucket, Launchers: []string{"user:test@example.com"}, Operators: []string{"user:test@example.com"}},
+			Terraform:   localcfg.Terraform{StateBucket: initStateBucket, Operators: []string{"user:test@example.com"}, Admins: []string{"user:test@example.com"}},
 			Budget:      &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
 			MaxParallel: 4,
 		}
@@ -443,8 +443,8 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 			}
 		}
 		// Everything the operator chose and that names no project is kept.
-		if len(next.Terraform.Launchers) != 1 || next.Terraform.Launchers[0] != "user:test@example.com" {
-			t.Errorf("the config's launchers are %v: the restore moves the project, not the operator's choices", next.Terraform.Launchers)
+		if len(next.Terraform.Operators) != 1 || next.Terraform.Operators[0] != "user:test@example.com" {
+			t.Errorf("the config's launchers are %v: the restore moves the project, not the operator's choices", next.Terraform.Operators)
 		}
 		if next.Name != initProjectName || next.Region != "us-east5" || next.MaxParallel != 4 {
 			t.Errorf("the config is %s/%s/%d, want %s/us-east5/4: the name, the region and the rest of the operator's choices are not the restore's to change", next.Name, next.Region, next.MaxParallel, initProjectName)

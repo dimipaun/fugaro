@@ -196,7 +196,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 				stop = true
 				return plan, nil
 			}
-			if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
+			if err := r.confirmPlanned("applies "+counts.String()+" "+what, "nothing was applied", plan, r.notCoveredFirebase(plan, imports)); err != nil {
 				return plan, err
 			}
 		}

@@ -38,7 +38,7 @@ func readinessPolicy(t *testing.T, f *cloud, spec RepoSpec, policy bool) (RepoSp
 		t.Fatal(err)
 	}
 	ex.PolicyExists = policy
-	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false)
+	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func readinessPolicyErr(t *testing.T, f *cloud, spec RepoSpec, policy bool) (Rep
 		t.Fatal(err)
 	}
 	ex.PolicyExists = policy
-	return Readiness(context.Background(), f.c, spec, ex, false)
+	return Readiness(context.Background(), f.c, spec, ex, false, "update")
 }
 
 // readinessPolicyPlanErr is readinessPolicyErr under --plan-only: Readiness is
@@ -66,7 +66,7 @@ func readinessPolicyPlanErr(t *testing.T, f *cloud, spec RepoSpec, policy bool) 
 		t.Fatal(err)
 	}
 	ex.PolicyExists = policy
-	return Readiness(context.Background(), f.c, spec, ex, true)
+	return Readiness(context.Background(), f.c, spec, ex, true, "update")
 }
 
 // The other half of D11's gate, which nothing pinned before (the review of

@@ -201,11 +201,12 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	// database with (workspace_create.go, W3) — the workspace record the
 	// owner's `fugaro update` publishes (update_workspace.go / D1292), the
 	// project layer and its one local file (init_layer_stage.go), the
-	// checkout's own steps inside fugaro update (init_checkout_upgrade.go) and
-	// the compute backend's provisioning, which the design puts last
+	// checkout's own steps inside fugaro update (init_checkout_upgrade.go), the
+	// login unit that runs the orchestrator daemon (init_orchestrator_stage.go,
+	// O9) and the compute backend's provisioning, which the design puts last
 	// (compute-backend §8.1 task 6).
-	if len(names) != 17 {
-		t.Fatalf("the design has seventeen stages, got %v", names)
+	if len(names) != 18 {
+		t.Fatalf("the design has eighteen stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -220,7 +221,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, Policy, WorkspaceProject, Workspace, Layer, Checkout, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, Policy, WorkspaceProject, Workspace, Layer, Checkout, Unit, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}

@@ -77,8 +77,10 @@ commit authors are the owner under **three email addresses on three different do
 the runner identity `Fugaro <fugaro@users.noreply.invalid>` (389) and `dependabot[bot]` (8
 mechanical version bumps; its 14 `Signed-off-by` trailers are the only sign-offs in the
 history). PR authors ever: the owner's account, `app/fugaro-dev`, `app/dependabot`. Commit
-trailers credit AI models as co-authors (about 8,900 `Co-authored-by` lines). No outside human
-contributor appears. *Consequence, for the owner and counsel, not decided here:* (a) whether any
+trailers credit AI models as co-authors (about 8,900 `Co-authored-by` lines). One outside human
+contributor has appeared since: `paulkore` (2 commits, #1665 and #1673, merged 2026-11-03), whose
+pull requests the CLA assistant reported as signed by all committers. A `.mailmap` at the repository root maps the owner's
+billmybank.com and youkno.ai addresses to the lattica.com one for display; the stored commits are unchanged. *Consequence, for the owner and counsel, not decided here:* (a) whether any
 organisation behind the email domains has a claim on work committed under its address; (b)
 how AI-assisted authorship bears on the copyright the enterprise licence rests on. Neither blocks
 the 0.11.0 slice; both bear on D305.

@@ -235,6 +235,11 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 		// it would refuse the six keys by name of `fugaro project` and print a
 		// bare command for keys no subcommand of it edits.
 		"project policy",
+		// The clone URLs' family, the image map's twin: an entry is keyed by a
+		// canonical repository name and its value is held to the node's own
+		// rule, so `fugaro project clone-url` is where the two are checked
+		// against each other (settings spec §5.6, D842).
+		"project clone-url",
 	}
 	for _, r := range Rows() {
 		ok := false

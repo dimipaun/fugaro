@@ -1531,8 +1531,8 @@ insertion above it. **The console spawns it** — design §5.1 rule 6's
 `runs stats --json` row, the console's `runs.stats` operation — as the data
 behind the Spend screen's by-person view, and the console passes `--since`
 and nothing else. **`--all-users` is not on the spawn list**, which is what
-keeps the view the CLI resolved out of a screen's hands: an operator of the
-installation sees every user's rows, a plain launcher sees their own row
+keeps the view the CLI resolved out of a screen's hands: an admin of the
+installation sees every user's rows, a plain operator sees their own row
 alone, and an identity the installation's own lists do not place stays
 private. It is read-only —
 the figures come from the run records (`launch.json`'s `launched_by`, and
@@ -1541,11 +1541,12 @@ there is no write path behind it and no counter a screen has to reconcile.
 
 | Field | Type | omitempty | Availability state |
 |---|---|---|---|
+| `version` | int | no | the document's own shape version, `2` today (`userStatsDocVersion`). **A field's meaning never changes under it** (the rule at the top of this document): adding a field is compatible, removing or retyping one bumps the version, and a field whose meaning must change gets a new name. Version 1 carried the privileged list's answer under `operator` — that role's word before the roles' rename, when the config's `terraform.operators` WAS the privileged set — and that word names the run-starters now, so a consumer reads `admin` and refuses a version it does not know rather than reading `operator` as the set it named then |
 | `project` | string | no | the Fugaro project, the marker's name |
 | `by` | string | no | the breakdown asked for: `"user"`, the only value the command publishes |
-| `view` | string | no | `"all"` or `"own"`: which rows the caller is shown. **The ruling, not a preference** — an operator of the installation (the identity the local config's `user:`/git names, listed in its `terraform.operators`) sees `"all"`; a plain launcher gets `"own"` unless they pass `--all-users`; an identity the lists do not place stays `"own"`. `"own"` with `rows: []` is a real state, not a failure: see the note below |
+| `view` | string | no | `"all"` or `"own"`: which rows the caller is shown. **The ruling, not a preference** — an admin of the installation (the identity the local config's `user:`/git names, listed in its `terraform.admins`) sees `"all"`; anyone else gets `"own"` unless they pass `--all-users`; an identity the lists do not place stays `"own"`. `"own"` with `rows: []` is a real state, not a failure: see the note below |
 | `you` | string | no | the identity the view was resolved for, in the same domain a row's key is. `""` is *unavailable*, not anonymous: the CLI could not tell who the caller is — no identity at all, or one with nothing printable in it — which `--all-users` gets past. It is `"unknown"` only when the caller's own identity literally says so, never as a stand-in for "no key of its own", because that word is a group of runs rather than a person. A screen must not read `you` as a row it can always find in `rows` (see below) |
-| `operator` | bool | no | whether the installation's own lists place `you` as an operator. A screen must not render `"all"` as "you are an operator": `--all-users` produces `"all"` with `operator: false` |
+| `admin` | bool | no | whether the installation's own lists place `you` as an **admin** — the privileged set the wider view is resolved from (`terraform.admins`), not the run-starters `operator` names. A screen must not render `"all"` as "you are an admin": `--all-users` produces `"all"` with `admin: false` |
 | `since` | string | no | the window's first UTC day (`YYYY-MM-DD`); `""` (unbounded) for `--since 0` |
 | `until` | string | no | the window's last UTC day. Both are UTC days, like `runs ls`'s window |
 | `max_runs` | int | no | the bound the read ran under (`--max-runs`, default 5000) |

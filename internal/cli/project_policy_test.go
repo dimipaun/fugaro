@@ -2876,7 +2876,7 @@ func TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent(t *testing.T) {
 		{"a null routing member, replaced by the config's switch", `{"version": 4, "routing": null}`, switchOn, false},
 		{"a null claude member, replaced by the config's switch", `{"version": 4, "routing": {"claude": null}}`, switchOn, false},
 	} {
-		node, err := policyNodeBytes(tc.pol, []byte(tc.old), true, tc.keep)
+		node, err := policyNodeBytes(tc.pol, []byte(tc.old), true, tc.keep, true)
 		if err != nil {
 			t.Errorf("%s: policyNodeBytes = %v, want the node written", tc.name, err)
 			continue
@@ -2922,12 +2922,12 @@ func TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers(t *testing.T) {
 		"models twice":         `{"version": 4, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "models": []}}}`,
 		"a case-folded claude": `{"version": 4, "routing": {"CLAUDE": {"via": "direct"}}}`,
 	} {
-		if _, err := policyNodeBytes(pol, []byte(old), true, true); err == nil || !strings.Contains(err.Error(), "routing block") {
+		if _, err := policyNodeBytes(pol, []byte(old), true, true, true); err == nil || !strings.Contains(err.Error(), "routing block") {
 			t.Errorf("%s: policyNodeBytes = %v, want a refusal naming the block", name, err)
 		}
 	}
 	// The other side: a block this Fugaro reads as written is patched as before.
-	if _, err := policyNodeBytes(pol, []byte(`{"version": 4, "routing": {"claude": {"via": "direct"}}}`), true, true); err != nil {
+	if _, err := policyNodeBytes(pol, []byte(`{"version": 4, "routing": {"claude": {"via": "direct"}}}`), true, true, true); err != nil {
 		t.Errorf("a well-spelled block: policyNodeBytes = %v, want it written", err)
 	}
 }
