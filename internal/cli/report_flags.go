@@ -130,8 +130,13 @@ func streamOut(rep *report.Reporter, sink report.Sink, w io.Writer) io.Writer {
 // path is one line and still returns its own error: the step is the run's
 // verdict, the summary is the line under it, and both have to be written
 // before the command's error reaches cobra, which prints it (G8).
-func failStep(rep *report.Reporter, step *report.Step, err error) error {
-	step.Failed(err, nil)
+//
+// context is what the failure has to be read with — a line this run had already
+// earned and would otherwise lose with it — and it goes where
+// report.Step.Failed puts its own: under the step, and in the log. Only a
+// failure whose subject the run can no longer name any other way passes one.
+func failStep(rep *report.Reporter, step *report.Step, err error, context ...string) error {
+	step.Failed(err, context)
 	rep.Summary()
 	return err
 }

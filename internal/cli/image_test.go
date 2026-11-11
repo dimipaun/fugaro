@@ -389,6 +389,32 @@ func TestImageBuildCloudNoWait(t *testing.T) {
 	}
 }
 
+// A --no-wait build returns before anything knows how long it runs, so its
+// whole reservation is recorded and that write is the command's last act. When
+// that write fails the run still names the build: nothing waited for it, so it
+// is running and billing from here on, and this command is the only thing that
+// ever knew which build it is (G8 — the failure block carries the context a
+// reader needs, and a settle that failed must not be the reason the only line
+// naming the build is lost with it).
+func TestImageBuildNoWaitSettleFailureNamesTheBuild(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	// The settle's own write, and only it: the lease a take writes carries no
+	// "settled" key, so the build is submitted first and this failure lands
+	// after it — the state the test is about.
+	f.db.DenyKeys("settled")
+
+	out, errOut, err := executeBuild(t, "image", "build", "--no-wait", "--base", "b:1")
+	if err == nil {
+		t.Fatalf("the build's spend could not be recorded and the command exited zero:\n%s%s", out, errOut)
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("submitted %d builds, want the one the failure is about\n%s%s", buildPosts(fb), out, errOut)
+	}
+	if !strings.Contains(out, "submitted Cloud Build build ") {
+		t.Errorf("the failed run never names the build it submitted and is still billing:\n%s", out)
+	}
+}
+
 func TestImageBuildCloudRepoMustBeTheCheckout(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	_, _, err := executeBuild(t, "image", "build", "--base", "b:1", "--repo", "acme/other")

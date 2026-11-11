@@ -382,10 +382,16 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	// The sentence this command has always printed on stdout is the step's own
 	// line now: one line per step, on the screen and in the log.
 	if o.noWait {
+		submitted := fmt.Sprintf("submitted Cloud Build build %s of %s; log: %s", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+		// The settle is this run's last act on the unwatched arm, and it is the
+		// sentence above that fails with it: nothing waited for this build, so
+		// it is running and billing from here on, and a run that could not
+		// record what it reserved is the last place that knows which build it is
+		// (G8 — the context of the failure, not a "Done" the command did not do).
 		if err := lease.settle(ctx, false); err != nil {
-			return failStep(sr.rep, step, err)
+			return failStep(sr.rep, step, err, submitted)
 		}
-		step.Done(fmt.Sprintf("submitted Cloud Build build %s of %s; log: %s", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL)))
+		step.Done(submitted)
 		return nil
 	}
 	fmt.Fprintf(w, "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
