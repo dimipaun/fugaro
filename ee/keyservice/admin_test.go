@@ -131,14 +131,14 @@ func TestAdminRefusesAnyoneButTheOwner(t *testing.T) {
 	}
 }
 
-// TestAPlanlessRequestStartsTheRowOnThePagePlan: a request the manual form
+// TestAdminStartsAPlanlessRowOnThePagePlan: a request the manual form
 // queued named no plan, so the numbers the page renders for it are the page
 // plan's and not the form's own one. The numbers a row renders are what the
 // owner's next click submits, so a row that started at one rendered "Term days
 // 1" and approving it minted and mailed a one-day key — and nothing takes that
 // back: the approval is idempotent on the request and a decline is refused once
 // a key exists.
-func TestAPlanlessRequestStartsTheRowOnThePagePlan(t *testing.T) {
+func TestAdminStartsAPlanlessRowOnThePagePlan(t *testing.T) {
 	f := newFixtureWith(t, Production, func(f *fixture) {
 		// The page plan's own numbers, and neither is one the page renders
 		// anywhere else: the Order-Form form's are the fixture's 1 and 365.
