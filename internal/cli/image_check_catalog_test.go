@@ -177,7 +177,11 @@ func (f *catalogCheckFixture) putRecord(t *testing.T, entry, repo string, gen in
 	rec, err := json.Marshal(imagecheck.CatalogRecordState{
 		Version: imagecheck.CatalogRecordVersion, Entry: entry, SourceCommit: catalogCheckCommit,
 		DefinitionGeneration: gen, DefinitionSHA256: sum,
-		BaseRef: checkBase, BaseDigest: baseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
+		// The template the job's own binary would run: a record that names it
+		// is a build of this same release, so the tests below are about the
+		// triggers they name and not about the template one.
+		TemplateSalt: gcp.TemplateSalt(Version),
+		BaseRef:      checkBase, BaseDigest: baseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -321,6 +325,7 @@ func TestCatalogCheckJobRebuildsTheChangedEntryAsItsOwnRepositorysAccount(t *tes
 		ServiceAccount: gcp.BuildServiceAccountID(otherSlug) + "@proj-1234.iam.gserviceaccount.com",
 		MachineType:    "E2_HIGHCPU_8",
 		Bucket:         "gs://" + catalogBuildBucket,
+		TemplateSalt:   gcp.TemplateSalt(Version),
 		Selftest:       catalogCheckSelftest(t, "acme/other", catalogCheckCommit),
 	})
 	if err != nil {
@@ -828,7 +833,8 @@ func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
 			Version: imagecheck.CatalogRecordVersion, Entry: tc.entry, SourceCommit: catalogCheckCommit,
 			ContextCommit: catalogCheckCommit, ContextSHA256: tc.recorded,
 			DefinitionGeneration: gen, DefinitionSHA256: sum,
-			BaseRef: checkBase, BaseDigest: checkBaseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
+			TemplateSalt: gcp.TemplateSalt(Version),
+			BaseRef:      checkBase, BaseDigest: checkBaseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -882,6 +888,7 @@ func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
 		ServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
 		MachineType:    "E2_HIGHCPU_8",
 		Bucket:         "gs://" + catalogBuildBucket,
+		TemplateSalt:   gcp.TemplateSalt(Version),
 		Selftest:       catalogCheckSelftest(t, "acme/app", stagedCommit),
 	})
 	if err != nil {
@@ -897,6 +904,62 @@ func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
 	}
 	if got := f.fb.Last(); !reflect.DeepEqual(got, wantMap) {
 		t.Fatalf("request =\n%v\nwant\n%v", got, wantMap)
+	}
+}
+
+// TestCatalogCheckRebuildsOnAChangedTemplate: an entry whose last build ran a
+// template this job does not know — the release behind — is rebuilt, and the
+// record the rebuild writes carries this job's own template, so the trigger
+// fires once and not every night. The copied definition, the context and the
+// base are the same bytes either way, so without the salt a release that
+// changes how catalog images are built rebuilds every workflow image and no
+// catalog entry at all (F33, D1402's second half).
+func TestCatalogCheckRebuildsOnAChangedTemplate(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	gen, sum := f.seed(t, "runtime", "acme/other", catalogCheckOtherDef, checkBaseDigest)
+	recKey, err := gcp.CatalogRecordKey(f.slugs["acme/other"], "runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(imagecheck.CatalogRecordState{
+		Version: imagecheck.CatalogRecordVersion, Entry: "runtime", SourceCommit: catalogCheckCommit,
+		DefinitionGeneration: gen, DefinitionSHA256: sum,
+		// A build of the release behind: the same definition and base, a
+		// template this job has never run.
+		TemplateSalt: strings.Repeat("9", 64),
+		BaseRef:      checkBase, BaseDigest: checkBaseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.put(t, recKey, data)
+
+	lines, err := runCatalogCheck(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := lineFor(t, lines, "runtime"); l.Decision != imagecheck.Rebuild || !slices.Equal(l.Reasons, []string{imagecheck.ReasonCatalogTemplate}) {
+		t.Fatalf("runtime line = %+v, want a rebuild on the changed template", l)
+	}
+	if got := buildPosts(f.fb); got != 1 {
+		t.Fatalf("builds submitted = %d, want 1", got)
+	}
+	// The rebuild states the template this job would run, which is what the
+	// record it writes carries: the same salt twice would fire again tomorrow.
+	st := catalogBuildStep(t, f.fb, "catalog-record")
+	if st == nil {
+		t.Fatal("the request has no catalog-record step")
+	}
+	var salt string
+	env, _ := st["env"].([]any)
+	for _, raw := range env {
+		kv, _ := raw.(string)
+		if v, ok := strings.CutPrefix(kv, "TEMPLATE_SALT="); ok {
+			salt = v
+		}
+	}
+	if want := gcp.TemplateSalt(Version); salt != want {
+		t.Fatalf("the rebuild states the template salt %q, want this job's own %q", salt, want)
 	}
 }
 
