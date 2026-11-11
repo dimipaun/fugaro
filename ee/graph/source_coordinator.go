@@ -207,3 +207,178 @@ func coordinatorNode(source, repo string, rec coordinator.Record) (Node, bool) {
 	n.Key = NodeKey(n.Source, n.ID)
 	return n, true
 }
+
+// The roadmap record on the same scope (GV4.1). The coordinator scope is two
+// documents rather than one: the sweep's stored view of the project's
+// repositories, which is what CoordinatorSource above draws, and the project's
+// own roadmap record — the published plans, their tasks, the releases they ship
+// in and the dependencies between them — which is what the coordinator's own
+// front door writes (P9b) and what a person moves a task with (D2110).
+//
+// The record is project-level (D2111), so it is not a scope of its own: it is
+// read once and drawn wherever the caller asked for the coordinator's scope.
+
+// CoordinatorRecordSource is the roadmap record as a graph source: the record
+// the caller has already read with its own credential (D2117,
+// `coordinator.Store.ReadRoadmap`), and nothing else. Like CoordinatorSource it
+// holds no store, no client and no clock, so drawing it is not a read and
+// testing it needs no fake.
+type CoordinatorRecordSource struct {
+	// Record is every plan, release, assignment and edge the project's record
+	// holds, plus the count of documents this build could not read and the ids
+	// that are dangling.
+	Record coordinator.Roadmap
+}
+
+// Record is the record's own part of a document: the task nodes it carries, the
+// project's release boxes and the dependencies between its tasks. A caller adds
+// these beside whatever else its scopes answered with, and the three lists
+// belong to one project rather than to one scope.
+type Record struct {
+	Nodes    []Node
+	Releases []Release
+	Edges    []Edge
+}
+
+// Draw returns the record as the graph draws it.
+//
+// **A published task becomes one node, keyed by its qualified id** — `<plan>/
+// <task>`, the record's project-wide name for it (D2111) — and it is the
+// `plan` field that marks a node as the record's, since the coordinator's
+// stored view draws nodes of the same source. Its stream is the release's, or
+// the plan's own for a task nobody has placed (D2114), and its version is the
+// plan's own target, carried for exactly that unplaced task. A release box is
+// the record's `releases[]`: the stream, the record's key for it, its name, the
+// state the record calls it and its position in its stream (D2113). An edge is
+// one of the record's own cross-plan dependencies (D2112), from the task to
+// what it needs, which is the direction the orchestrator scopes' edges already
+// carry.
+//
+// **A dangling id is drawn rather than dropped** (D2115): a task an assignment
+// or an edge names and no plan document carries is a node of its own, marked
+// `dangling`, so a screen can show the record's own housekeeping instead of a
+// dependency pointing at nothing. Its lane is the plan's name the qualified id
+// carries, and a task whose id does not split into plan and task has no lane at
+// all.
+//
+// It refuses an identity that sanitising would rewrite — a task id carrying a
+// control character or a bidi override — rather than printing a document whose
+// keys are wrong (Sanitise, D1356). Everything else is prose and is sanitised.
+func (s CoordinatorRecordSource) Draw() (Record, error) {
+	source := Scope{Kind: ScopeCoordinator}.String()
+	out := Record{Nodes: []Node{}, Releases: []Release{}, Edges: []Edge{}}
+
+	boxes := make(map[string]coordinator.Release, len(s.Record.Releases))
+	for _, rel := range s.Record.Releases {
+		key := coordinator.ReleaseID(rel.Stream, rel.ID)
+		boxes[key] = rel
+		out.Releases = append(out.Releases, Release{
+			Key:    key,
+			Stream: rel.Stream,
+			ID:     rel.ID,
+			Name:   rel.Name,
+			State:  rel.State,
+			Order:  rel.Order,
+		})
+	}
+
+	placed := make(map[string]coordinator.Assignment, len(s.Record.Assignments))
+	for _, a := range s.Record.Assignments {
+		placed[a.Task] = a
+	}
+	dangling := make(map[string]bool, len(s.Record.Dangling))
+	for _, id := range s.Record.Dangling {
+		dangling[id] = true
+	}
+
+	carried := make(map[string]bool)
+	for _, p := range s.Record.Plans {
+		for _, t := range p.Tasks {
+			qualified := p.Plan + "/" + t.ID
+			if carried[qualified] {
+				continue
+			}
+			carried[qualified] = true
+			n := recordNode(source, coordinator.Plan{Plan: p.Plan, Stream: p.Stream}, t, qualified, boxes, placed)
+			n.Dangling = dangling[qualified]
+			if err := n.sanitise(); err != nil {
+				return Record{}, err
+			}
+			out.Nodes = append(out.Nodes, n)
+		}
+	}
+	// The dangling ids no plan document carries come after the tasks the record
+	// does carry, in the read's own sorted order, so two reads of one record
+	// draw the same thing.
+	for _, id := range s.Record.Dangling {
+		if carried[id] {
+			continue
+		}
+		carried[id] = true
+		plan, _, ok := coordinator.SplitQualifiedID(id)
+		n := recordNode(source, coordinator.Plan{Plan: plan}, coordinator.Task{ID: id}, id, boxes, placed)
+		if !ok {
+			n.Plan = ""
+		}
+		n.Dangling = true
+		if err := n.sanitise(); err != nil {
+			return Record{}, err
+		}
+		out.Nodes = append(out.Nodes, n)
+	}
+
+	for _, e := range s.Record.Edges {
+		edge := Edge{
+			From: NodeKey(source, e.Task),
+			To:   NodeKey(source, e.Needs),
+			Kind: DependsOnEdge,
+		}
+		edge.sanitise()
+		out.Edges = append(out.Edges, edge)
+	}
+	for i := range out.Releases {
+		if err := out.Releases[i].sanitise(); err != nil {
+			return Record{}, err
+		}
+	}
+	return out, nil
+}
+
+// recordNode is one of the record's tasks as a node: its qualified id, the
+// plan's own title for it, the stream it is drawn in and the plan's version
+// where the artifact named one.
+//
+// The stream is the release's when the task is in a box the record holds, and
+// the plan's own otherwise — which is both a task nobody has placed (D2114) and
+// a task placed in a release the record does not hold, whose assignment is
+// dangling (D2115). The latter is drawn in the plan's lane beside its own
+// version rather than in a box that does not exist, and its `dangling` mark is
+// what says the record's assignment went somewhere.
+func recordNode(
+	source string,
+	plan coordinator.Plan,
+	task coordinator.Task,
+	qualified string,
+	boxes map[string]coordinator.Release,
+	placed map[string]coordinator.Assignment,
+) Node {
+	n := Node{
+		Source: source,
+		Kind:   NodeTask,
+		ID:     qualified,
+		Title:  task.Title,
+		Plan:   plan.Plan,
+		Stream: plan.Stream,
+	}
+	if task.Version != nil {
+		n.Version = *task.Version
+	}
+	if a, ok := placed[qualified]; ok {
+		if rel, held := boxes[a.Release]; held {
+			n.Release = a.Release
+			n.Stream = rel.Stream
+		}
+	}
+	n.Key = NodeKey(n.Source, n.ID)
+	return n
+}

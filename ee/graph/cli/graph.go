@@ -255,6 +255,7 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, db *rtdb.Client, scope graph.Scope, now, asOf time.Time, warned *bytes.Buffer) (graph.Document, error) {
 	sources := []graph.SourceState{}
 	nodes := []graph.Node{}
+	releases := []graph.Release{}
 	edges := []graph.Edge{}
 
 	covers, orchestrators, err := graphSources(ctx, env, db, scope, warned)
@@ -262,12 +263,13 @@ func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, d
 		return graph.Document{}, err
 	}
 	if covers {
-		state, ns, es, err := coordinatorScope(ctx, env, store, now, asOf, warned)
+		state, ns, rs, es, err := coordinatorScope(ctx, env, store, now, asOf, warned)
 		if err != nil {
 			return graph.Document{}, err
 		}
 		sources = append(sources, state)
 		nodes = append(nodes, ns...)
+		releases = append(releases, rs...)
 		edges = append(edges, es...)
 	}
 	for _, src := range orchestrators {
@@ -297,6 +299,7 @@ func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, d
 		Version:     graph.DocumentVersion,
 		GeneratedAt: now,
 		Sources:     sources,
+		Releases:    releases,
 		Nodes:       nodes,
 		Edges:       edges,
 		Warnings:    graphWarningLines(warned),
@@ -515,11 +518,14 @@ func cachedBriefs() (map[string]time.Time, error) {
 	return out, nil
 }
 
-// coordinatorScope is the coordinator's stored view as its part of a document:
-// its state, its nodes and no edges (F17), read exactly as `coordinator status
-// --from-store --all` reads it — the same store, the same credential and the
-// same runs-half fallback for a repository with nothing stored, which is what
-// makes a project whose coordinator is off draw its runs rather than nothing.
+// coordinatorScope is the coordinator's own part of a document: the stored view
+// as its state and its nodes, and the project's roadmap record as the task
+// nodes, release boxes and cross-plan edges beside them (GV4.1). The view is
+// read exactly as `coordinator status --from-store --all` reads it — the same
+// store, the same credential and the same runs-half fallback for a repository
+// with nothing stored, which is what makes a project whose coordinator is off
+// draw its runs rather than nothing — and the record is read from the same store
+// with the same credential (D2117, `coordinator.Store.ReadRoadmap`).
 //
 // Two answers this build cannot read become the scope's state and never a
 // refusal: a stored node the decoding refuses (coordinator.ErrUnreadable), and
@@ -529,11 +535,20 @@ func cachedBriefs() (map[string]time.Time, error) {
 // reads as "this CLI has no graph" (T3) and it would say that about a project
 // whose database this CLI can read and whose coordinator has simply written
 // something this build does not know.
-func coordinatorScope(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, now, asOf time.Time, warned *bytes.Buffer) (graph.SourceState, []graph.Node, []graph.Edge, error) {
+//
+// **A record this build could not read is a warning and not a state**: the
+// stored view above it was read, so the scope is not unreadable, and the record
+// is the newer half of the same database. A record that answers with documents
+// this build cannot decode (`Roadmap.Unreadable`) and one whose read failed are
+// both said in a sentence beside the figures the scope does have — the same door
+// the rest of the read's sentences take (`graphWarningLines`), and the reason
+// the count exists is exactly this: "the record holds nothing" and "the record
+// holds something this build cannot read" must not look alike (§6.22).
+func coordinatorScope(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, now, asOf time.Time, warned *bytes.Buffer) (graph.SourceState, []graph.Node, []graph.Release, []graph.Edge, error) {
 	source := graph.Scope{Kind: graph.ScopeCoordinator}.String()
 	window, err := fcli.ParseSince(fcli.LsDefaultSince())
 	if err != nil {
-		return graph.SourceState{}, nil, nil, fcli.UserErr("%v", err)
+		return graph.SourceState{}, nil, nil, nil, fcli.UserErr("%v", err)
 	}
 	project, err := coordcli.StoredProjectThrough(ctx, env, store, graphRepos(env), fcli.LsSince(window), warned)
 	switch {
@@ -541,14 +556,45 @@ func coordinatorScope(ctx context.Context, env *fcli.Cloud, store *coordinator.S
 		src := graph.CoordinatorSource{View: project, AsOf: asOf, Now: now}
 		nodes, state, err := src.Nodes()
 		if err != nil {
-			return unreadableScope(source, err), nil, nil, nil
+			return unreadableScope(source, err), nil, nil, nil, nil
 		}
-		return state, nodes, []graph.Edge{}, nil
+		record := recordScope(ctx, store, warned)
+		return state, append(nodes, record.Nodes...), record.Releases, record.Edges, nil
 	case errors.Is(err, coordinator.ErrUnreadable):
-		return unreadableScope(source, err), nil, nil, nil
+		return unreadableScope(source, err), nil, nil, nil, nil
 	default:
-		return graph.SourceState{}, nil, nil, err
+		return graph.SourceState{}, nil, nil, nil, err
 	}
+}
+
+// recordScope is the project's roadmap record as the graph draws it, and the
+// sentences its read owes a reader.
+//
+// **A read that failed is not the whole read's failure**: the document's other
+// scopes answered, and the coordinator's stored view beside it did, so the
+// failure is a part of the picture that is missing and it is said rather than
+// refused. That is the same rule the orchestrator scopes follow for an id the
+// enumeration lost (`readGraph`), and the one difference is that this half's
+// absence is always worth a sentence, because a project with published plans
+// draws them here and nowhere else.
+func recordScope(ctx context.Context, store *coordinator.Store, warned *bytes.Buffer) graph.Record {
+	empty := graph.Record{Nodes: []graph.Node{}, Releases: []graph.Release{}, Edges: []graph.Edge{}}
+	record, err := store.ReadRoadmap(ctx)
+	if err != nil {
+		// safetext.OneLine for the same reason every other sentence here uses
+		// it: the text is another program's and the console draws it as one line.
+		_, _ = fmt.Fprintf(warned, "the roadmap record is left out of this graph: %s\n", safetext.OneLine(err.Error()))
+		return empty
+	}
+	if record.Unreadable > 0 {
+		_, _ = fmt.Fprintf(warned, "this build cannot read %d of the roadmap record's documents\n", record.Unreadable)
+	}
+	drawn, err := graph.CoordinatorRecordSource{Record: record}.Draw()
+	if err != nil {
+		_, _ = fmt.Fprintf(warned, "the roadmap record is left out of this graph: %s\n", safetext.OneLine(err.Error()))
+		return empty
+	}
+	return drawn
 }
 
 // unreadableScope is one scope that answered with something this build cannot

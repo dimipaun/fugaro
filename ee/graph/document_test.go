@@ -164,6 +164,10 @@ func TestDocumentRoundTripsAndIsStrict(t *testing.T) {
 		Seq:         7,
 		GeneratedAt: at,
 		Sources:     []SourceState{{Source: "coordinator", State: SourceUp, AsOf: &updated}},
+		Releases: []Release{{
+			Key: "release-key", Stream: "cli", ID: "v1.5.0",
+			Name: "CLI 1.5", State: "open", Order: 2,
+		}},
 		Nodes: []Node{{
 			Key: NodeKey("coordinator", "1"), Source: "coordinator", Kind: NodePullRequest,
 			ID: "1", Title: "Fix the thing", Repo: "owner/repo", State: "open",

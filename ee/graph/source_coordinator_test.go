@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -319,5 +320,220 @@ func TestCoordinatorTextIsSanitised(t *testing.T) {
 	bad.Repos[0].Repo = "acme/app\x07"
 	if _, _, err := (CoordinatorSource{View: bad, AsOf: now, Now: now}).Nodes(); err == nil {
 		t.Error("Nodes accepted a repository whose name safetext.Field would change")
+	}
+}
+
+// recordFixture is the roadmap record the GV4.1 tests draw: two plans in two
+// streams, one task placed in a release, one nobody has placed, one release the
+// record calls finished, a cross-plan dependency between the two plans, and one
+// assignment naming a task no plan document carries (D2115). It is built here
+// rather than read from a file because every field it carries is one a writer
+// computes — an assignment holds a release *key* (ReleaseID) and not a name —
+// and a fixture spelling one by hand would pin a shape the writer never writes.
+func recordFixture() coordinator.Roadmap {
+	cli := coordinator.Release{ID: "v1.5.0", Stream: "cli", Name: "CLI 1.5", State: coordinator.ReleaseOpen, Order: 2}
+	style := coordinator.Release{ID: "v1.4.0", Stream: "style", Name: "Style 1.4", State: coordinator.ReleaseFinished, Order: 1}
+	target := "1.6.0"
+	return coordinator.Roadmap{
+		Plans: []coordinator.Plan{
+			{
+				Schema: coordinator.RoadmapSchema,
+				Plan:   "plans/cli",
+				Stream: "cli",
+				Tasks: []coordinator.Task{
+					{ID: "place", Title: "the box a task is placed in", Version: &target},
+					{ID: "free", Title: "a task nobody has placed", Version: &target},
+					{ID: "orphan", Title: "a task in a release the record has lost"},
+				},
+			},
+			{
+				Schema: coordinator.RoadmapSchema,
+				Plan:   "plans/style",
+				Stream: "style",
+				Tasks: []coordinator.Task{
+					{ID: "paint", Title: "a task in the other stream"},
+				},
+			},
+		},
+		Releases: []coordinator.Release{cli, style},
+		Assignments: []coordinator.Assignment{
+			{Schema: coordinator.RoadmapSchema, Task: "plans/cli/place", Release: coordinator.ReleaseID(cli.Stream, cli.ID)},
+			{Schema: coordinator.RoadmapSchema, Task: "plans/cli/orphan", Release: coordinator.ReleaseID(cli.Stream, "v1.0.0")},
+			{Schema: coordinator.RoadmapSchema, Task: "plans/gone/left", Release: coordinator.ReleaseID(cli.Stream, cli.ID)},
+		},
+		Edges: []coordinator.Edge{
+			{Schema: coordinator.RoadmapSchema, Task: "plans/style/paint", Needs: "plans/cli/place", Reason: "the palette"},
+			{Schema: coordinator.RoadmapSchema, Task: "plans/style/paint", Needs: "plans/gone/left", Reason: "the palette"},
+		},
+		// The reader's own answer (D2115): the two ids no plan document carries
+		// — one an assignment names and one an edge names.
+		Dangling: []string{"plans/cli/orphan", "plans/gone/left"},
+	}
+}
+
+func drawnRecord(t *testing.T) Record {
+	t.Helper()
+	out, err := CoordinatorRecordSource{Record: recordFixture()}.Draw()
+	if err != nil {
+		t.Fatalf("Draw: %v", err)
+	}
+	return out
+}
+
+func recordNodeAt(t *testing.T, out Record, id string) Node {
+	t.Helper()
+	for _, n := range out.Nodes {
+		if n.ID == id {
+			return n
+		}
+	}
+	t.Fatalf("no node for %q in %v", id, out.Nodes)
+	return Node{}
+}
+
+// TestCoordinatorRecordDrawsTasksBoxesAndEdges is GV4.1's own assertion: a task
+// of a published plan is a node of the coordinator scope, its release is a box
+// the document carries, and a cross-plan dependency is an edge between the two
+// tasks — the edge a document drawn from the stored view alone has none of
+// (F17).
+func TestCoordinatorRecordDrawsTasksBoxesAndEdges(t *testing.T) {
+	out := drawnRecord(t)
+	source := Scope{Kind: ScopeCoordinator}.String()
+
+	if len(out.Releases) != 2 {
+		t.Fatalf("releases = %v, want 2", out.Releases)
+	}
+	first := out.Releases[0]
+	if first.Key != coordinator.ReleaseID("cli", "v1.5.0") || first.Stream != "cli" || first.Name != "CLI 1.5" ||
+		first.State != coordinator.ReleaseOpen || first.Order != 2 {
+		t.Fatalf("release[0] = %+v", first)
+	}
+
+	placed := recordNodeAt(t, out, "plans/cli/place")
+	if placed.Key != NodeKey(source, "plans/cli/place") || placed.Kind != NodeTask {
+		t.Fatalf("placed = %+v", placed)
+	}
+	if placed.Plan != "plans/cli" || placed.Stream != "cli" || placed.Release != first.Key {
+		t.Fatalf("placed = %+v, want the record's plan, stream and release key", placed)
+	}
+	if placed.Dangling {
+		t.Fatalf("placed is dangling: %+v", placed)
+	}
+
+	if len(out.Edges) != 2 {
+		t.Fatalf("edges = %v, want 2", out.Edges)
+	}
+	want := Edge{
+		From: NodeKey(source, "plans/style/paint"),
+		To:   NodeKey(source, "plans/cli/place"),
+		Kind: DependsOnEdge,
+	}
+	if out.Edges[0] != want {
+		t.Fatalf("edge = %+v, want %+v", out.Edges[0], want)
+	}
+	// Every endpoint of every edge is a node of the document, dangling ones
+	// included (D2115): an edge drawn to an endpoint no node carries is a
+	// dependency a reader cannot follow.
+	for _, edge := range out.Edges {
+		for _, key := range []string{edge.From, edge.To} {
+			if !slices.ContainsFunc(out.Nodes, func(n Node) bool { return n.Key == key }) {
+				t.Fatalf("edge %+v names %q and no node carries it", edge, key)
+			}
+		}
+	}
+}
+
+// TestCoordinatorRecordUnassignedTaskIsInItsPlansStream holds D2114: a task
+// nobody has placed is drawn in its plan's own stream box-less, with the plan's
+// version beside it, and it is never matched to a release.
+func TestCoordinatorRecordUnassignedTaskIsInItsPlansStream(t *testing.T) {
+	out := drawnRecord(t)
+	free := recordNodeAt(t, out, "plans/cli/free")
+	if free.Release != "" {
+		t.Fatalf("an unassigned task names a release: %+v", free)
+	}
+	if free.Stream != "cli" {
+		t.Fatalf("stream = %q, want the plan's own (D2114)", free.Stream)
+	}
+	if free.Version != "1.6.0" {
+		t.Fatalf("version = %q, want the plan's own target", free.Version)
+	}
+}
+
+// TestCoordinatorRecordDanglingIsDrawn holds D2115's two dangling shapes: an id
+// no plan document carries is a node of its own — so an edge naming it has two
+// endpoints in the document — and a task whose assignment names a release the
+// record does not hold is drawn in its plan's own lane rather than in a box that
+// is not there.
+func TestCoordinatorRecordDanglingIsDrawn(t *testing.T) {
+	out := drawnRecord(t)
+	gone := recordNodeAt(t, out, "plans/gone/left")
+	if !gone.Dangling {
+		t.Fatalf("a task no plan carries is not marked: %+v", gone)
+	}
+	if gone.Plan != "plans/gone" {
+		t.Fatalf("plan = %q, want the qualified id's own plan", gone.Plan)
+	}
+	if gone.Release != coordinator.ReleaseID("cli", "v1.5.0") || gone.Stream != "cli" {
+		t.Fatalf("an assignment to a release that exists is not drawn in its box: %+v", gone)
+	}
+
+	orphan := recordNodeAt(t, out, "plans/cli/orphan")
+	if !orphan.Dangling {
+		t.Fatalf("a task whose release is gone is not marked: %+v", orphan)
+	}
+	if orphan.Release != "" {
+		t.Fatalf("a task whose release the record does not hold names one: %+v", orphan)
+	}
+	if orphan.Stream != "cli" {
+		t.Fatalf("stream = %q, want the plan's own lane", orphan.Stream)
+	}
+}
+
+// TestCoordinatorRecordTextIsSanitised is the scope's own rule (H2): every text
+// of the record is another writer's, so it is sanitised rather than trusted,
+// and the fields this build joins on — the qualified id — are refused instead of
+// rewritten (Sanitise, D1356).
+func TestCoordinatorRecordTextIsSanitised(t *testing.T) {
+	record := recordFixture()
+	record.Plans[0].Tasks[0].Title = "a title\x07with a bell"
+	record.Releases[0].Name = "a name\x07with a bell"
+	record.Plans[0].Tasks[1].Title = "a title​with a zero-width space"
+	out, err := CoordinatorRecordSource{Record: record}.Draw()
+	if err != nil {
+		t.Fatalf("Draw: %v", err)
+	}
+	if strings.ContainsRune(recordNodeAt(t, out, "plans/cli/place").Title, '\x07') {
+		t.Fatalf("a title kept a control character")
+	}
+	for _, rel := range out.Releases {
+		if strings.ContainsRune(rel.Name, '\x07') {
+			t.Fatalf("release name %q kept a control character", rel.Name)
+		}
+	}
+	if out.Releases[0].Name != "a namewith a bell" {
+		t.Fatalf("release name = %q", out.Releases[0].Name)
+	}
+
+	record = recordFixture()
+	record.Plans[0].Tasks[0].ID = "pla\x07ce"
+	if _, err := (CoordinatorRecordSource{Record: record}).Draw(); err == nil {
+		t.Fatal("an id sanitising would rewrite was accepted")
+	}
+}
+
+// TestCoordinatorRecordEmptyIsEmpty is the absent-record case: a project that
+// has never published a plan draws no node, no box and no edge, and never a
+// null the console would have to tell from an empty list.
+func TestCoordinatorRecordEmptyIsEmpty(t *testing.T) {
+	out, err := CoordinatorRecordSource{}.Draw()
+	if err != nil {
+		t.Fatalf("Draw: %v", err)
+	}
+	if len(out.Nodes) != 0 || len(out.Releases) != 0 || len(out.Edges) != 0 {
+		t.Fatalf("an empty record drew %+v", out)
+	}
+	if out.Nodes == nil || out.Releases == nil || out.Edges == nil {
+		t.Fatalf("an empty record drew a nil list: %+v", out)
 	}
 }
