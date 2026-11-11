@@ -1206,6 +1206,65 @@ func TestBootstrapSaysNothingForAReviewRunThatNamesAnImage(t *testing.T) {
 	}
 }
 
+// TestBootstrapSaysNothingForARebaseRunThatNamesAnImage (V5, D2005): a rebase
+// run puts a pull request's branch back on its base — its step is the runner's
+// own work plus one stage for the conflicts, whose subject is the branch
+// rather than a picture — so a task naming a file the branch carries is not
+// the run that dies at implement, and the remedy the refusal gives would add a
+// model it never runs. The run is the follow-up shape the mode is launched as
+// (`fugaro run --recipe rebase --pr N`), on a base that has moved under the
+// branch so there is a conflict to resolve.
+//
+// Mutation (drop `r.rebase` from checkImages' mode guard): the run is refused
+// at bootstrap as config_invalid, and pushes nothing.
+func TestBootstrapSaysNothingForARebaseRunThatNamesAnImage(t *testing.T) {
+	g := newGW(t, providerPinned(t), "enforce", "50")
+	wireProviders(t, g, nil, "acme/app")
+	g.provider.SelfID = fugaroSelf
+	first, err := g.run(t, commitOnly("feature"), review("ship", 0))
+	if err != nil || first.PR == nil || first.PushedHead == "" {
+		t.Fatalf("first run: rec = %+v, err = %v", first, err)
+	}
+	commitToRemote(t, g.harness, func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"feature.txt": "the base's side\n"})
+	})
+	fu := &fuHarness{harness: g.harness, first: first}
+	fu.followUpRecipe(t, followID, runID, "Put it back on main: docs/banner.png is what the release page needs", rebaseTask(t))
+	rec, err := g.run(t, resolveTheConflict)
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a rebase run whose task names a picture was refused: rec = %+v, err = %v", rec, err)
+	}
+	if rec.PushedHead == "" {
+		t.Error("the run pushed nothing: it stopped at bootstrap instead of rebasing")
+	}
+}
+
+// TestBootstrapSaysNothingForAReportRunThatNamesAnImage (V5, D2005): a report
+// run's own step is the runner's — it writes the reports the repository is
+// missing, with no model call and no implement stage — so a task naming a
+// picture is not a run whose coder dies at implement. The task text is what
+// makes the check's other half fire; the mode is what keeps it from refusing.
+//
+// Mutation (drop `r.digest` from checkImages' mode guard): the run is refused
+// at bootstrap as config_invalid, and writes no report.
+func TestBootstrapSaysNothingForAReportRunThatNamesAnImage(t *testing.T) {
+	const earlier = "20261019-090000-bbbb"
+	g := newGW(t, providerPinned(t), "enforce", "50")
+	spec := digestSpec(earlier)
+	spec.Task = "Write the run reports; docs/banner.png is the release page's and no part of this"
+	g.setSpec(t, spec)
+	wireProviders(t, g, nil, "acme/app")
+	clk := digestClock(g.harness)
+	digestRecord(t, g.bucket, repoSlug, earlier, clk.Now().AddDate(0, 0, -1), 1.5, nil)
+	rec, err := g.run(t, review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a report run whose task names a picture was refused: rec = %+v, err = %v", rec, err)
+	}
+	if got := stageNames(rec); !slices.Equal(got, []string{"digest", "review"}) {
+		t.Errorf("stages = %v, want the digest step and the review: the run wrote its report rather than stopping at bootstrap", got)
+	}
+}
+
 // renderProviderPinned is providerPinned with the workflow's render command
 // added: the configuration an artifact run needs (renderCfg's own insertion,
 // on the gateway's fixture, so the run has a provider coder with no image
