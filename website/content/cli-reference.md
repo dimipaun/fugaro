@@ -26,6 +26,7 @@ Flags:
 
 Subcommands:
 
+- `fugaro ab` -- Report model A/B results: pairs, wins, cost and the recommendation per group
 - `fugaro accounts` -- List the named Claude accounts a repository may use
 - `fugaro allow-delete` -- Record the objects a run may delete or replace, by address (the project's owner)
 - `fugaro artifacts` -- List and download what an artifact run delivered
@@ -74,6 +75,63 @@ Subcommands:
 - `fugaro watch` -- Watch the project's spend, repositories and running agents live
 - `fugaro workflow` -- Create and remove a repository's workflow blocks
 - `fugaro workspace` -- Join this project to a workspace, or declare one
+
+## `fugaro ab`
+
+Report model A/B results: pairs, wins, cost and the recommendation per group
+
+Report model A/B results from the runs the launcher sampled.
+
+A sampled task launches a champion (the run the developer sees) and a
+challenger (the same task, at the same commit, on another coder model, run as a
+shadow that pushes nothing and opens nothing). Both records carry the pair, and
+this command scores the pairs from those records alone: no model call, no
+judgement, and the same records always give the same table.
+
+Rows are one per rigor mode x tier x model pair. A pair the arms do not make --
+a different start commit, mode, tier or recipe, or an arm that never started --
+is in no figure at all. WINS and LOSSES are the challenger's; a TIE decided
+nothing and no figure is drawn from one. HALTS is each arm's halt count: a halt
+is already a loss, and the count says how often a limit rather than the work
+decided a pair. COST is the median pair cost ratio, the challenger's model
+dollars over the champion's.
+
+ADVICE is D565's rule at the mode's exchange rate: the challenger is recommended
+when it is clearly better (the lower bound of its win share above a half) and its
+median cost ratio is within the mode's rate, or when it is not worse (the upper
+bound of its loss share below 0.6) and cheaper; otherwise the champion stays. A
+row with fewer than 20 decisive pairs says no conclusion rather than
+approximating one. Nothing here changes a default: this is a report, not a
+switch.
+
+No person, repository or task text reaches the output: a row is a mode, a tier and
+two coder models.
+
+--since is how far back the read goes (default 30d: a day count, a Go duration,
+or 0 for no bound). --json prints {project, source, since, until, rows[{mode,
+tier, champion, challenger, pairs, wins, losses, ties, champion_halts,
+challenger_halts, champion_follow_ups, recommendation{decision, rule, decisive,
+p, win_share_lo, win_share_hi, median_cost_ratio, exchange_rate}}], warnings};
+median_cost_ratio is null when no pair of the group carried both arms' costs.
+
+Usage: `fugaro ab`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ab |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | only this repository (owner/name) |
+| `--since` | string | `30d` | no | how far back to read: Nd, a Go duration, or 0 for no bound |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro accounts`
 
