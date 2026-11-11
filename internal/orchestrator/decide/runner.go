@@ -340,8 +340,9 @@ func (r *Runner) call(bounds Bounds, model string, brief Brief) (Call, error) {
 // again here, so the daemon and the runs set the same variable.
 //
 // A pinned name the environment already carries is replaced rather than
-// appended to: the child reads the first entry of a name and the parent's
-// value is the one that would win, which is the opposite of a pin.
+// appended to: a Call that carries one name twice is a pin whose value depends
+// on who runs it — os/exec keeps the last entry, a shell keeps the first — and
+// a bound nobody can read off the Call is not a bound.
 func (r *Runner) env(bounds Bounds) []string {
 	env := slices.Clone(r.Env)
 	if env == nil {

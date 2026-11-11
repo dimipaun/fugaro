@@ -323,13 +323,14 @@ func TestOutputTokenPinIsPassed(t *testing.T) {
 		t.Errorf("an unbounded runner ran with --max-turns %q, want the default %d", got, decide.DefaultMaxTurns)
 	}
 
-	// A pin the caller's own environment already carries is replaced, not
-	// appended to: the child reads the first entry of a name, so the parent's
-	// larger value is the one that would win — which is the opposite of a pin
-	// and exactly the value the owner's lesson 21 says breaks every review.
-	inherited := testutil.FakeClaude(t, `{"calls":[{"structured":`+theAnswer+`}]}`)
+	// A pin the environment the caller hands over already carries is replaced,
+	// not appended to: a Call carrying one name twice is a pin whose value
+	// depends on who runs it — os/exec keeps the last entry, a shell the first
+	// — so the environment is read off the Call itself rather than off a child
+	// that has already deduplicated it.
+	rec := &calls{}
 	r3 := &decide.Runner{
-		Agent:  decide.Claude{Bin: inherited},
+		Agent:  rec,
 		Bounds: decide.Bounds{MaxOutputTokens: 4321},
 		Now:    testNow, Models: testModels(),
 		Env: []string{"PATH=" + os.Getenv("PATH"), "CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000"},
@@ -337,13 +338,26 @@ func TestOutputTokenPinIsPassed(t *testing.T) {
 	if _, err := r3.Decide(ctx, decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}}); err != nil {
 		t.Fatalf("the decision ended as %v", err)
 	}
-	env := testutil.FakeClaudeCalls(t, inherited)[0].Env
+	if len(rec.made) != 1 {
+		t.Fatalf("the runner built %d calls, want 1", len(rec.made))
+	}
+	env := rec.made[0].Env
 	if got := envValue(env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS"); got != "4321" {
-		t.Errorf("the child ran with the inherited CLAUDE_CODE_MAX_OUTPUT_TOKENS=%q, want the pinned 4321", got)
+		t.Errorf("the call carries the inherited CLAUDE_CODE_MAX_OUTPUT_TOKENS=%q, want the pinned 4321", got)
 	}
 	if n := envCount(env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS"); n != 1 {
-		t.Errorf("the child's environment carries %d entries for the pin, want one", n)
+		t.Errorf("the call's environment carries %d entries for the pin, want one", n)
 	}
+}
+
+// calls is an Agent that runs nothing: it records the Call the runner built,
+// which is the one place an environment the child would already have
+// deduplicated is still readable.
+type calls struct{ made []decide.Call }
+
+func (c *calls) Run(_ context.Context, call decide.Call) (decide.Reply, error) {
+	c.made = append(c.made, call)
+	return decide.Reply{Structured: json.RawMessage(theAnswer)}, nil
 }
 
 func TestTheDecisionAndItsReasoningAreWrittenToTheAuditLog(t *testing.T) {

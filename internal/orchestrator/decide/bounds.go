@@ -102,9 +102,8 @@ func (b Bounds) Allow(s orchestrator.State, now time.Time) error {
 }
 
 // callRecordPrefix names the record one call leaves in the state. It is a name
-// of its own rather than an id of the shape a person or a session writes, so a
-// reader — and the tests below — can tell the loop's own bookkeeping from a
-// question somebody asked.
+// of its own rather than one a question would carry, so a reader — and a test —
+// can tell the loop's own bookkeeping from a question somebody asked.
 const callRecordPrefix = "decide-call-"
 
 // recordCall is s with the record of one call in it: the decision the loop asks
@@ -112,16 +111,16 @@ const callRecordPrefix = "decide-call-"
 // rather than questions.
 //
 // It is a decision and not a counter of its own because the document has one
-// place for the loop's history, and it is closed as it is written — by the
-// class it waits on, the daemon's, since the daemon is what keeps the loop's
-// books — because only a resolved decision ages out: an open one is a question
-// somebody still owes an answer to and is never evicted (orchestrator.Retain),
-// so a record per call would fill the document and stop the daemon through
-// OverCap. Resolved, it is un-evictable only while the caps still count it
-// (countedDecision) and drops out of the document with the window.
+// place for the loop's history. It is closed as it is written, by the class it
+// waits on — the daemon's, since the daemon is what keeps the loop's books —
+// because only a resolved decision ages out: an open one is a question somebody
+// still owes an answer to and is never evicted (orchestrator.Retain), so a
+// record per call would fill the document and stop the daemon through OverCap.
+// Resolved, it is un-evictable only while the caps still count it
+// (countedDecision), and it leaves the document with the window.
 //
 // What it costs is bounded by the caps themselves: at most CallsPerDay records
-// a day can leave, and each is a name, one line and two stamps.
+// can be written in a day, and each is a name, one line and two stamps.
 func recordCall(s orchestrator.State, itemID string, at time.Time) (orchestrator.State, error) {
 	id := freeCallID(s)
 	p := orchestrator.Patch{BaseRev: s.Rev, Ops: []orchestrator.Op{
