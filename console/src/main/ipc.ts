@@ -1735,10 +1735,12 @@ export const CONSOLE_OPERATIONS = [
   // writes that walk an installation out of a lapse carry
   // `refusedAfterLapse` (`docs/design/lapse-read-only.md`).
   //
-  // It takes no argument (`args: []`): no positional word, no `--gcp-project`
-  // and no `--region`, so no word of the argv comes from a renderer. The
-  // window is the ruling's own 90 days and no flag moves it -- an estimate over
-  // a window the caller chose would be a different count wearing the same name.
+  // **No argument at all**, the strongest form of this rule's closed schema:
+  // the command takes no positional word, `--json` is a fixed word of the spawn
+  // row and the cloud group's `--project`/`--config` are the installation's --
+  // so there is no field a renderer could fill. The window is the ruling's own
+  // 90 days and no flag moves it: an estimate over a window the caller chose
+  // would be a different count wearing the same name.
   {
     name: 'seats.read',
     method: 'readSeats',

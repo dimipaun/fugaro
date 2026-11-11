@@ -484,10 +484,10 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // and the identities the estimate cannot count. One row, like every other,
   // and here the reason is at its plainest: the operation has no argument, so
   // this method takes none -- the window is the ruling's own 90 days and no
-  // control moves it. **It answers a count of people**, which is the one figure
-  // this surface carries that is neither a dollar nor a state: the screen draws
-  // it beside the licence key's own seat count and warns when it is above it,
-  // and nothing in this console is blocked by either number.
+  // control moves it. **What comes back is a count of people and the identities
+  // a count cannot include**: the screen draws it beside the licence key's own
+  // seat count, warns when it is above it, and blocks nothing on either number
+  // (D439 -- seats are compared, never enforced).
   ['seats.read', 'readSeats'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
