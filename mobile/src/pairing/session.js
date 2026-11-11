@@ -257,6 +257,11 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
       expired();
       return;
     }
+    // A snapshot with no delivery is the phone's own request write coming back
+    // (the listener was attached after it) or a node caught mid-write. It is
+    // not the event this session waits for, so it is passed over rather than
+    // refused: the CLI deletes the subtree in the next instant, and a session
+    // that gave up here would never see the delivery behind it.
     if (typeof value !== 'object' || typeof value.delivery !== 'string') return;
     try {
       await delivered(value.delivery);
