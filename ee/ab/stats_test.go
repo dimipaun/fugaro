@@ -479,8 +479,23 @@ func TestMedianRatio(t *testing.T) {
 		if got := MedianRatio(c.ratios); math.Abs(got-c.want) > 1e-12 {
 			t.Errorf("MedianRatio(%v) = %v, want %v (%s)", c.ratios, got, c.want, c.what)
 		}
-		if !slices.Equal(c.ratios, before) {
+		if !sameSample(c.ratios, before) {
 			t.Errorf("%s: MedianRatio modified its input: %v", c.what, c.ratios)
 		}
 	}
+}
+
+// sameSample compares two samples element by element. It is not slices.Equal
+// because one case above is made of NaN, which is unequal to itself: a reader
+// of that failure would be told the input moved when it did not.
+func sameSample(a, b []float64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] && !(math.IsNaN(a[i]) && math.IsNaN(b[i])) {
+			return false
+		}
+	}
+	return true
 }
