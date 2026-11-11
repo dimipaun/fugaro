@@ -365,9 +365,23 @@ func (r *run) providerServedReview() bool {
 // rate, which is the model the gateway refuses an image for (D2014). Denying
 // the read is what keeps such a stage from dying on a refused request: Claude
 // Code puts what it read into the next Messages body as a base64 image block.
+//
+// The second answer is the gateway's, so it is only given where the gateway
+// carries the stage: a run whose calls reach no gateway writes no managed
+// settings file at all (writeManagedSettings' own first rule) and has nothing
+// to refuse an image, and a stage the run's Claude OAuth account serves goes
+// straight to Anthropic on that account's token (stageDirect), which serves
+// the image. A price row alone would answer no for a model the run's table
+// does not carry — one the gateway does serve, priced at the table's maximum
+// and refused an image (forward.go's modelFor) — and a coder that is denied a
+// read nothing refuses, and told of a fix that changes nothing in its
+// installation, is a coder that learns to read past the rule.
 func (r *run) denyBinaryReads(stage string) bool {
 	if config.IsReviewStage(stage) {
 		return true
+	}
+	if !r.gatewayOn() || r.stageDirect(stage) {
+		return false
 	}
 	model := r.stageModel(stage)
 	// A stage pinned to no model runs Claude Code's own default, which no
