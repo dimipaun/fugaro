@@ -12,10 +12,11 @@ import "github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 // first writer's row keeps it, so a repository with no key gets the project
 // layer's rows and the floor's, a project with no key gets the floor, a
 // repository's row can never take a project's row away from it, and a list
-// nothing was written to is the floor (D1504, D1506). Nothing is recorded of a
-// row the union dropped, which is unionReviewFloor's own rule for a list (F23):
-// a union has no loser — the rows a layer asked for are all in force, and the
-// rows it left out are the ones no layer asked for.
+// nothing was written to is the floor (D1504, D1506). A row the union dropped
+// is recorded and never refused, the way policy.Merge records a looser value in
+// Effective.Ignored (SecurityIgnoredRow): the write is what its author believes
+// and the list in force is not, and leaving the two unsaid apart is the failure
+// the record exists for.
 //
 // It is one exported name rather than a promise, which is D1511's "one source
 // of truth": every reader of the list — `fugaro security paths`, doctor's line
@@ -76,11 +77,59 @@ func (l SecurityList) Patterns() []sensitivity.Pattern {
 	return out
 }
 
-// SecurityPatterns is the list in force over the two layers a caller holds:
-// repo is the repository's own security: block and layer the project layer
-// that applies to it, either of which may be nil — a repository that writes no
-// key, and a project no layer applies to, are both ordinary states and neither
-// is a list that says less than the floor (D1504).
+// SecurityIgnoredRow is a row a layer wrote that the union did not apply,
+// recorded the way policy.Merge records a looser value in Effective.Ignored
+// (F10, D1506): the row as it was written, who wrote it, and the row that holds
+// the name instead.
+//
+// A row is only ever dropped when a layer above it — the floor or the project
+// layer — already spends its name, which is the one direction the union's
+// "a name is a row's identity" rule takes: the first writer keeps it
+// (sensitivity.Union). The two cases a person writes are a repository repeating
+// one of its project's names, and a layer repeating a floor name, which
+// validateSecurity refuses at load in both layers and which therefore never
+// reaches here.
+//
+// It is recorded and not refused because the write is not an error: a
+// repository that narrows a project's row has written something it believes, and
+// the list in force simply is not the one it describes. Leaving that unsaid is
+// the failure mode this record exists for — the repository's author reads their
+// own file and believes the narrower glob is what a run matches.
+type SecurityIgnoredRow struct {
+	// Name is the name both rows spend: a row's identity in the list in force.
+	Name string
+	// Written is the row the later layer wrote, which is not in force.
+	Written sensitivity.Pattern
+	// Source is the layer that wrote it.
+	Source SecuritySource
+	// Kept is the row in force under that name.
+	Kept sensitivity.Pattern
+	// HeldBy is the layer whose row holds the name.
+	HeldBy SecuritySource
+}
+
+// SecurityResolution is what one resolution answers: the list in force, and the
+// rows a layer wrote that are not in it.
+type SecurityResolution struct {
+	list    SecurityList
+	ignored []SecurityIgnoredRow
+}
+
+// List is the list in force: what every reader matches against.
+func (r SecurityResolution) List() SecurityList { return r.list }
+
+// Ignored is the rows a layer wrote that the union dropped, in the order the
+// layers wrote them — the repository's last, since it is the last layer. It is
+// empty for a repository that writes no rows of its own and for one whose every
+// name is its own.
+func (r SecurityResolution) Ignored() []SecurityIgnoredRow { return r.ignored }
+
+// SecurityPatterns is the one resolution: the list in force over the two layers
+// a caller holds, with each row's source, and the rows the union dropped. repo
+// is the repository's own security: block and layer the project layer that
+// applies to it, either of which may be nil — a repository that writes no key,
+// and a project no layer applies to, are both ordinary states and neither is a
+// list that says less than the floor (D1504).
 //
 // They are two arguments rather than one resolved Config because the two
 // callers hold them differently: the runner holds the config it resolved at
@@ -88,7 +137,7 @@ func (l SecurityList) Patterns() []sensitivity.Pattern {
 // one file's own text at a ref and never resolves a config at all — the
 // resolution reads the repository's block and the layer's and nothing else of
 // either, so neither caller has to build the other half to ask.
-func SecurityPatterns(repo *Security, layer *ProjectLayer) SecurityList {
+func SecurityPatterns(repo *Security, layer *ProjectLayer) SecurityResolution {
 	var project, own []sensitivity.Pattern
 	if layer != nil && layer.Security != nil {
 		project = layer.Security.Patterns
@@ -115,10 +164,29 @@ func SecurityPatterns(repo *Security, layer *ProjectLayer) SecurityList {
 
 	merged := sensitivity.Union(floor, project, own)
 	out := make(SecurityList, 0, len(merged))
+	kept := make(map[string]sensitivity.Pattern, len(merged))
 	for _, row := range merged {
 		out = append(out, SecurityRow{Pattern: row, Source: source[row.Name]})
+		kept[row.Name] = row
 	}
-	return out
+
+	// The dropped rows are read in the union's own order of writers: the floor
+	// first (which validateSecurity makes impossible to repeat) and the
+	// repository's last, so a reader is told about the layer that wrote last
+	// rather than the one that was there first.
+	var ignored []SecurityIgnoredRow
+	appendIgnored := func(rows []sensitivity.Pattern, s SecuritySource) {
+		for _, row := range rows {
+			if held, ok := kept[row.Name]; ok && held != row {
+				ignored = append(ignored, SecurityIgnoredRow{
+					Name: row.Name, Written: row, Source: s, Kept: held, HeldBy: source[row.Name],
+				})
+			}
+		}
+	}
+	appendIgnored(project, SecuritySourceProject)
+	appendIgnored(own, SecuritySourceRepo)
+	return SecurityResolution{list: out, ignored: ignored}
 }
 
 // SecurityOf reads the security: block out of a fugaro.yaml's own bytes, and

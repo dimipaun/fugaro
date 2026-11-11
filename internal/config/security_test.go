@@ -80,7 +80,7 @@ func TestRepoKeyCannotRemoveAProjectRow(t *testing.T) {
 	layer := securityTestLayer(t, "security: { patterns: [ { name: payments, match: \"internal/payments/**\", category: credentials } ] }\n")
 	repo := securityTestRepo(t, "security: { patterns: [ { name: payments, match: \"internal/payments/legacy/**\", category: artifacts }, { name: billing, match: \"internal/billing/**\", category: credentials } ] }\n")
 
-	list := SecurityPatterns(repo.Security, layer)
+	list := SecurityPatterns(repo.Security, layer).List()
 
 	payments := securityTestRow(t, list, "payments")
 	if payments.Pattern.Match != "internal/payments/**" || payments.Pattern.Category != sensitivity.Credentials {
@@ -104,7 +104,7 @@ func TestRepoKeyCannotRemoveAProjectRow(t *testing.T) {
 func TestEmptyRepoListIsTheProjectListAndTheFloor(t *testing.T) {
 	layer := securityTestLayer(t, "security: { patterns: [ { name: payments, match: \"internal/payments/**\", category: credentials } ] }\n")
 	for _, repo := range []*Config{securityTestRepo(t, ""), securityTestRepo(t, "security: {}\n")} {
-		list := SecurityPatterns(repo.Security, layer)
+		list := SecurityPatterns(repo.Security, layer).List()
 
 		if want := len(sensitivity.Floor()) + 1; len(list) != want {
 			t.Fatalf("the list in force holds %d rows, want the floor's %d and the project's one", len(list), want)
@@ -123,7 +123,7 @@ func TestEmptyProjectListIsTheFloor(t *testing.T) {
 	layer := securityTestLayer(t, "security: {}\n")
 	repo := securityTestRepo(t, "security: {}\n")
 
-	list := SecurityPatterns(repo.Security, layer)
+	list := SecurityPatterns(repo.Security, layer).List()
 
 	if len(list) != len(sensitivity.Floor()) {
 		t.Fatalf("the list in force holds %d rows, want the floor's %d", len(list), len(sensitivity.Floor()))
@@ -141,7 +141,7 @@ func TestEmptyProjectListIsTheFloor(t *testing.T) {
 func TestBothEmptyIsTheFloor(t *testing.T) {
 	repo := securityTestRepo(t, "")
 
-	list := SecurityPatterns(repo.Security, nil)
+	list := SecurityPatterns(repo.Security, nil).List()
 
 	floor := securityTestFloorRows()
 	if len(list) != len(floor) {
@@ -162,7 +162,7 @@ func TestResolutionNamesEachRowsSource(t *testing.T) {
 	layer := securityTestLayer(t, "security: { patterns: [ { name: payments, match: \"internal/payments/**\", category: credentials } ] }\n")
 	repo := securityTestRepo(t, "security: { patterns: [ { name: billing, match: \"internal/billing/**\", category: credentials } ] }\n")
 
-	list := SecurityPatterns(repo.Security, layer)
+	list := SecurityPatterns(repo.Security, layer).List()
 
 	seen := map[SecuritySource]int{}
 	want := map[string]SecuritySource{"payments": SecuritySourceProject, "billing": SecuritySourceRepo}
@@ -183,6 +183,56 @@ func TestResolutionNamesEachRowsSource(t *testing.T) {
 	}
 	if got := len(list.Patterns()); got != len(list) {
 		t.Errorf("Patterns() = %d rows, want the list's own %d", got, len(list))
+	}
+}
+
+// TestADroppedRowIsRecorded: the row the union drops is not refused and not
+// silent — it is recorded, the way policy.Merge records a looser value in
+// Effective.Ignored (F10, D1506). The record names the row as it was written,
+// the layer that wrote it, and the row that holds the name instead, which is
+// what makes "why is the row I wrote not the one that runs?" answerable.
+//
+// A row that repeats a name *and* the row under it is not a drop: the merge's
+// own rule is that equal values are not recorded (policy.Merge), and a row
+// nothing differs about is the one in force.
+func TestADroppedRowIsRecorded(t *testing.T) {
+	layer := securityTestLayer(t, "security: { patterns: [ { name: payments, match: \"internal/payments/**\", category: credentials } ] }\n")
+	repo := securityTestRepo(t, "security: { patterns: [ { name: payments, match: \"internal/payments/legacy/**\", category: artifacts } ] }\n")
+	resolved := SecurityPatterns(repo.Security, layer)
+
+	ignored := resolved.Ignored()
+	if len(ignored) != 1 {
+		t.Fatalf("the resolution records %d dropped rows, want exactly the repository's one: %+v", len(ignored), ignored)
+	}
+	got := ignored[0]
+	if got.Name != "payments" || got.Written.Match != "internal/payments/legacy/**" || got.Written.Category != sensitivity.Artifacts {
+		t.Errorf("the dropped row = %+v, want the row as the repository wrote it", got.Written)
+	}
+	if got.Source != SecuritySourceRepo {
+		t.Errorf("the dropped row's source = %q, want %q: the repository is the layer that wrote it", got.Source, SecuritySourceRepo)
+	}
+	if got.Kept.Match != "internal/payments/**" || got.Kept.Category != sensitivity.Credentials {
+		t.Errorf("the kept row = %+v, want the project layer's row of that name", got.Kept)
+	}
+	if got.HeldBy != SecuritySourceProject {
+		t.Errorf("the kept row's layer = %q, want %q: the project layer is the first writer of that name", got.HeldBy, SecuritySourceProject)
+	}
+}
+
+// TestANameIsNotDroppedWhenTheRowsAgree: two layers that write the same row
+// under one name are not a drop, and the record stays empty — the union's own
+// rule, and the merge's (a value that does not move the list is not ignored).
+func TestANameIsNotDroppedWhenTheRowsAgree(t *testing.T) {
+	layer := securityTestLayer(t, "security: { patterns: [ { name: payments, match: \"internal/payments/**\", category: credentials } ] }\n")
+	repo := securityTestRepo(t, "security: { patterns: [ { name: payments, match: \"internal/payments/**\", category: credentials } ] }\n")
+
+	resolved := SecurityPatterns(repo.Security, layer)
+
+	if got := resolved.Ignored(); len(got) != 0 {
+		t.Errorf("the resolution records %+v, want nothing: the two rows agree, so nothing was dropped", got)
+	}
+	if want := len(sensitivity.Floor()) + 1; len(resolved.List()) != want {
+		t.Errorf("the list in force holds %d rows, want the floor's %d and the one row both layers wrote", len(resolved.List()), want)
 	}
 }
 

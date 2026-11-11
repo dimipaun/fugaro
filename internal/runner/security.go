@@ -99,9 +99,9 @@ func (r *run) securityBase() string {
 // escalation can ask for and never less than the run would have.
 func (r *run) securityList() config.SecurityList {
 	if r.cfg == nil {
-		return config.SecurityPatterns(nil, nil)
+		return config.SecurityPatterns(nil, nil).List()
 	}
-	return config.SecurityPatterns(r.cfg.Security, r.cfg.Layer)
+	return config.SecurityPatterns(r.cfg.Security, r.cfg.Layer).List()
 }
 
 // escalateSecurity classifies the run's diff and, on a match, turns review

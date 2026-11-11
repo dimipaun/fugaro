@@ -75,6 +75,11 @@ import (
 // incomplete list read like a complete one. The run is not weakened by that gap:
 // it resolves the published layer in the cloud, so `fugaro security paths` is
 // the advisory read and the runner's own resolution is the control.
+//
+// A row a later layer writes under a name an earlier layer's row already spends
+// is not in force and is said on stderr beside the list
+// (config.SecurityIgnoredRow, D1506): the row is what its author believes and
+// the list in force is not, which is a difference only the reader can settle.
 
 // securityPathsDoc is D1512's document, and it is the contract the desktop
 // console's §6.23 describes. The shape is closed in the way every wire shape in
@@ -260,7 +265,8 @@ func runSecurityPaths(cmd *cobra.Command, o *securityPathsOptions) error {
 	// floor, the project layer that applies to this repository and the
 	// repository's own rows, each row carrying the layer it came from.
 	layer := modelsLayer(doc.Project)
-	list := config.SecurityPatterns(own, layer)
+	resolved := config.SecurityPatterns(own, layer)
+	list := resolved.List()
 	doc.Security.Count = len(list)
 	for _, row := range list {
 		doc.Security.Patterns = append(doc.Security.Patterns, securityPattern{
@@ -287,6 +293,14 @@ func runSecurityPaths(cmd *cobra.Command, o *securityPathsOptions) error {
 		// console's contract (§6.23) and none of them is this. stderr is where
 		// the table already says what a read did not answer.
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this machine holds no cached copy of project %s's layer, so the rows its security: block writes are not in this list; a run resolves the published layer itself\n", oneLine(doc.Project))
+	}
+	for _, ig := range resolved.Ignored() {
+		// A row the union dropped is a row its author believes and the list in
+		// force is not (config.SecurityIgnoredRow, F10, D1506). It is said here
+		// for the same reason the two above are: the document's shape is the
+		// console's contract and carries no member for it.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this %s writes a security row named %s (%s), which is not in force: the %s row of that name (%s) is the one a run matches, because a name is a row's identity in the list and only the first layer that writes it keeps it\n",
+			ig.Source, cellOneLine(ig.Name), cellOneLine(ig.Written.Match), ig.HeldBy, cellOneLine(ig.Kept.Match))
 	}
 
 	if o.json {

@@ -88,7 +88,7 @@ func doctorSecurityChecks(ctx context.Context, root string) []doctorCheck {
 // row against, and a finding nobody can check is worse than none.
 func doctorSecurityListChecks(layers func() (*config.Security, *config.ProjectLayer), baseTree func() (string, []string)) []doctorCheck {
 	own, layer := layers()
-	list := config.SecurityPatterns(own, layer)
+	list := config.SecurityPatterns(own, layer).List()
 	out := []doctorCheck{doctorSecurityInForce(list)}
 	written := doctorSecurityWritten(list)
 	if len(written) == 0 {

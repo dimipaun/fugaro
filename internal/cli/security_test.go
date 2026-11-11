@@ -664,3 +664,47 @@ func TestSecurityPathsSaysSoWhenTheProjectLayerIsNotCached(t *testing.T) {
 		t.Errorf("security.count = %d, want the floor's %d rows: the project's rows are not on this machine to be read", doc.Security.Count, len(securityFloorRows()))
 	}
 }
+
+// securityOwnRepeatYAML is a repository that writes a row under a name its
+// project layer already spends: the write D1506 makes a union drop, and the one
+// a person makes by narrowing a project's row in their own file.
+const securityOwnRepeatYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github, base_branch: main }\n" +
+	"security:\n  patterns:\n    - { name: payments, match: \"internal/payments/legacy/**\", category: artifacts }\n" +
+	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// securityProjectPaymentsLayerYAML is a project layer writing the name the
+// fixture above repeats.
+const securityProjectPaymentsLayerYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+	"security:\n  patterns:\n    - { name: payments, match: \"internal/payments/**\", category: credentials }\n"
+
+// TestSecurityPathsSaysWhenARowIsDropped: a repository's row under a name the
+// project layer already spends is not in force — the project's row is — and the
+// command says so on stderr rather than leaving the difference between the
+// file's author's belief and the list in force unsaid (config.SecurityIgnoredRow,
+// F10, D1506). The document itself carries the project's row and the source
+// `project`, and the repository's narrower glob appears nowhere in it.
+func TestSecurityPathsSaysWhenARowIsDropped(t *testing.T) {
+	securityCheckout(t, "acme/app", securityOwnRepeatYAML)
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234", CheckedAt: time.Now(), YAML: securityProjectPaymentsLayerYAML,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, err := execute(t, "security", "paths")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, out)
+	}
+	if !strings.Contains(errOut, "payments") || !strings.Contains(errOut, "not in force") {
+		t.Errorf("stderr = %q, want the dropped row and that it is not in force", errOut)
+	}
+	if strings.Contains(out, "internal/payments/legacy/**") {
+		t.Errorf("the table carries the repository's dropped row:\n%s", out)
+	}
+
+	doc := securityDoc(t, "security", "paths")
+	want := securityRow{"payments", "internal/payments/**", "credentials", "project"}
+	if got := securityRows(doc); len(got) != len(securityFloorRows())+1 || got[len(got)-1] != want {
+		t.Errorf("the list in force = %+v, want the floor's rows and %+v: the repository's row of that name does not take the project's away", got, want)
+	}
+}
