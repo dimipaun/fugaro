@@ -854,7 +854,7 @@ probe account carries predefined grants only).
 | 360 | The managed screens show what the CLI says, on a managed project ([`docs/console-managed-screens/`](console-managed-screens/implementation-plan.md), its Check 360 and task **CM12**; **F3** and **D1489**, the owner's ask of 2026-11-07): the Project tab's five later sections — the managed state, the retirements, the account keys, the credentials service and the policy panel — drawn on a real managed project, each within its own read and from the document that read answers with, agreeing with `fugaro managed status --json`, `fugaro settings --json`, `fugaro project policy show --json` and `fugaro doctor`'s policy lines; **no section offers a control that changes anything**, and no token appears anywhere (**D1471**). Its hermetic half is `console/test/e2e/managed.spec.ts`, which walks the same tab against the stub — and the live reading is the one a stub cannot take | See "Check 360" below; there is **no script** — the check is three steps you do by hand in the console and the reading you take from them — and **you** run it, on your own machine, with an installation and a managed project; **no agent runs any step of it** | One `fugaro update` — the same run you would make anyway — plus two reads and one window: no model call, no run and nothing billable. Nothing is created or written by the check itself, so there is nothing to restore. **USER-RUN, NOT RUN.** |
 | 361 | The workspace's own Firebase's sign-in providers ([`docs/workspaces/`](workspaces/spec.md) spec §3's provider pin, and that plan's **W3**): the Identity Platform configuration of the workspace's **own** project, read once over REST and judged against the pin — `google.com` and `password` enabled, `anonymous` and phone-number sign-in off, no other provider enabled, and public sign-up **not** disabled. It is the check W3's design says no hermetic test can hold: the project and its rules come from the installation path, but `fugaro setup`'s Identity Platform step initializes with **no provider** (`IdentityPlatformStep`, `internal/infra/identityplatform.go`) — right for a member's project and wrong for the workspace's — and `refusePublicSignUp` (`internal/cli/init_firebase.go`) refuses an off-pin provider on a workspace's own project by name while never *requiring* the pinned pair, so the providers are enabled by you and this is the read-back. A workspace whose project carries no provider has nobody who can sign in, and one that carries a provider the pin refuses is a sign-in path the exchange never sees | See "Check 361" below; `bash scripts/live-checks/check361.sh --project <the workspace's own project>` is the whole of it — ONE read-only GET, nothing created and nothing deleted, so it is safe to run repeatedly — and **you** run it: a project whose name contains `belong` is refused before any call, and **no agent runs any step of it** | Nothing billable and no model call: one GET of the project's Identity Platform configuration with your own credentials. **USER-RUN, NOT RUN.** |
 | 370 | The security escalation ([`docs/security-classification/`](security-classification/implementation-plan.md) §6, its Check 370; the plan's task **SC6**; reconciliation **D1507**, **D1508**, **D1509** and **D1519**): a run whose own diff touches a path the list in force calls security-sensitive turns review level 3 on for the rest of the run — the adversarial step runs, and the run's record names the matched row's `name`, its `category` and the moment, while the rigor mode stays the mode it was (D1508) — and a run whose diff touches nothing on the list does neither, its record carrying no escalation member. Its reader's half is `fugaro security paths --json` (the same work's task **SC3**, in slice 1: it landed as `cb69f1754`, #1979, and is an ancestor of this checkout) on a project that has published no key: the floor's 43 rows, with `internal/creds/state.go` sensitive and `docs/recipes.md` not — the pair that shows the floor is a **positive list and not the classifier's complement** (F1, F22) — and the same command against a working tree whose `fugaro.yaml` carries a `security` row and a base that does not, which must print the **base's** list (D1518) | See "Check 370" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | Two sandbox runs and three reader commands: **the runs are model calls and real money** and the reader commands are free. Nothing is granted, nothing is written outside the runs' own prefixes, and there is nothing to restore. **USER-RUN, NOT RUN.** |
-| 510 | The name-prefix IAM condition, and the two grants IAM cannot fence ([`docs/secrets-brokering/dynamic-delivery/`](secrets-brokering/dynamic-delivery/implementation-plan.md), its task **DS0.2** and its check; the reconciliation's **U3** and **F30**, which **DS2.2**'s Terraform is written against): whether an IAM condition on `resource.name` applies to `secretmanager.versions.add` and `secretmanager.secrets.delete` at all; whether **one** condition naming both prefixes (`fugaro_u_` and `fugaro_p_`) admits each of them and refuses a name of F6's collision class — `fugaro-<slug>-<logical>-<hash>`, a repository's own mounted secret, so the refusal is measured against that shape and not against one the check invented; that a conditioned `secrets.create` and `secrets.list` admit **nothing at all**, because both are checked on the project (F30 — and the reason the intake grants them unconditioned, while an unconditioned create of a name outside the prefixes then succeeds); and the maximum secret ID length, read by bisection rather than assumed (R1). **A failed 510 stops DS2.2 and returns to the owner as a decision** | See "Check 510" below; `bash scripts/live-checks/check510.sh` is the whole of it, and its sibling test `scripts/live-checks/check510_test.sh` drives it against fake tools only — **you** run it, on the sandbox project only, never `belong` (the project and region are hard-coded in the script, and a project, region or account naming that installation is refused by name); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account (`chk510-<stamp>`), the project IAM bindings its rows need (the two conditioned grants, and the one **unconditioned** `roles/secretmanager.admin` grant the F30 create row is measured on), and the probe containers they are measured on — five under the `fugaro_u_`, `fugaro_p_` and `fugaro-<slug>-…` shapes plus the bisection's own, about a dozen — every one of them deleted **and read back** as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. The IAM waits are the slow part (a fresh binding can take a minute to be seen). **OWNER-RUN, NOT RUN.** Written by **DS0.2** of [secrets-brokering/dynamic-delivery/implementation-plan.md](secrets-brokering/dynamic-delivery/implementation-plan.md), whose steps are [secrets-brokering/dynamic-delivery/check510-steps.md](secrets-brokering/dynamic-delivery/check510-steps.md). |
+| 510 | The name-prefix IAM condition, and the grants IAM may not be able to fence ([`docs/secrets-brokering/dynamic-delivery/`](secrets-brokering/dynamic-delivery/implementation-plan.md), its task **DS0.2** and its check; the reconciliation's **U3** and **F30**, which **DS2.2**'s Terraform is written against): whether an IAM condition on `resource.name` applies to `secretmanager.versions.add` and `secretmanager.secrets.delete` at all; whether **one** condition naming both prefixes (`fugaro_u_` and `fugaro_p_`) admits each of them and refuses a name of F6's collision class — `fugaro-<slug>-<logical>-<hash>`, a repository's own mounted secret, so the refusal is measured against that shape and not against one the check invented; **the create rows, where F30's create half was already contradicted once** — the owner's run of 2026-11-11 saw a conditioned `secrets.create` **admitted** for a `fugaro_u_` name, so the check **reports** its three create rows instead of grading them, and what is open is whether a create **outside** both prefixes is refused: refused beside an admitted create inside means create is fenced by name in both directions and **DS2.2** may condition the intake's create, admitted outside means there is no name fence and the unconditioned create stays as the plan has it (an unconditioned create of a name outside the prefixes succeeds either way); `secrets.list` is still the project-checked case F30 states; and the maximum secret ID length, read by bisection rather than assumed (R1). **A failed 510 stops DS2.2 and returns to the owner as a decision** | See "Check 510" below; `bash scripts/live-checks/check510.sh` is the whole of it, and its sibling test `scripts/live-checks/check510_test.sh` drives it against fake tools only — **you** run it, on the sandbox project only, never `belong` (the project and region are hard-coded in the script, and a project, region or account naming that installation is refused by name); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account (`chk510-<stamp>`), the project IAM bindings its rows need (the two conditioned grants, and the one **unconditioned** `roles/secretmanager.admin` grant the create rows' control is measured on), and the probe containers they are measured on — five under the `fugaro_u_`, `fugaro_p_` and `fugaro-<slug>-…` shapes, whatever the two conditioned create rows make if IAM admits the create, plus the bisection's own, about a dozen — every one of them deleted **and read back** as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. The IAM waits are the slow part (a fresh binding can take a minute to be seen). **OWNER-RUN, NOT RUN.** Written by **DS0.2** of [secrets-brokering/dynamic-delivery/implementation-plan.md](secrets-brokering/dynamic-delivery/implementation-plan.md), whose steps are [secrets-brokering/dynamic-delivery/check510-steps.md](secrets-brokering/dynamic-delivery/check510-steps.md). |
 | 511 | A request every N seconds keeps one service instance up ([`docs/secrets-brokering/dynamic-delivery/`](secrets-brokering/dynamic-delivery/implementation-plan.md), its task **DS0.2** and its check; the reconciliation's **U4**, which **DS1.5**'s keep-warm heartbeat rests on): the credentials service `fugaro-credentials` scaling to zero as the platform holds it (`min_instance_count` is the premise — an instance kept up by configuration says nothing about a heartbeat, and the row says so); then a request every 15 seconds (the beat `internal/budget/session.go` already keeps) for five minutes, each answered **by the container itself** on a route the service does not serve, so its own 404 is how an instance serving is told from the front end refusing; each read for its latency (a cold start inside the window is the instance having been reaped **despite** the beat) and, from Cloud Logging, for the instance that answered it — one id across the window is U4's reading rather than only its timing. **A failed 511 stops DS1.5 and returns to the owner as a decision.** | See "Check 511" below; `bash scripts/live-checks/check511.sh` is the whole of it, and its sibling test `scripts/live-checks/check511_test.sh` drives it against fake tools only — **you** run it, on the sandbox installation only, never `belong` (the project and region are hard-coded, and a project, region or account naming that installation is refused by name); **no agent runs any step of it** | Five minutes of wall clock and **nothing billable**: no job, no build, no container, no binding and no account. The requests go to a route the service does not serve, so no credential is read, no model is called and no budget is spent; every other call is a `describe` or a log listing, and the platform's own request log entries for them are not the check's to delete. **OWNER-RUN, NOT RUN.** Written by **DS0.2** of [secrets-brokering/dynamic-delivery/implementation-plan.md](secrets-brokering/dynamic-delivery/implementation-plan.md), whose steps are [secrets-brokering/dynamic-delivery/check511-steps.md](secrets-brokering/dynamic-delivery/check511-steps.md). |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -12821,7 +12821,7 @@ beyond the policy read a `fugaro` command already makes.
 work rests on — that the list in force changes what a run spends, and that a person can read out of the
 record why it did.
 
-## Check 510: the name-prefix IAM condition, and the two grants IAM cannot fence (sandbox project only, never `belong`; run by you; NOT RUN)
+## Check 510: the name-prefix IAM condition, and the grants IAM may not be able to fence (sandbox project only, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **DS0.2** of
 [secrets-brokering/dynamic-delivery/implementation-plan.md](secrets-brokering/dynamic-delivery/implementation-plan.md)
@@ -12830,6 +12830,12 @@ claim that anything holds. The check is `scripts/live-checks/check510.sh` (its s
 `scripts/live-checks/check510_test.sh` drives it against fake tools only, and never a real project),
 the steps are [secrets-brokering/dynamic-delivery/check510-steps.md](secrets-brokering/dynamic-delivery/check510-steps.md),
 and **no agent runs any step of it**: what it measures is a live project's IAM and Secret Manager.
+
+**The owner ran it once, on 2026-11-11**, and its `create-conditioned` row came back ADMITTED — a
+conditioned `secrets.create` **was** admitted for a `fugaro_u_` name, contradicting the create half of
+**F30** — and that run probed only a name inside the prefix, so whether a create outside both prefixes
+is refused is unmeasured. The re-run that asks it is what this section's block will be, which is why
+the row above still reads NOT RUN.
 
 **What it settles, and what it gates.** The reconciliation's **U3** and **F30**, which **DS2.2**'s
 Terraform is written against:
@@ -12841,21 +12847,29 @@ Terraform is written against:
   refuses a name outside them. The refusal is measured against **F6**'s collision class — a
   repository's own mounted secret, `fugaro-<slug>-<logical>-<hash>` — and not against a name the check
   invented: a refusal measured on the wrong shape settles nothing;
-- that a conditioned `secretmanager.secrets.create` admits nothing, not even the prefix it names,
-  because the permission is checked on the **project** (F30). That is why the intake grants create
-  unconditioned, and why an unconditioned create of a name **outside** the prefixes then succeeds:
-  the row records that as the reading it is, not as a surprise. `secretmanager.secrets.list` is the
-  same case, and the check reads it the same way;
+- **the create rows, where F30's create half is already known to be wrong.** F30 said a conditioned
+  `secretmanager.secrets.create` admits nothing, not even the prefix it names, because the permission
+  is checked on the **project** — which is why the intake grants create unconditioned. The 2026-11-11
+  reading is the opposite for a `fugaro_u_` name, so the check **reports** its three create rows
+  (`create-conditioned`, `create-conditioned-outside`, `create-unconditioned`) rather than passing or
+  failing them, and what is open is the pair: a create **outside** both prefixes under the same
+  conditioned grant. Refused beside an admitted create inside means create is fenced by name in both
+  directions, so **DS2.2** may condition the intake's create; admitted outside means there is no name
+  fence and the unconditioned create stays as the plan has it. An unconditioned create of a name
+  outside the prefixes succeeds either way, and the row records that as the reading it is.
+  `secretmanager.secrets.list` is still the project-checked case F30 states, and the check reads it
+  the same way;
 - the **maximum secret ID length** (R1), read by bisection — a name over the limit is refused with a
   sentence naming the limit — rather than a number assumed from the plan.
 
 **What a run costs.** Nothing billable and no model call: no job, no build and no container of the
 installation's. It creates one throwaway service account (`chk510-<stamp>`), the project IAM bindings
 its own rows need — the two conditioned grants, and the one **unconditioned**
-`roles/secretmanager.admin` grant the F30 create row is measured on, which is what makes that row and
-the conditioned one beside it a pair: the same role, refused under the condition and admitted without
-it — and the probe containers they are measured on — five under the `fugaro_u_`, `fugaro_p_` and
-`fugaro-<slug>-…` shapes, plus the containers the length bisection makes, about a dozen. The slow part
+`roles/secretmanager.admin` grant the create rows' control is measured on — the same role with no
+condition on it, which is what the conditioned create rows are read against — and the probe containers
+they are measured on — five under the `fugaro_u_`, `fugaro_p_` and `fugaro-<slug>-…` shapes, whatever
+the two conditioned create rows make if IAM
+admits the create, plus the containers the length bisection makes, about a dozen. The slow part
 is IAM propagation: a fresh binding can take a minute to be seen, and the rows that depend on it are
 read only once it is.
 
@@ -12872,15 +12886,20 @@ bash scripts/live-checks/check510.sh
 ```
 
 Progress goes to stderr and one `CHECK 510 RESULT` block goes to stdout at the end: paste that whole
-block here and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a
-measured criterion that did not hold; **`2`** is the check not being able to measure (a tool missing, a
-probe of its own that could not be set up, a length probe refused for a reason that is not the ID
-limit — a name already taken, say, which must never be read as the limit itself — or a fresh binding
-that never became visible). A key the run never reached reads `FAIL — not reached`.
+block here and nothing else. **Exit `0`** is every criterion that was measured holding **and every
+reading taken — a create reading that contradicts F30 is one of these, printed and reported rather
+than failed**; **`1`** is a measured criterion that did not hold; **`2`** is the check not being able
+to measure (a tool missing, a probe of its own that could not be set up, a create answered something
+other than `200` or `403`, a length probe refused for a reason that is not the ID limit — a name
+already taken, say, which must never be read as the limit itself — or a fresh binding that never
+became visible). A key the run never reached reads `FAIL — not reached`.
 
 **What waits on it.** **DS2.2** (the intake and the prefix-conditioned reader in Terraform): a failed
 510 stops it and returns to the owner as a decision, because the condition shape is that task's whole
-content.
+content. Its **create** grant is the one thing that waits on the re-run rather than on a verdict:
+`create-conditioned-outside` refused means create is fenced by name and DS2.2 may condition it, admitted
+means the unconditioned create stays as the plan has it — and the grant itself does not change until
+that reading is in.
 
 ## Check 511: a request every N seconds keeps one service instance up (sandbox installation only, never `belong`; run by you; NOT RUN)
 
