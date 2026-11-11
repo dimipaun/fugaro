@@ -512,12 +512,20 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 // is the credentials service's own IAM policy crossed with the repository's own
 // jobs, because the released doctor names accounts of workflow variants a
 // switched repository does not deploy, so a sentence about accounts decides
-// nothing there.
+// nothing there. Those two arms are also the ones
+// doctorCredentialsServiceDeployed returns BEFORE doctorCredentialsServiceServing
+// — the read that sees the bundle — so the check reads the bundle itself in that
+// state rather than reading the arm as a service that can serve a run.
 //
 // Every phrase is pinned on the Go side of the contract, where a reword lands: a
 // sentence this file stops speaking is an arm the check does not place, and the
 // check records that as unmeasured (exit 2, nothing launched) rather than as a
-// switch that is on. That is the safe direction.
+// switch that is on. That is the safe direction. The reverse is pinned too: an
+// arm listed as one the check must NOT place carries no other arm's phrase, so a
+// needle that came to match two arms fails here — doctor's arms for a read that
+// failed carry "may invoke it could not be checked" in their own sentence, and a
+// check that read that tail as the custom-role arm would report an installation
+// nobody could read as one whose only open question was the grant.
 func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *testing.T) {
 	// deployed is the service every arm after the first two starts from: there,
 	// admitting this installation's one job account, with the bundle container
@@ -541,7 +549,11 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 	cases := []struct {
 		arm    string
 		phrase string
-		build  func(t *testing.T) *brokeringRig
+		// unplaced is an arm the check must NOT place: its line carries none of
+		// the phrases below, so the check records it as unmeasured (exit 2,
+		// nothing launched).
+		unplaced bool
+		build    func(t *testing.T) *brokeringRig
 	}{
 		{
 			arm:    "the installation carries no service",
@@ -590,7 +602,7 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 		},
 		{
 			arm:    "a role doctor cannot judge",
-			phrase: "may invoke it could not be checked",
+			phrase: "a custom role on its or the project's policy could not be read",
 			build: func(t *testing.T) *brokeringRig {
 				t.Helper()
 				r := newBrokeringRig(t)
@@ -601,9 +613,35 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 			},
 		},
 		{
+			// The catch-all arm for a read that failed before the service was
+			// ever looked at. Its sentence carries "whether its callers may
+			// invoke it could not be checked", which is why the custom-role
+			// needle above is that arm's own clause and not that tail: a check
+			// that matched the tail would read this arm as one about the grant.
+			arm:      "a read that failed before the service was looked at",
+			unplaced: true,
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := newBrokeringCheckout(t, true)
+				// A repository whose provider the local config does not name:
+				// infra.CredentialsJobAccounts refuses it, which is this arm.
+				addLocalLines(t, r.doctorRig, "repos:\n  workspace-a/repo-a: { workflows: [app] }\n")
+				putProjectSecret(t, r.sm, "aurora", config.BitbucketSecret, []byte("bundle-token-value"))
+				return r
+			},
+		},
+		{
 			arm:   "every job account may invoke it, with a version in the bundle",
 			build: serving,
 		},
+	}
+	// placed is every phrase the check DOES place an arm by, which is what an
+	// arm listed as unplaced must carry none of.
+	var placed []string
+	for _, c := range cases {
+		if c.phrase != "" {
+			placed = append(placed, c.phrase)
+		}
 	}
 	for _, c := range cases {
 		t.Run(c.arm, func(t *testing.T) {
@@ -614,6 +652,17 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 			cs := checksByID(o, "credentials-service-deployed")
 			if len(cs) != 1 {
 				t.Fatalf("the state emitted %d credentials-service-deployed checks, want exactly one: %+v", len(cs), cs)
+			}
+			if c.unplaced {
+				if cs[0].Problem == "" {
+					t.Fatalf("this arm is listed as one the check does not place, and its line is empty — an empty line is the serving arm, which the check reads past")
+				}
+				for _, p := range placed {
+					if strings.Contains(cs[0].Problem, p) {
+						t.Errorf("check191.sh must not place this arm, and its line carries the phrase %q it places another one by: %q", p, cs[0].Problem)
+					}
+				}
+				return
 			}
 			if c.phrase == "" {
 				if cs[0].Problem != "" {

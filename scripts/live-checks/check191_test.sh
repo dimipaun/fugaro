@@ -271,6 +271,7 @@ ALLOWED = {
     ("run", "services", "get-iam-policy"): ("--project", "--region", "--format"),
     ("secrets", "list"): ("--project", "--format"),
     ("secrets", "get-iam-policy"): ("--project", "--format"),
+    ("secrets", "versions", "list"): ("--project", "--format"),
     ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
 }
 sub = None
@@ -338,7 +339,32 @@ elif sub == ("run", "services", "get-iam-policy"):
         sys.exit(1)
     sys.stdout.write(state("service-policy.json", '{"bindings":[]}\n'))
 elif sub == ("secrets", "list"):
+    if mode == "no-secret-list":
+        # The read failing, which is a different thing from a listing that holds
+        # no such container: the caller may not list secrets in this project.
+        sys.stderr.write("ERROR: (gcloud) PERMISSION_DENIED: the caller does not have permission to list secrets in this project\n")
+        sys.exit(1)
     sys.stdout.write(state("secrets.json", "[]\n"))
+elif sub == ("secrets", "versions", "list"):
+    # The credentials service's bundle container's own versions, which is where
+    # the check reads whether the service has anything to serve a run out of: it
+    # is answered for the container the listing names and no other, so a check
+    # that asked about a name it invented (or about no container at all) gets
+    # the NOT_FOUND Secret Manager answers it with.
+    listed = json.loads(state("secrets.json", "[]\n"))
+    ids = [s.get("name", "").rsplit("/", 1)[-1] for s in listed
+           if isinstance(s, dict)]
+    named = [a for a in args[3:] if not a.startswith("--")]
+    if len(named) != 1 or named[0] not in ids:
+        sys.stderr.write("ERROR: (gcloud) NOT_FOUND: no secret named %s\n"
+                         % " ".join(named))
+        sys.exit(1)
+    if mode == "no-bundle-versions":
+        # The read of the container's versions failing, which is a different
+        # thing from a container with no version in it.
+        sys.stderr.write("ERROR: (gcloud) PERMISSION_DENIED: the caller does not have permission to list versions of this secret\n")
+        sys.exit(1)
+    sys.stdout.write(state("bundle-versions.json", "[]\n"))
 elif sub == ("secrets", "get-iam-policy"):
     # The policy is answered for the containers the list fixture holds and no
     # other: a check that asked about a name the installation never created
@@ -613,12 +639,36 @@ JOBS_EOF
 [{"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-bitbucket-token-d874a0dfd2bd0854",
   "labels":{"fugaro":"managed","fugaro_project":"fugaro","fugaro_secret":"bitbucket-token"}},
  {"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80",
-  "labels":{"fugaro":"managed","fugaro_project":"fugaro","fugaro_secret":"creds-bundle"}}]
+  "labels":{"fugaro":"managed","fugaro_project":"fugaro"}}]
 SECRETS_EOF
+  # The credentials service's bundle container's versions, as `gcloud secrets
+  # versions list --format=json` answers them: the newest version (the highest
+  # NUMBER) is ENABLED, which is the one state a run can be launched in. The
+  # labels above carry no fugaro_secret: the real container deliberately does
+  # not (deploy/terraform/gcp/modules/installation/credentials.tf), because
+  # that label is what `fugaro update`'s discovery reads to decide which
+  # LOGICAL secret a container holds, and this one is not one of those.
+  cat >"$1/state/bundle-versions.json" <<'VERSIONS_EOF'
+[{"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80/versions/1","state":"DISABLED"},
+ {"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80/versions/2","state":"ENABLED"}]
+VERSIONS_EOF
   # The secret's own IAM policy: after the flip no job account holds a role on it.
   cat >"$1/state/secret-policy.json" <<'IAM_EOF'
 {"bindings":[{"role":"roles/secretmanager.secretAccessor","members":["serviceAccount:fugaro-credentials@fugaro-dev.iam.gserviceaccount.com"]}]}
 IAM_EOF
+}
+
+# grant_arm_doctor DIR: doctor's `credentials-service-deployed` row as the
+# RELEASED doctor answers it for a repository that is on the switch — the
+# invoker-grant arm, naming job accounts of workflow variants this repository
+# does not deploy (infra.CredentialsJobAccounts crosses every workflow with every
+# account the installation allows; measured on 2026-11-11). It is the state the
+# check reads the bundle ITSELF in: doctor answers that arm before it ever looks
+# at the bundle, so the row carries nothing about what the service has to serve.
+grant_arm_doctor() { # grant_arm_doctor DIR
+  cat >"$1/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-a (web_belong), workspace-a/repo-a (web_bmb): a run of workspace-a/repo-a (web_belong), workspace-a/repo-a (web_bmb) that is on the switch would fail to fetch a model credential"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
 }
 
 # --------------------------------------------------------------- the test cases
@@ -901,10 +951,10 @@ test_the_switch_is_read_from_the_service_s_own_policy() {
   # reading that matched the repository's name in that sentence answered `off`
   # and stopped a check whose runs are served exactly as its other rows say. The
   # switch is the service's own IAM policy and the repository's REAL jobs, and
-  # doctor's text is context.
-  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
-{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-a (web_belong), workspace-a/repo-a (web_bmb): a run of workspace-a/repo-a (web_belong), workspace-a/repo-a (web_bmb) that is on the switch would fail to fetch a model credential"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
-DOCTOR_EOF
+  # doctor's text is context. That arm is also the one doctor answers before it
+  # reads the bundle, so the check reads the bundle itself — here the default
+  # fixture, whose newest version is ENABLED — before it goes on to the runs.
+  grant_arm_doctor "$dir"
   run_check "$dir" "$script"
   expect_status "$status" 0 "doctor's sentence names variants the repository does not deploy"
   expect_contains "$out" "FACT proxied: PASS" "variants named by doctor: the row passes"
@@ -914,6 +964,10 @@ DOCTOR_EOF
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "--run-id $(rid_of "$dir" work)" "variants named by doctor: the working run was launched"
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "gcloud run services get-iam-policy fugaro-credentials" "variants named by doctor: the service's own policy is what was read"
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "--region=us-east5" "variants named by doctor: the policy was read in the installation's own region"
+  # Doctor's grant arm is answered before doctor reads the bundle, so the bundle
+  # is read here: the check may not launch a run against a service that has
+  # nothing to serve a model credential out of.
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "gcloud secrets versions list fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80" "variants named by doctor: the bundle's own versions are read"
 }
 
 test_an_installation_with_no_credentials_service_is_a_failure() {
@@ -978,6 +1032,106 @@ DOCTOR_EOF
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a disabled version: no run launched"
 }
 
+# The regression's own follow-on: in the state doctor answers about the invoker
+# grant it has NOT read the bundle (doctorCredentialsServiceDeployed returns the
+# missing-grant and the custom-role arm; doctorCredentialsServiceServing — the
+# read that sees the bundle — runs only when every job account is admitted), so
+# the check reads the bundle itself, and a service with nothing to serve stops it
+# exactly as doctor's own nothing-to-serve arms do. A row that passed here would
+# launch three real runs against a service that refuses every model call they
+# make — which is the state the check's own prerequisites name.
+test_a_bundle_with_nothing_to_serve_stops_the_check_under_doctor_s_grant_arm() {
+  local dir=$work/switchgrantbundle
+  prepare "$dir"
+  grant_arm_doctor "$dir"
+  # The container the installation's own apply creates, with no version in it.
+  printf '[]\n' >"$dir/state/bundle-versions.json"
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "a bundle with no version, under doctor's grant arm"
+  expect_contains "$out" "FACT proxied: FAIL" "no version under the grant arm: the row does not pass"
+  expect_contains "$out" "cannot serve a run's model credential out of its bundle" "no version under the grant arm: the row says what the service cannot do"
+  expect_contains "$out" "the bundle container holds no version at all" "no version under the grant arm: the row carries the reading's own words"
+  expect_contains "$out" "grants no roles/run.invoker to workspace-a/repo-a (web_belong)" "no version under the grant arm: doctor's own text is carried for context"
+  expect_contains "$err" "could NOT measure proxied" "no version under the grant arm: the check says it could not measure"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no version under the grant arm: no run launched"
+  # The same state one read along: a version is there and Secret Manager will not
+  # serve it, so the loader is refused. The NEWEST version is the one that
+  # decides, and here that is version 2 — version 1 is ENABLED and is not it.
+  cat >"$dir/state/bundle-versions.json" <<'VERSIONS_EOF'
+[{"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80/versions/1","state":"ENABLED"},
+ {"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80/versions/2","state":"DISABLED"}]
+VERSIONS_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "a disabled newest version, under doctor's grant arm"
+  expect_contains "$out" "FACT proxied: FAIL" "a disabled version under the grant arm: the row does not pass"
+  expect_contains "$out" "is DISABLED, which Secret Manager will not serve" "a disabled version under the grant arm: the row carries the state it read"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a disabled version under the grant arm: no run launched"
+}
+
+# The bundle read is three answers — the secrets listing, the container's name in
+# it, and that container's versions — and a read that did not answer is a row the
+# check could NOT measure, never a PASS: the runs below it would be launched
+# against a service nobody settled.
+test_a_bundle_that_could_not_be_read_is_unmeasured() {
+  local dir=$work/switchbundleread
+  prepare "$dir"
+  # Doctor's grant arm, which is the only state the check reads the bundle in:
+  # a row doctor answers about the invoker grant carries nothing about what the
+  # service has to serve.
+  grant_arm_doctor "$dir"
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-secret-list
+  expect_status "$status" 2 "the secrets listing could not be read"
+  expect_contains "$out" "FACT proxied: FAIL" "an unread listing: the row does not pass"
+  expect_contains "$out" "gcloud secrets list exited non-zero" "an unread listing: the row says which read failed"
+  expect_contains "$err" "could NOT measure proxied" "an unread listing: the check says it could not measure"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unread listing: no run launched"
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-bundle-versions
+  expect_status "$status" 2 "the container's versions could not be read"
+  expect_contains "$out" "FACT proxied: FAIL" "unread versions: the row does not pass"
+  expect_contains "$out" "gcloud secrets versions list" "unread versions: the row says which read failed"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "unread versions: no run launched"
+  # A listing that holds no container with the name the bundle's derivation
+  # gives it. The installation's own apply creates exactly one, so none is a
+  # name this reading cannot settle — and it may not be read as "nothing to
+  # serve" either: the container that would have been read is not there to read.
+  python3 - "$dir/state/secrets.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+kept = [s for s in json.load(open(path))
+        if "creds-bundle" not in s.get("name", "")]
+open(path, "w").write(json.dumps(kept))
+PY
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "no container is the bundle"
+  expect_contains "$out" "FACT proxied: FAIL" "no bundle container: the row does not pass"
+  expect_contains "$out" "is the credentials service bundle" "no bundle container: the row says what it could not name"
+  expect_contains "$out" "0 container(s) carry the name its derivation gives it" "no bundle container: the row carries the count it read"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "gcloud secrets versions list" "no bundle container: no versions are read of a container nobody named"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no bundle container: no run launched"
+}
+
+# Doctor's arm for a read that failed altogether carries the same tail as its
+# custom-role arm ("may invoke it could not be checked", in "whether its callers
+# may invoke it could not be checked"), so a needle that matched that tail would
+# read an installation NOBODY could read as one whose only open question was the
+# invoker grant — and the check would go on to launch three runs on it. The
+# needle is the custom-role arm's own sentence, and this arm falls to the state
+# the check stops on.
+test_doctor_s_catch_all_unreadable_arm_is_unmeasured() {
+  local dir=$work/switchcatchall
+  prepare "$dir"
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the installation has opted into the credentials service (fugaro-credentials), and the job accounts that may call it (the Cloud Run API is unavailable) could not be read: whether it is deployed and whether its callers may invoke it could not be checked"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "doctor's catch-all unreadable arm"
+  expect_contains "$out" "FACT proxied: FAIL" "an installation nobody could read: the row does not pass"
+  expect_contains "$out" "state: other" "an installation nobody could read: the row carries the state it read"
+  expect_contains "$out" "could not be read" "an installation nobody could read: doctor's own words are carried"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "gcloud secrets versions list" "an installation nobody could read: the bundle is not read for an arm the check does not place"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an installation nobody could read: no run launched"
+}
+
 test_a_doctor_row_the_reading_does_not_place_is_unmeasured() {
   local dir=$work/switchother
   prepare "$dir"
@@ -1023,7 +1177,10 @@ DOCTOR_EOF
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "the verify route emptied: the runs are launched"
   # Doctor's arm for a grant it could not judge is context for the same reason:
   # the grant is read from the service's own policy, so a custom role on it is
-  # answered there rather than here.
+  # answered there rather than here. It is one of the two arms doctor answers
+  # BEFORE it reads the bundle, so the bundle is read by the check first — the
+  # default fixture, whose newest version is ENABLED — and the row still passes
+  # on the two gcloud reads.
   cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
 {"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed, and whether workspace-a/repo-a (web) may invoke it could not be checked: a custom role on its or the project's policy could not be read"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
 DOCTOR_EOF
@@ -1404,6 +1561,9 @@ t test_no_job_of_the_repository_is_unmeasured
 t test_the_switch_is_read_from_the_service_s_own_policy
 t test_an_installation_with_no_credentials_service_is_a_failure
 t test_a_service_with_nothing_to_serve_stops_the_check
+t test_a_bundle_with_nothing_to_serve_stops_the_check_under_doctor_s_grant_arm
+t test_a_bundle_that_could_not_be_read_is_unmeasured
+t test_doctor_s_catch_all_unreadable_arm_is_unmeasured
 t test_a_doctor_row_the_reading_does_not_place_is_unmeasured
 t test_doctor_s_row_is_context_and_never_the_decision
 t test_happy_path

@@ -11876,7 +11876,11 @@ UNREAD — a row the check could not measure — otherwise. `fugaro doctor`'s `c
 sentence is **not** the decision: the released doctor lists job accounts of workflow variants the
 repository does not deploy, so that row is read only for the states where the service cannot serve a run
 at all — the installation has no credentials service, or it has one that admits every job account and
-holds nothing to serve a model credential out of — and its text is carried in the row for context. It
+holds nothing to serve a model credential out of — and its text is carried in the row for context. Those
+states are the ones doctor's own row can be trusted for; where the row is about the invoker grant, doctor
+answered it before it ever read the bundle, so the check reads the bundle itself (`gcloud secrets
+versions list`, of the container `gcloud secrets list` names as the service's own) and stops unmeasured
+when it holds no version Secret Manager will serve. It
 fails the `proxied` row *before it launches anything* when the repository is not admitted, is admitted
 without the proxy, or is off the switch: the published half alone is **inert**, since a repository off the
 switch holds its own Bitbucket token and is served by nothing, so the check stops rather than launch three
@@ -11895,7 +11899,9 @@ reached, so a pull request of the second repository would earn `other_repository
 `mktemp`, `python3`, `curl`, `gcloud` and `fugaro` on PATH, `gcloud` authenticated as an account that may
 read Cloud Logging for the installation, read the job list, **read the credentials service's own IAM
 policy** (`gcloud run services get-iam-policy`, the switch's own half), **list the installation's secrets
-and read the IAM policy of the one labelled `fugaro_secret=bitbucket-token`** (Check 192's accessor row: the
+and read the versions of the credentials service's bundle container** (the check reads them itself where
+doctor's row is about the invoker grant), **read the IAM policy of the one labelled
+`fugaro_secret=bitbucket-token`** (Check 192's accessor row: the
 project-wide container, and a repository that stored the token itself has its own), and
 **write and delete one node** in the installation's Realtime Database (the register's Check 95 step 3 is
 the same write): the ended-run row is set up by hand, as you, with `gcloud auth print-access-token` and
