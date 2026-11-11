@@ -159,7 +159,8 @@ revocation's lapse effect are held.
 Two keys may be installed at once, and the verifier takes **the latest valid one** — the one with the
 later `paid_through` among those that verify and are within their lifetime — so a renewal landing early
 changes nothing for the user. The job starts trying `renew_before_days` before `paid_through`, which is
-the key's own number, so an issuing outage is **absorbed by the grace period**. Overlap is a property
+the key's own number, so an issuing outage is **absorbed by the grace period**; the plan's per-tier
+policy table gives `renew_before_days` no default, and that is open. Overlap is a property
 of the format and not of a special case: nothing in a key says whether another key is installed, so
 **two keys are simply two keys the store holds**, and at most two are kept (K3.1). The old design's
 fixed lead — the next key minted a fixed 30 days before expiry, and the 60-day outage that followed
