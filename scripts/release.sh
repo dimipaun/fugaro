@@ -507,7 +507,7 @@ run_hotfix() {
       continue
     fi
     if ! hotfix_pick "$fix_sha"; then
-      echo "cherry-picking $fix_sha onto $branch failed (above). Nothing was pushed and nothing in this checkout changed; resolve it by hand on the branch, or name a fix that applies cleanly, then re-run \"$rerun\"" >&2
+      echo "cherry-picking $fix_sha onto $branch failed (above). Nothing was pushed and nothing in this checkout changed. Resolving the conflict here is not the recovery: the commit would either keep the pick's trailer while carrying a change main does not have, or carry no trailer at all, and scripts/verify-release.sh refuses both -- a trailer is held to the change under it by patch-id, and a commit with no trailer may touch only the release's own three files -- once the tag is pushed, where it cannot be moved and the release is stranded. The change has to be on main in the shape this line needs it, so that the pick applies cleanly to $branch as it stands: land a commit on main that carries the change as this line needs it (a PR as usual) and name that commit, or name a --fix commit that applies, then re-run \"$rerun\" (docs/release.md, \"Hotfix releases\")" >&2
       return 1
     fi
     picked="$picked $fix_sha"
@@ -520,7 +520,7 @@ run_hotfix() {
       return 1
     fi
     if ! hotfix_pick "$bump_commit"; then
-      echo "cherry-picking main's plugin bump $bump_commit onto $branch failed (above). Nothing was pushed and nothing in this checkout changed; resolve it by hand on the branch, then re-run \"$rerun\"" >&2
+      echo "cherry-picking main's plugin bump $bump_commit onto $branch failed (above). Nothing was pushed and nothing in this checkout changed. Resolving it here is not the recovery either: the commit would keep the pick's trailer while carrying a plugin change main does not have, and scripts/verify-release.sh refuses every commit of the tag that is not a clean pick of a commit on main -- once the tag is pushed, where it cannot be moved and the release is stranded. The bump has to be on main in the shape this line needs it, so that the pick applies cleanly to $branch as it stands. Check what the branch carries that the bump's parent does not: a hand edit outside the release's own three files is a commit scripts/verify-release.sh refuses on the tag anyway, and if main's bump cannot apply to this line at all, the line cannot take it as a pick and the fix has to ship from main instead. Then re-run \"$rerun\" (docs/release.md, \"Hotfix releases\")" >&2
       return 1
     fi
     picked="$picked $bump_commit(bump)"

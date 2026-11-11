@@ -221,10 +221,12 @@ case "$1 ${2:-}" in
         # ([name, status, conclusion, head branch, event] | @tsv). The tag's own
         # runs are the three a strict vX.Y.Z tag starts -- release, images and
         # console-windows, from FAKE_GH_RUN_RELEASE / _IMAGES / _WINDOWS -- plus
-        # FAKE_GH_RUN_OTHER; a run of each workflow on main is answered below too
-        # and belongs to no verification, so a filter that lost its head-branch
-        # or event clause reads a row it must not. This arm's rows and
-        # verify-release.sh's --jq are one shape in two files: keep them in step.
+        # FAKE_GH_RUN_OTHER; three more rows below belong to no verification --
+        # a push to main at this commit, main's nightly refresh, and a dispatch
+        # against the tag's ref -- each red on purpose, so that each clause of
+        # verify-release.sh's filter has a row only it rejects and deleting a
+        # clause turns a green test red. This arm's rows and verify-release.sh's
+        # --jq are one shape in two files: keep them in step.
         case "$*" in
           *".workflow_runs[]"*"@tsv"*) ;;
           *)
@@ -259,11 +261,19 @@ case "$1 ${2:-}" in
         if [ -n "${FAKE_GH_RUN_OTHER:-}" ]; then
           run_rows "${FAKE_GH_RUN_OTHER%%:*}" "${FAKE_GH_RUN_OTHER#*:}"
         fi
-        # Not this tag's push: a scheduled refresh of the latest release on
-        # main, red on purpose, and a dispatch against the tag's ref (the very
-        # shape images.yml's own notes say a workflow_dispatch run has).
+        # Not this tag's push. The first is a push to main at this very commit --
+        # the tag is usually main's tip, and shared-tests is the one workflow here
+        # that a branch push starts -- so the head-branch clause is the only thing
+        # keeping it out. The second is main's nightly images refresh at the same
+        # commit, which either clause keeps out. The third is a dispatch against
+        # the tag's ref, the shape images.yml's own notes say a workflow_dispatch
+        # run has, and it ran console-windows, a required workflow, so the event
+        # clause is the only thing keeping it out. All three are red on purpose,
+        # so that a filter that lost a clause fails on the row it should have
+        # rejected rather than passing it silently.
+        printf '%s\t%s\t%s\t%s\t%s\n' shared-tests completed failure main push
         printf '%s\t%s\t%s\t%s\t%s\n' images completed failure main schedule
-        printf '%s\t%s\t%s\t%s\t%s\n' ci completed success "$branch" workflow_dispatch
+        printf '%s\t%s\t%s\t%s\t%s\n' console-windows completed failure "$branch" workflow_dispatch
         exit 0
         ;;
     esac

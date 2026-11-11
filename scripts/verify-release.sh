@@ -48,9 +48,9 @@
 # Read-only: it fetches, reads the GitHub API and pulls image manifests, and
 # changes nothing on origin -- no tag, no branch, no release. Needs gh
 # (authenticated), git, docker, and a checkout of this repository with its
-# origin remote. GITHUB_REPOSITORY names the repository when it is set (the
-# workflows set it, and scripts/release.sh passes it); otherwise `gh repo view`
-# answers from the checkout.
+# origin remote. GITHUB_REPOSITORY names the repository when it is set;
+# otherwise `gh repo view` answers from the checkout -- which is what
+# scripts/release.sh's own call relies on, since it passes no GITHUB_REPOSITORY.
 set -eu
 
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
