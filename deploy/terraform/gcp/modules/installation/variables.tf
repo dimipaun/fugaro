@@ -161,6 +161,25 @@ variable "operators" {
   }
 }
 
+# The viewer list (RS4 of docs/roles-scopes/implementation-plan.md, roles.md
+# §4): members who read and do nothing else. The grammar is the Firebase
+# module's rather than the two lists above: the same list is handed to the
+# Firebase root, where a domain member is refused, so accepting one here would
+# be a list the two roots disagree about — an installation with a Firebase
+# project could not apply it. A viewer list is a read of every run and every
+# run's logs, which is not a grant a whole domain gets by one line.
+variable "viewers" {
+  description = "Members who read and nothing else: the runs bucket, the project's jobs and runs, the isolated log view, the database and the spend history. No launch, no cancel, no write."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for m in var.viewers : can(regex("^(user|group|serviceAccount):[^ *]+$", m))])
+    error_message = "viewers must be IAM members: user:, group: or serviceAccount: followed by one address (no domain: and no wildcard: the same list is handed to the Firebase root, where a broader member is refused)."
+  }
+}
+
 variable "launcher_bucket_condition" {
   description = "The condition of the launchers' objectUser grant on the runs bucket: runs/, tokens/ and issues/ of that bucket only (gcp.LauncherBucketCondition). Passed byte for byte, so every launcher shares one binding."
   type = object({

@@ -154,6 +154,7 @@ const customKey = "custom:"
 var grantRules = map[string]map[string]who{
 	"google_project_iam_member": {
 		customKey + "fugaroLauncher":       toPeople,
+		customKey + ViewerRole:             toPeople,
 		customKey + "fugaroBuildSubmitter": toPeople | toAccounts,
 		customKey + "fugaroHistory":        toAccounts,
 		customKey + "fugaroReaper":         toAccounts,
@@ -470,7 +471,7 @@ const MCPServerStorePrefix = "fugaro-mcpauth-"
 // own account (MCPServerAccountID), for the same reason (toCoordinator,
 // toCatalogCheck, toMCP).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, WorkspaceReadRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
+	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, WorkspaceReadRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -900,6 +901,14 @@ var (
 // TestRolePinsAreTheModules fails when a module's list and this one differ.
 var RolePermissions = map[string][]string{
 	"fugaroLauncher": {"run.jobs.get", "run.jobs.list", "run.executions.get", "run.executions.list", "run.executions.cancel", "run.operations.get",
+		"secretmanager.secrets.list", "secretmanager.versions.list"},
+	// The viewer's read-only job role (RS4, roles.md §4): the launcher's list
+	// minus run.executions.cancel and nothing else, so every read a launcher
+	// makes a viewer makes — the run's own state and operations, and the
+	// project's secret list's metadata, which is what `fugaro secrets ls`
+	// needs — and the one thing the list withholds is the cancel.
+	// TestViewerRoleHasNoCancelPermission reads this against the launcher's.
+	ViewerRole: {"run.jobs.get", "run.jobs.list", "run.executions.get", "run.executions.list", "run.operations.get",
 		"secretmanager.secrets.list", "secretmanager.versions.list"},
 	"fugaroJobRunner":      {"run.jobs.run", "run.jobs.runWithOverrides"},
 	"fugaroBuildSubmitter": {"cloudbuild.builds.create", "cloudbuild.builds.get"},

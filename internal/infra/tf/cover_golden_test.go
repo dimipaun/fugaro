@@ -724,13 +724,13 @@ func TestGoldenViewerPlans(t *testing.T) {
 	// against each other.
 	var role *ResourceChange
 	for _, rc := range goldenPlan(t, "installation-viewers").ResourceChanges {
-		if rc.Address == "module.installation.google_project_iam_custom_role.viewer" {
+		if rc.Address == "module.installation.google_project_iam_custom_role.viewer[0]" {
 			change := rc
 			role = &change
 		}
 	}
 	if role == nil {
-		t.Fatal("installation-viewers plans no module.installation.google_project_iam_custom_role.viewer: the viewer's read-only job role is not defined")
+		t.Fatal("installation-viewers plans no module.installation.google_project_iam_custom_role.viewer[0]: the viewer's read-only job role is not defined")
 	}
 	if got := str(role.Change.After["role_id"]); got != ViewerRole {
 		t.Errorf("the viewer's role carries role_id %q, want %q", got, ViewerRole)
