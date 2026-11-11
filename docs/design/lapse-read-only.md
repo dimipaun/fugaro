@@ -11,6 +11,10 @@ release carrying S6.2 and the app release carrying S6.3 each state the behaviour
 and the plan lists counsel's sign-off step (S8.4) as a dependency of both — though the Terms' §9.1
 already carries T12's cancel and counsel approved it on 2026-10-29 (the reconciliation's T12).
 
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the grace this note fixes at thirty days
+after `expires` is the key's own `grace_days` (D2133), and "Free" is the no-key state (D2142).**
+
 This is subscriptions **S6.1**. It continues the licence-key note's state table and answers the four
 things that note hands it: what a lapsed installation shows and still allows, what an installation
 with no key shows, what the console 0.112.0 upgrade leaves a user in, and what a key the build cannot
