@@ -99,15 +99,15 @@ func runIssueDismiss(cmd *cobra.Command, ref string) error {
 // A store that cannot be reached answers with a line and no error: the issue is
 // on this machine, the person is at the terminal, and a network that is down
 // must not stop them setting their own record aside — the line says the
-// project's copy is still open, and running the command again once the store is
-// back settles it. A store that answers and refuses is another matter — the
-// issue is filed, or another teammate has already decided it — and that is an
-// error, because the decision is then not this machine's to make.
+// project's copy was not set aside, and running the command again once the
+// store is back settles it. A store that answers and refuses is another matter
+// — the issue is filed, or another teammate has already decided it — and that
+// is an error, because the decision is then not this machine's to make.
 func dismissShared(ctx context.Context, i issues.Issue) (string, error) {
 	sh := openIssueShared(ctx, "")
 	defer sh.Close()
 	if sh.bucket == nil {
-		return "note: the project's copy of " + issueRef(i) + " is still open: " + sh.why(), nil
+		return "note: the project's copy of " + issueRef(i) + " was not set aside: " + sh.why(), nil
 	}
 	if err := issues.SetSharedStatus(ctx, sh.bucket, i.Number, issues.StatusDismissed, time.Now()); err != nil {
 		return "", errors.New(oneLine(err.Error()))
