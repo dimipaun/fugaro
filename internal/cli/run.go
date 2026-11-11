@@ -1265,6 +1265,15 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkClonePlanningImage(ctx, env, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The follow-up fields a filed task carries, gated on the fields
+		// themselves: see followUpSince. It comes before the request
+		// below because a task this command files also carries the
+		// parent's recorded mode, and followUpSince is the newer of the
+		// two: the refusal a person can act on names the command they
+		// just ran rather than a --mode flag they never passed.
+		if err := checkCloneFollowUpImage(env.lc, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The run's own rigor request, gated on the field the same way:
 		// a runner older than rigorRequestSince refuses a task carrying
 		// rigor or paths outright (task.Parse decodes with
@@ -1406,6 +1415,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The planning: block, the same shape and the same reason again:
 		// see checkPlanningImage.
 		if err := checkPlanningImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see followUpSince, and the order is the clone branch's.
+		if err := checkFollowUpImage(ctx, env, slug, spec, kind, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The same gate as the clone branch's above, and for the same
