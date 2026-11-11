@@ -440,8 +440,14 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		// give the rest of the reservation back, which is money the build Cloud
 		// Build is running is spending and headroom under the caps for a loop of
 		// builds that fail here.
+		// The sentence that names this build, built before anything after the
+		// submission can fail — the record and the settle below are both of
+		// them, and with --no-wait nothing waited for the build either, so
+		// nothing else in this run will say which one it is (G8: what a failure
+		// has to be read with, on the screen and in the log).
+		submitted := fmt.Sprintf("submitted Cloud Build build %s of %s; log: %s", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 		if err := m.recorded(ctx); err != nil {
-			return failStep(sr.rep, step, withLease(err, lease.settle(ctx, false)))
+			return failStep(sr.rep, step, withLease(err, lease.settle(ctx, false)), submitted)
 		}
 		if !o.noWait {
 			fmt.Fprintf(w, "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
@@ -464,9 +470,9 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		}
 		// The lease closes before the step is reported done: a settle that
 		// fails is the command's exit, and a command that exits non-zero may not
-		// end on a "Done" (G3).
+		// end on a "Done" (G3). The build stays named by it either way.
 		if err := lease.settle(ctx, !o.noWait); err != nil {
-			return failStep(sr.rep, step, err)
+			return failStep(sr.rep, step, err, submitted)
 		}
 		// A prebuilt entry is smoked and never built, and the sentence says so:
 		// what the run produced is the digest of the reference the entry names,
