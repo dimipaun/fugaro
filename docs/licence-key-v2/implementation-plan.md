@@ -65,15 +65,14 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
 ### Slice K0: owner-run
 
 - **K0.1 Counsel and privacy text. OWNER-RUN.** The Terms' refund and "no revocation" text, and the
-  privacy notice, change for the renewal and status contact (it sends `key_id`, `workspace_id` and an
-  HMAC from the customer's project). The owner sends the counsel packet; no agent edits the Terms.
+  privacy notice, change for the renewal and status contact (it sends `key_id`, `workspace_id` and the
+  renewal secret from the customer's project). The owner sends the counsel packet; no agent edits the Terms.
 - **K0.2 Production signing keys (subscriptions S3.8). OWNER-RUN.** Creates the KMS keys, then S2.9's task
   publishes the public half.
 
 ### Slice K1: the key and its verifiers (inert until a key exists)
 
-- **K1.1 The v1 verifier. SECURITY.** Files: `ee/licence/key.go`, `ee/licence/store.go`,
-  `ee/licence/key_test.go`, `ee/licence/testdata/vectors.json`. Interfaces: produces `Claims` v1
+- **K1.1 The v1 verifier. SECURITY.** Files: `ee/licence/keyv1.go` (new), `ee/licence/keyv1_test.go` (new), `ee/licence/testdata/vectors_v1.json` (new). **Additive: the old `key.go`, `store.go` and their tests stay untouched so `-tags ee` keeps compiling on `main` until K7.3 removes them.** Interfaces: produces `ClaimsV1`
   (`v`, `kid`, `key_id`, `workspace_id` optional, `organisation`, `tier` (`community|team|enterprise`),
   `seats`, `issued_at`, `paid_through`, `grace_days`, `renewal_mode`, `renew_before_days`,
   `check_interval`, `renewal_secret_hash`, `warnings`, `kind`, `note`), the text `fgk_<payload>.<sig>`,
@@ -83,17 +82,17 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   `TestNoClaimIsReadBeforeTheSignatureVerifies`, `TestHigherPolicyVersionIsRefusedNotFree`,
   `TestUnknownFieldsInASignedKeyAreIgnored`, `TestUnsignedFormatsStayStrict`,
   `TestStagingKeyIDIsRefused`, `TestKeyBeyondTheTierLifetimeIsRefused`, `TestGraceUsesTheKeysOwnDays`,
-  `TestWorkspaceIDIsCheckedOnlyWhenPresent`, against a `ProjectID` the caller passes in (the installation's GCP project id, supplied by K3.1 and the console; the claim names that id and nothing broader). Command: `go test ./ee/licence/... -tags ee -run 'Test(Verify|No|Higher|Unknown|Unsigned|Staging|Key|Grace|Workspace)' -count=1`.
+  `TestWorkspaceIDIsCheckedOnlyWhenPresent` (the claim holds the installation's GCP project id until the workspaces feature claims the name, TN2), against a `ProjectID` the caller passes in (the installation's GCP project id, supplied by K3.1 and the console; the claim names that id and nothing broader). Command: `go test ./ee/licence/... -tags ee -run 'Test(VerifyFgk|NoClaim|Higher|Unknown|Unsigned|Staging|KeyBeyond|Grace|Workspace)' -count=1`.
   Depends on: none. Commit: `ee: the v1 licence key (fgk_) and its verifier (D2130)`. Red step:
-  `TestHigherPolicyVersionIsRefusedNotFree` fails on the old verifier (it has no `v`).
+  `TestHigherPolicyVersionIsRefusedNotFree` fails against the old verifier (it has no `v`). The `v1` types are named `ClaimsV1`/`VerifyV1`; K7.3 renames them to `Claims`/`Verify` when the old ones go.
 - **K1.3 The mint tool.** Files: `ee/licence/mint/main.go`, `mint.go`, `mint_test.go`. Flags for every v1 field,
   `-kind`, `-grace-days`, `-renewal-mode`, `-check-interval`; still signs only through the KMS signer and
   verifies its own output against K1.1. Tests: `TestMintedKeyVerifies`, `TestMintRefusesAKeyTheVerifierRefuses`,
   `TestTheToolHoldsNoWayToSignButTheSigner`. Command: `go test ./ee/licence/mint/... -tags ee -count=1`.
-  Depends on: K1.1. Commit: `ee: the mint tool writes v1 keys`. **OWNER-RUN to use.** SECURITY.
+  Depends on: K1.1. Commit: `ee: the mint tool writes v1 keys`. It calls `VerifyV1`. **OWNER-RUN to use.** SECURITY.
 - **K1.4 The console verifier.** Files: `console/src/main/licence.ts`, `licence-state.ts`,
   `licence-store.ts`, their `*.test.ts`. Reads K1.1's vectors; same refusals, same states, the upgrade
-  message. Also reads the project key's state and the warning field from `fugaro licence status --json` (D2143: no key is Free). Tests: `licence.test.ts` (vector parity, no key is Free). Command: `cd console && npm run test:unit -- licence --maxWorkers=2`.
+  message. Tests: `licence.test.ts` (vector parity). Reading the project key's state is K3.6. Command: `cd console && npm run test:unit -- licence --maxWorkers=2`.
   Depends on: K1.1. Commit: `console: the v1 licence key verifier`. SECURITY.
 - **K1.5 Rewrite the key note.** Files: `docs/licensing/licence-key.md` (the v1 text; the old design's
   surviving rules, the revocation and limits sections rewritten). Tests: `go test ./internal/cli/ -run Docs -count=1`.
@@ -115,9 +114,9 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   (the route table: `/renew`, `/status`), `renew_test.go` (new). The caller sends `key_id` and the renewal secret over TLS and the server compares the secret's hash with the one it holds
   (no HMAC: the hash is in the key, which every reader of the runs bucket holds, so it must not be a signing key); response
   `{status: ok|revoked, newer_key: bool}` and the renewal's new key; uniform answers; throttled; never
-  returns a key to a revoked or unknown `key_id`; a replayed request is idempotent; a renewal returns the next key **and its new renewal secret** (reissue under a new `key_id` rotates it). Tests:
+  returns a key to a revoked or unknown `key_id`; a replayed request is idempotent; a renewal returns the next key **and its new renewal secret** (reissue under a new `key_id` rotates it). **Secret handling:** 256 bits from the system CSPRNG; shown once together with the key as a two-line bundle (key line, secret line) by every issue path (the purchase email, the account page's download, the authorize code exchange and the device poll, the admin page and the mint tool), so each of those tasks returns the bundle and a re-download **rotates** the secret; after a rotation the old secret still fetches the new one for 24 hours only, then is refused. Tests:
   `TestRenewalAnswersAreUniform`, `TestTheKeyAloneCannotRenew`, `TestRenewalRefusesAWrongSecret`, `TestRevokedKeyIsNeverRenewed`,
-  `TestStatusCarriesNoKey`, `TestReplayedRenewalIsIdempotent`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestRenewal|TestRevoked|TestStatus|TestReplayed' -count=1`.
+  `TestStatusCarriesNoKey`, `TestReplayedRenewalIsIdempotent`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestRenewal|TestTheKeyAlone|TestRevoked|TestStatus|TestReplayed' -count=1`.
   Depends on: K2.1, K2.2. Commit: `ee: the renewal and status endpoints`.
 - **K2.4 Sign-in, authorize and device code. SECURITY.** Files: `ee/keyservice/signin.go` (new),
   `ee/keyservice/service.go`, `signin_test.go` (new). Verifies Firebase ID tokens of the owner's licence
@@ -126,56 +125,59 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   approve routes. Tests: `TestAuthorizeRefusesANonLoopbackRedirect`, `TestCodeIsSingleUse`,
   `TestPKCEVerifierIsRequired`, `TestDeviceCodeExpiresAndIsRateLimited`, `TestUnknownAndExpiredDeviceCodesAnswerAlike`,
   `TestTokenFromAnotherProjectIsRefused`. Depends on: K2.3 (one writer of `service.go` per level).
+  Command: `go test ./ee/keyservice/ -tags ee -run 'TestAuthorize|TestCode|TestPKCE|TestDeviceCode|TestUnknownAndExpired|TestTokenFrom' -count=1`.
   Commit: `ee: the licence site's sign-in, authorize and device code`.
 - **K2.5 Paddle events to v1. SECURITY.** Files: `ee/keyservice/merchant.go`, `merchant_test.go`. Maps a
   completed transaction (renewal included) to a v1 key (Team monthly and annual), a refund or
   chargeback to a revocation (D2131), a seat change to a reissue; Enterprise is not sold here (D2141).
   Tests: `TestRefundRevokesTheKey`, `TestSeatChangeReissuesUnderANewKeyID`, `TestEnterpriseIsNotACheckoutPlan`.
-  Depends on: K2.1, K2.2. Commit: `ee: Paddle events mint, reissue and revoke v1 keys`.
+  Depends on: K2.1, K2.2. Command: `go test ./ee/keyservice/ -tags ee -run 'TestRefund|TestSeatChange|TestEnterprise' -count=1`.
+  Commit: `ee: Paddle events mint, reissue and revoke v1 keys`.
 - **K2.6 The admin page. SECURITY.** Files: `ee/keyservice/admin.go` (new), `service.go`, `admin_test.go` (new).
   Owner-only: reseller and comped keys (`kind: comped` with an expiry, excluded from revenue reporting),
   lookup by workspace or `key_id`, revoke, reissue, override policy; every action is recorded. Tests:
   `TestAdminRefusesAnyoneButTheOwner`, `TestCompedKeyHasAnExpiry`, `TestAdminActionsAreRecorded`.
-  Depends on: K2.4 (`service.go`). Commit: `ee: the founder's admin page`.
+  Depends on: K2.4 (`service.go`). Command: `go test ./ee/keyservice/ -tags ee -run 'TestAdmin|TestComped' -count=1`.
+  Commit: `ee: the founder's admin page`.
 - **K2.7 The 14-day Team trial. SECURITY.** Files: `ee/keyservice/trial.go` (new), `service.go`,
   `trial_test.go` (new). A signed-in account asks for a trial for an installation (`kind: trial`, 14 days,
   grace 0, `check_interval` `P1D`); one per installation and account. Tests: `TestSecondTrialIsRefused`,
-  `TestTrialIsTeamTierFourteenDays`. Depends on: K2.6 (`service.go`), K2.2. Commit: `ee: the Team trial`.
+  `TestTrialIsTeamTierFourteenDays`. Depends on: K2.6 (`service.go`), K2.2. Command: `go test ./ee/keyservice/ -tags ee -run 'TestSecondTrial|TestTrialIs' -count=1`.
+  Commit: `ee: the Team trial`.
 
 ### Slice K3: the project side (`ee/register`, `ee/licence`)
 
-- **K3.1 The project-level store. SECURITY.** Files: `ee/licence/projectstore.go` (new), `projectstore_test.go`
+- **K3.1 The project-level store. SECURITY.** Files: `ee/licence/project/store.go` (new package, so the verifier's package keeps its no-network import test), `store_test.go`
   (new). Reads and writes the key object in the installation's runs bucket (through `internal/blobx`), the
   last-check record and the unreachable counter; at most two keys (overlap, T26). Tests:
   `TestProjectStoreKeepsTwoKeys`, `TestTheStoreNeverLogsAKey`, `TestAViewerReadsTheStateNotTheKey`.
-  Command: `go test ./ee/licence/ -tags ee -run 'TestProjectStore|TestTheStore|TestAViewer' -count=1`.
+  Command: `go test ./ee/licence/project/ -tags ee -run 'TestProjectStore|TestTheStore|TestAViewer' -count=1`. Where the per-machine `licence.key` and the project key differ, the project key wins and `status` says so.
   Depends on: K1.1. Commit: `ee: the licence key at project level (D2137)`.
 - **K3.2 `fugaro licence set | status | refresh`. SECURITY.** Files: `ee/register/licence.go` (new),
-  `ee/register/licence_test.go` (new), `internal/clidoc` entries only if the clidoc table requires one.
-  `set` takes the key (line 1) and the renewal secret (line 2, absent for an offline key) from stdin or `--file`, refuses a positional key, writes the key to the project store and the secret to the installation's Secret Manager secret, refuses inside a coding agent's session as every cloud write does, and
-  prints that the next `fugaro update` applies the renewal job when the key's `renewal_mode` or
-  `check_interval` asks for one (F10); `status` prints tier, seats, expiry, state and last check and
+  `ee/register/licence_test.go` (new), `internal/cli/agentsession.go` (new: exports the agent-session refusal that `ee/` commands call, since `agentMarker` is unexported), `internal/cli/untagged_licence_test.go` (new), `internal/clidoc` entries only if the clidoc table requires one.
+  `set` takes the key (line 1) and the renewal secret (line 2, absent for an offline key) from stdin or `--file`, refuses a positional key, writes the key to the project store and the secret to the installation's Secret Manager secret, refuses inside a coding agent's session as every cloud write does, writing only to the Secret Manager secret that `fugaro update` created (K4.2) and refusing with one line ("run `fugaro update`") before it exists, so `update` never meets a secret it did not create; `status` prints tier, seats, expiry, state and last check and
   has `--json` with new field names; `refresh` calls K2.3 once. Hidden alias `license`. Tests:
-  `TestLicenceSetRefusesAKeyInArgv`, `TestLicenceStatusJSONShape`, `TestUntaggedBuildHasNoLicenceCommand`,
-  `TestLicenceSetNeverPrintsTheKey`, `TestLicenceWritesAreRefusedInAnAgentSession` (set, refresh, login, seats assign), `TestLicenceAliasLicenseWorks`. Command: `go test ./ee/register/ ./internal/eeboundary/ -tags ee -run 'TestLicence|TestUntagged' -count=1`.
+  `TestLicenceSetRefusesAKeyInArgv`, `TestLicenceStatusJSONShape`, `TestUntaggedBuildHasNoLicenceCommand` (in `internal/cli`, no `ee` tag),
+  `TestLicenceSetNeverPrintsTheKey`, `TestLicenceWritesAreRefusedInAnAgentSession` (set, refresh, login, seats assign), `TestLicenceAliasLicenseWorks`. Command: `go test ./ee/register/ -tags ee -run 'TestLicence' -count=1` and `go test ./internal/cli/ -run 'TestUntaggedBuildHasNoLicenceCommand' -count=1`.
   Depends on: K1.1, K3.1, K2.3. Commit: `ee: fugaro licence set, status and refresh`. `cli.RegisterCommand` is top-level only, so K3.2 owns `licence.go` and registers a subcommand table that K3.3, K3.4 and K4.1 fill from their own files.
-- **K3.3 `fugaro licence login`. SECURITY.** Files: `ee/licence/login.go` (new), `ee/register/licence_login.go`
+- **K3.3 `fugaro licence login`. SECURITY.** Files: `ee/licence/login/login.go` (new package, network allowed), `ee/register/licence_login.go`
   (new), tests. The loopback listener (127.0.0.1, random port, one request, `state`, PKCE, 5-minute
   deadline) and the device-code fallback (`--device`, or no browser). Tests:
   `TestLoopbackBindsOnlyTheLoopback`, `TestCallbackWithTheWrongStateIsRefused`,
-  `TestTheCodeIsNeverLogged`, `TestDevicePollStopsAtExpiry`. Depends on: K2.4, K3.2. Commit: `ee: fugaro licence login`.
+  `TestTheCodeIsNeverLogged`, `TestDevicePollStopsAtExpiry`. Command: `go test ./ee/licence/login/ ./ee/register/ -tags ee -run 'TestLoopback|TestCallback|TestTheCode|TestDevicePoll' -count=1`. Depends on: K2.4, K3.2. Commit: `ee: fugaro licence login`. The device approve page shows the requesting installation's name as untrusted text and requires typing the user code.
 - **K3.4 Seats. SECURITY. HELD until the owner says enforcement ships (TN1).** Files: `ee/register/seats.go`
   (new), `ee/register/lapse.go`, `internal/access/seats.go` (new: an `access.SetSeatLimit` seam taking the caller's identity, consulted while the key is active, set from `ee/register`, default limits nothing; the core still reads no key), `ee/register/seats_test.go` (new). Records seat holders on the project's
   operator and admin lists (D2139), `fugaro licence seats assign|rm|ls`, and the `access` seam answers an
-  unseated operator as a viewer on Subscription surfaces; admins always keep a seat; a lapse changes
+  unseated operator as a viewer on Subscription surfaces; admins always keep a seat; a seat decrease applies from the next key (spec §3.3); a lapse changes
   nothing stored. Tests: `TestAnUnseatedOperatorActsAsAViewer`, `TestAdminsAlwaysKeepASeat`,
-  `TestSeatsAreNotEnforcedInTheMITCLI`, `TestLapseNeverDeletes`. Depends on: K1.1, K3.1, K3.2 (the command
+  `TestSeatsAreNotEnforcedInTheMITCLI`, `TestLapseNeverDeletes`. Command: `go test ./ee/register/ ./internal/access/ -tags ee -run 'TestAnUnseated|TestAdminsAlways|TestSeatsAre|TestLapseNever' -count=1`. Depends on: K1.1, K3.1, K3.2 (the command
   family's file `licence.go` is read, not edited). Commit: `ee: seats are assigned and enforced on the paid surfaces`.
 - **K3.5 Warnings.** Files: `ee/register/warn.go` (new), `warn_test.go` (new); the window rules of the key's
   `warnings` (roles and `grace_start[+Nd]`), a line on each tagged-CLI ee command, and the field the console
   and app read from `licence status --json`. Delivered by the console, app and ee commands only (F6).
   Tests: `TestAdminsOnlyInTheFirstWeekOfGrace`, `TestEveryoneInTheLast`, `TestNoWarningWhenActive`.
-  Depends on: K3.2. Commit: `ee: licence warnings by role and window`.
+  Command: `go test ./ee/register/ -tags ee -run 'TestAdminsOnly|TestEveryone|TestNoWarning' -count=1`. Depends on: K3.2. Commit: `ee: licence warnings by role and window`.
+- **K3.6 The console reads the project key's state.** Files: `console/src/main/licence-state.ts`, `licence-state.test.ts`. Reads `fugaro licence status --json` and the warning field; no key is Free (D2143). The app's reader is the amended S2.5 and is not in this plan. Command: `cd console && npm run test:unit -- licence-state --maxWorkers=2`. Depends on: K1.4, K3.5. Commit: `console: the project licence state and warnings`. SECURITY.
 
 ### Slice K4: renewal and revocation job
 
@@ -185,20 +187,20 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   `renew_before_days`, writes the next key (overlap kept), records last-ok and the failure count, never
   revokes on an error, and sets the 30-day "cannot verify revocation" warning. Tests:
   `TestAnUnreachableServerNeverRevokes`, `TestRenewalWritesTheNextKeyBesideTheOld`,
-  `TestRevokedKeyIsRecordedNotDeleted`, `TestOfflineKeyNeverContactsTheServer`. Depends on: K1.1, K3.1, K2.3.
+  `TestRevokedKeyIsRecordedNotDeleted`, `TestOfflineKeyNeverContactsTheServer`. It verifies a renewed key (and its `workspace_id`) before writing, writes **the new secret version first, then the key**; if the stored key's hash matches no stored secret (a crash between the two), it retries with the previous secret version (inside the 24-hour window). Command: `go test ./ee/register/ -tags ee -run 'TestAnUnreachable|TestRenewalWrites|TestRevokedKey|TestOffline' -count=1`. Depends on: K1.1, K3.1, K2.3, K3.2.
   Commit: `ee: the renewal and revocation job`.
 - **K4.2 The Scheduler job and the update. SECURITY.** Files: `deploy/terraform/gcp/modules/installation/licence.tf`
   (new), `variables.tf`, `deployer.tf` (the job's permissions), `deploy/terraform/gcp/roots/*` only if a root
   names the switch, `internal/cli/update_licence.go` (new), tests, `docs/releases/v<next>.md`
-  (`### For operators`: run `fugaro update`; it applies the licence job and its secret). The job reuses the key-gated image of the coordinator, the Secret Manager secret
-  of the renewal secret, and a service account that reads and writes the key object and nothing else; it is **always applied** (the core
+  (`### For operators`: run `fugaro update`; it applies the licence job and its secret). The job reuses the key-gated image of the coordinator and is created **under the coordinator's own condition** (`enable_budget && coordinator != null && deploy_job`, `modules/installation/coordinator.tf`); an installation without it has no tagged image, no job, and `licence status` says renewal is by hand (TN5), the Secret Manager secret
+  of the renewal secret, and a service account that reads and writes the key object and nothing else; where the condition holds it is **always applied** (the core
   never reads a key, D524) and its command no-ops with no key or an offline key. On a managed project it is
   applied without a prompt; elsewhere `update` asks as for any new resource. It also creates the empty Secret
   Manager secret for the renewal secret and grants the job's account `secretmanager.versions.add` on that one
   secret only. Tests:
   `TestUpdateAddsTheRenewalJobAndLeavesARunInFlightRunning`, `TestRunImagesCarryNoKey`,
   `TestRenewalServiceAccountReadsOnlyTheKeyObject` (terraform tag). Command: `go test -tags terraform ./internal/infra/... -run Licence -count=1`
-  and `go test ./internal/cli/ -run 'TestUpdateAdds|TestRunImages' -count=1`. Depends on: K4.1.
+  and `go test ./internal/cli/ -run 'TestUpdateAdds' -count=1` and `go test ./images/ -run TestRunImagesCarryNoKey -count=1`. Depends on: K4.1.
   Commit: `ee: update applies the licence renewal job`.
 
 ### Slice K5: the licence site
@@ -224,6 +226,8 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   `docs/design/key-signing-service.md` (a dated "superseded by licence-key-v2" note where S2.1, S2.3, S2.4,
   S3.1–S3.4 name the old claims). Depends on: none. Commit: `docs: licence key v2 supersedes the old key's claims`.
 
+- **K7.3 Remove the old key format.** Files: `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (the old format, deleted; `keyv1.go` renamed to the package's `Claims`/`Verify`). Tests: `go test ./ee/... -tags ee -count=1` compiles and passes with no reference to the old format. Depends on: K1.3, K2.1, K2.5, K3.1. Commit: `ee: the old licence key format is removed`. SECURITY.
+
 ## Parallel execution
 
 Edges are the "Depends on" lines.
@@ -232,13 +236,13 @@ Edges are the "Depends on" lines.
 | --- | --- |
 | 0 | K0.1, K0.2 (owner); K1.1, K1.5, K7.2 |
 | 1 | K1.3, K1.4, K2.1, K2.2, K3.1 |
-| 2 | K2.3, K2.5, K3.2 |
-| 3 | K2.4, K3.5, K4.1 |
-| 4 | K2.6, K3.3, K4.2, K5.1 |
-| 5 | K2.7, K6.1 |
-| held | K3.4 (the owner's enforcement go, TN1), after level 2 |
+| 2 | K2.3, K2.5 |
+| 3 | K2.4, K3.2, K7.3 |
+| 4 | K2.6, K3.3, K3.5, K4.1, K5.1 |
+| 5 | K2.7, K3.6, K4.2, K6.1 |
+| held | K3.4 (the owner's enforcement go, TN1), after level 3 |
 
-**Critical path:** K1.1 → K2.1 → K2.3 → K2.4 → K3.3 → K6.1 (six levels). K2.3 → K2.4 → K2.6 → K2.7 is the
+**Critical path:** K1.1 → K2.1 → K2.3 → K2.4 → K3.3 → K6.1 (six levels; K2.3 → K3.2 → K3.5 → K3.6 is as long). K2.3 → K2.4 → K2.6 → K2.7 is the
 sequence on `ee/keyservice/service.go`, which has one writer per level by construction. K4.1 → K4.2 is
 sequential because the job's runtime is what the Terraform runs.
 
@@ -246,22 +250,24 @@ sequential because the job's runtime is what the Terraform runs.
 
 | File | Writers (level) |
 | --- | --- |
-| `ee/licence/key.go`, `store.go`, `vectors.json` | K1.1 (0) |
+| `ee/licence/keyv1.go`, `testdata/vectors_v1.json` | K1.1 (0) |
+| `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (old format) | K7.3 (3) |
 | `ee/licence/mint/*` | K1.3 (1) |
-| `console/src/main/licence*.ts` | K1.4 (1) |
+| `console/src/main/licence.ts`, `licence-store.ts`, `licence-state.ts` | K1.4 (1), K3.6 (5; only `licence-state.ts`) |
 | `docs/licensing/licence-key.md` | K1.5 (0) |
 | `ee/keyservice/minter.go`, `minterclient.go`, `policy.go` | K2.1 (1) |
 | `ee/keyservice/store.go` | K2.2 (1) |
 | `ee/keyservice/service.go` | K2.3 (2), K2.4 (3), K2.6 (4), K2.7 (5) |
 | `ee/keyservice/merchant.go` | K2.5 (2) |
-| `ee/licence/projectstore.go` | K3.1 (1) |
-| `ee/register/licence.go` | K3.2 (2), the subcommand table; later tasks add their own files |
+| `ee/licence/project/store.go` | K3.1 (1) |
+| `internal/cli/agentsession.go`, `untagged_licence_test.go` | K3.2 (3) |
+| `ee/register/licence.go` | K3.2 (3), the subcommand table; later tasks add their own files |
 | `internal/access/seats.go` | K3.4 (held) |
 | `ee/register/lapse.go`, `seats.go` | K3.4 (held) |
-| `ee/register/warn.go` | K3.5 (3) |
-| `ee/register/licence_renew.go` | K4.1 (3) |
-| `ee/register/licence_login.go`, `ee/licence/login.go` | K3.3 (4) |
-| `deploy/terraform/.../installation/licence.tf`, `variables.tf`, `deployer.tf` | K4.2 (4) |
+| `ee/register/warn.go` | K3.5 (4) |
+| `ee/register/licence_renew.go` | K4.1 (4) |
+| `ee/register/licence_login.go`, `ee/licence/login/login.go` | K3.3 (4) |
+| `deploy/terraform/.../installation/licence.tf`, `variables.tf`, `deployer.tf`, `internal/cli/update_licence.go` | K4.2 (5) |
 | `website/src/pages/licence/*` | K5.1 (4) |
 | `docs/licensing/implementation-plan.md`, `docs/subscriptions/implementation-plan.md`, `docs/design/key-signing-service.md` | K7.2 (0) |
 

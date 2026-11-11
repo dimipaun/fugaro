@@ -170,12 +170,13 @@ a viewer **can** copy the key; with an optional `workspace_id` (D2134) the copy 
   enforcement. Options: (a) build everything now, hold the *effect* (K3.4, K4.1's drop-to-lapse) until
   the owner says enforcement ships (the plan's reading); (b) ship the effect with the key. (a) holds
   back revocation from the first key; (b) reverses T27(b).
-- **TN2: D2134 leaves a binding that checks nothing by default.** With `workspace_id` optional and
+- **TN2: D2134 leaves a binding that checks nothing by default, and `workspace_id` holds an installation's project id** (a later workspaces feature cannot reuse the name for a group without changing its meaning; rename to `project_id` now if the owner prefers). With `workspace_id` optional and
   `organisation` unchecked (F47), a key still works in any project unless it carries `workspace_id`.
   Options: keep as ruled and state the limit (the plan does); or require `workspace_id` on `team`,
   `enterprise` and `trial` keys only.
 - **TN3: Firebase Auth for the licence site.** Confirm it is the owner's own licence-service project and
   not each customer's (F14), and whether a workspace's own token should later prove the binding.
+- **TN5: installations without a coordinator.** The renewal job reuses the coordinator's key-gated image, which exists only where the coordinator is deployed; elsewhere there is no auto renewal or revocation and renewal is by hand. Options: accept (the plan does) or give the job its own image built by `update`.
 - **TN4: D2135 was amended after review** (see its cell); the owner confirms the amended text.
 - **Pending the owner's go:** no task is approved. K0.1 (counsel: the Terms' refund and the privacy text
   for the renewal contact) and K0.2 (production signing keys, S3.8) are owner-run.
