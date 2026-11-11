@@ -110,6 +110,7 @@ func Pairs(records []runstore.Record) []Pair {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
+	edges := followEdges(records)
 	out := make([]Pair, 0, len(ids))
 	for _, id := range ids {
 		arms := byID[id]
@@ -136,7 +137,7 @@ func Pairs(records []runstore.Record) []Pair {
 		if !sameArmInputs(p.Champion, p.Challenger) {
 			continue
 		}
-		p.ChampionFollowUps = championFollowUps(p.Champion.RunID, records)
+		p.ChampionFollowUps = championFollowUps(p.Champion.RunID, edges)
 		out = append(out, p)
 	}
 	return out
@@ -191,35 +192,51 @@ func recordTier(rec runstore.Record) tier.Tier {
 }
 
 // recordRecipe is the run's recipe as one comparable string: its name and the
-// hash of the bytes it came from, with a separator neither value can carry, so
-// no two of values can spell another pair's string.
+// hash of the bytes it came from, with a separator neither can carry — a name
+// is letters, digits and dashes, a hash is hex — so two recipes cannot spell
+// one string.
 func recordRecipe(rec runstore.Record) string {
 	if rec.Recipe == nil {
 		return ""
 	}
-	return rec.Recipe.Name + "|" + rec.Recipe.SHA256
+	return rec.Recipe.Name + "\x00" + rec.Recipe.SHA256
+}
+
+// followEdges maps each run to the runs that continue it (FollowUp.PreviousRun
+// read backwards), the whole set read once so that counting each pair's
+// follow-ups stays one pass over the records however many pairs there are.
+func followEdges(records []runstore.Record) map[string][]string {
+	edges := make(map[string][]string, len(records))
+	for _, rec := range records {
+		if rec.FollowUp == nil || rec.RunID == "" {
+			continue
+		}
+		previous := rec.FollowUp.PreviousRun
+		edges[previous] = append(edges[previous], rec.RunID)
+	}
+	return edges
 }
 
 // championFollowUps counts the runs that continue the champion's pull request
 // (D562). The champion is the first run of its pull request and every
-// follow-up names the run it continues, so the chain is walked until no record
-// extends it; a chain that names a run the set does not hold extends nothing,
-// and the walk is bounded by the set itself however the records are chained.
-func championFollowUps(runID string, records []runstore.Record) int {
+// follow-up names the run it continues, so the chain is walked from the
+// champion's own ID: the second follow-up of a pull request names the first and
+// not the run that opened it. A run already counted is never walked again, so a
+// chain that loops back — or a set of records no launcher wrote — ends the walk
+// rather than repeating it.
+func championFollowUps(runID string, edges map[string][]string) int {
 	onPR := map[string]bool{runID: true}
 	count := 0
-	for added := true; added; {
-		added = false
-		for _, rec := range records {
-			if rec.FollowUp == nil || rec.RunID == "" || onPR[rec.RunID] {
+	for queue := []string{runID}; len(queue) > 0; {
+		next := queue[0]
+		queue = queue[1:]
+		for _, run := range edges[next] {
+			if onPR[run] {
 				continue
 			}
-			if !onPR[rec.FollowUp.PreviousRun] {
-				continue
-			}
-			onPR[rec.RunID] = true
+			onPR[run] = true
 			count++
-			added = true
+			queue = append(queue, run)
 		}
 	}
 	return count
