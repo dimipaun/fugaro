@@ -534,8 +534,13 @@ func TestDisabledPluginReported(t *testing.T) {
 	withVersion(t, "0.2.0")
 	const content = `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"dimipaun/fugaro","ref":"v0.2.0"}}},"enabledPlugins":{"fugaro@fugaro":false}}`
 	root, settings := skillCheckout(t, content)
+	// "disabled by the repository" is one of "not wired"'s states, which is
+	// information since D942 (U3 of
+	// docs/plugin-user-scope/implementation-plan.md): --check prints the state
+	// and exits 0, the same treatment a checkout nothing pins gets, because
+	// neither is a state the machine's install is in.
 	txt, _, err := execute(t, "update-skills", "--check", "--dir", root)
-	if ExitCode(err) != 1 || !strings.Contains(txt, "disabled by the repository") {
+	if err != nil || !strings.Contains(txt, "disabled by the repository") {
 		t.Fatalf("check: err=%v out=%q", err, txt)
 	}
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
