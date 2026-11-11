@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // The two tables below are the to-do list a second forge works from (D610,
@@ -144,7 +146,7 @@ func TestEveryKindSwitchIsInventoried(t *testing.T) {
 	for _, c := range declaredKindConstants(t) {
 		names[c.name] = true
 	}
-	root := moduleRoot(t)
+	root := testutil.ModuleRoot()
 	found := map[string][]string{}
 	err := eachModuleGoFile(root, func(rel, path string) error {
 		if strings.HasSuffix(rel, "_test.go") {
@@ -277,17 +279,6 @@ func kindUses(path string, names map[string]bool) ([]string, error) {
 	})
 	slices.Sort(out)
 	return out, nil
-}
-
-// moduleRoot is this module's root, read from this package's own directory: the
-// tests of a package run with the package's directory as the working directory.
-func moduleRoot(t *testing.T) string {
-	t.Helper()
-	root := filepath.Join("..", "..")
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("the module root is not at %s: %v", root, err)
-	}
-	return root
 }
 
 // eachModuleGoFile walks the module and calls fn with every .go file in it, as
