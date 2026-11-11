@@ -686,13 +686,14 @@ func chainRemaining(b chainBehind, spec *task.Spec, o *runOptions, warn io.Write
 func chainMissText(c *runstore.Chain) string {
 	var parts []string
 	for _, m := range c.Charged {
+		run := task.ShortRun(m.Run)
 		switch {
 		case errors.Is(m.Err, runstore.ErrChainGap):
-			parts = append(parts, fmt.Sprintf("the record of run %s is gone, so the runs behind it cannot be read", m.Run))
+			parts = append(parts, fmt.Sprintf("the record of run %s is gone, so the runs behind it cannot be read", run))
 		case m.Err != nil:
-			parts = append(parts, fmt.Sprintf("the ledger of run %s could not be read (%v)", m.Run, m.Err))
+			parts = append(parts, fmt.Sprintf("the ledger of run %s could not be read (%v)", run, m.Err))
 		default:
-			parts = append(parts, fmt.Sprintf("the budget database has no ledger node for run %s", m.Run))
+			parts = append(parts, fmt.Sprintf("the budget database has no ledger node for run %s", run))
 		}
 	}
 	return strings.Join(parts, ", and ")

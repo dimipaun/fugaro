@@ -371,7 +371,7 @@ func TestRunContinuesWithAnUnmeasuredLedgerRefused(t *testing.T) {
 	for _, want := range []string{
 		"--continues " + task.ShortRun(chainRun),
 		"token spend cannot be established",
-		chainRun, // the run whose ledger could not be read
+		task.ShortRun(chainRun), // the run whose ledger could not be read
 		"no ledger node",
 		"--used-tokens",
 	} {
