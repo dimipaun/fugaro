@@ -2786,7 +2786,17 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	if refAgent {
 		auth = refAuth
 	}
-	declared := stageAccountsOf(env.lc)
+	// The stage accounts this run applies, and the one note that says which of
+	// the operator's project-wide keys a cascade run skips
+	// (config.CascadeSkippedStageAccounts is the rule and the sentence): the
+	// keys name accounts no rung of this launch reads, and refusing them would
+	// let one repository's auth decide the whole project's config. The note is
+	// printed once per launch, whatever stage asked for it.
+	declared, note := config.CascadeSkippedStageAccounts(auth, stageAccountsOf(env.lc))
+	if note != "" && !env.stageNote {
+		env.stageNote = true
+		fmt.Fprint(launchWarn, noteLine(note))
+	}
 	if ps := config.CheckStageAccountMix(auth, declared, "stages"); len(ps) > 0 {
 		return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
 	}
@@ -2997,8 +3007,9 @@ func stageAccountsOf(lc *localcfg.Config) map[string]string {
 // may have one: oauth, where the accounts design's rung 2 gives a stage an
 // account of its own, and api-key, where the B0 ruling's one account serves the
 // mix's stages: the senior review, the adversarial review and the triage that
-// weighs their findings. Every other auth is "" — vertex and
-// cascade are refused outright by CheckStageAccountMix, and an auth the launch
+// weighs their findings. Every other auth is "" — vertex is refused outright by
+// CheckStageAccountMix, cascade's project-wide accounts are skipped before that
+// rule is asked (config.CascadeSkippedStageAccounts), and an auth the launch
 // cannot resolve yet is not judged on a guess.
 func stageAccountOf(lc *localcfg.Config, auth, stage string) string {
 	if lc == nil || (auth != "oauth" && auth != "api-key") {
