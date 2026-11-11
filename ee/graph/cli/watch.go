@@ -8,13 +8,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/dimipaun/fugaro/ee/coordinator"
-	coordcli "github.com/dimipaun/fugaro/ee/coordinator/cli"
 	"github.com/dimipaun/fugaro/ee/graph"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
-	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -27,12 +26,14 @@ import (
 // Five properties are this child, each of them a rule of the contract rather
 // than an implementation detail:
 //
-//   - **One subscription per scope, and one scope today.** The child holds one
-//     RTDB connection, to the coordinator's subtree, shared by every node that
-//     scope produces (H6, F12): an RTDB stream is a held connection against a
-//     project-wide limit, so it is opened per scope and never per node or per
-//     repository. A scope added later — the orchestrator's, the local
-//     orchestrator's — opens its own subtree beside this one.
+//   - **One subscription per scope subtree.** The child opens one RTDB
+//     connection per subtree the scope covers and no more (H6, F12): an RTDB
+//     stream is a held connection against a project-wide limit, so it is opened
+//     per scope and never per node or per repository. The subtrees are
+//     `graph.ScopeSubtrees`' — the coordinator's and the orchestrator's for
+//     `all`, one node for a named orchestrator scope — which is the same
+//     function a second reader of the same scope reads, so two readers cannot
+//     disagree about what one subscription costs.
 //   - **A change is a read, not a patch applied to a document.** The event is
 //     the trigger and the one-shot read is what answers, so a stream's document
 //     and `graph --json`'s are the same document for the same data. That is
@@ -83,32 +84,35 @@ var (
 const withdrawnListen = "the server withdrew the listen"
 
 // runGraphWatch is `graph --watch --json`. The scope has already been parsed
-// and refused (runGraph), and the cloud is open: this opens the project's
-// database, subscribes to the one subtree the scope reads, and prints until the
+// and refused (runGraph), and the cloud is open: this subscribes to the
+// subtrees the scope reads — one connection each (H6) — and prints until the
 // context ends or its reader goes away.
-func runGraphWatch(ctx context.Context, out io.Writer, env *fcli.Cloud) error {
-	// The connection is the coordinator read's own (CoordinatorDB), so a project
-	// with no database is refused here with the sentence `graph --json` refuses
-	// it with — the same call and not a second check worded alike — rather than
-	// dereferenced.
-	db, err := coordcli.CoordinatorDB(ctx, env.Config())
+//
+// db is the connection the command already opened, and it is the caller's for
+// the same reason it is readGraph's: a project with no database is refused by
+// that one call, with the sentence `graph --json` refuses it with, rather than
+// here with a second check worded alike; and the store over it, the
+// subscription on it and every read behind a document share one client, one
+// credential and one connection.
+func runGraphWatch(ctx context.Context, out io.Writer, env *fcli.Cloud, db *rtdb.Client, scope graph.Scope) error {
+	subs, err := graph.ScopeSubtrees(scope)
 	if err != nil {
-		return err
+		return fcli.UserErr("%v", err)
 	}
 	// The store the child reads through is opened once, over the same client the
-	// subscription is on, and lives as long as the child: a document per change,
-	// per keep-alive and per retry of a failed read, each answered by a read that
-	// goes through it (readGraph, StoredProjectThrough). One per document would
-	// build an rtdb client, and mint its credential, on every change a console is
-	// watching for, which is the cost this one store is here to take off it.
-	store := coordinator.NewStore(db)
+	// subscriptions are on, and lives as long as the child: a document per
+	// change, per keep-alive and per retry of a failed read, each answered by a
+	// read that goes through it (readGraph, StoredProjectThrough). One per
+	// document would build an rtdb client, and mint its credential, on every
+	// change a console is watching for, which is the cost this one store is here
+	// to take off it.
 	stream, err := graph.NewStream()
 	if err != nil {
 		return fcli.RemoteErr(err)
 	}
 	stream.Floor, stream.Keep = graphFloor, graphKeepAlive
-	w := &watcher{env: env, out: out, st: stream, store: store}
-	return w.run(ctx, db)
+	w := &watcher{env: env, out: out, st: stream, store: coordinator.NewStore(db), db: db, scope: scope, subs: subs}
+	return w.run(ctx)
 }
 
 // watcher is the child's own state: the last document it wrote, whether the
@@ -120,6 +124,17 @@ type watcher struct {
 	// store is the connection every document's read goes through, and the same
 	// one for as long as the child lives (runGraphWatch).
 	store *coordinator.Store
+	// db is that connection's client, which the orchestrator scopes are read
+	// through: the same client the subscriptions are on, so one credential
+	// serves the stream and every read behind it (runGraphWatch).
+	db *rtdb.Client
+	// scope is what the caller asked for, and subs are the subtrees it covers:
+	// one held connection each (graph.ScopeSubtrees, H6). They are the child's
+	// own fields rather than the read's because the first snapshot waits for one
+	// opening put per subtree, which is a fact about the connections and not
+	// about the document.
+	scope graph.Scope
+	subs  []string
 	// last is the document written most recently. It is what a scope that is
 	// down still draws: the nodes are the last thing the scope said, and the
 	// state beside them is what has changed (H3).
@@ -140,11 +155,8 @@ type watcher struct {
 
 // run is the child's whole life: subscribe, print the first snapshot, then
 // print whenever one is due until the context ends or a reader goes away.
-func (w *watcher) run(ctx context.Context, db *rtdb.Client) error {
-	// The one held connection, to the coordinator's subtree (H6). Every
-	// repository's view is a node inside it, so this one stream watches the
-	// whole scope: the subscription is per scope and never per node.
-	events := db.Stream(ctx, coordpath.PathRoot)
+func (w *watcher) run(ctx context.Context) error {
+	events := w.subscribe(ctx)
 	if err := w.first(ctx, events); err != nil {
 		return err
 	}
@@ -158,19 +170,20 @@ func (w *watcher) run(ctx context.Context, db *rtdb.Client) error {
 		case <-ctx.Done():
 			return nil
 		case <-tick.C:
-		case ev, ok := <-events:
+		case e, ok := <-events:
 			if !ok {
-				// The channel closes when the context ends or after the server
-				// withdrew the listen; the context was checked above, so this is
-				// the withdrawal, and the child is not refused by it: its scope
-				// goes down and it stays alive with the last graph, which is
-				// `watch`'s rule for the same event (contract §10.6) and the rule
-				// this scope's plan pins (CG7, F20(3)). Nothing arrives on a
-				// closed channel again, so it is dropped from the select rather
-				// than read as an endless stream of zero events.
+				// The merged channel closes when every subtree's subscription is
+				// over, and each of them has already reported its own
+				// withdrawal; the context was checked above, so this is that. The
+				// child is not refused by it: its scope goes down and it stays
+				// alive with the last graph, which is `watch`'s rule for the same
+				// event (contract §10.6) and the rule this scope's plan pins
+				// (CG7, F20(3)). Nothing arrives on a closed channel again, so it
+				// is dropped from the select rather than read as an endless
+				// stream of zero events.
 				events = nil
 				w.down, w.dirty = withdrawnListen, true
-			} else if err := w.observe(ev); err != nil {
+			} else if err := w.observe(e.ev); err != nil {
 				return err
 			}
 		}
@@ -188,32 +201,88 @@ func (w *watcher) run(ctx context.Context, db *rtdb.Client) error {
 	}
 }
 
-// first prints the stream's first document: the full snapshot, taken once the
-// subscription has proved it is listening — the transport's own opening put —
+// streamEvent is one event of one subscription: the subtree it came from and
+// the event itself. The tag is what the first snapshot counts, because two
+// subtrees send the same opening put and the event alone does not say which
+// subscription carried it.
+type streamEvent struct {
+	subtree string
+	ev      rtdb.Event
+}
+
+// subscribe opens one held connection per subtree the scope covers (H6) and
+// merges their events into one channel, each tagged with its subtree.
+//
+// The merge is what lets the rest of the child be written for one stream of
+// events: a change is a change whichever subtree it came from — the read behind
+// the document covers every scope it draws — and only the first snapshot needs
+// to tell the subtrees apart, which the tag gives it.
+//
+// Each goroutine ends when its own subscription does, and closes nothing: the
+// channel the transport hands out ends after a cancel, which is delivered as
+// the event it is, so a closed subscription is one the child has already been
+// told about. The merged channel closes when the last of them is done, which is
+// the same thing one level up.
+func (w *watcher) subscribe(ctx context.Context) <-chan streamEvent {
+	merged := make(chan streamEvent)
+	var wg sync.WaitGroup
+	for _, subtree := range w.subs {
+		events := w.db.Stream(ctx, subtree)
+		wg.Add(1)
+		go func(subtree string, events <-chan rtdb.Event) {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case ev, ok := <-events:
+					if !ok {
+						return
+					}
+					select {
+					case merged <- streamEvent{subtree: subtree, ev: ev}:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}(subtree, events)
+	}
+	go func() {
+		wg.Wait()
+		close(merged)
+	}()
+	return merged
+}
+
+// first prints the stream's first document: the full snapshot, taken once every
+// subscription has proved it is listening — each transport's own opening put —
 // or after the bound, whichever comes first.
 //
-// Waiting for that put is what keeps the first snapshot from being two: the
-// put is what a reconnect delivers as well, so a child that printed before it
-// arrived would print a second, identical document a floor later. The bound is
-// what keeps the wait from being open-ended: a database that never answers
-// still gets the read it can make.
-func (w *watcher) first(ctx context.Context, events <-chan rtdb.Event) error {
+// Waiting for those puts is what keeps the first snapshot from being two: a put
+// is what a reconnect delivers as well, so a child that printed before they
+// arrived would print a second, identical document a floor later. One put per
+// subtree is what makes the wait complete: `all` covers two subtrees, and a
+// child that printed on the first of them would print again on the second. The
+// bound is what keeps the wait from being open-ended: a database that never
+// answers still gets the read it can make.
+func (w *watcher) first(ctx context.Context, events <-chan streamEvent) error {
 	timer := time.NewTimer(graphFirstSnapshot)
 	defer timer.Stop()
-	for {
+	open := make(map[string]bool, len(w.subs))
+	for len(open) < len(w.subs) {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-timer.C:
 			return w.write(ctx, time.Now())
-		case ev, ok := <-events:
+		case e, ok := <-events:
 			if !ok {
-				// A closed channel before the opening put is the context ending
-				// or the listen withdrawn before it ever proved it was
-				// listening. For the withdrawal no put is coming, so waiting for
-				// one waits for the bound to pass for nothing: the first snapshot
-				// is written now, with its scope down, and the child is not
-				// refused by it (H3, contract §10.6).
+				// Every subscription is over before any of them proved it was
+				// listening, or the context ended. For a withdrawal no put is
+				// coming, so waiting for one waits for the bound to pass for
+				// nothing: the first snapshot is written now, with its scope
+				// down, and the child is not refused by it (H3, contract §10.6).
 				if ctx.Err() != nil {
 					return nil
 				}
@@ -221,13 +290,21 @@ func (w *watcher) first(ctx context.Context, events <-chan rtdb.Event) error {
 				return w.write(ctx, time.Now())
 			}
 			switch {
-			case ev.Type == "put" && ev.Path == "/":
-				return w.write(ctx, time.Now())
-			case ev.Type == "error" && errors.Is(ev.Err, rtdb.ErrPermission):
-				return refusedStream(ev.Err)
+			case e.ev.Type == "put" && e.ev.Path == "/":
+				open[e.subtree] = true
+			case e.ev.Type == "cancel":
+				// This subtree's listen is over before its opening put ever
+				// came, so no put is coming for it and waiting for one would
+				// wait for the bound to pass for nothing. The scope is down
+				// from here on, and the other subtrees are still counted.
+				open[e.subtree] = true
+				w.down, w.dirty = withdrawnListen, true
+			case e.ev.Type == "error" && errors.Is(e.ev.Err, rtdb.ErrPermission):
+				return refusedStream(e.ev.Err)
 			}
 		}
 	}
+	return w.write(ctx, time.Now())
 }
 
 // observe folds one event of the subscription into the child's state.
@@ -318,7 +395,7 @@ func (w *watcher) snapshot(ctx context.Context, now time.Time) (graph.Document, 
 	// The read's own instant is the age the stream can give (contract §6.22):
 	// it is the caller that read the views and knows when (CG7), where the
 	// one-shot read has no such time to hand over.
-	doc, err := readGraph(ctx, w.env, w.store, now, now, &warned)
+	doc, err := readGraph(ctx, w.env, w.store, w.db, w.scope, now, now, &warned)
 	switch {
 	case err == nil:
 		return doc, nil
