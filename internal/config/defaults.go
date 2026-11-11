@@ -83,6 +83,17 @@ const (
 	// credential of the job's own. It is a value of the one list below, so
 	// every reader that places an auth places this one the same way.
 	AuthCascade = "cascade"
+	// DefaultDiagnoseModel is the model a local diagnosis runs on when neither
+	// the repository nor the project layer names one (D1607): Sonnet, because
+	// diagnosing means reading real code and real logs and a diagnosis is rare.
+	//
+	// Nothing applies it, the way nothing applies DefaultPlanningDecoupling:
+	// the read is `fugaro troubleshoot`'s own (troubleshootModel), so the
+	// resolved configuration of a file that writes no agent.models.diagnose
+	// carries no such member and its sha256 does not move. The settings
+	// registry's row for the key cites this constant rather than restating the
+	// model ID.
+	DefaultDiagnoseModel = "claude-sonnet-5-5"
 )
 
 // defaultReports is the list itself; DefaultReports answers a copy.

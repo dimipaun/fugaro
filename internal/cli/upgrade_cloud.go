@@ -542,7 +542,7 @@ func pricesDiff(job, now string) string {
 		}
 		return "unreadable copy"
 	}
-	return mapDiff(jo, no, func(a, b pricing.Rates) bool { return reflect.DeepEqual(a, b) })
+	return mapDiff(jo, no, func(a, b pricing.Override) bool { return reflect.DeepEqual(a, b) })
 }
 
 // mapDiff lists the keys of now that job lacks or disagrees with (added,

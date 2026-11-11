@@ -50,11 +50,12 @@ func (s State) Severity() Severity {
 // and fugaro update-skills installs the plugin on the machine instead — and a
 // marketplace that carries no ref simply follows the default branch. Outdated
 // keeps its line: the entry is there, and fugaro update is the door that takes
-// it out (D943) — U5's migration is the plugin stage offering the pin's
-// removal, so until U5 lands the line repeats at the end of the run it names.
-// U5 is ordered before the release that carries this work (E1), which is where
-// that closes, and the line stays as it is because it names the door the design
-// does send the reader to.
+// it out (D943) — U5's migration is the plugin stage offering the pin's removal
+// in that same run, so a checkout an older fugaro pinned comes out of the
+// command the line names with no pin, and the line stops. It stays as it is
+// because it still names the door the design sends the reader to: where the
+// removal is offered and not made — a coding agent's session, a checkout this
+// run may not write into — the run's own sentence says so, beside it.
 func (s State) Fix() string {
 	switch s {
 	case Outdated:

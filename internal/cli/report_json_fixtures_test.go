@@ -32,6 +32,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/diagnoseagent"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -363,6 +364,30 @@ var jsonCases = map[string]jsonCase{
 			return []string{"project", "policy", "show"}
 		},
 	},
+	"project profile ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			newBudgetFixture(t, "")
+			return []string{"project", "profile", "ls"}
+		},
+	},
+	"project profile show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The world's own config defines no profiles, and the read refuses a
+			// name it has none of rather than printing an empty document, so
+			// this run needs the block a project with a profile carries.
+			modelsWriteHomeWith(t, projectProfileExtra)
+			return []string{"project", "profile", "show"}
+		},
+	},
+	"project routing show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			newBudgetFixture(t, "")
+			return []string{"project", "routing", "show"}
+		},
+	},
 	"project show": {
 		reads: true,
 		run: func(t *testing.T) []string {
@@ -507,6 +532,23 @@ var jsonCases = map[string]jsonCase{
 		run: func(t *testing.T) []string {
 			jsonCloud(t)
 			return []string{"stats", "runs", "--project", "aurora"}
+		},
+	},
+	"troubleshoot": {
+		run: func(t *testing.T) []string {
+			// The command's own rig (troubleshoot_test.go): a failed
+			// command's log, a source tree, a credential and the agent's
+			// answer, none of them this machine's -- the run reaches its own
+			// document without an agent, a network or a change to anything of
+			// the person's.
+			x := tsSetup(t)
+			x.id = tsFailedLog(t, time.Now().UTC(), "error: the account is not allowed here", "Failed in 1.2s")
+			x.diag = diagnoseagent.Diagnosis{
+				Outcome:   diagnoseagent.OutcomeConfiguration,
+				Signature: "update configuration",
+				Text:      "The account is not allowed for this repository.",
+			}
+			return []string{"troubleshoot", x.id.String()}
 		},
 	},
 	"update": {

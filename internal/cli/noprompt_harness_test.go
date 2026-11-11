@@ -314,27 +314,35 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// answer, which is the whole of what a closed stdin can be shown here. The
 	// same reference in both is the point — neither leaf may ask a question of a
 	// missing issue.
-	"fugaro issue dismiss":     {args: []string{"local-update-20261107183012-1"}},
-	"fugaro issue show":        {args: []string{"local-update-20261107183012-1"}},
-	"fugaro logs":              {args: []string{"run-1"}},
-	"fugaro managed apply":     {args: []string{"root"}},
-	"fugaro managed flag":      {args: []string{"proj-1234"}},
-	"fugaro managed unflag":    {args: []string{"proj-1234"}},
-	"fugaro models add":        {args: []string{"claude-x"}},
-	"fugaro models rm":         {args: []string{"claude-x"}},
-	"fugaro models search":     {args: []string{"x"}},
-	"fugaro models use":        {args: []string{"a", "b", "c"}},
-	"fugaro pair revoke":       {args: []string{"--uid", "uid-1"}},
-	"fugaro project repos add": {args: []string{"acme/app"}},
-	"fugaro project repos rm":  {args: []string{"acme/app"}},
-	"fugaro recipes publish":   {args: []string{"slug"}},
-	"fugaro recipes show":      {args: []string{"slug"}},
-	"fugaro recipes validate":  {args: []string{"slug"}},
-	"fugaro restore":           {args: []string{"proj-2", "root"}},
-	"fugaro review show":       {args: []string{"run-1"}},
-	"fugaro run":               {args: []string{"do something"}},
-	"fugaro secrets rm":        {args: []string{"NAME"}},
-	"fugaro secrets set":       {args: []string{"NAME"}},
+	"fugaro issue dismiss":  {args: []string{"local-update-20261107183012-1"}},
+	"fugaro issue show":     {args: []string{"local-update-20261107183012-1"}},
+	"fugaro logs":           {args: []string{"run-1"}},
+	"fugaro managed apply":  {args: []string{"root"}},
+	"fugaro managed flag":   {args: []string{"proj-1234"}},
+	"fugaro managed unflag": {args: []string{"proj-1234"}},
+	"fugaro models add":     {args: []string{"claude-x"}},
+	"fugaro models rm":      {args: []string{"claude-x"}},
+	"fugaro models search":  {args: []string{"x"}},
+	"fugaro models use":     {args: []string{"a", "b", "c"}},
+	"fugaro pair revoke":    {args: []string{"--uid", "uid-1"}},
+	"fugaro project profile add": {args: []string{"standard", "--provider", "github", "--cpu", "2",
+		"--memory", "4Gi", "--timeout-class", "6h"}},
+	"fugaro project profile rm": {args: []string{"standard"}},
+	// The world's config defines no profiles, so this fixture stops at the
+	// command's own refusal — which is still its body, and the whole of what a
+	// bare run cannot reach.
+	"fugaro project profile set": {args: []string{"standard", "cpu", "4"}},
+	"fugaro project repos add":   {args: []string{"acme/app"}},
+	"fugaro project repos rm":    {args: []string{"acme/app"}},
+	"fugaro project routing set": {args: []string{"claude", "--via", "direct"}},
+	"fugaro recipes publish":     {args: []string{"slug"}},
+	"fugaro recipes show":        {args: []string{"slug"}},
+	"fugaro recipes validate":    {args: []string{"slug"}},
+	"fugaro restore":             {args: []string{"proj-2", "root"}},
+	"fugaro review show":         {args: []string{"run-1"}},
+	"fugaro run":                 {args: []string{"do something"}},
+	"fugaro secrets rm":          {args: []string{"NAME"}},
+	"fugaro secrets set":         {args: []string{"NAME"}},
 	// The rigor write reaches its own edit through the layer file the seed writes:
 	// the mode it sets ranks above what the file resolves to, so the fixture is the
 	// ordinary write and not the sensitive one, and the sentence naming the key is
@@ -447,8 +455,12 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro project clone-url ls":   "reads the selected project's own config, which this world's gives no repository a URL in, and prints that it gives none",
 	"fugaro project policy publish": "refuses before its ask: the deployed rules here carry no policy marker",
 	"fugaro project policy show":    "prints that this installation has published no policy",
+	"fugaro project profile ls":     "lists this world's config, which sets no profiles block, and says that it defines none",
+	"fugaro project profile show":   "refuses from inside its body: this world's config defines no standard profile for it to show",
 	"fugaro project repos ls":       "prints the no-project-config refusal",
 	"fugaro project repos set":      "prints the no-project-config refusal: this world selects no project, and the selection is read before either of the command's two shapes is",
+	"fugaro project routing show":   "prints this world's config's routing line: no switch is written there, which reads as the direct route",
+	"fugaro project routing unset":  "finds no routing block in this world's config, so the remove has nothing to remove and prints that there is no change",
 	"fugaro project show":           "prints the no-project-config refusal",
 	"fugaro project sync":           "refuses before its write: the deployed rules this world serves carry no policy marker",
 	"fugaro reaper":                 "prints the no-project-config refusal",
@@ -465,13 +477,21 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro settings":               "prints the registry's every row with no project selected, which is the whole of what a bare run does",
 	"fugaro seats":                  "reads the selected project's records for an advisory estimate, and this world selects no project",
 	"fugaro setup":                  "refuses on this world's runs bucket name before the wizard's first step",
-	"fugaro update":                 "refuses on this world's runs bucket name before its first stage",
-	"fugaro update-skills":          "reports that a development build has no release to pin the plugin to",
-	"fugaro upgrade":                "skips every step: a development build has no release to pin or install",
-	"fugaro user ls":                "prints the no-project-config refusal",
-	"fugaro validate":               "refuses with no fugaro.yaml in the world",
-	"fugaro version":                "prints the version",
-	"fugaro workspace ls":           "prints that no config on this machine names a workspace",
+	// The diagnosis takes the newest logged command that failed when it is
+	// given no run ID, and this world's machine has logged none: the bare run
+	// reaches the command's own "nothing to explain" refusal. Any other run
+	// would need a log and a source tree, which are fixtures of their own
+	// (troubleshoot_test.go); what this harness asks of the leaf is the
+	// policy's own question, and a bare run answers it as well as a fixtured
+	// one, because the command reads no stdin on any path.
+	"fugaro troubleshoot":  "refuses from inside its body: this world's machine has logged no failed command, and a bare run takes the newest one",
+	"fugaro update":        "refuses on this world's runs bucket name before its first stage",
+	"fugaro update-skills": "reports that a development build has no release to pin the plugin to",
+	"fugaro upgrade":       "skips every step: a development build has no release to pin or install",
+	"fugaro user ls":       "prints the no-project-config refusal",
+	"fugaro validate":      "refuses with no fugaro.yaml in the world",
+	"fugaro version":       "prints the version",
+	"fugaro workspace ls":  "prints that no config on this machine names a workspace",
 }
 
 // closedStdinPrompts is the allow-list: the leaves that still print a question

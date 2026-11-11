@@ -622,7 +622,14 @@ func (p Provider) EffectivePricePolicy() string { return p.ModelProvider.PricePo
 // internal/localcfg.ModelPrice): input_per_m and output_per_m are required,
 // and the optional rates are pointers so that a field left out keeps the list
 // default (cache_write_5m 1.25, cache_write_1h 2, cache_read 0.1,
-// web_search_per_1k 10), never 0. Decode checks the block with the catalogue's
+// web_search_per_1k 10), never 0. ImageTokens is the per-image token ceiling
+// a call carrying an image block is reserved at (D2001), and a pointer for
+// the same reason: left out, the model keeps the ceiling it had, and an
+// explicit 0 refuses its images. It does not move the node's Version (D2015):
+// nothing was removed or re-meant, and a version an older reader does not know
+// refuses the whole node, where this member needs one launch refused — that
+// guard is the release's visionSince check, not a version move. Decode checks
+// the block with the catalogue's
 // own pricing.ParseOverrides as well, so the two spellings cannot drift
 // (TestDecodeModelPricesAgreeWithTheCatalog). The model ID it belongs to is
 // the map key of Prices, which escapes it on the node and not in Go.
@@ -633,6 +640,7 @@ type Price struct {
 	CacheWrite1h   *float64   `json:"cache_write_1h,omitempty"`
 	CacheRead      *float64   `json:"cache_read,omitempty"`
 	WebSearchPer1k *float64   `json:"web_search_per_1k,omitempty"`
+	ImageTokens    *int64     `json:"image_tokens,omitempty"`
 	LongContext    *PriceTier `json:"long_context,omitempty"`
 }
 

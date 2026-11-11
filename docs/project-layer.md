@@ -169,6 +169,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `agent.models.reviewer` | project, repo |  |
 | `agent.models.background` | project, repo |  |
 | `agent.models.vision` | project, repo |  |
+| `agent.models.diagnose` | project, repo |  |
 | `agent.crafts.coder.model` | project, repo |  |
 | `agent.crafts.coder.access` | repo | it names a credential or pool the local config (never the project layer) allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them — the same reason agent.oauth_token is refused here |
 | `agent.crafts.review.model` | project, repo |  |
