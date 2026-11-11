@@ -1047,7 +1047,7 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
   may answer about"), and where a token's own repository filter is applied on top of that list
   rather than instead of it. spec.md §11 carries it as an open item until the owner assigns it.
 
-### M9 — `spawn_task`, `cancel_task`, and the narrowed ceiling — **DEFERRED (D936)**
+### M9 — `spawn_task`, `cancel_task`, and the narrowed ceiling — **DEFERRED (D936), PARKED: no release schedules it**
 **Out of the first slice (D936).** The first slice is **the authorization server plus the read
 tools**, and **M9 leaves the first slice**: it is the task that starts a run from the front door, and
 it needs two privileges the front door does not hold — `signJwt` and write on the runs bucket — plus
