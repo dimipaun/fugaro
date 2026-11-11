@@ -297,6 +297,12 @@ func (r *Runner) call(bounds Bounds, model string, brief Brief) (Call, error) {
 		// A decision is one question asked once: nothing about it belongs in
 		// a session file under the person's home, and nothing resumes it.
 		"--no-session-persistence",
+		// The brief is the whole of what a decision may know, and the child
+		// holds the person's own Claude login: a tool call is a process
+		// `claude` starts with that credential in its environment. An empty
+		// list removes the built-in set (check90.sh removes it for the same
+		// reason), and the deny rules below stay beside it (G8).
+		"--tools", "",
 		"--settings", settings,
 		"--append-system-prompt", systemPrompt,
 		"--model", model,
