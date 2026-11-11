@@ -1920,10 +1920,11 @@ func withoutValidate(m map[string]any) map[string]any {
 // branch is allowed to add: the credentials family (C1.3), the coordinator's
 // subtree (coordinator plan task P3, D195), the hosted MCP server's own
 // (docs/mcp-server/implementation-plan.md's M3, D922), the build lease's
-// (docs/no-prompt-policy/implementation-plan.md's T8, D1543, F22), or the
+// (docs/no-prompt-policy/implementation-plan.md's T8, D1543, F22), the
 // stateless orchestrator's (docs/stateless-orchestrator/implementation-plan.md's
-// O2, D1220). Anything else that appears in the document is a rules change
-// nobody asked for.
+// O2, D1220) or the workspace family's (docs/workspaces/implementation-plan.md's
+// W3, workspace.go). Anything else that appears in the document is a rules
+// change nobody asked for.
 //
 // They are equalities and not prefixes, for the reason isNewCredsPath gives
 // below: P3 adds the family's own node and nothing under it, so a path *under*
@@ -1936,7 +1937,44 @@ func withoutValidate(m map[string]any) map[string]any {
 // hidden one level down — and one a `USER` read at the top would otherwise make
 // look legitimate.
 func isNamedAddition(p string) bool {
-	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth || p == PathBuildLeases || p == PathOrchestrator
+	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
+		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p)
+}
+
+// isNewWorkspacePath reports whether p is one of the paths the workspace family
+// adds (docs/workspaces/implementation-plan.md W3, workspace.go): the record and
+// its four children, the admitted-token hashes, and the meter and the rollup by
+// month. Like the credentials family's, every one of them is an equality and
+// not a prefix — a path *under* `workspaces/$name` that is not named here is a
+// rule hidden under the record, which is the shape a client's read of it takes,
+// and it belongs in this test as a diff a reviewer reads rather than as a match
+// this function waves through.
+//
+// The paths are the family's whole output, so a node added to
+// workspace.json.tmpl without being named here fails this test — which is the
+// point: the workspace's database is the one whose readers are its own service
+// and the owner's CLI, and a rule that reached a client there would be a leak
+// with a public address.
+func isNewWorkspacePath(p string) bool {
+	for _, node := range []string{
+		WorkspaceRecordPath,
+		WorkspaceRecordPath + "/$name",
+		WorkspaceRecordPath + "/$name/version",
+		WorkspaceRecordPath + "/$name/name",
+		WorkspaceRecordPath + "/$name/members",
+		WorkspaceRecordPath + "/$name/cap",
+		WorkspaceTokenPath,
+		WorkspaceTokenPath + "/$hash",
+		WorkspaceMeterPath,
+		WorkspaceMeterPath + "/$month",
+		WorkspaceRollupPath,
+		WorkspaceRollupPath + "/$month",
+	} {
+		if p == node {
+			return true
+		}
+	}
+	return false
 }
 
 // isNewCredsPath reports whether p is one of the three things C1.3 adds: the

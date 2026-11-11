@@ -10,7 +10,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
 | console-dependency-graph | 13/17 | GV3.1, GV3.2, GV4.1 |
 | bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145, and 148's read half (S2, D1961); S3 superseded by the secrets-brokering proxy chain (2026-11-10), except T3.3's trust paths; Check 147 retired (D1960) and T2.6 unblocked (D1962); D1960–D1962 answered 2026-11-10 as recommended (its reconciliation-secrets-brokering.md) |
-| mcp-server | 8/12 | M4 store (draft #2117), M5b (draft #2114, a follow-up in a run); M9 deferred |
+| mcp-server | 8/12 | M4 store (draft #2117), M5b (draft #2114, a follow-up in a run); M9 parked (D936, the fence declined): no release schedules it |
 | contract-first-decoupling | 4/7 | CD4, CD5, CD7 |
 | task-governance | 24/31 | 7 left: T3.4 (docs), and the rest in `ee/governance` |
 | mobile | about 35/45 | P5.x, P7.2 to P7.5; owner P2.3 and P4.4 |
@@ -23,7 +23,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | Spec | Merged | Left |
 | --- | --- | --- |
 | stateless-orchestrator | 10/19 | O8 (draft #2064), O9 to O14, O16, O19; owner Checks 301 to 304 (300 PASSED 2026-11-10); 305 reserved |
-| api-key-review | 6/11 | AK6b (draft #2172), AK7, AK9, AK10; owner Check 330 |
+| api-key-review | 6/9 | AK6b (draft #2172), AK7; owner Check 330. AK9 and AK10 are folded into model-crafts MC6 (F26, D1638) and are no longer counted here |
 | secrets-brokering | 18/30 | B1.13 flip (draft #2166, held on Check 191), B1.15, B1.16, B2.1 to B5.1; owner Checks 191 and 192. Dynamic-delivery subfolder: DS0.1, DS1.3 and DS2.0 merged, DS2.1 in a run |
 | vision-model | plan only, 0/9 built (V0–V8); not started, nothing approved; owner Checks 520 and 521 not run |
 | subscriptions | about 17/51 | about 22 tasks; 10 owner-run |
@@ -37,6 +37,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | issues-resolved-on-update | 3/8 | T-RU4 to T-RU8 |
 | catalog-build-context | 2/5 | CB2, CB4, CB5 |
 | post-review-triage | 6/14 | TR3, TR6 (in a run), TR7 to TR10, TR12; TR5 merged, BF1m (#1999) merged |
+| outer-loop-escalation | 0/18 | plan only, no task approved (E0 to E16 with E10a and E10b); owner Checks 540 to 542 |
 | model-crafts | 4/10 | MC4 to MC7, MC9; owner MC10 |
 | security-classification | 6/11 | SC3, SC5, SC9 to SC11 |
 | settings-commands | about 6/12 | S6, S8 to S11; S7 closed 2026-11-10 as a duplicate of config-management's G7 |
@@ -57,6 +58,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | Spec | State |
 | --- | --- |
 | composite-commands | 1/10; depends on no-prompt-policy |
+| account-aliases | plan only, 0/5 (AL0–AL4), all approved 2026-11-10 and sequenced after #2274, #2247 and #2252; D2090–D2102 answered as recommended; owner Check 550 not run |
 | mobile-auth | 2/7; parked |
 | repo-image-removal | **PARKED** (2/11; parked by image-setup, D1900) |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
