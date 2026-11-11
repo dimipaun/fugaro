@@ -164,3 +164,52 @@ func TestRigorFloorAddsAnEntryWithoutTheTypedForm(t *testing.T) {
 		t.Errorf("the floor reads back as %v, want the two levels that were named", cfg.ReviewFloor)
 	}
 }
+
+// The one removal whose effect a person could read wrong, and the sentence that
+// keeps the command honest about it. A config silent about the floor keeps the
+// published one — the floor is the member a publish must not lower by accident
+// (localcfg's own comment on the field, and buildProjectPolicy) — and the
+// editor cannot write the `review_floor: {}` that would take it away, so a
+// removal of the file's LAST entry lowers the file and nothing else. The
+// command says which of the two it just did, and it says it only where it is
+// true: a removal that leaves another mode's floor behind reaches the node at
+// the next publish, and warns about nothing.
+func TestRigorFloorUnsetOfTheLastEntrySaysWhatItLeaves(t *testing.T) {
+	t.Run("the last entry", func(t *testing.T) {
+		path := rigorFloorHome(t, "review_floor:\n  pro: [l2]\n")
+		noAgentSession(t)
+		fakeTerminal(t)
+
+		out, _, err := executeStdin(t, "aurora\n", "rigor", "floor", "unset", "pro")
+		if err != nil {
+			t.Fatalf("the removal was refused: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "names no floor at all") || !strings.Contains(out, "review_floor: {}") {
+			t.Errorf("the removal of the file's only floor says nothing about the published one:\n%s", out)
+		}
+		if lines := strings.Split(strings.TrimRight(out, "\n"), "\n"); lines[len(lines)-1] != "next: fugaro update" {
+			t.Errorf("the last line is %q, want the one hand-off line", lines[len(lines)-1])
+		}
+		if got := readFileString(t, path); strings.Contains(got, "review_floor") {
+			t.Errorf("the removal left the key behind:\n%s", got)
+		}
+	})
+
+	t.Run("another mode's floor stays", func(t *testing.T) {
+		path := rigorFloorHome(t, "review_floor:\n  pro: [l2]\n  critical: [l3]\n")
+		noAgentSession(t)
+		fakeTerminal(t)
+
+		out, _, err := executeStdin(t, "aurora\n", "rigor", "floor", "unset", "pro")
+		if err != nil {
+			t.Fatalf("the removal was refused: %v\n%s", err, out)
+		}
+		if strings.Contains(out, "names no floor at all") {
+			t.Errorf("a removal that leaves another mode's floor behind warns about a floor that is gone:\n%s", out)
+		}
+		got := readFileString(t, path)
+		if !strings.Contains(got, "critical:") {
+			t.Errorf("the other mode's floor went with the removal:\n%s", got)
+		}
+	})
+}

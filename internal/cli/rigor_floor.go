@@ -61,7 +61,9 @@ import (
 // gone rather than written empty, and the two spellings mean different things
 // at publish — an absent key keeps the node's floor, a written `{}` takes it
 // away (localcfg's own comment on the field, and buildProjectPolicy). This file
-// reports that rather than inventing the operation.
+// reports that rather than inventing the operation: the command prints the one
+// sentence naming it (rigorFloorLeavesNone) instead of leaving the person to
+// find out that the floor is still there.
 
 // rigorFloorKey is the key this command writes, by the spelling the registry
 // and the settings write path look a row up by. The registry already carries it
@@ -257,8 +259,29 @@ func runRigorFloor(cmd *cobra.Command, o rigorFloorOptions, modeArg, levelsArg s
 	if err := applySettingsEdit(cmd, lc, edit); err != nil {
 		return err
 	}
+	if rigorFloorLeavesNone(prev.ReviewFloor, mode, remove) {
+		fmt.Fprintln(cmd.OutOrStdout(), "note: this file now names no floor at all, and a publish keeps the node's floor when the config is silent about one, so what this write removed is the file's floor and not the published one: `review_floor: {}` written by hand is what takes the published floor away")
+	}
 	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	return nil
+}
+
+// rigorFloorLeavesNone reports whether this edit leaves the config naming no
+// floor at all: the removal of a mode's floor that was the file's only entry.
+// It is the one write here whose effect a person could read wrong, and the
+// sentence the caller prints for it is why this is a function rather than a
+// condition inline.
+//
+// The distinction it turns on is the loader's (localcfg.Config.ReviewFloor): a
+// config silent about the floor keeps the one the node carries — the floor is
+// the member a publish must not lower by accident — and a written empty object
+// is the removal. The editor cannot write `review_floor: {}` — an empty flow
+// mapping is one of the shapes it refuses (`yamledit`'s #What it refuses) — so
+// a removal of the last entry leaves the key absent and the node's floor in
+// place, and the command says so rather than letting its own hand-off line
+// promise a lowering that has not happened.
+func rigorFloorLeavesNone(floor map[string][]string, mode rigor.Mode, remove bool) bool {
+	return remove && len(floor) == 1 && len(floor[string(mode)]) > 0
 }
 
 // rigorFloorLevels is the LEVELS argument as the policy package's vocabulary:
