@@ -114,11 +114,12 @@ func runAB(cmd *cobra.Command, o *abOptions, d Deps) error {
 		return err
 	}
 	lc := cloud.Config()
+	// The window as the report shows it and as the read bounds it: --since
+	// measured back from now, and no end, since --since is the whole window
+	// this command has.
+	since := fcli.LsSince(window)
 	m := report.ABMeta{Project: lc.Name, Source: "run-records"}
-	// The window's ends as instants, and the later end left open: --since is
-	// the whole window this command has, so a pair launched after the read
-	// began is in the next report rather than half in this one.
-	if since := fcli.LsSince(window); !since.IsZero() {
+	if !since.IsZero() {
 		m.Since = since.UTC().Format(time.RFC3339)
 	}
 	m.Until = fcli.LsNow().UTC().Format(time.RFC3339)
@@ -139,7 +140,7 @@ func runAB(cmd *cobra.Command, o *abOptions, d Deps) error {
 	if err != nil {
 		return err
 	}
-	objs, _, truncated, err := env.ReadRunRecords(ctx, slugs, fcli.LsSince(window), time.Time{}, d.MaxRuns)
+	objs, _, truncated, err := env.ReadRunRecords(ctx, slugs, since, time.Time{}, d.MaxRuns)
 	if err != nil {
 		return err
 	}
