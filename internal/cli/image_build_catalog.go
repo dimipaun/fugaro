@@ -259,6 +259,26 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	}
 	imageMap := lc.ImageMapEffective(publishedMap)
 	bakeRepos := lc.BakeReposEffective(publishedBake)
+	// The project's repositories, in the map's own key space (the canonical
+	// form, task.CanonicalRepo), and the entry the catalog marks as its default:
+	// the two things Decide reads the map against. The map is a statement about
+	// the repositories it names, so a project repository it names none for is
+	// one whose image a build cannot know — the deploy resolves it by that
+	// repository's own config — and the default entry is the one every
+	// repository that names no entry runs, whatever the map says.
+	var projectRepos []string
+	for name := range lc.Repos {
+		if canonical, err := task.CanonicalRepo(name); err == nil {
+			projectRepos = append(projectRepos, canonical)
+		}
+	}
+	catDefault := ""
+	for _, e := range cat.Entries {
+		if e.Default {
+			catDefault = e.Name
+			break
+		}
+	}
 	// What the map and the switch decide, and what they do not (imagebake.
 	// Decide): the map is the build's only evidence about any repository but
 	// the checkout's own, so a stage is composed only for an entry the map puts
@@ -393,6 +413,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			bakePlan := imagebake.Decide(imagebake.Request{
 				Entry: e.Name, Repo: bakeRepo, Reference: bakeRef,
 				Map: imageMap, Bake: bakeRepos,
+				Repos: projectRepos, Default: catDefault,
 			})
 			noteBakePlan(cmd, e.Name, bakePlan)
 			dropped, err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e, bakePlan)
@@ -772,11 +793,12 @@ func noteBakePlan(cmd *cobra.Command, entry string, p imagebake.Plan) {
 	if len(p.Cloned) > 0 {
 		alone = fmt.Sprintf("the other repositories the project maps to it (%s) run this image too, so their jobs can read this checkout, and they clone their own at job start", strings.Join(p.Cloned, ", "))
 	}
-	// What the line claims is what the image carries and where, and not that a
-	// job reads it: the runner opens the image's own work directory today, and
-	// the per-slug path is what IS8's reader — unapproved still — has to open
-	// before a job is faster for it. A note that promised the speedup now
-	// would be false for every build this command makes.
+	// What the line claims is what the image carries and where. That a job of
+	// the repository reads it is not a promise this command has to hedge: IS8's
+	// reader is in main (runner.openBakedCheckout, over runner.BakedDir), so a
+	// job whose image carries a checkout opens the per-slug path instead of
+	// cloning, and the only repository it opens it for is the one the checkout
+	// is of — which is the other half of what the line says about the rest.
 	fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkout of %s at %s, so the image carries that repository's source; %s\n",
 		pluginwire.Printable(entry), pluginwire.Printable(p.Baked.Repo), dir, alone)
 }

@@ -147,6 +147,19 @@ type Request struct {
 	// who else runs the entry — a build reads one repository's config — so the
 	// bake hangs off it: see Decide.
 	Map map[string]string
+	// Repos are the project's repositories, as canonical names (task.
+	// CanonicalRepo), which is the map's own key space. The map is read here
+	// against this list rather than trusted whole: a repository the map does not
+	// name is one whose image the build cannot know, because the deploy resolves
+	// it by that repository's own reference or by the tag-cover rule and a build
+	// reads neither — so it may be a reader of this entry (see Decide).
+	Repos []string
+	// Default is the name of the entry the project's catalog marks as its
+	// default, "" when it marks none (config.Entry.Default). A repository that
+	// names no entry of its own runs it, whatever the map says and whether or
+	// not the map names that repository at all, which makes it an entry this
+	// build cannot call its own: see Decide.
+	Default string
 	// Bake is the project's effective bake switch (bake_repos, D1901): nil when
 	// the project answered nothing, which is what an installation predating the
 	// field has, and true or false when an operator answered it. Nil and true
@@ -180,8 +193,8 @@ type Plan struct {
 }
 
 // Decide is the rule: a build bakes the repository it runs for, and only when
-// that repository runs this entry, when the entry is one no other repository
-// the project maps runs, and when the project asked for the bake.
+// that repository runs this entry, when the project's map leaves the entry to
+// that repository alone, and when the project asked for the bake.
 //
 // The entry a repository runs is the one its own workflow names, then the map's
 // answer for it, in the resolver's own order (T1 (b); IS1's one resolver), so
@@ -207,7 +220,7 @@ type Plan struct {
 // refuses the bake, and the line a build prints names those repositories as the
 // reason rather than as a warning.
 //
-// # What the map has to say
+// # What the map has to say, and what it does not
 //
 // Both of those are read off the project's map, the only thing a build holds
 // that speaks about a repository other than its own: it reads one repository's
@@ -217,6 +230,26 @@ type Plan struct {
 // even one that runs it by its own workflow's reference, is refused rather than
 // baked, because the build cannot name the repositories that run the entry as
 // well and Plan.Cloned would be a guess.
+//
+// The map is not, on its own, evidence that the entry is this repository's: a
+// job resolves its image with catalog.Choose, which reads a repository's own
+// reference, then the tag-cover rule over the tags it needs, and then the
+// catalog's default — and never the map, until IS1 makes the map that resolver.
+// So two further things refuse the bake, each of them a way the entry reaches a
+// job the map says nothing about. The entry the catalog marks as its default is
+// run by every repository of the project that names no entry of its own. And a
+// repository the map does not name at all is one whose image the build cannot
+// know at all, since the deploy resolves it by that repository's own config
+// (Request.Repos). What is left is the case the map is evidence for: every
+// repository of the project is accounted for by it, this repository is on this
+// entry, and no other repository is.
+//
+// That account is the project's own and not a proof of who runs the entry: a
+// repository the map puts on another entry reaches this one by its own
+// workflow's reference or by the tags its jobs need, and a build reads the
+// config of no repository but its own (O3 (b)), so it cannot rule that out.
+// What it can refuse is the entry the project's account says nothing about, and
+// that is what the refusals above do.
 func Decide(req Request) Plan {
 	// The other repositories this image serves: they are the clone-at-start
 	// half of O3 (b) and are named whether or not this build bakes.
@@ -256,6 +289,25 @@ func Decide(req Request) Plan {
 	if req.Map[req.Repo.Repo] != req.Entry {
 		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("this repository runs the catalog entry %s by its own workflow's reference and the project's image map does not put it there, so a build cannot name the other repositories that run the entry and could read a checkout baked into it: `fugaro image map set %s %s` records it in the map a build reads, and the bake follows", req.Entry, req.Repo.Repo, req.Entry)}
 	}
+	// The catalog's default is the entry every repository that names nothing
+	// runs, and the deploy resolves that without reading the map (catalog.Choose
+	// step 3). So the map saying nothing about a repository is not the map saying
+	// the repository runs something else: a project whose map puts this
+	// repository alone on the default entry still hands that entry's image to
+	// every other repository of the project, and the bake would be a checkout in
+	// their jobs (F18).
+	if req.Default != "" && req.Default == req.Entry {
+		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("the catalog marks the entry %s as the project's default, so every repository of the project that names no entry of its own runs this image, and their jobs could read whatever is baked into it: the bake follows only where the entry is not the default", req.Entry)}
+	}
+	// A repository the map does not name at all is one whose image this build
+	// cannot know: the deploy resolves it by that repository's own reference or
+	// by the tag-cover rule, and a build reads neither — one repository's config
+	// and one credential (O3 (b)). It is therefore a possible reader of this
+	// entry, and the map is only whole evidence when it names every repository
+	// the project has.
+	if unknown := unmapped(req.Repos, req.Map, req.Repo.Repo); len(unknown) > 0 {
+		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("the project's image map puts none of the project's other repositories (%s) on an entry, so this build cannot say which image their jobs run or whether they could read a checkout baked into this one: `fugaro image map set <repo> <entry>` records each of them, and the bake follows", strings.Join(unknown, ", "))}
+	}
 	// A shared image is O3 (b)'s own boundary and not the switch's: bake_repos:
 	// true asks for a bake, and it does not decide who may read the result.
 	if len(cloned) > 0 {
@@ -264,6 +316,26 @@ func Decide(req Request) Plan {
 	baked := req.Repo
 	return Plan{Baked: &baked, Cloned: cloned, Notable: true}
 
+}
+
+// unmapped lists the project's repositories the map names no entry for, in one
+// order, other than repo itself: the repositories whose image a build cannot
+// know, and therefore the ones whose jobs it cannot rule out as readers of an
+// entry it bakes into. A repository the map names, whatever it names for it, is
+// left out — the map is a statement about it, and Decide refuses the bake where
+// that statement puts it on this entry.
+func unmapped(repos []string, m map[string]string, self string) []string {
+	var out []string
+	for _, name := range repos {
+		if name == self {
+			continue
+		}
+		if _, known := m[name]; !known {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // markerPrefix begins the marker line the generated stage carries, so the

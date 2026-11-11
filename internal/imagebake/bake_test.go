@@ -24,8 +24,9 @@ func reqApp() Request {
 			Repo: "acme/app", Slug: "app-1234abcd",
 			URL: "https://github.com/acme/app.git", Branch: "main",
 		},
-		Map:  map[string]string{"acme/app": "app"},
-		Bake: bakeOn(),
+		Map:   map[string]string{"acme/app": "app"},
+		Repos: []string{"acme/app"},
+		Bake:  bakeOn(),
 	}
 }
 
@@ -94,6 +95,66 @@ func TestDecideBakesNothingIntoASharedImage(t *testing.T) {
 	req.Map = map[string]string{"acme/app": "app", "acme/api": "app", "acme/web": "app"}
 	if p := Decide(req); strings.Join(p.Cloned, ", ") != strings.Join(want, ", ") {
 		t.Errorf("with baking off the plan names %v as the other repositories this image serves, want %v: which repositories run the image does not depend on the switch", p.Cloned, want)
+	}
+}
+
+// TestDecideBakesNothingIntoTheDefaultEntry: the entry the catalog marks as the
+// project's default is the image every repository of the project that names no
+// entry of its own runs, and a job resolves that without reading the map at all
+// (catalog.Choose's step 3). So a map that puts this repository alone on the
+// default entry is not a statement that the image serves this repository alone:
+// the project's other repositories start it too, and a checkout baked into it
+// is source their jobs can read (F18).
+func TestDecideBakesNothingIntoTheDefaultEntry(t *testing.T) {
+	// The map names both repositories, so the entry's being the default is the
+	// one thing left that makes it shared.
+	req := reqApp()
+	req.Repos = []string{"acme/app", "acme/sandbox"}
+	req.Map = map[string]string{"acme/app": "app", "acme/sandbox": "other"}
+	req.Default = "app"
+	p := Decide(req)
+	if p.Baked != nil {
+		t.Fatalf("Decide baked into the entry the catalog marks as the project's default: every repository that names no entry of its own runs that image, so its jobs can read the checkout")
+	}
+	if !strings.Contains(p.Reason, "default") {
+		t.Errorf("the reason %q does not say the entry is the project's default, so a build's line does not say what refused the bake", p.Reason)
+	}
+	if !p.Notable {
+		t.Error("the plan is quiet, so the operator who asked for a bake is left with nothing")
+	}
+	// The default is a property of that one entry and not of a project that
+	// asked for a bake: the same request against an entry the catalog does not
+	// mark bakes as it did.
+	req.Default = ""
+	if p := Decide(req); p.Baked == nil {
+		t.Errorf("Decide baked nothing for an entry that is not the catalog's default (%s)", p.Reason)
+	}
+}
+
+// TestDecideBakesNothingWhenARepositoryIsUnmapped: a repository the project's
+// map names no entry for is one whose image a build cannot know — the deploy
+// resolves it by that repository's own reference or by the tags it needs, and a
+// build reads neither (one repository's config, one credential: O3 (b)) — so it
+// may run this entry's image, and a bake would be a checkout in its jobs (F18).
+// The map is whole evidence only when it names every repository the project
+// has.
+func TestDecideBakesNothingWhenARepositoryIsUnmapped(t *testing.T) {
+	req := reqApp()
+	req.Repos = []string{"acme/app", "acme/sandbox"}
+	p := Decide(req)
+	if p.Baked != nil {
+		t.Fatalf("Decide baked into an entry while acme/sandbox is on no entry of the project's map: which image its jobs run is what the build cannot know")
+	}
+	if !strings.Contains(p.Reason, "acme/sandbox") {
+		t.Errorf("the reason %q does not name the repository the map leaves out, so a build's line does not say who might read the checkout", p.Reason)
+	}
+	if !p.Notable {
+		t.Error("the plan is quiet, so the operator who asked for a bake is left with nothing")
+	}
+	// A map that names every repository the project has is the evidence the
+	// bake rests on, and the repository itself is never one of the readers.
+	if p := Decide(reqApp()); p.Baked == nil {
+		t.Errorf("Decide refused a project whose map names every repository it has (%s)", p.Reason)
 	}
 }
 
