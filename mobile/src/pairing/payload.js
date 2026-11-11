@@ -43,9 +43,16 @@
 // dot), and `new URL(...).host` is then the host a browser would dial -- there
 // is no parser differential left for a hostile string to use.
 
-import { URL_REFUSAL, validateExternalUrl } from '../../../shared/url/index.js';
+// The four configuration fields are judged by `config.js`, because the
+// delivery's copy of them is judged by the same rules (D199): this file owns
+// the QR, `config.js` owns "is this project `fp`'s configuration at all", and
+// delivery.js is the second caller. Its refusals, its field names and its code
+// strings are re-exported below so a reader of this module still sees one
+// vocabulary.
+import { CONFIG_CODES, judgeConfig } from './config.js';
+import { isPairingUID } from './uid.js';
 
-import { decodeBase64url } from './base64url.js';
+export { API_KEY_MAX_LENGTH, databaseHostsFor, validateDatabaseUrl } from './config.js';
 
 /** The payload version this build reads. A later format is refused rather than
  * misread, which is the same rule and the same reason as the envelope's
@@ -57,43 +64,35 @@ export const PAYLOAD_VERSION = 1;
  * reasoning about a hostile string reaching a native bridge unbounded). */
 export const PAYLOAD_MAX_LENGTH = 4096;
 
-/** The longest the web API key may be. A Firebase web API key is 39
- * characters; 256 leaves room without letting the field be a container. */
-export const API_KEY_MAX_LENGTH = 256;
-
 /** The longest the pairing token may be: a signed JWT, which is an RS256
  * header, a payload naming the pairing and a 256-byte signature -- about 750
  * characters for the claims this command mints (§7.1 step 3). 2048 is a bound
  * rather than a preference, and it is not a length the CLI can reach. */
 export const TOKEN_MAX_LENGTH = 2048;
 
-/** The random part of a pairing uid: 32 bytes, `pairing.go`'s own draw. */
-export const PAIRING_UID_BYTES = 32;
-
-/** The prefix a pairing session's name carries (`token.PairingPrefix`). */
-export const PAIRING_UID_PREFIX = 'p~';
+// The pairing uid's shape is `uid.js`'s, in one place: this file reads the
+// scanned name and the envelope's AAD binds the same one, so the two must
+// refuse the same strings.
 
 /** How this module refuses. `field` names the QR's own field -- the wire's
  * spelling, `database_url` and not `databaseUrl` -- because the thing that is
  * at fault is the payload the CLI wrote, and the payload is where a reader
  * looks. */
 export const PAYLOAD_CODES = Object.freeze({
+  // The four configuration fields' codes are `config.js`'s, spread rather than
+  // retyped: a refusal about `database_url` has one string in this app, so a
+  // caller can compare a scan's refusal with a delivery's.
+  ...CONFIG_CODES,
   NOT_A_STRING: 'not-a-string',
   EMPTY: 'empty',
   TOO_LONG: 'too-long',
   CONTROL_CHARACTER: 'control-character',
   BACKSLASH: 'backslash',
   NOT_JSON: 'not-json',
-  NOT_AN_OBJECT: 'not-an-object',
-  UNKNOWN_FIELD: 'unknown-field',
-  MISSING_FIELD: 'missing-field',
   DUPLICATE_FIELD: 'duplicate-field',
-  BAD_TYPE: 'bad-type',
   BAD_VERSION: 'bad-version',
-  BAD_TEXT: 'bad-text',
   BAD_UID: 'bad-uid',
   BAD_EXPIRY: 'bad-expiry',
-  BAD_DATABASE_URL: 'bad-database-url',
 });
 
 /** The fields the payload carries, exactly. An object with any other key is
@@ -110,28 +109,17 @@ const PAYLOAD_FIELDS = Object.freeze([
   'expires_at',
 ]);
 
-// The Fugaro project's name: `internal/config`'s `ProjectNameRE`, the rule the
-// CLI holds the name to when it writes a project, so a name the phone accepts
-// is a name the CLI could have written.
-const PROJECT_NAME = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
-
-// The GCP project id: `internal/infra`'s `fpIDRE`, for `ValidProjectID`. It
-// matters more here than it looks: this name is what the database's host is
-// derived from, and a name that could carry `/`, `.` or `@` could name a host
-// this payload's own project does not own.
-const GCP_PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
-
 // A control character (0x00-0x1F), a space, or DEL -- `shared/url`'s own
 // class, and the reason is the same: the QR carries no whitespace, and
 // trimming would validate a different string from the one that was scanned.
 const CONTROL_OR_SPACE = /[\u0000- \u007f]/;
 
-// Every field the CLI writes is printable ASCII: a project id is letters,
-// digits and hyphens, a uid and a key are base64url, an instant is RFC3339.
-// Anything else is a look-alike -- a Cyrillic `а` in a project name, a
-// zero-width space in a token -- so the rule is ASCII-only rather than
-// `Printable` plus a list of exceptions. It is also why no NFC check is
-// needed here: a non-ASCII string is refused outright.
+// The fields this module judges on its own are printable ASCII: a uid is
+// base64url, an instant is RFC3339, a token is base64url segments. Anything
+// else is a look-alike -- a zero-width space in a token -- so the rule is
+// ASCII-only rather than `Printable` plus a list of exceptions, which is also
+// why no NFC check is needed. It is the same class `config.js` holds its three
+// names to, kept here rather than imported because the fields are different.
 const PRINTABLE_ASCII = /^[!-~]+$/;
 
 // The instant `pair.go` writes: `time.RFC3339` of a UTC time, so a trailing
@@ -139,11 +127,6 @@ const PRINTABLE_ASCII = /^[!-~]+$/;
 // offset is not accepted: the CLI's own writer is UTC, so a payload that is
 // not is not one this command wrote.
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-
-// `internal/infra/firebase.go`'s regional shape, for this payload's project.
-// `-default-rtdb` is the database's name, `.firebasedatabase.app` the
-// regional domain, and everything between them is the region.
-const REGIONAL_HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?-default-rtdb\.[a-z0-9-]+\.firebasedatabase\.app$/;
 
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, ...(field === undefined ? {} : { field }) });
@@ -212,140 +195,41 @@ export function readScannedPayload(text) {
 
   if (typeof v !== 'number') return refuse(PAYLOAD_CODES.BAD_TYPE, 'v');
   if (v !== PAYLOAD_VERSION) return refuse(PAYLOAD_CODES.BAD_VERSION, 'v');
-  // Each text field's own rule, in one table rather than three loops: the two
-  // names are shapes the CLI mints, and the two secrets-shaped fields are
-  // bounded printable ASCII. Nothing here checks the `AIza…` shape of a web
-  // key: `settings.js` is what refuses to store one, the CLI mints it, and a
-  // fixture carrying a real-looking key is a secret-shaped literal this tree
-  // does not write.
-  const texts = [
-    ['project', project, PROJECT_NAME, null],
-    ['gcp_project', gcpProject, GCP_PROJECT, null],
-    ['api_key', apiKey, PRINTABLE_ASCII, API_KEY_MAX_LENGTH],
-    ['token', token, PRINTABLE_ASCII, TOKEN_MAX_LENGTH],
-  ];
-  for (const [field, value, shape, max] of texts) {
-    if (typeof value !== 'string') return refuse(PAYLOAD_CODES.BAD_TYPE, field);
-    if (max !== null && value.length > max) return refuse(PAYLOAD_CODES.BAD_TEXT, field);
-    if (!shape.test(value)) return refuse(PAYLOAD_CODES.BAD_TEXT, field);
-  }
+  // Nothing here checks the `AIza…` shape of a web key: `settings.js` is what
+  // refuses to store one, the CLI mints it, and a fixture carrying a
+  // real-looking key is a secret-shaped literal this tree does not write.
+  if (typeof token !== 'string') return refuse(PAYLOAD_CODES.BAD_TYPE, 'token');
+  if (token.length > TOKEN_MAX_LENGTH) return refuse(PAYLOAD_CODES.BAD_TEXT, 'token');
+  if (!PRINTABLE_ASCII.test(token)) return refuse(PAYLOAD_CODES.BAD_TEXT, 'token');
   if (typeof uid !== 'string') return refuse(PAYLOAD_CODES.BAD_TYPE, 'uid');
   if (!isPairingUID(uid)) return refuse(PAYLOAD_CODES.BAD_UID, 'uid');
   if (typeof expiresAt !== 'string') return refuse(PAYLOAD_CODES.BAD_TYPE, 'expires_at');
   if (!INSTANT.test(expiresAt)) return refuse(PAYLOAD_CODES.BAD_EXPIRY, 'expires_at');
   const expiresAtMs = Date.parse(expiresAt);
   if (!Number.isFinite(expiresAtMs)) return refuse(PAYLOAD_CODES.BAD_EXPIRY, 'expires_at');
+  // The four configuration fields, in the CLI's own rule (`config.js`), with
+  // this carrier's field names in a refusal: the QR's fields are flat and are
+  // named as the QR names them.
+  const judged = judgeConfig({ project, gcpProject, databaseUrl, apiKey }, '');
+  if (!judged.ok) return judged;
   // **The expiry is read, not enforced.** This is not the authority on the
   // pairing token's life: the token exchange is, and it fails loudly and at
   // once if the token really has expired. A phone whose clock runs fast would
   // otherwise refuse a pairing the operator's CLI would have completed, and
   // §7.2's own rule for a late delivery is "say the pairing expired", not
   // "refuse the scan".
-  const url = validateDatabaseUrl(databaseUrl, gcpProject);
-  if (!url.ok) return refuse(PAYLOAD_CODES.BAD_DATABASE_URL, 'database_url');
 
   return Object.freeze({
     ok: true,
     payload: Object.freeze({
       version: v,
-      project,
-      gcpProject,
-      databaseUrl: url.url,
-      databaseHost: url.host,
-      apiKey,
+      ...judged.config,
       token,
       uid,
       expiresAt: expiresAtMs,
     }),
   });
 }
-
-/**
- * Is `url` the database of project `gcpProject`, in one of the two spellings
- * the CLI accepts? The same call judges the scan's copy and the delivery's
- * (D199: the delivery's copy is the record, and it is held to the same rule,
- * so a delivery cannot name a database the scan would have refused).
- *
- * It answers the validator's `{ ok: true, url, host }` -- the **candidate
- * verbatim**, never a re-serialisation, so the string that was checked is the
- * string the app hands to the database client -- or a refusal carrying the
- * validator's own code, which is what makes this module's refusals
- * diagnosable without a second vocabulary.
- */
-export function validateDatabaseUrl(url, gcpProject) {
-  if (typeof url !== 'string' || typeof gcpProject !== 'string') {
-    return Object.freeze({ ok: false, code: URL_REFUSAL.NOT_A_STRING });
-  }
-  const legacy = `${gcpProject.toLowerCase()}-default-rtdb.firebaseio.com`;
-  const first = validateExternalUrl(url, [legacy]);
-  if (first.ok) return bareAuthority(first);
-  if (first.code !== URL_REFUSAL.HOST_NOT_ALLOWED) return first;
-  // Every other check has passed (`host-not-allowed` is the validator's last),
-  // so the host `new URL` resolves here is the host it would have matched.
-  const host = hostOf(url);
-  if (host === null || !REGIONAL_HOST.test(host)) return first;
-  // The regional spelling is this project's only if its database label is the
-  // project's own: `<project>-default-rtdb`. One character changed is another
-  // database, however well formed it looks.
-  if (!host.startsWith(`${gcpProject.toLowerCase()}-default-rtdb.`)) return first;
-  return bareAuthority(validateExternalUrl(url, [host]));
-}
-
-/**
- * The validator answers "may this string be opened", which a link may with a
- * path, a query or a fragment. A Realtime Database URL may not: it is the
- * database's address and nothing else, which is `internal/rtdb`'s
- * `ValidateURL` rule ("must be just the database's address, with no
- * credentials, path, query or fragment") and what stops a payload from naming
- * a path the phone would then read as part of the database.
- *
- * The check is a length because the validator has already done the work: it
- * guarantees the string spells `https://`, that the authority carries no
- * userinfo, port, `%` or trailing dot, and it hands back the candidate
- * **verbatim** with its lower-cased host. So "the string is exactly
- * `https://` and the host" is exactly "there is nothing after the authority".
- * It is stricter than the Go rule in one place, deliberately: a bare trailing
- * `/` is refused here and accepted there, and the CLI writes neither.
- */
-function bareAuthority(judged) {
-  if (!judged.ok) return judged;
-  if (judged.url.length !== 'https://'.length + judged.host.length) {
-    return Object.freeze({ ok: false, code: URL_REFUSAL.NOT_A_URL });
-  }
-  return judged;
-}
-
-/**
- * The hosts this payload's project may name, for a caller that wants to say
- * why rather than only that it refused: the legacy spelling, and the regional
- * one when `url` is one. It is the same derivation `validateDatabaseUrl`
- * makes, exported so the app's diagnostics and its validation cannot drift.
- */
-export function databaseHostsFor(url, gcpProject) {
-  const hosts = [`${String(gcpProject).toLowerCase()}-default-rtdb.firebaseio.com`];
-  const host = hostOf(url);
-  if (host !== null && REGIONAL_HOST.test(host)) hosts.push(host);
-  return Object.freeze(hosts);
-}
-
-/** The host of a string that has already passed `shared/url`'s shape checks,
- * or `null` when it does not parse at all. */
-function hostOf(url) {
-  try {
-    const parsed = new URL(url);
-    return parsed.host === '' ? null : parsed.host.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-/** A pairing uid: `p~` and 32 bytes of unpadded base64url, strictly decoded --
- * the one spelling §2 (e) pins, and the spelling the delivery's AAD binds. */
-export function isPairingUID(uid) {
-  if (typeof uid !== 'string' || !uid.startsWith(PAIRING_UID_PREFIX)) return false;
-  return decodeBase64url(uid.slice(PAIRING_UID_PREFIX.length), PAIRING_UID_BYTES).ok;
-}
-
 /** How many times `needle` occurs in `text`, counted without a regular
  * expression: the needles here contain no regex metacharacter that a caller
  * could get wrong, and `indexOf` cannot be made to backtrack. */

@@ -45,6 +45,11 @@ export const DEVICE_SECRET_SIZE = 32;
 /** How the code is printed: two groups of four (decision 3). */
 export const CODE_LENGTH = 8;
 
+/** How much of the digest the code uses: eight five-bit groups are exactly five
+ * bytes, which is `token.deviceCodeBytes`. It is derived rather than written
+ * again, so the two cannot drift. */
+export const CODE_BYTES = (CODE_LENGTH * 5) / 8;
+
 /** Crockford base32: the digits and the letters without I, L, O and U, so that
  * no character the code prints can be read as another one. The CLI's
  * `deviceCodeAlphabet` is this string, in this order. */
@@ -131,7 +136,7 @@ export function fingerprint(key) {
   }
   const digest = sha256(key);
   let bits = 0;
-  for (let i = 0; i < CODE_LENGTH / 2; i += 1) bits = bits * 256 + digest[i];
+  for (let i = 0; i < CODE_BYTES; i += 1) bits = bits * 256 + digest[i];
   const chars = new Array(CODE_LENGTH);
   for (let i = CODE_LENGTH - 1; i >= 0; i -= 1) {
     chars[i] = CODE_ALPHABET[bits % 32];
