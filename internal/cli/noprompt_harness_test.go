@@ -299,6 +299,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro cancel":               {args: []string{"run-1"}},
 	"fugaro creds set":            {args: []string{"NAME"}},
 	"fugaro diagnose":             {args: []string{"run-1"}},
+	"fugaro estimate":             {args: []string{"--run", "run-1", "--model", "claude-opus-5-5"}},
 	"fugaro exec":                 {args: []string{"--bucket", "file:///nonexistent"}},
 	"fugaro followups":            {args: []string{"run-1"}},
 	"fugaro image add":            {args: []string{"base"}},
