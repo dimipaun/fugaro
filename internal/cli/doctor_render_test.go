@@ -950,6 +950,27 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 		}
 	}
 
+	// plugin-pin joined the allow-list with D942 (U3 of
+	// docs/plugin-user-scope/implementation-plan.md): the state it measures is
+	// the un-wired checkout, which is the normal one now that the merge which
+	// wrote a pin is deleted (D949). Filed as audit it was counted by the
+	// default view's pointer line, so the one screen the owner reads most said
+	// "1 more finding" over a checkout with nothing wrong with it. Its finding
+	// states are the update class — a pin this binary does not match, a foreign
+	// wiring — which is what keeps them on that screen, so the two ends are
+	// pinned together here.
+	pin := doctorCheck{ID: "plugin-pin", Severity: "info", Problem: "no fugaro marketplace in .claude/settings.json"}
+	if got := doctorClassOf(pin); got != doctorClassMeasure {
+		t.Errorf("the un-wired plugin-pin is %q, want %q: it is the normal state, not a finding (D942)", got, doctorClassMeasure)
+	}
+	if out := doctorDefaultOutput(t, []doctorCheck{pin}); strings.Contains(out, "more finding") || strings.Contains(out, "plugin-pin") {
+		t.Errorf("the un-wired checkout is printed or counted by the default view:\n%s", out)
+	}
+	stale := doctorCheck{ID: "plugin-pin", Severity: "warning", Problem: "the plugin is pinned at fugaro@0.1.0, and this fugaro is 0.2.0", Fix: "run `fugaro update`"}
+	if got := doctorClassOf(stale); got != doctorClassUpdate {
+		t.Errorf("a pin this binary does not match is %q, want %q: nothing acts on it otherwise", got, doctorClassUpdate)
+	}
+
 	// The per-instance IDs of those same sweeps are findings: runs-bucket-iam-1
 	// is one grant doctor could not place, and its summary line is the
 	// measurement. A prefix in the allow-list would swallow it, which is why the
