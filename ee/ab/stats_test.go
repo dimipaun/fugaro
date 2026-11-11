@@ -229,15 +229,11 @@ func TestHolmOrdering(t *testing.T) {
 // pairs is no conclusion, however lopsided -- a perfect nineteen is not a
 // result, and the twentieth pair makes the same evidence one.
 func TestBelowMinimumNoConclusion(t *testing.T) {
-	// D563's minimum is internal/stats' convention, the figure a thin group is
-	// suppressed rather than approximated at (F15). Pinned equal here rather
-	// than imported there: the two packages answer different questions, and a
-	// drift between them would be two reports disagreeing about what a sample
-	// is.
-	if MinRuns != stats.MinRuns {
-		t.Errorf("MinRuns = %d, want internal/stats' %d: D563 reuses the minimum-sample convention", MinRuns, stats.MinRuns)
-	}
-	below := Summary{Wins: MinRuns - 1, CostRatios: []float64{0.5}}
+	// The boundary is read at internal/stats' figure rather than at a literal
+	// twenty, because D563 reuses that convention (F15) and MinRuns is that
+	// constant: a group one pair below whatever the repository's minimum is
+	// gets no conclusion, and a group exactly at it does.
+	below := Summary{Wins: stats.MinRuns - 1, CostRatios: []float64{0.5}}
 	rec := Recommend(below, 0)
 	if rec.Decision != DecisionNoConclusion || rec.Rule != RuleBelowMinimum {
 		t.Errorf("Recommend(%d wins, 0 losses) = %s/%s, want %s/%s: a conclusion needs %d decisive pairs",
@@ -252,11 +248,11 @@ func TestBelowMinimumNoConclusion(t *testing.T) {
 		t.Errorf("Recommend(%d wins, 0 losses) = [%v, %v], want the group's own [%v, %v]",
 			below.Wins, rec.Lo, rec.Hi, lo, hi)
 	}
-	at := Summary{Wins: MinRuns, CostRatios: []float64{0.5}}
+	at := Summary{Wins: stats.MinRuns, CostRatios: []float64{0.5}}
 	rec = Recommend(at, 0)
 	if rec.Decision != DecisionChallenger || rec.Rule != RuleBetterWithinRate {
 		t.Errorf("Recommend(%d wins, 0 losses, half price, rate 0) = %s/%s, want %s/%s: the twentieth decisive pair is a sample",
-			MinRuns, rec.Decision, rec.Rule, DecisionChallenger, RuleBetterWithinRate)
+			stats.MinRuns, rec.Decision, rec.Rule, DecisionChallenger, RuleBetterWithinRate)
 	}
 }
 
@@ -414,16 +410,19 @@ func TestReportDeterministic(t *testing.T) {
 	if got := read(shuffled); !slices.Equal(got, first) {
 		t.Errorf("reading the groups in another order gave %v, want %v", got, first)
 	}
-	// The floats themselves, bit for bit: two sums over the same terms in
-	// another order would print the same to four decimals and differ here.
-	for _, g := range groups {
-		p1, lo1, hi1 := SignTest(g.sum.Wins, g.sum.Losses)
-		p2, lo2, hi2 := SignTest(g.sum.Wins, g.sum.Losses)
-		if math.Float64bits(p1) != math.Float64bits(p2) || math.Float64bits(lo1) != math.Float64bits(lo2) || math.Float64bits(hi1) != math.Float64bits(hi2) {
-			t.Errorf("%s: two reads of one group gave (%v, %v, %v) then (%v, %v, %v)", g.name, p1, lo1, hi1, p2, lo2, hi2)
-		}
-		if c1, c2 := MedianRatio(g.sum.CostRatios), MedianRatio(g.sum.CostRatios); math.Float64bits(c1) != math.Float64bits(c2) {
-			t.Errorf("%s: two medians of one group gave %v then %v", g.name, c1, c2)
+	// The median is the sample's and not its order, bit for bit: a report's
+	// ratios arrive in whatever order the pairs were read in, and a median
+	// taken in that order -- a running sum, a two-heap median -- could agree
+	// with the sorted one to four decimals and differ here. The values are
+	// ones no double holds exactly, so the sum below is not a coincidence of
+	// round numbers.
+	rotation := []float64{0.8, 1.1, 0.1, 0.3, 3.7, 0.9, 0.7}
+	wantBits := math.Float64bits(MedianRatio(rotation))
+	for k := 1; k < len(rotation); k++ {
+		rotated := append(append([]float64{}, rotation[k:]...), rotation[:k]...)
+		if math.Float64bits(MedianRatio(rotated)) != wantBits {
+			t.Errorf("the ratios %v have median %v, but rotated to %v they have %v: the median is the sample's, not its order's",
+				rotation, MedianRatio(rotation), rotated, MedianRatio(rotated))
 		}
 	}
 	// Holm's decision belongs to the hypothesis and not to its position: every

@@ -30,20 +30,23 @@ import (
 const Alpha = 0.05
 
 // MinRuns is the least decisive pairs a group may carry a conclusion from
-// (D563): the same figure and the same convention as internal/stats.MinRuns,
-// which suppresses a group below it rather than approximating one, and
-// TestBelowMinimumNoConclusion pins the two equal. A decisive pair is a win or
-// a loss; a tie says nothing about which arm is better, so it is not one, and a
-// group of twenty ties is below the minimum however many pairs it ran.
-const MinRuns = 20
+// (D563): internal/stats' minimum-sample figure itself, not a second copy of it,
+// so the A/B report and `fugaro stats runs` can never come to disagree about
+// what a sample is. That package suppresses a group below it rather than
+// approximating one, and this one returns DecisionNoConclusion for the same
+// reason. A decisive pair is a win or a loss; a tie says nothing about which arm
+// is better, so it is not one, and a group of twenty ties is below the minimum
+// however many pairs it ran.
+const MinRuns = stats.MinRuns
 
-// LossTolerance is the highest Clopper-Pearson upper bound of the challenger's
-// share of losses among a group's decisive pairs that D565 still calls "not
-// worse". It is the bar a challenger clears to be recommended on price, and it
-// is deliberately not a demonstration that it loses no more often than the
-// champion: a group sitting exactly on it is still consistent with a challenger
-// losing close to three pairs in five. "Not worse" is the weak claim D565 makes
-// it, which is why the region that rests on it also asks for a lower price.
+// LossTolerance is the Clopper-Pearson upper bound of the challenger's share of
+// losses among a group's decisive pairs that D565's "not worse" is measured
+// against: the price region asks for a bound below it, so a group exactly on it
+// keeps the champion. It is a bar a challenger clears to be recommended, and
+// deliberately not a demonstration that it loses no more often than the
+// champion -- a group just under it is still consistent with a challenger
+// losing close to three pairs in five, which is the weak claim "not worse" is,
+// and the reason that region also asks for a lower price.
 const LossTolerance = 0.6
 
 // SignTest reads a group's decisive pairs. p is the exact two-sided sign test's
@@ -90,10 +93,14 @@ func SignTest(wins, losses int) (p, lo, hi float64) {
 // binomTail(n, min(wins,losses), 0.5) and an endpoint is the p where a tail
 // crosses half of Alpha.
 //
-// The terms are summed in log space. A binomial term is routinely below the
-// smallest double -- C(300,150)/2^300 is 4e-91, and the tail of a lopsided
-// split falls faster still -- so a linear-space sum would read as an exact
-// zero and put a p-value of 0 in a report for a split that is merely unlikely.
+// The terms are carried as logarithms and summed under a running scale, rather
+// than in p's own units, for two reasons of arithmetic. The terms of one sum
+// span every order of magnitude -- at n = 300 the largest is 0.046 and one a
+// hundred and thirty successes into the tail is 3.7e-60 -- and a raw sum would
+// drop the small ones against the large rather than add them. And the
+// coefficient alone leaves the smallest and largest doubles behind long before
+// the term it belongs to does: C(1030,515) is 2.9e308, past the largest double,
+// while its term is 0.025. No coefficient is ever formed here.
 func binomTail(n, k int, p float64) float64 {
 	if k < 0 {
 		return 0
@@ -109,9 +116,8 @@ func binomTail(n, k int, p float64) float64 {
 	}
 	logp, logq := math.Log(p), math.Log1p(-p)
 	// log C(n,i) p^i q^(n-i), carried term by term -- C(n,i+1)/C(n,i) is
-	// (n-i)/(i+1), so no coefficient is ever formed on its own -- and folded
-	// into a running sum whose scale is the largest term seen so far, so no
-	// term is ever added to one that dwarfs it.
+	// (n-i)/(i+1) -- and folded into a running sum whose scale is the largest
+	// term seen so far, so no term is ever added to one that dwarfs it.
 	logTerm := float64(n) * logq
 	largest, sum := logTerm, 1.0
 	for i := 1; i <= k; i++ {
@@ -197,10 +203,11 @@ func MedianRatio(ratios []float64) float64 {
 }
 
 // finiteRatios is the ratios of a group that can be read: one ratio per pair
-// whose arms both carry a cost figure, in the caller's order. It is what tells
-// a group with no price from a group whose challenger was free, which is the
-// difference between keeping the champion and recommending the cheapest arm
-// there could be -- so the two are never the same value.
+// whose arms both carry a cost figure, in the caller's order. An empty answer is
+// a group with no price at all, which is not the same state as a group whose
+// challenger cost nothing -- that one is 0 in every ratio and comes back here as
+// a full slice of zeros. The caller tells the two apart by the slice being
+// empty, and never by a ratio, since a ratio of 0 is a price.
 func finiteRatios(ratios []float64) []float64 {
 	xs := make([]float64, 0, len(ratios))
 	for _, r := range ratios {
@@ -348,7 +355,7 @@ func Recommend(group Summary, rate float64) Recommendation {
 			Decision: d, Rule: r,
 			Decisive: group.Wins + group.Losses,
 			P:        p, Lo: lo, Hi: hi,
-			CostRatio: MedianRatio(ratios),
+			CostRatio: stats.PercentilesOf(ratios).Median,
 			HasCost:   len(ratios) > 0,
 			Rate:      rate,
 		}
