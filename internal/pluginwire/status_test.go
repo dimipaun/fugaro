@@ -133,11 +133,25 @@ func TestInstalledVersionBestEffort(t *testing.T) {
 		return `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"` + user + `"},` +
 			`{"scope":"project","version":"` + project + `","projectPath":"` + root + `"}]}}`
 	}
-	if r := Status(set, "0.2.0", installedFile(t, both("0.2.0", "0.1.0"))); r.Install != OK || r.Version != "0.2.0" {
-		t.Errorf("the machine's own current beside this checkout's behind: install=%q version=%q", r.Install, r.Version)
+	if r := Status(set, "0.2.0", installedFile(t, both("0.2.0", "0.1.0"))); r.Install != OK || r.Version != "0.2.0" || r.UserVersion != "0.2.0" {
+		t.Errorf("the machine's own current beside this checkout's behind: install=%q version=%q user=%q", r.Install, r.Version, r.UserVersion)
 	}
-	if r := Status(set, "0.2.0", installedFile(t, both("0.1.0", "0.2.0"))); r.Install != InstalledDiffers || r.Version != "0.1.0" {
-		t.Errorf("the machine's own behind beside this checkout's current: install=%q version=%q", r.Install, r.Version)
+	if r := Status(set, "0.2.0", installedFile(t, both("0.1.0", "0.2.0"))); r.Install != InstalledDiffers || r.Version != "0.1.0" || r.UserVersion != "0.1.0" {
+		t.Errorf("the machine's own behind beside this checkout's current: install=%q version=%q user=%q", r.Install, r.Version, r.UserVersion)
+	}
+	// The checkout's own install alone: the report answers with it, and says
+	// with UserVersion that the machine has none — a reader asking the
+	// machine's question (the plugin step under --check) has to tell the two
+	// apart, and the state alone does not (D949, U2).
+	for _, e := range []string{entry("project", "0.2.0", root), entry("project", "0.1.0", root)} {
+		if r := Status(set, "0.2.0", installedFile(t, e)); r.UserVersion != "" {
+			t.Errorf("a checkout-scoped install alone reads as the machine's own: %+v", r)
+		}
+	}
+	// And a machine whose user-scope install is the only one: UserVersion is
+	// the version Version names, because they are the same install.
+	if r := Status(set, "0.2.0", installedFile(t, entry("user", "0.2.0", ""))); r.UserVersion != "0.2.0" {
+		t.Errorf("the machine's own install alone: %+v", r)
 	}
 	dir := t.TempDir()
 	if r := Status(set, "0.2.0", dir); r.Install != CannotCompare {

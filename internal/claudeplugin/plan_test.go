@@ -55,8 +55,8 @@ func TestDecide(t *testing.T) {
 		// is no call and no reason for one. It is no install of the machine's
 		// own either, so it is not what Before reports: that is the user-scope
 		// install, the one this step's line and its check after the calls are
-		// about, and a checkout's version is doctor's question (Effective,
-		// D942).
+		// about, and the checkout's own version is Effective's answer, which
+		// nothing else reads (D942).
 		{"this checkout's project install behind", pinned, []Install{user("0.5.2"), project("0.5.1", root)}, nil, "0.5.2", nil},
 		{"another checkout's install is not ours to update", pinned, []Install{user("0.5.2"), project("0.4.0", other)}, nil, "0.5.2", nil},
 		{"both behind", pinned, []Install{project("0.5.0", root), user("0.5.1")}, [][]string{upd, updU}, "0.5.1", nil},

@@ -108,11 +108,14 @@ func Applying(root string, installed []Install) []Install {
 }
 
 // Effective is the plugin version that applies to root: a project or local
-// install's over the user one, "" when none applies. It is the checkout's own
-// question (D942) — what a checkout's settings installed there, which is not
-// what this step maintains and no longer what its own line reports — and it is
-// kept answering it for doctor, which asks it of the machine (U3). The version
-// this step's own check asks about is UserVersion's, the machine's.
+// install's over the user one, "" when none applies. Nothing calls it: the
+// step's own line and its check ask the machine's version (UserVersion, D949,
+// U2), doctor reads the record through pluginwire.Status, and the checkout's
+// question is asked there, in installState's fallback to the checkout-scoped
+// install. U3 re-aims doctor's plugin-install at the user-scope install
+// (docs/plugin-user-scope/spec.md §6), which is the opposite question, so this
+// is not a reader waiting to arrive; it stays with the rest of the read side
+// because the question is still one this package answers (U2's F26).
 func Effective(root string, installed []Install) string {
 	v := ""
 	for _, in := range Applying(root, installed) {

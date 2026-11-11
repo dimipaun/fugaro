@@ -152,9 +152,9 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 	// What the step converged is the install it maintains: the machine's own,
 	// at user scope. A checkout-scoped install is not this step's to move any
 	// more (D949, U2), so one standing behind this release — a person's, or one
-	// a trusted folder made from the pin it carried — is not a failure here;
-	// what applies to the checkout is doctor's question (claudeplugin.Effective,
-	// D942).
+	// a trusted folder made from the pin it carried — is not a failure here:
+	// what applies to the checkout is a question no reader of this line asks,
+	// and nothing in the tree asks it (claudeplugin.Effective has no caller).
 	got := claudeplugin.UserVersion(installed)
 	c, ok := claudeplugin.Compare(got, ver)
 	switch {
@@ -172,20 +172,40 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 }
 
 // pluginCheck is the plugin step under --check: Claude Code's record of
-// installed plugins compared with this fugaro, no claude run.
+// installed plugins compared with this fugaro, no claude run. The install it
+// answers about is the machine's own, at user scope (r.UserVersion), which is
+// the one the write path maintains (claudeplugin.UserVersion): Status answers
+// with a checkout-scoped install where the machine has none, and reporting
+// that one here would call the step current on a machine whose own Claude Code
+// has no plugin — the install the write path would still make, and the one
+// every reader of this line can act on (D949, U2).
 func pluginCheck(u *upgradeCtx, ver string) stepResult {
 	r := pluginwire.Status(u.loc.Settings, Version, installedPlugins())
-	if r.Install == pluginwire.NotInstalled {
+	switch r.Install {
+	case pluginwire.NotInstalled:
 		return stepResult{state: stepSkipped, reason: "not installed on this machine (fugaro upgrade installs it through the claude CLI)"}
+	case pluginwire.OK, pluginwire.InstalledDiffers:
+		// Only these two carry a version read out of the record; everything
+		// else about it — a file that cannot be read, a pin that is not a
+		// release tag, a checkout with no wiring at all — is what the step
+		// below says it cannot tell.
+	default:
+		return stepResult{state: stepSkipped, reason: "cannot tell from Claude Code's record of installed plugins (fugaro upgrade asks claude itself)"}
 	}
-	c, ok := claudeplugin.Compare(r.Version, ver)
+	if r.UserVersion == "" {
+		// A checkout-scoped install and nothing at user scope: what this step
+		// has to do here is the install the machine has none of, so the line
+		// names the install that was read rather than a version of its own.
+		return stepResult{state: stepSkipped, reason: fmt.Sprintf("installed %s in this checkout only, not in your own Claude Code at user scope (fugaro upgrade installs it there)", pluginwire.Printable(r.Version))}
+	}
+	c, ok := claudeplugin.Compare(r.UserVersion, ver)
 	switch {
 	case !ok:
 		return stepResult{state: stepSkipped, reason: "cannot tell from Claude Code's record of installed plugins (fugaro upgrade asks claude itself)"}
 	case c < 0:
-		return stepResult{state: stepStale, reason: fmt.Sprintf("installed %s, this fugaro is %s", r.Version, ver)}
+		return stepResult{state: stepStale, reason: fmt.Sprintf("installed %s, this fugaro is %s", r.UserVersion, ver)}
 	case c > 0:
-		return stepResult{state: stepCurrent, reason: fmt.Sprintf("installed %s, newer than this fugaro %s (brew upgrade dimipaun/tap/fugaro)", r.Version, ver)}
+		return stepResult{state: stepCurrent, reason: fmt.Sprintf("installed %s, newer than this fugaro %s (brew upgrade dimipaun/tap/fugaro)", r.UserVersion, ver)}
 	}
-	return stepResult{state: stepCurrent, reason: "installed " + r.Version}
+	return stepResult{state: stepCurrent, reason: "installed " + r.UserVersion}
 }

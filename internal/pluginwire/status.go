@@ -73,7 +73,8 @@ func (s State) Fix() string {
 
 // Report is how the project's wiring compares with the binary. Pin compares
 // the settings file with the binary; Install, evaluated only when Pin is a
-// release tag, compares the plugin Claude Code installed with the pin.
+// release tag, compares the plugin Claude Code installed with the pin, and
+// UserVersion is the machine's own install beside it.
 type Report struct {
 	Pin     State  `json:"pin"`
 	Install State  `json:"install,omitempty"`
@@ -81,7 +82,13 @@ type Report struct {
 	Ref     string `json:"ref,omitempty"`       // the marketplace ref in settings
 	Repo    string `json:"repo,omitempty"`      // the marketplace repository in settings
 	Version string `json:"installed,omitempty"` // the installed plugin version, when readable
-	Detail  string `json:"detail,omitempty"`    // a sentence for the person
+	// UserVersion is the version installed at user scope on this machine, ""
+	// when the machine has none: Install and Version answer with the checkout's
+	// own install where the machine has none (installState), and a reader
+	// asking the machine's question — the plugin step under --check, the step
+	// whose own write is that install (D949, U2) — has to tell the two apart.
+	UserVersion string `json:"userVersion,omitempty"`
+	Detail      string `json:"detail,omitempty"` // a sentence for the person
 }
 
 // States are the report's states that are not ok, in order.
@@ -162,7 +169,7 @@ func Status(settingsPath, version, installedPlugins string) Report {
 		}
 	}
 	if pinIsTag && r.Pin != Foreign {
-		r.Install, r.Version = installState(installedPlugins, root, pinV)
+		r.Install, r.Version, r.UserVersion = installState(installedPlugins, root, pinV)
 	}
 	return r
 }
@@ -231,67 +238,80 @@ func readPin(path string) (ref, repo string, wired bool, detail string) {
 // answers with is the machine's own, at user scope: that is the one fugaro
 // maintains (claudeplugin.UserVersion, D949, U2 of
 // docs/plugin-user-scope/implementation-plan.md), so it is the one every
-// reader of this report can act on — the plugin step's own check, the warning
-// every command prints in a checkout, and doctor. A checkout-scoped install
-// beside it is the checkout's own and not fugaro's to move, so it is never the
-// version reported as behind the pin: that would name a state on every command
-// which fugaro cannot clear. It is read only where there is no user-scope
-// install, and then it is what applies to the checkout (claudeplugin.Effective,
-// D942). The file's format is observed, not documented: anything unexpected is
-// cannot compare, and never an error.
-func installState(path, root string, pin semver) (State, string) {
+// reader of this report can act on — the warning every command prints in a
+// checkout, and doctor. A checkout-scoped install beside it is the checkout's
+// own and not fugaro's to move, so it is never the version reported as behind
+// the pin: that would name a state on every command which fugaro cannot clear.
+// It is read only where there is no user-scope install, and then it is what
+// applies to the checkout (claudeplugin.Effective, D942) — which is why the
+// machine's own version comes back beside it: a reader asking that install's
+// question, and not the checkout's, has no way to tell the two apart from the
+// state alone. The file's format is observed, not documented: anything
+// unexpected is cannot compare, and never an error.
+//
+// userVersion is the user-scope install's version and "" wherever the answer
+// above came from somewhere else (a checkout-scoped install, or no install at
+// all), so a caller can see the machine has none.
+func installState(path, root string, pin semver) (state State, version, userVersion string) {
 	if path == "" {
-		return CannotCompare, ""
+		return CannotCompare, "", ""
 	}
 	data, _, exists, err := readFile(path, 4<<20)
 	if err != nil {
-		return CannotCompare, ""
+		return CannotCompare, "", ""
 	}
 	if !exists {
-		return NotInstalled, ""
+		return NotInstalled, "", ""
 	}
 	var file struct {
 		Plugins map[string]json.RawMessage `json:"plugins"`
 	}
 	if json.Unmarshal(data, &file) != nil || file.Plugins == nil {
-		return CannotCompare, ""
+		return CannotCompare, "", ""
 	}
 	raw, ok := file.Plugins[PluginID]
 	if !ok {
-		return NotInstalled, ""
+		return NotInstalled, "", ""
 	}
-	type install struct {
+	type entry struct {
 		Scope       string `json:"scope"`
 		Version     string `json:"version"`
 		ProjectPath string `json:"projectPath"`
 	}
-	var entries []install
+	var entries []entry
 	if json.Unmarshal(raw, &entries) != nil {
-		var one install
+		var one entry
 		if json.Unmarshal(raw, &one) != nil {
-			return CannotCompare, ""
+			return CannotCompare, "", ""
 		}
-		entries = []install{one}
+		entries = []entry{one}
 	}
-	var got *install
+	// The machine's own install wins wherever there is one — the first
+	// user-scope entry, and nothing after it is read — and the checkout's own
+	// is taken only in its absence.
+	var got *entry
 	for i, e := range entries {
-		applies := e.Scope == "user" || (e.ProjectPath != "" && sameDir(e.ProjectPath, root))
-		if !applies {
-			continue
+		if e.Scope == "user" {
+			got = &entries[i]
+			break
 		}
-		if got == nil || got.Scope != "user" {
+		if e.ProjectPath != "" && sameDir(e.ProjectPath, root) {
 			got = &entries[i]
 		}
 	}
 	if got == nil {
-		return NotInstalled, ""
+		return NotInstalled, "", ""
 	}
 	v, ok := parseSemver(got.Version)
 	if !ok {
-		return CannotCompare, ""
+		return CannotCompare, "", ""
+	}
+	user := ""
+	if got.Scope == "user" {
+		user = v.String()
 	}
 	if v != pin {
-		return InstalledDiffers, v.String()
+		return InstalledDiffers, v.String(), user
 	}
-	return OK, v.String()
+	return OK, v.String(), user
 }

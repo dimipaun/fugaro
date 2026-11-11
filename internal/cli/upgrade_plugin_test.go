@@ -448,8 +448,9 @@ func TestUpgradePluginCurrentRunsOnlyTheLists(t *testing.T) {
 // Code made from the pin a wired checkout carried when the folder was trusted
 // — and this step no longer moves one (D949, U2). A behind project install
 // beside the machine's own current install is nothing to do, and no call is
-// planned in the checkout for it: what applies there is doctor's question
-// (claudeplugin.Effective, D942). The version the line names is the machine's
+// planned in the checkout for it: what applies there is a question this step
+// asks nowhere (claudeplugin.Effective, D942, which nothing reads). The
+// version the line names is the machine's
 // own, so this line and fugaro upgrade --check's say the same thing about the
 // same machine.
 func TestUpgradePluginLeavesThisCheckoutsProjectInstall(t *testing.T) {
@@ -530,6 +531,35 @@ func TestUpgradeCheckLeavesThisCheckoutsProjectInstall(t *testing.T) {
 	out, _, _ := executeStdin(t, "", "upgrade", "--check", root)
 	if !strings.Contains(out, "plugin: current: installed 0.5.2") || strings.Contains(out, "plugin: stale") {
 		t.Fatalf("%s", out)
+	}
+}
+
+// TestUpgradeCheckSeesNoUserScopeInstallBesideThisCheckoutsProjectInstall: the
+// same record with the machine's own install missing, which is the state the
+// two questions differ in. The checkout's project-scope install is at this
+// release and the machine has none at user scope: read as current, the check
+// would promise a machine the write path still installs the plugin on — the
+// step plans that install, and fails after the calls when it did not happen
+// (TestUpgradePluginInstallsAtUserScopeBesideThisCheckoutsProjectInstall, from
+// the write side) — so the check answers about the machine's install
+// (pluginwire's Report.UserVersion, D949, U2) and says the plugin is not there.
+func TestUpgradeCheckSeesNoUserScopeInstallBesideThisCheckoutsProjectInstall(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	record := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json")
+	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plugins := `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"project","version":"0.5.2","projectPath":"` + root + `"}]}}`
+	if err := os.WriteFile(record, []byte(plugins), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := executeStdin(t, "", "upgrade", "--check", root)
+	if strings.Contains(out, "plugin: current") {
+		t.Fatalf("the checkout's own install was read as the machine's:\n%s", out)
+	}
+	if !strings.Contains(out, "plugin: skipped: installed 0.5.2 in this checkout only, not in your own Claude Code at user scope") {
+		t.Fatalf("the check does not say the machine has no install:\n%s", out)
 	}
 }
 

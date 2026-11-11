@@ -255,6 +255,33 @@ func TestInitPluginStageFindsALinkedWorktree(t *testing.T) {
 	}
 }
 
+// The state the stage's read has to tell apart (U2, D949): the checkout's own
+// project-scope install is at this release and the machine has none at user
+// scope, which is the install this stage makes. Read through the checkout's
+// question it is a machine at this release — "No changes", no claude call —
+// and the machine the user's own session opens has no plugin at all, which is
+// what the plan of a run has to show.
+func TestInitPluginStageInstallsWhereOnlyTheCheckoutHasAnInstall(t *testing.T) {
+	releaseBuild(t, "0.5.1")
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	dir := repoCheckout(t, githubOrigin, "")
+	t.Chdir(dir)
+	checkoutFile(t, filepath.Join(dir, ".claude", "settings.json"), wiredAt("v0.5.1"))
+	checkoutFile(t, filepath.Join(cfg, "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"project","version":"0.5.1","projectPath":"`+dir+`"}]}}`)
+
+	e, out := stageEngine(t, "", &initOptions{planOnly: true})
+	res := runPlugin(t, e)
+	st := res.Stages[0]
+	if st.State != initflow.Todo {
+		t.Fatalf("the checkout's own install alone reads as %q (%s): the plugin this stage installs is the machine's, and this machine has none (U2)\n%s", st.State, st.Detail, out)
+	}
+	if !strings.Contains(st.Detail, "installs the plugin in Claude Code") || !strings.Contains(st.Detail, "not in your own Claude Code at user scope") {
+		t.Errorf("the plan says %q, which does not say what the machine is missing\n%s", st.Detail, out)
+	}
+}
+
 // A dev build has no release plugin to install: skipped with the reason, and
 // nothing run and nothing written.
 func TestInitPluginStageDevBuildSkipped(t *testing.T) {
