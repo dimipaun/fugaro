@@ -3,11 +3,14 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -17,9 +20,11 @@ import (
 // What they hold. The line names the list in force by counts and by name and
 // never by a value (D1513), counting the floor's rows, the project layer's and
 // the repository's separately (SC9); a list a person added nothing to is a
-// measurement and moves behind --security — and the
-// one finding it can carry, a written row that matches nothing in the base, is
-// the reader's to fix and is an item of the default view (D1503).
+// measurement and moves behind --security — and the one finding it can carry, a
+// row this repository wrote that matches nothing in the base, is the
+// reader's to fix and is an item of the default view (D1503). The two layers
+// that are not the repository's own are counted and never measured: neither the
+// floor nor a project layer is this reader's to edit.
 
 // doctorSecurityTestBase is a checkout whose origin/main holds the given
 // files, committed: the base a written row is measured against (D1518 — the
@@ -232,6 +237,84 @@ func TestDoctorReadsTheRepositorysOwnRowsAtTheBase(t *testing.T) {
 	}
 	if strings.Contains(found.Problem, "rogues") {
 		t.Errorf("problem = %q, names a row only the working copy writes: the base branch's file is the one read (D1518)", found.Problem)
+	}
+}
+
+// doctorSecurityProjectLayerYAML is a project layer whose security: block writes
+// one row this repository's base matches and one it does not (D1501). A layer's
+// rows are shared by every repository of the project, so a row naming a tree
+// this repository does not have is the ordinary case and not a mistake of the
+// reader's.
+const doctorSecurityProjectLayerYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+	"security:\n  patterns:\n" +
+	"    - { name: creds, match: \"internal/creds/**\", category: credentials }\n" +
+	"    - { name: settlements, match: \"internal/settlements/**\", category: credentials }\n"
+
+// doctorSecurityLayerChecks runs the check in a checkout whose machine holds the
+// layer above cached — the branch a project's rows only reach on a machine that
+// has read the published layer — with the repository's own block written into
+// the base's fugaro.yaml. own is that block's rows as YAML, or "" for a file
+// that writes no security: key at all.
+func doctorSecurityLayerChecks(t *testing.T, own string) []doctorCheck {
+	t.Helper()
+	isolateCache(t)
+	file := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows: { web: { commands: { build: sh b.sh, test: sh t.sh } } }\n"
+	if own != "" {
+		file += "security: { patterns: [ " + own + " ] }\n"
+	}
+	root := doctorSecurityTestBase(t, map[string]string{
+		"README.md":               "# aurora\n",
+		"internal/creds/state.go": "package creds\n",
+		"fugaro.yaml":             file,
+	})
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234", CheckedAt: time.Now(), YAML: doctorSecurityProjectLayerYAML,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return doctorSecurityChecks(context.Background(), root)
+}
+
+// The project layer's rows are counted and never measured. A layer row that
+// matches nothing in this repository's base is the ordinary case — the layer is
+// shared by every repository of the project — and the fix D1503's finding asks
+// for, drop the row, is one only the project's owner could apply, taking it away
+// from the repository that does have that tree. A finding nobody can repair is
+// worse than none, which is the rule the floor's own rows already follow.
+func TestDoctorCountsTheProjectLayersRowsWithoutMeasuringThem(t *testing.T) {
+	checks := doctorSecurityLayerChecks(t, "")
+
+	line, ok := doctorCheckByID(checks, doctorSecurityID)
+	if !ok {
+		t.Fatalf("no %s check: %+v", doctorSecurityID, checks)
+	}
+	if !strings.Contains(line.Problem, "2 patterns written by this project's layer") {
+		t.Errorf("problem = %q, want the cached layer's two rows counted", line.Problem)
+	}
+	if found, ok := doctorCheckByID(checks, doctorSecurityUnusedID); ok {
+		t.Errorf("%s = %+v, want no finding: a project layer's row is not this reader's to fix", doctorSecurityUnusedID, found)
+	}
+	if checksFail(checks, true) {
+		t.Errorf("--strict fails on a list whose only written rows are the project's: %+v", checks)
+	}
+}
+
+// The repository's own rows are still measured with a layer present, and the
+// finding names none of the layer's.
+func TestDoctorMeasuresOnlyTheRowsThisRepositoryWrote(t *testing.T) {
+	checks := doctorSecurityLayerChecks(t,
+		"{ name: prod-secrets, match: \"config/prod/**\", category: credentials }")
+
+	found, ok := doctorCheckByID(checks, doctorSecurityUnusedID)
+	if !ok {
+		t.Fatalf("no %s check: %+v", doctorSecurityUnusedID, checks)
+	}
+	if !strings.Contains(found.Problem, "prod-secrets") {
+		t.Errorf("problem = %q, want the repository's own row", found.Problem)
+	}
+	if strings.Contains(found.Problem, "settlements") {
+		t.Errorf("problem = %q, names a row of the project layer: only the rows this repository wrote are its reader's to fix", found.Problem)
 	}
 }
 

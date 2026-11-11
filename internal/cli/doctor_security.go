@@ -13,9 +13,9 @@ import (
 // The security list in force, as doctor says it (F11, D1513): which patterns a
 // run of this repository escalates on, how many of them the engine's floor
 // holds and how many a project layer or the repository wrote, and the one
-// thing about that list the reader has to fix — a written row that matches
-// nothing in the base, which escalates nothing and so does not do what its
-// author thinks (D1503's second half).
+// thing about that list the reader has to fix — a row this repository's own
+// file wrote that matches nothing in the base, which escalates nothing and so
+// does not do what its author thinks (D1503's second half).
 //
 // Counts and names, never a value: a pattern is a path glob the reader wrote
 // in their own config, so doctor prints it back the way it prints any other
@@ -34,7 +34,12 @@ import (
 // most repositories do not have (internal/creds/**, mobile/**), so measuring it
 // would put a finding on nearly every screen in a repository with nothing wrong
 // in it — and the reader could not repair it, since the floor is not theirs to
-// edit. A row a person wrote is the row a person can fix.
+// edit. The project layer's rows are in the same state for the same reason: the
+// layer is shared by every repository of the project, so a row naming a tree
+// this repository does not have is the ordinary case, and the fix the finding
+// asks for — drop the row — would take it away from the repository that does
+// have that tree. A row this repository's own file wrote is the row its reader
+// can fix.
 const (
 	doctorSecurityID       = "security-list"
 	doctorSecurityUnusedID = "security-list-unused"
@@ -118,14 +123,18 @@ func doctorSecurityListChecks(layers func() (*config.Security, *config.ProjectLa
 	return append(out, doctorSecurityUnused(unused, ref))
 }
 
-// doctorSecurityWritten is the rows of the list in force a person wrote, in the
-// list's own order: every row that is not the engine's. They are what D1503's
-// finding measures, because a row of the floor is not the reader's to fix and
-// names trees most repositories do not have.
+// doctorSecurityWritten is the rows of the list in force this reader can fix, in
+// the list's own order: the repository's own, and no other layer's. The floor's
+// rows are not the reader's to edit, and a project layer's row is not either —
+// it is shared by every repository of the project, so the fix this finding asks
+// for would apply to none of them but the one that wrote it, and this checkout's
+// base is not the tree such a row was written for. Both are counted by the line
+// beside this one and neither is measured (D1503's finding is over a row a
+// person wrote for the tree it is measured against).
 func doctorSecurityWritten(list config.SecurityList) []sensitivity.Pattern {
 	var written []sensitivity.Pattern
 	for _, row := range list {
-		if row.Source != config.SecuritySourceFloor {
+		if row.Source == config.SecuritySourceRepo {
 			written = append(written, row.Pattern)
 		}
 	}
@@ -154,8 +163,8 @@ func doctorSecurityInForce(list config.SecurityList) doctorCheck {
 	}
 }
 
-// doctorSecurityUnused is D1503's finding: the rows a person wrote that no
-// path in ref matches.
+// doctorSecurityUnused is D1503's finding: the rows this repository wrote that
+// no path in ref matches.
 func doctorSecurityUnused(rows []sensitivity.Pattern, ref string) doctorCheck {
 	names := make([]string, len(rows))
 	for i, r := range rows {

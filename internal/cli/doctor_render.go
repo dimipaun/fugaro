@@ -162,9 +162,9 @@ var doctorSecurityPrefixes = []string{
 	// checkout — the floor, the project layer's rows and the repository's own —
 	// which is only measured: the default view does not print it and --security
 	// does. Its sibling ID, security-list-unused, is the finding the same check
-	// makes when a row a person wrote matches nothing in the base: that one is a
-	// warning, so the class is doctorClassActionable and the default view
-	// prints it whatever this list says.
+	// makes when a row this repository wrote matches nothing in the base: that
+	// one is a warning, so the class is doctorClassActionable and the default
+	// view prints it whatever this list says.
 	"security-list",
 }
 
