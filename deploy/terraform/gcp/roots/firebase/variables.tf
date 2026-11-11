@@ -62,3 +62,8 @@ variable "coordinator_account" {
   type    = string
   default = ""
 }
+
+variable "workspace_service_account" {
+  type    = string
+  default = ""
+}

@@ -87,10 +87,18 @@ const (
 	WorkspaceTokenPath = "tokens"
 	// WorkspaceMeterPath is the subtree the workspace's cap is taken from: the
 	// reservations and the settles of the calls the workspace's own credentials
-	// paid for (W7).
+	// paid for (W7). What the document pins is this SUBTREE ROOT and nothing
+	// below it: a rule at `meter` denies every descendant, so the `$month` child
+	// the template carries is one illustrative level of a shape the writer is
+	// free to deepen — PathWorkspaceSpend writes `meter/<workspace>/<month>` —
+	// and no writer has to match that child. The subtree is what the document
+	// and the writer must agree on, and it is what
+	// TestWorkspaceMeterLivesUnderTheSubtreeTheRulesDeny compares.
 	WorkspaceMeterPath = "meter"
 	// WorkspaceRollupPath is the subtree the reconciliation alarm compares a
 	// member's ledger against (W7). It is not the basis of the cap any more.
+	// Like the meter's, what the document pins is the subtree root, so a writer
+	// below it is denied with the subtree however deep it goes.
 	WorkspaceRollupPath = "rollup"
 	// WorkspaceRecordPath is the subtree the workspace's record lives at, the
 	// parent of projectpolicy.PathWorkspace's own node.

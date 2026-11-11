@@ -652,6 +652,12 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 	defer ans.resp.Body.Close()
 	hdr := http.Header{}
 	copyAnswerHeaders(hdr, ans.resp.Header, ans.credential)
+	// The workspace's advisory headroom would be written here, on the answer to
+	// a call the workspace paid for (gateway.WorkspaceHeadroomHeader, through
+	// SetWorkspaceHeadroom): this is where the service's own headers are set,
+	// and copyAnswerHeaders drops any X-Fugaro- header an upstream sent. It is
+	// not written yet, because the call is not metered yet — workspace_cap.go's
+	// header states that deferral and the task it needs.
 	if err := SetCredentialHeaders(hdr, wireTier(c.Tier), c.Name); err != nil {
 		s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 			"the answer could not carry the credential that served it")

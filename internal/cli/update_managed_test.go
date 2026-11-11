@@ -2288,3 +2288,71 @@ func TestUpdateManagedWorkspaceStageRefusesAnEmptyNode(t *testing.T) {
 		t.Errorf("a step that was never judged left a record: %+v", rec)
 	}
 }
+
+// TestUpdateFirebaseProjectKeepsItsOwnConfirmationOnAManagedProject: what a
+// managed project's member actually meets when their own `fugaro update` plans
+// the workspace grant. W7's Terraform half binds the workspace's account to
+// firebasedatabase.instances.get in each member's own project, and the plan
+// that carries it is the FIREBASE root's — planned only by `fugaro update
+// --firebase-project` (the Firebase stage skips without the flag). That flag
+// shapes the installation rather than converging it as it is, and a shaped run
+// keeps no gate at all (initRun.gateable), so:
+//
+//   - the managed cover never judges this plan, on a world whose marks say the
+//     project is managed: the run writes no audit record, and what refuses the
+//     step is not the gate's sentence. TestTheWorkspaceBindingIsNotCovered
+//     (internal/infra/tf) holds the cover's answer to a plan it IS handed; this
+//     holds that no run hands it this one.
+//   - the step is left to the member's OWNER and not applied: the binding is
+//     the Firebase stage's own typed confirmation's to apply, once per member,
+//     at the owner's own terminal, which a coding agent's session cannot give.
+func TestUpdateFirebaseProjectKeepsItsOwnConfirmationOnAManagedProject(t *testing.T) {
+	// The world the other managed tests use — the run's marks say managed, so a
+	// gate that judged anything would have written a record — with the Firebase
+	// project's own clients, because --firebase-project is what plans the root
+	// the binding lives in.
+	r := newFBRigFor(t, initProject)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	updating(t, r.initRig)
+	r.appendConfig(t, wsPin)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	r.setPlanAt(t, "firebase", change("module.firebase.google_project_iam_member.workspace_read[0]", "create"))
+
+	got, err := updateRun(t, r.initRig, "update", "--firebase-project", initProject, "--yes")
+	if err == nil {
+		t.Fatalf("a coding agent's session ran the Firebase step that binds the workspace's account:\n%s", got)
+	}
+	// The flag is the whole of the cause, and it is asserted rather than told:
+	// the same options without it are gateable, in this very world.
+	shaped := &initRun{o: &initOptions{door: updateDoor.name, firebase: initProject}}
+	if shaped.gateable() {
+		t.Errorf("a run whose own flag shapes the installation is gateable: the plan it writes would be judged by a gate that must never judge what an argument just wrote")
+	}
+	if plain := (&initRun{o: &initOptions{door: updateDoor.name}}); !plain.gateable() {
+		t.Errorf("a plain update is not gateable, so this test's world is not the managed one its other assertions rest on")
+	}
+	// No step of the run was judged, so the cover's refusal is not what stopped
+	// it.
+	if recs := audits(t, r.initRig); len(recs) != 0 {
+		t.Errorf("the run wrote %d audit record(s), want none: the run that plans this binding has no gate, so the managed cover never saw the plan and did not refuse it", len(recs))
+	}
+	// The coding agent's own refusal, the command the owner is left with, and no
+	// apply of that root: the step is the member's owner's to take. The step's
+	// line in the run's list is truncated (the whole sentence is in the log the
+	// line prints the path of), so what is matched is the opening clause that
+	// line always carries — initflow.AgentRefusal's first words.
+	if !strings.Contains(got, "a coding agent's session is present") {
+		t.Errorf("the session does not read the refusal a step it cannot confirm is left with:\n%s", got)
+	}
+	if strings.Contains(got, "no confirmation reaches past a refusal (D1012)") {
+		t.Errorf("the run reads the gate's own refusal of a plan, so this plan was judged after all:\n%s", got)
+	}
+	if !strings.Contains(got, "fugaro update --firebase-project "+initProject) {
+		t.Errorf("the owner is not left the command that applies the step:\n%s", got)
+	}
+	if applies := r.ran(t, "apply"); len(applies) != 0 {
+		t.Errorf("%d terraform apply(s) ran, want none: this run applied a step a coding agent's session may not confirm", len(applies))
+	}
+}
