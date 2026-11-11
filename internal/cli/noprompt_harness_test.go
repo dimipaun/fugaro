@@ -233,6 +233,20 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "remove workflows.docs from",
 		seed:    closedStdinWorkflowSeed(workflowDocs),
 	},
+	// The two clone_urls writes are the settings group's kind: each reaches a
+	// block of the world's own project config, and the sentence naming the
+	// entry it changes is the proof the run reached the write rather than the
+	// refusal a project with no config file of its own meets. rm takes an entry
+	// away, so its seed writes one first.
+	"fugaro project clone-url set": {
+		args:    []string{"github/acme/app", "https://github.com/acme/app"},
+		reaches: "write clone_urls[github/acme/app] = https://github.com/acme/app in",
+	},
+	"fugaro project clone-url rm": {
+		args:    []string{"github/acme/app"},
+		reaches: "remove clone_urls[github/acme/app] from",
+		seed:    closedStdinCloneURLSeed,
+	},
 	// watch is the one leaf whose contract is not to return: it follows the
 	// project until it is interrupted. --once is its own one snapshot, which is
 	// the run this harness can hold to a deadline.
@@ -401,6 +415,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro pair ls":                "prints the no-project-config refusal",
 	"fugaro plan graph":             "refuses with no graph artifact under docs/plans",
 	"fugaro plan status":            "reads the repository's plan and stream files and reports what is missing",
+	"fugaro project clone-url ls":   "reads the selected project's own config, which this world's gives no repository a URL in, and prints that it gives none",
 	"fugaro project policy publish": "refuses before its ask: the deployed rules here carry no policy marker",
 	"fugaro project policy show":    "prints that this installation has published no policy",
 	"fugaro project repos ls":       "prints the no-project-config refusal",
@@ -641,6 +656,16 @@ const closedStdinRetiredWhy = "is the tombstone: it prints the two commands that
 func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "base_branch: main\n")
+}
+
+// closedStdinCloneURLSeed gives the world's own project config the entry the
+// clone_urls removal takes away, beside one it leaves. Without the first the
+// leaf would stop at "this project gives no clone URL for it" and would say
+// nothing about the write; without the second the removal would be the last
+// entry's, which the command refuses for the reason its own refusal gives.
+func closedStdinCloneURLSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n  github/acme/other: https://github.com/acme/other.git\n")
 }
 
 // closedStdinPoolSeed gives the world the two things a pool write needs to

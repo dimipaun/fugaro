@@ -99,6 +99,14 @@ func (c *Config) Shared() *Config {
 	// who could write this key into the runs bucket's shared file would be
 	// choosing where a run sends the Bitbucket token.
 	s.BitbucketAPIRoots = nil
+	// CloneURLs is the owner's policy too, and travels the same way: `fugaro
+	// project policy publish` copies it into the policy node, which the runner
+	// reads and fails closed on. A launcher who could write this key into the
+	// runs bucket's shared file would be choosing where every teammate's runs
+	// clone from (SD5, D842), which is the directory the run's own slug, locks
+	// and budget session name. ParseShared refuses the key besides, because a
+	// shared config carrying it was not written by the converge.
+	s.CloneURLs = nil
 	// Profiles are the owner's policy, published through `fugaro project
 	// policy publish` into the policy node — not through the shared config a
 	// launcher can write (the node is what the runner reads and fails closed
