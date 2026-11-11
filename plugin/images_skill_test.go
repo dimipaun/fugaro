@@ -244,17 +244,20 @@ func TestImagesSkillNoBuildArgSecrets(t *testing.T) {
 }
 
 // TestImagesSkillMountsOnlyDeclaredSecrets: a catalog build mounts the secrets
-// the entry's own repository declares in its workflows, one mount per
-// declaration and under that declaration's `env`
+// the entry's own repository declares in its workflows, one mount per distinct
+// `env` those declarations name and under that declaration's `env`
 // (catalogBuildSecrets, internal/cli/image_build_catalog.go; the request's
 // AvailableSecrets, internal/backend/gcp/catalog.go). A stored secret no
 // workflow declares is never mounted, and a step that reads the file only when
 // it is there skips it without an error — so the skill has to say both halves
 // or an agent writes a mount that is never satisfied and reads the 401 as a
-// wrong token.
+// wrong token. And the mounts collapse by variable rather than by declaration:
+// the same declaration twice is one mount, and two workflows naming one `env`
+// for different secrets do not build at all, so a skill that taught "one mount
+// per declaration" would describe a build that never starts.
 func TestImagesSkillMountsOnlyDeclaredSecrets(t *testing.T) {
 	skill := imagesSkillFile(t)
-	for _, want := range []string{"workflows.<w>.secrets", "declaration's `env`", "401"} {
+	for _, want := range []string{"workflows.<w>.secrets", "declaration's `env`", "401", "one mount per distinct `env`"} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("the skill never says %q, so an agent cannot tell that a catalog build mounts the entry's repository's own declarations, under the variable each one names", want)
 		}
