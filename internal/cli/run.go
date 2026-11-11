@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
@@ -9,6 +10,9 @@ import (
 	"io"
 	"maps"
 	"math/rand/v2"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -23,6 +27,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/craft"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -4235,11 +4241,14 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // backend, launched onto the other, would otherwise start and die on its
 // first docker command.
 //
-// Which jobs the catalog speaks for is catalog.Applies, the same predicate the
-// deploy-time spec builder uses: a workflow that keeps its own image
-// definition, or that runs the base or a shared layer, is not the catalog's,
-// and asking the rule on its behalf would refuse a launch for an entry the job
-// does not run.
+// Which jobs the project's images speak for is the one resolver (catalog.
+// JobImage, D1900), asked exactly as the deploy-time spec builder asks it: a
+// workflow that runs the base image or a shared layer is not one of them, and
+// neither is one that wrote an image definition of its own while the project's
+// default is an entry such a job cannot run — the resolver sets that default
+// aside for it, so its job runs the image this project builds for the
+// repository. Asking the rule on either one's behalf would refuse a launch for
+// an entry the job does not run.
 //
 // A catalog that no longer agrees with the deployed image — the entry the
 // image is was removed or renamed, the workflow now pins another one, or the
@@ -4283,7 +4292,7 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // because the file is not always there. The desktop console spawns `fugaro run
 // --repo` from a private empty directory on every machine, and `--repo` may be
 // run from anywhere, so a launcher with no checkout of this repository reads
-// no fugaro.yaml and cannot ask catalog.Applies — while the job it is about to
+// no fugaro.yaml and cannot ask the resolver — while the job it is about to
 // start is still the one the catalog deployed, and the services its tests need
 // are still that entry's. Reading the workflow first (as this did) left such a
 // launch with the zero entry, an empty stamp and a run whose tests fail on a
@@ -4309,27 +4318,44 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	// catalog: this machine's own entry stands, exactly as it does on an
 	// installation that has published no policy.
 	var published *config.Catalog
+	var publishedMap map[string]string
 	var pol *projectpolicy.Policy
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
-		pol, published = p, p.ImageCatalog
+		pol, published, publishedMap = p, p.ImageCatalog, p.ImageMap
 	}
 	cat := env.lc.ImageCatalogEffective(published)
 	if cat == nil {
 		return config.Entry{}, false, nil
 	}
 	// The workflow this launcher has a file for, if it has one at all, and
-	// whether the catalog speaks for it.
+	// whether the catalog speaks for it. The one resolver, asked the way the
+	// deploy-time arm asks it (F21): the project's images decide this job's
+	// entry, be it through the workflow's own reference, the project's map or
+	// the catalog's default.
 	speaks := false
 	var w config.Workflow
+	var sel catalog.Selection
+	var selErr error
 	if co := checkoutConfig(ctx, spec.Repo); co != nil {
 		if wt, ok := co.Workflows[spec.Workflow]; ok {
-			w, speaks = wt, catalog.Applies(*cat, wt)
+			w = wt
+			sel, selErr = catalog.JobImage(catalog.ImageRequest{
+				Catalog:   cat,
+				ImageMap:  env.lc.ImageMapEffective(publishedMap),
+				Canonical: spec.Repo,
+				Workflow:  w,
+				Backend:   catalog.Backend(launchBackend(env.be)),
+			})
+			// A resolver that refused the configuration is the catalog's own
+			// claim on the job (the deploy-time arm refuses it the same way),
+			// so it is not the answer that the catalog is silent.
+			speaks = selErr != nil || sel.Source == catalog.SourceCatalog
 		}
 	}
 	// The job is the workflow's own when it is a shared project job: the
 	// catalog's jobs are per-repository ones, and the sole kind a shared
 	// project job runs — a clone workflow (launchProjectJobFor) — is the kind
-	// catalog.Applies takes out of this rule.
+	// the resolver takes out of this rule (SourceBase and SourceShared).
 	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
 	if !ok {
 		// Not a job name: the launch itself refuses the variant a few lines
@@ -4372,11 +4398,34 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 		}
 		return config.Entry{}, false, catalogMovedErr(spec.Workflow, name, image)
 	}
-	// A pin is the repository's own claim about which entry its job runs, and
-	// it is a claim about the deployed image too (D1155): a repository that
-	// now names another entry has a job deployed with an image this catalog
-	// does not give it.
-	if speaks && w.ImageName != "" && w.ImageName != entry.Name {
+	// A configuration the resolver refuses — this job's own reference, a pin or
+	// the map's entry, naming a name the catalog does not hold — is refused at
+	// launch too. The deploy-time arm refuses it the same way (F7), so the job
+	// cannot have been deployed with what this launcher's file names, and the
+	// image it happens to carry is not the one this configuration asks for:
+	// going on would start the run on it and say nothing. The refusal carries
+	// the resolver's own sentence, which names the entry there is not (a pin)
+	// or the map that points at it (T1 b), and it is the same family as the
+	// moves below because the person's fix is the same one command.
+	//
+	// Only a reference naming an entry the catalog does not hold is refused
+	// here. The resolver's other errors are the tag-cover and docker rules,
+	// which say which entries serve a job rather than which one it runs: an
+	// entry the deployed image is but that no longer covers what the workflow
+	// needs comes out of the lookup above, the coverage check below or the
+	// docker rule, each with the reason the person needs.
+	if speaks && errors.Is(selErr, catalog.ErrUnknownEntry) {
+		return config.Entry{}, false, catalogClaimsErr(spec.Workflow, name, image, selErr)
+	}
+	// The entry the project's configuration NAMES for this job — a pin, or what
+	// the project's map gives the repository (D1155, D1906) — against the entry
+	// its deployed image is: both are claims about the deployed job, and a job
+	// deployed with an image the project no longer names for it is one this
+	// catalog does not give it. An entry the tag-cover rule chose is checked
+	// below instead, by the coverage the choice was made on: the deploy fixed
+	// the job's image, and which entry the rule would choose now is not a claim
+	// about the job (F7).
+	if speaks && sel.Reference && sel.Entry.Name != entry.Name {
 		return config.Entry{}, false, catalogMovedErr(spec.Workflow, name, image)
 	}
 	// The tags the workflow needs, against the entry the job actually runs:
@@ -4452,6 +4501,17 @@ func catalogEntryOf(cat config.Catalog, image string) (config.Entry, bool) {
 // the one command that does.
 func catalogMovedErr(workflow, job, image string) error {
 	return userErr("workflow %s: the job %s is deployed with the image %s, which this project's image catalog no longer gives it; a job keeps the image it was deployed with, so run `fugaro update` to deploy it again with this project's catalog", workflow, job, image)
+}
+
+// catalogClaimsErr refuses a launch whose own configuration the resolver
+// refuses: the reference this launcher's file makes is one the project's
+// catalog cannot answer, so the job was not deployed with it and no image it
+// carries is the one this file asks for. The resolver's sentence says which
+// reference is wrong (why is its own); what this adds is the deployed image the
+// launch would otherwise have started on, and the one command that deploys the
+// job again once the file and the catalog agree.
+func catalogClaimsErr(workflow, job, image string, why error) error {
+	return userErr("workflow %s: %v; the job %s is deployed with the image %s, and a job keeps the image it was deployed with, so fix the reference above and run `fugaro update` to deploy it again with this project's catalog", workflow, why, job, image)
 }
 
 // launchRun starts spec's execution, stored under slug, at most once, however many CLIs race
@@ -4712,6 +4772,15 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
 	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, deployed)
+	// The run's slip, asked for exactly where the service's address was just
+	// written: the grant the credentials service keeps for this run, whose id
+	// the job claims at its first call and presents on every call after it
+	// (DS1.3's two routes). It goes on THIS EXECUTION's environment and never
+	// into a stored document: the task object is the repository's own file, a
+	// repeated run ID repeats it byte for byte, and a slip is one run's.
+	if url, ok := credentialsServiceURLOf(lspec.Env); ok {
+		lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, variant, url)...)
+	}
 	// The services the job's own catalog entry declares, on EVERY launch and
 	// empty where the deployed image is no catalog entry (backend.ServicesEnv
 	// states why the key is always written, and why it is not a reserved
@@ -4953,6 +5022,336 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, de
 		return nil
 	}
 	return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
+}
+
+// envSlip is the variable a run reads its slip's id from. It is the launcher's
+// half of the name the runner claims the slip by (DS1.5, which reads its own
+// environment), and it is spelled here because passing the id to the job is
+// this task's (DS1.4). It is plain environment and never SecretEnv: the
+// backend that matters refuses SecretEnv outright
+// (backend.LaunchSpec.SecretEnv), and the slip's protection is its binding to
+// the run and to a claim secret rather than its secrecy — the run's own agent
+// can read the runner's environment anyway (F22, reconciliation).
+const envSlip = "FUGARO_SLIP"
+
+// The grant call's own bounds. slipGrantTimeout bounds the whole of it — the
+// launcher's own mint and the call — so a service that hangs cannot eat the
+// hold this launcher took to launch (holdTimeout, half of claimTTL, and the
+// launch call itself is bounded by launchTimeout's two minutes).
+const (
+	slipGrantTimeout = 30 * time.Second
+	// maxSlipAnswerBytes bounds what the grant route may answer, as the read
+	// mint's own bound does (internal/gitprov/github's maxServiceAnswerBytes):
+	// the service is another writer, and an unbounded answer is one a launch
+	// renders into memory.
+	maxSlipAnswerBytes = 16 << 10
+	// maxSlipIDBytes bounds the id this launcher will hand a job. The service's
+	// own bound is on its side of the wire (internal/credsvc's maxSlipIDBytes,
+	// the hex of the bytes it draws), and this one is generous because a
+	// launcher cannot read that constant: an id longer than any id the service
+	// draws is one this launcher will not carry.
+	maxSlipIDBytes = 256
+)
+
+// errSlipRouteAbsent means the credentials service does not serve the grant
+// route at all — a revision built before DS1.3 — rather than refusing this
+// launcher's call. It is the version skew DS1.4 keeps: the run proceeds on the
+// path it took before the slip existed, quietly, because an installation one
+// release behind is the skew `fugaro doctor` reports and the one `fugaro
+// update` converges, and a warning on every launch of it would be noise about
+// something the launcher cannot change (D1945's shape for an older CLI).
+var errSlipRouteAbsent = errors.New("this credentials service does not serve the grant route")
+
+// slipRouteAbsent reports whether status is the answer of a service that does
+// not serve the grant route: the 404 its own router gives a path it does not
+// serve (internal/credsvc's servedRoute, which answers 404 rather than 405 for
+// a route asked with another method), and the 405 an intermediary may give a
+// route it holds for another method. Neither is a refusal of this launcher.
+func slipRouteAbsent(status int) bool {
+	return status == http.StatusNotFound || status == http.StatusMethodNotAllowed
+}
+
+// slipGrant is the grant call a launch makes, and a package variable because
+// TestMain answers it for every test that is not about the slip itself
+// (main_test.go): the call is made on every switched-on launch, and no other
+// test may reach a service or mint a token. A test about the slip replaces it
+// or hands in slipGrantOverService with a service of its own.
+var slipGrant = slipGrantOverService
+
+// slipIdentity mints the launcher's own Google ID token for serviceURL, which
+// is the identity the service's launcher class verifies (DS1.2, D1938).
+//
+// It is the PLAIN mint the read path presents (reviewReadIdentity), for the
+// audience rather than for the token: a plain mint's audience is gcloud's own
+// client id (credsvc.GcloudAudience), which the launcher class admits and which
+// is the only one a person's account can mint — gcloud refuses --audiences for
+// a user account. That a gcloud-audience token replaying a member's own access
+// also gets a slip at this route is accepted and documented rather than
+// refused (D1939, D1944).
+var slipIdentity = func(ctx context.Context, serviceURL string) (string, error) {
+	return personIdentity(ctx, serviceURL, "a run's slip is asked for")
+}
+
+// slipGrantOverService is the grant call: it presents the launcher's own
+// identity token to the grant route and reads the slip's id out of the answer.
+//
+// Nothing here can put a value a caller sent into an error: the identity token
+// is never formatted into one, the request body is the launcher's own names,
+// and the answer is read for its status, its size and its shape alone — the
+// message beside an error code is written for an operator's log and not for a
+// command's output (internal/gitprov/github's read mint drops it for the same
+// reason).
+func slipGrantOverService(ctx context.Context, serviceURL string, req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+	if err := checkSlipServiceURL(serviceURL); err != nil {
+		return credsvc.SlipGrantResponse{}, err
+	}
+	identity, err := slipIdentity(ctx, serviceURL)
+	if err != nil {
+		return credsvc.SlipGrantResponse{}, err
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return credsvc.SlipGrantResponse{}, errors.New("the grant call's request could not be built")
+	}
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(serviceURL, "/")+credsvc.SlipPath, bytes.NewReader(body))
+	if err != nil {
+		return credsvc.SlipGrantResponse{}, errors.New("the grant call's request could not be built")
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	hreq.Header.Set("Accept", "application/json")
+	hreq.Header.Set("Authorization", "Bearer "+identity)
+	resp, err := slipClient().Do(hreq)
+	if err != nil {
+		return credsvc.SlipGrantResponse{}, errors.New("the installation's credentials service could not be reached")
+	}
+	defer resp.Body.Close()
+	if slipRouteAbsent(resp.StatusCode) {
+		return credsvc.SlipGrantResponse{}, fmt.Errorf("%w: the service answered %d", errSlipRouteAbsent, resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return credsvc.SlipGrantResponse{}, fmt.Errorf("the installation's credentials service refused the grant call (%d)", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSlipAnswerBytes+1))
+	if err != nil {
+		return credsvc.SlipGrantResponse{}, errors.New("the credentials service's answer could not be read")
+	}
+	if len(data) > maxSlipAnswerBytes {
+		return credsvc.SlipGrantResponse{}, errors.New("the credentials service's answer is larger than a grant's")
+	}
+	var ans credsvc.SlipGrantResponse
+	if err := json.Unmarshal(data, &ans); err != nil {
+		return credsvc.SlipGrantResponse{}, errors.New("the credentials service's answer is not a grant's")
+	}
+	return ans, nil
+}
+
+// slipClient is the client the grant call is made with: it never follows a
+// redirect, because the request carries the launcher's own Google ID token and
+// a followed 307 or 308 would carry it to whatever host the Location named
+// (internal/gitprov's serviceMintClient and internal/gateway's upstreamClient
+// refuse redirects for the same reason), it keeps no cookie jar, and it does
+// not wait on an answer forever.
+func slipClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableCompression = true
+	return &http.Client{
+		Transport:     t,
+		Timeout:       slipGrantTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// checkSlipServiceURL refuses a URL this launcher will not send its own
+// identity token to: the token is a bearer credential, and over plain http it
+// would travel in cleartext. The rule is internal/gitprov's read-mint rule
+// respelled (that package does not export it): https, or http on a loopback
+// address, which is a test's own service. The refusal carries the URL's shape
+// and never the URL.
+func checkSlipServiceURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("the credentials service URL this launch was built with is not a scheme and a host")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if ip := net.ParseIP(u.Hostname()); (ip != nil && ip.IsLoopback()) || u.Hostname() == "localhost" {
+			return nil
+		}
+	}
+	return errors.New("the credentials service URL this launch was built with is not https")
+}
+
+// runSlipEnv asks the installation's credentials service for this run's slip
+// and answers the environment entry that hands the job its id, or nothing at
+// all when there is no slip to hand it.
+//
+// Every failure but a refusal of the caller is quiet and the run starts
+// anyway, and that is not a hole in R9's no-downgrade rule: the fence is the
+// service's own, which serves a per-user, pool-owned or shared credential only
+// under a claimed slip and fails closed without one. So a launcher that could
+// not get a slip — no gcloud, a service that is not answering, an answer this
+// launcher will not carry — starts the run it started before this task existed
+// and no more than that. The alternative, failing the launch, would break runs
+// that work today over the grant of a credential they may not even use.
+func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workflow, serviceURL string) []string {
+	names, why := slipCredentialNames(ctx, env, spec)
+	if why != "" {
+		// No slip rather than a slip that names less than the run will ask
+		// for: the names are the set the service serves this run from (R9),
+		// so one short of the run's own credentials is a run refused at the
+		// call with no way back, where no slip at all is exactly the run this
+		// launcher started before the slip existed.
+		fmt.Fprintf(launchWarn, "warning: this run starts without a slip, because %s: a slip must name every credential the run will ask for, and one that named fewer would be a call refused with no way back (R9)\n", oneLine(why))
+		return nil
+	}
+	req := credsvc.SlipGrantRequest{
+		Slug: slug,
+		Run:  spec.RunID,
+		// The account the run will call as, derived exactly as the doctor's
+		// invoker check and the installation's own root derive it: one account
+		// is dedicated to one job per repository (D1937), and the claim is
+		// checked against it.
+		Account:           gcp.ServiceAccountID(slug, workflow) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com",
+		Credentials:       names,
+		MaxRuntimeSeconds: int64(slipRunTime(spec) / time.Second),
+	}
+	sctx, cancel := context.WithTimeout(ctx, slipGrantTimeout)
+	defer cancel()
+	ans, err := slipGrant(sctx, serviceURL, req)
+	switch {
+	case errors.Is(err, errSlipRouteAbsent):
+		return nil
+	case err != nil:
+		fmt.Fprintf(launchWarn, "warning: this run's slip was not granted, so the run starts without one and a credential that only a slip serves is refused at the call: %s\n", oneLine(err.Error()))
+		return nil
+	}
+	if !slipIDUsable(ans.Slip) {
+		fmt.Fprintf(launchWarn, "warning: the installation's credentials service answered the grant call with no usable slip id, so this run starts without a slip and a credential that only a slip serves is refused at the call\n")
+		return nil
+	}
+	if ans.MaxRuntimeSeconds < req.MaxRuntimeSeconds {
+		fmt.Fprintf(launchWarn, "warning: the slip this run was granted is served for %s and the run may live for %s: the service stops issuing at the slip's end, and a credential the run still needs after it is refused\n",
+			(time.Duration(ans.MaxRuntimeSeconds) * time.Second).String(), slipRunTime(spec).String())
+	}
+	return []string{envSlip + "=" + ans.Slip}
+}
+
+// slipCredentialNames are the credentials the run's slip asks the service to
+// serve: what each of the four crafts resolves to for this launch, deduplicated
+// — the same answer `fugaro craft ls` prints and the same one the runner will
+// make its calls with, because the resolution is internal/craft's and not a
+// second rule here (that package's own promise: a launcher and a runner cannot
+// disagree about what one configuration means).
+//
+// The layers are the two that can write a craft's access: the document this
+// run will check out, and the installation's config, which is where the owner
+// creates the credentials and the pools a repository's file only selects among
+// (F12, D1628). The project layer is not read because it cannot change this
+// answer at all: it carries crafts and only their models, since config.Scopes
+// refuses a craft access in a file anyone who can write the runs bucket can
+// write.
+//
+// A craft no layer sets an access for resolves to the default credential, so
+// the ordinary cascade repository asks for its own bundle entry and nothing
+// else — and a slip that named nothing would be a run refused the one
+// credential it has.
+//
+// The second answer is why this launcher cannot name the run's own set, ""
+// when it can: the repository's own document could not be read at the run's ref
+// (only a file that exists there is a set of accesses, and this one is read
+// exactly as the run reads it — cascadeRefConfig, the ref out of the launcher's
+// checkout, which is the document the run clones and resolves its crafts from),
+// or it names an access no layer of this installation holds (craft.Resolve's
+// own verdict, which its caller here keeps rather than drops). The caller asks
+// for no slip then, because the names it would send are the slip's allow-list
+// rather than a wish (R9: the service serves this run from exactly them), and a
+// name in there that the run may not be served, or one the run will ask for
+// that is missing, is a run let into a state it cannot get out of.
+//
+// launchFileConfig is deliberately not what reads it, though every other launch
+// read does: its checkout stands in when the ref cannot be read, and the
+// working tree is a document the run never sees — one left on another branch or
+// carrying an uncommitted edit names accesses the run will not ask for, which
+// is the same broken slip the nil branch above refuses, only silently.
+//
+// subscriptionSpread is false and that is not a judgement about the switch: it
+// decides only whether a pool is reported inert, which is the run's own rule
+// about which of a pool's members to skip (D1626, MC5), and it changes no
+// access.
+func slipCredentialNames(ctx context.Context, env *cloudEnv, spec *task.Spec) ([]string, string) {
+	co := cascadeRefConfig(ctx, env, spec)
+	if co == nil {
+		return nil, "the repository's own fugaro.yaml could not be read at the ref this run will check out — there is no checkout of the repository here, or that ref carries no such file this launcher can resolve — so the credentials the run will ask for cannot be named, and the launcher's own working tree is not the document the run reads; run `fugaro run` from a checkout of the repository with the ref the run will clone to have this run served under a slip"
+	}
+	layers := []craft.Layer{{Name: craft.SourceRepo, Crafts: co.Agent.Crafts}}
+	if env.lc != nil {
+		layers = append(layers, craft.Layer{Name: craft.SourceLocal, Crafts: env.lc.Crafts,
+			Credentials: env.lc.Credentials, Pools: env.lc.Pools, KeyPrefix: craftLocalKeyPrefix})
+	}
+	eff, ps := craft.Resolve(layers, false)
+	if len(ps) > 0 {
+		// The path and not the name an access wrote: that name is what the
+		// slip must not carry, so it stays out of the launcher's output the
+		// way internal/credsvc's own refusals keep it out of theirs.
+		return nil, ps[0].Path + " names a credential or pool no layer of this installation holds, so the credentials the run will ask for cannot be named (`fugaro validate` names every one)"
+	}
+	names := make([]string, 0, len(config.CraftNames))
+	for _, name := range config.CraftNames {
+		if access := eff[name].Access; access != "" && !slices.Contains(names, access) {
+			names = append(names, access)
+		}
+	}
+	return names, ""
+}
+
+// slipRunTime is how long this run asks to be served for: the run's own
+// ceiling, which is the execution's own timeout — the task's total plus the
+// slack the backend adds to it, so the slip and the execution end together —
+// and the platform's maximum where the task names no total, since that is what
+// the backend would run it for. Asking for the run's own ceiling rather than a
+// guess is what keeps the two from drifting apart: a slip that ends before the
+// run does is a run refused at its next call, and the service clamps what it
+// will grant to its own constant (R10).
+func slipRunTime(spec *task.Spec) time.Duration {
+	if d := launchTimeoutOf(spec); d > 0 {
+		// The execution this slip is granted for is not the task's own total
+		// but that total plus the slack the backend adds to it
+		// (backend.LaunchSpec.Timeout), so the task's total alone buys the run
+		// a slip that ends while the execution it was granted for is still
+		// working. The service clamps what it will grant (R10), so asking for
+		// the whole of it is asking for the run's own ceiling and no more.
+		return d + backend.TaskTimeoutSlack
+	}
+	// A task that names no total runs for the job's own timeout, which is a
+	// platform read this launcher does not make; the platform's maximum is
+	// what it asks for instead, and that is also the most the service will
+	// grant, so there is no slack to add here that would buy the run anything.
+	return backend.MaxRunTime
+}
+
+// slipIDUsable reports whether id is one slip id this launcher will put on a
+// job's environment. The id becomes ONE environment entry of the execution, so
+// a value that is empty, longer than any id the service draws, or not one
+// clean printable token would be an entry the service chose rather than the id
+// it granted — and the backend builds the execution's environment out of these
+// entries.
+func slipIDUsable(id string) bool {
+	return id != "" && len(id) <= maxSlipIDBytes && reviewPrintableToken(id)
+}
+
+// credentialsServiceURLOf is the address credentialsServiceLaunchEnv put on
+// this launch, and whether it put one there at all: the slip is asked for
+// exactly where the service's address is, so the two decisions cannot disagree
+// about whether this run has a service to ask.
+func credentialsServiceURLOf(entries []string) (string, bool) {
+	for _, kv := range entries {
+		if url, ok := strings.CutPrefix(kv, envCredentialsServiceURL+"="); ok {
+			return url, url != ""
+		}
+	}
+	return "", false
 }
 
 // releaseClaim drops our own claim after a failed launch, so a retry need

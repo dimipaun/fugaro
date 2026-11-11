@@ -729,8 +729,10 @@ minimum:
    the always-on orchestrator design's agent-in-a-job (PR #632, its §6 rule 4, and mobile
    D115's conditions). The two cannot both be built, and shipping either silently decides the
    other's question.
-3. **Ruling on the merge authority (D18)** — the tree's non-goal is *"Auto-merge. Fugaro never
-   merges."* (`docs/design/v1.md` §2), and the spec's opening sentence contradicts it.
+3. **Ruling on the merge authority (D18)** — the tree's non-goal was *"Auto-merge. Fugaro never
+   merges."* (`docs/design/v1.md` §2), and the spec's opening sentence contradicts it. **Amended
+   2026-11-10 by `docs/outer-loop-escalation`:** the non-goal now reads "No merge outside the orchestrator's gated rule",
+   so only the daemon merges and only under that rule's gate.
 4. **Saying what happens to the credential path (D4)** — whether v1 ships with the
    credential-free half only (P0–P7) and P8 waits for
    [docs/credentials-service/](../credentials-service/README.md)'s first slice, which is this

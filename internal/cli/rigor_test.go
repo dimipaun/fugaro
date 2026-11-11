@@ -1,0 +1,745 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rigor"
+)
+
+// rigor_test.go is G6's half of the `fugaro rigor` group (D1169,
+// docs/config-management/implementation-plan.md): `fugaro rigor set`, the
+// command docs/rigor-command/spec.md §3 and §5 design, writing through
+// applySettingsEdit — the one write path (settings_write.go) — as a layer write
+// of this machine's own project layer file (D830).
+//
+// The design's own rules are what these tests hold, one test each, because every
+// one of them is a refusal a later change could quietly drop:
+//
+//   - the rank rule (D832): a mode below what this project resolves to today is
+//     the sensitive direction, so it is the `Typed` step — refused in a coding
+//     agent's session with nothing written, and written at the owner's own
+//     terminal with the sentence saying what it lowers (D1180, D1552). The plan
+//     names this test's answer "refuses a mode below the resolved one" for the
+//     session half, which is what a session's fence does with a Typed step;
+//   - D834: `hotfix` is not a mode any layer sets, in either form, and the
+//     refusal names `fugaro run --mode hotfix`;
+//   - D838: `--area` addresses a rule by its glob, so a layer that carries one
+//     glob twice is refused and a pair is never created — the loader's own
+//     repeat rule (internal/config's validateRigor, F14) is the check;
+//   - §3 step 4's two absences, which are not the same absence: a file that does
+//     not exist while the project HAS a published layer is refused, naming
+//     `fugaro update`, rather than replaced, and a file that does not exist
+//     while the project has published NO layer is created as a project layer
+//     document carrying the local config's anchors and the edit — so the state a
+//     fresh `fugaro setup` leaves is one this command can reach. Which of the
+//     two it is, is the published-layer read's answer and nothing else, so the
+//     tests below give that read both answers.
+//
+// The world is the settings family's own: settingsWriteHome's hermetic
+// installation (project aurora, gcp_project aurora-gcp) and a layer file written
+// by the test at localcfg's one path — the path `fugaro update` seeds and this
+// command edits (localcfg.LayerFile). Which document the file is, and what it
+// must read as, is config.ParseProjectLayer's own anchor: the two anchors come
+// from the selected installation, so a fixture that named another project would
+// be refused before any rule below was asked.
+
+// rigorAnchors is the project layer file's three anchor keys with nothing else:
+// the shortest document this command edits, and the shape `fugaro update` seeds
+// from the published layer. The anchor values are the settings family's own
+// project aurora and its GCP project aurora-gcp (settingsFixture).
+const rigorAnchors = "version: 1\nproject: aurora\ngcp_project: aurora-gcp\n"
+
+// rigorAnchor is the anchor the layer file a settingsWriteHome test writes is
+// read against: the selected project's own name and GCP project.
+var rigorAnchor = config.LayerAnchor{Project: "aurora", GCPProject: "aurora-gcp"}
+
+// rigorReadsBack holds an edited document against the loader the write path
+// itself re-reads with (settingsReparse): a document this command writes is one
+// ParseProjectLayer accepts against the same anchor the publisher uses.
+func rigorReadsBack(t *testing.T, text string) {
+	t.Helper()
+	if _, ps := config.ParseProjectLayer([]byte(text), rigorAnchor); len(ps) > 0 {
+		t.Fatalf("the written file is not a project layer: %s\n%s", ps[0].String(), text)
+	}
+}
+
+// rigorMode is the mode the layer file a test seeds sets.
+func rigorModeSet(t *testing.T, text, mode string) string {
+	t.Helper()
+	return settingsManagedLayerFile(t, text+"defaults:\n  rigor:\n    default: "+mode+"\n")
+}
+
+// The red step, first half: a mode that ranks BELOW what this project resolves
+// to today is the sensitive direction (D832), and the sensitive direction is the
+// `Typed` step (D1180): a coding agent's session is refused it whatever --yes
+// says, with the diff and the command a person runs themselves, and nothing is
+// written (SD9). The second half is the door it does have: at the owner's own
+// terminal the same write lands, with the sentence saying what it lowers printed
+// beside the diff (D1552: a Typed step asks nothing, and a session is the fence
+// it keeps).
+//
+// The baseline is a RESOLUTION and not the key the file happens to hold — the
+// design's own point — but with no --repo and no --path the inputs are this
+// layer's default and its own rules, so `critical` resolving today is what makes
+// `startup` a lowering.
+func TestRigorSetRefusesAModeBelowTheResolvedOne(t *testing.T) {
+	settingsWriteHome(t)
+	path := rigorModeSet(t, rigorAnchors, "critical")
+	before := readFileString(t, path)
+
+	agentSession(t)
+	out, _, err := execute(t, "rigor", "set", "startup", "--yes")
+	if err == nil {
+		t.Fatalf("a coding agent's session lowered the project's rigor mode:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "coding agent's session") {
+		t.Errorf("the refusal does not name the session: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fugaro rigor set startup") {
+		t.Errorf("the refusal does not print the command to run: %v", err)
+	}
+	if !strings.Contains(out, "default: critical") {
+		t.Errorf("the refused write printed no diff:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "defaults.rigor.default") {
+		t.Errorf("the refusal does not name the key it refused: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed the layer file")
+	}
+
+	noAgentSession(t)
+	noTerminal(t)
+	out, _, err = execute(t, "rigor", "set", "startup")
+	if err != nil {
+		t.Fatalf("the owner's own terminal was refused a lowering: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if !strings.Contains(out, "lowers") {
+		t.Errorf("the write does not say what it lowers:\n%s", out)
+	}
+	got := readFileString(t, path)
+	if !strings.Contains(got, "default: startup") {
+		t.Errorf("the layer file does not carry the lowered mode:\n%s", got)
+	}
+	if strings.Contains(got, "default: critical") {
+		t.Errorf("the layer file still carries the mode it replaced:\n%s", got)
+	}
+}
+
+// The red step, second half: D834's refusal. `hotfix` is off the axis, ranks
+// below every on-axis mode, and is an operator's own run mode (D12), so no layer
+// may set it — as a default or as an area rule — and the refusal names the one
+// command that reaches it rather than offering a flag that would write it.
+func TestRigorSetRefusesHotfix(t *testing.T) {
+	settingsWriteHome(t)
+	path := rigorModeSet(t, rigorAnchors, "pro")
+	before := readFileString(t, path)
+	noAgentSession(t)
+	noTerminal(t)
+
+	for _, args := range [][]string{
+		{"rigor", "set", "hotfix"},
+		{"rigor", "set", "hotfix", "--area", "docs/**", "--name", "docs"},
+	} {
+		out, _, err := execute(t, args...)
+		if err == nil {
+			t.Fatalf("%v wrote hotfix into the layer file:\n%s", args, out)
+		}
+		if !strings.Contains(err.Error(), "fugaro run --mode hotfix") {
+			t.Errorf("%v: the refusal does not name the operator's own door: %v", args, err)
+		}
+	}
+	if readFileString(t, path) != before {
+		t.Error("a refused hotfix changed the layer file")
+	}
+}
+
+// The fence a raising write keeps, which is the one arm of it nothing else here
+// reads. A mode below the resolved one is refused in a session by the `Typed`
+// class before the session is consulted, and a managed project's session is
+// refused by the gate's allowlist, so both of those refusals hold even if the
+// document were read as a repository's own file. What turns a session away from
+// this write is that the file is NOT one: it is this machine's project layer
+// file, outside every checkout, and a session may not write it in any direction.
+// The document is at `pro` and the mode asked for is `critical`, so nothing else
+// in this command has a reason to refuse it.
+func TestRigorSetRefusesARaisingWriteInAnAgentSession(t *testing.T) {
+	settingsWriteHome(t)
+	path := rigorModeSet(t, rigorAnchors, "pro")
+	before := readFileString(t, path)
+	agentSession(t)
+
+	for _, args := range [][]string{
+		{"rigor", "set", "critical"},
+		{"rigor", "set", "critical", "--yes"},
+		{"rigor", "set", "critical", "--area", "docs/**", "--name", "docs"},
+	} {
+		out, _, err := execute(t, args...)
+		if err == nil {
+			t.Fatalf("%v wrote to the project layer file from a coding agent's session:\n%s", args, out)
+		}
+		if !strings.Contains(err.Error(), "coding agent's session") {
+			t.Errorf("%v: the refusal does not name the session: %v", args, err)
+		}
+		if !strings.Contains(out, "default: critical") && !strings.Contains(out, "match: docs/**") {
+			t.Errorf("%v: the refused write printed no diff:\n%s", args, out)
+		}
+		if !strings.Contains(err.Error(), "fugaro rigor set") {
+			t.Errorf("%v: the refusal does not print the command to run: %v", args, err)
+		}
+		if got := readFileString(t, path); got != before {
+			t.Fatalf("%v: the refused write changed the layer file:\n%s", args, got)
+		}
+	}
+}
+
+// The red step, third part: the ordinary write. A mode at or above what the
+// project resolves to is written into this machine's own project layer file
+// (D830), through the shared write path: the document is re-read strictly, the
+// old bytes are kept beside it, and every other byte of the file — a block, its
+// comments — is left exactly as it was, which is what yamledit is for. The
+// command ends with `next: fugaro update`, the stage that publishes it (D831),
+// and it prints the review floor beside the write: the floor is outside every
+// layer and this command cannot lower it. SD10 names `fugaro rigor floor` as the
+// command that changes one, and that command is G7's and not in this tree yet,
+// so the line names no command rather than sending a person to one that prints
+// this group's help.
+//
+// The plan's name for this test says "the local project config": the document is
+// this machine's own layer file, and the name is the plan's shorthand for it.
+func TestRigorSetWritesTheLocalProjectConfig(t *testing.T) {
+	settingsWriteHomeWith(t, "review_floor:\n  critical: [l2, l3]\n")
+	path := settingsManagedLayerFile(t, rigorAnchors+"# the layer this machine edits\ndefaults:\n  agent:\n    review_rounds: 4\n")
+	before := readFileString(t, path)
+	noAgentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "rigor", "set", "critical")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if !strings.Contains(out, "critical: l2, l3") {
+		t.Errorf("the write does not print the floor this project holds:\n%s", out)
+	}
+	if !strings.Contains(out, "cannot lower it") {
+		t.Errorf("the write does not say the floor is outside this command's reach:\n%s", out)
+	}
+	if strings.Contains(out, "fugaro rigor floor") {
+		t.Errorf("the write points at a command this tree does not have:\n%s", out)
+	}
+	if lines := strings.Split(strings.TrimRight(out, "\n"), "\n"); lines[len(lines)-1] != "next: fugaro update" {
+		t.Errorf("the last line is %q, want the one hand-off line", lines[len(lines)-1])
+	}
+	got := readFileString(t, path)
+	if !strings.Contains(got, "default: critical") {
+		t.Errorf("the layer file does not carry the mode:\n%s", got)
+	}
+	if !strings.Contains(got, "review_rounds: 4") || !strings.Contains(got, "# the layer this machine edits") {
+		t.Errorf("the write did not keep the rest of the file:\n%s", got)
+	}
+	if !strings.Contains(before, "review_rounds: 4") {
+		t.Fatal("the fixture did not write the block this test is about")
+	}
+	rigorReadsBack(t, got)
+}
+
+// The vocabulary is internal/rigor's, refused with the list in the message (§3
+// step 1): a near miss is not a mode, and nothing is written. The sentence is
+// this command's own — `fugaro run --mode`'s names a flag this command does not
+// have and offers to resolve a mode it cannot resolve — so the two are pinned
+// apart here.
+func TestRigorSetRefusesAVocabularyNearMiss(t *testing.T) {
+	settingsWriteHome(t)
+	path := rigorModeSet(t, rigorAnchors, "pro")
+	before := readFileString(t, path)
+	noAgentSession(t)
+	noTerminal(t)
+
+	for _, near := range []string{"Pro", "critical ", "crit", ""} {
+		out, _, err := execute(t, "rigor", "set", near)
+		if err == nil {
+			t.Fatalf("%q was written as a rigor mode:\n%s", near, out)
+		}
+		if !strings.Contains(err.Error(), "poc, startup, pro, critical, hotfix") {
+			t.Errorf("%q: the refusal does not print the vocabulary: %v", near, err)
+		}
+		if strings.Contains(err.Error(), "--mode") || strings.Contains(err.Error(), "leave it off") {
+			t.Errorf("%q: the refusal is `fugaro run --mode`'s sentence, naming a flag and a resolution this command has not got: %v", near, err)
+		}
+	}
+	if readFileString(t, path) != before {
+		t.Error("a refused mode changed the layer file")
+	}
+}
+
+// rigorPublishedLayer is the published-layer read, answered by the test: exists
+// says whether this project has published a layer, and readErr a bucket that
+// cannot be read at all — the three answers §3 step 4's decision is made on. The
+// returned flag reports whether the command made the read, so a test can say the
+// decision was taken on that answer rather than on the file's absence alone.
+func rigorPublishedLayer(t *testing.T, exists bool, readErr error) *bool {
+	t.Helper()
+	var read bool
+	old := layerPublishedRead
+	t.Cleanup(func() { layerPublishedRead = old })
+	layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
+		read = true
+		switch {
+		case readErr != nil:
+			return nil, 0, false, readErr
+		case !exists:
+			return nil, 0, false, nil
+		}
+		return []byte(rigorAnchors + "defaults:\n  rigor:\n    default: pro\n"), 7, true, nil
+	}
+	return &read
+}
+
+// §3 step 4's second absence: a file absent while the project HAS a published
+// layer is refused, and no byte is created where it would be. The refusal this
+// pins is the one write path's own sentence, and the absence it is written for is
+// the one where publishing a fresh, nearly empty layer over the project's real
+// one is the mistake this command must not make: the remedy is `fugaro update`,
+// whose Layer stage seeds the file from that layer (D831, merged).
+func TestRigorSetRefusesWithNoLocalFileWhileALayerIsPublished(t *testing.T) {
+	settingsWriteHome(t)
+	read := rigorPublishedLayer(t, true, nil)
+	path := localLayerPath(t)
+	noAgentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "rigor", "set", "critical")
+	if err == nil {
+		t.Fatalf("a write with no layer file to edit succeeded:\n%s", out)
+	}
+	if !*read {
+		t.Error("the refusal was made without asking whether the project has published a layer")
+	}
+	if !strings.Contains(err.Error(), "fugaro update") || !strings.Contains(err.Error(), path) {
+		t.Errorf("the refusal does not name the file and the remedy: %v", err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Error("the refusal created the file it refused to edit")
+	}
+}
+
+// A bucket that cannot be read is not the answer "this project has published no
+// layer": the file is created on that answer alone, because the layer a failed
+// read could not see is exactly the one a fresh, nearly empty file would be
+// published over by the next `fugaro update`. The refusal is the shared one, the
+// same sentence the published-layer case gets, and it creates nothing.
+func TestRigorSetRefusesWhenThePublishedLayerCannotBeRead(t *testing.T) {
+	settingsWriteHome(t)
+	read := rigorPublishedLayer(t, false, errors.New("the bucket answered with a refusal"))
+	path := localLayerPath(t)
+	noAgentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "rigor", "set", "critical")
+	if err == nil {
+		t.Fatalf("a write whose published-layer read failed created the file:\n%s", out)
+	}
+	if !*read {
+		t.Error("the refusal was made without asking whether the project has published a layer")
+	}
+	if !strings.Contains(err.Error(), "fugaro update") || !strings.Contains(err.Error(), path) {
+		t.Errorf("the refusal does not name the file and the remedy: %v", err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Error("the failed read created the file it could not decide about")
+	}
+}
+
+// §3 step 4's first absence, and the state a fresh `fugaro setup` leaves: no
+// local layer file and no published layer. The file is created as a project
+// layer document — the local config's three anchor values and nothing else of
+// that file, which the layer parser would refuse — and the change that was asked
+// for is written into it by the one write path, so what is left is not three
+// bare keys and not a second command's work. Both forms create it: the layer's
+// default here, and a rule below.
+func TestRigorSetCreatesTheFileWhenNoLayerIsPublished(t *testing.T) {
+	settingsWriteHome(t)
+	read := rigorPublishedLayer(t, false, nil)
+	path := localLayerPath(t)
+	noAgentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "rigor", "set", "critical")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !*read {
+		t.Error("the command created the file without asking whether the project has published a layer")
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("no layer file was created at %s: %v", path, statErr)
+	}
+	got := readFileString(t, path)
+	if !strings.HasPrefix(got, rigorAnchors) {
+		t.Errorf("the created file does not carry the installation's own anchors:\n%s", got)
+	}
+	if !strings.Contains(got, "default: critical") {
+		t.Errorf("the created file does not carry the mode that was asked for:\n%s", got)
+	}
+	rigorReadsBack(t, got)
+	if lines := strings.Split(strings.TrimRight(out, "\n"), "\n"); lines[len(lines)-1] != "next: fugaro update" {
+		t.Errorf("the last line is %q, want the one hand-off line", lines[len(lines)-1])
+	}
+
+	// The area form, on its own fresh installation: what the created document
+	// carries is the rule, and the anchors are still the local config's.
+	settingsWriteHome(t)
+	rigorPublishedLayer(t, false, nil)
+	path = localLayerPath(t)
+	out, _, err = execute(t, "rigor", "set", "critical", "--area", "docs/**", "--name", "docs")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got = readFileString(t, path)
+	if !strings.HasPrefix(got, rigorAnchors) {
+		t.Errorf("the created file does not carry the installation's own anchors:\n%s", got)
+	}
+	for _, want := range []string{"match: docs/**", "name: docs", "mode: critical"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the created file does not carry %q:\n%s", want, got)
+		}
+	}
+	rigorReadsBack(t, got)
+}
+
+// Nothing a refusal leaves behind includes the file the creation wrote: the
+// session fence refuses the write the creation was made for, and a rule that
+// cannot be built refuses it too, and both leave the machine without the file —
+// which is what makes the sentences' "nothing was written" true of the file and
+// not only of its bytes.
+func TestRigorSetCreatesNothingWhenItRefuses(t *testing.T) {
+	settingsWriteHome(t)
+	rigorPublishedLayer(t, false, nil)
+	path := localLayerPath(t)
+	agentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "rigor", "set", "critical")
+	if err == nil {
+		t.Fatalf("a coding agent's session created the project layer file:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "coding agent's session") {
+		t.Errorf("the refusal does not name the session: %v", err)
+	}
+	if !strings.Contains(out, "default: critical") {
+		t.Errorf("the refused write printed no diff of what it would have created:\n%s", out)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Error("the refused write left the file it had created behind")
+	}
+
+	noAgentSession(t)
+	_, _, err = execute(t, "rigor", "set", "critical", "--area", "docs/**")
+	if err == nil || !strings.Contains(err.Error(), "--name") {
+		t.Fatalf("a rule with no name was written: %v", err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Error("the refused rule left the file the creation had written behind")
+	}
+}
+
+// §5: a rule is addressed by its glob. A glob the layer does not carry is added
+// and the rule then needs a name — it is what the run record and the pull
+// request print (rigor.Area's own reason) — and a rule that has one is written
+// whole, in the layer's own format, with every other byte of the file kept.
+func TestRigorSetAreaAddsARuleAndRequiresAName(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsManagedLayerFile(t, rigorAnchors+"defaults:\n  agent:\n    review_rounds: 4\n")
+	before := readFileString(t, path)
+	noAgentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "rigor", "set", "critical", "--area", "docs/**")
+	if err == nil {
+		t.Fatalf("a rule with no name was written:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--name") {
+		t.Errorf("the refusal does not name the flag that supplies one: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed the layer file")
+	}
+
+	out, _, err = execute(t, "rigor", "set", "critical", "--area", "docs/**", "--name", "docs")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got := readFileString(t, path)
+	if !strings.Contains(got, "areas:") || !strings.Contains(got, "match: docs/**") ||
+		!strings.Contains(got, "name: docs") || !strings.Contains(got, "mode: critical") {
+		t.Errorf("the layer file does not carry the rule:\n%s", got)
+	}
+	if !strings.Contains(got, "review_rounds: 4") {
+		t.Errorf("the write did not keep the rest of the file:\n%s", got)
+	}
+	rigorReadsBack(t, got)
+
+	// A name without a glob names nothing: the rule a name belongs to is the one
+	// the glob addresses.
+	_, _, err = execute(t, "rigor", "set", "critical", "--name", "docs")
+	if err == nil || !strings.Contains(err.Error(), "--area") {
+		t.Fatalf("--name without --area was accepted: %v", err)
+	}
+}
+
+// A glob the layer already carries has its mode replaced — one rule, its name
+// kept — and the replacement is a lowering when the rule's own paths resolve
+// higher today, which is the same rank rule read over the rule's own input
+// (§5, D832).
+func TestRigorSetAreaReplacesTheModeOfAnExistingGlob(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsManagedLayerFile(t, rigorAnchors+
+		"defaults:\n  rigor:\n    areas:\n      - match: docs/**\n        mode: critical\n        name: docs\n")
+	noAgentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "rigor", "set", "critical", "--area", "docs/**", "--name", "the docs")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got := readFileString(t, path)
+	if strings.Count(got, "match: docs/**") != 1 {
+		t.Errorf("the write added a second rule for one glob:\n%s", got)
+	}
+	if !strings.Contains(got, "name: the docs") {
+		t.Errorf("--name on an existing rule did not rename it:\n%s", got)
+	}
+
+	// The mode a rule sets is a floor over its paths: lowering it in a coding
+	// agent's session is refused, exactly as lowering the default is.
+	agentSession(t)
+	before := readFileString(t, path)
+	_, _, err = execute(t, "rigor", "set", "poc", "--area", "docs/**")
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a coding agent's session lowered an area rule's mode: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed the layer file")
+	}
+}
+
+// The rank rule's second baseline (rigorAreaLowered). §3's baseline is a
+// resolution over the rule's own glob, and a glob that does not match its own
+// literal text — a brace or a character class — resolves to the layer's default
+// against itself, so a rule lowered through one of those read as no change at
+// all: the owner's terminal printed no lowering sentence and a coding agent's
+// session wrote the mode. The rule the edit replaces is what decides instead,
+// and both halves of the sensitive direction are pinned here.
+func TestRigorSetAreaLowersABraceGlobRuleTheResolutionCannotSee(t *testing.T) {
+	const brace = "docs/{a,b}/**"
+	seeded := rigorAnchors +
+		"defaults:\n  rigor:\n    default: pro\n    areas:\n      - match: " + brace + "\n        mode: critical\n        name: docs subfolders\n"
+	settingsWriteHome(t)
+	path := settingsManagedLayerFile(t, seeded)
+	noAgentSession(t)
+	noTerminal(t)
+
+	// startup is below the rule's own critical although the resolution over the
+	// glob's literal text reads pro before (the default) and pro after.
+	out, _, err := execute(t, "rigor", "set", "startup", "--area", brace)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "lowers") {
+		t.Errorf("the owner's terminal did not print the lowering sentence:\n%s", out)
+	}
+	got := readFileString(t, path)
+	if !strings.Contains(got, "mode: startup") {
+		t.Errorf("the write did not replace the rule's mode:\n%s", got)
+	}
+	if strings.Count(got, "match: "+brace) != 1 {
+		t.Errorf("the write added a second rule for one glob:\n%s", got)
+	}
+
+	// And the same edit in a coding agent's session: the Typed class is what
+	// refuses it, so a session reading the glob as a path would have written it.
+	path = settingsManagedLayerFile(t, seeded)
+	agentSession(t)
+	_, _, err = execute(t, "rigor", "set", "startup", "--area", brace)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a coding agent's session lowered a brace-glob rule's mode: %v", err)
+	}
+	if readFileString(t, path) != seeded {
+		t.Error("the refused write changed the layer file")
+	}
+}
+
+// The rank rule's third baseline (rigorAreaIsNew): a rule the layer does not
+// carry yet. Adding a rule never lowers a resolution — it can only raise or keep
+// it — so the resolution over the glob reads the same before and after, and the
+// rule's own mode is not there to compare against either: with the default at
+// `critical`, adding a rule at `poc` lowers every path the glob covers and
+// neither baseline above reports it. An area rule replaces the default for the
+// paths it matches, so the mode a new rule is compared against is the layer's
+// default, the floor every path falls back to. Both halves of the sensitive
+// direction are pinned here, for the glob that matches its own literal text and
+// for the brace pattern that does not.
+func TestRigorSetAreaRefusesANewRuleBelowTheDefault(t *testing.T) {
+	const seeded = rigorAnchors + "defaults:\n  rigor:\n    default: critical\n"
+
+	for _, glob := range []string{"docs/**", "docs/{a,b}/**"} {
+		settingsWriteHome(t)
+		path := settingsManagedLayerFile(t, seeded)
+		noAgentSession(t)
+		noTerminal(t)
+
+		out, _, err := execute(t, "rigor", "set", "poc", "--area", glob, "--name", "docs")
+		if err != nil {
+			t.Fatalf("--area %s: %v\n%s", glob, err, out)
+		}
+		if !strings.Contains(out, "lowers") {
+			t.Errorf("--area %s: the owner's terminal did not print the lowering sentence:\n%s", glob, out)
+		}
+		got := readFileString(t, path)
+		if !strings.Contains(got, "mode: poc") || !strings.Contains(got, "match: "+glob) {
+			t.Errorf("--area %s: the write did not add the rule:\n%s", glob, got)
+		}
+	}
+
+	// The same edit in a coding agent's session is refused, because the class is
+	// Typed: a session may not add a rule that lowers what the project resolves
+	// to for the paths the rule covers.
+	settingsWriteHome(t)
+	path := settingsManagedLayerFile(t, seeded)
+	agentSession(t)
+	noTerminal(t)
+	_, _, err := execute(t, "rigor", "set", "poc", "--area", "docs/{a,b}/**", "--name", "docs")
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a coding agent's session added a rule below the default: %v", err)
+	}
+	if readFileString(t, path) != seeded {
+		t.Error("the refused write changed the layer file")
+	}
+}
+
+// D838 with F14: two rules with one glob in a layer are refused, and by the
+// loader's own repeat rule rather than by a second table here — a glob addresses
+// one rule, so an edit that cannot tell which one it is addressing writes
+// nothing. The refusal is the one the file's own reader prints.
+func TestRigorSetAreaRefusesATwinGlob(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsManagedLayerFile(t, rigorAnchors+
+		"defaults:\n  rigor:\n    areas:\n      - match: docs/**\n        mode: critical\n        name: docs\n"+
+		"      - match: docs/**\n        mode: pro\n        name: docs again\n")
+	before := readFileString(t, path)
+	noAgentSession(t)
+	noTerminal(t)
+
+	_, _, err := execute(t, "rigor", "set", "poc", "--area", "docs/**")
+	if err == nil {
+		t.Fatal("a layer carrying one glob twice was edited")
+	}
+	if !strings.Contains(err.Error(), "docs/**") || !strings.Contains(err.Error(), "repeats") {
+		t.Errorf("the refusal does not name the glob this edit cannot address: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed the layer file")
+	}
+}
+
+// §5's shape rules are rigor.Area's own, and this command reads them rather than
+// restating them: a glob that is absolute, that walks up out of the repository,
+// or that is not a doublestar pattern, and a name outside areaNameRE, are each
+// refused with the rule's own words, and nothing is written.
+func TestRigorSetAreaRefusesAGlobOutsideTheRepository(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsManagedLayerFile(t, rigorAnchors)
+	before := readFileString(t, path)
+	noAgentSession(t)
+	noTerminal(t)
+
+	for _, tc := range []struct{ glob, name, want string }{
+		{"/etc/**", "etc", "relative"},
+		{"../secrets/**", "secrets", ".."},
+		{"docs/[", "docs", "glob"},
+		{"docs/**", "docs\nname", "name"},
+	} {
+		out, _, err := execute(t, "rigor", "set", "critical", "--area", tc.glob, "--name", tc.name)
+		if err == nil {
+			t.Fatalf("--area %q --name %q was written:\n%s", tc.glob, tc.name, out)
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("--area %q --name %q: the refusal does not carry %q: %v", tc.glob, tc.name, tc.want, err)
+		}
+	}
+	if readFileString(t, path) != before {
+		t.Error("a refused rule changed the layer file")
+	}
+}
+
+// §3 step 5's shape check is read before the rule is built, and it is the
+// sentence that names the rule the way the loader names it — by its index in
+// defaults.rigor.areas — so a person is told which rule is wrong and in the
+// rule's own words. The re-read one line later refuses the same rule for the
+// same reason, which is why the guard's sentence is what this pins: a name past
+// rigor.MaxAreaName reaches it, and the refusal must be the guard's own and not
+// the loader's re-read of the bytes it would have written.
+func TestRigorSetAreaRefusesARuleItsOwnShapeCheckRejects(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsManagedLayerFile(t, rigorAnchors+
+		"defaults:\n  rigor:\n    areas:\n      - match: docs/**\n        mode: critical\n        name: docs\n")
+	before := readFileString(t, path)
+	noAgentSession(t)
+	noTerminal(t)
+
+	_, _, err := execute(t, "rigor", "set", "critical", "--area", "docs/**", "--name", strings.Repeat("n", rigor.MaxAreaName+1))
+	if err == nil {
+		t.Fatal("a rule whose name is past the limit was written")
+	}
+	want := fmt.Sprintf("defaults.rigor.areas[0]: a name must be 1 to %d characters of letters, digits, space, dash, underscore and dot, starting with a letter or a digit; nothing was written", rigor.MaxAreaName)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not the shape check's own sentence with the rule's index: %v", err)
+	}
+	if strings.Contains(err.Error(), "would not read back") {
+		t.Errorf("the loader's re-read is what refused the rule, so the shape check did not: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused rule changed the layer file")
+	}
+}
+
+// The layer file is the document the managed gate judges (M0) and its answer is
+// recorded (M6, D1014), so a managed project's coding agent's session reaches the
+// gate rather than only this command's fence — and the gate's own sentence is
+// what refuses it. What the gate admits here is its allowlist's business
+// (settingsManagedKeys, D1027): the rigor keys are not on it, so the refusal is
+// the allowlist's, and the record of it lands in the runs bucket.
+func TestRigorSetManagedRefusesTheKeyInAnAgentSession(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	r.managedRunsBucket(t)
+	path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  rigor:\n    default: pro\n")
+	before := readFileString(t, path)
+	agentSession(t)
+
+	out, _, err := execute(t, "rigor", "set", "critical")
+	if err == nil {
+		t.Fatalf("a managed project's session wrote the rigor mode:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "not a key a coding agent's session writes") {
+		t.Errorf("the gate's own refusal is not what refused the write: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed the layer file")
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 {
+		t.Fatalf("%d gate records, want the one refusal of this write: %+v", len(recs), recs)
+	}
+	if !strings.HasSuffix(recs[0].Command, " rigor set") {
+		t.Errorf("the record names %q, want the command a person types", recs[0].Command)
+	}
+}

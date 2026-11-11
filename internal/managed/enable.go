@@ -30,10 +30,15 @@ import (
 // apply-time budget read of internal/managed/budget.go succeeded. The gate is
 // therefore no longer a value the release chooses — it is the *answer* of a
 // read of the project's own creation fact, which is what makes it the
-// privilege boundary the plan's Task 4.4 says the commit is about. A managed
-// project with no recorded budget, an unreadable marker, a marker of a version
-// this build does not know and a marker naming another project all leave the
-// gate closed.
+// privilege boundary the plan's Task 4.4 says the commit is about. An
+// unreadable marker, a marker of a version this build does not know and a
+// marker naming another project all leave the gate closed. A managed project
+// whose creation fact records no budget amount (the marker's version 1) is the
+// one case that now opens the gate with a WARNING rather than a refusal
+// (D1545): the read answered that the project is managed, and what it lacked
+// was the evidence that the owner chose a budget, which the owner can add at
+// their own terminal — so the apply proceeds and the warning reaches the
+// session (warning, below, printed by Apply and carried on Result).
 //
 // It is a value in the build and NOT a flag or an environment variable, which
 // is the whole of the shape: the session that applies is a coding agent's, and
@@ -58,11 +63,26 @@ type Enable struct {
 	// value is false, so a caller that forgets to thread a read through is
 	// refused rather than admitted.
 	read bool
+	// warning is why the gate opened without a recorded amount: the one case
+	// D1545 takes (a managed creation fact that records no budget, Enable's
+	// own comment). It is non-empty only on a gate ApplyGate opened with a
+	// warning, and it is what Apply prints before it applies and what Result
+	// carries, so a gate that opened for a reason nobody was told about cannot
+	// happen.
+	warning string
 }
 
 // Budget is the pair the gate was opened on: the zero Budget for a closed
-// gate.
+// gate, and the zero Budget for a gate opened with a warning (a version-1
+// creation fact records no amount to carry).
 func (e Enable) Budget() Budget { return e.budget }
+
+// Warning is why the gate opened without a recorded budget amount, "" when it
+// opened on one or is closed. It is the sentence the owner already reads
+// (ApplyGate's default branch), so the session that applies is told what the
+// project is missing and what its owner can do about it, and it is recorded
+// on Result so the command can carry it.
+func (e Enable) Warning() string { return e.warning }
 
 // Open reports whether an apply-time budget read opened the gate — the same
 // answer Refuse gives, as a boolean.
@@ -80,14 +100,15 @@ var ErrNotEnabled = errors.New("the managed apply is not enabled")
 // to mean is that nothing was read at all. The sentence a reader acts on is
 // not this one — it is the read's own refusal, built by ApplyGate and returned
 // by the caller before any of this is reached.
-const NotEnabled = "the managed apply was refused: no apply-time budget read opened it, and an apply with no recorded budget amount is never made"
+const NotEnabled = "the managed apply was refused: no apply-time budget read opened it, and an apply is never made behind a gate nothing opened"
 
 // Refuse is the gate's whole behaviour: nil when an apply-time budget read
-// opened it, and the one refusal when it is not. It is the FIRST thing Apply
-// reads, so an Enable that was never built by ApplyGate refuses however it is
-// called.
+// opened it — on a recorded amount, or with a warning (Enable.warning) that
+// the project's creation fact records none — and the one refusal when it is
+// not. It is the FIRST thing Apply reads, so an Enable that was never built by
+// ApplyGate refuses however it is called.
 func (e Enable) Refuse() error {
-	if e.read && e.budget.Valid() {
+	if e.read && (e.budget.Valid() || e.warning != "") {
 		return nil
 	}
 	return fmt.Errorf("%w: %s", ErrNotEnabled, NotEnabled)

@@ -148,9 +148,6 @@ func TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate(t *testing.T) {
 		unreadable bool
 		want       []string
 	}{
-		{"the marker is version 1: managed, and no amount recorded",
-			[]byte(`{"version":1,"gcp_project":"proj-1234"}`), false,
-			[]string{"has no budget recorded", "fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC", "fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
 		{"there is no marker at all", nil, false, []string{"is not managed", "is not there"}},
 		{"the marker exists and cannot be read", []byte(v2), true, []string{"is not managed", "cannot be read"}},
 		// A version-2 marker whose figure fails Budget.Check is reported as an
@@ -352,6 +349,146 @@ func TestManagedApplyRunsPastAnOpenGate(t *testing.T) {
 	}
 	if !initWithCred {
 		t.Fatalf("an open gate did not go on to launch terraform's init with the deployer's credential file (calls: %v)", verbs)
+	}
+}
+
+// TestManagedApplyRefusesAContentFindingAndKeepsNoRecordOfIt is D1545's split
+// as this command answers it, and it is the answer the command has always
+// given: a delete of a type D1551 does not call data-bearing and no list of the
+// owner's admits is a content finding, which the gate records in Warnings for
+// the commands it stands in for. `fugaro managed apply` is not one of them
+// (D1011, the spec's "not a change to managed apply"): it writes no audit
+// record, so the ruling's other half — the finding is recorded and `fugaro
+// doctor` flags it — has nothing to stand on here, and a finding that neither
+// refuses nor reaches doctor would apply the plan with nothing kept in the
+// finding's place. So it is folded into the verdict's refusals (apply.go's
+// gateAndApply) and the session reads it as the refusal it is, in the same
+// lines a refusal is always rendered in. The audit family is read back beside
+// it: this command still writes no record, and a version that started writing
+// one — or that went back to applying the warned plan — fails here rather than
+// in a reader's search for an object that is not there.
+func TestManagedApplyRefusesAContentFindingAndKeepsNoRecordOfIt(t *testing.T) {
+	r, root, _ := managedOpenGateRig(t)
+	// The plan a managed cover can read — the configuration it reads the
+	// provisioners, providers and data sources of, and the provider's own
+	// project — whose one change is the removal of a Run job no entry of the
+	// owner's list approves (the rig's allow list holds nothing). That removal
+	// is the gate's content half because google_cloud_run_v2_job is classified
+	// and not data-bearing (D1551), which is exactly the finding this command
+	// refuses and the converge set would record. The job the removal takes away
+	// is the managed project's own — its name carries the prefix and it runs as
+	// one of the project's managed accounts — because a delete is read as the
+	// resource it removes (removed), so a before view that was not this
+	// project's would be refused for that reason instead.
+	b, err := json.Marshal(map[string]any{
+		"format_version": "1.2",
+		"configuration": map[string]any{"provider_config": map[string]any{"google": map[string]any{
+			"name": "google", "full_name": "registry.terraform.io/hashicorp/google",
+			"expressions": map[string]any{"project": map[string]any{"constant_value": initProject}}}}},
+		"resource_changes": []any{map[string]any{
+			"address": "module.managed.google_cloud_run_v2_job.worker", "mode": "managed",
+			"type": "google_cloud_run_v2_job", "name": "worker",
+			"provider_name": "registry.terraform.io/hashicorp/google",
+			"change": map[string]any{"actions": []string{"delete"}, "before": map[string]any{
+				"name": tf.ManagedPrefix + "worker",
+				"template": []any{map[string]any{"template": []any{map[string]any{
+					"service_account": tf.ManagedPrefix + "worker@" + initProject + ".iam.gserviceaccount.com"}}}}}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.script["show"] = map[string]any{"stdout": string(b)}
+	r.save(t)
+
+	out, errOut, _ := execute(t, "managed", "apply", root)
+	got := out + errOut
+	for _, want := range []string{
+		"nothing was applied: the gate refused the plan of ",
+		"the managed gate refused the plan, so nothing is applied",
+		"module.managed.google_cloud_run_v2_job.worker",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the session does not read the content finding as a refusal, missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "applies it anyway") {
+		t.Errorf("the session is told the warned plan is applied, which this command does not do:\n%s", got)
+	}
+	list, err := managedStorage(t, r.gcs).Objects.List(initRunsBucket).Prefix(managedmode.AuditPrefix).Context(context.Background()).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 0 {
+		t.Errorf("a managed apply wrote %d object(s) under %s, and this command keeps no record (D1011): %v", len(list.Items), managedmode.AuditPrefix, list.Items)
+	}
+}
+
+// TestManagedApplyWarnsWhenTheMarkerRecordsNoBudget is D1545's one exception to
+// the refusal table above, and the reason the version-1 row is not in it: a
+// version-1 marker that NAMES THIS PROJECT is a managed creation fact, so the
+// read answered the question it was asked and what is missing is only the
+// evidence that the owner chose a budget — which the owner can add at their own
+// terminal. The gate therefore opens WITH A WARNING rather than refusing: the
+// apply goes on past the gate, exactly as an open gate does above, and the
+// session reads the sentence ApplyGate built and Apply printed (Request.Out,
+// which this command's reporter points at stderr).
+//
+// The warning is asserted where it is written, from Enable.Warning, and not by
+// re-deriving it here: the five pieces are the sentence's own opening, the
+// read's reason, the owner's two commands and what the warning does here — the
+// apply proceeds, and no audit record of it is written.
+func TestManagedApplyWarnsWhenTheMarkerRecordsNoBudget(t *testing.T) {
+	r, root, mints := managedOpenGateRig(t)
+	// The rig's own marker is a version 2, the open gate the test above runs
+	// past; the world this test is about records no amount, and it names this
+	// project, so the second read IsManaged makes answers "managed" and the one
+	// warning D1545 takes is the one raised.
+	r.gcs.Put(initRunsBucket, "fugaro/managed.json", []byte(`{"version":1,"gcp_project":"proj-1234"}`))
+
+	out, errOut, _ := execute(t, "managed", "apply", root)
+	got := out + errOut
+	for _, want := range []string{
+		initProjectName + " has no budget recorded (",
+		"records no budget amount for " + initProjectName,
+		"fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC",
+		"fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID",
+		"this apply proceeds on that warning and keeps no audit record of it",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the owner does not read the gate's own warning, missing %q:\n%s", want, got)
+		}
+	}
+	// And the family that warning would be in holds nothing: `fugaro managed apply`
+	// is the one command the audit design cites and does not touch (D1011, the
+	// spec's "not a change to managed apply"), so it is not in the converge set
+	// and the family `fugaro doctor` reads holds nothing about this apply. The
+	// sentence above says exactly that, and this reads the family back to hold
+	// it to it: a wording that went on promising a record would be a reader
+	// sent to an empty prefix.
+	list, err := managedStorage(t, r.gcs).Objects.List(initRunsBucket).Prefix(managedmode.AuditPrefix).Context(context.Background()).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 0 {
+		t.Errorf("a managed apply wrote %d object(s) under %s, and its own warning says it keeps no record (D1011): %v", len(list.Items), managedmode.AuditPrefix, list.Items)
+	}
+	// And a warning is not a refusal: the run goes on past the gate to the
+	// steps it guards, which is what "the apply proceeds" promises.
+	if !readAllowList(r) {
+		t.Error("a warned gate did not go on to read the owner's delete list")
+	}
+	calls := mints()
+	if !slices.ContainsFunc(calls, func(p string) bool { return strings.HasSuffix(p, ":generateAccessToken") }) {
+		t.Errorf("a warned gate did not go on to assume the deployer (impersonation calls: %v)", calls)
+	}
+	var initWithCred bool
+	for _, c := range r.fakeCalls(t) {
+		if c.Args[0] == "init" && c.Credentials {
+			initWithCred = true
+		}
+	}
+	if !initWithCred {
+		t.Fatal("a warned gate did not go on to launch terraform's init with the deployer's credential file")
 	}
 }
 

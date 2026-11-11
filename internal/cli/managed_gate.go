@@ -124,8 +124,8 @@ type managedGateFacts struct {
 	// the budget database already asks.
 	Declined string
 	// Identity is the account the write ran as, when the command knows better
-	// than the credentials do (the deployer account of `managed apply`); an
-	// empty one is filled from the credentials in force.
+	// than the credentials do; an empty one is filled from the credentials in
+	// force, which is what every command in the gate's own set passes.
 	Identity string
 	// AgentMarker is the session's own environment marker, "" for a person at a
 	// terminal. It is recorded rather than trusted: it says what the session
@@ -358,14 +358,14 @@ func (g *managedGate) record(ctx context.Context, conv managedmode.Converge) err
 		return nil
 	}
 	if isAccessDenied(err) {
-		return userErr("the step's audit record could not be written to gs://%s, and a managed apply that leaves no trail fails the command (D1014): the operator's own account needs storage.objects.create under %s there",
+		return userErr("the step's audit record could not be written to gs://%s, and a managed step that leaves no trail fails the command (D1014): the operator's own account needs storage.objects.create under %s there",
 			safetext.Field(g.env.lc.RunsBucketName()), safetext.Field(managedmode.AuditPrefix))
 	}
 	return remote(fmt.Errorf("writing the audit record of %s for %s: %w", safetext.Field(g.facts.Subcommand), safetext.Field(g.env.lc.Name), safetext.FieldErr(err)))
 }
 
 // identity is the account a record names: the caller's own when it named one
-// (the deployer account of `managed apply`), and otherwise the credentials in
+// (no command in the gate's set does today), and otherwise the credentials in
 // force, as the account they belong to. It is the first thing an owner asks of
 // a record — "who ran this in my project" — so a record whose identity could
 // not be established at all is refused by the writer rather than written with
