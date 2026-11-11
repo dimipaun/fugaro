@@ -2988,21 +2988,25 @@ scope keeps its checkout and its card**; the new scopes are what the dropdown
 adds beside it (D1356).
 
 **`--source` selects the scope, and the set is closed.** `all` is the default and
-is the union of the scopes that exist — today the coordinator alone —
-`coordinator` is the stored view, and `orchestrator:<id>` and `local:<id>` are
-**refused with "no orchestrator is installed in this build"** until CG4 and CG5
-register their readers: an honest refusal, never an empty graph, because a screen
-must be able to tell "nothing here" from "not asked". The value reaches argv from
-the renderer, so the CLI refuses everything but the closed set below **before it
-reads anything** (H1), and the console sends only a value a previous read listed
-(F21):
+is the union of the scopes that exist — the coordinator's stored view, and one
+scope per orchestrator the project's database holds or this machine has a cached
+brief for (CG4's rule, D1358) — `coordinator` is the stored view alone,
+`orchestrator:<id>` is one orchestrator's state node, and `local:<id>` is the
+same node read as one this machine's daemon drives, falling back to its cached
+brief when there is none (CG5). **An id neither the database nor this machine
+knows is refused**, naming the scope and `fugaro orchestrator ls`, because a
+screen must be able to tell "nothing here" from "not asked" — and never answered
+with an empty document, which is the same shape a scope with no work in it
+prints. The value reaches argv from the renderer, so the CLI refuses everything
+but the closed set below **before it reads anything** (H1), and the console sends
+only a value a previous read listed (F21):
 
 | Value | What it names |
 | --- | --- |
-| `all` | every scope that exists: today the coordinator's stored view, and the orchestrator scopes as they are built |
+| `all` | every scope that exists: the coordinator's stored view, and one scope per orchestrator the database holds or this machine runs (CG4's union) |
 | `coordinator` | the coordinator's stored view: every repository it has reconciled (§6.13), with no checkout |
-| `orchestrator:<id>` | one orchestrator's node under `orchestrator/` — **refused today**, CG4's reader |
-| `local:<id>` | one local orchestrator, read through its node and its cache file — **refused today**, CG5's reader |
+| `orchestrator:<id>` | one orchestrator's state node under `orchestrator/`, read through the caller's own credential (D1357) |
+| `local:<id>` | one orchestrator this machine's daemon drives: the same node, and the cached brief when the node is not there (CG5, D1358) |
 
 An id is one lower-case letter or digit, then up to 39 more of those or a hyphen,
 and nothing else. So a leading `-` (which would reach argv as a flag), a path
@@ -3026,7 +3030,7 @@ one entry of `sources`:
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `source` | string | never | never | the source this state is about (`graph.Scope.String`): `coordinator`, `orchestrator:<id>` or `local:<id>`, and **never `all`** — `all` is a selector and not a source, so a read that selected it (`graph --json`'s default) writes one entry per scope that exists, each named for itself, which today is one `coordinator` entry. It is the source half of every `key` that came from it, and a value a console may send back as `--source` |
+| `source` | string | never | never | the source this state is about (`graph.Scope.String`): `coordinator`, `orchestrator:<id>` or `local:<id>`, and **never `all`** — `all` is a selector and not a source, so a read that selected it (`graph --json`'s default) writes one entry per scope that exists, each named for itself: the coordinator's stored view first, then one per orchestrator id, in id order. A project with no orchestrator and nothing cached answers with the one `coordinator` entry and nothing else. It is the source half of every `key` that came from it, and a value a console may send back as `--source` |
 | `state` | string | never | never | one of the four words below. **The whole answer**, so a screen draws it as a word and never as a colour alone (H3, H10) |
 | `as_of` | string | never | **yes** | RFC 3339; when this source's data was last known good. **Null when there is no such time**, which is a source that has never read: null is not "now", and a screen must not draw an age from it — it draws one from this field when it is set, and never from `generated_at`. **The coordinator's stored view carries no time of its own** — it is a function of its inputs, which is why the Coordinator screen claims no age for it (CG2) — so a caller that read the views without knowing when the sweep stored them has none to give and prints null, and **`graph --json`, a one-shot read, is that caller**: its coordinator scope has a null `as_of` and is never stale by age. The stream (CG7) is the caller that knows its own read's time and can fill it; the sweep's own marker is a separate fact and not this field |
 | `reason` | string | never | never | why, in words, when the state is not `up`; `""` when it is. The read's own sentence, sanitised like every other string here, and the field a screen shows **beside** the state rather than instead of it |
@@ -3133,11 +3137,18 @@ and the next `seq` rather than a delta — the client restarts its own subscript
 and each connect begins with a full `put` of the subtree (`rtdb.Client.Stream`)
 — so a reader never has to ask what it missed.
 
-**One subscription per scope.** The child subscribes to **one** `coordinator/`
-subtree per scope it covers, shared across that scope's nodes rather than opened
-once per node (H6, F12): an RTDB stream is a held connection, and the console
-runs this one only while the Graph tab is visible and counts it in
-`MAX_LIVE_FEEDS` (CG9b, CG11).
+**One subscription per scope subtree.** The child subscribes to **one** node per
+scope subtree it covers, shared across that scope's nodes rather than opened once
+per node (H6, F12): `all` covers two — `/coordinator` and `/orchestrator` — a
+single orchestrator scope covers that id's own node under the second, and
+`coordinator` covers the first alone (`graph.ScopeSubtrees`). An RTDB stream is a
+held connection, and the console runs these only while the Graph tab is visible
+and counts them in `MAX_LIVE_FEEDS` (CG9b, CG11). **The first document waits for
+every subtree's own opening `put`** — the transport's proof that the listen is
+live (rtdb.Client.Stream) — so a subtree that is slow to connect is in the first
+snapshot rather than in a second one, and a subtree that withdraws before its put
+is a scope that is `down` in that first document rather than a wait that never
+ends.
 
 ### 6.23 `fugaro security paths --json` — the list in force, and the answer per path
 
