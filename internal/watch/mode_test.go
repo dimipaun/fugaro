@@ -57,7 +57,9 @@ func TestWatchShowsALiveRunsMode(t *testing.T) {
 // scrub refuses, so the recorded-fixture workflow would fail on any recording
 // that happened to catch a run still waiting.
 func TestWatchShowsAQueuedRunsModeAsAbsent(t *testing.T) {
-	v := MergeQueued(fixture(), Config{},
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"acme%2Fapp":{"r1":`+agent("acme/app", "a live run", `,"mode":"critical","from":"area"`)+`}}`, t0)
+	v := MergeQueued(Build(s, t0, Config{}), Config{},
 		[]QueuedRun{{Run: "r-queued1", Slug: "acme__app", Workflow: "web", LaunchedAt: t0.Add(-2 * time.Minute)}}, "", t0)
 
 	var row RunRow
@@ -87,5 +89,14 @@ func TestWatchShowsAQueuedRunsModeAsAbsent(t *testing.T) {
 	}
 	if jr.Mode != "-" || jr.From != "-" {
 		t.Fatalf("queued run in --json = Mode:%q From:%q, want the - every other absent value shows", jr.Mode, jr.From)
+	}
+
+	// The contract is about the whole frame, not this one row: every run in
+	// runs[] carries a value for both keys, so no row kind can be added that
+	// leaves one at the zero value and hands a reader an empty string.
+	for _, r := range BuildJSON("aurora", v).Runs {
+		if r.Mode == "" || r.From == "" {
+			t.Fatalf("run %s = Mode:%q From:%q, want a value for both keys", r.Run, r.Mode, r.From)
+		}
 	}
 }
