@@ -345,6 +345,54 @@ func TestRunContinuesWithAnUnreadableLedgerChargedTheCap(t *testing.T) {
 	}
 }
 
+// TestRunContinuesWithAnUnmeasuredLedgerRefused: with the budget on, a
+// chain-limited dimension the read could not measure is never read as a zero —
+// a missing ledger read as free restores the chain's whole budget, which is
+// cheaper than forging one (F14). D1049 charges an unreadable ledger the
+// per-run cap, so the dimension is unmeasured only where this installation
+// sets no cap for it to be charged — the ordinary case for tokens, whose cap
+// is optional policy with no database counterpart — and there the launch is
+// refused rather than handed the chain's whole token limit again. The refusal
+// names the run whose ledger could not be read, and --used-tokens is the way
+// out: a caller who knows the figure states it (D1048).
+func TestRunContinuesWithAnUnmeasuredLedgerRefused(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	limitsImage(t, f.cloudFixture)
+	limitsCheckout(t)
+	// A chain that limits the token dimension alone, whose run has no ledger
+	// node at all: the dollars of the chain are not limited, so nothing else
+	// answers this launch.
+	tokens := int64(900_000)
+	seedChainRun(t, f.cloudFixture, chainRun, chainSpent, task.Overrides{MaxTokens: &tokens})
+	_, _, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a chain whose token spend cannot be established refused", err)
+	}
+	for _, want := range []string{
+		"--continues " + task.ShortRun(chainRun),
+		"token spend cannot be established",
+		chainRun, // the run whose ledger could not be read
+		"no ledger node",
+		"--used-tokens",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to name %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none: the whole token limit was about to be handed over", n)
+	}
+	// The figure the caller states is the charge, and the launch carries what
+	// is left of the chain's own limit (900_000 less the 800_000 stated).
+	if _, _, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu,
+		"--used-tokens", "800000", "A task"); err != nil {
+		t.Fatal(err)
+	}
+	if o := chainTask(t, f.cloudFixture, chainFu).Overrides; o.MaxTokens == nil || *o.MaxTokens != 100_000 {
+		t.Fatalf("overrides = %+v, want the 100_000 tokens the chain has left", o)
+	}
+}
+
 // TestRunContinuesWithAUsedFigureThatRaises: --used-* is the caller's one
 // honest knob for spend the chain's own runs do not hold — work a previous
 // container did without settling a ledger, say — and it may only raise the
@@ -801,6 +849,40 @@ func TestRunFollowUpCarriesThePreviousRunWhenTheChainHasAGap(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "gap") {
 		t.Fatalf("stderr %q, want the gap the chain's read stopped at named", errOut)
+	}
+}
+
+// TestRunRefusesAChainGapWithNothingToCarry: a gap is answered by what the
+// previous run's stored task holds — a bound on what the chain has left, since
+// the chain has only spent more since — and where that object is gone as well
+// there is no figure anywhere: not the chain's own limit, which is the run
+// behind the hop, and not the previous run's remaining, which went with its
+// task. A launch bounded by no figure at all is the hole D1052 closes, so this
+// one stops and names the missing run rather than starting a run the chain does
+// not bound (F21, T5). A --pr follow-up cannot reach this: its previous run's
+// task is what names the base branch, so it is gone by the refusal at
+// followup.go's own check. A review job's chain is read from the PR's runs
+// without one, which is the shape below.
+func TestRunRefusesAChainGapWithNothingToCarry(t *testing.T) {
+	f := chainRig(t)
+	gone, fu1 := wallRunIDAt(95, "090000", "aaaa"), wallRunIDAt(1, "090000", "bbbb")
+	// The newest run to push to PR 7: its link names a run the bucket has
+	// nothing under, and its own stored task is gone too.
+	rec := prRecord(fu1, "", 7, chainSpent)
+	rec.Branch, rec.StartedAt = "fugaro/"+gone, time.Now().Add(-24*time.Hour)
+	rec.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: gone}
+	writeRecord(t, f, fu1, rec)
+	_, _, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--recipe", "review-only", "--run-id", chainFu)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a gap with nothing left to carry refused", err)
+	}
+	for _, want := range []string{"PR #7", "cannot be read", gone, "no stored task"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to name %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
 	}
 }
 
