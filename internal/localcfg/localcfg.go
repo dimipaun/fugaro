@@ -201,6 +201,18 @@ type Config struct {
 	// (spec §2). They are created where credentials are, and for the same
 	// reason.
 	Pools []config.Pool `yaml:"pools,omitempty"`
+	// SubscriptionSpread is whether a run may spread across two or more Claude
+	// OAuth subscription credentials at all (D1622, D1636): the D875 switch
+	// `claude_account_auto` held, under the name the pools it governs use, and
+	// off is what every installation reads until the owner turns it on — the
+	// arrangement a subscription's terms may forbid is not what Fugaro does
+	// unattended. It is a pointer so that "the owner wrote false" and "the
+	// owner wrote nothing" are two facts: the second is what a publish keeps
+	// the node's member for, and only the first turns a pool that is already
+	// spread off. It is created where the pools are, and for their reason: the
+	// node a run reads it from is the owner's own, and a key a launcher could
+	// write would be one that spends a subscription nobody agreed to spread.
+	SubscriptionSpread *bool `yaml:"subscription_spread,omitempty"`
 	// Crafts are the credential or pool each craft's calls go out on (spec
 	// §3): the project's own answer, published to the policy node by the same
 	// publish that carries the two blocks above. It is here rather than in the
@@ -2065,6 +2077,28 @@ func (c *Config) BakeReposEffective(published *bool) *bool {
 func (c *Config) TriageEffective(published *bool) *bool {
 	if c.Triage != nil {
 		return c.Triage
+	}
+	return published
+}
+
+// SubscriptionSpreadEffective is the keep rule for the pools' subscription
+// switch (F22, D1622, D1636), stated here beside the field for the triage
+// switch's reason and one of its own: this file's answer when the owner wrote
+// one, and the published node's otherwise, so a machine whose config says
+// nothing about it does not publish a node that turns off — for every teammate,
+// and for the runs in flight while `fugaro update` republishes the node — a
+// spread the owner turned on somewhere else. The cost of the other reading is
+// the triage switch's: the switch is what makes a pool of two or more
+// subscriptions serve anything at all (D1622), so a publish that invented an
+// "off" for it would take a project's pools away from its runs.
+//
+// A written false is the owner's own "no" and is kept as the value it is, which
+// is what the pointer on both sides is for: the two are different facts here,
+// since the field's own default is off and a written false is a decision, and a
+// config and a node that both say nothing publish no member at all.
+func (c *Config) SubscriptionSpreadEffective(published *bool) *bool {
+	if c.SubscriptionSpread != nil {
+		return c.SubscriptionSpread
 	}
 	return published
 }

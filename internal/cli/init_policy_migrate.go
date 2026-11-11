@@ -338,6 +338,14 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	if lc.TriageEffective(nil) != nil {
 		out = append(out, "the triage switch")
 	}
+	// The pools' subscription switch joins them (F22, D1636): it is read off
+	// the node and nowhere else — a run asks the published policy whether it
+	// may spread a project across subscriptions at all — so a project whose
+	// config writes it and which never published a node has left the owner's
+	// own act in a file no run reads.
+	if lc.SubscriptionSpreadEffective(nil) != nil {
+		out = append(out, "the pools' subscription switch")
+	}
 	// The clone URLs join them (SD5, D842): the URL a run clones from is the
 	// member the runner computes from the published node, and no job's
 	// environment carries it, so a project whose config writes the block and
@@ -361,8 +369,12 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 // project's runs read is the node's. The clone URLs join them (SD5, D842) for
 // the whole of the member: the runner computes a run's clone URL from the
 // published node, so the block the local config writes reaches no run until the
-// node carries it. So each of them is a member a project that has never
-// published a node has left in a file no run reads.
+// node carries it. The pools' subscription switch joins them last (F22, D1636)
+// for the same reason, one over: whether a run may spread a project across two
+// or more subscriptions at all is the node's answer, and a written true is what
+// makes a pool of two or more subscriptions serve anything. So each of them is
+// a member a project that has never published a node has left in a file no run
+// reads.
 //
 // The members that are not node-only are not this stage's to publish here: a
 // budget ceiling, a base branch or a model list reaches every run through the

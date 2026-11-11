@@ -1266,6 +1266,9 @@
         "stages.triage.claude_account": {
           "default": "unset = the project's default account"
         },
+        "subscription_spread": {
+          "default": "unset = false: a run spreads across one subscription at a time"
+        },
         "terraform.admins": {
           "default": "unset = none"
         },
