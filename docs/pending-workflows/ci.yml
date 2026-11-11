@@ -40,7 +40,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,7 +60,7 @@ jobs:
       - run: go vet -tags terraform ./...
       # Type-checks the emulator tests of the database rules (the rules job runs them).
       - run: go vet -tags firebase ./...
-      - run: go test -race -timeout 20m ./...
+      - run: go test -race -timeout 40m ./...
   # The budget database rules are the only thing between a compromised run's
   # token and every shared counter, so their tests run against the Realtime
   # Database emulator: a firebase-tools pinned by

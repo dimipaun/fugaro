@@ -3006,6 +3006,8 @@ Two honest limits of this diff, both deliberate:
 `.github/workflows/ci.yml` plus one word, so the copy-in diff is that one line and nothing else.
 `.github/workflows/ci.yml`'s `terraform` job loops over `installation firebase repo compute`, and `deploy/terraform/gcp/roots/workspace` — the workspace's own project, added by the workspaces work's task **W3** (`docs/workspaces/implementation-plan.md`) — is not in that loop: `init -backend=false`, `validate` and `terraform test` reach it only where a person runs them, so the next edit to that root's account, its two-permission database role or the one grant that is the whole of the workspace service's reach lands unvalidated and surfaces as a failed `fugaro update` on a user's machine. The staged copy adds the word `workspace` to the loop and changes nothing else.
 
+**Also staged (2026-11-11): the `test` job's time.** `go test -race -timeout 20m ./...` timed out in `internal/cli` on `main` (runs 42951396656 and 42969953103) while a one-second test was running, so the package simply needs longer than 20 minutes in full (CLAUDE.md puts it near 25). The staged file raises the go test `-timeout` to 40m and the job's `timeout-minutes` to 60, so the copy-in diff is now three lines.
+
 **What the owner runs, once**, the same two commands every staged workflow change here ends with:
 
     cp docs/pending-workflows/ci.yml .github/workflows/ci.yml
