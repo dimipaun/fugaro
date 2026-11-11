@@ -3,6 +3,10 @@ package runner
 import (
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // TestReviewPromptWithFocusEmptyChangesNothing: a level that names no focus is
@@ -89,5 +93,62 @@ func TestBaseInstructionsBlockKeepsEverythingUnderTheCap(t *testing.T) {
 	}
 	if strings.Contains(block, "left out") {
 		t.Errorf("the block claims it left something out of a base that fits:\n%s", block)
+	}
+}
+
+// TestSystemPromptIsUnchangedWithAnImageRate: the image rule follows the price
+// row of the stage's own model and the gateway that refuses the image, and
+// every run it is not for gets the brief every run got before it existed
+// (D2016). A coder that HAS an image rate sends the image itself; a coder
+// priced without one that the gateway carries is the run the rule is for.
+//
+// A coder whose calls reach no gateway is neither refused nor denied — an
+// oauth run and a run with the budget off write no managed settings file at
+// all (writeManagedSettings' first rule) — so its brief must not claim an
+// enforcement that is not there, nor forbid a read it can make. The model here
+// is one the run's price table has no row for, which the gateway does serve,
+// priced at the table's maximum, and refuses an image for (forward.go's
+// modelFor): the price row alone is not the question.
+//
+// Mutation (denyBinaryReads' price-row answer without its gatewayOn): the two
+// gateway-off cases gain the rule and their byte-for-byte assertion fails.
+func TestSystemPromptIsUnchangedWithAnImageRate(t *testing.T) {
+	mk := func(model, auth, mode string) (PromptData, string) {
+		r := &run{
+			d:     Deps{StateDir: "/s"},
+			rec:   &runstore.Record{Branch: "fugaro/x"},
+			cfg:   &config.Config{},
+			spec:  &task.Spec{},
+			spend: Spend{Mode: mode},
+		}
+		r.cfg.Git.BaseBranch = "main"
+		r.cfg.Agent.Auth = auth
+		r.cfg.Agent.Models.Coder = model
+		pd := r.systemPromptData()
+		return pd, SystemPrompt(pd, "")
+	}
+	for _, c := range []struct {
+		name  string
+		model string
+		auth  string
+		mode  string
+		want  bool
+	}{
+		{"a coder with an image rate", "claude-sonnet-5-5", "api-key", "enforce", false},
+		{"a coder without one", "deepseek/deepseek-v4-flash", "api-key", "enforce", true},
+		{"a coder without one on oauth, where the gateway is off", "deepseek/deepseek-v4-flash", "oauth", "enforce", false},
+		{"a coder without one with the budget off", "deepseek/deepseek-v4-flash", "api-key", "off", false},
+	} {
+		pd, got := mk(c.model, c.auth, c.mode)
+		if pd.NoImageReads != c.want {
+			t.Errorf("%s: NoImageReads = %v, want %v", c.name, pd.NoImageReads, c.want)
+		}
+		if c.want {
+			continue
+		}
+		base := SystemPrompt(PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}, "")
+		if got != base {
+			t.Errorf("%s: the brief is not the one every run had before the image rule:\n%s", c.name, got)
+		}
 	}
 }

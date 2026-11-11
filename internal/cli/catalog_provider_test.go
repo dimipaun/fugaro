@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // catalogBuildAppID is the App ID the catalog fixtures' local config records
@@ -94,7 +95,7 @@ func catalogStubKeyRead(t *testing.T, pem []byte, err error) (resolves, reads *i
 	t.Helper()
 	resolves, reads = new(int), new(int)
 	wasID, wasRead := catalogAppKeySecretID, readSecretValue
-	catalogAppKeySecretID = func(context.Context, *localcfg.Config, infra.RepoSpec) (string, error) {
+	catalogAppKeySecretID = func(context.Context, *localcfg.Config, infra.RepoSpec, *projectpolicy.Policy) (string, error) {
 		*resolves++
 		return gcp.SecretID(mustSlug(gitprov.KindGitHub, "acme/app"), config.GitHubAppKeySecret), nil
 	}
@@ -115,7 +116,7 @@ func catalogStubTokenRead(t *testing.T, token []byte, err error) (resolves, read
 	t.Helper()
 	resolves, reads = new(int), new(int)
 	wasID, wasRead := catalogTokenSecretID, readSecretValue
-	catalogTokenSecretID = func(context.Context, *localcfg.Config, infra.RepoSpec) (string, error) {
+	catalogTokenSecretID = func(context.Context, *localcfg.Config, infra.RepoSpec, *projectpolicy.Policy) (string, error) {
 		*resolves++
 		return gcp.SecretID(mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret), nil
 	}
@@ -188,7 +189,7 @@ func TestCatalogProviderEnv(t *testing.T) {
 		resolves, reads := catalogStubKeyRead(t, nil, errors.New("Secret Manager must not be read"))
 		t.Setenv(providers.EnvGitHubAppKey, catalogAppKeyPlaceholder)
 		var notice bytes.Buffer
-		env, _, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true)
+		env, _, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -216,7 +217,7 @@ func TestCatalogProviderEnv(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "app-key.pem")
 		t.Setenv(providers.EnvGitHubAppKeyFile, path)
 		var notice bytes.Buffer
-		env, _, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true)
+		env, _, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -240,7 +241,7 @@ func TestCatalogProviderEnv(t *testing.T) {
 		key := appKey(t)
 		resolves, reads := catalogStubKeyRead(t, key, nil)
 		var notice bytes.Buffer
-		env, _, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true)
+		env, _, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -263,7 +264,7 @@ func TestCatalogProviderEnv(t *testing.T) {
 		lc, rs, entries := catalogProviderEnvRig(t)
 		key := appKey(t)
 		catalogStubKeyRead(t, key, errors.New("the secret is unreachable"))
-		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true)
+		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
 		if err == nil {
 			t.Fatal("a failed read answered an environment")
 		}
@@ -286,7 +287,7 @@ func TestCatalogProviderEnv(t *testing.T) {
 		catalogClearProviderEnv(t)
 		lc, rs, entries := catalogProviderEnvRig(t)
 		catalogStubKeyRead(t, nil, fmt.Errorf("secret versions.list: %w", gcp.ErrNoVersion))
-		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true)
+		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit %d, err %v: a secret with no version is a user error", ExitCode(err), err)
 		}
@@ -304,7 +305,7 @@ func TestCatalogProviderEnv(t *testing.T) {
 		catalogClearProviderEnv(t)
 		lc, rs, entries := catalogProviderEnvRig(t)
 		catalogStubKeyRead(t, nil, fmt.Errorf("secrets.versions.access: %w", gcp.ErrNoAccess))
-		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true)
+		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit %d, err %v: a missing secretAccessor is a user error", ExitCode(err), err)
 		}
@@ -321,7 +322,7 @@ func TestCatalogProviderEnv(t *testing.T) {
 		lc, rs, entries := catalogProviderEnvRig(t)
 		resolves, reads := catalogStubKeyRead(t, appKey(t), nil)
 		t.Setenv("CLAUDECODE", "1")
-		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true)
+		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "refused in a coding agent's session") {
 			t.Fatalf("exit %d, err %v: the read is refused under a marker", ExitCode(err), err)
 		}
@@ -338,7 +339,7 @@ func TestCatalogProviderEnv(t *testing.T) {
 		lc, rs, _ := catalogProviderEnvRig(t)
 		resolves, reads := catalogStubKeyRead(t, appKey(t), nil)
 		entries := []config.Entry{{Name: "tools", Source: config.Source{Kind: config.SourceInline, Inline: "FROM example.invalid/base\n"}}}
-		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true)
+		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -357,7 +358,7 @@ func TestCatalogProviderEnv(t *testing.T) {
 		lc, rs, entries := catalogProviderEnvBitbucketRig(t)
 		resolves, _ := catalogStubKeyRead(t, appKey(t), nil)
 		catalogStubTokenRead(t, []byte(catalogTokenPlaceholder), nil)
-		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true)
+		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -381,7 +382,7 @@ func TestCatalogProviderEnv(t *testing.T) {
 		t.Setenv(providers.EnvCredentialsServiceURL, "https://creds.example.invalid/")
 		resolves, reads := catalogStubKeyRead(t, nil, errors.New("Secret Manager must not be read"))
 		var notice bytes.Buffer
-		env, _, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true)
+		env, _, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -414,7 +415,7 @@ func TestCatalogProviderEnvBitbucket(t *testing.T) {
 		token := []byte(catalogTokenPlaceholder)
 		resolves, reads := catalogStubTokenRead(t, token, nil)
 		var notice bytes.Buffer
-		env, hint, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true)
+		env, hint, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -441,7 +442,7 @@ func TestCatalogProviderEnvBitbucket(t *testing.T) {
 		resolves, reads := catalogStubTokenRead(t, nil, errors.New("Secret Manager must not be read"))
 		t.Setenv(providers.EnvBitbucketToken, catalogTokenPlaceholder)
 		var notice bytes.Buffer
-		env, hint, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true)
+		env, hint, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -464,7 +465,7 @@ func TestCatalogProviderEnvBitbucket(t *testing.T) {
 		lc, rs, entries := catalogProviderEnvBitbucketRig(t)
 		resolves, reads := catalogStubTokenRead(t, []byte(catalogTokenPlaceholder), nil)
 		t.Setenv("CLAUDECODE", "1")
-		env, hint, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true)
+		env, hint, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "refused in a coding agent's session") {
 			t.Fatalf("exit %d, err %v: the read is refused under a marker", ExitCode(err), err)
 		}
@@ -481,7 +482,7 @@ func TestCatalogProviderEnvBitbucket(t *testing.T) {
 		lc, rs, entries := catalogProviderEnvBitbucketRig(t)
 		catalogStubTokenRead(t, nil, fmt.Errorf("secret versions.access: %w", gcp.ErrNoVersion))
 		var notice bytes.Buffer
-		env, hint, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true)
+		env, hint, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("a failed read is not an error of its own: the provider's own failure is what says so: %v", err)
 		}
@@ -499,7 +500,7 @@ func TestCatalogProviderEnvBitbucket(t *testing.T) {
 		catalogClearProviderEnv(t)
 		lc, rs, entries := catalogProviderEnvBitbucketRig(t)
 		catalogStubTokenRead(t, nil, fmt.Errorf("secrets.versions.access: %w", gcp.ErrNoAccess))
-		env, hint, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true)
+		env, hint, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -519,7 +520,7 @@ func TestCatalogProviderEnvBitbucket(t *testing.T) {
 		catalogClearProviderEnv(t)
 		lc, rs, entries := catalogProviderEnvBitbucketRig(t)
 		catalogStubTokenRead(t, nil, errors.New("the secret is unreachable"))
-		_, hint, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true)
+		_, hint, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -537,7 +538,7 @@ func TestCatalogProviderEnvBitbucket(t *testing.T) {
 		lc, rs, _ := catalogProviderEnvBitbucketRig(t)
 		resolves, reads := catalogStubTokenRead(t, []byte(catalogTokenPlaceholder), nil)
 		entries := []config.Entry{{Name: "tools", Source: config.Source{Kind: config.SourceInline, Inline: "FROM example.invalid/base\n"}}}
-		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true)
+		env, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}

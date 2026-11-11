@@ -18,12 +18,13 @@ import (
 // liveCheckScripts are the owner-run live checks' scripts and their tests.
 // Each test drives its script against fake tools on PATH -- a fake `claude`
 // and a fake upstream for Check 90, fake `gcloud`, `fugaro` and `curl` for
-// Check 91, fake `gcloud` and `fugaro` for Checks 111 and 146, fake `gcloud`,
+// Check 91, fake `gcloud` and `fugaro` for Checks 111, 146 and 401, fake `gcloud`,
 // `git`, `curl` and `fugaro` for Check 190, fake `gcloud`, `fugaro` and a fake
-// Realtime Database behind a fake `curl` for Check 191, and a fake `gcloud`
-// that evaluates the conditions of Check 340's own IAM bindings for Check 340
-// -- or, for Checks 145 and 180, against a fake Bitbucket Cloud on a loopback
-// port, so no
+// Realtime Database behind a fake `curl` for Check 191, a fake `gcloud` that
+// evaluates the conditions of Check 340's own IAM bindings for Check 340, and
+// fake `gcloud`, `fugaro` and a fake credentials service, GitHub and Identity
+// Toolkit behind a fake `curl` for Check 96 -- or, for Checks 145 and 180,
+// against a fake Bitbucket Cloud on a loopback port, so no
 // network, no cloud project and no credential is touched here, and no live
 // step of any of them is run by an agent. Check 130's fake is a fake `curl`
 // alone, answering the three anonymous GETs the check makes about a
@@ -35,7 +36,10 @@ import (
 // records the request -- the URL, the headers, and the Authorization header
 // of the `--config` file the check handed over -- so a case can say the token
 // travelled through a 0600 file and never onto a command line or into the
-// block.
+// block. Check 401's fake `curl`
+// serves the grants node from the case's own directory and its fake `fugaro`
+// update PRETENDS to be the migration, so a case says what the converge did by
+// writing files.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -52,7 +56,9 @@ var liveCheckScripts = []struct {
 	{"check191.sh", "check191_test.sh"},
 	{"check300.sh", "check300_test.sh"},
 	{"check340.sh", "check340_test.sh"},
+	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},
+	{"check401.sh", "check401_test.sh"},
 	{"check510.sh", "check510_test.sh"},
 	{"check511.sh", "check511_test.sh"},
 }

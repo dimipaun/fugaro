@@ -8038,7 +8038,7 @@ func consolePendingSentence(t *testing.T, what, text, namePattern string) ([]str
 		}
 	}
 	slices.Sort(names)
-	if len(names) == 0 {
+	if len(names) == 0 && count != 0 {
 		t.Fatalf("%s names no workflow file: the sentence has to name the files it counts", what)
 	}
 	return names, count
