@@ -422,6 +422,24 @@ several accounts, and a public service holding `firebasedatabase.admin` would ho
 The original answer's **`.read: false` / `.write: false`** rule is kept and is now the *first* of five
 independent barriers rather than one of two. §6 and §8 state all of this.
 
+**Amended again 2026-11-11 — the owner's answer to the coordinator plan's D2118, for the roadmap
+path only.** "The public service holds no `firebasedatabase.admin` over anything … only the viewer"
+**stops being true when that plan's P9e lands**: the owner chose to give the front door's account
+`mcp_server` a database write so its `roadmap:write` tools write the coordinator's roadmap record
+themselves (the recommendation, a queue applied by a non-public job, was declined). The grant is a
+custom role of exactly `firebasedatabase.instances.get` and `firebasedatabase.instances.update` —
+not `admin`, so no instance lifecycle — and because Realtime Database IAM has **no path-level scope**
+(`SECURITY.md`, the credentials service's own paragraph), it reaches **the whole database**: the
+policy, the stop switches, the devices and pairing nodes, the spend counters, the outcomes, the
+credentials service's nodes and the `mcpauth` tripwire, for read and write. The fence is the front
+door's own code — a store that refuses every path outside `coordinator/project/roadmap` — which is a
+fence against a bug and not against a compromised revision. **What still holds**: the token records,
+the registrations and the audit stay in the D935 bucket, keyed and MAC'd, so the four other barriers
+of the list above are unchanged; the `mcpauth` node stays a tripwire, though an account that can
+write it now exists. The path-scoped alternative (a rules grant reached by a custom-token claim, at
+the cost of D923's "mints no custom token" and of a claim every launcher could forge) is that plan's
+open **D2124**.
+
 ### D923 — amended (findings H1 and M-a)
 
 **Amended 2026-11-04, and this is the one amendment that is NOT the recommendation.** Finding
