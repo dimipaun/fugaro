@@ -392,6 +392,14 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(err)
 	}
 	o.Checks = append(o.Checks, sharedConfigChecks(ctx, sel, lc, time.Now())...)
+	// The workspace's own installation whose Firebase is another project's: the
+	// one state W3's root cannot converge, which `fugaro update` skips with the
+	// same reason and goes on (doctorWorkspaceSplitCheck). Read from the local
+	// config alone, so it is here with the config's own checks and not with the
+	// cloud's.
+	if c := doctorWorkspaceSplitCheck(lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	// Both sides' checks, in the order main has them: the catalog's age (P7),
 	// the ZDR note (P9), and the project-wide provider secrets' own checks.
 	o.Checks = append(o.Checks, doctorPriceCatalog(budgetNow()))
@@ -2142,6 +2150,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	checks := doctorRulesSkew(ctx, db, lc)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
 	checks = append(checks, doctorBudgetMode(ctx, db)...)
+	checks = append(checks, doctorBuildBudget(ctx, db)...)
 	// The node is read through projectpolicy.Read, the reader a run uses
 	// (design §5(3)), not with a plain Get: with no marker, or one below
 	// PolicyRulesVersion, no run reads the policy however the node is written, and a

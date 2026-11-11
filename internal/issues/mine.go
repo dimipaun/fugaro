@@ -82,6 +82,10 @@ type MineLocal struct {
 	// Status is the local file's own, so it is never `resolved`: the shared
 	// record is the truth once an issue is uploaded.
 	Status Status
+	// Fingerprint is the hash of the signature the diagnosis returned (D1724).
+	// It is what matches this file to the shared row that has its number, so a
+	// hand-edited number does not hand one issue's command to another (F8).
+	Fingerprint string
 	// The four dates are the file's own; a nil one is a transition that has
 	// not happened, and a row with none is never hidden (F4).
 	HitAt       *time.Time
@@ -104,9 +108,13 @@ type MineSharedIssue struct {
 	// Number is the project number the store gave the issue. Every shared
 	// issue has one: a row that has none yet is this machine's own file, and
 	// is a MineLocal.
-	Number      int
-	Summary     string
-	Status      MineStatus
+	Number  int
+	Summary string
+	Status  MineStatus
+	// Fingerprint is the shared record's, and it is what a local file's copy
+	// of the same issue has to match before that file's command may be shown
+	// as a retry (F8).
+	Fingerprint string
 	HitAt       *time.Time
 	SubmittedAt *time.Time
 	ResolvedAt  *time.Time
@@ -160,6 +168,9 @@ type MineRow struct {
 	LocalID string
 	Summary string
 	Display Display
+	// Fingerprint is the issue's signature hash, whichever source the row came
+	// from, and it is what a retry command is matched on (F8).
+	Fingerprint string
 	// The four dates are the row's own times, the hit time included; a nil
 	// one is a transition that has not happened.
 	HitAt       *time.Time
@@ -253,6 +264,7 @@ func (in MineInput) sharedRow(s MineSharedIssue) MineRow {
 		Number:      s.Number,
 		Summary:     s.Summary,
 		Display:     display,
+		Fingerprint: s.Fingerprint,
 		HitAt:       s.HitAt,
 		SubmittedAt: s.SubmittedAt,
 		ResolvedAt:  s.ResolvedAt,
@@ -275,6 +287,7 @@ func (in MineInput) localRow(l MineLocal) MineRow {
 		LocalID:     l.LocalID,
 		Summary:     l.Summary,
 		Display:     display,
+		Fingerprint: l.Fingerprint,
 		HitAt:       l.HitAt,
 		SubmittedAt: l.SubmittedAt,
 		ResolvedAt:  l.ResolvedAt,

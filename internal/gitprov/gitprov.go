@@ -279,6 +279,20 @@ type ContentsReader interface {
 // bound the API already applies and no larger.
 const MaxContentsBytes = 1 << 20
 
+// The two facts about a file that make a Contents read answer an error
+// without the file being absent: it holds nothing, or it is over
+// MaxContentsBytes. Both adapters refuse a read of either — a definition read
+// has no use for an empty definition, and neither host serves a reply over
+// its own ceiling — and a caller that reads bytes wants both refused. They are
+// named here because a caller that asks whether a repository HAS a file, and
+// never reads its bytes, must not read either as "there is nothing at that
+// path": a package-lock.json of two megabytes, and an empty requirements.txt,
+// are both repositories whose image still has to carry that manager.
+var (
+	ErrContentsEmpty    = errors.New("the file is there and holds nothing")
+	ErrContentsTooLarge = errors.New("the file is larger than a contents read returns")
+)
+
 // Provider is what the runner needs from the git host.
 type Provider interface {
 	// EnsurePR creates the pull request for spec.Branch or, if one already

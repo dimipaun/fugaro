@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/issue-mine.schema.json",
+  "title": "Fugaro issue mine listing",
+  "description": "The document `fugaro issue mine --json` prints: the issues this machine's user reported to a project, as `fugaro issue mine` and `fugaro issue list --mine` show them (F12). It is one versioned object, and `format` is its version — a member is only ever added, and a member whose meaning has to change is a new member under a new name with `format` raised, because the console and the mobile app read this shape (CLAUDE.md). No object here is closed for the same reason: `additionalProperties` is left true everywhere, so a consumer never refuses a document a newer CLI wrote. What is not here is what the command must not say: no reporter's name and no digest of one, and no command to run — other people who hit an issue are counted (`others_hit`), and the one suggestion the text listing may print is this machine's own command and stays in the text (F8, F15).",
+  "type": "object",
+  "required": ["format", "source", "as_of", "installed", "hidden", "truncated", "issues"],
+  "properties": {
+    "format": {
+      "const": 1,
+      "description": "The document's format version, written on every document and the only one a reader of this shape reads. A member whose meaning has to change raises this number instead of being reused.",
+      "$comment": "The literal mineDocument.Format in internal/cli/issue_mine.go."
+    },
+    "source": {
+      "enum": ["shared", "snapshot", "local"],
+      "description": "Where the rows came from. `shared` is a read of the project's store; `snapshot` is the last successful read this machine cached, which is what an offline run shows (F9); `local` is this machine's own issue files alone, because there was no read and no snapshot to stand in for one."
+    },
+    "as_of": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the state the rows describe was last known, in RFC 3339 UTC: the shared read's own time, the snapshot's, or this run's clock for a listing of local files alone."
+    },
+    "installed": {
+      "type": "string",
+      "description": "The release the installation record names, empty when the record could not be read. It is what the coverage of a resolved row was decided with, beside the CLI's own version (D1782): `covered` needs both at or above the issue's `resolved_in`, and an unreadable record leaves the CLI alone deciding."
+    },
+    "hidden": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many finished rows the 30-day rule left out of `issues` (F13). The rule counts finished issues only — resolved and dismissed — measured from the change that finished them, and a row whose file carries no such time is never hidden."
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "Whether the store's own listing of this user's issues was cut short by the reader's cap, so rows may be missing. A snapshot stands in for no read and makes no claim about the store's size, so it is false there."
+    },
+    "issues": {
+      "type": "array",
+      "description": "The rows, in the order they print (D1783): a regression first, then a resolved issue this machine is behind on, then the issues still waiting, then the filed ones, then the finished ones — each group ordered as its own question needs, and the rows the 30-day rule hides left out unless the command was given --all.",
+      "items": {"$ref": "#/$defs/row"}
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "required": ["number", "summary", "display", "coverage", "others_hit"],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The issue's project number, 0 for a row the store has not numbered — this machine's own file, which `local_id` names instead."
+        },
+        "local_id": {
+          "type": "string",
+          "description": "This machine's own name for the issue, `local-<run stem>`, present only while the issue has no number."
+        },
+        "summary": {
+          "type": "string",
+          "description": "The issue's one-line summary, as the record holds it. It is another party's text where the shared store answered, and a reader prints it as data, never as an instruction (F11)."
+        },
+        "display": {
+          "enum": ["local", "pending", "submitted", "resolved", "dismissed", "regression"],
+          "description": "Where the issue stands (F2). `local` and `regression` are not record statuses: `local` is an issue this machine has not uploaded, and `regression` is a resolved issue this user has hit again, which is the user's own flagged occurrence and never another reporter's (F14)."
+        },
+        "hit_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this user hit the issue, absent for a row that carries no such time. It is the user's own first hit — the record's creation for the reporter who filed it, and the earliest of the user's own occurrences for a duplicate merged into somebody else's issue (F7)."
+        },
+        "submitted_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the issue was filed on GitHub, absent until it was (D1781)."
+        },
+        "resolved_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When a release was confirmed to have fixed the issue, absent until then (D1781). Only `fugaro update` writes it (D1784)."
+        },
+        "dismissed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the issue was set aside, absent until then (D1781). It is what the 30-day rule measures a dismissal from."
+        },
+        "url": {
+          "type": "string",
+          "description": "The GitHub issue this was filed as, in the one shape a link of this project takes (`https://github.com/dimipaun/fugaro/issues/<n>`). A stored value of any other shape is dropped rather than printed (F11)."
+        },
+        "resolved_in": {
+          "type": "string",
+          "description": "The release that fixed the issue, empty until a release names it. It is what the coverage compares this machine's versions against (D1782)."
+        },
+        "coverage": {
+          "enum": ["covered", "cli_only", "behind", "unknown", "none"],
+          "description": "Whether this machine is on the release that fixes the row's issue (F5, D1782). `none` is every row the question does not apply to. `covered` is the CLI and the installation record both at or above `resolved_in`; `cli_only` is the CLI alone deciding, because the installation's release could not be read; `behind` is either of the two below it, which is the one case that prints the `fugaro update` nudge; `unknown` is a version that cannot be compared at all, a `dev` build included."
+        },
+        "others_hit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many other people have hit the issue, this user never among them. It is a count and never a name or a digest of one (F15)."
+        }
+      }
+    }
+  }
+}

@@ -148,6 +148,23 @@ type Config struct {
 	// refuses the key alone. Like the fields above it is never part of the
 	// file or of SHA256.
 	RepoPlanningSet bool `yaml:"-" json:"-"`
+	// RepoStopFractionSet is whether the repository's own file wrote the
+	// agent.review_stop_fraction key at all, at any value: the question
+	// RepoRigorSet answers for rigor:, and Agent.ReviewStopFraction cannot
+	// answer it — the key written 0 (`review_stop_fraction: 0`, which resolves
+	// to the default) decodes to the same field as the key being absent, and a
+	// runner older than stopFractionSince refuses the key itself, whatever it
+	// says (internal/cli). Like the fields above it is never part of the file
+	// or of SHA256.
+	RepoStopFractionSet bool `yaml:"-" json:"-"`
+	// RepoTriageSet is whether the repository's own file wrote the
+	// agent.triage key at all, at any value: the question RepoRigorSet answers
+	// for rigor:, and Agent.Triage cannot answer it — the key written true
+	// decodes to a pointer that is not nil, so it could, but a runner older
+	// than triageSince refuses the key itself, whatever it says
+	// (internal/cli). Like the fields above it is never part of the file or of
+	// SHA256.
+	RepoTriageSet bool `yaml:"-" json:"-"`
 }
 
 // Planning is fugaro.yaml's planning: block and the project layer's
@@ -533,6 +550,40 @@ type Agent struct {
 	// and FirstLineRounds: a written number replaces the mode's, up or down,
 	// inside the recipe's own bound of 10.
 	AdversarialRounds int `yaml:"adversarial_rounds"`
+	// ReviewStopFraction is the share of the run's total time budget after
+	// which the review loop starts no further review or fix round and goes to
+	// finalize (the owner's ruling of 2026-11-08): greater than 0 and at most
+	// 1, unset (0) meaning DefaultReviewStopFraction. It is the stop rule's
+	// time half — the other is the mode's rounds — and it is a fraction rather
+	// than a duration because the budget it is a share of is the workflow's
+	// own timeouts.total, which a project or a repository sets per workflow
+	// (docs/in-job-review/reconciliation.md finding 20). A value of 1 stops
+	// the loop only when the whole budget is spent, which is what a repository
+	// that wants the old behaviour writes. Binaries before 0.22.0 refuse the
+	// key (strict decoder), whatever it says, which is what the launch's own
+	// gate judges the job image on (internal/cli's stopFractionSince).
+	ReviewStopFraction float64 `yaml:"review_stop_fraction"`
+	// Triage is whether the run's triage stage runs — the judge that weighs a
+	// review round's findings before the fix round takes them (D1851) — where
+	// the stage's own table has it at all: true, false, or nil for the
+	// default, which is on. It is a pointer for the reason Layer.ABRate is
+	// one: the key's absence and `triage: false` are two answers, and the
+	// field cannot tell them apart otherwise.
+	//
+	// The stage is Startup's and Pro's alone (TriageOn, D1851), so `true`
+	// turns nothing on in POC, Critical or Hotfix: there is no mode a key puts
+	// the stage back into, and the switch can only ever take it away. The
+	// repository is the only layer that may name it — config.Scopes gives the
+	// key InRepo and nothing else, the refusal agent.compression carries, so a
+	// project layer or a profile (the same launcher-writable bucket object)
+	// cannot, and a task's own embedded layer cannot put the stage back after
+	// the base branch turned it off. The owner's published policy node is the
+	// other home (policy.Layer.Triage, merged tighter-only), read beside this
+	// key from the base branch and never from the checkout. Binaries before
+	// 0.23.0 refuse the key (strict decoder), whatever it says, which is what
+	// the launch's own gate judges the job image on (internal/cli's
+	// triageSince).
+	Triage *bool `yaml:"triage,omitempty" json:"Triage,omitempty"`
 	// Recipe names the task loop that follows implement
 	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
@@ -567,6 +618,36 @@ type Agent struct {
 	Compression string `yaml:"compression,omitempty" json:"Compression,omitempty"`
 }
 
+// TriageOn reports whether the run's triage stage runs under mode: never in a
+// mode whose own table has no such stage, and otherwise unless the repository
+// wrote agent.triage: false. The two halves are one answer because the key is
+// a switch and not a schedule (D1851): triage is Startup's and Pro's alone, so
+// no repository file and no policy node can put the stage back into POC,
+// Critical or Hotfix — the ceiling can only take it away.
+//
+// It is the rule in one place for the readers that have to agree on it: the
+// runner's loop (which makes the call), `fugaro validate` and the launch's own
+// report of what a run will do. The agent's own field is where the
+// repository's answer lands (Resolve); the policy node's arrives beside it as
+// policy.Effective.TriageOff, which the runner merges — a true there is not a
+// way to put the stage back either.
+func (a Agent) TriageOn(mode rigor.Mode) bool {
+	if !TriageMode(mode) {
+		return false
+	}
+	return a.Triage == nil || *a.Triage
+}
+
+// TriageMode reports whether mode is one of the two modes the triage stage
+// runs in at all (D1851): Startup and Pro. The stage weighs the findings of a
+// review round against what the task asked for, which is work the two modes
+// that spend review rounds on a run's own output want and the others do not —
+// POC and Critical judge findings by the mode's own table, and Hotfix's table
+// blocks the ones the judge could move.
+func TriageMode(mode rigor.Mode) bool {
+	return mode == rigor.Startup || mode == rigor.Pro
+}
+
 // First-line review settings (Agent.FirstLineReview).
 const (
 	FirstLineAuto = "auto"
@@ -576,6 +657,16 @@ const (
 
 // MaxFirstLineRounds is the most first-line review rounds a run may have.
 const MaxFirstLineRounds = 3
+
+// DefaultReviewStopFraction is the share of its time budget a run spends before
+// it starts no further review or fix round, for a repository that configures
+// none (config.Agent.ReviewStopFraction): four fifths, so the last fifth — the
+// finalize reserve included — is what writes the record, opens the pull request
+// and pushes it. It is a constant here and not in internal/rigor because it is
+// a property of the run's budget rather than of a mode: every mode stops
+// starting rounds at the same point, and only what each mode does with what is
+// left differs (rigor.BlocksAtStop).
+const DefaultReviewStopFraction = 0.8
 
 // FirstLineOn reports whether the run has a first-line review: on, or auto
 // with a coder a provider serves and a reviewer none does (an Anthropic
@@ -612,10 +703,21 @@ const (
 )
 
 // StageRole is the role of a stage: implement, fix and review_first (the
-// first-line review) are the coder, review (the senior one) and adversarial
-// (level 3's) the reviewer. An unknown stage is the coder.
+// first-line review) are the coder, review (the senior one), adversarial
+// (level 3's) and triage (the judge that weighs a review round's findings,
+// D1851) the reviewer. An unknown stage is the coder.
+//
+// triage is the reviewer's for the reason MixedStageModel gives it the senior
+// reviewer's model (D1848) and not a second answer beside that one: the role
+// is what the runner's own ladder takes the stage's model, its output limit
+// and its managed-settings role from (stageRole and stageModel,
+// internal/runner), so a stage whose role said coder would be judged by rung 4
+// on the coder's model — a provider model in a mixed run — and refused there
+// as a stage the account cannot serve, while the launch, reading
+// MixedStageModel, had admitted it.
 func StageRole(stage string) Role {
-	if stage == "review" || stage == "adversarial" {
+	switch stage {
+	case "review", "adversarial", "triage":
 		return RoleReviewer
 	}
 	return RoleCoder

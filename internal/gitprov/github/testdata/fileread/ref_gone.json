@@ -1,0 +1,11 @@
+[
+  {"method": "GET", "path": "/repos/acme/web/contents/fugaro.yaml?ref=release/1.2",
+   "auth": "Bearer ghs_fixture_person_read", "status": 404,
+   "response": {"message": "Not Found", "documentation_url": "https://docs.github.com/rest/repos/contents"}},
+  {"method": "GET", "path": "/repos/acme/web",
+   "auth": "Bearer ghs_fixture_person_read", "status": 200,
+   "response": {"id": 1, "full_name": "acme/web", "private": true}},
+  {"method": "GET", "path": "/repos/acme/web/contents?ref=release/1.2",
+   "auth": "Bearer ghs_fixture_person_read", "status": 404,
+   "response": {"message": "No commit found for the ref release/1.2", "documentation_url": "https://docs.github.com/rest/repos/contents"}}
+]

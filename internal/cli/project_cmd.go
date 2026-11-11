@@ -935,6 +935,24 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedCatalog = old.ImageCatalog
 	}
 	imageCatalog := lc.ImageCatalogEffective(publishedCatalog)
+	// The services each entry's image provides are derived from that catalog
+	// (D1904) and not kept member by member, because there is no second place
+	// they are written: an entry carries them in the catalog the operator edits,
+	// and the node carries them as a key of its own (F20's answer, in
+	// projectpolicy). A config that writes a catalog therefore states the whole
+	// block — an entry whose services were removed has them removed on the node,
+	// which is an edit the drift comparison sees. A config that writes no
+	// catalog keeps the node's block, which is the catalog's own keep rule and
+	// its reason: a machine whose config predates the key cannot restate the
+	// services, and deriving from the node's catalog would drop every one of
+	// them — the node's entries cannot carry the member at all.
+	var imageServices projectpolicy.ImageServices
+	switch {
+	case lc.ImageCatalog != nil:
+		imageServices = projectpolicy.ImageServicesFromCatalog(imageCatalog)
+	case old != nil:
+		imageServices = old.ImageServices
+	}
 	// The repo-to-image map and the bake switch are kept by that same rule
 	// (D1906, D1901), and the cost of the other reading is the catalog's: a
 	// machine whose config predates the keys — a teammate's, a CI box's — would
@@ -955,6 +973,20 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	}
 	imageMap := lc.ImageMapEffective(publishedImageMap)
 	bakeRepos := lc.BakeReposEffective(publishedBake)
+	// The triage switch is kept by that same rule (D1854), and the cost of the
+	// other reading is the floor's, one direction over: the stage is what judges
+	// the findings a review round's table would have blocked, so a publish that
+	// dropped the member would turn the judge back on for every run of the
+	// project — from a machine whose config merely predates the key. A config
+	// that writes the switch replaces what the node holds, and one that writes
+	// neither keeps the node's; the switch is a pointer on both sides because
+	// absent and true are one statement, so a node and a config that both say
+	// nothing publish no member at all.
+	var publishedTriage *bool
+	if old != nil {
+		publishedTriage = old.Triage
+	}
+	triage := lc.TriageEffective(publishedTriage)
 	// The orchestrator block is kept by the same rule (D1239, D1234), with the
 	// catalog's two spellings collapsed into one: a config that states a block
 	// replaces what the node holds — the daemon's guardrails are the owner's own
@@ -980,9 +1012,22 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// known. An empty entry names nothing and is dropped, and a config that
 	// names no stage account publishes no member at all, so the node of such a
 	// project is byte for byte what it was before the key existed.
+	//
+	// A stage the release behind cannot read is held back
+	// (config.AccountStageHeldBack): the node's reader refuses the whole node
+	// over one name outside its own run, and the reader is a job image that
+	// `fugaro update` rebuilds behind its own confirmation — so publishing a
+	// stage this release added would break every run of the project on an image
+	// that is not rebuilt yet, an in-flight run included, which the update must
+	// never do (docs/design/update-in-flight.md). The operator's choice stays in
+	// the local config, and it reaches the node from the release after the one
+	// that added the stage: adding the name to
+	// config.AccountStagesAReleasedImageKnows is what lifts the hold-back, and
+	// that list moves when a release is cut and the work moves on, the way the
+	// release-skew constants beside it do.
 	var stageAccounts map[string]string
 	for stage, choice := range lc.ClaudeAccountStages {
-		if choice.ClaudeAccount == "" {
+		if choice.ClaudeAccount == "" || config.AccountStageHeldBack(stage) {
 			continue
 		}
 		if stageAccounts == nil {
@@ -1006,8 +1051,10 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		ReviewFloor:          floor,
 		VerifierAccounts:     verifierAccounts,
 		ImageCatalog:         imageCatalog,
+		ImageServices:        imageServices,
 		ImageMap:             imageMap,
 		BakeRepos:            bakeRepos,
+		Triage:               triage,
 		Orchestrator:         orchestrator,
 	}
 	switch {

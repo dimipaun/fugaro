@@ -2,7 +2,8 @@ package plugin_test
 
 // Docs tests (plan T7): the README's Getting started is the two steps of the
 // brief, and nothing in the repository still names a retired per-command
-// skill (the plugin has five: setup, working, routing, parallelism, upgrade).
+// skill (the plugin has six: setup, working, routing, parallelism, upgrade and
+// orchestrator).
 
 import (
 	"io/fs"
@@ -52,7 +53,11 @@ func TestReadmeGettingStartedIsTwoSteps(t *testing.T) {
 // TestReadmeNamesNoRetiredSkill: no document, help text, manifest or test
 // string names a per-command skill that no longer exists.
 func TestReadmeNamesNoRetiredSkill(t *testing.T) {
-	retired := regexp.MustCompile("(?i)(fugaro:(onboard|launch|logs|diagnose|followup)\\b|fugaro:status\\b|\\b(onboard|launch|status|logs|diagnose|followup) skill\\b|skills/(onboard|launch|status|logs|diagnose|followup)\\b|six skills|six per-command)")
+	// The count alone is not in the pattern: "six skills" was retired text when
+	// five shipped, and six is what the plugin carries now (O10), so a document
+	// that says the true number would be refused for saying it. What is retired
+	// is the set of names, which the rest of the pattern lists.
+	retired := regexp.MustCompile("(?i)(fugaro:(onboard|launch|logs|diagnose|followup)\\b|fugaro:status\\b|\\b(onboard|launch|status|logs|diagnose|followup) skill\\b|skills/(onboard|launch|status|logs|diagnose|followup)\\b|six per-command)")
 	// fugaro:status is also the pull request body's status marker.
 	marker := regexp.MustCompile(`\[//\]|<!--|fugaro:status (begin|end)|fugaro:status["')]|rendered description|StripMarkers|fugaro:status\\n`)
 	// docs/plans and the M11 design and brief describe the change itself.

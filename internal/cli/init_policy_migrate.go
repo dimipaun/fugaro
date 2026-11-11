@@ -301,9 +301,10 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 // The rule is the publisher's own rows, one member at a time: whatever
 // policyNodeForPublish would put in the node because the file states it is a
 // reason to create the node, and that is `lc.X != nil` where the publisher's
-// guard is (the bake switch among them: BakeReposEffective hands back a written
-// answer whatever it is, and the row that compares it is reached by
-// `lc.BakeRepos != nil`).
+// guard is (the bake switch and the triage switch among them:
+// BakeReposEffective and TriageEffective hand back a written answer whatever it
+// is, and the rows that compare them are reached by `lc.BakeRepos != nil` and
+// `lc.Triage != nil`).
 func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	var out []string
 	if lc.ImageCatalogEffective(nil) != nil {
@@ -318,6 +319,14 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	if lc.OrchestratorEffective(nil) != nil {
 		out = append(out, "the orchestrator's guardrails")
 	}
+	// The triage switch is the newest of them (D1854): a repository's own file
+	// states the switch for itself (agent.triage, read from the base), and the
+	// answer a project's runs read is the node's, so a project whose config
+	// writes the switch and which never published a node has left it in a file
+	// no run reads.
+	if lc.TriageEffective(nil) != nil {
+		out = append(out, "the triage switch")
+	}
 	return out
 }
 
@@ -326,9 +335,11 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 // an image catalog (D1156), the repo-to-image map (D1906), the bake switch
 // (D1901) and the orchestrator's guardrails (D1239) are read out of the
 // published policy and nowhere else — no job's environment carries any of them,
-// and the shared config refuses the map and the switch outright — so a project
-// that has never published a node has left what the operator wrote in a file no
-// run reads.
+// and the shared config refuses the map and the switches outright. The triage
+// switch joins them (D1854) for the half a repository cannot write: a
+// repository's own file states the switch for itself, and the answer a
+// project's runs read is the node's. So each of them is a member a project that
+// has never published a node has left in a file no run reads.
 //
 // The members that are not node-only are not this stage's to publish here: a
 // budget ceiling, a base branch or a model list reaches every run through the

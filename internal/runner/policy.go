@@ -300,6 +300,39 @@ func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend)
 	// effective policy (policy.Merge), so a later layer could add a level and
 	// none can take one away.
 	ceiling.ReviewFloor = pp.ReviewFloor
+	// The binary allow rule rides the ceiling layer for the floor's reason
+	// (D986): it is the owner's word about the paths a run may add a binary at,
+	// the node is the one object the launcher cannot write, and the merge
+	// intersects the list and takes the smaller cap, so a layer under the
+	// ceiling can remove an admitted path and never add one. A node with no
+	// block leaves the ceiling with no list, which admits no binary at all —
+	// exactly what every installation does today.
+	//
+	// No decoder fills the field yet (projectpolicy.Binaries): this release
+	// lists a node's `binaries` key in UnknownKeys instead of reading it, so
+	// every run today is the node-with-no-block case above. The read is here
+	// because it is the seam the block arrives through, and because a policy
+	// built by hand carries one — which is what AR2's tests below do.
+	//
+	// Unlike the floor these are keys of the merge's own vocabulary, so the
+	// node's are named in `set`: result.json then sources them as "policy" and
+	// not as a ceiling that carries no such value at all.
+	//
+	// The empty list the node wrote counts as its own: `binaries: {allow: []}`
+	// is D987's spelling for clearing the list, the merge reads it as the first
+	// list there is (the empty one), and it would then be sourced from the job
+	// environment — the one layer that can carry no binaries at all, since
+	// fugaro.yaml has no such key. So the member being written, not its length,
+	// is what names the key.
+	if b := pp.Binaries; b != nil {
+		ceiling.BinariesAllow, ceiling.BinariesMaxBytes = b.Allow, b.MaxBytes
+		if b.Allow != nil {
+			set[policy.KeyBinariesAllow] = true
+		}
+		if b.MaxBytes > 0 {
+			set[policy.KeyBinariesMaxBytes] = true
+		}
+	}
 	if len(pp.Prices) > 0 {
 		o, err := policyOverrides(pp)
 		if err != nil {
@@ -464,8 +497,12 @@ func sourcesText(m map[string]string) string {
 // PolicyKeyPath is where a policy key lives in fugaro.yaml: the governance
 // keys under a governance: block of their own — a tier's own keys under
 // governance.tiers.<tier>, the block that carries them (policy.TierKey) — the
-// agent's own keys, its output limits and the crafts, under agent:, and
-// everything else — the budget's cost and model policy — under budget:.
+// agent's own keys, its output limits, the triage switch and the crafts, under
+// agent:, and everything else — the budget's cost and model policy — under
+// budget:. The triage switch is the agent's key and not the budget's
+// (policy.KeyTriage is "triage" and the repository writes agent.triage,
+// config.Scopes), so a report that read it as a budget key would name a key no
+// file has.
 //
 // A craft key is the agent.crafts block (policy.CraftAccessKey), which is the
 // block where a repository's file writes the one of the three it may write at
@@ -476,7 +513,7 @@ func sourcesText(m map[string]string) string {
 // budget:, where neither a craft nor a credential lives.
 func PolicyKeyPath(key string) string {
 	switch key {
-	case policy.KeyMaxRunTokens, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer:
+	case policy.KeyMaxRunTokens, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer, policy.KeyTriage:
 		return "agent." + key
 	case policy.KeyReviewRatio, policy.KeyReviewFloorCalls, policy.KeyMaxSubagents,
 		policy.KeyStageBudgetImplement, policy.KeyStageBudgetReview, policy.KeyStageBudgetFix,

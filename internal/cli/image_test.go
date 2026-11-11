@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
@@ -229,6 +232,10 @@ func cloudBuildCheckout(t *testing.T, bare bool) (*gcpfake.Build, *cloudFixture)
 	if !bare {
 		fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app")))
 	}
+	// Every build of this fixture leases its cost before it is submitted (T4),
+	// so the installation's budget database, its caps and the price lookup are
+	// part of what a checkout that can build is.
+	buildBudgetWorld(t, f)
 	return fb, f
 }
 
@@ -412,6 +419,218 @@ func TestImageBuildCloudFailureIsRemote(t *testing.T) {
 // TestImageBuildCloudDigestUnknown: a SUCCESS without pushed-image results
 // still built and pushed the tag, so it is a success, but the output says
 // the digest is unknown rather than printing an empty one.
+// TestImageBuildCountsTheWholeReservationWhenTheWatchIsLost: a wait that gives
+// up is not a build that ended. Wait fails both for a build that finished badly
+// — whose status is terminal — and for one whose status could not be read, and
+// the second is a build that may still be running, which is what its own error
+// says (internal/backend/gcp's Wait). The lease has to settle that one like
+// --no-wait: the whole reservation, because Cloud Build goes on billing and the
+// minute this command watched is not what the build costs.
+//
+// Mutation (run, restore): settle on "the wait returned an error" (waited true,
+// which is what all three arms did) and this test fails with 15 600 µ$ counted —
+// one minute at the lease's rate, with the rest of the reservation handed back
+// to the day's caps while the build is still spending it.
+func TestImageBuildCountsTheWholeReservationWhenTheWatchIsLost(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	// The first status read is refused, and a 403 is not something Wait retries:
+	// the watch gives up at once, over a build Cloud Build is still running.
+	fb.FailGets, fb.FailGetCode = 1, http.StatusForbidden
+	_, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if err == nil {
+		t.Fatalf("a build whose status could not be read succeeded:\n%s", stderr)
+	}
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "may still be running") {
+		t.Fatalf("exit %d, err %v: want the lost watch's own error", ExitCode(err), err)
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("the build was submitted %d times, want the one the lost watch is about", buildPosts(fb))
+	}
+	wholeReservationCounted(t, f.db, mustSlug("bitbucket", "acme/app"), "for a build whose watch was lost")
+}
+
+// TestImageBuildCountsWhatAWatchedBuildSpent: the other direction of the settle
+// above, and the one the caps depend on. Cloud Build reports a finished build's
+// status, image and log and no billed time, so the watch's own clock is the
+// measurement (buildSpend, image_build_lease.go): the minutes it saw, at the
+// rate the lease was taken at, capped at what the lease holds. What the day
+// counts for a build that ended is that figure — the whole reservation is the
+// fixed hour the build was allowed to cost, and the caps are what stands in
+// place of the confirmation T4 removed (D1543), so a completed build that moved
+// them by nothing, or by the whole hour, is the defect this pins.
+//
+// Mutation (run, restore): `return 0` from buildSpend's watched half and the day
+// counts 0 µ$ for a build that ran; `return unspent` there and it counts the
+// whole 936 000 µ$ reservation — measured, both of them, by putting each in and
+// running this file's settle tests: nothing but this test and TestBuildSpend
+// moves, because the build is reported as built, the lease as settled and the
+// exit code zero either way.
+func TestImageBuildCountsWhatAWatchedBuildSpent(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	slug := mustSlug("bitbucket", "acme/app")
+	out, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if !strings.Contains(out, " built ") {
+		t.Fatalf("output = %q: this test is about a build that ended, so it has to be one this command watched to SUCCESS", out)
+	}
+	if buildPosts(fb) != 1 || buildGets(fb) == 0 {
+		t.Fatalf("the build was submitted %d times and its status read %d times, want the one submission this command waited on", buildPosts(fb), buildGets(fb))
+	}
+	// Hermetically the wait lasts milliseconds, and Cloud Build bills a partial
+	// minute as a whole one: the figure is the first minute of the lease's hour.
+	rate := buildRate(t)
+	countedOnTheDay(t, f.db, slug, rate.MicrosPerMinute,
+		"for a build this command watched to SUCCESS: the minute the watch measured is what it spent, while the whole reservation is what the arms that never watched one leave")
+	// And the rest of the reservation is back with the caps: the lease keeps
+	// what the build spent and reads as settled.
+	var leases map[string]budget.BuildLease
+	client, err := newBudgetClient(context.Background(), f.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), budget.PathBuildLeases(slug), &leases); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("%d build leases are in the database, want the one this build took: %v", len(leases), leases)
+	}
+	for id, l := range leases {
+		if l.State != budget.BuildLeaseSettled || l.Settled != rate.MicrosPerMinute || l.Released != l.Reserved-l.Settled {
+			t.Errorf("the lease %s reads %s with %d µ$ settled and %d µ$ released of its %d µ$ reservation, want it settled for the first minute (%d µ$) with the rest given back",
+				id, l.State, l.Settled, l.Released, l.Reserved, rate.MicrosPerMinute)
+		}
+	}
+}
+
+// buildGets are the build status reads the fake served: what tells a test that
+// the watch of a build is under way. The submission itself is a POST to the
+// builds collection, which this does not count.
+func buildGets(fb *gcpfake.Build) int {
+	n := 0
+	for _, r := range fb.Requests() {
+		if r.Method == "GET" && strings.Contains(r.Path, "/builds/") {
+			n++
+		}
+	}
+	return n
+}
+
+// TestImageBuildSettlesItsLeaseWhenTheContextIsCancelled: the interrupt a
+// person sends during a build — Ctrl-C, SIGTERM, SIGHUP, which
+// cmd/fugaro/main.go's signalContext turns into a cancelled command context,
+// leaving the process alive until the command returns — reaches the settle
+// that closes the lease, because that settle runs after the wait the interrupt
+// broke. Made on that cancelled context the write fails at once, and what it
+// leaves is worse than a missing line: the lease stays OPEN, and once its
+// deadline passes the next command's reclaim releases it whole
+// (imageCost.reclaim), counting 0 µ$ for a build Cloud Build is still running.
+// The closing write is therefore made on a context of its own (leaseWriteCtx),
+// and this is the test that really cancels the command's context, rather than
+// handing the settle a context that was never live.
+//
+// Mutation (run, restore): drop the WithoutCancel from leaseWriteCtx and the
+// day counters stay at 0 while the lease node reads open — the reviewer's own
+// reproduction of this finding.
+func TestImageBuildSettlesItsLeaseWhenTheContextIsCancelled(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	// WORKING is not terminal, so the watch polls it for as long as it is
+	// allowed to: the build never ends and only the interrupt stops the watch.
+	fb.Outcome = "WORKING"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The interrupt arrives once the build is out and being watched: by then
+	// Cloud Build has it and bills for it whatever this command does next.
+	go func() {
+		for buildGets(fb) == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	_, stderr, err := executeBuildCtx(t, ctx, "image", "build", "--base", "b:1")
+	if err == nil {
+		t.Fatalf("a build whose watch was interrupted succeeded:\n%s", stderr)
+	}
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "may still be running") {
+		t.Fatalf("exit %d, err %v: want the interrupted watch's own error", ExitCode(err), err)
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("the build was submitted %d times, want the one the interrupt is about", buildPosts(fb))
+	}
+	slug := mustSlug("bitbucket", "acme/app")
+	wholeReservationCounted(t, f.db, slug, "for a build interrupted while this command watched it")
+	// And the lease is closed, not left open for a later command's reclaim.
+	var leases map[string]budget.BuildLease
+	client, err := newBudgetClient(context.Background(), f.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), budget.PathBuildLeases(slug), &leases); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("%d build leases are in the database, want the one build's this test read: %v", len(leases), leases)
+	}
+	for id, l := range leases {
+		if l.State != budget.BuildLeaseSettled {
+			t.Errorf("the lease %s reads %q, want %q: an interrupt is not a reason to leave a submitted build's reservation open for the next command to give back",
+				id, l.State, budget.BuildLeaseSettled)
+		}
+	}
+}
+
+// TestImageBuildWithoutABudgetBackendBuildsUncounted: the installation of an
+// owner who never ran `fugaro update --firebase-project` has no budget backend
+// at all, and its builds take no lease — there is no ledger to write a
+// reservation into, no cap to judge the build against, and no permission on the
+// Cloud Billing catalog the price is read from (billing-price-spike.md §1.2),
+// so the lookup must not run there. The build is still submitted: a run has
+// proceeded on such a project all along (launch_budget.go), and the command
+// that would otherwise refuse is `fugaro update`'s own checkout stage, whose
+// step 4 rebuilds stale images — a refusal there would be an operator step the
+// one upgrade command is not allowed to need (HARD RULE).
+//
+// Mutation (run, restore): let openBuildLease fall through to budgetDBFor on
+// this installation and the build fails with the operator sentence and 0 posts;
+// delete the note and the one line that says the build is uncounted is gone.
+func TestImageBuildWithoutABudgetBackendBuildsUncounted(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	dropBudgetBackend(t, f)
+	// What the spike's §1.2 forbids is the *call*, not a wrong answer from it:
+	// a lookup that ran here would be a request the installation holds no
+	// permission for, so the failure is the assertion.
+	was := newBuildPricer
+	newBuildPricer = func(*localcfg.Config) buildPricer {
+		t.Error("the Cloud Billing price lookup ran on an installation with no budget backend")
+		return fakePricer{book: pricedBook()}
+	}
+	t.Cleanup(func() { newBuildPricer = was })
+
+	_, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("a build on an installation with no budget backend failed: %v\n%s", err, stderr)
+	}
+	for _, want := range []string{"has no Firebase budget backend", "this build takes no lease and nothing counts its cost",
+		"fugaro update --firebase-project proj-1234"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("the build was submitted %d times, want the one build this installation cannot lease", buildPosts(fb))
+	}
+	// The database the fixture's block pointed at is still up, and it is the
+	// one place a lease would have gone: nothing may be in it.
+	slug := mustSlug("bitbucket", "acme/app")
+	if v := f.db.Value(budget.PathBuildLeases(slug)); v != nil {
+		t.Errorf("a build with no lease to take wrote %v at %s", v, budget.PathBuildLeases(slug))
+	}
+	if v := f.db.Value(budget.PathSpendRepo(today(), slug)); v != nil {
+		t.Errorf("a build with nothing reserved counted %v at %s", v, budget.PathSpendRepo(today(), slug))
+	}
+}
+
 func TestImageBuildCloudDigestUnknown(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	fb.NoResults = true

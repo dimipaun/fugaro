@@ -215,6 +215,17 @@ var yamlMeta = map[string]Row{
 	"agent.adversarial_rounds": {
 		Default: unset("the run's rigor mode decides (rigor.AdversarialDefault)"),
 	},
+	"agent.review_stop_fraction": {
+		Default: unset("0.8 (config.DefaultReviewStopFraction)"),
+	},
+	// The triage stage's switch (D1854): an absent key is the stage running,
+	// in the two modes that have such a stage at all, so the DEFAULT column
+	// names those modes rather than reading "none" — which a reader would take
+	// for the stage being off.
+	"agent.triage": {
+		Default: unset("on (startup and pro only, config.TriageMode)"),
+	},
+
 	"agent.recipe":      {Owner: "models", Default: unset("the built-in recipe"), Doc: "docs/recipes.md"},
 	"agent.oauth_token": {Default: unset("the job's own credential")},
 	"agent.compression": {Default: unset("inherit")},
@@ -413,6 +424,12 @@ const (
 	// DEFAULT column and the schema's keyDefaults, and a spec of the section's
 	// own would be the document that takes the rows over.
 	docTroubleshoot = "docs/troubleshoot-issue/implementation-plan.md"
+	// docTriage is the document that states the triage stage and the switch
+	// that turns it off (D1854, D1851). It is the work's plan for
+	// docOrchestrator's reason: the stage, its default and the switch's home on
+	// the published node are stated there and nowhere else yet, and a document
+	// of the stage's own would take the row over.
+	docTriage = "docs/post-review-triage/implementation-plan.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -532,6 +549,7 @@ var layerRows = []Row{
 	layerRow("defaults.agent.levels.l3.none", "the run's rigor mode and the recipe decide", "settings set", docLayer),
 	layerRow("defaults.agent.levels.l3.focus", "none", "settings set", docLayer),
 	layerRow("defaults.agent.adversarial_rounds", "the run's rigor mode decides (rigor.AdversarialDefault)", "settings set", docLayer),
+	layerRow("defaults.agent.review_stop_fraction", "0.8 (config.DefaultReviewStopFraction)", "settings set", docLayer),
 	layerRow("defaults.agent.recipe", "the built-in recipe", "models", docModels),
 	layerRow("defaults.rigor.default", "the built-in mode (pro)", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.name", "none", "rigor", docRigor),
@@ -844,6 +862,14 @@ var localRows = []Row{
 	loc("image_catalog.entries.*.source.image", "none", "project", docImages),
 	loc("image_catalog.entries.*.description", "none", "project", docImages),
 	loc("image_catalog.entries.*.default", "false", "project", docImages),
+	// The services an entry's image provides are the same image policy one
+	// step further (D1904): the run starts them before its tests, and the
+	// entry's own list is the only source, so a person reading the row learns
+	// which list decided it. The owner is the `fugaro project` family, as the
+	// map's row below is `fugaro image map`'s: this leaf belongs to a catalog
+	// entry and its path carries a `*`, so the generic write refuses it twice
+	// over (settings_set.go) and the family is the command that writes it.
+	loc("image_catalog.entries.*.services", "none: the run starts no backing service", "project", docImages),
 	// The repo-to-image map is the catalog's counterpart one step down (D1906):
 	// which entry each of the project's repositories runs, so it is the image
 	// policy too and one row for the whole map because the map's keys are the
@@ -862,6 +888,14 @@ var localRows = []Row{
 	// boolean whose only reader is the resolver, and a family for one key would
 	// be a command family that does nothing the generic write does not.
 	loc("bake_repos", "true: a repository the build can read is baked into the image its job runs", "settings set", docImages),
+	// The triage switch is the other policy key of that shape — a local key the
+	// node is published from — and it is the catalog's rather than the bake
+	// switch's: `fugaro project policy publish` is what carries it, which is why
+	// the owner names the project family and not the generic path. The switch is
+	// the owner's because it decides which of a review round's findings hold a
+	// pull request back (D1854), and no command writes it beyond the publish: an
+	// operator states it in the file and runs the update.
+	loc("triage", "true: a review round's findings are judged by the triage stage in the modes that triage at all, and a written false turns the stage off for the project", "project", docTriage),
 
 	// The orchestrator daemon's own guardrails (D1239, D1234) are the owner's
 	// policy like the catalog above, and one row per member for the catalog's

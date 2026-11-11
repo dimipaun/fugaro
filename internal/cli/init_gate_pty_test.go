@@ -46,7 +46,8 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	go func() { done <- e.r.gatherInputs(t.Context()) }()
 	typeAt("Type the GCP project's ID", 1, "my-proj-42\n")
 	typeAt("Type the region the installation's jobs and the scheduler run in", 1, "\n")
-	typeAt("Type the Fugaro project's name", 1, "\n") // last: its default can come from an installation in that project
+	typeAt("Type the Fugaro project's name", 1, "\n") // its default can come from an installation in that project
+	typeAt("Bake your repos", 1, "\n")                // the wizard's last question (IS7), and Enter is its suggestion
 	select {
 	case err := <-done:
 		if err != nil {

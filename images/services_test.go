@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // fugaro-services is run with bash from the image's PATH; these runs need no
@@ -68,6 +71,99 @@ func TestFugaroServicesUsageAndStatus(t *testing.T) {
 	if out, err := runServices(t, nil, "stop"); err != nil || !strings.Contains(out, "nothing to stop") {
 		t.Errorf("stop with nothing started: err=%v\n%s", err, out)
 	}
+}
+
+// TestFugaroServicesKnowsEveryCatalogServiceName pins the two lists that
+// cannot disagree: config.ServiceNames is what a catalog entry's `services:` is
+// held to (internal/config) and this script's own allow-list is what a run's
+// stamp is handed to, so a name on one side and not the other is a service an
+// entry cannot declare or a stamp this script refuses — and both fail every run
+// of that image at bootstrap, with the reason buried in a stage's output rather
+// than named. config.ServiceNames' own doc states the equality; this is where
+// it is held to.
+//
+// The names are read out of the line that refuses everything else, and then
+// really started: the ports of the services this test can steer are already
+// open, which is what makes start return at once without the service installed
+// (TestFugaroServicesStartLeavesAnAnsweringServiceAlone's own shortcut), and
+// for firebase — whose emulators take their ports from a config this test has
+// none of — a firebase that exits at once stands in, so the name is still put
+// through the allow-list and no emulator is started on this machine.
+func TestFugaroServicesKnowsEveryCatalogServiceName(t *testing.T) {
+	scriptNames := scriptServiceNames(t)
+	if sorted := slices.Sorted(slices.Values(config.ServiceNames)); !slices.Equal(sorted, slices.Sorted(slices.Values(scriptNames))) {
+		t.Fatalf("the script accepts %v and the catalog declares %v: an entry's `services:` is held to the second and handed to the first", scriptNames, config.ServiceNames)
+	}
+
+	shim := t.TempDir()
+	if err := os.WriteFile(filepath.Join(shim, "firebase"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ln := listenOnFreePort(t)
+	defer ln.Close()
+	port := portOf(ln)
+	for _, name := range config.ServiceNames {
+		out, err := runServicesRaw(t, nil, []string{
+			"FUGARO_SERVICES=" + name,
+			"FUGARO_POSTGRES_PORT=" + port,
+			"FUGARO_REDIS_PORT=" + port,
+			"FUGARO_SERVICES_TIMEOUT=10",
+			// The shim comes first, so `command -v firebase` finds it wherever
+			// this machine's own firebase is or is not.
+			"PATH=" + shim + string(os.PathListSeparator) + os.Getenv("PATH"),
+		}, []string{"PATH"}, "start")
+		if strings.Contains(out, "unknown service") {
+			t.Errorf("start with %s: the script refuses a name the catalog declares, so an entry declaring it fails every run of its image at bootstrap: err=%v\n%s", name, err, out)
+			continue
+		}
+		if err != nil {
+			// firebase, and only it: its emulators hold the ports themselves,
+			// so start reaches the tool — which is past the allow-list check,
+			// where the name was accepted.
+			if !strings.Contains(out, "firebase") {
+				t.Errorf("start with %s: err=%v, want the start to fail on the service itself\n%s", name, err, out)
+			}
+			continue
+		}
+		if want := name + ": up (port " + port + ")"; !strings.Contains(out, want) {
+			t.Errorf("start with %s: err=nil but the output has no %q, so the name was accepted and the service was not started\n%s", name, want, out)
+		}
+	}
+}
+
+// scriptServiceNames reads this script's own list of service names: the case
+// arms of the line that refuses everything else, so the list read here is the
+// list the script really judges a stamp by.
+func scriptServiceNames(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile("common/fugaro-services")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const refusal = "unknown service"
+	line := ""
+	for _, l := range strings.Split(string(data), "\n") {
+		if strings.Contains(l, refusal) {
+			line = l
+		}
+	}
+	const arms = "case $s in "
+	i := strings.Index(line, arms)
+	armsText := ""
+	if i >= 0 {
+		armsText = line[i+len(arms):]
+	}
+	j := strings.Index(armsText, ")")
+	if i < 0 || j < 0 {
+		t.Fatalf("the script's allow-list could not be read, so nothing pins the catalog's names to it: the line refusing an unknown service is %q", line)
+	}
+	names := strings.Split(armsText[:j], "|")
+	for _, n := range names {
+		if n == "" || strings.ToLower(n) != n {
+			t.Fatalf("the script's allow-list line %q does not read as names: %v", line, names)
+		}
+	}
+	return names
 }
 
 // With every port already taken, start leaves the services alone and returns

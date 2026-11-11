@@ -1,6 +1,6 @@
 # `fugaro settings`: one command to see and change every setting, with `fugaro update` publishing what it changes
 
-**Status as of 2026-11-10: in progress, about 6/12 merged; see [docs/status.md](../status.md) for the current table.** SD1–SD18 were
+**Status as of 2026-11-10: in progress, about 6/12 merged, and S7 closed as a duplicate of config-management's G7; see [docs/status.md](../status.md) for the current table.** SD1–SD18 were
 answered by the owner on 2026-10-31 (SD1–SD5 with named answers, the rest as recommended); the
 answers are in [reconciliation.md](reconciliation.md) §3, and the plan is written to them. The
 design's own decisions — everything the audit left open that is not one of its SDs — are
@@ -8,6 +8,15 @@ design's own decisions — everything the audit left open that is not one of its
 by the owner on 2026-10-31 as recommended**, and **D854 — the stale local copy that could overwrite a
 newer publish — is answered with them: the generation is recorded**, so a stage refuses to publish
 over a published generation that has moved. **D855–D859** are reserved and unused.
+
+**The owner's ruling of 2026-11-10 closes this plan's one duplicate.** One task here builds the same
+command as a task of [docs/config-management](../config-management/implementation-plan.md): **S7**
+(`fugaro rigor floor`) is config-management's **G7**, and the owner ruled on 2026-11-10 that
+**config-management wins** and S7 is closed as G7's duplicate. S7 keeps its section in
+[implementation-plan.md](implementation-plan.md) as the record of what was designed — G7 re-reads that
+record, as G6 re-reads the `rigor` design's — and keeps its number, which is never reused. **S0–S5 are
+merged and stay exactly as they are, and S6 and S8–S11 stay open**; the behaviour G7 does not carry is
+listed under *behaviour not covered by the winners* in the pull request that carries this ruling.
 
 **Asked by:** the owner, 2026-10-31: "for project level and repo level settings, in fact for ALL
 the settings, you should not expect people to edit the text file directly, but have Fugaro commands
@@ -72,7 +81,8 @@ three READMEs share.
 
 **The joint order**, agreed with the `models` and `rigor` designs and the same list in all three:
 **editor → policy stage (S3) → settings read (S0–S2, S4) → layer stage (R0, R1) → set (S5) → rigor
-(R2–R5) and models.**
+(R2–R5 and this design's S7, closed on 2026-11-10 to config-management's G0–G2 with G4, its G6 and its
+G7, which build them) and models.**
 
 | # | What lands | Owner | Why it sits here |
 | --- | --- | --- | --- |
@@ -81,7 +91,7 @@ three READMEs share.
 | 3 | The settings read | **S0–S2, S4** | useful before every writer, and it is what makes G1, G2 and G5 visible today |
 | 4 | The layer stage, and the local layer file it publishes | the `rigor` design's **R0, R1** | `settings set --layer project` (S5) needs both the file and its publisher |
 | 5 | `fugaro settings get\|set\|unset` | **S5** | the first writer over all three documents; it comes after 2 and 4 because its `next: fugaro update` line is false until both stages publish |
-| 6 | `fugaro rigor …` (R2–R5) and the `models` writes | the `rigor` and `models` designs | they reuse the editor and both stages, and their keys reach runs through the stage of 2 |
+| 6 | `fugaro rigor …` and the `models` writes | config-management (**G0–G2** with **G4**, **G6** and **G7**, which build the commands the `rigor` design's R2–R5 and this design's S7 designed and the owner closed as their duplicates on 2026-11-10) and the `models` design | they reuse the editor and both stages, and their keys reach runs through the stage of 2 |
 
 **What all three designs rule the same way:**
 
@@ -106,7 +116,7 @@ Against `origin/main` at `29004ec9` and the 18 pull requests open on 2026-10-31,
 offset reads and `git show`. The audit's own citations (`file:line` at `1c9be2a2c`) were re-checked
 against that commit; every claim in [reconciliation.md](reconciliation.md) names the file and the
 symbol it was read from. `docs/rigor-command/` (PR #1463) was read in full through `gh pr diff`,
-because its R0–R6 and this plan's S4–S7 write the same two documents, the same two `fugaro update`
+because its R0–R6 and this plan's S4–S6 write the same two documents, the same two `fugaro update`
 stages and the same editor.
 
 ## Numbers this work holds

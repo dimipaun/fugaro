@@ -410,8 +410,9 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // operation's own closed schema (`src/main/ipc.ts`), and a method that took
   // the operation as an argument is the shape rule 5 forbids. **It is the second
   // row whose child mints a credential of the host's**, after `run.launch` at
-  // the end of this list -- the coordinator's own read-only installation token,
-  // against a launched run's write set -- so its two arguments are the whole of
+  // the end of this list -- the person read set's own read-only installation
+  // token (contents, pull requests and metadata, all read), against a launched
+  // run's write set -- so its two arguments are the whole of
   // what a renderer can influence about the argv, and no credential of the host's
   // reaches this surface, the reply or a log line.
   ['coordinator.show', 'coordinatorShow'],
