@@ -334,8 +334,9 @@ function importsBreadcrumb(body, file) {
  * for) and so is this file. `argument` marks the rules that read the first
  * argument of each call site instead of only finding the token; it is given what
  * `firstArgument` read, the file's code (a rule may have to read more of it than
- * the call) and the file's path (a rule may have to resolve an import against
- * it), and answers whether that shape is allowed.
+ * the call), the file's path (a rule may have to resolve an import against it)
+ * and the index the first argument ended at (a rule that reads the argument
+ * under it starts there), and answers whether that shape is allowed.
  *
  * A `controls` entry is the offending line on its own, planted in a file that
  * imports nothing, or a `{ file, source }` pair when the offence is only an
@@ -392,7 +393,7 @@ const RULES = [
     accepted: [
       { file: 'src/telemetry/allowed.js', source: "analytics().logEvent('app_launch', { first: true });" },
       { file: 'src/app/allowed.js', source: "analytics().logEvent('screen_shown', { screen: 'mailbox' });" },
-      // The two events that carry nothing are sent with nothing.
+      // An event that declares no parameter is sent with none.
       { file: 'src/app/allowed.js', source: "analytics().logEvent('account_switched');" },
     ],
     why: 'D256: §7.2 is a closed allow-list of seven names with the parameters each declares, and a name the app invents — or a value nobody reviewed — is a leak D256 refused',
