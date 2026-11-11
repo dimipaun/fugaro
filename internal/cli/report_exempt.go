@@ -72,17 +72,33 @@ var reporterCommands = map[string]string{
 	"update":         "update",
 }
 
+// builtLogName is one reporter command whose log name is not a literal at the
+// constructor call site, and where the source writes it instead.
+type builtLogName struct {
+	// builder is the function the constructor is called with, which is where
+	// the name comes from. It is the whole answer for the kill switch, whose
+	// one builder is two commands.
+	builder string
+	// door is the convergeDoor whose own name field holds the command's name,
+	// for the two doors that share one converge: doorName returns the door the
+	// run was built for, and the door's name is written in its own spec, not
+	// in the builder.
+	door string
+}
+
 // builtLogNames are the reporter commands whose log name is built at the call
-// site rather than written there, and the function that builds it: one
-// constructor is two commands (`setup` and `update` are one converge behind two
-// doors, `budget kill` and `budget resume` one switch), so the name a person
-// typed is not a literal any scan can read. The test holds each of these names
-// to the function named here, and the function to the names it returns.
-var builtLogNames = map[string]string{
-	"budget kill":   "budgetKillLogName",
-	"budget resume": "budgetKillLogName",
-	"setup":         "doorName",
-	"update":        "doorName",
+// site rather than written there: one constructor is two commands (`setup` and
+// `update` are one converge behind two doors, `budget kill` and `budget resume`
+// one switch), so the name a person typed is not a literal any scan can read.
+// report_census_test.go holds each entry to the syntax tree: the builder has to
+// be the function a constructor is called with, and the name has to be the one
+// the builder returns or the door spec writes down -- a comment that says
+// "update" is not a name.
+var builtLogNames = map[string]builtLogName{
+	"budget kill":   {builder: "budgetKillLogName"},
+	"budget resume": {builder: "budgetKillLogName"},
+	"setup":         {builder: "doorName", door: "setupDoor"},
+	"update":        {builder: "doorName", door: "updateDoor"},
 }
 
 // exemptListing is one command D1354 keeps off the reporter because its stdout

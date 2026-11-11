@@ -9,18 +9,26 @@ package cli
 // would print its own account by hand, and no test would notice. So the tree is
 // walked, every visible runnable command has to be accounted for in
 // report_exempt.go -- on the reporter, or exempt with a reason -- and the
-// reporter's half is held to the source and to the log rule from both sides.
+// reporter's half is held to the code: not to a file that contains the words,
+// which prose satisfies, but to the syntax tree. A constructor has to call
+// openReporter, openReporter has to call report.OpenLog, the call site has to
+// pass the log name the census claims, and a name built at run time has to be
+// one the builder returns or the door spec writes down.
 //
 // The reasons are printed on every run of the pin, the way CL10's are: an
 // exemption a reviewer cannot read is a hole nobody sees.
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -102,40 +110,56 @@ func TestEveryCommandIsOnTheReporterOrExempt(t *testing.T) {
 //
 // A command on the reporter is a command whose run opens a log (D1351), and the
 // log is opened in one place: report.OpenLog, called by openReporter, which the
-// four constructors call. So the census is checked against the source rather
-// than against a promise: every log name a constructor is called with is an
-// entry, every entry is a name the source writes or one of the two builders
-// that cannot (builtLogNames), the entry is the command's own name because that
-// is what D1351 files a run under, and report.OpenLog accepts it -- the real
-// rule, run for real, rather than a copy of its pattern.
+// constructors call. Every step of that is read off the syntax tree rather than
+// off the text of a file -- a definition is not a call, and a word in a comment
+// is not a name -- so the census is held to what the code does: the call sites
+// must pass the name the census claims, a name built at run time must be one the
+// builder returns or the door spec writes down, the name must be the command's
+// own, and report.OpenLog must accept it -- the real rule, run for real, rather
+// than a copy of its pattern.
 func TestEveryMutatingCommandWritesALog(t *testing.T) {
-	sources := packageSources(t)
-	calls := reporterConstructorCalls(sources)
-	if len(calls) == 0 {
-		t.Fatal("no reporter constructor is called anywhere in this package, so a pass here would prove nothing")
+	src := parseCensusSource(t)
+	calls := reporterConstructorCalls(t, src)
+	if len(calls.literal) == 0 {
+		t.Fatal("no reporter constructor is called with a log name anywhere in this package, so a pass here would prove nothing")
 	}
 
-	// The chain the census rests on: every constructor ends in openReporter,
-	// and openReporter is the only thing in this package that opens a log.
+	// The chain the census rests on: a constructor calls openReporter,
+	// stepRunFor calls a constructor, openReporter calls report.OpenLog, and
+	// nothing else in the package opens a log.
 	for _, ctor := range []string{"reporterFor", "convergeReporter"} {
-		if !mentionsCall(sources["report_flags.go"], ctor) || !mentionsCall(sources["report_flags.go"], "openReporter") {
-			t.Errorf("%s is not built on openReporter in report_flags.go, so a reporter command may no longer reach report.OpenLog at all", ctor)
+		file, body := src.funcBody(t, ctor)
+		switch {
+		case body == nil:
+			t.Errorf("%s is not defined in this package, so a command built on it reaches no log at all", ctor)
+		case len(callsTo(body, "openReporter")) == 0:
+			t.Errorf("%s does not call openReporter in %s: a command built on it reaches no log at all", ctor, file)
 		}
 	}
-	if !strings.Contains(sources["report_step.go"], "reporterFor(") {
-		t.Error("stepRunFor does not build its reporter through reporterFor in report_step.go, so the step family no longer reaches report.OpenLog")
+	if _, body := src.funcBody(t, "stepRunFor"); body == nil || len(callsTo(body, "reporterFor")) == 0 {
+		t.Error("stepRunFor does not call reporterFor, so the step family no longer reaches a log through the one path the rest of the census is checked against")
 	}
-	logSites := 0
-	for _, file := range slices.Sorted(maps.Keys(sources)) {
-		if strings.Contains(sources[file], "report.OpenLog(") {
-			logSites++
-			if file != "report_flags.go" {
-				t.Errorf("%s opens a log directly, and openReporter in report_flags.go is the one place a run's log is opened", file)
-			}
+	logFile, logBody := src.funcBody(t, "openReporter")
+	if logBody == nil || len(callsTo(logBody, "report.OpenLog")) == 0 {
+		t.Errorf("openReporter does not call report.OpenLog in %s: the constructors' logs are not report's", logFile)
+	}
+	src.eachFunc(func(file, name string, body *ast.BlockStmt) {
+		if name == "openReporter" {
+			return
 		}
+		if len(callsTo(body, "report.OpenLog")) > 0 {
+			t.Errorf("%s opens a log directly in %s, and openReporter in report_flags.go is the one place a run's log is opened", name, file)
+		}
+	})
+
+	// The door's name reaches doorName through the field the converge is
+	// given: a door spec nothing assigns is a name doorName never returns,
+	// and a doorName that reads another field is a name no door wrote.
+	if _, body := src.funcBody(t, "doorName"); body == nil || !readsField(body, "door") {
+		t.Error("doorName does not read the door's own name field, so the door specs builtLogNames names are not what it returns")
 	}
-	if logSites != 1 {
-		t.Errorf("report.OpenLog is called from %d files, want exactly one (report_flags.go): a second call site is a run that opens a log no constructor made", logSites)
+	if !src.assignsFieldFromField("door", "name") {
+		t.Error("nothing assigns a door's name field from the door spec's own name, so no door's name ever reaches doorName")
 	}
 
 	isolateState(t)
@@ -157,29 +181,45 @@ func TestEveryMutatingCommandWritesALog(t *testing.T) {
 
 	// Both directions: a name the source builds a reporter with is an entry,
 	// and an entry is a name the source builds a reporter with -- written at
-	// the call site, or built by the one function builtLogNames names.
-	for _, name := range slices.Sorted(maps.Keys(calls)) {
+	// the call site, or built by the function builtLogNames names, whose name
+	// the source then has to write down where the census says it does.
+	for _, name := range slices.Sorted(maps.Keys(calls.literal)) {
 		if _, ok := reporterPath(name); !ok {
-			t.Errorf("a reporter is built at %s under the log name %q, which is not an entry in reporterCommands: a command that prints through the reporter has to be on the census", calls[name], name)
+			t.Errorf("a reporter is built at %s under the log name %q, which is not an entry in reporterCommands: a command that prints through the reporter has to be on the census", calls.literal[name], name)
 		}
 	}
 	for _, path := range slices.Sorted(maps.Keys(reporterCommands)) {
 		name := reporterCommands[path]
-		if _, ok := calls[name]; ok {
+		if _, ok := calls.literal[name]; ok {
 			continue
 		}
-		builder, ok := builtLogNames[path]
+		built, ok := builtLogNames[path]
 		if !ok {
-			t.Errorf("no reporter constructor in this package is called with %q, and builtLogNames does not name the function that builds it: `fugaro %s` is on the census with nothing in the source to hold it to", name, path)
+			t.Errorf("no reporter constructor in this package is called with %q, and builtLogNames does not say where `fugaro %s` builds it: the entry is held to nothing", name, path)
 			continue
 		}
-		src, ok := sources[builderFile(builder)]
-		if !ok || !definesFunc(src, builder) {
-			t.Errorf("builtLogNames says %s builds `fugaro %s`'s log name, and no such function is defined in this package", builder, path)
+		if _, called := calls.built[built.builder]; !called {
+			t.Errorf("builtLogNames says %s builds `fugaro %s`'s log name, and no reporter constructor is called with %s(...): the census names a builder nothing reads", built.builder, path, built.builder)
+		}
+		if built.door != "" {
+			file, expr := src.varValue(t, built.door)
+			lit, isLit := expr.(*ast.CompositeLit)
+			if !isLit {
+				t.Errorf("%s is not a composite literal in %s, so it is not the door spec builtLogNames names for `fugaro %s`", built.door, file, path)
+				continue
+			}
+			if got, ok := fieldString(lit, "name"); !ok || got != path {
+				t.Errorf("%s's name field is %q in %s, and `fugaro %s` files its log under %q: a renamed door is a run filed under a name no command has", built.door, got, file, path, name)
+			}
 			continue
 		}
-		if !strings.Contains(src, `"`+name+`"`) {
-			t.Errorf("%s does not name %q in %s, so the name `fugaro %s` files its log under is not the one the source builds", builder, name, builderFile(builder), path)
+		file, body := src.funcBody(t, built.builder)
+		if body == nil {
+			t.Errorf("builtLogNames says %s builds `fugaro %s`'s log name, and no such function is defined in this package", built.builder, path)
+			continue
+		}
+		if !slices.Contains(stringLiterals(body), name) {
+			t.Errorf("%s does not return %q in %s, so the name `fugaro %s` files its log under is not one the source builds", built.builder, name, file, path)
 		}
 	}
 }
@@ -209,17 +249,6 @@ func TestExemptCommandsAreListings(t *testing.T) {
 		}
 	}
 
-	// A listing is not a run: no exempt command may be one the reporter is
-	// building, which is what the log names in the source would say.
-	calls := reporterConstructorCalls(packageSources(t))
-	for _, path := range slices.Sorted(maps.Keys(exemptListings)) {
-		if name, onReporter := reporterCommands[path]; onReporter {
-			if _, built := calls[name]; built {
-				t.Errorf("`fugaro %s` is exempt as a listing and a reporter is built for it under %q: the two say different things about one command", path, name)
-			}
-		}
-	}
-
 	for _, path := range slices.Sorted(maps.Keys(exemptListings)) {
 		fmt.Printf("`fugaro %s`, exempt: %s\n", path, exemptListings[path].why)
 	}
@@ -243,78 +272,254 @@ func censusCommands(t *testing.T) map[string]*cobra.Command {
 	return tree
 }
 
-// reporterConstructorCalls reads this package's own sources for the log names
-// the reporter is built under, keyed by name with the file and line that names
-// it. Only a literal at the call site can be read: the two commands built by
-// builtLogNames are named at run time, which is why they are listed there.
-func reporterConstructorCalls(sources map[string]string) map[string]string {
-	calls := map[string]string{}
-	for _, file := range slices.Sorted(maps.Keys(sources)) {
-		for i, line := range strings.Split(sources[file], "\n") {
-			for _, ctor := range reporterConstructors {
-				at := strings.Index(line, ctor)
-				if at < 0 {
+// censusSource is this package's non-test sources, parsed once. Every claim
+// below is a claim about a declaration, a call or a name the source writes, and
+// each of those is a node in this tree rather than a word in a file: a comment
+// that says "update", or a function that is defined but never called, satisfies
+// a search through the text and satisfies nothing here.
+type censusSource struct {
+	fset  *token.FileSet
+	files map[string]*ast.File
+}
+
+func parseCensusSource(t *testing.T) *censusSource {
+	t.Helper()
+	names, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := &censusSource{fset: token.NewFileSet(), files: map[string]*ast.File{}}
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(src.fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		src.files[name] = file
+	}
+	if len(src.files) == 0 {
+		t.Fatal("no sources were parsed, so every check below would pass on an empty tree")
+	}
+	return src
+}
+
+// funcBody is the declaration of name -- a function or a method -- and the file
+// it is written in, or a nil body when this package has no such declaration.
+func (s *censusSource) funcBody(t *testing.T, name string) (string, *ast.BlockStmt) {
+	t.Helper()
+	for _, file := range slices.Sorted(maps.Keys(s.files)) {
+		for _, decl := range s.files[file].Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Name.Name != name || fd.Body == nil {
+				continue
+			}
+			return file, fd.Body
+		}
+	}
+	return "", nil
+}
+
+// eachFunc visits every declaration with a body, which is how a rule that has
+// to hold of the whole package -- no other function opens a log -- is checked
+// without a list of files to keep up to date.
+func (s *censusSource) eachFunc(fn func(file, name string, body *ast.BlockStmt)) {
+	for _, file := range slices.Sorted(maps.Keys(s.files)) {
+		for _, decl := range s.files[file].Decls {
+			if fd, ok := decl.(*ast.FuncDecl); ok && fd.Body != nil {
+				fn(file, fd.Name.Name, fd.Body)
+			}
+		}
+	}
+}
+
+// varValue is a package-level var's value, by the name it is bound to: the door
+// specs are composite literals, and what the census claims about them is what
+// the literal's own fields say.
+func (s *censusSource) varValue(t *testing.T, name string) (string, ast.Expr) {
+	t.Helper()
+	for _, file := range slices.Sorted(maps.Keys(s.files)) {
+		for _, decl := range s.files[file].Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
 					continue
 				}
-				rest := line[at+len(ctor):]
-				open := strings.Index(rest, `"`)
-				if open < 0 {
-					continue // the name is built, not written: builtLogNames' business.
-				}
-				shut := strings.Index(rest[open+1:], `"`)
-				if shut < 0 {
-					continue
-				}
-				name := rest[open+1 : open+1+shut]
-				if _, seen := calls[name]; !seen {
-					calls[name] = fmt.Sprintf("%s:%d", file, i+1)
+				for i, n := range vs.Names {
+					if n.Name == name && i < len(vs.Values) {
+						return file, vs.Values[i]
+					}
 				}
 			}
 		}
 	}
-	return calls
+	return "", nil
+}
+
+// reporterCalls are the places a reporter is built: the log names written at
+// the call site, and the builders the names that cannot be written there are
+// read from, each with the file and line of the call.
+type reporterCalls struct {
+	literal map[string]string
+	built   map[string]string
+}
+
+// reporterConstructorCalls reads the second argument of every constructor call
+// in this package: a string literal is the log name, and anything else is the
+// call whose own name is the builder the census has to name.
+func reporterConstructorCalls(t *testing.T, src *censusSource) reporterCalls {
+	t.Helper()
+	out := reporterCalls{literal: map[string]string{}, built: map[string]string{}}
+	record := func(m map[string]string, key, at string) {
+		if _, seen := m[key]; !seen {
+			m[key] = at
+		}
+	}
+	for _, file := range slices.Sorted(maps.Keys(src.files)) {
+		ast.Inspect(src.files[file], func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) < 2 || !slices.Contains(reporterConstructors, calleeName(call.Fun)) {
+				return true
+			}
+			at := fmt.Sprintf("%s:%d", file, src.fset.Position(call.Pos()).Line)
+			if lit, ok := call.Args[1].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				if name, err := strconv.Unquote(lit.Value); err == nil {
+					record(out.literal, name, at)
+				}
+				return true
+			}
+			if name := builderName(call.Args[1]); name != "" {
+				record(out.built, name, at)
+			}
+			return true
+		})
+	}
+	return out
 }
 
 // reporterConstructors are the calls that build a run through the reporter:
 // reporterFor and convergeReporter in report_flags.go, stepRunFor in
 // report_step.go, and openReporter, which is what all of them end in.
-var reporterConstructors = []string{"reporterFor(", "convergeReporter(", "stepRunFor(", "openReporter("}
+var reporterConstructors = []string{"reporterFor", "convergeReporter", "stepRunFor", "openReporter"}
 
-// packageSources is this package's non-test Go source, keyed by file name. The
-// tests run in the package's own directory, so the names are the ones the
-// census's reasons cite.
-func packageSources(t *testing.T) map[string]string {
-	t.Helper()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("reading the package directory: %v", err)
-	}
-	sources := map[string]string{}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
+// callsTo is every call to name inside n, where name is spelled the way the
+// census spells it: `openReporter` for a call this package makes, and
+// `report.OpenLog` for one it makes into another package. A declaration of the
+// same name is not a call, and is not found here. The callee is named by
+// calleeName, the package's one reader of a call's name (it is defined beside
+// the compute-backend docs test, which reads calls the same way).
+func callsTo(n ast.Node, name string) []*ast.CallExpr {
+	var out []*ast.CallExpr
+	ast.Inspect(n, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok && calleeName(call.Fun) == name {
+			out = append(out, call)
 		}
-		b, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatalf("reading %s: %v", name, err)
-		}
-		sources[name] = string(b)
-	}
-	if len(sources) == 0 {
-		t.Fatal("no sources were read, so every check below would pass on an empty map")
-	}
-	return sources
+		return true
+	})
+	return out
 }
 
-// builderFile is where the function builtLogNames names is defined, by the file
-// the census's reasons cite. The two are the converge's door name and the kill
-// switch's two names.
-func builderFile(builder string) string {
-	if builder == "doorName" {
-		return "init.go"
+// builderName is the function a constructor call reads a built log name from:
+// the last segment of the argument's own callee, so `o.doorName()` is doorName
+// and `budgetKillLogName(kill)` is budgetKillLogName, which is how
+// builtLogNames names them. An argument that is not a call builds no name.
+func builderName(arg ast.Expr) string {
+	call, ok := arg.(*ast.CallExpr)
+	if !ok {
+		return ""
 	}
-	return "budget.go"
+	name := calleeName(call.Fun)
+	if at := strings.LastIndex(name, "."); at >= 0 {
+		name = name[at+1:]
+	}
+	return name
+}
+
+// stringLiterals is every string literal written inside n, unquoted: a name
+// returned by a builder is one of these, and nothing else counts.
+func stringLiterals(n ast.Node) []string {
+	var out []string
+	ast.Inspect(n, func(node ast.Node) bool {
+		lit, ok := node.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		if v, err := strconv.Unquote(lit.Value); err == nil {
+			out = append(out, v)
+		}
+		return true
+	})
+	return out
+}
+
+// fieldString is the string a composite literal writes under key, which is how
+// a door spec states its own name.
+func fieldString(lit *ast.CompositeLit, key string) (string, bool) {
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		k, ok := kv.Key.(*ast.Ident)
+		if !ok || k.Name != key {
+			continue
+		}
+		v, ok := kv.Value.(*ast.BasicLit)
+		if !ok || v.Kind != token.STRING {
+			continue
+		}
+		s, err := strconv.Unquote(v.Value)
+		return s, err == nil
+	}
+	return "", false
+}
+
+// readsField is whether n reads a field of that name at all: doorName returns
+// the door's own name field, and a doorName that reads something else is a
+// name no door wrote.
+func readsField(n ast.Node, field string) bool {
+	found := false
+	ast.Inspect(n, func(node ast.Node) bool {
+		if sel, ok := node.(*ast.SelectorExpr); ok && sel.Sel.Name == field {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
+// assignsFieldFromField is whether any declaration assigns a field named from
+// another field named to, which is the one hop between a door spec's own name
+// and what doorName returns. It is read structurally rather than by variable
+// name, because what matters is that the field is filled from the spec and not
+// what the two receivers are called.
+func (s *censusSource) assignsFieldFromField(from, to string) bool {
+	found := false
+	s.eachFunc(func(_, _ string, body *ast.BlockStmt) {
+		ast.Inspect(body, func(node ast.Node) bool {
+			as, ok := node.(*ast.AssignStmt)
+			if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+				return true
+			}
+			if fieldName(as.Lhs[0]) == from && fieldName(as.Rhs[0]) == to {
+				found = true
+			}
+			return true
+		})
+	})
+	return found
+}
+
+func fieldName(e ast.Expr) string {
+	if sel, ok := e.(*ast.SelectorExpr); ok {
+		return sel.Sel.Name
+	}
+	return ""
 }
 
 // reporterPath maps a log name back to the command it is filed under, for the
@@ -339,17 +544,4 @@ func yesNo(b bool) string {
 		return "carries"
 	}
 	return "carries no"
-}
-
-// mentionsCall is whether src calls name at all, so that a helper whose whole
-// job is one call is held to making it.
-func mentionsCall(src, name string) bool {
-	return strings.Contains(src, name+"(")
-}
-
-// definesFunc is whether src defines name, method or function: a method's
-// receiver stands between `func` and the name, and the space in front is what
-// both spellings share.
-func definesFunc(src, name string) bool {
-	return strings.Contains(src, " "+name+"(")
 }
