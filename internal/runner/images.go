@@ -39,11 +39,13 @@ func imageNamesInTask(text string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, word := range strings.FieldsFunc(text, func(r rune) bool { return !imageNameRune(r) }) {
-		if !namesAnImage(word, exts) || seen[strings.ToLower(word)] {
+		if !namesAnImage(word, exts) {
 			continue
 		}
-		seen[strings.ToLower(word)] = true
-		out = append(out, word)
+		if key := strings.ToLower(word); !seen[key] {
+			seen[key] = true
+			out = append(out, word)
+		}
 	}
 	return out
 }
@@ -146,7 +148,7 @@ func (r *run) checkImages(ctx context.Context) error {
 	if names := imageNamesInTask(r.spec.Task); len(names) > 0 {
 		return refusal("the coder can't read an image the task names", []config.Problem{{
 			Path: coderPinPath,
-			Message: fmt.Sprintf("%s is priced without an image rate, and the task names %s: set %s to a model that can read images, and price that model's images with model_prices' image_tokens (0 refuses one)",
+			Message: fmt.Sprintf("%s is priced without an image rate, and the task names %s: set %s to a model that can read images, and price that model's images with model_prices' image_tokens (0 refuses an image)",
 				coder, strings.Join(names, ", "), visionPinPath),
 		}})
 	}
