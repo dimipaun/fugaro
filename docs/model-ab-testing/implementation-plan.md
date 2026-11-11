@@ -209,13 +209,28 @@ injection from a challenger's diff.
 ### A3.2 Challenger admission
 
 - **Files:** `ee/ab/admit.go` (new), `ee/ab/admit_test.go` (new).
-- **Interfaces:** `Admit(cfg config.Config, layer config.AB, repo string, providers, prices) (model string, ok bool, why string)`:
-  the first challenger of `ab.challengers` that differs from the champion's coder and passes
-  `config.CheckProviderPolicy`, the allow-list and the price table for this repository; `why` is a
-  closed reason the skip line prints (a repository's tightened `allowed_models` shows as one).
-- **Tests:** `TestAdmitRefusesUnroutedChallenger` (outside `allow_data_to`), `TestAdmitRefusesUnpricedChallenger`,
-  `TestAdmitRefusesDisallowedModel`, `TestAdmitSkipsChampionModel`, `TestAdmitNeedsEnforceForProvider`,
-  `TestAdmitSkipsBitbucket`.
+- **Interfaces:** `Admit(cfg config.Config, layer config.AB, repo string, eff policy.Effective,
+  providers map[string]config.ModelProvider, prices *pricing.Table, serviceHeldKey bool) (model string, ok bool, why string)`:
+  the first challenger of `ab.challengers` that differs from the champion's coder and passes, for this
+  repository, every check a run's own model passes at bootstrap: the run's allow-list (`eff.Allows`, the
+  merge of every layer that writes one, so a repository can only tighten the project's), a route that
+  claims it and whose `allow_data_to` names the repository (`config.CheckProviderPolicy`, the plain ID
+  and the price row included), the pin rule a run under a budget applies to its coder (an explicit
+  model ID, never an alias), the credential that may carry a provider's key (`config.CheckProviderAuth`:
+  only `api-key`) and the gateway a provider's call needs (`config.CheckProviderGateway` under
+  `eff.Mode`, which must be `enforce`). Two facts about the repository refuse every challenger at once,
+  whatever it names: a Bitbucket repository, and a GitHub one whose App key the credentials service
+  holds, since neither can mint the read-only installation token a challenger's clone needs (A2.1).
+  `eff` and `serviceHeldKey` are not in `cfg` because a repository's file is one layer of the run's
+  merge and the service-held key is the launch's own fact. `why` is a closed reason the skip line prints
+  — `no-challenger`, `bitbucket`, `service-held-key`, `champion-model`, `not-allowed`, `unrouted`,
+  `variant`, `unpriced`, `needs-api-key`, `needs-enforce` — and it is the first refusal of the list, the
+  candidate the owner reads first (a repository's tightened `allowed_models` shows as one).
+- **Tests:** `TestAdmitTakesTheFirstChallengerThatPasses`, `TestAdmitReadsTheRunsMergedPolicy`,
+  `TestAdmitRefusesAlias`, `TestAdmitRefusesUnroutedChallenger` (outside `allow_data_to`),
+  `TestAdmitRefusesUnpricedChallenger`, `TestAdmitRefusesDisallowedModel`, `TestAdmitSkipsChampionModel`,
+  `TestAdmitNeedsEnforceForProvider`, `TestAdmitNeedsAPIKeyForProvider`, `TestAdmitSkipsBitbucket`,
+  `TestAdmitSkipsServiceHeldKey`, `TestAdmitNeedsAChallenger`, `TestAdmitAgreesWithTheProviderPolicy`.
 - **Command:** `go test ./ee/ab/ -run TestAdmit -count=1`
 - **Depends on:** A1.2.
 - **Commit:** `ee/ab: a challenger passes the same egress checks as any run`
@@ -226,8 +241,9 @@ injection from a challenger's diff.
 
 - **Files:** `ee/ab/launch.go` (new), `ee/ab/launch_test.go` (new), `ee/register/ab_launch.go` (new; one
   `RegisterLaunchPlanner` call).
-- **Interfaces:** consumes A3.0, A3.1, A3.2, A1.1. As the planner: when sampled, eligible, admitted,
-  under the daily count, the run has a dollar cap and the launch runs its pre-check, it returns the
+- **Interfaces:** consumes A3.0, A3.1, A3.2, A1.1. As the planner: when sampled, eligible, admitted
+  (A3.2's `Admit`, handed the run's own merged policy and whether the credentials service holds this
+  installation's GitHub App key), under the daily count, the run has a dollar cap and the launch runs its pre-check, it returns the
   pair (A3.0 then applies `PrecheckPair` with D573's margin): the challenger is same task, workflow, recipe, mode,
   tier and `--path` set, at the commit the champion is launched at (U5), `ab` blocks on both, one batch
   label `ab-<pair id>`. Otherwise no pair and one skip line with a closed reason (stderr and `--json`). A job image older than the
