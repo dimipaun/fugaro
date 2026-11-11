@@ -1719,6 +1719,34 @@ export const CONSOLE_OPERATIONS = [
       },
     ],
   },
+  // The Project tab's seat estimate (subscriptions plan S4.2; the read behind
+  // it is `fugaro seats --json`, S4.1, and the rulings are D439, D433 and
+  // T14). It is the console's **thirty-eighth** operation, and it is a read of
+  // core data and nothing else: the command reads this machine's own launcher
+  // and operator lists and the requesters of the last 90 days of runs, sends
+  // nothing, stores nothing and consults no key, licence or server.
+  //
+  // **It is not on a reduced view.** The reduced mode withholds the screens
+  // that read money an operator's runs spent (`REDUCED_VIEW_OPERATIONS`), and
+  // this document carries no money at all: a seat is a contract pricing rule of
+  // the Subscription Terms and not a figure of this installation's spend, and
+  // the estimate the CLI publishes is a count of people. It is not gated by a
+  // lapse either, and for the same reason a read is never gated: only the two
+  // writes that walk an installation out of a lapse carry
+  // `refusedAfterLapse` (`docs/design/lapse-read-only.md`).
+  //
+  // It takes no argument (`args: []`): no positional word, no `--gcp-project`
+  // and no `--region`, so no word of the argv comes from a renderer. The
+  // window is the ruling's own 90 days and no flag moves it -- an estimate over
+  // a window the caller chose would be a different count wearing the same name.
+  {
+    name: 'seats.read',
+    method: 'readSeats',
+    command: 'seats',
+    flags: ['--json'],
+    summary: 'the advisory estimate of who launches jobs on this installation, and the identities the estimate cannot count',
+    args: [],
+  },
 ] as const satisfies readonly ConsoleOperation[]
 
 /** OperationName is the closed union of the surface's operation names. */
