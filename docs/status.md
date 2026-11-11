@@ -15,6 +15,7 @@ As of 2026-11-11, read from `main`, the open pull requests and each plan's task 
 | mobile | about 35/45 | P5.x, P7.2 to P7.5; owner P2.3 and P4.4 |
 | troubleshoot-issue | 15/18 | T-IS9 (docs), T-IS11, T-IS12; T-IS6 (#2135), T-IS19 (#2115) and T-IS7 (#2192) merged |
 | rigor-command | 3/10 | R6 (docs), R7 (the hotfix gate), W (`setup` asks the rigor mode); R2 to R5 closed 2026-11-10 as duplicates of settings-commands and config-management, so the spec is mostly superseded but not wholly |
+| compute-backend | 4/7 | Task 10 (the enable of `backend: cloud-batch`, with the `doctor` gate) is in a run; Task 12 is owner-run (Check 57b, and Check 124 for `--provision-batch`) after it; Task 13 only if Task 14's answer needs it. Built: Tasks 8, 9, 11 and 14 (the opener, the reaper role and `fugaro reaper`, the seal's carrier refusal); `backend: cloud-batch` is still refused until Task 10 |
 
 ## In progress, a lot left
 
