@@ -622,17 +622,32 @@ const burstGate = 200 * time.Millisecond
 // The two are the two answers a test reads — the mints the page let through and
 // the one it did before the window closed — so nothing about the service is
 // faked here: what decides which of them happens is the page's own lock.
+//
+// reached is closed by the first mint to arrive, so a test can put a second
+// action in flight beside a mint without waiting on a clock.
 type burstMints struct {
-	inner Mints
-	want  int
-	gate  time.Duration
-	open  chan struct{}
+	inner   Mints
+	want    int
+	gate    time.Duration
+	open    chan struct{}
+	reached chan struct{}
 
+	once sync.Once
 	mu   sync.Mutex
 	seen int
 }
 
+// newBurstMints is that minter, with want the number of arrivals that opens the
+// window early: a mint that arrives alone waits it out.
+func newBurstMints(inner Mints, want int) *burstMints {
+	return &burstMints{
+		inner: inner, want: want, gate: burstGate,
+		open: make(chan struct{}), reached: make(chan struct{}),
+	}
+}
+
 func (b *burstMints) Mint(ctx context.Context, req Request) (Minted, error) {
+	b.once.Do(func() { close(b.reached) })
 	b.mu.Lock()
 	b.seen++
 	if b.seen == b.want {
@@ -688,7 +703,7 @@ func answered(codes []int, want int) int {
 func TestConcurrentApprovalsMintOnce(t *testing.T) {
 	const clicks = 8
 	f := newFixture(t)
-	f.deps.Mints = &burstMints{inner: f.recording, want: clicks, gate: burstGate, open: make(chan struct{})}
+	f.deps.Mints = newBurstMints(f.recording, clicks)
 	f.start()
 
 	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a multi-seat trial"}}))
@@ -738,7 +753,7 @@ func TestConcurrentMintsRespectTheCap(t *testing.T) {
 	f := newFixtureWith(t, Production, func(f *fixture) {
 		f.cfg.MintCaps[licence.TierEnterprise] = Limits{Requests: 1, Window: time.Hour}
 	})
-	f.deps.Mints = &burstMints{inner: f.recording, want: clicks, gate: burstGate, open: make(chan struct{})}
+	f.deps.Mints = newBurstMints(f.recording, clicks)
 	f.start()
 
 	forms := make([]url.Values, clicks)
@@ -767,6 +782,58 @@ func TestConcurrentMintsRespectTheCap(t *testing.T) {
 	}
 	if got := len(f.records()); got != 1 {
 		t.Errorf("the burst wrote %d record(s), want one", got)
+	}
+}
+
+// TestADeclineAndAnApprovalDoNotCross: §4.5's queue with both of the page's
+// answers in flight for one request — the "no" beside the mint that grants it.
+// They are exclusive, so one click takes and the other is refused. The decline
+// reads the record to refuse a request that already has a key, and §5.2 writes
+// that record **after** the key: a decline that ran while the mint was still in
+// the minter's hands would read the store before the write it is there to find
+// and take a "no" for a request about to be licensed. The mint is held inside
+// the minter while the decline is submitted, which is that moment.
+func TestADeclineAndAnApprovalDoNotCross(t *testing.T) {
+	f := newFixture(t)
+	mints := newBurstMints(f.recording, 2)
+	f.deps.Mints = mints
+	f.start()
+
+	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a multi-seat trial"}}))
+	open := f.open()
+	if len(open) != 1 {
+		t.Fatalf("the manual form left %d open request(s), want one", len(open))
+	}
+	id := open[0].ID
+	approve := f.mintForm(url.Values{
+		"application": {id}, "plan": {paidPlanName}, "seats": {"3"},
+		"term_days": {"365"}, "organisation": {"acme.example"},
+	})
+	decline := f.decideForm(id)
+
+	codes := make([]int, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		codes[0] = f.adminPost(RouteAdminMint, approve).Code
+	}()
+	go func() {
+		defer wg.Done()
+		<-mints.reached
+		codes[1] = f.adminPost(RouteAdminDecide, decline).Code
+	}()
+	wg.Wait()
+
+	if got := answered(codes, http.StatusSeeOther); got != 1 {
+		t.Errorf("%d of the two answers were the page's own, want one: a request is declined or approved and not both (%v)", got, codes)
+	}
+	if got := answered(codes, http.StatusConflict); got != 1 {
+		t.Errorf("%d of the two answers refused the other's ground, want one (%v)", got, codes)
+	}
+	held := f.queued()
+	if len(f.records()) == 1 && len(held) == 1 && held[0].Decision == Declined {
+		t.Errorf("the request reads Declined with a key issued for it: %+v", held[0])
 	}
 }
 
