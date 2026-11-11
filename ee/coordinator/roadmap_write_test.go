@@ -192,7 +192,7 @@ func TestMoveFromUnassignedExpectsNone(t *testing.T) {
 	}
 	got, found := readDoc[Assignment](t, s, PathAssign(unassigned))
 	if !found || got.Release != ReleaseID("console", "0.110") || got.Prev != nil {
-		t.Errorf("the unassigned task's assignment = %+v (found %v), want it in console/0.110 with no prev", got, found)
+		t.Errorf("the unassigned task's assignment = %+v (found %v), want it in the console stream's open release with no prev", got, found)
 	}
 }
 
