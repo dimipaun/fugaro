@@ -199,7 +199,7 @@ func TestWorstCaseBoundsActual(t *testing.T) {
 				o.LongContext = &Tier{AboveInputTokens: 1 + rng.Int64N(1_000_000), InputPerM: rate(0.01, 1000), OutputPerM: rate(0.01, 1000)}
 			}
 			var err error
-			if tb, err = tb.With(Overrides{"claude-alpha-1": o}); err != nil {
+			if tb, err = tb.With(Overrides{"claude-alpha-1": {Rates: o}}); err != nil {
 				t.Fatal(err)
 			}
 		}

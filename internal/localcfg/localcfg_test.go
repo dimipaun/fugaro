@@ -900,6 +900,40 @@ func TestModelPricesDefaults(t *testing.T) {
 	}
 }
 
+func TestModelPricesCarryAnImageRate(t *testing.T) {
+	c, err := Parse([]byte(sample + `model_prices:
+  deepseek/deepseek-v4.1-flash: { input_per_m: 0.3, output_per_m: 1.2, image_tokens: 6000 }
+  claude-mine-1: { input_per_m: 1, output_per_m: 5, image_tokens: 0 }
+`))
+	if err != nil {
+		t.Fatalf("a project that prices a model's images: %v", err)
+	}
+	o, err := c.Overrides()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := o["deepseek/deepseek-v4.1-flash"].ImageTokens; got == nil || *got != 6000 {
+		t.Fatalf("image_tokens = %v, want 6000", got)
+	}
+	// An explicit zero is a value, not an omission: it says the model takes
+	// no image, exactly as the table's own 0 does.
+	if got := o["claude-mine-1"].ImageTokens; got == nil || *got != 0 {
+		t.Fatalf("image_tokens = %v, want an explicit 0", got)
+	}
+	// What the config says survives a write and a read.
+	data, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(data)
+	if err != nil {
+		t.Fatalf("round trip: %v\n%s", err, data)
+	}
+	if o2, err := back.Overrides(); err != nil || o2["deepseek/deepseek-v4.1-flash"].ImageTokens == nil || *o2["deepseek/deepseek-v4.1-flash"].ImageTokens != 6000 {
+		t.Fatalf("round trip overrides = %v, %v", o2, err)
+	}
+}
+
 func TestBudgetTokensAndModelsValidation(t *testing.T) {
 	for name, tc := range map[string]struct{ yaml, msg string }{
 		"negative tokens":   {"budget: { max_run_tokens: -1 }\n", "max_run_tokens"},

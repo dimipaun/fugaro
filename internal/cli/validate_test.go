@@ -2113,7 +2113,7 @@ func TestValidateAgreesWithTheRunAboutTheRoutedPins(t *testing.T) {
 				if price == "unpriced" {
 					project = strings.Replace(project, "model_prices:\n  anthropic/claude-sonnet-5.5: { input_per_m: 3, output_per_m: 15 }\n", "", 1)
 				} else {
-					overrides[routed] = pricing.Rates{InputPerM: 3, OutputPerM: 15}
+					overrides[routed] = pricing.Override{Rates: pricing.Rates{InputPerM: 3, OutputPerM: 15}}
 				}
 				project += "routing:\n  claude:\n    via: " + via + "\n    models: [" + canonical + "]\n"
 				// The run's own steps, in the run's own order: the switch's list
