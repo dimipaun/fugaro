@@ -169,6 +169,17 @@ type initOptions struct {
 	// the command the user is actually running rather than one that no longer
 	// exists.
 	door string
+
+	// resolvedPrinted is what this run has already said about its own issues,
+	// by the pair that names one project's issue (F8): the ones whose fixed
+	// line the resolved-issues step printed from this machine's own file
+	// (update_resolved.go). The retry offer below the step says the same
+	// sentence about the same issue, and one run says it once — the two
+	// memories that would otherwise say so are both writes, and neither is
+	// made in a coding agent's session (F16d). It is the run's own, so it is
+	// read by the offer and reset by nothing: a door's options live for one
+	// run.
+	resolvedPrinted map[resolvedKey]bool
 }
 
 // convergeDoor is one of the two front doors of the converge (setup.go,
@@ -760,6 +771,12 @@ type initResult struct {
 	RTDBURL  string `json:"rtdb_url,omitempty"`
 	// Anchor is set by update --anchor.
 	Anchor *anchorResult `json:"anchor,omitempty"`
+	// ResolvedIssues is what `fugaro update` found this release fixes about
+	// the project's filed issues (update_resolved.go, T-RU5): the additive
+	// field the console, the mobile app and the history read, so its entries
+	// carry new names and no field here changes meaning (U4). It is absent
+	// when the update fixes none of them.
+	ResolvedIssues []resolvedIssueJSON `json:"resolved_issues,omitempty"`
 }
 
 func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
@@ -3337,6 +3354,36 @@ func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) 
 	if written {
 		fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
 	}
+}
+
+// updateResolved is the door's resolved-issues step (update_resolved.go,
+// T-RU5), and it is the last thing an update that converged does with the
+// installation: it records which two releases this update spans and prints
+// what this release fixes about the project's filed issues.
+//
+// It sits here, beside publishSharedConfig and after the loop rather than at
+// the door, because of the one thing it owes that the offer beside it does
+// not: the --json document. --json prints initResult the moment the converge
+// ends (printResult, from the loop's own outcome), so a step that added a
+// field to it after the run had returned would add it to a document already on
+// stdout. Everything else about it is built to be missed rather than felt (the
+// hard rule): the run reaches here only with every stage applied and nothing
+// left for the person, every failure inside it is a line not printed, and the
+// pass it runs is bounded to twenty seconds.
+func (r *initRun) updateResolved(ctx context.Context) {
+	if !updateResolvedRuns(r.o) || len(r.res.LeftForYou) > 0 {
+		return
+	}
+	// The bucket the run converged against, opened through the retry offer's
+	// own seam: the question is the same one — which project did this run
+	// converge, and where is its store — and a second seam would be a second
+	// answer to it.
+	b, err := updateRetryBucket(ctx, r.o.cloud, updateRetryProject(r.o, nil))
+	if err != nil {
+		return
+	}
+	defer func() { _ = b.Close() }()
+	r.res.ResolvedIssues = r.printResolvedIssues(ctx, b)
 }
 
 // writeLocalConfig writes next to path, showing the diff first and backing
