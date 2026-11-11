@@ -32,9 +32,9 @@ import (
 
 // Patch is one arm's material for the judge: the patch object A2.1 stored
 // under the run's own prefix (runs/<repo-slug>/<run-id>/ab/patch.diff) with
-// the identifiers of the run that wrote it. It is a plain value, so the reader
-// that lists a pair's two records builds it without this package reaching the
-// bucket.
+// the identifiers of the run that wrote it and the model it ran on. It is a
+// plain value, so the reader that lists a pair's two records builds it without
+// this package reaching the bucket.
 type Patch struct {
 	// Diff is the stored tree diff, as the bucket holds it: the change from
 	// the run's start commit to its final head. A2.1 diffs two trees, so
@@ -58,11 +58,11 @@ type Patch struct {
 	// because the arms differ in this and nothing else, so a diff naming its
 	// own arm's model tells the judge which arm it is reading.
 	//
-	// It is not optional decoration and "" is not the same pair: a challenger
-	// may be a model this build's price table does not carry (an owner prices
-	// it under model_prices, D556), and that is the challenger whose own diff
-	// would otherwise name it. A reader that has the record has this field on
-	// it; one that does not leaves it "" and gets the table's words alone.
+	// An empty Model is not the same pair: a challenger may be a model this
+	// build's price table does not carry (an owner prices it under
+	// model_prices, D556), and that is the challenger whose own diff would
+	// otherwise name it. A reader that has the record has the model on it; one
+	// that does not leaves this "" and gets the table's words alone.
 	Model string
 }
 
@@ -96,11 +96,12 @@ const modelPlaceholder = "[model]"
 // minModelWord is the shortest word the redaction replaces, and it is what
 // keeps the vocabulary from eating the diff: the match is a substring, so a
 // two- or three-letter word lands inside ordinary text — "pro" in provider and
-// process, "k3" in task3 — and a judge handed "ap[model]ve" is reading a diff
-// the pair is judged on. internal/redact's redactor draws the same line at 4
-// bytes for the same reason. What it costs is the shortest spelling of a name
-// alone: the ID and the vendor word that carry it are longer and stay in the
-// vocabulary, so a diff that spells the model out is still redacted whole.
+// process, "k3" in task3 — and a judge reading "ap[model]ve" is no longer
+// reading the change it is judging. internal/redact's redactor draws the same
+// line at 4 bytes for the same reason. What it costs is the shortest spelling
+// of a name alone: the ID and the vendor word that carry it are longer and stay
+// in the vocabulary, so a diff that spells the model out is still redacted
+// whole.
 const minModelWord = 4
 
 // Bundle builds the judge's input for one pair from its two patch objects.
