@@ -55,14 +55,15 @@ neither deletes nor closes them, and the block names each one.
   bundle, its root re-applied), and the sandbox repository published with `proxy: true`** (the plan's
   B1.7/B1.8, `fugaro project policy publish` from the project's
   `project_secrets.bitbucket-token.allow_data_to`). Check 191 reads the published policy from
-  `fugaro project policy show --project fugaro --json` and the switch from `fugaro doctor --project
-  fugaro --json` (its `credentials-service-deployed` row, which is the one reading of the invoker
-  grants), and fails the `proxied` row — before it launches anything — when the repository is not
-  admitted, is admitted without `proxy: true`, or is off the switch: the published half alone is
-  **inert**, a repository off the switch holds its own token and is served by nothing, so the check
-  stops rather than launch three runs at a path the proxy is not on. Its remedy is to set
-  `agent.auth: cascade` for that repository, run `fugaro update --repo` for it and run the check
-  again.
+  `fugaro project policy show --project fugaro --json` and the switch from the credentials service's
+  OWN IAM policy (`gcloud run services get-iam-policy fugaro-credentials --project fugaro-dev --region
+  us-east5 --format=json`) crossed with the repository's REAL jobs (the jobs whose own `FUGARO_REMOTE`
+  names it, from the job list the check already reads), and fails the `proxied` row — before it
+  launches anything — when the repository is not admitted, is admitted without `proxy: true`, or is
+  off the switch: the published half alone is **inert**, a repository off the switch holds its own
+  token and is served by nothing, so the check stops rather than launch three runs at a path the proxy
+  is not on. Its remedy is to set `agent.auth: cascade` for that repository, run `fugaro update
+  --repo` for it and run the check again.
 - **Three sandbox Bitbucket repositories of that installation**: `CHECK191_REPO` (the proxied one the
   runs work in), `CHECK191_OTHER_REPO` (a **second** one, for the other-repository refusal) and, for
   `--after-flip`, `CHECK191_PLAIN_REPO` (one the published policy does **not** proxy). Plus
@@ -75,7 +76,8 @@ neither deletes nor closes them, and the block names each one.
 - `bash`, `mktemp`, `python3`, `curl`, `gcloud` and `fugaro` on PATH, and `git` for `--after-flip`
   (the checkout's origin remote, so the check knows the directory it is about to read doctor in is
   this repository's). `gcloud` must be authenticated as an account that may read Cloud Logging for
-  the installation, read the job list, list the installation's secrets and read the IAM policy of the
+  the installation, read the job list, read the credentials service's own IAM policy, list the
+  installation's secrets and read the IAM policy of the
   one holding `bitbucket-token`, and **write and delete one node in the installation's Realtime
   Database** (Check 95 step 3 in the register is the same write): the ended-run row is set up by
   hand, as you, with `gcloud auth print-access-token` and `curl`, because no call of a run's own can
@@ -157,9 +159,17 @@ the repository may appear in any of them. If no secret carries that label the ro
 it reads `FAIL` and the check ends `2`, because there was no policy to read.
 
 Check 191: `proxied` (the published policy admits the repository with `proxy: true` **and** the
-credentials-service switch is on for it — `fugaro doctor --project fugaro --json`'s
-`credentials-service-deployed` row: `proxy: true` is inert for a repository off the switch, and a row
-that passed on the policy alone would call a run at the direct path a broken proxy), `run-launch` and
+credentials-service switch is on for it — the switch is read from the credentials service's OWN IAM
+policy (`gcloud run services get-iam-policy fugaro-credentials --project fugaro-dev --region us-east5
+--format=json`) and the repository's REAL jobs (the jobs whose own `FUGARO_REMOTE` names it, from the
+job list the check already reads): it is ON when every one of those jobs runs as an account that
+policy grants `roles/run.invoker` to and at least one job exists, OFF when an existing job's account
+is not granted, and UNREAD — a row the check could not measure — otherwise. `fugaro doctor`'s
+`credentials-service-deployed` sentence is NOT the decision: the released doctor lists job accounts of
+workflow variants the repository does not deploy, so the doctor row is read only for the state where
+the installation has no credentials service at all, and its text is carried in the row for context.
+`proxy: true` is inert for a repository off the switch, and a row that passed on the policy alone
+would call a run at the direct path a broken proxy), `run-launch` and
 `run-outcome` (the working run reached a final status, succeeded, and the service served its push and
 its pull request — the branch and the number the check leaves for you), the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,
@@ -210,17 +220,22 @@ knowing by name:
   sandbox repository, or run this check as `--after-flip` if the flip has already happened. The check
   stops at this row: nothing below it was measured and no run was launched.
 - **The repository is off the credentials-service switch** (`proxied: FAIL`) — the published policy
-  admits it with `proxy: true`, and `fugaro doctor` reports its job account among the ones the service
-  does not admit, so its own `agent.auth` is not `cascade` (or its root was never re-applied with it):
-  the job mounts the token and the runs push straight to Bitbucket. Set `agent.auth: cascade` for that
-  repository (with a model credential in the service's bundle, `fugaro creds set`), run
-  `fugaro update --repo` for it and run the check again. The check stops here, and no run was launched
-  — the rows below would have measured the direct path, not the proxy.
-- **The switch could not be read** (`proxied: FAIL`, exit `2`) — `fugaro doctor --project fugaro
-  --json` came back without the `credentials-service-deployed` row, or with an arm this check does not
-  recognise, so whether the repository is served was **not measured**. Read `fugaro doctor --project
-  fugaro --json` yourself and settle it before you launch anything: a run whose switch nobody settled
-  is a run whose rows are about nothing.
+  admits it with `proxy: true`, and the credentials service's OWN IAM policy does not grant
+  `roles/run.invoker` to every account the repository's jobs run as, so its own `agent.auth` is not
+  `cascade` (or its root was never re-applied with it): the job mounts the token and the runs push
+  straight to Bitbucket. Set `agent.auth: cascade` for that repository (with a model credential in the
+  service's bundle, `fugaro creds set`), run `fugaro update --repo` for it and run the check again.
+  The check stops here, and no run was launched — the rows below would have measured the direct path,
+  not the proxy. An installation with no credentials service at all fails this row with that reason
+  instead: `proxy: true` is inert without one, and neither the policy nor a grant can even be read.
+- **The switch could not be read** (`proxied: FAIL`, exit `2`) — the service's own IAM policy or the
+  job list could not be read, the policy binds a job account in a way this check cannot interpret (a
+  custom role, or a grant that holds only while a condition does), no job of the repository is in the
+  list, or a job runs as no account the check can name — so whether the repository is served was
+  **not measured**. Read the two facts yourself — `gcloud run services get-iam-policy
+  fugaro-credentials --project fugaro-dev --region us-east5 --format=json`, and the jobs of the
+  repository in `gcloud run jobs list` — and settle it before you launch anything: a run whose switch
+  nobody settled is a run whose rows are about nothing.
 - **`the working run reported NO line for the … attempt`** — the probe's task asked for one
   `CHK191 attempt=<name> refused=… answer=…` line per attempt and the log holds none: the attempt was
   never made or never printed. Read `fugaro logs <run id>` and see what the agent did.

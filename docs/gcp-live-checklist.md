@@ -11867,8 +11867,15 @@ by name. The installation's **credentials service must be on**, the sandbox repo
 credentials-service switch** — `agent.auth: cascade` for it, with a model credential in the service's
 bundle and its root re-applied — and the sandbox repository must be **published with `proxy: true`** (the
 plan's B1.7/B1.8). The check reads both halves: `fugaro project policy show --project fugaro --json` for
-the published policy, and `fugaro doctor --project fugaro --json` — its `credentials-service-deployed`
-row, the one reading of the invoker grants, so no `gcloud` call of the check's own — for the switch. It
+the published policy, and the switch from the credentials service's **own IAM policy** (`gcloud run
+services get-iam-policy fugaro-credentials --project fugaro-dev --region us-east5 --format=json`) crossed
+with the repository's **real jobs** (the jobs whose own `FUGARO_REMOTE` names it, from the job list the
+check already reads): it is ON when every one of those jobs runs as an account that policy grants
+`roles/run.invoker` to and at least one job exists, OFF when an existing job's account is not granted, and
+UNREAD — a row the check could not measure — otherwise. `fugaro doctor`'s `credentials-service-deployed`
+sentence is **not** the decision: the released doctor lists job accounts of workflow variants the
+repository does not deploy, so that row is read only for the state where the installation has no
+credentials service at all, and its text is carried in the row for context. It
 fails the `proxied` row *before it launches anything* when the repository is not admitted, is admitted
 without the proxy, or is off the switch: the published half alone is **inert**, since a repository off the
 switch holds its own Bitbucket token and is served by nothing, so the check stops rather than launch three
