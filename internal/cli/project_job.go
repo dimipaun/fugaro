@@ -166,13 +166,13 @@ func (e *cloudEnv) launchConfigWhereTheTreeGivesNone(ctx context.Context, spec *
 // (chain_continues.go), so its spec carries no PreviousRun and it decides from
 // the document as a first run does.
 //
-// ok is false when this launch continues no run, or when the run it continues
-// recorded nothing: the launch then decides from the document, exactly as a
-// first run does. A record that carries no job is a run that ran on the
-// per-repository job, and the job returned is nil with ok true — that is the
-// job to reuse, and it is reused without reading a document: the per-repository
-// job is the answer for a repository whose record says so, and no refusal of
-// the read applies to a job that was already decided.
+// ok is false when this launch continues no run, when the run it continues
+// recorded nothing, or when what it recorded is not a project job of this
+// project's published policy: the launch then decides from the document,
+// exactly as a first run does. That last case is the ordinary one, not the
+// exception — the name every launch records is the platform's own, the job its
+// execution was started on (run.go's write, backend.ParseExecution's read), so a
+// run that ran on its repository's own job records the per-repository name.
 func (e *cloudEnv) continuedJob(ctx context.Context, slug string, spec *task.Spec) (*launchProjectJob, bool, error) {
 	if spec.PreviousRun == "" {
 		return nil, false, nil
@@ -184,47 +184,51 @@ func (e *cloudEnv) continuedJob(ctx context.Context, slug string, spec *task.Spe
 	if err != nil {
 		return nil, false, remote(fmt.Errorf("run %s continues %s/%s, and the job that run launched on cannot be read: %w", spec.RunID, slug, spec.PreviousRun, err))
 	}
-	if l == nil {
+	if l == nil || l.Job == "" {
 		return nil, false, nil
 	}
-	if l.Job == "" {
-		return nil, true, nil
-	}
-	job, err := e.jobFromRecord(ctx, l.Job)
-	if err != nil {
-		return nil, false, err
-	}
-	return job, true, nil
+	return e.projectJobOfRecord(ctx, l.Job)
 }
 
-// jobFromRecord is a job name read out of a run's record as a launch uses it:
-// the name exactly as it stands, and the two things a launch needs about it —
-// the profile it belongs to, for messages and for the review variant derived
-// from it later, and the window its own timeout gives the budget token.
+// projectJobOfRecord is a job name read out of a run's record as this launch's
+// job, when the name is one the published policy computes as a project job: the
+// name exactly as it stands, the profile it belongs to (for messages, and for
+// the review variant reviewJobFor derives from it later), and the window that
+// profile's own class gives the budget token.
 //
 // The profile is the published policy's answer (runner.ProjectJobOfPolicy, the
 // computation the runner matches CLOUD_RUN_JOB against), never a name parsed
 // back (R2-5), and the timeout is that profile's own — the same class the job
-// was deployed with (internal/infra's ProjectJobs). A name the published policy
-// does not compute keeps the name and nothing else: it is still the job the run
-// that recorded it ran on, and this launch runs on it too — refusing here would
-// refuse a continuation because the policy moved under it, and the runner's own
-// placement checks are what judge a job no profile of this policy describes
-// (spec.md §8, §12). Nothing on that path knows the job's own timeout, so the
-// token's window is the platform's default rather than a floor that is a guess
-// upward.
-func (e *cloudEnv) jobFromRecord(ctx context.Context, job string) (*launchProjectJob, error) {
+// was deployed with (internal/infra's ProjectJobs).
+//
+// ok is false for a name the policy does not compute, and that is a decision,
+// not a fallback: the tuple (slug, workflow, account) of a per-repository job
+// is the backend's to derive from THIS launch's own spec, so a recorded name
+// that is not a project job is not this launch's job to reuse. Handing it to
+// the shared path would run it on a job this installation was never asked for
+// (a name the platform's list does not hold, or the previous account's job where
+// this launch names another): the credentials service's address is withheld
+// from a named job (credentialsServiceLaunchEnv), which is the fetch path a
+// cascade repository clones by, the token's window would be the platform's
+// default rather than the job's own class, and the account axis the launch
+// derives would be pinned to the run being continued. A policy that is not
+// published, or cannot be read, leaves every name uncomputed, so a continuation
+// on such an installation decides from the document as main does — the shared
+// path is entered on a computed name, never on a guess (spec.md §8, §12).
+func (e *cloudEnv) projectJobOfRecord(ctx context.Context, job string) (*launchProjectJob, bool, error) {
 	p, found, err := e.policy.read(ctx, e.lc)
 	if err != nil {
-		return nil, policyReadErr(err)
+		return nil, false, policyReadErr(err)
 	}
-	if found && p != nil {
-		if profile, _, _, ok := runner.ProjectJobOfPolicy(p, job); ok {
-			timeout, _ := config.ParseDuration(p.Profiles[profile].TimeoutClass)
-			return &launchProjectJob{Name: job, Profile: profile, Timeout: timeout + backend.TaskTimeoutSlack}, nil
-		}
+	if !found || p == nil {
+		return nil, false, nil
 	}
-	return &launchProjectJob{Name: job, Timeout: backend.DefaultTaskTimeout}, nil
+	profile, _, _, ok := runner.ProjectJobOfPolicy(p, job)
+	if !ok {
+		return nil, false, nil
+	}
+	timeout, _ := config.ParseDuration(p.Profiles[profile].TimeoutClass)
+	return &launchProjectJob{Name: job, Profile: profile, Timeout: timeout + backend.TaskTimeoutSlack}, true, nil
 }
 
 // launchProjectJobFor resolves the project job spec runs on, and returns nil
@@ -236,12 +240,16 @@ func (e *cloudEnv) jobFromRecord(ctx context.Context, job string) (*launchProjec
 // (runstore.Open's own): the record of a run this launch continues is stored
 // under it.
 func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *task.Spec) (*launchProjectJob, error) {
-	// A launch that continues a run reuses the job that run recorded (D907,
-	// spec.md §2 source 2, §8): a continuation stays on the job it continues,
-	// and never reads a document to decide a job a run of this repository
-	// already decided. It is asked first — ahead of the document and of the
-	// read that would otherwise refuse — because it is the one source that
-	// needs neither.
+	// A launch that continues a run reuses the job that run recorded, when the
+	// published policy computes that name as a project job (D907, spec.md §2
+	// source 2, §8): a continuation stays on the job it continues, and never
+	// reads a document to decide a job a run of this repository already
+	// decided. It is asked first — ahead of the document and of the read that
+	// would otherwise refuse — because it is the one source that needs
+	// neither, and because the read it would otherwise be refused by is the
+	// very one it replaces. Every other record — a run of its repository's own
+	// job, an installation with no published policy — falls through to the
+	// document below, which is the decision main makes.
 	if job, ok, err := e.continuedJob(ctx, slug, spec); err != nil {
 		return nil, err
 	} else if ok {

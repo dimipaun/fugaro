@@ -3766,3 +3766,48 @@ func TestRecordedJobIsNotTrustedForItsProfile(t *testing.T) {
 		t.Fatalf("the launch ran on %s/%s, want the standard/github job run %s records", profile, provider, root)
 	}
 }
+
+// TestARunRecordedOnItsRepositoriesOwnJobIsNotReusedAsAProjectJob is the
+// boundary of what a record may decide, and the ordinary case of a record that
+// decides nothing: the job name a launch writes down is the platform's own, the
+// job its execution started on, so a run of a repository on its own job records
+// the per-repository name — not a project job of any profile, and not this
+// launch's to reuse. The tuple (slug, workflow, account) of that job is the
+// backend's to derive from THIS launch's own spec.
+//
+// The witness is the credentials service's address, which a launch on a named
+// job withholds (credentialsServiceLaunchEnv) and a repository's own job is
+// handed: it is the fetch path a cascade repository clones by, so a
+// continuation sent down the shared path stops before it clones. The ref's tree
+// carries no document, so the per-repository job is the document decision's own
+// answer too — what this test tells apart is the path, not the job's name, which
+// the two share.
+//
+// Mutation (run, restore): drop projectJobOfRecord's ok from continuedJob, and
+// reuse the recorded name through the shared path — the execution carries no
+// credentials service address.
+func TestARunRecordedOnItsRepositoriesOwnJobIsNotReusedAsAProjectJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.document = ""
+	s.use(t, f.cloudFixture)
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
+	root, fu := wallRunIDAt(3, "090000", "aaaa"), wallRunIDAt(0, "120000", "f00d")
+	perRepo := gcp.JobName(appSlug, "web")
+	seedLaunchedOn(t, f.cloudFixture, appSlug, root, perRepo)
+	writeRecord(t, f.cloudFixture, root, prRecord(root, "", 7, 1))
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fu, "also rename x"); err != nil {
+		t.Fatalf("a follow-up of a run recorded on its repository's own job: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s that run %s records", len(calls), calls, perRepo, root)
+	}
+	if got := calls[0].Env[providers.EnvCredentialsServiceURL]; got != s.srv.URL {
+		t.Errorf("the execution carries %s = %q, want %q: a repository on its own job is handed the address it fetches the repository by, and a launch placed on a named job is handed none", providers.EnvCredentialsServiceURL, got, s.srv.URL)
+	}
+}
