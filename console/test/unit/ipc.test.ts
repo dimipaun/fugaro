@@ -2783,7 +2783,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirty-seven, and no others".
+ * channel. The claim is "these thirty-eight, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -4228,7 +4228,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: thirty of the surface's thirty-seven operations,
+    // The non-vacuity half: thirty-one of the surface's thirty-eight operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its

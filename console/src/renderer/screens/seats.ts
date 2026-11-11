@@ -155,7 +155,11 @@ export const SEATS_EMPTY =
  * are values of the document's own (`unknown_size`, `account`, S4.1), so the row
  * is drawn from this table and never from the string the document carried: a
  * reason a later CLI grew is a word nobody here can interpret, and drawing it as
- * itself would be the section inventing a meaning for it.
+ * itself would be the section inventing a meaning for it -- so `whyWord` asks
+ * this table whether it **owns** the code, for `rigor.ts`'s reason: a bare index
+ * answers for `constructor`, `toString` and `__proto__` too, and the row would
+ * carry a native function's source or `[object Object]` where this module's own
+ * sentence belongs.
  */
 export const SEATS_WHY_WORDS: Readonly<Record<string, string>> = Object.freeze({
   unknown_size: 'an unknown number of people',
@@ -311,6 +315,16 @@ function personRows(raw: unknown): readonly SeatsPerson[] | null {
   return rows
 }
 
+/** whyWord is one `not_counted` reason in this file's own words. The lookup is
+ * an ownership check and not an index: `code` is a string the document chose,
+ * and an ordinary object literal answers `obj['constructor']`, `obj['toString']`
+ * and `obj['__proto__']` from `Object.prototype`, so the fallback this table
+ * exists for would be defeated by exactly the input it is there for. */
+function whyWord(code: string): string {
+  const word = Object.hasOwn(SEATS_WHY_WORDS, code) ? SEATS_WHY_WORDS[code] : undefined
+  return word ?? SEATS_WHY_UNREADABLE
+}
+
 /** flaggedRows is the document's `not_counted` table as rows, with each reason
  * through this file's own table. A reason the table does not hold is drawn as
  * `SEATS_WHY_UNREADABLE` -- never as the code the document carried. */
@@ -324,7 +338,7 @@ function flaggedRows(raw: unknown): readonly SeatsFlagged[] | null {
     const code = textAt(row['why'])
     const sources = sourcesOf(row['sources'])
     if (member === null || code === null || sources === null) return null
-    rows.push({ member, sources, why: SEATS_WHY_WORDS[code] ?? SEATS_WHY_UNREADABLE })
+    rows.push({ member, sources, why: whyWord(code) })
   }
   return rows
 }

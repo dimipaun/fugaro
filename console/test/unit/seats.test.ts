@@ -402,6 +402,29 @@ describe('the seats section', () => {
     expect(drawn(section)).not.toContain('a_later_reason')
   })
 
+  it('reads a reason off its own table and never off Object.prototype’s members', () => {
+    // The code is a string the document chose, so the table it is looked up in
+    // is asked whether it **owns** it. A bare index answers for the prototype's
+    // own member names -- `constructor` and `toString` would draw a native
+    // function's source, `__proto__` would draw an object as `[object Object]`
+    // -- and every one of those is the fallback's case, not the table's.
+    for (const code of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+      const { drawn: section } = drawnSection({
+        raw: {
+          ...A_SEATS_DOC,
+          not_counted: [{ member: 'group:eng@acme.example', why: code, sources: ['operator'] }],
+        },
+        licence: licenceWith(2),
+        because: null,
+      })
+      const why = one(section, SEATS_WHY_CLASS).textContent ?? ''
+      expect(why, `${code} did not take the fallback`).toBe(SEATS_WHY_UNREADABLE)
+      expect(why, `${code} reached the screen`).not.toContain('function')
+      expect(why).not.toContain('[object')
+      expect(why).not.toContain(code)
+    }
+  })
+
   it('carries no link and no control, in the states it has', () => {
     for (const inputs of [
       { raw: A_SEATS_DOC, licence: licenceWith(2), because: null },
