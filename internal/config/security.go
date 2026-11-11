@@ -15,8 +15,8 @@ import "github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 // nothing was written to is the floor (D1504, D1506). A row the union dropped
 // is recorded and never refused, the way policy.Merge records a looser value in
 // Effective.Ignored (SecurityIgnoredRow): the write is what its author believes
-// and the list in force is not, and leaving the two unsaid apart is the failure
-// the record exists for.
+// and the list in force is not, and leaving that difference unsaid is the
+// failure the record exists for.
 //
 // It is one exported name rather than a promise, which is D1511's "one source
 // of truth": every reader of the list — `fugaro security paths`, doctor's line
