@@ -842,17 +842,17 @@ func pairTimeoutRefusal(timeout time.Duration) string {
 // The scope is the whole of it. A device node records a role and no scope, so
 // the role it carries has to be one that means the same thing in every
 // repository of the project; a caller whose grants all carry a repository (or
-// all-repos) scope holds nothing a device could hold, and is refused by the
-// caller rather than paired with a role nobody bounded. The device word is the
-// same word the grants use, and a project-scope admin's device is an admin:
-// --role may only lower it.
+// all-repos) scope holds nothing a device could hold, so that caller is refused
+// rather than paired with a role nobody bounded. The device word is the same
+// word the grants use, and a project-scope admin's device is an admin: --role
+// may only lower it.
 //
 // The implicit project admins (the GCP project's owners and editors, and the
 // budget admins, F17.3/F22) are not read here, and the pairing path passes
 // none: pairing holds no CRM client — it reaches the database and the signer
 // and nothing else — so an owner who holds no stored grant is refused rather
-// than admitted. That is the direction this command fails in either way (a
-// caller on neither IAM list cannot pair today), and it is the safe one: a
+// than admitted. That is the direction this command already fails in (a caller
+// the two IAM lists do not name cannot pair either), and it is the safe one: a
 // device node has no scope, so admitting a caller the grants do not place would
 // put authority on a phone that no grant record bounds. An owner who wants a
 // device is one `fugaro update --operator` away from holding the grant.
