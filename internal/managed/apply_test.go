@@ -574,6 +574,67 @@ func TestApplyFailsWhenTheRecordOfAnAppliedPlanCannotBeWritten(t *testing.T) {
 	}
 }
 
+// An apply that failed is still an apply that recorded what it was asked to
+// do: terraform creates what it can before it stops, so the plan the gate
+// admitted has landed in the project whether or not this call returned zero
+// (spec §6, and `fugaro update`'s applyAndRecord records a failed apply for the
+// same reason). Since D1545 the record is also the only control left on the
+// content findings, so a root that puts an off-table grant before a resource
+// sure to fail would otherwise land the grant with nothing recorded and nothing
+// for `fugaro doctor` to warn about.
+func TestApplyRecordsThePlanItAppliedWhenTheApplyItselfFails(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	r.script["apply"] = map[string]any{"exit": 1, "stderr": "the provider rejected the apply"}
+	res, err := Apply(context.Background(), r.request(t))
+	if err == nil {
+		t.Fatal("an apply terraform refused was reported as done")
+	}
+	if errors.Is(err, ErrRefused) {
+		t.Errorf("the failure reads as a refusal, and the gate admitted this plan: %v", err)
+	}
+	var ee *tf.ExitError
+	if !errors.As(err, &ee) || ee.Code != 1 {
+		t.Errorf("the apply's own exit code is no longer what the caller reads: %v", err)
+	}
+	if applied := r.applied(t); len(applied) != 1 {
+		t.Errorf("the fake was asked to apply %v, want the one apply that failed", applied)
+	}
+	if !res.Verdict.OK {
+		t.Error("the returned result no longer carries the verdict the gate passed")
+	}
+	rec := r.rec.recorded(t)
+	if rec.Refuse() != nil {
+		t.Error("the recorded verdict is a refusal, and this plan was admitted and applied")
+	}
+	if rec.Digest() == "" {
+		t.Error("the record carries no digest, and which bytes were applied is the whole point of it (D1022)")
+	}
+}
+
+// And where that record cannot be written either, the failure carries both:
+// terraform's own cause, which is what classifies the exit, and the write's,
+// which is D1014's rule. Returning the writer's error alone would report a
+// failed apply as a broken gate.
+func TestApplyKeepsTheApplysFailureWhenTheRecordCannotBeWritten(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	r.script["apply"] = map[string]any{"exit": 1, "stderr": "the provider rejected the apply"}
+	writeErr := errors.New("the audit record could not be written")
+	r.rec.err = writeErr
+	_, err := Apply(context.Background(), r.request(t))
+	if err == nil {
+		t.Fatal("an apply that failed and recorded nothing was reported as done")
+	}
+	var ee *tf.ExitError
+	if !errors.As(err, &ee) || ee.Code != 1 {
+		t.Errorf("failure %v does not carry the apply's own exit code, so the command's exit status is the write's: %v", err, writeErr)
+	}
+	if !strings.Contains(err.Error(), writeErr.Error()) {
+		t.Errorf("failure %v does not carry the write's own cause", err)
+	}
+}
+
 // The delete list's provenance: an address the applying command's own command
 // line named is refused by name rather than honoured, and nothing runs at all.
 func TestApplyRefusesAnAddressTheCommandLineNamed(t *testing.T) {

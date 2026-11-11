@@ -742,16 +742,36 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		fmt.Fprintf(r.Out, "applying the saved plan of %s as %s\n", r.what(), safetext.Field(cred.Account()))
 	}
 	if err := t.Apply(ctx, planPath); err != nil {
-		return res, safetext.FieldErr(err)
+		// A failed apply is not an apply that applied nothing: terraform
+		// creates, updates and deletes what it can before it stops, and the
+		// plan the gate judged has landed in the project whether or not this
+		// call returned zero (spec §6, and `fugaro update`'s applyAndRecord
+		// records a failed apply for the same reason). Since D1545 the record
+		// is also the only control left standing on a content finding, and a
+		// root authored by the session the gate stands over could put an
+		// off-table grant, an off-table type or an unlisted delete of a
+		// non-data-bearing type before a resource that is sure to fail: the
+		// change would land, nothing would be recorded, and `fugaro doctor`
+		// would have nothing to warn about. So the record of the plan that was
+		// judged is written here too, and the apply's own failure is what the
+		// session reads — in terraform's output and in the error below.
+		applyErr := safetext.FieldErr(err)
+		if werr := r.Recorder.Record(ctx, conv); werr != nil {
+			// Both sentences stay in the chain, as they do above: the apply's
+			// own cause is what classifies the exit, and a trail that could not
+			// be left is in the message beside it rather than in place of what
+			// terraform said.
+			return res, fmt.Errorf("%w: %w", applyErr, werr)
+		}
+		return res, applyErr
 	}
 	// The record is written AFTER the plan is applied and never before it (spec
-	// §6, D1014): the admission of a step that did not apply would be a record
-	// of something that did not happen, and a record of a step that was
-	// confirmed and then failed to apply is the same lie told about an error.
-	// Where the apply itself failed, the error above is what the session reads
-	// and no record is written for it — the failure is in terraform's own
-	// output and in the state it left, which is what an owner reads to find out
-	// what happened.
+	// §6, D1014), and what reaches this line is an apply that ran and returned
+	// zero. The paths that return above have each answered for themselves: a
+	// refused plan is recorded as the refusal it is, and a step whose apply
+	// never ran — a confirmation the person declined, a saved plan that changed
+	// between the gate and here — records nothing, because an admission for it
+	// would be a record of something that did not happen.
 	if err := r.Recorder.Record(ctx, conv); err != nil {
 		return res, err
 	}
