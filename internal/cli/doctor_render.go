@@ -226,6 +226,14 @@ var doctorMeasureIDs = map[string]bool{
 	// docs/plugin-user-scope/implementation-plan.md), and the class of both is
 	// update — the plugin on this machine is what `fugaro update` installs.
 	"plugin-install": true,
+	// pluginwire's "not wired": a checkout nothing pins, because the merge
+	// that writes a pin is gone (D949, U5). It is the normal state of every
+	// repository now, and information rather than a finding — filed as audit
+	// it was counted by the pointer line, so the one screen said "1 more
+	// finding" over a repository with nothing wrong with it. The states that
+	// ARE wrong (a pin this binary does not match, a foreign wiring) are
+	// warnings, and the update arm above keeps them in the default view.
+	"plugin-pin": true,
 	// The standing note the wiring always prints beside its per-notice lines:
 	// a fixed sentence about what wiring the plugin blesses, not a finding of
 	// this checkout's.

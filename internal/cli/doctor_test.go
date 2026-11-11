@@ -732,6 +732,15 @@ func TestDoctorOffline(t *testing.T) {
 	if _, _, err := execute(t, "doctor", "--offline", "--strict", "--json", "--dir", dir); err != nil {
 		t.Fatalf("--strict failed on skipped checks: %v", err)
 	}
+	// The class the skips are filed in, pinned directly: a skipped check is a
+	// measurement (D946's "counted in no view's total"), never an item and
+	// never a finding. policy-rules-skew stands in for all of them — they are
+	// the update class's IDs, whose own arm sits above the measure ones — and
+	// without this arm the four skips above would be counted in the default
+	// view's pointer line, which is a count of checks that never ran.
+	if got := doctorClassOf(doctorCheck{ID: "policy-rules-skew", Skipped: true, Severity: "info"}); got != doctorClassMeasure {
+		t.Errorf("a skipped policy-rules-skew is %q, want %q: a skip is not a finding", got, doctorClassMeasure)
+	}
 	// The default view never prints a skipped check's own line, and never
 	// claims a check it did not run was checked: the pointer says how many
 	// were left out, and --all is where their own words are.
@@ -744,6 +753,9 @@ func TestDoctorOffline(t *testing.T) {
 	}
 	if !strings.Contains(view, "not run by `--offline`") {
 		t.Errorf("the default view does not say that checks were not run:\n%s", view)
+	}
+	if strings.Contains(view, "more finding") {
+		t.Errorf("the default view counts a skipped check as a finding:\n%s", view)
 	}
 	all, _, err := execute(t, "doctor", "--offline", "--all", "--dir", dir)
 	if err != nil {

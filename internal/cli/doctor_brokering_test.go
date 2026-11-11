@@ -1980,23 +1980,12 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 	// nor counts would leave no line at all.
 	counted := func(t *testing.T, def, flag string) {
 		t.Helper()
-		// The pointer block is the view's last lines: each one counts a kind the
-		// view held back, and the block is what the screen ends with. The count
-		// for this kind has to be one of them — pinned as "in the block" rather
-		// than "the last line of it", because a run can hold back more than one
-		// kind (a checkout nothing pins carries plugin-pin at info, D942, beside
-		// the security finding) and the order two pointers print in is the
-		// report's, not this test's. A state the view neither prints nor counts
-		// still leaves no line at all, which is what this catches.
-		lines := strings.Split(strings.TrimRight(def, "\n"), "\n")
-		found := false
-		for i := len(lines) - 1; i >= 0 && strings.Contains(lines[i], "finding"); i-- {
-			if strings.HasSuffix(lines[i], flag) {
-				found = true
-			}
+		last := strings.TrimRight(def, "\n")
+		if i := strings.LastIndex(last, "\n"); i >= 0 {
+			last = last[i+1:]
 		}
-		if !found {
-			t.Errorf("the default view does not count %s among its pointers:\n%s", flag, def)
+		if !strings.HasSuffix(last, flag) || !strings.Contains(last, "finding") {
+			t.Errorf("the default view does not end with the pointer for %s: %q\n%s", flag, last, def)
 		}
 	}
 

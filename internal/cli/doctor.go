@@ -307,12 +307,13 @@ not evaluated at all, because a runner has no Claude Code.
 
 --offline checks the update class and nothing else, and it makes no cloud call,
 no network call and no secret read: the plugin's wiring and the install on this
-machine, the login unit that runs the orchestrator daemon, and whether the base
-image and the jobs a workflow builds are the ones this checkout resolves to.
-Every check whose answer lives in the project's Realtime Database or the runs
-bucket — the published policy, the deployed rules, which image a job was last
-built from — and the one that asks whether a newer release is available, is
-skipped rather than guessed: it comes back with skipped true and ok false, and
+machine, the login unit that runs the orchestrator daemon, and the base image
+this checkout resolves to where a local installation is configured to answer
+it. Every check whose answer lives in the project's Realtime Database or the
+runs bucket — the published policy, the deployed rules, and whether a
+workflow's job was built from the image settings it resolves to now — and the
+one that asks whether a newer release is available, is skipped rather than
+guessed: it comes back with skipped true and ok false, and
 a problem saying what could not be read, and it fails nothing, with or without
 --strict. A reader of --json should take ok true as "checked and fine" and
 skipped true as "not checked"; that pair is the whole contract. It is the
