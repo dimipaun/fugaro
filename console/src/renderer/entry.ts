@@ -273,6 +273,7 @@ import {
   modelsListSupported,
   runsListPageSupported,
   runsSummarySupported,
+  seatsSupported,
 } from '../shared/version'
 import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
 import { NOTICE_HIDE_DETAILS, NOTICE_SHOW_DETAILS } from '../shared/notice'
@@ -5379,6 +5380,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * such verb and answers `unknown command "ls"` -- a failure the operator can
      * do nothing about. The floor is asked **before** the read goes out. */
     const modelsTooOld = !modelsListSupported(gate.compatibility.cliVersion ?? '')
+    /** seatsTooOld is whether the CLI in use predates the seat estimate
+     * (`seatsSupported`). `fugaro seats` landed in v0.21.0, and every CLI above
+     * this console's supported set answers `ok`, so a 0.20.x installation is a
+     * CLI the tab reads and one that answers `unknown command "seats"` for this
+     * read -- a failure the operator can do nothing about. The floor is asked
+     * **before** the read goes out, like the models panel's. */
+    const seatsTooOld = !seatsSupported(gate.compatibility.cliVersion ?? '')
     /** model and modelsSentence are what `models ls` last answered on this
      * visit, and `modelsOut` says a read of it is in flight. */
     let models: ModelsListView | null = null
@@ -5968,6 +5976,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           raw: seats,
           licence: buildLicence({ raw: licence, because: licenceSentence }),
           because: seatsSentence,
+          tooOld: seatsTooOld,
+          version: gate.compatibility.cliVersion ?? '',
         }),
         drawn.seats,
       )
@@ -6392,18 +6402,23 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
 
     /**
-     * beginSeats starts the seat estimate's read and puts its mark up. It is
+     * beginSeats starts the seat estimate's read and puts its mark up -- or,
+     * below the command's floor, makes no read at all and draws the console's own
+     * sentence naming the version this panel needs (`beginModels`' shape). It is
      * called on every visit, the budget's own read or not, for `beginModels`'s
      * reason: a cached budget view drawn before anything is awaited is not what
      * keeps this section waiting.
      */
     const beginSeats = (): void => {
-      seatsAttempt += 1
-      seatsOut = true
-      seatsToken = projectsSeatsRead.start()
+      if (!seatsTooOld) {
+        seatsAttempt += 1
+        seatsOut = true
+        seatsToken = projectsSeatsRead.start()
+      }
       if (frame === null) mount(true)
       else markSeats()
-      void loadSeats(seatsAttempt)
+      if (seatsTooOld) paintSeats()
+      else void loadSeats(seatsAttempt)
     }
 
     /** beginSettings starts the third section's read and puts its mark up. It
@@ -6502,10 +6517,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // The seat estimate's read is taken with the rest (S4.2). It is the tab's
       // one read whose child lists the installation's bucket, so it is the one
       // that answers last -- and taking its token here is what lets its panel
-      // draw the moment it does, rather than behind the budget's read.
-      seatsAttempt += 1
-      seatsOut = true
-      seatsToken = projectsSeatsRead.start()
+      // draw the moment it does, rather than behind the budget's read. Below the
+      // command's floor there is no seats read at all (`seatsTooOld`): the panel
+      // is then drawn by the same branch the models panel uses below its own.
+      if (!seatsTooOld) {
+        seatsAttempt += 1
+        seatsOut = true
+        seatsToken = projectsSeatsRead.start()
+      }
       const fresh = frame === null
       const drawn = mount(true)
       if (!fresh) {
@@ -6526,7 +6545,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       void loadPolicy(policyAttempt)
       void loadDoctor(doctorAttempt)
       void loadLicence(licenceAttempt)
-      void loadSeats(seatsAttempt)
+      if (seatsTooOld) paintSeats()
+      else void loadSeats(seatsAttempt)
     }
 
     // The view this screen opens on, if this session has already read it, is

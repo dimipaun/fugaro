@@ -213,8 +213,11 @@ import { MANAGED_BUSY, MANAGED_TITLE } from '../../src/renderer/screens/managed'
 import {
   SEATS_ADVISORY,
   SEATS_BUSY,
+  SEATS_CLI_FLOOR_WORD,
   SEATS_OVER_WARNING,
+  SEATS_PEOPLE_CLASS,
   SEATS_TITLE,
+  SEATS_VALUE_CLASS,
 } from '../../src/renderer/screens/seats'
 import { POLICY_NODE_TITLE } from '../../src/renderer/screens/policynotes'
 import { RETIREMENTS_BUSY, RETIREMENTS_SET_TITLE } from '../../src/renderer/screens/retirements'
@@ -6271,6 +6274,44 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
         ['button', 'input', 'select', 'textarea', 'form', 'a'].includes(node.tagName.toLowerCase()),
       ),
     ).toEqual([])
+  })
+
+  it('asks for no seats read at all below the command’s floor, and says which version it needs', async () => {
+    // `fugaro seats` landed in v0.21.0 (`SEATS_CLI_FLOOR`), and every CLI above
+    // this console's supported set is read as one it may ask -- so a 0.20.x
+    // installation is a CLI this tab draws its full dashboard for and one that
+    // answers `unknown command "seats"` for this read, which the panel would draw
+    // as a broken estimate. The floor is asked **before** the read goes out.
+    const { bridge, calls } = fakeBridge({
+      compatibility: { ...anOkCompatibility(), cliVersion: '0.20.9' },
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        readLicence: () => ({ ok: true, data: A_LICENCE_REPLY }),
+        readSeats: () => ({ ok: true, data: A_SEATS_REPLY }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'projects').click()
+    await flush()
+    expect(
+      calls.slice(before).some((call) => call.name === 'readSeats'),
+      'the tab asked a CLI below the floor for `seats`',
+    ).toBe(false)
+    const panel = classed(panelOf(document), PROJECTS_SEATS_CLASS)[0] as FakeNode
+    expect(panel, 'the tab drew no seats section').toBeDefined()
+    expect(holdsText(panel, `${SEATS_CLI_FLOOR_WORD}0.20.9`)).toBe(true)
+    // No figure behind a read that was never made, no mark left up for one, and
+    // no table of people either.
+    expect(classed(panel, SEATS_PEOPLE_CLASS)).toEqual([])
+    expect(classed(panel, SEATS_VALUE_CLASS)).toEqual([])
+    expect(busyLabels(document)).toEqual([])
+    // The rest of the tab is untouched by it: one section below its floor takes
+    // no other panel down with it.
+    expect(classed(panelOf(document), PROJECTS_LICENCE_CLASS).length).toBe(1)
   })
 
   it('asks for no models read at all below the command’s floor, and says which version it needs', async () => {

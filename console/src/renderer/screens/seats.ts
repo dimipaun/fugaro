@@ -42,6 +42,7 @@
 import { estimated, measured, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import { sanitizeRefusal } from '../../shared/sanitize'
+import { SEATS_CLI_FLOOR } from '../../shared/version'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
 import { REFUSAL_UNREADABLE } from './degraded'
@@ -143,6 +144,21 @@ export const SEATS_ADVISORY =
 export const SEATS_FLOOR =
   'A lower bound: a member the estimate cannot size, or a run it could not read, is counted nowhere — so the figure is a floor and not a ceiling.'
 
+/**
+ * SEATS_CLI_FLOOR_WORD introduces the console's own sentence for a CLI below the
+ * seats command's floor, and **its trailing space is the sentence's**: the
+ * version line follows it and the two are one string. The `CLI` in its name is
+ * this file's one hedge against a collision of its own: `SEATS_FLOOR` above is
+ * the estimate's lower bound, and the two floors are different facts.
+ *
+ * `fugaro seats` landed in v0.21.0 (`SEATS_CLI_FLOOR`), so a CLI older than that
+ * has no such command and answers `unknown command "seats"` -- a failure the
+ * operator can do nothing about. The floor is asked before the read goes out
+ * (`src/renderer/entry.ts`), and below it the panel spawns nothing and draws
+ * this.
+ */
+export const SEATS_CLI_FLOOR_WORD = `the seat estimate needs fugaro ${SEATS_CLI_FLOOR} and this CLI is `
+
 /** SEATS_EMPTY is what an estimate with nobody in it says. An empty table would
  * read as a failure; this is the document's own fact, said plainly (S4.1 prints
  * the same sentence for a terminal reader). */
@@ -224,6 +240,14 @@ export interface SeatsInputs {
   readonly raw: unknown
   readonly licence: LicenceModel
   readonly because: string | null
+  /** tooOld is whether the CLI in use predates the command this section reads
+   * (`seatsSupported`). It is a fourth input rather than something the read
+   * answers, because below the floor no read is made at all: the entry asks the
+   * floor before the child goes out, and hands the answer in. */
+  readonly tooOld: boolean
+  /** version is the CLI line the floor was asked about, drawn **only** in the
+   * floor sentence above (`SEATS_CLI_FLOOR_WORD`). */
+  readonly version: string
 }
 
 /**
@@ -385,6 +409,11 @@ function unavailableModel(licence: LicenceModel, because: string): SeatsModel {
 /**
  * buildSeats turns the read's own answer into this section's model.
  *
+ * **Below the command's floor there is nothing to read** (`SEATS_CLI_FLOOR_WORD`):
+ * the model is the unavailable one, carrying the sentence naming the release the
+ * panel needs, and neither figure is drawn -- not as a zero and not as an `n/a`,
+ * because the console is not saying "no seat count", it is saying it cannot ask.
+ *
  * **Three rules are decided here and nowhere else.**
  *
  *   - **a reply this build cannot read is refused whole** (`SEATS_SHAPE_BECAUSE`,
@@ -403,6 +432,11 @@ function unavailableModel(licence: LicenceModel, because: string): SeatsModel {
  * It touches no element, so every one of those is testable in plain Node.
  */
 export function buildSeats(inputs: SeatsInputs): SeatsModel {
+  // The floor is asked first, and it is not a refusal: the read never went out,
+  // and the sentence names the release this panel needs rather than a failure
+  // the operator cannot act on (`SEATS_CLI_FLOOR_WORD`; `modelsListSupported`'s
+  // panel is drawn the same way one panel over).
+  if (inputs.tooOld) return unavailableModel(inputs.licence, `${SEATS_CLI_FLOOR_WORD}${inputs.version}`)
   if (inputs.because !== null) return unavailableModel(inputs.licence, inputs.because)
   const doc = objectAt(inputs.raw)
   if (doc === null) return unavailableModel(inputs.licence, SEATS_ABSENT_BECAUSE)

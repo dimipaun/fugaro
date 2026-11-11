@@ -42,9 +42,11 @@ import {
   SEATS_ABSENT_BECAUSE,
   SEATS_BECAUSE_CLASS,
   SEATS_CLASS,
+  SEATS_CLI_FLOOR_WORD,
   SEATS_EMPTY,
   SEATS_FIGURES_CLASS,
   SEATS_FLOOR,
+  SEATS_FLOOR_CLASS,
   SEATS_LICENCE_UNREAD_BECAUSE,
   SEATS_LICENSED_TERM,
   SEATS_MEMBER_CLASS,
@@ -73,6 +75,7 @@ import {
   fillSeats,
 } from '../../src/renderer/screens/seats'
 import type { ScreenElement, ScreenFactory } from '../../src/renderer/screens/seats'
+import { SEATS_CLI_FLOOR } from '../../src/shared/version'
 
 // ---------------------------------------------------------------------------
 // The harness: a fake element that refuses what a screen may not do.
@@ -178,6 +181,12 @@ function drawnSection(
   return { host, drawn: one(host, SEATS_CLASS) }
 }
 
+/** ABOVE_THE_FLOOR is the two floor inputs of every case but the floor's own:
+ * `seats.read` is offered to a CLI at or above `SEATS_CLI_FLOOR`, and a case
+ * about a document is about the document. The case below that is about the floor
+ * passes its own pair. */
+const ABOVE_THE_FLOOR = { tooOld: false, version: '' } as const
+
 /** licenceWith is the licence section's own model for a key that carries
  * `seats` seats: the seats section reads the key through the same builder the
  * licence section draws it with, so the figure it compares against is the
@@ -211,6 +220,7 @@ const A_SEATS_DOC: Readonly<Record<string, unknown>> = Object.freeze({
 describe('the seats section', () => {
   it('draws the estimate beside the key’s seats, warns on the overage, and blocks nothing', () => {
     const { drawn: section } = drawnSection({
+      ...ABOVE_THE_FLOOR,
       raw: A_SEATS_DOC,
       licence: licenceWith(2),
       because: null,
@@ -243,6 +253,7 @@ describe('the seats section', () => {
 
   it('draws no warning when the estimate is within the key’s seats, and still blocks nothing', () => {
     const { drawn: section } = drawnSection({
+      ...ABOVE_THE_FLOOR,
       raw: {
         project: 'acme',
         days: 90,
@@ -268,6 +279,7 @@ describe('the seats section', () => {
 
   it('draws an estimate with nobody in it as a sentence, not an empty table', () => {
     const { drawn: section } = drawnSection({
+      ...ABOVE_THE_FLOOR,
       raw: {
         project: 'acme',
         days: 90,
@@ -288,6 +300,7 @@ describe('the seats section', () => {
 
   it('draws the window the estimate was taken over, in the document’s own days', () => {
     const { drawn: section } = drawnSection({
+      ...ABOVE_THE_FLOOR,
       raw: A_SEATS_DOC,
       licence: licenceWith(2),
       because: null,
@@ -300,7 +313,7 @@ describe('the seats section', () => {
   it('draws the key’s seats as n/a, with this console’s own sentence, when there is no key', () => {
     const noKey = buildLicence({ raw: { state: 'none' }, because: null })
     expect(noKey.word).toBe(LICENCE_NO_KEY_WORD)
-    const { drawn: section } = drawnSection({ raw: A_SEATS_DOC, licence: noKey, because: null })
+    const { drawn: section } = drawnSection({ ...ABOVE_THE_FLOOR, raw: A_SEATS_DOC, licence: noKey, because: null })
     const values = all(section, SEATS_VALUE_CLASS)
     expect(values.map((cell) => cell.textContent)).toEqual(['≥ est. 3', 'n/a'])
     // The sentence explaining the `n/a` is the console's, and it says which
@@ -312,7 +325,7 @@ describe('the seats section', () => {
 
   it('draws the key’s seats as n/a when the licence section could not be read', () => {
     const unread = buildLicence({ raw: null, because: 'the console’s own store did not answer' })
-    const { drawn: section } = drawnSection({ raw: A_SEATS_DOC, licence: unread, because: null })
+    const { drawn: section } = drawnSection({ ...ABOVE_THE_FLOOR, raw: A_SEATS_DOC, licence: unread, because: null })
     const values = all(section, SEATS_VALUE_CLASS)
     expect(values[1]?.textContent).toBe('n/a')
     expect(values[1]?.getAttribute('title')).toBe(SEATS_LICENCE_UNREAD_BECAUSE)
@@ -323,19 +336,20 @@ describe('the seats section', () => {
     // An answer that arrived and is not the shape this section reads is a
     // sentence: a decoder that guessed would draw a member out of a reply that
     // does not mean it.
-    const shape = drawnSection({ raw: { project: 'acme' }, licence: licenceWith(4), because: null })
+    const shape = drawnSection({ ...ABOVE_THE_FLOOR, raw: { project: 'acme' }, licence: licenceWith(4), because: null })
     expect(one(shape.drawn, SEATS_BECAUSE_CLASS).textContent).toBe(SEATS_SHAPE_BECAUSE)
     expect(all(shape.drawn, SEATS_FIGURES_CLASS)).toHaveLength(0)
     expect(controls(shape.drawn)).toHaveLength(0)
     // A read that produced nothing at all is the bridge answering `null`, which
     // is what a member that is missing or that failed to answer looks like here.
-    const absent = drawnSection({ raw: null, licence: licenceWith(4), because: null })
+    const absent = drawnSection({ ...ABOVE_THE_FLOOR, raw: null, licence: licenceWith(4), because: null })
     expect(one(absent.drawn, SEATS_BECAUSE_CLASS).textContent).toBe(SEATS_ABSENT_BECAUSE)
     expect(one(absent.drawn, SEATS_STATE_CLASS).textContent).toBe('not read')
   })
 
   it('draws the CLI’s own refusal sentence when the read was refused, and the advisory beside it', () => {
     const { drawn: section } = drawnSection({
+      ...ABOVE_THE_FLOOR,
       raw: null,
       licence: licenceWith(4),
       because: 'the bucket of this installation does not answer',
@@ -349,6 +363,7 @@ describe('the seats section', () => {
 
   it('draws every identity through its own door: a person redacted, a member whole, a reason in this module’s words', () => {
     const { drawn: section } = drawnSection({
+      ...ABOVE_THE_FLOOR,
       raw: A_SEATS_DOC,
       licence: licenceWith(2),
       because: null,
@@ -391,6 +406,7 @@ describe('the seats section', () => {
 
   it('draws a reason this build does not read as its own word, never as the document’s code', () => {
     const { drawn: section } = drawnSection({
+      ...ABOVE_THE_FLOOR,
       raw: {
         ...A_SEATS_DOC,
         not_counted: [{ member: 'domain:acme.example', why: 'a_later_reason', sources: ['launcher'] }],
@@ -410,6 +426,7 @@ describe('the seats section', () => {
     // -- and every one of those is the fallback's case, not the table's.
     for (const code of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
       const { drawn: section } = drawnSection({
+        ...ABOVE_THE_FLOOR,
         raw: {
           ...A_SEATS_DOC,
           not_counted: [{ member: 'group:eng@acme.example', why: code, sources: ['operator'] }],
@@ -425,11 +442,38 @@ describe('the seats section', () => {
     }
   })
 
+  it('draws no figure at all below the command’s floor, and names the release it needs', () => {
+    // `fugaro seats` landed in v0.21.0 (`SEATS_CLI_FLOOR`), so a 0.20.x CLI has
+    // no such word and answers `unknown command "seats"`. Below the floor no read
+    // is made, and the panel says which release it needs -- an `n/a` beside a
+    // figure would be this console saying the estimate is unknown rather than
+    // that it cannot ask for one.
+    const { drawn: section } = drawnSection({
+      tooOld: true,
+      version: '0.20.9',
+      raw: null,
+      licence: licenceWith(4),
+      because: null,
+    })
+    expect(one(section, SEATS_STATE_CLASS).textContent).toBe('not read')
+    expect(one(section, SEATS_BECAUSE_CLASS).textContent).toBe(`${SEATS_CLI_FLOOR_WORD}0.20.9`)
+    expect(all(section, SEATS_VALUE_CLASS)).toHaveLength(0)
+    expect(all(section, SEATS_PEOPLE_CLASS)).toHaveLength(0)
+    // The sentence carries the floor's own constant, so the two cannot drift:
+    // the version the panel names is the version the read is offered from.
+    expect(SEATS_CLI_FLOOR_WORD).toContain(SEATS_CLI_FLOOR)
+    // The marks that would explain a figure are not drawn either: there is no
+    // figure, and no table of people the read never answered.
+    expect(all(section, SEATS_WARNING_CLASS)).toHaveLength(0)
+    expect(all(section, SEATS_FLOOR_CLASS)).toHaveLength(0)
+  })
+
   it('carries no link and no control, in the states it has', () => {
     for (const inputs of [
-      { raw: A_SEATS_DOC, licence: licenceWith(2), because: null },
-      { raw: A_SEATS_DOC, licence: licenceWith(9), because: null },
+      { ...ABOVE_THE_FLOOR, raw: A_SEATS_DOC, licence: licenceWith(2), because: null },
+      { ...ABOVE_THE_FLOOR, raw: A_SEATS_DOC, licence: licenceWith(9), because: null },
       {
+        ...ABOVE_THE_FLOOR,
         raw: null,
         licence: buildLicence({ raw: null, because: 'the console answered nothing' }),
         because: null,
@@ -450,7 +494,12 @@ describe('the seats section', () => {
     // The two are separate sections of the same tab: the seats panel reads the
     // key through `buildLicence` and draws nothing of the licence section's own
     // class, so a licence that has not landed cannot hide the estimate.
-    const { host } = drawnSection({ raw: A_SEATS_DOC, licence: licenceWith(2), because: null })
+    const { host } = drawnSection({
+      ...ABOVE_THE_FLOOR,
+      raw: A_SEATS_DOC,
+      licence: licenceWith(2),
+      because: null,
+    })
     expect(all(host, LICENCE_CLASS)).toHaveLength(0)
     expect(all(host, SEATS_CLASS)).toHaveLength(1)
   })
