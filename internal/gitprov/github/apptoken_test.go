@@ -366,3 +366,45 @@ func TestRunTokenPermissionsUnchanged(t *testing.T) {
 		t.Error("the review job's set is the run's set: a fifth declaration that is not one leaves the review job holding the write credential D883 refuses it")
 	}
 }
+
+// TestPersonReadPermissionsCoverAFileRead is D915's rule made mechanical (A0 of
+// docs/run-without-checkout/implementation-plan.md): the set the credentials
+// service's person read mint asks with reaches the one file that route was
+// extended to serve -- a repository's own fugaro.yaml at a ref, read through
+// gitprov.ContentsReader's GET /repos/{owner}/{repo}/contents/{path}?ref= --
+// and asks for no write anywhere.
+//
+// It carries the coordinator's two as well, because the route is one route: the
+// same mint is what a person's `coordinator show` reads a pull request with, so
+// the set has to reach that read too. It is asserted as an equality rather than
+// as "no write" alone, the rule TestAppTokenCoordinatorPermissionsHoldNoWrite
+// keeps for the coordinator's set: a permission asked for and never used is
+// reach a stolen token would have for nothing, which a write-only check cannot
+// see.
+//
+// The coordinator's set is the one this set must NOT be: widening it would
+// widen the coordinator's own credential, which reads no file. That is what the
+// two pins beside this test hold -- TestAppTokenCoordinatorPermissionsHoldNoWrite
+// and its fixture body on one side, TestGitHubReadAsksForNoWrite in
+// internal/credsvc on the other -- and the last check here says it in this
+// package's own vocabulary.
+func TestPersonReadPermissionsCoverAFileRead(t *testing.T) {
+	want := map[string]string{"contents": "read", "pull_requests": "read", "metadata": "read"}
+	perms := PersonReadTokenPermissions()
+	if !maps.Equal(perms, want) {
+		t.Fatalf("PersonReadTokenPermissions() = %v, want %v", perms, want)
+	}
+	for name, level := range perms {
+		if level != "read" {
+			t.Errorf("the person read mint asks GitHub for %s: %s", name, level)
+		}
+	}
+	perms["contents"] = "write"
+	perms["issues"] = "read"
+	if again := PersonReadTokenPermissions(); !maps.Equal(again, want) {
+		t.Errorf("PersonReadTokenPermissions() after a caller mutated its copy = %v, want %v", again, want)
+	}
+	if maps.Equal(CoordinatorTokenPermissions(), want) {
+		t.Error("the coordinator's set is the person read set: the two are two declarations, so a change to either cannot widen the other")
+	}
+}

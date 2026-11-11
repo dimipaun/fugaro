@@ -38,13 +38,17 @@ const (
 	bitbucketCredentialsSpec   = "docs/bitbucket-credentials/spec.md"
 	bitbucketCredentialsRecon  = "docs/bitbucket-credentials/reconciliation.md"
 	bitbucketCredentialsPlan   = "docs/bitbucket-credentials/implementation-plan.md"
+	// bitbucketCredentialsReconSecrets is the 2026-11-10 reading of the plan
+	// against the secrets-brokering proxy chain. It is guarded like the three
+	// above: the index must name it, and every path it cites is checked.
+	bitbucketCredentialsReconSecrets = "docs/bitbucket-credentials/reconciliation-secrets-brokering.md"
 
 	// bitbucketCredentialsReadmeStatus is the index's status line, word for
 	// word, and bitbucketCredentialsPlanStatus the plan's. They move together:
 	// an index that says a task is approved while the plan says none is leaves
 	// the two documents disagreeing about the one thing a reader starts from.
-	bitbucketCredentialsReadmeStatus = "**Status: plan only; nothing is implemented; no task approved.**"
-	bitbucketCredentialsPlanStatus   = "**Plan only. Nothing is implemented, and no task is approved.**"
+	bitbucketCredentialsReadmeStatus = "**Status as of 2026-11-10: in progress, 9/12 merged; see [docs/status.md](../status.md) for the current table.**"
+	bitbucketCredentialsPlanStatus   = "**Status as of 2026-11-10: in progress, 9/12 merged; see [docs/status.md](../status.md) for the current table.**"
 
 	// bitbucketCredentialsS3Parked is the amendment of 2026-10-26, after #1104:
 	// the run-token slice is deferred rather than cancelled, and its tasks keep
@@ -73,6 +77,7 @@ var bitbucketCredentialsIndexedFiles = []string{
 	"[spec.md](spec.md)",
 	"[reconciliation.md](reconciliation.md)",
 	"[implementation-plan.md](implementation-plan.md)",
+	"[reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md)",
 }
 
 // bitbucketDecisionRE matches one decision row of the reconciliation's §5 table:
@@ -89,8 +94,8 @@ var bitbucketDecisionRE = regexp.MustCompile(`(?m)^\|\s*\*\*D(3[0-9][0-9])\*\*\s
 var bitbucketCredentialsAgainstRecommendation = []string{"D360", "D362", "D363", "D367"}
 
 // TestDocsBitbucketCredentialsIsWritten: the folder exists with its index and
-// its three documents, the index carries the status line word for word and names
-// the other three files, the plan carries its own status line and its slices,
+// its four documents, the index carries the status line word for word and names
+// the other four files, the plan carries its own status line and its slices,
 // and both number blocks are stated with what is written in them and what is
 // reserved. Its red state is this test: the folder's guard did not exist until
 // this file did.
@@ -111,13 +116,14 @@ func TestDocsBitbucketCredentialsIsWritten(t *testing.T) {
 		bitbucketCredentialsS3Parked,
 		"The active plan is **S0–S2**",
 		// The two number blocks this work holds, with what is written in each
-		// and what is reserved. A block is extended by appending to it and the
-		// table that summarises it is elsewhere, which is how a range goes stale.
+		// and what is reserved — the check row naming what each number now is,
+		// because D1960 retired 147 and D1961 moved 148's read half into S2.
 		"| **D360–D389** |",
 		"| **Checks 145–154** |",
 		"**D360–D367** are written and answered",
 		"**D368–D389** are reserved and unused",
-		"**145–149** are proposed by the plan",
+		"**145, 146, 148 and 149** are the plan's",
+		"**147** is retired as reserved and unused (D1960, answered 2026-11-10)",
 		"**150–154** are reserved and unused",
 	}, bitbucketCredentialsIndexedFiles...) {
 		if !strings.Contains(readme, want) {
@@ -359,6 +365,7 @@ func TestDocsBitbucketCredentialsEveryCitedPathExists(t *testing.T) {
 	paths := map[string]bool{}
 	for _, doc := range []string{
 		bitbucketCredentialsReadme, bitbucketCredentialsRecon, bitbucketCredentialsPlan,
+		bitbucketCredentialsReconSecrets,
 	} {
 		for _, p := range bitbucketCitedPaths(readDoc(t, doc)) {
 			paths[p] = true

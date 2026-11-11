@@ -696,3 +696,125 @@ func TestOrchestratorPatchExitsTwoWhenTheDatabaseCannotBeRead(t *testing.T) {
 		t.Errorf("the failed patch wrote the node: rev %d", after.Rev)
 	}
 }
+
+// TestImageBuildRefusesAnotherInstallationsDatabase: a build's lease is a
+// writer into the budget database. It reserves a node under /buildleases/<slug>
+// and moves the day's counters before the submission (T4, D1543), so
+// `fugaro image build` asks the one ownership question — and the name gate
+// beside it — before it takes that lease, as every other writer does.
+//
+// The two directions the ruling is about, both held here. A build judged and
+// counted against another installation's database is the bound T4 put in the
+// prompt's place bounding nothing here, and its reservation and counters are
+// spend that installation never made — which its own runs are then refused for.
+// The check is reached in every session, not only through the managed gate: a
+// pipe and a coding agent's session open no gate at all (openBuildManaged) and
+// submit the build, lease and all.
+func TestImageBuildRefusesAnotherInstallationsDatabase(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	slug := mustSlug("bitbucket", "acme/app")
+	// The installation's own marked database: the build is submitted, and what
+	// it leaves in the database is the baseline the refusals below are read
+	// against — an assertion that nothing was written says nothing at all if the
+	// lease never wrote anything in the first place.
+	if _, _, err := executeBuild(t, "image", "build", "--base", "b:1"); err != nil {
+		t.Fatalf("a build against the installation's own marked database was refused: %v", err)
+	}
+	posts := buildPosts(fb)
+	if posts != 1 {
+		t.Fatalf("builds submitted = %d, want the first one to have gone through", posts)
+	}
+	if f.db.Value(budget.PathBuildLeases(slug)) == nil {
+		t.Fatal("the submitted build left no lease behind, so this test's baseline is empty and its assertions below are vacuous")
+	}
+	leases, spend := f.db.Value(budget.PathBuildLeases(slug)), f.db.Value(budget.PathSpendGlobal(today()))
+
+	// Another installation's mark.
+	f.db.Set(budget.PathMark, birchMark())
+	_, _, err := executeBuild(t, "image", "build", "--base", "b:1")
+	refusedByTheOwnershipCheck(t, "image build", err, "nothing was built")
+	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
+		t.Errorf("the refusal is not the shared one (the mark it found): %v", err)
+	}
+	if buildPosts(fb) != posts {
+		t.Error("a refused build still reached Cloud Build")
+	}
+	if !reflect.DeepEqual(f.db.Value(budget.PathBuildLeases(slug)), leases) {
+		t.Error("the refused build wrote a lease into the other installation's database")
+	}
+	if !reflect.DeepEqual(f.db.Value(budget.PathSpendGlobal(today())), spend) {
+		t.Error("the refused build moved the day's counters in the other installation's database")
+	}
+
+	// Data and no mark at all: the other half of the same answer.
+	f.db.Set(budget.PathMark, nil)
+	_, _, err = executeBuild(t, "image", "build", "--base", "b:1")
+	refusedByTheOwnershipCheck(t, "image build", err, "nothing was built")
+	if !reflect.DeepEqual(f.db.Value(budget.PathBuildLeases(slug)), leases) {
+		t.Error("the refused build wrote a lease into the unmarked database")
+	}
+	if buildPosts(fb) != posts {
+		t.Error("the build against the unmarked database still reached Cloud Build")
+	}
+}
+
+// TestImageBuildRefusesADatabaseNamingAnotherProject: the name gate is the
+// build path's first question and it is not the ownership question asked twice —
+// the two read different facts and each one lets through a database the other
+// refuses. A database whose mark is this installation's own, so
+// requireOwnBudgetDB passes it, and whose /fugaro/project names another project
+// is exactly that shape, and the build has to stop at the gate: the lease and
+// the day's counters are writes into that database, and one that another project
+// names is not a database this checkout's config may lease against.
+//
+// The shape is a real one rather than a contrived pair. /fugaro/project is what
+// `fugaro update --firebase-project` writes, and a budget block carried into
+// another checkout (a copied fugaro.yaml, a project renamed and reinstalled)
+// finds a database whose mark came along with it: the mark alone cannot tell
+// that apart from the installation's own, so without the gate the build is
+// submitted and its reservation and counters land in the other installation's
+// database — spend that installation never made, which its own runs are then
+// refused for, while this one's builds run unleased and uncapped.
+//
+// The mark stays this installation's through the whole test: what refuses the
+// build below is the name and nothing else, which is the call this test exists
+// to hold (TestImageBuildRefusesAnotherInstallationsDatabase holds the other).
+func TestImageBuildRefusesADatabaseNamingAnotherProject(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	slug := mustSlug("bitbucket", "acme/app")
+	// The installation's own database, name and mark both its own: the baseline
+	// the refusals below are read against, so that "nothing was written" is a
+	// statement about a path that does write.
+	if _, _, err := executeBuild(t, "image", "build", "--base", "b:1"); err != nil {
+		t.Fatalf("a build against a database naming its own project was refused: %v", err)
+	}
+	posts := buildPosts(fb)
+	if posts != 1 {
+		t.Fatalf("builds submitted = %d, want the first one to have gone through", posts)
+	}
+	if f.db.Value(budget.PathBuildLeases(slug)) == nil {
+		t.Fatal("the submitted build left no lease behind, so this test's baseline is empty and its assertions below are vacuous")
+	}
+	leases, spend := f.db.Value(budget.PathBuildLeases(slug)), f.db.Value(budget.PathSpendGlobal(today()))
+
+	f.db.Set(budget.PathProject, "birch")
+	_, _, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if err == nil {
+		t.Fatal("a build leased into a database naming another project succeeded")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("image build: exit %d, want 1 (a refusal, not an outage): %v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), `belongs to project "birch"`) {
+		t.Errorf("the refusal is not the name gate's own (the project the database names): %v", err)
+	}
+	if buildPosts(fb) != posts {
+		t.Error("a refused build still reached Cloud Build")
+	}
+	if !reflect.DeepEqual(f.db.Value(budget.PathBuildLeases(slug)), leases) {
+		t.Error("the refused build wrote a lease into the database naming another project")
+	}
+	if !reflect.DeepEqual(f.db.Value(budget.PathSpendGlobal(today())), spend) {
+		t.Error("the refused build moved the day's counters in the database naming another project")
+	}
+}

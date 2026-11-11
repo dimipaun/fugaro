@@ -152,7 +152,11 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"agent.levels.l3.none":     InProject | InRepo,
 		"agent.levels.l3.focus":    InProject | InRepo,
 		"agent.adversarial_rounds": InProject | InRepo,
-		"agent.recipe":             InProject | InRepo | InOverride,
+		// The stop rule's time half (the owner's ruling of 2026-11-08): a share
+		// of the run's budget, so it sits where the workflow's timeouts do and
+		// the project layer — the layer that knows them — may set it.
+		"agent.review_stop_fraction": InProject | InRepo,
+		"agent.recipe":               InProject | InRepo | InOverride,
 		// Named oauth tokens plan Task 6 (docs/design/named-oauth-tokens.md §3
 		// T2): added after agent.recipe, in config.Scopes already; the design
 		// doc's own §5 table (which this golden map otherwise mirrors) gains
@@ -163,6 +167,17 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		// override is one-directional (--no-compression only), which the scope
 		// table does not express.
 		"agent.compression": InRepo | InOverride,
+		// The triage stage's switch (docs/post-review-triage, T-TR5, D1854) is
+		// repo-only, and not even a task flag: a launcher writes the task, and
+		// the project layer travels inside it (task.Spec.ProjectLayer), so a
+		// layer key would be a second home for the switch — reachable from
+		// whatever revision the launcher read, including the checkout under
+		// review, which could put the stage back after the base branch took it
+		// away. The design doc's §5 table does not name every key
+		// (agent.compression and agent.review_stop_fraction are not there
+		// either); the row is printed in docs/project-layer.md, which
+		// TestScopeTableMatchesDocs keeps equal to config.Scopes.
+		"agent.triage": InRepo,
 
 		"budget.mode":           InRepo,
 		"budget.per_run_usd":    InRepo,

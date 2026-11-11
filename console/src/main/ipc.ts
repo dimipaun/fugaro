@@ -1486,16 +1486,16 @@ export const CONSOLE_OPERATIONS = [
   // launched run holds the App's private key and mints installation tokens that
   // carry `contents: write` and `pull_requests: write`, because it pushes and
   // opens the pull request (`internal/gitprov/github/apptoken.go`), while the set
-  // this operation's child mints is the read-only one: pull requests read and
-  // metadata read, no `write` of any kind
-  // (`github.CoordinatorTokenPermissions`), minted for the one repository and
-  // revoked when the command is done. That is why the two arguments below are
+  // this operation's child mints is the read-only one: contents read, pull
+  // requests read and metadata read, no `write` of any kind — the credentials
+  // service's person read set (`github.PersonReadTokenPermissions`) — minted
+  // for the one repository and revoked when the command is done. That is why the two arguments below are
   // the whole of what a renderer can influence about this argv: there is no key
   // for a token, a host, a path, an endpoint or a flag, and the row in
-  // `src/main/spawn.ts` declares the same two keys and no other word. Under
-  // `FUGARO_CREDENTIALS_SERVICE_URL` the command refuses -- the service holds
-  // the App's key and this read is not a run -- which the screen draws as its
-  // own refusal.
+  // `src/main/spawn.ts` declares the same two keys and no other word. A project
+  // that publishes no credentials service is one whose host read is refused --
+  // the read resolves the service from the project's own published block and
+  // from nothing else -- which the screen draws as its own refusal.
   {
     name: 'coordinator.show',
     method: 'coordinatorShow',
@@ -2341,7 +2341,7 @@ const MAX_SETTING_KEY_LENGTH = 120
  * **`*` is admitted anywhere a letter is, on purpose.** A standalone segment is
  * the spelling the registry uses, but `stages.rev*iew.x` passes this grammar
  * too, and that is the honest shape of the claim: this expression bounds the
- * **word** a key can be, and `internal/cli/settings_set.go:318` refuses any key
+ * **word** a key can be, and `internal/cli/settings_set.go:331` refuses any key
  * carrying a `*` with its own sentence -- "varies with a name this command does
  * not take" -- before the allow-list is consulted. Tightening the segment here
  * would move that refusal from the CLI's words to a schema refusal of this

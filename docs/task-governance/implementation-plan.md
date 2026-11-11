@@ -8,8 +8,8 @@ amended by [reconciliation.md](reconciliation.md)**, whose decisions D320–D333
 2026-10-26. **Partly implemented, and what remains is born in `ee/`.**
 
 On `main` (2026-10-29), task by task: T1.1, T1.2, T1.3, T1.4, T2.1, T2.2, T2.3, T3.1, T3.2, T3.3,
-T3.5, T3.6, T4.1, T4.2, T4.3, T5.1, T5.2, T6.1, T6.2, T7.1, T7.6, T8.1a (the tier vocabulary and
-the task fields) and T8.1b (`fugaro run --tier`). **T3.4 and T4.4 are not started.**
+T3.5, T3.6, T4.1, T4.2, T4.3, T4.4, T5.1, T5.2, T6.1, T6.2, T7.1, T7.6, T8.1a (the tier vocabulary
+and the task fields) and T8.1b (`fugaro run --tier`). **T3.4 is not started.**
 
 **The cut-off (D527, 2026-10-29): the in-flight governance work finishes in `internal/` and moves
 once; the rest is born in `ee/governance`.** `ee-reorg` D527 puts the cut-off at the first move pull

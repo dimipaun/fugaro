@@ -382,6 +382,75 @@ func TestCredentialsServiceReviewJobAccountsAreOneTableWhateverTheDocumentsOrder
 	}
 }
 
+// TestLauncherAccountsReadFromEnv is the wiring of the launcher class's own
+// list (DS1.2, D1938, F36): FUGARO_LAUNCHER_ACCOUNTS is the fifth name this
+// command reads beside the seven credentials.tf always sets, and it is read
+// exactly the way FUGARO_PERSON_ACCOUNTS is -- as an OPTIONAL value, because
+// the module renders the entry only on an installation whose roster names a
+// launcher, so one that names none must start with a class that admits nobody
+// rather than a process that will not bind a port.
+//
+// The entry the first half uses is one credsvc's own fold refuses (a launcher
+// is matched against a Google ID token's email claim), so the refusal is
+// reachable ONLY if the entry arrived at NewAuthenticator -- which is the whole
+// point of the test: an empty list and a list quietly dropped on the way to
+// AuthConfig look identical from the outside, and only the grant route's
+// answer would differ. Mutation (verified, run and restored): dropping
+// LauncherAccounts from the AuthConfig literal in credentialsServiceConfig --
+// this test fails, the process starting with the list dropped.
+//
+// The second half is the shape rule and this process's own no-echo rule: a
+// value that is present and is not the document the module renders is refused
+// by the variable's name and never by an entry.
+func TestLauncherAccountsReadFromEnv(t *testing.T) {
+	const entry = "launchér-1@example.invalid"
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	t.Setenv(envLauncherAccounts, `["`+entry+`"]`)
+	fakeCredentialsService(t)
+
+	_, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: an entry the launcher class cannot fold must refuse the process rather than be dropped on the way to it", err)
+	}
+	if !strings.Contains(err.Error(), "cannot verify its callers") || !strings.Contains(err.Error(), "launcher") {
+		t.Fatalf("err = %v, want the refusal that says the service cannot verify its callers because a launcher entry could not be folded, which is reachable only if %s reached the authenticator", err, envLauncherAccounts)
+	}
+	if strings.Contains(err.Error(), entry) {
+		t.Errorf("err = %v, which carries the launcher entry itself: the refusal names the variable and never an account", err)
+	}
+
+	// A value that is not the array the module renders is a deployment that is
+	// wrong, refused by name.
+	for _, raw := range []string{`"` + entry + `"`, `[{"email":"` + entry + `"}]`, `["ok@example.invalid",3]`, "not json"} {
+		got, err := credentialsServiceLaunchers(raw)
+		if err == nil {
+			t.Errorf("credentialsServiceLaunchers(%q) = %v, want a refusal: the value is the document the module renders or nothing", raw, got)
+			continue
+		}
+		if !strings.Contains(err.Error(), envLauncherAccounts) {
+			t.Errorf("the refusal for %q is %q, want it to name %s", raw, err, envLauncherAccounts)
+		}
+		if strings.Contains(err.Error(), entry) {
+			t.Errorf("the refusal for %q carries an entry: %q", raw, err)
+		}
+	}
+
+	// The optional half: absent and empty are the empty list, and the service
+	// starts with a launcher class that admits nobody.
+	for _, raw := range []string{"", "[]"} {
+		t.Setenv(envLauncherAccounts, raw)
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with %s = %q: %v (the entry is rendered only on an installation whose roster names a launcher, so one that names none must start the same service it always did)", envLauncherAccounts, raw, err)
+		}
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer with %s = %q: %v", envLauncherAccounts, raw, err)
+		}
+	}
+}
+
 // TestCredentialsServiceConfigBuildsFromAFullEnvironment is the headline: the
 // whole of this task is that the service can be configured at all, so a
 // complete environment must build a credsvc.Config that NewServer accepts --
@@ -455,6 +524,7 @@ func TestCredentialsServiceConfigBuildsFromAFullEnvironment(t *testing.T) {
 		{"Kills", cfg.Kills != nil},
 		{"DB", cfg.DB != nil},
 		{"Probes", cfg.Probes != nil},
+		{"Slips", cfg.Slips != nil},
 		{"Signs", cfg.Signs != nil},
 		{"AuditLog", cfg.AuditLog != nil},
 		{"Log", cfg.Log != nil},
@@ -736,16 +806,19 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // The other direction is a name this command reads that nothing sets, which is
 // a fact the service silently does not have.
 //
-// The list is the seven REQUIRED names plus the four optional ones, which is
+// The list is the seven REQUIRED names plus the five optional ones, which is
 // the whole of what the module renders and what this command reads: the
 // optional ones belong here because a name the module sets and this command
 // does not read is the same mistake whether the command requires it or reads it
 // outside the loop. Which of the names is which is pinned by the tests around
 // this one, not by this comparison.
 //
-// All four are rendered conditionally — the module sets each of them only on an
+// All five are rendered conditionally — the module sets each of them only on an
 // installation where it applies — and the reason they belong here rather than
-// in credentialsServiceEnvNames is pinned by the tests around this one.
+// in credentialsServiceEnvNames is pinned by the tests around this one. One of
+// them, FUGARO_LAUNCHER_ACCOUNTS (D1938), is rendered by no module yet and is
+// read from CredentialsServiceEnvAwaitingTheModule below, which is the same
+// cover-first order FUGARO_REVIEW_JOB_ACCOUNTS followed.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list
@@ -758,7 +831,7 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 		inModule[m[1]] = true
 	}
 	pending := infraTF.CredentialsServiceEnvAwaitingTheModule()
-	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envCoordinatorAccount, envReviewJobAccounts)
+	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts)
 	for _, n := range read {
 		if slices.Contains(pending, n) {
 			if inModule[n] {

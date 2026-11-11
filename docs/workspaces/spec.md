@@ -1,7 +1,6 @@
 # Workspaces: the spec
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** §0 is the owner's spec as this run recorded it; the design that follows (§1 onward) is
+**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.** §0 is the owner's spec as this run recorded it; the design that follows (§1 onward) is
 written to the answer of each decision in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**,
 the block this design was renumbered into on 2026-11-04), and **where the two disagree the
 reconciliation wins** — §0 is the record of what was asked, not of what this design proposes.
@@ -115,9 +114,9 @@ A workspace is declared in **two** places, and the second is derived from the fi
    on the workspace's project at all (§5), and the member's exchange verifies the pin **in its own
    config** and reads **its own** launcher/operator lists (§3). The record is the workspace's own
    statement about the group; it is not an input any member trusts. **It also does not say how to
-   reach a member** — the job accounts, the Firebase project and `fp` and the member's exchange URL
-   are the service's own per-member table, from the workspace owner's config (§5), and the record
-   only names the members.
+   reach a member** — the job accounts, the Firebase project and its database's region, `fp`, and the
+   member's exchange URL are the service's own per-member table, from the workspace owner's config
+   (§5), and the record only names the members.
 
 The workspace name reuses the project-name grammar (`config.ProjectNameRE`, F21) rather than a second
 one. A workspace's record is validated strictly and strictly decoded, like every other config and
@@ -179,9 +178,9 @@ ever presented. The endpoint verifies it and mints the **member-bound assertion*
 
 **The workspace token is accepted nowhere but the workspace's own signer endpoint**, which refuses a
 token whose signature is not **Google's published Firebase signing keys** (`GoogleKeysURL`,
-`internal/credsvc/auth.go`:1371-1373 — one global set, the same document for every Firebase project),
+`internal/credsvc/auth.go`:1388-1390 — one global set, the same document for every Firebase project),
 whose `aud` is not the workspace's own project id, whose `iss` is not that project's securetoken
-issuer (`:1072`), whose `email_verified` is not true (fact 2), or whose **`firebase.sign_in_provider`
+issuer (`:1089`), whose `email_verified` is not true (fact 2), or whose **`firebase.sign_in_provider`
 is not one of the pinned providers** — the next paragraph. That endpoint is the workspace's, deployed
 in the workspace's project, and **no member verifies a Firebase token at all**.
 
@@ -311,9 +310,9 @@ but the checks around it are pinned to one installation today, and they have to 
   what names the member. **A member name in a request body, a header or a query parameter is never
   identity** — a job's own launcher can write any header, so a member read off one would be a member
   a caller chooses.
-- **The token's own pins have to admit the member.** `verifyRun` (`:1047`) refuses a token whose
-  `aud` is not this service's Firebase project (`:1069`), whose `iss` is not that project's
-  securetoken issuer (`:1072`), or whose `fp` is not this service's Fugaro project (`:1105`). A
+- **The token's own pins have to admit the member.** `verifyRun` (`:1064`) refuses a token whose
+  `aud` is not this service's Firebase project (`:1086`), whose `iss` is not that project's
+  securetoken issuer (`:1089`), or whose `fp` is not this service's Fugaro project (`:1122`). A
   workspace-deployed service therefore has to accept **each member's** Firebase project as the issuer
   and **each member's** Fugaro project as `fp`, and hold the member it found to both: the account's
   member, the issuer's member and the `fp`'s member must be the **same** member, or the call is
@@ -331,7 +330,7 @@ but the checks around it are pinned to one installation today, and they have to 
   splice would be invisible: the account resolves, the tokens verify, and the policy that answers is
   another member's. So the database is **derived from the Firebase project the caller's verified
   `iss` names**, and a member whose declared values and verified `iss` disagree is refused before any
-  read. `checkLive` (`internal/credsvc/auth.go`:1196) and its outcomes reader
+  read. `checkLive` (`internal/credsvc/auth.go`:1213) and its outcomes reader
   (`RTDBOutcomes`, `:217`) are **per member** and chosen by the member the call resolved to, not by a
   process-wide setting: one deployment serves N members, so one configured database is one member's
   state answering for all of them. W6 owns the derivation and the test.
@@ -367,7 +366,16 @@ bypass, so the intersection is the only shape that keeps rule 1). Every shared c
 effective set is the **intersection** of:
 
 - the workspace credential's allow-list;
-- the member's own policy, which may refuse a provider or a credential the workspace holds.
+- the member's own policy, which may refuse a provider or a credential the workspace holds;
+- **the repository the run is on**, as the member's own database admits it: the repository's own
+  admission child, read from the member's database at the slug the run identity's `fs` verified, is
+  the **gate** — the account names it holds are the ones the workspace credential's allow-list is
+  asked against, and a credential that child does not name is not served — and the member's two
+  `allow_repos` legs are asked over the canonical name **recovered from the member's own policy**
+  rather than from that child: the child holds account names and no repository, so the name is the
+  entry of the account's `allow_repos` whose `task.Slug` is the verified slug (§5) — the **run's**
+  repository, which §8's residual risk 7 is about: nothing holds that slug to the repository the
+  calling job account belongs to.
 
 The member's policy is always the tighter side, because that is what "only tighten" means
 (`internal/policy/merge.go`). A credential the workspace holds and the member's policy excludes is
@@ -450,10 +458,26 @@ never the enforcement.
 
 **The service keeps one table of members, and every value in it comes from the workspace owner's
 config.** To resolve a caller, to check its tokens and to mint a member-bound assertion (§3) the
-service needs, per member, its **job service accounts**, its **Firebase project id and `fp`**, and
+service needs, per member, its **job service accounts**, its **Firebase project id, the region its
+database is in when it is not the project's default one, and `fp`**, and
 its **exchange URL** — and each is the workspace owner's own declaration, made once per member on the
 owner's machine (`workspace member add`, W1) and converged by the owner's `fugaro update` (W2's stage
-writes the record; W3's root of the workspace's own project and W6's service carry the table). **The
+writes the record; W3's root of the workspace's own project and W6's service carry the table).
+**The table has no writer in the tree yet, and the region is the one value of it no command
+records** — stated rather than implied. `workspace member add` takes the member's job accounts, its
+Firebase project, its `fp` and its exchange URL, `--repo` (a repository the member contributes,
+repeatable) and `--yes` — the first four are the values this table holds, `--repo` is the member's
+contribution to the workspace, and the **region** is in none of them (§6) — and the per-member
+credentials node itself has no writer at all:
+`WorkspaceCredentials`'s own comment says so
+(`internal/projectpolicy/workspace_credentials.go`:101, "This node has no writer in the tree"). The
+command that records a region, and the publish path that fills the table, are therefore a later
+task's, and a member whose Firebase project was adopted with a **regional** database is derived the
+legacy `<firebase_project>-default-rtdb` host until one lands: its row can carry only an empty
+region, so the service cannot reach that member at all. **The owner answered that gap on 2026-11-10,
+as recommended**: the task that carries the region and the publish path is the one that gives this
+node its writer, and this release ships the node's shape and the derivation rather than taking the
+field ([reconciliation.md](reconciliation.md) §9, O4). **The
 member's database URL is not in the table at all**: it is **derived from the Firebase project the
 verified `iss` names**, so an owner cannot splice member B's accounts onto member A's database (§4,
 finding 6). **None of it is in
@@ -596,7 +620,7 @@ member's database. Both are applied throughout this section above, and both are 
 | `workspace ls [--json]` | Offline. Every workspace this machine's project configs name, with the members it can see **from its own files** — the owner's machine, which holds the record it publishes, sees the whole list, and a member's sees the memberships its own configs name — and which of them this machine has a config for. Versioned JSON with a schema, like every other CLI document |
 | `workspace show <name> [--json]` | Offline. One workspace from **this machine's own files**: the configs on it and the pin each carries, its cap as last published here, and the drift between what this machine holds and what it last knew the record to say. It reads no cloud node (§2: a member holds no grant on the workspace's project), so on a member it shows the member's own half and says so rather than printing an empty member list; the workspace owner's machine, which holds the record it publishes, shows the whole of it |
 | `workspace add <name>` / `workspace rm <name>` | Edits the **selected local project config** and nothing else: the membership key `workspace: <name>` **and the pin beside it** — the values of §2, which are the one place a member decides what it trusts and which workspace key it verifies an assertion against — on, or off. Prints the diff, backs up the file, writes atomically, and ends by printing `next: fugaro update` |
-| `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for — the owner's side of a membership. `member add` is also where the owner records the per-member values §5's service table is built from (the member's job accounts, its Firebase project and `fp`, and its exchange URL), because the owner is the side that declares them. **The member's database URL is not among them**: it is derived from the verified `iss` project (§4, §5), so that an owner cannot pair one member's accounts with another's database |
+| `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for — the owner's side of a membership. `member add` is also where the owner records the per-member values §5's service table is built from (the member's job accounts, its Firebase project, its `fp`, and its exchange URL), because the owner is the side that declares them — **and the region of the member's database is the one value of that table the command does not record**: it has no option for it, so the task that carries it is a later one (§5). **The member's database URL is not among them**: it is derived from the verified `iss` project (§4, §5), so that an owner cannot pair one member's accounts with another's database |
 | `workspace cap set --workspace <name> --monthly <amount>` | Records the workspace's cap in the local config; `fugaro update` publishes it |
 
 **`workspace show` reads files and never a cloud node**, and what "drift" means follows from that.
@@ -734,6 +758,39 @@ already has over the member's own credentials today; grouping it means one membe
 reaches the *pool*, not just that member. It is why the allow-list is mandatory and why a shared
 credential's allow-list should name the fewest members that need it.
 
+**The member's leg is asked by name, by the repository's own node, and by the two canonical
+`allow_repos` legs; what is not re-asked is the pairing of that node with the calling job account.**
+A member's policy scopes a credential to **some of that member's
+repositories** (`accounts.<name>.allow_repos`), and the workspace's service asks that scope the way it
+can ask it: from the member's own database, at the repository's **own admission child**, keyed by the
+**slug the run identity's `fs` verified** (projectpolicy.PathRepo — the node the member's publish
+derived from those very allow-lists, and the node the member's own cascade reads for the same
+purpose). A credential the member's policy names but that child does not is not served, so the pool
+is scoped to the repositories the member's own database admits it to. The two legs the member's own
+cascade asks by the **canonical `github/owner/repo` name** — the project's own `allow_repos`, and the
+account's as the policy holds it now — are asked too, and the name they need is **recovered rather
+than inverted**: a slug cannot be turned back into a name (F18), but it does not have to be, because
+the account's `allow_repos` is exact by validation (`projectpolicy.validAccounts` refuses a wildcard)
+and the publish path keys the child with `task.Slug` of the same canonical name, so the run's
+repository is the entry whose slug is the verified one. A child that is **stale** against the policy
+it was derived from (a `repos rm` that did not touch it, two concurrent publishes, a hand edit) is
+therefore refused here exactly as the member's own service refuses it. The slug is the run identity's
+own and it is **not** held to the repository the calling job account belongs to — the comparison the
+member's front door makes (`internal/credsvc/server.go`:737) — because the per-member table names
+accounts and no repository, so the node is the **run's** repository and the account that called may
+belong to another — the column the owner's per-member table does not carry, and **review finding
+N1**. That is the divergence; it is stated
+here rather than left to be found, and it is narrow: the workspace's allow-list is still mandatory,
+the member's policy must still declare the credential, the repository's own node must still admit it,
+the member's two canonical legs are asked, and option (B) the owner refused is still refused.
+Whether to close the pairing is the owner's call, and
+closing it is a column rather than a redesign: the repository beside each job account in the
+owner's per-member table — the pair `credsvc.JobAccount` already carries for the installation's own
+jobs, which yields the slug the pairing needs — and the column this table does not. It is stated
+again as residual risk 7 below, which is where W6 leaves it:
+the pairing stated and **not** enforced, because this release's row names job accounts and no
+repository.
+
 **The workspace cap's integrity, after the amendment.** The cap is enforced at the service (D1299)
 and **metered there too** (D1301 as amended, §5): the service reserves before each call it pays for
 and settles on the response's usage, atomically in the workspace's own database. So the accounting no
@@ -837,6 +894,52 @@ ceiling is decided.
    (The exchange's `email_verified` requirement, §3 fact 2, is not a mitigation against this: setting
    that flag is exactly what a custom token can do. It is there because an unverified address is one
    nobody proved they own, and the provider pin is what answers this risk.)
+7. A shared credential is served where the member's own service would refuse it: **the run's
+   repository is not held to the calling job account.** The workspace's service asks the repository
+   from the **slug the run identity verified** — the repository's own admission child, the node that
+   repository's administrator published (projectpolicy.PathRepo), gates the account names asked, and
+   the member's two canonical `allow_repos` legs are asked over the name recovered from the member's
+   **own policy**, the entry of the account's `allow_repos` whose `task.Slug` is that slug (the child
+   itself holds names and no repository) — so a child stale against the policy it was derived from is
+   refused here, and nothing ties that slug to the account
+   that called: the per-member table names a member's job service accounts and no repository, so an
+   account admitted for one repository can present a run identity of **another** repository of the
+   same member and be served that repository's admissions, where the member's own front door refuses
+   the same call by comparing the two (`internal/credsvc/server.go`:737, `!bound || ja.Slug !=
+   id.Slug`; **review finding N1**, and the table it compares is built from the installation's own
+   `{provider, repo, workflow}` triples, which this table does not carry). Mitigation: the workspace's
+   allow-list, the member's own declaration of the credential, the repository's own admission child
+   and the member's two canonical `allow_repos` legs are all still required, so the pool serves only
+   names the member admits, on the repository the run identity proved, that repository's own node
+   admits and the member's own lists still scope; and a member that needs the last word keeps that
+   credential in its own project rather than sharing it. **And the reach of the confusion is the
+   member's own lists**: reaching a second repository this way takes the member's own policy to
+   scope that credential to it — both canonical legs above are asked — so a job of one member's
+   repository reaches no other member's pool and no repository the member's own lists do not name;
+   what it reaches is another repository of the *same* member, admitted by the member itself.
+   Closing the pairing is an owner decision and
+   a column — the repository beside each job account in the owner's per-member table, the pair
+   `credsvc.JobAccount` already carries for the installation's own jobs, which yields the slug the
+   pairing needs — not a redesign, and **the owner made that call on 2026-11-10, as recommended:
+   W6 ships with the pairing stated here and not enforced**, and the column is taken by the task that
+   gives the per-member table a writer, because the row's job accounts are emails, `Verify` therefore
+   has no slug to compare, and a column no command writes would be a check with nothing in it
+   ([reconciliation.md](reconciliation.md) §9, O3).
+   **The second way this risk is reachable is the account's class, and it is stated here for the
+   same reason.** The workspace builds each member's verifier from the owner's own table —
+   `JobAccounts` alone, `internal/credsvc/workspace.go`:459 — so the two account classes the
+   member's own installation decides from its own published policy are not asked: the shared-job
+   gate that refuses a shared project job whole under Global Constraint 6
+   (`verifyJob`, `internal/credsvc/auth.go`:682) and the review class, which the installation admits
+   for its own account's pairing alone (`pairReview`, `internal/credsvc/review.go`:330;
+   `offeredToReview`, `internal/credsvc/cascade.go`:139). An account the owner's table names is
+   therefore a per-repository job here whatever the member's own service would call it, and it is
+   served the pool on every repository the member's own lists name. This is not a missing read: the
+   owner's table is the deployment's whole caller rule by design (§4 — a member's own file cannot
+   admit a caller into the workspace's pool), so resolving the member's own lists here would be a
+   second admission rule, and **closing it is an owner decision like the pairing above**. W6 ships
+   it stated and pinned, with no owner answer yet, by
+   `TestWorkspaceAdmitsEveryAccountInTheOwnersTableAsAPerRepositoryJob`.
 
 ## 9. What a workspace never does
 

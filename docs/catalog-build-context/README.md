@@ -1,7 +1,6 @@
 # A repository build context for catalog `dockerfile` entries — the Dockerfiles teams already have
 
-**Status: plan only; nothing is implemented on `main`; the decisions D1390–D1409 are all answered
-2026-11-07 (each the recommendation) and all five tasks CB1–CB5 are approved 2026-11-07.** This is a
+**Status as of 2026-11-10: in progress, 2/5 merged; see [docs/status.md](../status.md) for the current table.** This is a
 plan for the owner to read.
 
 **2026-11-07: D1390-D1409 are all answered, each the recommendation** (asked one at a time; reconciliation section 7 carries the dated answer in each row). D1408 is answered (fold into `docs/project-image-catalog/context-design.md`), so the first gate is lifted, and **all five tasks are approved**: the go this folder left to the owner, task by task, was given in that one answer. D1409's answer puts the work **after the removal and after D1208's migrated entries — 0.22.0**, the slot `docs/failure-classes` shares with it.

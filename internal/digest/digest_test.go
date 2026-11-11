@@ -503,6 +503,26 @@ func TestDigestUnknownEnumRendersOther(t *testing.T) {
 	}
 }
 
+// TestDigestRendersUnreviewedAsItself: the label for a run no review answered
+// (D994, statuses above) is a word of the report's own vocabulary, not one a
+// record this Fugaro wrote has to render as "other". The report's closed set
+// is read from runstore.Statuses, so adding the constant is what the report
+// follows; this test is the report's half of that, and it fails the moment the
+// vocabulary and the set are edited apart.
+func TestDigestRendersUnreviewedAsItself(t *testing.T) {
+	rec := run(t, "20261019-090000-aaaa", "2026-10-19T09:00:00Z", 0.10, 0)
+	rec.Status = runstore.StatusUnreviewed
+	rec.Outcome = runstore.OutcomeDraft
+
+	out := string(Markdown(Build([]runstore.Record{rec}, week43(t))))
+	if !strings.Contains(out, "| "+string(runstore.StatusUnreviewed)+" |") {
+		t.Errorf("the report does not render a run whose status is %q as itself:\n%s", runstore.StatusUnreviewed, out)
+	}
+	if strings.Contains(out, "| other |") {
+		t.Errorf("the report renders the label as other:\n%s", out)
+	}
+}
+
 // TestDigestARepoRecipeIsNotTheCatalogRecipe: a repository's own recipe file,
 // and a project layer's, may reuse a catalog name -- resolveRecipe lets it
 // shadow the built-in one -- so the name alone is not the recipe. Only a run

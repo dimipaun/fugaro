@@ -220,11 +220,20 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 			Problem: fmt.Sprintf("the credentials service %s is deployed, and whether %s may invoke it could not be checked: a custom role on its or the project's policy could not be read", infra.CredentialsServiceName, strings.Join(unread, ", ")),
 			Fix:     "rerun doctor with the IAM API available, or read the policy yourself: gcloud run services get-iam-policy " + infra.CredentialsServiceName}}
 	}
+	// The fix names the other half of the grant as well, because an operator
+	// who reads the command alone would run it at a repository the switch is
+	// held off for and get no grant: the grant is written by a repository's own
+	// root and only where CredentialsServiceServes says the switch is on, so a
+	// repository whose agent.auth is not cascade has to be set to it first.
+	// That state is worth saying in the problem too, and it is the one where
+	// the published policy's proxy: true reads as a promise the installation
+	// keeps: nothing about such a repository is brokered, and its runs hold the
+	// Bitbucket token on their own job.
 	return []doctorCheck{{ID: id, Severity: "warning",
-		Problem: fmt.Sprintf("the credentials service %s is deployed and grants no %s to %s: a run of %s would fail to fetch a model credential%s",
+		Problem: fmt.Sprintf("the credentials service %s is deployed and grants no %s to %s: a run of %s that is on the switch would fail to fetch a model credential%s. The grant follows the switch, and the switch follows the repository's own agent.auth, so a repository of that list that does not run with agent.auth: cascade has the service held off for it: the published policy's proxy: true is inert there — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one",
 			infra.CredentialsServiceName, runInvokeRoles[0], strings.Join(missing, ", "), strings.Join(missing, ", "),
 			noteIfAny("; not read: "+strings.Join(unread, ", "), len(unread) > 0)),
-		Fix: selfCommand() + " update --repo <each repository named above> (grants each of its job accounts " + runInvokeRoles[0] + " on the service)"}}
+		Fix: selfCommand() + " update --repo <each repository named above> (grants each of its job accounts " + runInvokeRoles[0] + " on the service). For one of them that runs with an agent.auth other than cascade, set agent.auth: cascade for it first (with a model credential in the service's bundle, " + selfCommand() + " creds set) and run it again: until then the switch is off for that repository, proxy: true is inert, and its runs hold their own Bitbucket token"}}
 }
 
 // doctorCredentialsServiceServing is the rest of

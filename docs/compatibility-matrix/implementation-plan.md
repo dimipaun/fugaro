@@ -1,7 +1,6 @@
 # Implementation plan: the compatibility matrix page
 
-Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)**. **Nothing is
-implemented and no task is approved**: each task needs the owner's explicit go (an answer to a
+Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)**. **Status as of 2026-11-10: in progress, 1/4 merged; see [docs/status.md](../status.md) for the current table.** Each task needs the owner's explicit go (an answer to a
 decision is not that go). The owner's answers that shaped the plan (D1527's Vertex answer is amended after review and was confirmed by the owner on 2026-11-07; D1539's answer is amended after review and was re-asked and answered the same day): D1520 a "Built, not enabled"
 status; D1522 the editions are "Core (MIT)" and "Subscription"; D1537 a data file, one page and an
 evidence test; D1538 an "as of" stamp refreshed by the release procedure; every row's wording is
@@ -73,7 +72,7 @@ the reconciliation's findings F1–F31.
 - **Schema/rules/config change:** a skill change: **security-sensitive path** (`.claude/**`).
 - **Tests:** the stamp test; `go test ./internal/cli -run Docs` for the release doc's pins.
 - **Command:** `cd website && node --test test/compatibility.mjs`; `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1`.
-- **Depends on:** CM1, and the stale-docs task DOC1 (**in flight, not on main**: it edits the same skill and `docs/release.md` for the website promote step; CM3 launches after DOC1 merges).
+- **Depends on:** CM1, and the stale-docs task DOC1 (**merged**, #1897: it wrote the website promote step in the same two files, the skill and `docs/release.md`, so CM3's step is written against the release procedure as DOC1 left it).
 - **Red step:** the stamp test fails against a stamp one release behind.
 - **Reviewer tier:** **opus + mandatory independent review** (ask for the in-run level 3, never a
   second local review).

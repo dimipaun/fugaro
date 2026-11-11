@@ -137,7 +137,7 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 	}
 	readme := flattenDoc(readDoc(t, csrReadme))
 	for _, want := range []string{
-		"**Status: design only, nothing approved.**",
+		"**Status as of 2026-11-10: done (CSR17 and CSR18 moved to api-key-review); see [docs/status.md](../status.md) for the current table.**",
 		// The claim two rounds had to restore: the table's own row said a
 		// decision was still open while the header and the reconciliation
 		// recorded it answered, so a reader of the table alone would have
@@ -180,7 +180,7 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 	// task ids are the CSR-prefixed ones the plan settled on.
 	plan := flattenDoc(readDoc(t, csrPlan))
 	for _, want := range []string{
-		"**Nothing here is approved.**",
+		"**Status as of 2026-11-10: done (CSR17 and CSR18 moved to api-key-review); see [docs/status.md](../status.md) for the current table.**",
 		"**The task ids are prefixed `CSR`, and that is deliberate.**",
 		"**E7** (the credentials service enabled and admitting a project-scoped job) blocks CSR7, CSR2 and the coordinator's merge path",
 		"**U7** (the owner-run live observation of the deployed fence) **is ANSWERED (2026-11-01)**",

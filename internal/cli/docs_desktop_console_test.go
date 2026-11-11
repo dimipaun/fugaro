@@ -8549,6 +8549,86 @@ func TestDocsConsoleReleaseSymbolsIsStagedAndPinned(t *testing.T) {
 	}
 }
 
+// TestDocsConsoleReadmeCarriesTheWindowsNote pins the fourth of the four places
+// that said "Windows stays out" (docs/console-windows/reconciliation.md F43),
+// and the only one outside docs/: the console's own README, whose Linux section
+// opens on the owner's ruling of 2026-10-20.
+//
+// This file is where it belongs rather than in docs_windows_console_test.go,
+// because it reads a path under console/ and this is the file the boundary
+// allow-list admits to one (docs_console_boundary_test.go, Task 0.3 a3). The
+// other three -- the design's section 4.2, its section 7.6 rule 3, the
+// owner-run table's signing row and D10's row, and docs/windows-cli/wsl.md --
+// are read there.
+//
+// The claim is the same in both: the owner's ruling of 2026-10-20 moves half of
+// that sentence. The Windows *build* is in -- the console drives the *Linux*
+// `fugaro` inside a WSL distribution, and the pack job runs at release time
+// only -- and the *signing* answer is not, because there is still no Authenticode
+// identity and none is planned. The README keeps its own sentence and gains the
+// dated note, for the reason the other three do: a rewrite would claim more
+// than the ruling does.
+//
+// The Windows section below it is read too, and for T-H4's reason rather than
+// this ruling's: it is the section a reader arrives at asking whether the pack
+// has run, and the only place that answers is the pack job's own document --
+// docs/pending-workflows/README.md's `## console-windows.yml` section -- so the
+// section has to name it rather than leave the reader with a job they cannot
+// find.
+//
+// The mutations that prove it: delete the note, move it out of the Linux
+// section into the Windows one below it, and delete the Windows section's
+// pointer to the pack job's document. Each fails here.
+func TestDocsConsoleReadmeCarriesTheWindowsNote(t *testing.T) {
+	const path = "console/README.md"
+	readme := readDoc(t, path)
+	linux := flattenDoc(mdBetween(t, path, readme,
+		"## The Linux build, unsigned (the owner's ruling of 2026-10-20)",
+		"\n## The Windows pack, unsigned, and not yet run"))
+
+	for _, want := range []string{
+		windowsConsoleNoteDate,
+		"the *build* half",
+		"the signing half",
+		"Authenticode",
+		appliedConsoleWindowsPath,
+	} {
+		if !strings.Contains(linux, want) {
+			t.Errorf("%s's Linux section no longer carries %q: it opens on \"Windows stays out\", the owner's ruling of 2026-10-20 moves half of that sentence, and the README is the one of the four places a console developer reads first", path, want)
+		}
+	}
+
+	// The Windows section's own pointer, which is T-H4's half of this file's
+	// claim: no `.exe` exists, the job has never run, and what a reader can
+	// learn about it -- the path that runs, when it was copied in, why it is a
+	// workflow of its own -- is in the pack job's document, so this section has
+	// to send them there by name.
+	// The section is read from the Windows pack's own heading rather than from
+	// the first "### What is not here" in the file, which is the Linux
+	// section's: the two sections share the subheading, and the pointer belongs
+	// to the Windows one.
+	pack := strings.Index(readme, "### The `--win` pack no longer stops")
+	if pack < 0 {
+		t.Fatalf("%s has no \"### The `--win` pack no longer stops\" heading: this test reads the Windows section from it", path)
+	}
+	rest := readme[pack:]
+	notHere := strings.Index(rest, "### What is not here")
+	if notHere < 0 {
+		t.Fatalf("%s's Windows section has no \"### What is not here\" subheading: this test reads the pointer to the pack job's document out of it", path)
+	}
+	windows := flattenDoc(rest[notHere:])
+	for _, want := range []string{
+		"docs/pending-workflows/README.md",
+		"## console-windows.yml",
+		"copy-in",
+		"2026-11-10",
+	} {
+		if !strings.Contains(windows, want) {
+			t.Errorf("%s's Windows section no longer carries %q: the pack has never run, and the pack job's own document is where the status, the copy-in and the reason it is a workflow of its own are written -- a section that stops naming it leaves the reader with a job they cannot find", path, want)
+		}
+	}
+}
+
 // TestStagedLinuxFilesSurviveTheCopyIn is the proof of the property every test
 // in this family is written for: **the copy-in the owner does by hand does not
 // turn `main` red.** The tests above read the two Linux files through
