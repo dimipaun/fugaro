@@ -768,6 +768,50 @@ func TestDoctorOffline(t *testing.T) {
 	}
 }
 
+// doctorOfflineAnchoredYAML is skillCheckoutYAML with the anchor every other
+// checkout in this file's tests goes without: project aurora in gcp_project
+// proj-1234, which is the rig's own local installation, so findLayer has a
+// project layer to look for and reaches the bucket it lives in.
+const doctorOfflineAnchoredYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+	"git: { provider: github }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+// TestDoctorOfflineReadsNoBucket: --offline resolves the checkout's own
+// fugaro.yaml over the cache alone, and never opens the project layer's
+// bucket to do it. The guard is the layerOptions.Offline
+// doctorOfflineWorkflows resolves with, and it is the flag's whole promise
+// (D952, doctor.go's own help: no cloud call, no secret read) -- but no
+// fixture the flag's own test uses can pin it. skillCheckoutYAML names no
+// gcp_project:, so findLayer returns before any bucket is named, and a
+// checkout with no local installation selected is forced offline by findLayer
+// itself (layer_resolve.go). This one is anchored and the rig's installation
+// is selected: the only thing left between the run and a bucket read is the
+// option itself, and noLayerBucketReads fails the test the instant anything
+// opens it.
+//
+// Mutation (run, restore): drop Offline from doctorOfflineWorkflows'
+// layerOptions and this test fails -- with an installation whose endpoints are
+// real it would be a bucket read with this machine's own credentials, which is
+// the reproduction the review recorded (a logging proxy saw the OAuth calls the
+// unmutated build never makes).
+func TestDoctorOfflineReadsNoBucket(t *testing.T) {
+	r := newDoctorRig(t)
+	isolateCache(t)
+	dir := gitCheckout(t, t.TempDir(), doctorOfflineAnchoredYAML)
+	t.Chdir(dir)
+	doctorCleanState(t, r, dir)
+	noLayerBucketReads(t)
+	out, _, err := execute(t, "doctor", "--offline", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// And the resolution really happened: the workflow names come from this
+	// checkout's own file, one skipped check each, without the bucket. Without
+	// this the test would pass over a run that gave up before the layer.
+	if !strings.Contains(out, `"id": "image-config-app"`) {
+		t.Fatalf("--offline did not name the anchored checkout's workflow:\n%s", out)
+	}
+}
+
 // TestDoctorPluginIsOffline: --plugin never touches the cloud: with a local
 // installation pointing at fakes, not one request reaches them, and no
 // installation or credentials are needed at all.
