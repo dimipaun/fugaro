@@ -762,7 +762,7 @@ func TestAGrantTheInstallationNeverHeldNamesItself(t *testing.T) {
 		if len(r.ran(t, "apply")) == 0 {
 			t.Errorf("the run applied nothing:\n%s", all)
 		}
-		if !strings.Contains(all, "the grants node holds "+extra+", who this installation's own outputs do not") {
+		if !strings.Contains(all, "the grants node holds "+extra+", whom this installation's own outputs do not hold at the role the node does") {
 			t.Errorf("the run does not say which member the installation's outputs do not hold:\n%s", all)
 		}
 		if !strings.Contains(all, "granting "+extra+", which the review did not announce") {
@@ -802,6 +802,88 @@ func TestAGrantTheInstallationNeverHeldNamesItself(t *testing.T) {
 		}
 		if strings.Contains(all, "which the review did not announce") || strings.Contains(all, "the grants node holds "+extra) {
 			t.Errorf("a member the installation's own outputs hold was treated as the node's own addition:\n%s", all)
+		}
+	})
+}
+
+// TestAPromotionInTheNodeNamesItself: a write to the grants node by anyone holding
+// roles/firebasedatabase.admin can RAISE a member the installation's own outputs hold
+// as an operator to an admin, and the roles an admin's list carries are not an
+// operator's: objectAdmin on the runs and state buckets, serviceAccountUser on the job
+// accounts, the build submitter. That is a grant nobody at this terminal made, and the
+// role the node holds is the whole of the difference — so the member the node raised is
+// announced NOWHERE: the review does not list them, the cover a managed project's gate
+// judges plans by refuses the plan that grants them, and the step that plans it names
+// the grant in its banner (heldAccess) — while the member the outputs hold at that same
+// role stays listed and silent, which is the control.
+func TestAPromotionInTheNodeNamesItself(t *testing.T) {
+	const ops = "user:ops@example.com"
+	// The node holds the member at the role the ticket is about, and the outputs do not.
+	node := accessNodeDoc(projectGrant(ops, accesslib.RoleAdmin))
+	t.Run("the node raised an operator to an admin", func(t *testing.T) {
+		r, db := accessRig(t, nil, nil, []string{ops}, nil)
+		db.Set(accesslib.PathNode, node)
+		updating(t, r)
+		r.setPlanAt(t, "installation", grantChange("runs_object_admin", ops, "roles/storage.objectAdmin", "create"))
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		all := accessOut(out, errOut, err)
+		if err != nil {
+			t.Fatalf("a plan granting the role the node raised a member to failed under --yes: %v\n%s", err, all)
+		}
+		if !strings.Contains(all, "the grants node holds "+ops) {
+			t.Errorf("the run says nothing about the member the node raised above what the installation's outputs hold:\n%s", all)
+		}
+		if !strings.Contains(all, "granting "+ops+", which the review did not announce") {
+			t.Errorf("the admin's roles the node raised the member to are applied in silence:\n%s", all)
+		}
+	})
+	t.Run("no terminal and no --yes", func(t *testing.T) {
+		r, db := accessRig(t, nil, nil, []string{ops}, nil)
+		db.Set(accesslib.PathNode, node)
+		updating(t, r)
+		r.setPlanAt(t, "installation", grantChange("runs_object_admin", ops, "roles/storage.objectAdmin", "create"))
+		out, errOut, err := executeStdin(t, "", "update")
+		all := accessOut(out, errOut, err)
+		if err == nil || !strings.Contains(all, "real terminal") {
+			t.Fatalf("the role the node raised a member to was confirmed with no terminal and no --yes: %v\n%s", err, all)
+		}
+		if calls := subcommands(r.calls(t)); slices.Contains(calls, "apply") {
+			t.Errorf("a run whose raised role was not confirmed applied the installation: %q\n%s", calls, all)
+		}
+	})
+	t.Run("a managed project's gate refuses it", func(t *testing.T) {
+		r, db := accessRig(t, nil, nil, []string{ops}, nil)
+		db.Set(accesslib.PathNode, node)
+		r.managedRuns(t, initProjectName, initProject)
+		isolateGateCredentials(t)
+		updating(t, r)
+		r.setPlanAt(t, "installation", grantChange("runs_object_admin", ops, "roles/storage.objectAdmin", "create"))
+		t.Setenv(agentMarkers[0], "1")
+		got, err := updateRun(t, r, "update", "--yes")
+		if err == nil {
+			t.Fatalf("a managed project's gate admitted the role the node raised a member to:\n%s", got)
+		}
+		if !strings.Contains(got, ops) {
+			t.Errorf("the gate's refusal does not name the member it refused:\n%s", got)
+		}
+		if n := len(r.ran(t, "apply")); n != 0 {
+			t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
+		}
+	})
+	t.Run("the installation held the member as an admin", func(t *testing.T) {
+		r, db := accessRig(t, nil, nil, nil, []string{ops})
+		db.Set(accesslib.PathNode, node)
+		updating(t, r)
+		r.setPlanAt(t, "installation", grantChange("runs_object_admin", ops, "roles/storage.objectAdmin", "create"))
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		all := accessOut(out, errOut, err)
+		if err != nil {
+			t.Fatalf("a plan granting the role the installation's own outputs hold failed: %v\n%s", err, all)
+		}
+		if strings.Contains(all, "which the review did not announce") || strings.Contains(all, "the grants node holds "+ops) {
+			t.Errorf("a member the installation's own outputs hold as an admin was treated as the node's own promotion:\n%s", all)
 		}
 	})
 }

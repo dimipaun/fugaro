@@ -161,8 +161,8 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 }
 
 // heldAccess reads the installation's own outputs and records the members they
-// hold, so that the review screen announces this run's lists without the grants
-// node's own additions (accessAdded).
+// hold AT EACH OF THE TWO ROLES, so that the review screen announces this run's
+// lists without the grants node's own additions (accessAdded).
 //
 // The node is what an installation's roles are, and the one write it accepts
 // outside this run — a hand edit, `fugaro user`'s own door, a later release's
@@ -172,12 +172,22 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 // something else would be the whole of the agreement: the review's own sentence
 // is that a plan granting anyone the screen did not list stops and asks.
 //
+// A ROLE is what the two lists are read apart for, and the write that makes it
+// matter needs no more than roles/firebasedatabase.admin: a member the outputs
+// hold as an operator, raised to an admin in the node, is the same grant nobody
+// here made, and the roles it carries are a different roster's — objectAdmin on
+// the runs and state buckets, serviceAccountUser on the job accounts, the build
+// submitter. The cover (tf.Cover.Listed) is members and cannot see a role, so
+// naming that member under the role the outputs DO hold them at would put those
+// grants inside one --yes: a member is announced only at the role the outputs
+// hold them at, and one the node raised is announced nowhere.
+//
 // Read once per converge, before the loop's first stage, because the screen is
 // printed from the same lists the cover judges: a member the outputs hold and
 // the node does not is a revocation this run applies, which the screen says,
-// and a member the node holds and the outputs do not is the grant this is
-// about. A first run has no outputs to read and nothing to tell apart — its
-// lists are the flags it was given, which are the run's own.
+// and a member the node holds and the outputs do not — at that role, or at all
+// — is the grant this is about. A first run has no outputs to read and nothing
+// to tell apart: its lists are the flags it was given, which are the run's own.
 func (e *initEngine) heldAccess(ctx context.Context) {
 	if e.firstRun() {
 		return
@@ -200,33 +210,54 @@ func (e *initEngine) heldAccess(ctx context.Context) {
 		e.r.warn(accessAddsUnknown)
 		return
 	}
-	held := slices.Concat(outs.Launchers, outs.Operators)
+	// The members the outputs hold for each of the two roles, plus the ones this
+	// run named on its own flags: the people this terminal was told about, and
+	// the role each was told about them at. The roles RANK — an admin operates
+	// too (the module's launchers_only, iam.tf:274), which is why the derive puts
+	// an admin's grant in both lists — so the members held at the operators' role
+	// are those of both of the outputs' lists, and one this run named as an admin
+	// is held there as well.
+	operators := slices.Concat(outs.Launchers, outs.Operators)
+	admins := slices.Clone(outs.Operators)
 	if e.r.o.operatorsChanged {
-		held = append(held, e.r.o.operators...)
+		operators = append(operators, e.r.o.operators...)
 	}
 	if e.r.o.adminsChanged {
-		held = append(held, e.r.o.admins...)
+		operators = append(operators, e.r.o.admins...)
+		admins = append(admins, e.r.o.admins...)
 	}
-	e.r.accessHeld, e.r.accessHeldRead = sortedMembers(held), true
-	if added := addedTo([][]string{e.spec.Launchers, e.spec.Operators}, e.r.accessHeld); len(added) > 0 {
+	// The members the node holds that the outputs do not hold at the role this
+	// run's own list puts them at: the ones it added, and the ones it raised.
+	added := sortedMembers(slices.Concat(
+		addedTo(e.spec.Launchers, operators),
+		addedTo(e.spec.Operators, admins),
+	))
+	held := sortedMembers(slices.Concat(operators, admins))
+	e.r.accessHeld, e.r.accessHeldRead = withoutMembers(held, added), true
+	if len(added) > 0 {
 		e.r.warn(fmt.Sprintf(accessAdded, safetext.FieldListLine(added)))
 	}
 }
 
-// addedTo is the members of the derived lists the installation's own outputs do
-// not hold: the ones the grants node holds and this run was not told about
-// (heldAccess). Only `user:` members are read — the other forms are carried
-// from the machine's own list and are announced by the screen with it (F25).
-func addedTo(lists [][]string, held []string) []string {
+// addedTo is the members of one of this run's derived lists the installation's
+// own outputs do not hold for that list's OWN ROLE: the ones the grants node
+// holds and this run was not told about (heldAccess) — a member it added, and
+// one it raised from the other role. Only `user:` members are read — the other
+// forms are carried from the machine's own list and are announced by the screen
+// with it (F25).
+func addedTo(list, held []string) []string {
 	var out []string
-	for _, l := range lists {
-		for _, m := range l {
-			if isUserMember(m) && !slices.Contains(held, m) {
-				out = append(out, m)
-			}
+	for _, m := range list {
+		if isUserMember(m) && !slices.Contains(held, m) {
+			out = append(out, m)
 		}
 	}
 	return sortedMembers(out)
+}
+
+// withoutMembers is members without the ones in drop.
+func withoutMembers(members, drop []string) []string {
+	return slices.DeleteFunc(members, func(m string) bool { return slices.Contains(drop, m) })
 }
 
 // landFlagLists writes the roles step's two computed nodes: the migration's
@@ -769,13 +800,15 @@ func (e *initEngine) deriveAccessAgain(ctx context.Context) (operators, admins [
 // file alone, and a change written there is exactly what this sentence is about.
 const accessDropped = "this machine's list holds %s as %s, which the installation's grants node does not: the node is what an installation's roles are, so this run applies its members and those lose the role. A change to a role is written to the node by naming the whole list (fugaro update --operator, --admin)"
 
-// accessAdded is what the roles step says when the grants node holds a member
-// this installation's own outputs do not: the run's plan grants that member the
-// roles the node holds them at, and the review screen does not list them, so a
-// plan that does is not covered — the step that plans them names them in its
-// banner and takes the run's ordinary confirmation (init_review.go's
-// confirmPlanned).
-const accessAdded = "the grants node holds %s, who this installation's own outputs do not: the roles the node holds are granted by this run's plan, the review does not list them, and the step that plans them names them in its confirmation"
+// accessAdded is what the roles step says when the grants node holds a member at
+// a role this installation's own outputs do not: either a member the outputs hold
+// at no role, or one they hold at the other role — an operator the node raised
+// to an admin, whose admin's roles are a different roster's. The run's plan
+// grants that member the roles the node holds them at, and the review screen does
+// not list them AT ALL, so a plan that does is not covered — the step that plans
+// them names them in its banner and takes the run's ordinary confirmation
+// (init_review.go's confirmPlanned).
+const accessAdded = "the grants node holds %s, whom this installation's own outputs do not hold at the role the node does: the roles the node holds are granted by this run's plan, the review does not list them, and the step that plans them names them in its confirmation"
 
 // accessAddsUnknown is what a run that could not read the installation's own
 // outputs says instead. It cannot tell a member the node added from one the

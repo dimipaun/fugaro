@@ -264,8 +264,10 @@ func (r *initRun) confirmPlanned(what, undone string, p *tf.Plan, notCovered str
 
 // grantsNotAnnounced is the members this plan grants a role to that the review
 // screen did not announce: the `user:` members of its `*_iam_member` creates
-// that the installation's own outputs do not hold (initRun.accessHeld). Each
-// member's grant is one resource, so a member the node gained is a create.
+// that the installation's own outputs do not hold at the role this run's own
+// lists place them at (initRun.accessHeld) — a member the node gained, and one
+// it raised, whose roles the screen does not list either. Each member's grant is
+// one resource, so a member the node gained is a create.
 //
 // It is empty for a run that could not read those outputs, which is the answer
 // announced gives to the same question, and for a plan that grants no member at
@@ -387,9 +389,16 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 }
 
 // announced is one of the run's two lists as the review screen announces it:
-// the members the installation's own outputs hold and the ones this run named
-// itself, without the members only the grants node holds (update_access.go's
-// heldAccess).
+// the members the installation's own outputs hold AT THE ROLE THE LIST PLACES
+// THEM AT and the ones this run named itself, without the members only the
+// grants node holds (update_access.go's heldAccess).
+//
+// The role is half of it, and the other half is that this cover cannot say one:
+// a member the node raised from operator to admin is in the outputs' operator
+// list and in the run's admin list, so announcing them under the list they came
+// from would name a person whose plan grants them the ADMIN's roles — the member
+// is announced at the role the outputs hold them at and nowhere else, which for
+// a raised member is nowhere at all.
 //
 // Such a member is a grant nobody at this terminal made, and the screen's own
 // sentence is that a plan granting anyone the screen did not list stops and

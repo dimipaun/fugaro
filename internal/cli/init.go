@@ -669,14 +669,18 @@ type initRun struct {
 	// whose roles step found no node.
 	accessDerive func(ctx context.Context) (operators, admins []string, ok bool, err error)
 
-	// accessHeld are the IAM members the installation's own outputs held, plus
-	// the ones this run named on its own flags: the people this terminal was
-	// told about, and the only ones the review screen announces and its one
-	// confirmation may cover. A member of the grants node that is not among
-	// them is a grant nobody here made (update_access.go's heldAccess), and
-	// accessHeldRead says whether the outputs could be read at all — a run that
-	// could not read them filters nothing, says so, and covers the node's whole
-	// roster as it did before this read existed.
+	// accessHeld are the IAM members the installation's own outputs held AT THE
+	// ROLE THIS RUN'S OWN LISTS PLACE THEM AT, plus the ones this run named on
+	// its own flags: the people this terminal was told about, and the only ones
+	// the review screen announces and its one confirmation may cover. A member
+	// of the grants node that is not among them is a grant nobody here made
+	// (update_access.go's heldAccess) — either a member the outputs held at no
+	// role, or one they held at the other role, which the node raised. The cover
+	// the screen builds is members and cannot see a role, so a raised member
+	// announced under the role the outputs hold them at would carry the admin's
+	// roles inside one --yes. accessHeldRead says whether the outputs could be
+	// read at all — a run that could not read them filters nothing, says so, and
+	// covers the node's whole roster as it did before this read existed.
 	accessHeld     []string
 	accessHeldRead bool
 
