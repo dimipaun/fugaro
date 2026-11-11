@@ -149,6 +149,66 @@ func TestCoordinatorTfvarsGolden(t *testing.T) {
 	checkGolden(t, "firebase-coordinator.tfvars.json", data)
 }
 
+// The viewer list ON (roles.md §4, RS4): the installation every owner already
+// deploys, with a read-only roster beside its launchers and operators, and the
+// two fixtures the golden plans of that state are made from. Like the
+// coordinator's, they are fixtures of their own and not cases of the two above,
+// because the list is empty on every installation that names no viewer: those
+// plan exactly the fixtures above, byte for byte what they planned before the
+// viewer's role existed.
+//
+// The list is what the Terraform gates the viewer's role and grants on
+// (modules/installation/iam.tf), so these two documents are the only ones that
+// plan them, and TestGoldenViewerPlans reads them back.
+func TestViewerTfvarsGolden(t *testing.T) {
+	spec := projectJobSpec(t)
+	h, err := History(parseLC(t, m4LocalConfig+m5Additions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.DeployJob, h.FirebaseProject, h.RTDBURL = true, "aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com"
+	spec.EnableBudget, spec.History = true, &h
+	spec.Viewers = []string{"user:viewer@example.com", "group:auditors@example.com"}
+	data, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "installation-viewers.tfvars.json", data)
+
+	inst := installationSpec(t)
+	inst.Launchers = []string{"user:launcher@example.com"}
+	inst.Operators = []string{"user:operator@example.com", "user:launcher@example.com"}
+	inst.Viewers = []string{"user:viewer@example.com", "group:auditors@example.com"}
+	fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp",
+		Admins:         []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
+		BudgetAdmins:   []string{"user:extra@example.com"},
+		HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = FirebaseVars(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "firebase-viewers.tfvars.json", data)
+}
+
+// TestViewerListRefusesDomain is roles.md §8 R1's check on the viewer list,
+// which is the check the Firebase root's members already get: a `domain:`
+// member is not a principal anyone can read as a person, so the list that
+// grants a read of every run refuses it before Terraform sees it — with the
+// module's own variable refusing it too, so no spelling of the value reaches a
+// plan.
+func TestViewerListRefusesDomain(t *testing.T) {
+	inst := installationSpec(t)
+	inst.Viewers = []string{"domain:example.com"}
+	if _, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp"}); err == nil {
+		t.Fatal("the Firebase root accepted a domain: viewer")
+	} else if !strings.Contains(err.Error(), "viewers") || !strings.Contains(err.Error(), "domain:example.com") {
+		t.Errorf("the refusal does not name the viewer list and the member: %v", err)
+	}
+}
+
 // TestTheCoordinatorIsOffByDefault is the security review's first finding
 // (MAJOR-1): a budget installation that has not opted in gets no coordinator
 // account, so no grant, no job and no schedule — and the Firebase root is

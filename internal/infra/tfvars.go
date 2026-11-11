@@ -58,7 +58,13 @@ type InstallOptions struct {
 	SkipAPIs bool
 	// Launchers and Operators are IAM members; nil means the local config's.
 	Launchers, Operators []string
-	Budget               *Budget
+	// Viewers are IAM members too, and nil is empty: no local config key
+	// carries a viewer list, so an installation names one only when a run
+	// derives it from the grants node (roles.md §4, RS4). An installation
+	// that names none plans exactly what it planned before the viewer's
+	// role existed — the module's role and grants are gated on the list.
+	Viewers []string
+	Budget  *Budget
 	// AlertEmail defaults to the local config's; empty means no alert.
 	AlertEmail string
 	// RegistryCleanup is dry-run (the default), on or off.
@@ -157,6 +163,12 @@ type InstallationSpec struct {
 	ManageAPIs      bool              `json:"manage_apis"`
 	Launchers       []string          `json:"launchers"`
 	Operators       []string          `json:"operators"`
+	// Viewers are the installation's read-only people (roles.md §4, RS4):
+	// they read every run, its logs and the project's inventory, and hold no
+	// write and no launch. It is left out of the tfvars when empty, so an
+	// installation that names no viewer hands Terraform the document it
+	// handed it before the list existed.
+	Viewers []string `json:"viewers,omitempty"`
 	// LauncherBucketCondition limits the launchers' write grant on the runs
 	// bucket to runs/, tokens/ and issues/ (gcp.LauncherBucketCondition).
 	LauncherBucketCondition Condition       `json:"launcher_bucket_condition"`
@@ -1230,6 +1242,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		ManageAPIs:      !o.SkipAPIs,
 		Launchers:       members(o.Launchers, lc.Terraform.Operators),
 		Operators:       members(o.Operators, lc.Terraform.Admins),
+		Viewers:         members(o.Viewers, nil),
 		LauncherBucketCondition: Condition{
 			Title:      gcp.LauncherBucketConditionTitle,
 			Expression: gcp.LauncherBucketCondition(bucket),
@@ -1405,6 +1418,7 @@ func RepoVars(spec RepoSpec) ([]byte, error) {
 func InstallationVars(spec InstallationSpec) ([]byte, error) {
 	spec.Launchers = launchersWithOperators(spec.Launchers, spec.Operators)
 	spec.Operators = members(spec.Operators, nil)
+	spec.Viewers = sortedUnique(spec.Viewers)
 	return sortedJSON(spec)
 }
 
