@@ -1997,8 +1997,14 @@ func isNewCredsPath(p string) bool {
 			return true
 		}
 	}
+	// `mode` and `from` are the same shape of addition one generation later
+	// (rigor-modes plan T1.7, F40 of its reconciliation): the mode a live run
+	// resolved and the layer that decided it, which the runner writes into its
+	// own registry entry from its record so `fugaro watch` can show them. Both
+	// are equalities, for the reason above.
 	entry := "agents/" + slugForPath + "/$run/"
-	return p == entry+"credential" || p == entry+"waiting_until"
+	return p == entry+"credential" || p == entry+"waiting_until" ||
+		p == entry+"mode" || p == entry+"from"
 }
 
 // TestRulesVersionUnchanged: the generations an installation compares, asserted
