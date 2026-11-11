@@ -71,6 +71,13 @@ type toolSpec struct {
 // cancel_task have their scope decided, and what keeps them out of the served
 // set is that nothing registers a handler for them until the design item that
 // carries them does.
+//
+// The state group's three are here for the same reason the deferred two are:
+// their scopes are decided (D1224's names, D1227's scopes), and a name that is
+// catalogue-mapped but registered by nothing is a tool a client cannot call at
+// all. apply_patch is the one of them no task of this plan serves (D2021), and
+// the scope written beside it is what keeps a later registration from choosing
+// one of its own.
 var toolCatalogue = []toolSpec{
 	{"spawn_task", ScopeTasksWrite, "Start a run on one of the project's repositories, with a prompt, a recipe and a rigor mode"},
 	{"get_task_status", ScopeTasksRead, "The state of one run of this project, from its own run record"},
@@ -93,6 +100,16 @@ var toolCatalogue = []toolSpec{
 	// (ErrOperatorOnly) and not this table's.
 	{"get_audit_record", ScopeTasksRead, "Read one person's audit record: the calls this front door served for them, and how it answered"},
 	{"revoke_family", ScopeTasksWrite, "Revoke one token family: every access and refresh token of it stops working at the next call"},
+
+	// The stateless orchestrator's state group (D1224, D1227): one
+	// orchestrator's generated brief, its audit log, and the patch that would
+	// change it. The first two read the state node and the third would write
+	// it, which is why they map to the two scopes of their own rather than to
+	// the task pair: a token that may start a run is not a token that may read
+	// or rewrite the orchestrator's state (D1227).
+	{"get_state", ScopeStateRead, "One orchestrator's state: the generated brief, the revision the node is at and its schema version"},
+	{"get_events", ScopeStateRead, "One orchestrator's audit log, in the order the server stamped it, optionally since a duration"},
+	{"apply_patch", ScopeStateWrite, "Change one orchestrator's state with a validated patch: catalogued and served by nothing (D2021)"},
 }
 
 // catalogueEntry answers the declaration the catalogue holds for a tool name,

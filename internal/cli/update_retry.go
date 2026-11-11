@@ -93,6 +93,15 @@ var updateRetryBucket = func(ctx context.Context, o cloudOptions, p retryProject
 // bucket_url that is not it are two answers to one question. Every error is an
 // offer not printed, never a failed update.
 //
+// A config whose endpoints are fakes has no bucket either, for the reason
+// every sibling reader of this installation's own bucket gives: the gs:// URL
+// is not the bucket those endpoints stand for, so opening it would
+// reach the real network with the machine's credentials (publishSharedWarn,
+// the project layer's read, the admin list's write). It is the refusal this
+// function's own callers need rather than a line they print: an offer that
+// cannot read the store prints nothing, and updateResolved's step leaves the
+// document's field empty.
+//
 // It is a function of its own because the answer is what a test can check
 // without a bucket: the seam it is called from opens a gs:// URL, which no
 // hermetic test can reach.
@@ -106,7 +115,11 @@ func retryBucketURL(lc *localcfg.Config, runsBucket string) (string, error) {
 	if lc.Bucket == "" && lc.RunsBucket == "" {
 		return "", errors.New("no project with a runs bucket is selected")
 	}
-	return lc.BucketURL(), nil
+	url := lc.BucketURL()
+	if fakeEndpointsOnGS(lc, url) {
+		return "", fmt.Errorf("the runs bucket %s is a fake endpoint in this installation, so the shared store is not read for real", url)
+	}
+	return url, nil
 }
 
 // retryProject is the project the run this offer follows converged, as the
