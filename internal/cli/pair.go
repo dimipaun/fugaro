@@ -211,11 +211,11 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	if role == mobileauth.RoleNone {
 		if !grantsNode.Found {
 			return pairRefuse(ev, o, pairRefusedUnplaced,
-				fmt.Errorf("%s has no grants node yet (%s is absent), so a device paired here would have no role to inherit: run '%s update', which migrates this installation's terraform.operators and terraform.admins into project-scope grants there",
+				fmt.Errorf("%s has no grants node yet (%s is absent), so a device paired here would have no role to inherit: run '%s update', which writes that node from the installation's own lists when one of them names a user: member — a group: or domain: member is not an address a grant holds, and lists that name none write no node",
 					lc.Name, accesslib.PathNode, selfCommand()))
 		}
 		return pairRefuse(ev, o, pairRefusedUnplaced,
-			fmt.Errorf("%s holds no role at project scope in %s, so a device it paired would have no role to inherit: a device records a role and no scope, so the role it inherits is the pairing user's highest role at project scope, and a role held only in repositories is not one a device can carry; ask an admin of %s to grant you one at project scope with '%s update --operator %s', which writes that grant",
+			fmt.Errorf("%s holds no role at project scope in %s, so a device it paired would have no role to inherit: a device records a role and no scope, so the role it inherits is the pairing user's highest role at project scope, and a role held only in repositories is not one a device can carry; ask an admin of %s to add you to the installation's project-scope operator grants by naming the whole list with '%s update --operator %s' — that flag writes the list it is given, so every operator who must keep the role is named beside you",
 				me, lc.Name, lc.Name, selfCommand(), me))
 	}
 	if o.role != "" {
@@ -855,7 +855,10 @@ func pairTimeoutRefusal(timeout time.Duration) string {
 // the two IAM lists do not name cannot pair either), and it is the safe one: a
 // device node has no scope, so admitting a caller the grants do not place would
 // put authority on a phone that no grant record bounds. An owner who wants a
-// device is one `fugaro update --operator` away from holding the grant.
+// device is one `fugaro update --operator` away from holding the grant, and that
+// flag names the whole project-scope operator list — so the operators who must
+// keep the role are named beside them, and naming one member alone takes the
+// role from every other.
 func pairInheritedRole(grants []accesslib.Grant, me string) mobileauth.Role {
 	return accesslib.EffectiveAtProject(accesslib.Input{Grants: grants}, me)
 }

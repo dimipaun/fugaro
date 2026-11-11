@@ -499,7 +499,10 @@ func TestPairRefusesRepoScopedOnlyUser(t *testing.T) {
 		pairGrant(t, "person-4@example.com", accesslib.RoleAdmin, "github/acme/*"),
 		pairGrant(t, "person-4@example.com", accesslib.RoleViewer, "all-repos"))
 	out, _, err := pairRun(t, "--json")
-	pairAssertUnplaced(t, f, out, err, "user:person-4@example.com", "project scope")
+	// The door the sentence names writes a role's WHOLE project-scope list, so
+	// the sentence says so: an admin who ran it as printed would otherwise hand
+	// the caller a grant and take it from every other operator (foldProjectGrants).
+	pairAssertUnplaced(t, f, out, err, "user:person-4@example.com", "project scope", "whole list", "named beside you")
 
 	// The same answer for a caller the installation's IAM lists still name: the
 	// node places a caller now, and the lists are only the migration's source.
@@ -512,14 +515,16 @@ func TestPairRefusesRepoScopedOnlyUser(t *testing.T) {
 // TestPairRefusesInstallationWithoutGrantsNode is the other half of the same
 // refusal: the grants node itself is absent, which is an installation that has
 // not run the release that migrates the two IAM lists into it (RS3). A device
-// paired here would inherit nothing, so the refusal names the absent node and
-// the one command that writes it — `fugaro update` — rather than a grant to ask
-// an admin for, and it still mints and writes nothing.
+// paired here would inherit nothing, so the refusal names the absent node, the
+// one command that writes it — `fugaro update` — and the precondition that
+// command has (a list naming a `user:` member; an installation whose lists name
+// no address stays absent, TestAMigrationWithNoUserMemberWritesNoNode), rather
+// than a grant to ask an admin for. It still mints and writes nothing.
 func TestPairRefusesInstallationWithoutGrantsNode(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	f.db.Set(accesslib.PathNode, nil)
 	out, _, err := pairRun(t, "--json")
-	reason := pairAssertUnplaced(t, f, out, err, accesslib.PathNode, selfCommand()+" update")
+	reason := pairAssertUnplaced(t, f, out, err, accesslib.PathNode, selfCommand()+" update", "user: member")
 	if strings.Contains(reason, "update --operator") {
 		t.Fatalf("an absent node reads as a missing grant: %q", reason)
 	}
