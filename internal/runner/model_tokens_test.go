@@ -234,6 +234,13 @@ func TestRunFillsModelTokensLateCallIsInTheLedger(t *testing.T) {
 // event's tokens are in no key here either. A run that added them would put
 // tokens in the record that no cache total knows about, and a reader summing
 // the entries would count tokens the gateway never priced.
+//
+// What this holds is the record's shape at the end of such a run. It is NOT
+// the pin for the guard that keeps the agent's report out of a gateway run's
+// counts: closeGateway takes the ledger's map whole, so an ungated sum is
+// overwritten by the time this record is written, and this test passes with
+// the guard removed. That pin is the internal test
+// TestRecordAgentModelTokensOnlyWithoutAGateway.
 func TestRunFillsModelTokensMixedRunIsTheGatewayOnly(t *testing.T) {
 	g := newGW(t, mixedAccountConfig(t, "3", "30s"), "enforce", "50",
 		anthropicfake.MessageOK(sonnet, coderUsage))
