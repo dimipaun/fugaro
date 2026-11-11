@@ -71,6 +71,14 @@ func (f *commitsServer) provider(t *testing.T) *Provider {
 	return p
 }
 
+// srcNext is a listing's "next" field — the body field this API pages with,
+// not a Link header — as the absolute URL the API answers with. It is built
+// from the started server's own URL, because the field carries a whole URL
+// rather than a path, and only a test that pages can know it.
+func (f *commitsServer) srcNext(path string) string {
+	return fmt.Sprintf(`, "next": %q`, f.srv.URL+"/2.0"+path)
+}
+
 // asked reports whether the server was asked for at, so a test can assert a
 // refusal happened before a read rather than after one.
 func (f *commitsServer) asked(at string) bool {
@@ -175,8 +183,8 @@ func TestTreeWalksEveryPageOfAListing(t *testing.T) {
 	two := "two\n"
 	f := newCommitsServer(t)
 	f.routes[srcBase+"ci/?pagelen=100&max_depth=100"] = commitsReply{status: 200, ctype: "application/json",
-		body:   fmt.Sprintf(`{"values": [{"path": "ci/a", "type": "commit_file", "size": %d}]}`, len(one)),
-		header: map[string]string{"Link": "<{{server}}/2.0/repositories/acme/web/src/" + commitSHA + "/ci/?pagelen=100&max_depth=100&page=2>; rel=\"next\""}}
+		body: fmt.Sprintf(`{"values": [{"path": "ci/a", "type": "commit_file", "size": %d}]%s}`,
+			len(one), f.srcNext("/repositories/acme/web/src/"+commitSHA+"/ci/?pagelen=100&max_depth=100&page=2"))}
 	f.routes[srcBase+"ci/?pagelen=100&max_depth=100&page=2"] = commitsReply{status: 200, ctype: "application/json",
 		body: fmt.Sprintf(`{"values": [{"path": "ci/b", "type": "commit_file", "size": %d}]}`, len(two))}
 	f.routes[srcBase+"ci/a"] = commitsReply{status: 200, ctype: "application/octet-stream", body: one}
@@ -219,15 +227,15 @@ func TestTreeReadsADirectoryWrittenWithItsTrailingSlash(t *testing.T) {
 // requests shows.
 func TestTreeStopsTheWalkOnThePageThatIsOverItsLimit(t *testing.T) {
 	one := "one\n"
-	page := func(n int, link bool, name string) commitsReply {
-		r := commitsReply{status: 200, ctype: "application/json",
-			body: fmt.Sprintf(`{"values": [{"path": "ci/%s", "type": "commit_file", "size": %d}]}`, name, len(one))}
-		if link {
-			r.header = map[string]string{"Link": fmt.Sprintf("<{{server}}%sci/?pagelen=100&max_depth=100&page=%d>; rel=\"next\"", srcBase, n+1)}
-		}
-		return r
-	}
 	f := newCommitsServer(t)
+	page := func(n int, more bool, name string) commitsReply {
+		next := ""
+		if more {
+			next = f.srcNext(fmt.Sprintf("/repositories/acme/web/src/%s/ci/?pagelen=100&max_depth=100&page=%d", commitSHA, n+1))
+		}
+		return commitsReply{status: 200, ctype: "application/json",
+			body: fmt.Sprintf(`{"values": [{"path": "ci/%s", "type": "commit_file", "size": %d}]%s}`, name, len(one), next)}
+	}
 	f.routes[srcBase+"ci/?pagelen=100&max_depth=100"] = page(1, true, "a")
 	f.routes[srcBase+"ci/?pagelen=100&max_depth=100&page=2"] = page(2, true, "b")
 	f.routes[srcBase+"ci/?pagelen=100&max_depth=100&page=3"] = page(3, false, "c")
@@ -259,8 +267,8 @@ func TestTreeRefusesAListingThatNeverEnds(t *testing.T) {
 	f := newCommitsServer(t)
 	page := func(n int) commitsReply {
 		return commitsReply{status: 200, ctype: "application/json",
-			body:   fmt.Sprintf(`{"values": [{"path": "ci/dir%d", "type": "commit_directory"}]}`, n),
-			header: map[string]string{"Link": fmt.Sprintf("<{{server}}%sci/?pagelen=100&max_depth=100&page=%d>; rel=\"next\"", srcBase, n+1)}}
+			body: fmt.Sprintf(`{"values": [{"path": "ci/dir%d", "type": "commit_directory"}]%s}`, n,
+				f.srcNext(fmt.Sprintf("/repositories/acme/web/src/%s/ci/?pagelen=100&max_depth=100&page=%d", commitSHA, n+1)))}
 	}
 	at := func(n int) string {
 		if n == 1 {

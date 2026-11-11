@@ -84,6 +84,9 @@ func (p *Provider) Commit(ctx context.Context, ref string) (string, error) {
 // path, its type and its own size, so a tree over the caller's ceiling is
 // refused before a file of it is read — the walk itself stops on the page that
 // took it over, and maxSrcPages bounds a listing the caller's ceiling does not.
+// The pages after the first are the ones the body's "next" names (srcListing):
+// a walk that read the listing as one page would digest a context short of
+// every file past the hundredth, and count the ceilings over those alone.
 // The depth is asked for rather than assumed (srcMaxDepth): this listing
 // answers one directory's own entries by default, and a context's
 // subdirectories are part of the context.
@@ -105,11 +108,11 @@ func (p *Provider) Commit(ctx context.Context, ref string) (string, error) {
 //
 // UNVERIFIED against the live API, like the commit read and the file read
 // beside it: the shape follows Bitbucket's documented src listing — its
-// max_depth parameter rather than a recursive flag, and the Link header its
-// paging answers with — not a recorded response. What this read asks the
-// listing for is what decides which files a context is made of, so it is a
-// live run of this read, against a context with a subdirectory in it, that
-// would confirm it.
+// max_depth parameter rather than a recursive flag, and the body's "next"
+// field its paging answers with, as listComments already reads one — not a
+// recorded response. What this read asks the listing for is what decides which
+// files a context is made of, so it is a live run of this read, against a
+// context with a subdirectory in it, that is what would confirm it.
 func (p *Provider) Tree(ctx context.Context, path, ref string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
 	at := pluginwire.Printable(path)
 	dir := strings.TrimSuffix(path, "/")
@@ -174,6 +177,13 @@ type srcEntry struct {
 // the page that takes either over the ceiling ends the walk with the refusal —
 // so a context over it costs the pages up to that one and no file read, and
 // maxSrcPages is left to bound a listing the ceiling does not.
+//
+// The pages are the API's own: a listing names the next one in the body's
+// "next" field, not in a Link header, and the URL it names is read through
+// PagePath so the bearer token never follows one off the API's host
+// (listComments' own rule). A walk that took a missing Link header for the
+// last page would stop at the first one and answer a listing that is short
+// without saying so.
 func (p *Provider) srcListing(ctx context.Context, path, rev string, limit gitprov.TreeLimit) ([]srcEntry, error) {
 	prefix := ""
 	if path != "" && path != "." {
@@ -189,9 +199,9 @@ func (p *Provider) srcListing(ctx context.Context, path, rev string, limit gitpr
 		}
 		var listing struct {
 			Values []srcEntry `json:"values"`
+			Next   string     `json:"next"`
 		}
-		link, err := p.api.DoPage(ctx, http.MethodGet, next, nil, &listing)
-		if err != nil {
+		if err := p.api.Do(ctx, http.MethodGet, next, nil, &listing); err != nil {
 			return nil, err
 		}
 		for _, e := range listing.Values {
@@ -209,7 +219,14 @@ func (p *Provider) srcListing(ctx context.Context, path, rev string, limit gitpr
 			}
 		}
 		entries = append(entries, listing.Values...)
-		next = link
+		next = ""
+		if listing.Next != "" {
+			rel, err := p.api.PagePath(listing.Next)
+			if err != nil {
+				return nil, err
+			}
+			next = rel
+		}
 	}
 	return entries, nil
 }
