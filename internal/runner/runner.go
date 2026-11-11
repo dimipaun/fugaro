@@ -2472,7 +2472,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// dispatched in agentLoop in place of implement for the same reason the
 	// digest step is: the loop below walks review levels, and this run has
 	// none. The launcher's image gate refuses a rebase launch against a
-	// release image that predates the step (rebaseSince, internal/cli/
+	// release image that predates the step (escalationSince, internal/cli/
 	// recipes_skew.go).
 	r.rebase = recipe.UsesRebase(rcp)
 	// A follow-up cannot run one whatever this image executes: a report run

@@ -294,7 +294,7 @@ func UsesAdversarial(r *Recipe) bool {
 // UsesDigest does: a parser that predates the step refuses the whole recipe
 // ("is not a step type") instead of dropping it.
 //
-// It is read by the launch gate: recipeSinceFor chooses rebaseSince when a
+// It is read by the launch gate: recipeSinceFor chooses escalationSince when a
 // recipe holds the step (internal/cli/recipes_skew.go), so a rebase launch
 // against a job image whose runner predates the release that executes it is
 // refused before it starts, naming fugaro image refresh, rather than
