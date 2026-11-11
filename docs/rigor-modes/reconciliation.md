@@ -1433,6 +1433,13 @@ Workflows permission and lifting the refusal, which is a security decision
 several sizes larger than this feature. The honest version of this alternative is
 "a person merges and watches CI", which is the recommendation.
 
+**Amended 2026-11-10 by `docs/outer-loop-escalation`.** Fugaro still opens pull requests and still never deploys, and a run still never merges — `gitprov` had
+no merge call when this was answered. The one exception the owner has now ruled is the orchestrator daemon, which may mark a stalled draft ready and merge it,
+and only under the long-run triage rule's gate: green CI at that head, a changed-path set wholly inside the routine allowlist, no critical finding and none
+high in a security path. It merges at the exact head SHA it readied and judged, never with an admin or bypass flag, and every other merge stays a person's.
+Nothing else in this ruling moves: "ship immediately" is still a ready pull request the operator merges now, with the full suite running as CI on `main` after
+the merge.
+
 ### D14 — Fix confidence: a deterministic diff rule gates; the agent's number is recorded, never trusted
 
 **Answered 2026-10-20, and it differs from this folder's recommendation: the
