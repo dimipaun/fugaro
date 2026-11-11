@@ -833,7 +833,11 @@ func (v *orchestratorRunView) executionOver(ctx context.Context, slug, runID str
 	}
 	x, err := v.env.checkExecution(ctx, nil, l.Execution, slug, runID)
 	if err != nil {
-		fmt.Fprintf(v.warn, "run %s/%s: the state of its execution could not be read: %s\n", slug, runID, safetext.OneLine(err.Error()))
+		// The ending, not the whole ID: this line is one a person reads in the
+		// daemon's output, and every surface names a run the way a lookup takes
+		// it (spec.md §1, D1705).
+		fmt.Fprintf(v.warn, "run %s/%s: the state of its execution could not be read: %s\n",
+			slug, task.ShortRun(runID), safetext.OneLine(err.Error()))
 		return "", false
 	}
 	if x == nil {

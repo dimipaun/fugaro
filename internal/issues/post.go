@@ -270,6 +270,15 @@ func NewIssueURL(p Post) string {
 // and none of the finding. Half is where tidiness stops being worth the budget;
 // below it the cut stays mid-line, and the notice that follows says so either
 // way.
+//
+// The cut is a byte cut and the body is not bytes: a bisection that stops
+// inside a multi-byte character keeps its first bytes and drops the rest, and
+// those bytes are what the browser decodes and GitHub writes into a public
+// issue — a sequence that is not a text. So the cut backs off to the character
+// it fell in, the way the log's own cut steps over the one it fell in
+// (postLog). Backing off and not forward, because the budget counted here is
+// the encoded length: a character's remaining bytes would be spent on a
+// character the budget did not admit.
 func cutForURL(body string) string {
 	fits := func(n int) bool {
 		return len(url.QueryEscape(body[:n]+newIssueURLCutNotice)) <= newIssueURLBudget
@@ -288,6 +297,9 @@ func cutForURL(body string) string {
 	}
 	if at := strings.LastIndexByte(body[:lo], '\n'); at >= lo/2 {
 		lo = at
+	}
+	for lo > 0 && !utf8.RuneStart(body[lo]) {
+		lo--
 	}
 	return body[:lo]
 }

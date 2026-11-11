@@ -73,7 +73,7 @@ func (*rulesStage) Name() string    { return initflow.Rules }
 func (*rulesStage) SelfConfirming() {}
 
 func (s *rulesStage) Left() initflow.Left {
-	return promptLeft(initflow.Rules, "type the project's name to deploy the security rules when asked", s.e.r.o.doorName())
+	return promptLeft(initflow.Rules, "run the command below: it asks you nothing and deploys the security rules", s.e.r.o.doorName())
 }
 
 // rulesNoBudget is why the stage does nothing here, "" when the installation

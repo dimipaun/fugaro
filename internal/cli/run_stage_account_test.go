@@ -284,6 +284,15 @@ func TestClaudeAccountForTheMixMatrix(t *testing.T) {
 	// local config may spell the default key with — "default" is the unsuffixed
 	// default account, which an api-key run's job carries no token for, so it
 	// names no account and declares no mix whatever the stage's model is.
+	// rung 2's keys name the two review stages, and rung 4 serves every stage
+	// the launch's allow-list carries (config.MixedAccountStages) — those two
+	// and, since T-TR5, the triage that weighs their findings. The two sets are
+	// not the same one, so the expectation below is built from each: a
+	// repository that names triage no account of its own still has the project
+	// default serve it where the model condition holds, while a rung-2
+	// declaration about review and adversarial alone leaves it on the run's own
+	// credential.
+	rungTwo := []string{"review", "adversarial"}
 	rungs := []struct{ name, keys string }{
 		{"rung 2", stagesBlock("review", "acme-overflow", "adversarial", "acme-overflow")},
 		{"rung 4", "default_claude_account: acme-overflow\n"},
@@ -299,15 +308,15 @@ func TestClaudeAccountForTheMixMatrix(t *testing.T) {
 		{"an Anthropic reviewer", claudeReviewer, true},
 		{"a provider reviewer", mixCoderModel, false},
 	}
-	stages := []string{"review", "adversarial", "implement", "review_first", "fix", "plan"}
+	stages := []string{"review", "adversarial", "triage", "implement", "review_first", "fix", "plan"}
 	for _, rung := range rungs {
 		for _, model := range models {
 			t.Run(rung.name+", "+model.name, func(t *testing.T) {
 				env, co := mixCase(t, rung.keys, model.reviewer, mixEnforce)
 				for _, stage := range stages {
-					mixed := (rung.name == "rung 2" || rung.name == "both" ||
-						(rung.name == "rung 4" && model.anthropic)) &&
-						slices.Contains(config.MixedAccountStages, stage)
+					mixed := ((rung.name == "rung 2" || rung.name == "both") && slices.Contains(rungTwo, stage)) ||
+						((rung.name == "rung 4" || rung.name == "both") && model.anthropic &&
+							slices.Contains(config.MixedAccountStages, stage))
 					want := config.DefaultClaudeAccount
 					if mixed {
 						want = "acme-overflow"

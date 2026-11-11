@@ -219,7 +219,7 @@ func (s *projectStage) billingForAdminBecause(why string) initflow.Left {
 		Text: why + "Billing is not linked to " + s.id + " yet, so setup paused here: the project and Firebase exist, and what needs billing (Cloud Run, Cloud Build, Artifact Registry, Secret Manager, the buckets) waits for it. " +
 			"If you cannot link it yourself, forward this to whoever administers billing in your organization: they run the first line below with their billing account's id " +
 			"(theirs to supply; they find it with gcloud billing accounts list; see docs/gcp-setup.md#not-an-owner). " +
-			"Then run the second line at your own terminal: it resumes " + s.id + " and finishes the setup, and marks the project managed once you type its ID",
+			"Then run the second line at your own terminal: it resumes " + s.id + " and finishes the setup, and marks the project managed when the person at the terminal confirms it there",
 		Commands: []string{
 			billing.GcloudBin + " billing projects link " + quoteWord(s.id) + " --billing-account=<billing-account-id>",
 			selfCommand() + " setup --name " + quoteWord(name) + " --gcp-project " + quoteWord(s.id),
@@ -337,13 +337,13 @@ func (s *projectStage) describe() string {
 		} else {
 			p += " with no parent"
 		}
-		parts = append(parts, p+" (typed confirmation)")
+		parts = append(parts, p+" (its own confirmation; may be permanent)")
 	}
 	if s.create || s.addFirebase {
 		parts = append(parts, "add Firebase (free)")
 	}
 	if s.link {
-		parts = append(parts, "link billing account "+s.o().linkBilling+" (its own typed confirmation; may incur charges)")
+		parts = append(parts, "link billing account "+s.o().linkBilling+" (its own confirmation; may incur charges)")
 	} else if s.create || s.guide {
 		parts = append(parts, "billing is not linked by fugaro setup without --link-billing: "+s.guided())
 	}
@@ -369,42 +369,50 @@ func (s *projectStage) Left() initflow.Left {
 		if s.o().linkBilling != "" {
 			args = append(args, "--link-billing", quoteWord(s.o().linkBilling))
 		}
-		return promptLeft(initflow.Project, "type the ID(s) it asks for", args...)
+		return promptLeft(initflow.Project, "create the project (and link the billing account) from the banner it prints, which asks you nothing", args...)
 	}
 	return s.billingForAdmin()
 }
 
-// canType is whether this run may show a typed confirmation: a terminal on
+// canType is whether this run has a person at its terminal: a terminal on
 // stdin, none of --non-interactive and --json (a run no person watches),
-// and no coding agent's session. --yes is not consulted: it confirms
-// nothing here, and a person at a terminal who also passed it still types.
+// and no coding agent's session. --yes is not consulted: it confirms nothing
+// here, and a person at a terminal who also passed it is still a person there.
 //
 // It is one predicate in one place, asked of the run, because two things ask
-// it: this stage's typed confirmations, and the wizard's billing question
-// (billing_prompt.go, W4.3), whose whole reason to exist is bounded by it —
-// listing the operator's billing accounts is a reversal internal/billing's
-// package doc limits to exactly these four conditions, and two copies of them
-// would be two places to widen by accident.
+// it: this stage's confirmations, and the wizard's question of who may be
+// asked anything (billing_prompt.go, W4.3), whose whole reason to exist is
+// bounded by it — listing the operator's billing accounts is a reversal
+// internal/billing's package doc limits to the flags of that list, and two
+// copies of them would be two places to widen by accident.
 func (r *initRun) canType() bool {
 	o := r.o
 	return !o.nonInteractive && !o.asJSON && agentMarker(os.Getenv, r.stdinTerminal()) == "" && stdinIsTerminal(r.cmd.InOrStdin())
 }
 
-// canType is this stage's typed confirmation, asked of the run it is in.
+// canType is this stage's own reading of whether a person is at the terminal.
 func (s *projectStage) canType() bool { return s.e.r.canType() }
 
-// typed shows banner and the prompt, and reports whether the line typed is
-// exactly want.
-func (s *projectStage) typed(banner, want, prompt string) (bool, error) {
+// confirm is this stage's confirmation: the banner naming what the step does
+// to the project, and then the run's own answer to it (confirmNow). Nothing is
+// typed under it and no flag stands in for the person (T7,
+// docs/no-prompt-policy): creating the project, adding Firebase to it and
+// linking a billing account are initflow.Typed in both front doors, so --yes
+// never reaches them (stepConfirmation) and a person at their own terminal
+// reads the banner and the step goes on. A person who passed --yes is the one
+// way a person at a terminal leaves the step instead, and declined is what
+// says so.
+func (s *projectStage) confirm(banner, question string) (bool, error) {
 	r := s.e.r
 	fmt.Fprintf(r.w, "⚠ CONFIRM: %s\n", banner)
-	fmt.Fprintf(r.w, "Type %s %s: ", want, prompt)
-	line, err := r.in.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, userErr("reading the confirmation: %v", err)
+	if r.stepConfirmation(initflow.Typed) == stepLeave {
+		return false, nil
 	}
-	fmt.Fprintln(r.w)
-	if strings.TrimSpace(line) != want {
+	ok, err := r.confirmNow(question)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
 		return false, nil
 	}
 	r.noteIDETerminal()
@@ -505,9 +513,13 @@ func (s *projectStage) credentialNote() string {
 	return who + "; your credentials name no quota project, so calls may be refused: set one with gcloud auth application-default set-quota-project <a project of yours> (the new project cannot be its own quota project)"
 }
 
+// declined is the refusal of a step of this stage that nobody confirmed:
+// nothing is typed at its confirmation any more (T7, docs/no-prompt-policy),
+// and --yes never stands in for one of these three steps, so the sentence
+// names the flag that did not and the one way out of it.
 func (s *projectStage) declined(what string) error {
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftPrompt,
-		Text: "not confirmed (" + what + " was not typed): rerun " + selfCommand() + " " + s.e.r.o.doorName() + " in your own terminal window and type it, nothing further was done"}}
+		Text: "not confirmed (" + what + " was not confirmed): " + s.e.r.o.doorName() + " asks this step of a person at a real terminal and --yes never stands in for one — rerun " + selfCommand() + " " + s.e.r.o.doorName() + " in your own terminal window without --yes, read the banner, and the step goes on; nothing further was done"}}
 }
 
 func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
@@ -539,15 +551,15 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 			name = s.id
 		}
 		s.billingHeadsUp()
-		ok, err := s.typed(fmt.Sprintf("this CREATES the Google Cloud project %q (display name %q) with %s, and adds Firebase to it, %s. "+
+		ok, err := s.confirm(fmt.Sprintf("this CREATES the Google Cloud project %q (display name %q) with %s, and adds Firebase to it, %s. "+
 			"The ID is global and permanent: nobody can reuse it, even after the project is deleted. It will be used for everything Fugaro runs. "+
-			"Billing is linked separately: this confirmation does not link it.",
-			s.id, name, parent, s.credentialNote()), s.id, "to create it")
+			"Billing is linked separately: this step does not link it.",
+			s.id, name, parent, s.credentialNote()), "create the project "+s.id+"?")
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
 		if !ok {
-			return initflow.Outcome{}, s.declined("the project's ID")
+			return initflow.Outcome{}, s.declined("the creation of project " + s.id)
 		}
 		spec := infra.CreateSpec{ID: s.id, DisplayName: name, Parent: o.parent, OnOperation: func(op string) {
 			fmt.Fprintf(r.w, "creating project %s (operation %s): if this run stops before it is readable, wait a few minutes and rerun with the same ID\n", s.id, op)
@@ -564,12 +576,12 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		fmt.Fprintf(r.w, "created project %s\n", s.id)
 		s.addFirebase = true
 	} else if s.addFirebase {
-		ok, err := s.typed(fmt.Sprintf("%s: it has no Firebase, and this ADDS Firebase to it (free; Firebase is how Fugaro keeps its budget and dashboard data), %s. Nothing else about the project changes.", resumeNote(s.id), s.credentialNote()), s.id, "to add Firebase to it")
+		ok, err := s.confirm(fmt.Sprintf("%s: it has no Firebase, and this ADDS Firebase to it (free; Firebase is how Fugaro keeps its budget and dashboard data), %s. Nothing else about the project changes.", resumeNote(s.id), s.credentialNote()), "add Firebase to project "+s.id+"?")
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
 		if !ok {
-			return initflow.Outcome{}, s.declined("the project's ID")
+			return initflow.Outcome{}, s.declined("adding Firebase to project " + s.id)
 		}
 	}
 	if s.addFirebase {
@@ -589,13 +601,13 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		if !created {
 			lead = resumeNote(s.id) + ": "
 		}
-		ok, err := s.typed(fmt.Sprintf("%sthis LINKS billing account %s to project %s. Everything Fugaro runs in the project (Cloud Run jobs, builds, storage, Firestore, Vertex AI calls) may incur charges on that account. "+
-			"It is not undone by deleting resources; unlink it with gcloud billing projects unlink %s.", lead, acct, s.id, quoteWord(s.id)), acct, "to link it")
+		ok, err := s.confirm(fmt.Sprintf("%sthis LINKS billing account %s to project %s. Everything Fugaro runs in the project (Cloud Run jobs, builds, storage, Firestore, Vertex AI calls) may incur charges on that account. "+
+			"It is not undone by deleting resources; unlink it with gcloud billing projects unlink %s.", lead, acct, s.id, quoteWord(s.id)), "link billing account "+acct+" to project "+s.id+"?")
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
 		if !ok {
-			return initflow.Outcome{}, s.declined("the billing account's ID")
+			return initflow.Outcome{}, s.declined("linking billing account " + acct)
 		}
 		if err := infra.LinkBilling(ctx, s.pc, s.id, acct, !created); err != nil {
 			var pe *infra.ProjectError
@@ -649,8 +661,18 @@ func (s *projectStage) pauseBecause(did []string, why string) error {
 	if s.e.old == nil && s.e.path != "" {
 		next := *s.e.lc
 		next.SetupPending = "billing"
+		// The bake answer travels with the config, and the rebuild it costs is
+		// said here as it is in writeConfig (carryBakeAnswer, init.go): this
+		// path writes the switch and this run never reaches writeConfig at all,
+		// so a run that answered the question would otherwise write it in
+		// silence — and an answer written nowhere would be one no later run
+		// could recover.
+		carried := s.e.r.carryBakeAnswer(&next)
 		if err := s.e.r.writeLocalConfig(&next, s.e.path, nil, true); err != nil {
 			return err
+		}
+		if carried {
+			s.e.r.noteBakeRebuild()
 		}
 	}
 	detail := "billing pending"

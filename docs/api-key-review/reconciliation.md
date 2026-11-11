@@ -1,17 +1,23 @@
 # The api-key review path — reconciliation
 
-**Status: AK1–AK5 are implemented on `main` and no task past AK5 is started; D1410–D1429 are answered
+**Status: AK1–AK5 and AK6a are implemented on `main` (AK6a merged as #2147, `03c2a22c`), AK6b is
+written and in review, and no further task is started; D1410–D1429 are answered
 2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax") — except the two
 the security review added later, AK9 and AK10, which are written and not approved.** This document
 reads every clause of the owner's ask ([spec.md](spec.md), 2026-11-07) against the tree as it stood
 then, classifies what it finds, and turns the parts that needed a decision into questions
 **D1410–D1429** (§7), every one of them
-answered the same day, each as recommended. **Two things happened after that reading and neither
+answered the same day, each as recommended. **Three things happened after that reading and none of them
 reopens it:** on **2026-11-09** the owner answered **D1418** — the provider's base URL and the auth
 shape go **in the bundle** (§5, §7) — and the **author's own security pass** over the merged AK4 and
 AK5 ([security-review.md](security-review.md), 2026-11-09) was written, adding **F25–F27** and tasks
 **AK9** and **AK10**; the plan's AK6 was split into **AK6a** and **AK6b** the same day
-([implementation-plan.md](implementation-plan.md) §6 item 9).
+([implementation-plan.md](implementation-plan.md) §6 item 9); and on **2026-11-10** the reconciliation
+with `docs/model-crafts` was done (that folder's **D1638** and **F26**) — **api-key-review is NOT
+superseded by model-crafts, which builds on it**: model-crafts' MC5 and MC6 extend what AK6a, AK6b and
+AK7 build and are held until the last two have merged, and **AK9 and AK10 are folded into MC6**
+([implementation-plan.md](implementation-plan.md) §6 item 12). **AK6a merged as** `03c2a22c` (#2147),
+so the axis value the other package builds on is on `main`.
 
 **Checked against:** `origin/main` at `aa26f322f`, on **2026-11-07**. `graphify` has no graph for
 this repository (there is no `graphify-out/`), so every claim was located with `git grep` and then

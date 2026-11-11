@@ -109,9 +109,14 @@ func TestUpdateWithoutAnInstallationNamesSetup(t *testing.T) {
 // TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne: a checkout whose
 // repository the project does not list is not update's to enrol **by asking**
 // (D5). Update's converge never puts the typed owner/name question and never
-// offers --onboard-repo, so the run leaves one line naming `fugaro setup`,
-// exit code 1, and never the typed owner/name: there is nothing for this run
-// to type. The repository engine is never reached. --yes is a different
+// offers --onboard-repo, so the run states in one clause that the repository
+// is not the project's, leaves the step for the user, exits 1, and never puts
+// the typed owner/name: there is nothing for this run to type. The door that
+// does enrol it (`fugaro setup`) is the left-for-you line, which the run
+// reaches only at that stage — the second half of this test, over the stages
+// themselves, pins that line, because an apply that stops at the installation
+// prints no left-for-you at all (report.Brief keeps one clause of a step's
+// reason; the whole of it is in the log the run names). --yes is a different
 // matter, and TestUpdateAppliesTheFourStepsItOwns pins it: D12 makes the step
 // a covered one, which is why the sentence above says "by asking".
 func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
@@ -132,8 +137,8 @@ func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 		t.Errorf("exit %d, want %d", got, ExitUserError)
 	}
 	all := out + errOut + ErrorText(err)
-	if !strings.Contains(all, selfCommand()+" setup") {
-		t.Errorf("the line does not name the door that enrols a repository:\n%s", all)
+	if !strings.Contains(all, "is not one of project "+initProjectName+"'s yet") {
+		t.Errorf("the run does not say the checkout's repository is not the project's:\n%s", all)
 	}
 	if strings.Contains(all, "Type acme/app") {
 		t.Errorf("update asked the typed repository question:\n%s", all)
@@ -253,9 +258,13 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 				if !tc.covered {
 					// The class is Typed for `setup`, so --yes confirms nothing
 					// here and the run leaves the permanent location for the
-					// user rather than reading a location off stdin.
-					if err == nil || !strings.Contains(err.Error(), infra.FirestoreLocation) {
+					// user: T7, nothing is typed at it, and the banner below is
+					// the note, which names the location.
+					if err == nil || !strings.Contains(err.Error(), "the Firestore database's permanent location") {
 						t.Fatalf("setup confirmed the permanent location: %v\n%s", err, out)
+					}
+					if !strings.Contains(out.String(), infra.FirestoreLocation) {
+						t.Errorf("the setup banner does not name the location it leaves:\n%s", out)
 					}
 					if strings.Contains(out.String(), "confirmed by --yes") {
 						t.Errorf("setup --yes confirmed the location:\n%s", out)
@@ -370,12 +379,14 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 				}
 			})
 		}
-		// And a run that cannot take it leaves it, in either door.
+		// And a run that cannot take it leaves it, in either door: nothing is
+		// typed at the step any more (T7), so what is left is the command
+		// whose own confirmation it takes.
 		for _, door := range []string{setupDoor.name, updateDoor.name} {
 			e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: door})
 			st := &imagesStage{e: e}
 			err := st.confirmReplace(pl)
-			if err == nil || !strings.Contains(err.Error(), "the project's name") {
+			if err == nil || !strings.Contains(err.Error(), "asks you nothing and replaces base") {
 				t.Fatalf("%s replaced a tag with no confirmation: %v\n%s", door, err, out)
 			}
 		}
@@ -451,10 +462,10 @@ func TestUpdateConvergesTwiceAndSaysNoChanges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("run %d: %v\n%s", i, err, out)
 		}
-		if !strings.Contains(out, "[done]") || !strings.Contains(out, "No changes") {
+		if !strings.Contains(out, markDone+" done") || !strings.Contains(out, "No changes") {
 			t.Errorf("run %d does not report a converged installation:\n%s", i, out)
 		}
-		if strings.Contains(out, "[needs-you]") || strings.Contains(out, "[todo]") {
+		if strings.Contains(out, markLeft+" ") || strings.Contains(out, markWaiting+" ") {
 			t.Errorf("run %d leaves something for the user:\n%s", i, out)
 		}
 	}

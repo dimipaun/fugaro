@@ -1,9 +1,14 @@
 # The key signing service
 
-**Status: design and threat model. No code.** `ee/keyservice/` does not exist, nothing mints a key
-but a person, and no infrastructure for the service is written. Until the entity exists and the
-service is built (T13, S8.1) keys are **minted by hand** (S2.10), and every sentence below about the
-running service is a design rather than a description.
+**Status: design and threat model. The infrastructure is written, the service is not.**
+`ee/keyservice/terraform/` holds the service's two Terraform roots and their `terraform`-tagged
+suite (S3.5, written 2026-11-09), and neither root has been applied: S3.8 applies the key ring and
+S3.7 the services, both OWNER-RUN, so no key and no service exists yet. The service itself is not
+written — the infrastructure's tagged suite is the only Go file under `ee/keyservice/`.
+No job runs that suite in CI: the change that would is staged
+([pending-workflows/README.md](../pending-workflows/README.md) §`ci.yml`). Until the entity exists
+and the service is built (T13, S8.1) keys are **minted by hand** (S2.10), and every sentence below
+about the running service is a design rather than a description.
 
 This is subscriptions **S3.1**, the first task of slice S3: the design the tasks after it are written
 against — the issuing service (S3.2), the admin page and the manual queue (S3.4), the dedicated

@@ -169,12 +169,12 @@ const fonts = site.fonts
 // by the owner's feedback of 2026-10-21**: "let's drop the top reference menu. We'll move the
 // submenu console under product, and the rest go under Project"). The routes are the ones the
 // plan's page list fixes (how-it-works, why-gcp, getting-started, caps-and-costs, console,
-// mobile, docs, security, changelog, faq, community) and each label is the route's own words
-// rather than a copy of a page's title — a nav that restated the pages would be a second copy
-// of them to keep in step. The groups' five-and-six split is the feedback's, not a symmetry:
+// mobile, docs, compatibility, security, changelog, faq, community) and each label is the route's
+// own words rather than a copy of a page's title — a nav that restated the pages would be a
+// second copy of them to keep in step. The groups' split is the feedback's, not a symmetry:
 // *Product* carries the pages about running the thing the visitor came for (how it works,
 // how to start, what it costs, the console and the phone app), and *Project*
-// the ones about the project itself, Docs and Changelog included. **Why GCP is a *Project*
+// the ones about the project itself, Docs, Compatibility and Changelog included. **Why GCP is a *Project*
 // item, after Security** (the owner's explicit approval of 2026-10-23, which moved it out of
 // *Product*, where D238 had put it second): it is the argument for the project's one platform,
 // beside the page about what that platform's boundary protects. Its label and URL are unchanged.
@@ -184,6 +184,16 @@ const fonts = site.fonts
 // Console is a Product item, so the new item goes beside it rather than into Project. The two
 // groups stay two — the plan's Part 3 asks for one item and not a third group — and
 // `website/test/base-styles.mjs`'s `GROUPS_WANTED` is what holds both to that.
+//
+// **Compatibility is one of them, and it is a *Project* item** (the compatibility
+// matrix, `docs/compatibility-matrix/implementation-plan.md` Task CM2). D1537 makes the matrix
+// a page of the site, and the reconciliation's §4 left the entry to the owner: **the owner
+// approved it on 2026-11-10** ("Yes, add Compatibility to the nav"), which is the approval
+// `.claude/rules/website.md` asks for before a nav label or URL moves. It sits in *Project*,
+// which is where the entries about the project rather than about running the thing belong, and
+// directly after Docs: the two are read together — what the project does, then what it works
+// with. The label is the page's own title and the URL is the page's own route, so the menu
+// holds no second name for either.
 //
 // **Home is not one of them, and it is in the menu all the same** (the owner's feedback of
 // 2026-10-21: "I think we need a 'Home' as the first menu"). D182 took Home out of the menu
@@ -208,6 +218,7 @@ const NAV_GROUPS = [
     label: 'Project',
     items: [
       { href: '/docs/', label: 'Docs' },
+      { href: '/compatibility/', label: 'Compatibility' },
       { href: '/security/', label: 'Security' },
       { href: '/why-gcp/', label: 'Why GCP' },
       { href: '/faq/', label: 'FAQ' },

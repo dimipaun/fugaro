@@ -55,18 +55,13 @@ type managedRefresh struct {
 	tg *refreshTarget
 }
 
-// managedRefreshMarker is the creation fact of a managed installation that
-// records a bound on the billable builds one invocation may start: the
-// version-3 object M5 reads, which is the only version that carries one.
+// managedRefreshMarker is the creation fact of a managed installation: the
+// version-3 object M5 reads. The count it once recorded (max_image_builds) is
+// carried by the fact and read by nothing any more — T4 moved the bound on a
+// billable build to the lease (D1543) — so the value a test passes here no
+// longer decides how many builds run.
 func managedRefreshMarker(bound int64) []byte {
 	return []byte(fmt.Sprintf(`{"version":3,"gcp_project":%q,"budget":{"amount":5000,"currency":"USD"},"max_image_builds":%d}`, initProject, bound))
-}
-
-// managedRefreshBudgetMarker is the version-2 object: managed, and no bound
-// recorded, which is the default of one build per invocation and never "no
-// bound" (D1013, spec §5).
-func managedRefreshBudgetMarker() []byte {
-	return []byte(`{"version":2,"gcp_project":"` + initProject + `","budget":{"amount":5000,"currency":"USD"}}`)
 }
 
 // managedRefreshUnknownVersionMarker is an object written by a Fugaro newer
@@ -98,16 +93,19 @@ func newManagedRefreshRig(t *testing.T, marker []byte) *managedRefresh {
 	// not.
 	useSelf(t)
 
-	r := &managedRefresh{anchorModeRig: newAnchorModeRig(t, refreshYAML, true), db: gcpfake.NewRTDB(t)}
+	r := &managedRefresh{anchorModeRig: newAnchorModeRig(t, refreshYAML, true)}
 	// The installation's own database, as fugaro update --firebase-project
 	// writes the pair: the ownership question the gate asks before it reads the
-	// marks needs both halves, and a loopback URL is the fake's own.
-	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+initProject+", rtdb_url: "+r.db.URL+" }\n")
+	// marks needs both halves, and a loopback URL is the fake's own. buildTarget
+	// below points the config at this same fake (buildBudgetForRig), because the
+	// builds step 4 submits lease their cost from it (T4).
+	r.db = buildBudgetForRig(t, r.initRig)
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
 	labelled(r.crm, initProject)
 	r.gcs.Put(initRunsBucket, managed.MarkerObject, marker)
-	// A coding agent's session: the one refuseRefreshHere and askBuild refuse
-	// today, and the only session whose steps the gate is about.
+	// A coding agent's session: the session the gate is about, for every step
+	// but the billable builds — those ask nothing in any session now (T4), and
+	// are admitted per build (admitBuild) or bounded by the lease.
 	t.Setenv(agentMarkers[0], "1")
 	r.e, r.tg = buildTarget(t, r.anchorModeRig)
 	// The account the build is submitted as, as infra.Repo derives it for this
@@ -162,18 +160,6 @@ func bothStale(t *testing.T) {
 	putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
 }
 
-// boundOf is a bound as M5 hands one out rather than as a test would guess it:
-// the decision over a recorded figure, so a document a test renders is rendered
-// under the same bound the gate judged it under.
-func boundOf(t *testing.T, n int64) managedmode.ImageBuilds {
-	t.Helper()
-	b, err := managedmode.ImageBuildsBound(managedmode.ImageBuildsRead{Project: initProjectName, Builds: n, OK: true, Managed: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return b
-}
-
 // swappingBuilder is a Cloud Build that changes the world before it submits:
 // the hook runs once, just before the first submission, so a test can change
 // the creation fact or the kill switch in the window between two builds. That
@@ -203,63 +189,49 @@ func useSwapBuilder(t *testing.T, swap func()) *swappingBuilder {
 	return b
 }
 
-// The red step of this task (plan M4): a marker recording one build and a plan
-// naming two. The first build runs — an agent's session is the one the gate
-// admits, and it was refused before the gate existed — and the second is
-// refused with the owner's own command named, because the count is what bounds
-// an unattended run and nothing else does.
-//
-// It failed before this task for the reason the task exists: `fugaro image
-// refresh` refuses a coding agent's session before any step runs, so no build
-// ran at all, and nothing named the bound the project records.
-func TestImageRefreshManagedStopsAtTheRecordedBound(t *testing.T) {
+// A managed refresh builds every stale workflow the plan names, and each build
+// is its own admission: what bounded this loop was a count in the project's
+// creation fact, and T4 replaced it with the lease (D1543) — so the count a
+// marker records is read by nothing here, and the records are one admission per
+// build, each over its own document.
+func TestImageRefreshManagedBuildsEveryBuildInThePlan(t *testing.T) {
 	useVersion(t, "0.5.1")
+	// A marker recording ONE build, and a plan naming two: the count is not a
+	// bound any more.
 	r := newManagedRefreshRig(t, managedRefreshMarker(1))
 	fb := useFakeBuilder(t)
 	bothStale(t)
 	p := r.plan(r.door(t))
-	err := r.e.r.refreshBuilds(t.Context(), p, r.tg)
-	if err == nil {
-		t.Fatal("a plan naming two builds ran to completion under a bound of one")
+	if err := r.e.r.refreshBuilds(t.Context(), p, r.tg); err != nil {
+		t.Fatalf("a managed refresh stopped before it built the plan: %v", err)
 	}
-	if !errors.Is(err, managedmode.ErrNotConverged) {
-		t.Errorf("the second build was stopped by %v, want the gate's own refusal", err)
-	}
-	if !strings.Contains(err.Error(), "fugaro image refresh") {
-		t.Errorf("the refusal does not name the command the owner runs in their own terminal instead:\n%v", err)
-	}
-	if len(fb.specs) != 1 || fb.specs[0].Workflow != "app" {
-		t.Fatalf("submitted %d builds (%+v), want the plan's first one alone", len(fb.specs), fb.specs)
+	if len(fb.specs) != 2 {
+		t.Fatalf("submitted %d builds (%+v), want both", len(fb.specs), fb.specs)
 	}
 	got := r.audits(t)
 	if len(got) != 2 {
-		t.Fatalf("the day holds %d records, want one admission and one refusal (D1014: an admission is recorded after the write, D1025: a refusal too)", len(got))
+		t.Fatalf("the day holds %d records, want one admission per build (D1014: an admission is recorded after the write)", len(got))
 	}
-	var admitted, refused int
+	digests := map[string]bool{}
 	for _, rec := range got {
-		switch rec.Verdict {
-		case managedmode.AuditAdmitted:
-			admitted++
-			// The admission's record is the judged document's: a command that
-			// submitted a build and never called gate.recorded would leave none
-			// at all, and a record whose digest is not the document's would name
-			// bytes nobody judged (D1022).
-			doc, err := refreshBuildDocBytes(r.tg, "app", "base", p.builds, boundOf(t, 1), 0, "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if rec.PlanDigest != gateDigest(doc) {
-				t.Errorf("the admission's plan_digest is %q, want the sha256 of the first build's document (%q)", rec.PlanDigest, gateDigest(doc))
-			}
-		case managedmode.AuditRefused:
-			refused++
-			if !strings.Contains(strings.Join(rec.Rules, "; "), "past the bound") {
-				t.Errorf("the refused record's rules are %q, and the rule that refused is not among them", rec.Rules)
-			}
+		if rec.Verdict != managedmode.AuditAdmitted {
+			t.Errorf("record %+v is not an admission", rec)
+			continue
 		}
+		digests[rec.PlanDigest] = true
 	}
-	if admitted != 1 || refused != 1 {
-		t.Errorf("the day holds %d admissions and %d refusals, want one of each", admitted, refused)
+	// The admissions' records are the judged documents': a command that
+	// submitted a build and never called gate.recorded would leave fewer, and a
+	// record whose digest is not the document's would name bytes nobody judged
+	// (D1022).
+	for _, build := range p.builds {
+		doc, err := refreshBuildDocBytes(r.tg, build, "base", p.builds, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !digests[gateDigest(doc)] {
+			t.Errorf("no admission's plan_digest is the sha256 of %s's document (%q)", build, gateDigest(doc))
+		}
 	}
 }
 
@@ -287,27 +259,6 @@ func TestImageRefreshManagedRefusesABuildThatIsNotTheProjectsOwn(t *testing.T) {
 	got := r.audits(t)
 	if len(got) != 1 || got[0].Verdict != managedmode.AuditRefused {
 		t.Fatalf("the day holds %d records, want the refusal alone (%+v)", len(got), got)
-	}
-}
-
-// A creation that records no bound is still held to a count: a version-2 fact
-// is managed, and its bound is the default of one per invocation, never "no
-// bound" (D1013). The same plan as the red step runs the same way under it.
-func TestImageRefreshManagedDefaultBoundIsOne(t *testing.T) {
-	useVersion(t, "0.5.1")
-	r := newManagedRefreshRig(t, managedRefreshBudgetMarker())
-	fb := useFakeBuilder(t)
-	bothStale(t)
-	p := r.plan(r.door(t))
-	err := r.e.r.refreshBuilds(t.Context(), p, r.tg)
-	if err == nil {
-		t.Fatal("a plan naming two builds ran to completion under the default bound")
-	}
-	if !strings.Contains(err.Error(), "1 per invocation") {
-		t.Errorf("the refusal does not name the bound it stopped at:\n%v", err)
-	}
-	if len(fb.specs) != 1 || fb.specs[0].Workflow != "app" {
-		t.Fatalf("submitted %d builds (%+v), want the plan's first one alone", len(fb.specs), fb.specs)
 	}
 }
 
@@ -377,34 +328,11 @@ func TestImageRefreshManagedUnreadableKillSwitchStops(t *testing.T) {
 	}
 }
 
-// D1013's "before each build, never once per command", for the bound: the owner
-// replaces the creation fact while the first build runs, and the second build
-// is judged against the fact in force then — the read fails, and the run stops
-// rather than submitting a build nothing bounds. A command that kept the door's
-// own read would submit the second build and pass this test's assertion of one.
-func TestImageRefreshManagedReadsTheBoundBeforeEachBuild(t *testing.T) {
-	useVersion(t, "0.5.1")
-	r := newManagedRefreshRig(t, managedRefreshMarker(2))
-	fb := useSwapBuilder(t, func() {
-		r.gcs.Put(initRunsBucket, managed.MarkerObject, managedRefreshUnknownVersionMarker())
-	})
-	bothStale(t)
-	p := r.plan(r.door(t))
-	err := r.e.r.refreshBuilds(t.Context(), p, r.tg)
-	if err == nil {
-		t.Fatal("the run went on after the creation fact it was judging builds against became unreadable")
-	}
-	if !strings.Contains(err.Error(), "bound on this project's billable image builds was not read") {
-		t.Errorf("the run stopped without saying which read failed:\n%v", err)
-	}
-	if len(fb.specs) != 1 {
-		t.Fatalf("submitted %d builds, want the first alone: the bound is re-read before each one", len(fb.specs))
-	}
-}
-
-// The same property for the project's kill switch: an operator stopping the
-// project while a refresh runs means the build AFTER that stops, so the switch
-// is read again for each build and not once for the command.
+// The project's kill switch is read before each build, never once for the
+// command: an operator stopping the project while a refresh runs means the
+// build AFTER that stops. (What the bound's own re-read pinned is covered by the
+// switch's: the bound is gone, T4, D1543 — a build is bounded by its lease, and
+// a lease is taken per build.)
 func TestImageRefreshManagedReadsTheKillSwitchBeforeEachBuild(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newManagedRefreshRig(t, managedRefreshMarker(2))
@@ -562,22 +490,20 @@ func TestImageRefreshReadsTheGateBeforeAnyWrite(t *testing.T) {
 	}
 }
 
-// The owner's own terminal in a managed project asks nothing for a billable
-// build either (the ruling of 2026-11-01: the whole point of a managed project
-// is that the gate manages it on the owner's behalf, without the prompts). The
-// marks are read because this is exactly the run the per-build question would
-// have stopped at, the gate judges THIS build, and the typed project name is
-// replaced by the verdict: the cost line is printed with it, and the admission
-// the owner finds later in their own bucket is written by refreshBuilds once
-// the build is out.
+// A billable build's own line asks nothing in either world, and the two are
+// told apart by the sentence under it and by the record the run leaves: in a
+// managed project the gate's verdict is printed over the cost line and an
+// admission lands in the owner's own bucket once the build is out; in a project
+// whose creation fact this program does not believe there is no verdict to
+// print and no record to write — but there is no question either, because the
+// promised project name went with the prompts (T4). What the gate's own read
+// decides is the sentence and the record, never whether this build runs: the
+// lease bounds that (D1543).
 //
-// The first case is that; the second is the control, and it is the whole of
-// what "the gate is the confirmation" means — an unproven project keeps
-// today's behaviour exactly, so the same build is the typed question this
-// command has always asked, which a terminal with nothing to type leaves
-// unanswered. The mutations caught: Managed.Removes answering true for every
-// project (the control's question is skipped and the build confirmed), and the
-// gate's own read being dropped so that any project is treated as managed.
+// The mutation caught: announceBuild printing the gate's sentence without the
+// gate having admitted anything (Managed.Removes answering true for a project
+// this program cannot prove is managed) — the unproven case then reads exactly
+// like the managed one, and this test fails on it.
 func TestImageRefreshManagedOwnerTerminalAsksNoBuildQuestion(t *testing.T) {
 	useVersion(t, "0.5.1")
 	for _, tc := range []struct {
@@ -585,8 +511,8 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBuildQuestion(t *testing.T) {
 		marker  []byte
 		managed bool
 	}{
-		{"the project is managed, so the verdict is the confirmation", managedRefreshMarker(1), true},
-		{"the project is unproven, so the build is asked for as it always was", managedRefreshUnknownVersionMarker(), false},
+		{"the project is managed, so the verdict is what the owner reads", managedRefreshMarker(1), true},
+		{"the project is unproven, so there is no verdict to read", managedRefreshUnknownVersionMarker(), false},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			r := newManagedRefreshRig(t, tc.marker)
@@ -599,38 +525,30 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBuildQuestion(t *testing.T) {
 			if (m != nil) != tc.managed {
 				t.Fatalf("the gate's door answered %v, want managed=%v", m != nil, tc.managed)
 			}
-			if !tc.managed {
-				// The control: the same build, the same terminal, and the
-				// question this command has always asked. Nothing is typed, so
-				// nothing is confirmed and no build is submitted.
-				ok, reachable, err := r.e.r.askBuild("submits a Cloud Build", initflow.Managed{})
-				if err != nil || ok || !reachable {
-					t.Fatalf("a project that is not managed was answered without the typed name (ok=%v reachable=%v): %v", ok, reachable, err)
-				}
-				if !strings.Contains(out.String(), "Type "+initProjectName+" to confirm") {
-					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
-				}
-				return
-			}
 			p := r.plan(m)
 			host, err := infra.RegistryHost(r.tg.lc)
 			if err != nil {
 				t.Fatal(err)
 			}
-			g, err := m.admitBuild(t.Context(), p, r.tg, "app", host)
-			if err != nil {
-				t.Fatalf("the gate refused a build it should have admitted: %v", err)
+			g := initflow.Managed{}
+			if m != nil {
+				if g, err = m.admitBuild(t.Context(), p, r.tg, "app", host); err != nil {
+					t.Fatalf("the gate refused a build it should have admitted: %v", err)
+				}
 			}
 			banner := cloudBuildBanner(r.tg.spec.Name, "app", r.tg.lc.Build.MachineType, r.tg.spec.BuildServiceAccountEmail, r.tg.spec.RegistryPath)
-			ok, reachable, err := r.e.r.askBuild(banner, g)
-			if err != nil || !ok || !reachable {
-				t.Fatalf("a managed project's own terminal was refused a build (ok=%v reachable=%v): %v\n%s", ok, reachable, err, out)
+			if err := r.e.r.announceBuild(banner, g); err != nil {
+				t.Fatalf("the build's own line refused this session: %v\n%s", err, out)
 			}
-			if got := out.String(); !strings.Contains(got, banner) || !strings.Contains(got, initflow.GateProceeded()) {
-				t.Errorf("what the owner read is not the cost line and the verdict:\n%s", got)
+			got := out.String()
+			if !strings.Contains(got, banner) {
+				t.Errorf("the cost line was not printed:\n%s", got)
 			}
-			if strings.Contains(out.String(), "Type "+initProjectName+" to confirm") {
-				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
+			if strings.Contains(got, "Type "+initProjectName+" to confirm") || strings.Contains(got, "⚠ CONFIRM") {
+				t.Errorf("the removed prompt is still printed:\n%s", got)
+			}
+			if wantVerdict := tc.managed; strings.Contains(got, initflow.GateProceeded()) != wantVerdict {
+				t.Errorf("the verdict's own sentence is printed=%v, want %v:\n%s", !wantVerdict, wantVerdict, got)
 			}
 		})
 	}
@@ -658,7 +576,8 @@ func (r *managedRefresh) terminalRefresh(t *testing.T, want bool) *syncBuf {
 // project, whose marks the gate read and where the owner is asked nothing, and
 // a project whose creation fact this program does not believe (a marker a newer
 // Fugaro wrote), which is where every question this command has always asked
-// stays exactly as it was.
+// stays exactly as it was — the steps that are not billable builds; the builds
+// themselves ask nothing in either world (T4).
 func managedOrUnproven() []struct {
 	what    string
 	marker  []byte
@@ -670,25 +589,24 @@ func managedOrUnproven() []struct {
 		managed bool
 	}{
 		{"managed: the marks are read and the step asks nothing", managedRefreshMarker(1), true},
-		{"unproven: the step is the question it has always been", managedRefreshUnknownVersionMarker(), false},
+		{"unproven: the person at the terminal confirms it, without the gate's sentence", managedRefreshUnknownVersionMarker(), false},
 	}
 }
 
 // The daily image check job (step 3) takes no confirmation in a managed
 // project's own terminal either (the ruling of 2026-11-01: the whole point of a
 // managed project is that the gate manages it on the owner's behalf, without
-// the prompts). What replaces the typed project name is the gate's own read of
-// the marks and the sentence that says so, printed under the diff the typed
-// name would have been asked above; the job is updated.
+// the prompts). What replaces a typed name is the gate's own read of the marks
+// and the sentence that says so, printed under the diff; the job is updated.
 //
 // The control is the whole of what makes that safe, and it is the same step
-// with the same terminal: an unproven project is asked exactly as it always
-// was, and with nothing typed the job is not written.
+// with the same terminal: an unproven project's step goes ahead too (T7: the
+// person at the terminal is the whole answer, nothing is typed), but the gate's
+// sentence is not printed, because the gate judged nothing.
 //
 // The mutation caught: refreshManaged.asksNothing answering true whatever it is
-// handed — the unproven project's job is then updated with no question asked at
-// all and this test fails on its own control (1 patch, no error, no typed
-// name).
+// handed — the unproven project then prints the gate's sentence where no gate
+// judged, and this test fails on its own control.
 func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
 	useVersion(t, "0.5.1")
 	for _, tc := range managedOrUnproven() {
@@ -707,14 +625,14 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
 			r.tg.lc.BaseImages = map[string]string{"base": newRef}
 			err = r.e.r.refreshCheckJob(t.Context(), r.tg)
 			if !tc.managed {
-				if err == nil || len(r.run.Patches()) != 0 {
-					t.Fatalf("an unproven project's check job was updated without the typed name: %v, %d patches\n%s", err, len(r.run.Patches()), out)
-				}
-				if !strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
+				if err != nil {
+					t.Fatalf("a person at the terminal was stopped at the check job: %v\n%s", err, out)
 				}
 				if strings.Contains(out.String(), initflow.GateOrdinary()) {
 					t.Errorf("the gate's sentence was printed for a project it did not judge:\n%s", out)
+				}
+				if n := len(r.run.Patches()); n != 1 {
+					t.Fatalf("%d patches, want 1 (the check job's image and its spec moved together)", n)
 				}
 				return
 			}
@@ -726,8 +644,8 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
 			}
-			if strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
+			if strings.Contains(out.String(), "[y/N]") {
+				t.Errorf("a managed project's own terminal was asked a question anyway:\n%s", out)
 			}
 			if n := len(r.run.Patches()); n != 1 {
 				t.Fatalf("%d patches, want 1 (the check job's image and its spec moved together)", n)
@@ -741,12 +659,13 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
 // Cloud Build: what the owner reads is the old and new image, the sentence
 // that says why nothing is asked, and the line that the job was updated. The
 // control is the same move in the same terminal with a creation fact this
-// program does not believe: the typed name is asked, and a terminal with
-// nothing typed leaves the job at the image it had.
+// program does not believe: the step goes ahead too (T7: the person at the
+// terminal is the whole answer, nothing is typed), but the gate's sentence is
+// not printed, because the gate judged nothing.
 //
 // The mutation caught: refreshManaged.asksNothing answering true whatever it is
-// handed — the control's job is moved with no question asked, which is the
-// write this whole rule exists to keep behind the marks.
+// handed — the control then prints the gate's sentence where no gate judged,
+// and this test fails on its own control.
 func TestImageRefreshManagedOwnerTerminalAsksNoCloneJobQuestion(t *testing.T) {
 	useVersion(t, "0.5.1")
 	for _, tc := range managedOrUnproven() {
@@ -769,11 +688,17 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCloneJobQuestion(t *testing.T) {
 			p := &refreshPlan{workflows: []string{"app"}}
 			err := r.e.r.refreshBuilds(t.Context(), p, r.tg)
 			if !tc.managed {
-				if err == nil || len(r.run.Patches()) != 0 {
-					t.Fatalf("an unproven project's clone job was moved without the typed name: %v, %d patches\n%s", err, len(r.run.Patches()), out)
+				if err != nil {
+					t.Fatalf("a person at the terminal was stopped at the clone job: %v\n%s", err, out)
 				}
-				if !strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
+				if strings.Contains(out.String(), initflow.GateOrdinary()) {
+					t.Errorf("the gate's sentence was printed for a project it did not judge:\n%s", out)
+				}
+				if n := len(r.run.Patches()); n != 1 {
+					t.Fatalf("%d patches, want 1 (the clone job's image moved)", n)
+				}
+				if len(fb.specs) != 0 {
+					t.Fatalf("a Cloud Build was submitted for a checkout: clone workflow: %+v", fb.specs)
 				}
 				return
 			}
@@ -785,8 +710,8 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCloneJobQuestion(t *testing.T) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
 			}
-			if strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
+			if strings.Contains(out.String(), "[y/N]") {
+				t.Errorf("a managed project's own terminal was asked a question anyway:\n%s", out)
 			}
 			if n := len(r.run.Patches()); n != 1 {
 				t.Fatalf("%d patches, want 1 (the clone job's image moved)", n)
@@ -804,13 +729,13 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCloneJobQuestion(t *testing.T) {
 // refresh sets no review, so there is no run confirmation for a plan to be
 // outside of). In a managed project's own terminal it is confirmed by the
 // gate's read and the sentence that says so; in a project the gate did not
-// believe, it is the typed question it has always been, which a terminal with
-// nothing typed leaves unconfirmed.
+// believe it goes ahead too (T7: the person at the terminal is the whole
+// answer, nothing is typed), and the gate's own sentence is not printed,
+// because the gate judged nothing.
 //
 // The mutation caught: refreshManaged.asksNothing answering true whatever it is
-// handed — the control is confirmed with nothing typed, so the caller is told
-// nothing was copied and nothing was pinned and this test fails on its own
-// control.
+// handed — the control then prints the gate's sentence where no gate judged, and
+// this test fails on its own control.
 func TestImageRefreshManagedOwnerTerminalAsksNoBasePinQuestion(t *testing.T) {
 	useVersion(t, "0.5.1")
 	const what = "copies the release base image into this project's registry and pins it by digest in the local config, as listed above"
@@ -820,11 +745,14 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBasePinQuestion(t *testing.T) {
 			out := r.terminalRefresh(t, tc.managed)
 			err := r.e.r.confirmOrdinary(what, "nothing was copied and nothing was pinned", "")
 			if !tc.managed {
-				if err == nil || !strings.Contains(err.Error(), "not confirmed") {
-					t.Fatalf("an unproven project's base pin was confirmed without the typed name: %v\n%s", err, out)
+				if err != nil {
+					t.Fatalf("a person at the terminal was stopped at the base pin: %v\n%s", err, out)
 				}
-				if !strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
+				if strings.Contains(out.String(), initflow.GateOrdinary()) {
+					t.Errorf("the gate's sentence was printed for a project it did not judge:\n%s", out)
+				}
+				if !strings.Contains(out.String(), what) {
+					t.Errorf("what the owner read is not the plan:\n%s", out)
 				}
 				return
 			}
@@ -834,8 +762,8 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBasePinQuestion(t *testing.T) {
 			if got := out.String(); !strings.Contains(got, what) || !strings.Contains(got, initflow.GateOrdinary()) {
 				t.Errorf("what the owner read is not the plan and the sentence that says why nothing is asked:\n%s", got)
 			}
-			if strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
+			if strings.Contains(out.String(), "[y/N]") {
+				t.Errorf("a managed project's own terminal was asked a question anyway:\n%s", out)
 			}
 		})
 	}

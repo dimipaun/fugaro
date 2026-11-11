@@ -142,7 +142,7 @@ func TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate(t *testing.T) {
 		if _, err := launchRun(context.Background(), env, appSlug, raceSpecAt(t, env, runID), time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		return rec.env
+		return withoutServicesStamp(t, rec.env)
 	}
 	markRepoCredentialsServiceReady(t, f.cloudFixture)
 

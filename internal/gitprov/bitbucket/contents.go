@@ -121,9 +121,9 @@ func (p *Provider) Contents(ctx context.Context, path, ref string) ([]byte, erro
 	}
 	switch {
 	case len(data) == 0:
-		return nil, fmt.Errorf("reading %s: the reply is empty", at)
+		return nil, fmt.Errorf("reading %s: the reply is empty: %w", at, gitprov.ErrContentsEmpty)
 	case len(data) > gitprov.MaxContentsBytes:
-		return nil, fmt.Errorf("reading %s: it is more than the %d bytes a definition may be", at, gitprov.MaxContentsBytes)
+		return nil, fmt.Errorf("reading %s: it is more than the %d bytes a definition may be: %w", at, gitprov.MaxContentsBytes, gitprov.ErrContentsTooLarge)
 	}
 	return data, nil
 }
