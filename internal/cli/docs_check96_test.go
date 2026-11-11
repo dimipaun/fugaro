@@ -12,6 +12,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
+// check96Script is Check 96's own script: the register tells the owner to run
+// it, and the block it prints is what the section below explains.
+const check96Script = "scripts/live-checks/check96.sh"
+
 // pipeIntoPythonHeredocRE matches a pipe into `python3` on a line that opens a
 // heredoc further along it: the one shape whose stdin the heredoc wins.
 //
@@ -180,10 +184,11 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		// Secret hygiene: a check that mints credentials has to say where they go.
 		"greps its own text for `ghs_`",
 		"**Never paste a token of any kind",
-		// The job's spec is read from the file the guard wrote, by path: a heredoc takes
-		// stdin, so the `printf … | python3 - <<'PY'` this step first used handed python the
-		// script and an empty stdin, and the step printed none of its facts.
-		"python3 - \"$W/job.json\" <<'PY'",
+		// The check is ONE command now: the register tells the owner to run the
+		// script rather than to paste five guard-block steps by hand, and the
+		// script is named as the artifact the block comes from.
+		"**Run it:** `bash scripts/live-checks/check96.sh`",
+		"scripts/live-checks/check96.sh",
 		// The wiring, which the check has to state per job: the launch sets the
 		// variable on a switched-on repository's per-repository job and on no
 		// other, so the expected answer is true there and false on a shared
@@ -210,8 +215,11 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 			t.Errorf("docs/gcp-live-checklist.md's Check 96 does not say %q: the check is the live statement of D145's change, and this is a clause a reader takes the check's behaviour from", want)
 		}
 	}
-	if !strings.Contains(check, "# 0") {
-		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer reads its own scratch directory back to 0: the Restore's final assertion is that no file the check wrote survives it")
+	if !strings.Contains(check, "no scratch directory and no token in any file") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer reads its own scratch directory back: the Restore's final assertion is that no file the check wrote survives it, and the script's own `restore` row is where that is read now")
+	}
+	if !strings.Contains(check, "one `FACT <key>: <verdict> — <detail>` line per key") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says what the block it asks the owner to paste back is made of: the owner diffs a pasted block against the section's own list of keys")
 	}
 
 	// The register's row 96 carries two of the same claims, and two reviews found
@@ -294,6 +302,155 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	}
 	if body := check96FuncBody(t, mintGo, "func (s *Server) refuseMint(ctx context.Context, w http.ResponseWriter"); !strings.Contains(body, "auditMint") {
 		t.Errorf("internal/credsvc/github.go's `refuseMint` no longer audits the mint it refuses (%q): Check 96 states that a refused mint is recorded like an issued one", strings.TrimSpace(body))
+	}
+
+	// Step 2's front-end row is the one shape where the status and the count fail
+	// to tell two different services apart: a service deployed WITHOUT Cloud Run
+	// IAM lets the call reach the container, where `refuseIdentity` answers the
+	// same `403` `unverified_job_identity` and writes no line either — there is
+	// no verified identity to record — so a row that read the status and the
+	// unmoved line count alone would pass a service anyone can call. The body is
+	// what separates them (the platform's own non-JSON refusal against the
+	// service's typed one), and both halves of the pair are pinned: the section
+	// says the row reads the body, and the script's `step_front_end` does read it.
+	// Mutation (run and restored): the script's front-end step put back to the
+	// status-and-count test alone → FAIL; the section's sentence dropped → FAIL.
+	if !strings.Contains(check, "so this row reads the **body** the call came back with") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the `front-end` row reads the body the unauthenticated call came back with: the status and the unmoved audit-line count are the same for Cloud Run's own refusal and for a service deployed without IAM, whose `refuseIdentity` answers the same `403` and writes no line either, so without the body the row would pass a service anyone can call")
+	}
+	// And the counts it compares have to be counts it read. The row's two audit
+	// reads are compared for equality, and a `gcloud logging read` that exits 0
+	// with a document this check cannot parse leaves both empty — equal to each
+	// other — which is a PASS asserting "the service wrote no line for it" from a
+	// log that was never read. The section says the read that cannot be counted
+	// stops the run instead, and the script's `audit_lines` is held to checking
+	// the reader's status.
+	// Mutation (run and restored): `audit_lines` put back to
+	// `field_of lines "$(reader count <…)"` → FAIL.
+	if !strings.Contains(check, "it compares only two counts it actually read") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the `front-end` row compares two counts it actually read: the equality test over two counts that were never taken is true, so the row would record a PASS about the service's log from a document it could not parse")
+	}
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "audit_lines() {"); !strings.Contains(body, `ans=$(reader count <"$SCRATCH/audit-count.json") || return 1`) || !strings.Contains(body, "[ -n \"$lines\" ] || return 1") {
+		t.Errorf("scripts/live-checks/check96.sh's `audit_lines` no longer checks the count it hands out (%q): the counts this row compares are taken through `field_of`, whose pipeline succeeds on empty input, so an unread log gives two empty counts that compare equal and the row PASSes on a log it never read", strings.TrimSpace(body))
+	}
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "step_front_end() {"); !strings.Contains(body, `reader refusal <"$SCRATCH/noident.json"`) || !strings.Contains(body, "BY THE SERVICE") {
+		t.Errorf("scripts/live-checks/check96.sh's `step_front_end` no longer tells the two `403`s apart by the body (%q): the section states that discrimination as this row's mechanism, and a step that read the status and the line count alone would pass a service deployed without Cloud Run IAM", strings.TrimSpace(body))
+	}
+
+	// A row that reads the service's log has to wait for it. Cloud Logging is
+	// eventually consistent — the line the service wrote a moment ago is often
+	// not readable at once — and the `audit` and `pairing` rows read an empty
+	// document as the one finding they exist to report, *"the service answered
+	// this call and left it unrecorded"*. A row that read once would therefore
+	// report that finding, on every run, against a service that is behaving: a
+	// false live result, and the one the App-key drop (#907) is waiting on. The
+	// section says both rows re-read until the line is there and fails only a
+	// line that never arrives; the script's `wait_for_audit` is that read, with
+	// the bound the section names — so the document's "about 90 seconds" and the
+	// script's `CHECK96_LOG_TRIES` × `CHECK96_LOG_POLL` cannot drift apart — and
+	// all three rows that read a run's lines go through it rather than through
+	// `audit_for`, which reports the empty first read.
+	// Mutation (run and restored): `wait_for_audit`'s loop cut to a single
+	// `audit_for` call → FAIL, on the case whose first read is empty.
+	if !strings.Contains(check, "Both rows therefore re-read the run's lines until the line the call should have written is there") || !strings.Contains(check, "about 90 seconds") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the `audit` and `pairing` rows re-read the service's log until the line is there, within a bound: an empty document is what those rows read as \"the service answered and left it unrecorded\", so a reader who is not told about the wait takes an ordinary ingestion delay for the finding")
+	}
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "wait_for_audit() {"); !strings.Contains(body, `local every=${CHECK96_LOG_POLL:-5} limit=${CHECK96_LOG_TRIES:-18}`) || !strings.Contains(body, `[ "$lines" -ge "$want" ] && break`) {
+		t.Errorf("scripts/live-checks/check96.sh's `wait_for_audit` no longer re-reads until the run's lines are there, with the bound the section names (%q): a read taken once reports the empty document Cloud Logging serves while a just-written line is still being ingested, and the `audit` and `pairing` rows read that as the finding they exist to report", strings.TrimSpace(body))
+	}
+	if script := readRepoFile(t, check96Script); strings.Count(script, `wait_for_audit "`) != 3 {
+		t.Errorf("scripts/live-checks/check96.sh has %d `wait_for_audit` call(s) where the section names three log reads that wait — the `audit` row's, the `pairing` row's and the `outsider` row's second read of the mint's run: a row left reading through `audit_for` reports a service whose line has not been ingested yet as one that left the call unrecorded", strings.Count(script, `wait_for_audit "`))
+	}
+
+	// Which repository the check mints for is the owner's to name. With more than
+	// one repository holding state and none named, the reader used to take the
+	// first one — and what the check does with that repository is mint a REAL
+	// GitHub installation token for it and read its reach at GitHub, so a pick the
+	// owner did not make is a token spent on a repository that may not be the
+	// sandbox at all. It refuses now, and the refusal lists the candidates: the
+	// section says the run stops, and the reader is held to the refusal.
+	// Mutation (run and restored): the first-of-several pick put back →
+	// test_a_derivation_among_several_repositories_is_refused FAILs on
+	// "a call before the refusal".
+	if !strings.Contains(check, "stops (exit `2`) and lists them rather than picking one") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says an unnamed run stops when more than one repository has state: Check 96 mints a real GitHub installation token for whatever repository it is handed, so the section has to say the repository is named rather than picked")
+	}
+	if body := check96PythonFunc(t, readRepoFile(t, check96Script), "def cmd_budget(want):"); !strings.Contains(body, "cannot tell which one is the sandbox") {
+		t.Errorf("scripts/live-checks/check96.sh's `cmd_budget` no longer refuses to derive one repository out of several (%q): the check mints a real installation token for the repository it names and reads that repository at GitHub, so a derivation the owner did not make spends a token on a repository that may not be the sandbox", strings.TrimSpace(body))
+	}
+
+	// And the config's `repos` mapping is read at the indentation fugaro writes
+	// that file with. `localcfg.Config.Marshal` is `yaml.Marshal` (yaml.v3, four
+	// spaces), so a reader that only accepts a two-space entry finds no repository
+	// at all in a config fugaro wrote itself: `credentials_service_ready` is
+	// `unset` for every repository, `step_job_env` reaches its final PASS branch,
+	// and the FAIL for a switched-on repository's job that has lost the service's
+	// address can never fire. The section says where the record is read.
+	// Mutation (run and restored): `len(pad) == 2` put back with the fixture at
+	// four spaces → test_a_job_that_has_no_service_url_while_the_config_records_one_is_a_fail
+	// FAILs with the check PASSing a job that has no URL.
+	if !strings.Contains(check, "at the indentation fugaro writes that file with") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the repository's record is read out of the config at the indentation fugaro writes it with: yaml.v3 writes four spaces, and a `job-env` row that could not find the record would report `unset` where the repository's own answer is the thing being read")
+	}
+	if body := check96PythonFunc(t, readRepoFile(t, check96Script), "def cmd_config(path, repo):"); !strings.Contains(body, "entry_pad is None") || !strings.Contains(body, "if len(pad) <= entry_pad:") {
+		t.Errorf("scripts/live-checks/check96.sh's `cmd_config` no longer takes the `repos` mapping's indentation from the block's first key (%q): localcfg.Config.Marshal is yaml.Marshal at yaml.v3's four-space indent, and a reader that assumed two finds no repository in the installation's own config", strings.TrimSpace(body))
+	}
+
+	// The installation is the sandbox one by NAME, not by its project alone. The
+	// project is what the calls go to, but the Firebase project, the token signer
+	// and the restricted web API key this check mints its run identities with are
+	// read out of whichever installation the config in force describes — so a
+	// second installation on fugaro-dev would be read as this one and minted
+	// against, while the register's row says the check runs on installation
+	// `fugaro` and no other. The section says the guard is by name and why, and
+	// `step_installation` is held to the name it accepts.
+	// Mutation (run and restored): the NAME case neutered (`*) ;;`) →
+	// test_another_installation_on_fugaro_dev_stops FAILs with every row PASS
+	// under a `scratch-install` doctor, which is the review's own probe.
+	if !strings.Contains(check, "the installation is read by **name**, not by its project alone") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the installation is read by name rather than by its project alone: the register's row promises the check runs on installation `fugaro` and no other, and the Firebase project, the signer and the web API key all come out of that one config")
+	}
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "step_installation() {"); !strings.Contains(body, `case "$NAME" in`) || !strings.Contains(body, `"$NAME_WANTED") ;;`) {
+		t.Errorf("scripts/live-checks/check96.sh's `step_installation` no longer refuses an installation that is not `$NAME_WANTED` (%q): a guard on the GCP project alone passes a second installation on fugaro-dev, and everything this check mints is minted with that installation's Firebase project, token signer and web API key", strings.TrimSpace(body))
+	}
+
+	// And `job` falls back to the shared project job for NO job of the
+	// repository's own — never for several. A repository whose fugaro.yaml has
+	// more than one workflow has one job per workflow, and the job a run lands on
+	// is a question the launch itself refuses to answer without `--workflow`
+	// (internal/cli/run.go's resolveWorkflow), so reading one of them (or the
+	// shared project job) would judge `job-env`, `mint` and `pairing` against an
+	// account and an environment that are not the repository's. The section says
+	// which of the two it is, the shell stops on several, and the reader reports
+	// the count it found rather than collapsing a several into a none.
+	// Mutation (run and restored): the several-jobs stop folded back into the
+	// `0` branch → test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none
+	// FAILs with the false `the sandbox repository acme/sandbox has NO job of its own`.
+	if !strings.Contains(check, "A repository with **several** jobs of its own") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says a repository with several jobs of its own is neither read nor fallen back from: one job per workflow, and the row that reports one of them would report an account, an environment and a mint that are not the repository's")
+	}
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "step_job() {"); !strings.Contains(body, `0)`) || !strings.Contains(body, `answer=$(reader projectjob`) || !strings.Contains(body, `stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION`) {
+		t.Errorf("scripts/live-checks/check96.sh's `step_job` no longer tells no job of the repository's own from several (%q): the fallback to the installation's shared project job is for none, and a repository with several jobs has one per workflow, so falling back there reads the wrong account, the wrong environment and the wrong mint", strings.TrimSpace(body))
+	}
+	if body := check96PythonFunc(t, readRepoFile(t, check96Script), "def cmd_jobs():"); !strings.Contains(body, `print("found=%d" % len(found))`) {
+		t.Errorf("scripts/live-checks/check96.sh's `cmd_jobs` no longer reports how many jobs of its own the repository has (%q): without the count the shell cannot tell a repository with none from one with several, and the two are the fallback and the stop", strings.TrimSpace(body))
+	}
+
+	// The URL gate is held in BOTH directions, which is what the section's
+	// expectation below says: the variable is what opens the github provider
+	// keyless, so a repository job that carries it while the config in force
+	// records the repository as NOT switched on — or names no credentials
+	// service at all — is the job and the record having moved apart. A row that
+	// tested only the switched-on direction PASSed that state while its own
+	// sentence said the job "mints in-job exactly as before", which is false of
+	// a job that carries the variable.
+	// Mutation (run and restored): either FAIL folded back into its PASS branch
+	// (`if [ "$url" = NEVERMATCHES ]`, which leaves both sentences in the
+	// function and only makes them unreachable) → this test FAILs on the pin,
+	// and the two cases below FAIL with the row PASSing a job that mints at the
+	// service.
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "step_job_env() {"); !strings.Contains(body, "present ]; then\n    fact job-env FAIL \"the config in force records $REPO's root as NOT") || !strings.Contains(body, "present ]; then\n      fact job-env FAIL \"the config in force records no credentials service") || !strings.Contains(body, "does not carry FUGARO_CREDENTIALS_SERVICE_URL") {
+		t.Errorf("scripts/live-checks/check96.sh's `step_job_env` no longer holds the URL to the config in both directions (%q): the section's expectation is the variable present on a switched-on repository's own job and absent on every other, and a row that only tested the switched-on direction would PASS a job that mints at the service while the config in force records the repository as not switched on", strings.TrimSpace(body))
 	}
 
 	// The wiring, held to the code as well: the keyless provider is opened only
@@ -472,6 +629,45 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 // passing on the prose.
 var credentialsDatabaseRoleRE = regexp.MustCompile(`role_id\s*=\s*"` + regexp.QuoteMeta(tf.CredentialsDatabaseRole) + `"|role\s+= "roles/firebasedatabase`)
 
+// check96ShellFunc returns one shell function's body out of scripts/live-checks/
+// check96.sh: from its signature to the `}` that closes it at column 0.
+//
+// check96FuncBody below splits on a top-level `\nfunc `, which is the Go shape
+// and not this file's: pointed at the script it returned everything below the
+// signature, so a pin meant to hold one step in place was satisfied anywhere in
+// the rest of the file, and a refactor that moved the body read out of
+// `step_front_end` would have kept passing.
+func check96ShellFunc(t *testing.T, script, sig string) string {
+	t.Helper()
+	i := strings.Index(script, sig)
+	if i < 0 {
+		t.Fatalf("%s: %s not found — this test's marker has moved", check96Script, sig)
+	}
+	rest := script[i+len(sig):]
+	j := strings.Index(rest, "\n}\n")
+	if j < 0 {
+		t.Fatalf("%s: %s is not closed by a `}` at column 0 — this test's marker has moved", check96Script, sig)
+	}
+	return rest[:j]
+}
+
+// check96PythonFunc returns one function's body out of the reader embedded in
+// scripts/live-checks/check96.sh: from its `def` line to the next `def ` at
+// column 0. The reader is Python, so check96ShellFunc's `\n}\n` is not in it and
+// check96FuncBody's `\nfunc ` is not either.
+func check96PythonFunc(t *testing.T, script, sig string) string {
+	t.Helper()
+	i := strings.Index(script, sig)
+	if i < 0 {
+		t.Fatalf("%s: %s not found — this test's marker has moved", check96Script, sig)
+	}
+	rest := script[i+len(sig):]
+	if j := strings.Index(rest, "\ndef "); j >= 0 {
+		return rest[:j]
+	}
+	return rest
+}
+
 // check96FuncBody returns one function's body out of a source file the test
 // already read: from the signature to the next top-level `func `, so a call
 // added below it does not leak into what the test reads.
@@ -536,10 +732,67 @@ func check96Section(t *testing.T) string {
 // `printf '%s' "$ANSWER" | python3 - "$CHK96_SANDBOX_REPO" <<'PY'` — the argv
 // form the first regex missed → FAIL, which is the widening this test's regex
 // was extended for.
+// TestCheck96RegisterNamesEveryBlockKey: the register's "Reading the `CHECK 96
+// RESULT` block:" paragraph is what the owner diffs a pasted block against, so
+// it names every key the block prints, and what the block prints is the
+// script's own BLOCK_KEYS rather than a paraphrase of it. The paragraph, and
+// not the whole section, is the check: several of these keys are named again in
+// the prose above (`mint`, `pairing` and `app-key` are the claims themselves),
+// and a key the paragraph leaves out reads as a key the block was not meant to
+// print — `restore`, `survivors` and `xtrace` are the three whose absence would
+// leave a reader taking a run that left a user behind, or one whose shell was
+// tracing, as a complete result.
+//
+// The script is also held to the harness that runs it: a script whose test is
+// not wired into scripts/live_checks_test.go is a script nothing checks, and
+// Check 96's test is the only thing that runs a step of it.
+//
+// Mutations (verified, run and restored): take `secret-scan` out of the
+// paragraph's parenthetical — the key a run that leaked would print, and the
+// one a reader has to be able to place; take `xtrace` out of the key list, and
+// the paragraph no longer names a key BLOCK_KEYS prints; delete the
+// `{"check96.sh", "check96_test.sh"}` line from scripts/live_checks_test.go —
+// red on the wiring.
+func TestCheck96RegisterNamesEveryBlockKey(t *testing.T) {
+	script := readRepoFile(t, check96Script)
+	keys := blockKeys(t, script)
+	// A parse that reads nothing (or reads the comment above the array) would
+	// make this test vacuous.
+	if len(keys) < 10 {
+		t.Fatalf("%s: BLOCK_KEYS parsed as %d keys (%v), which cannot be the block", check96Script, len(keys), keys)
+	}
+	sec := check96Section(t)
+	const heading = "**Reading the `CHECK 96 RESULT` block:**"
+	i := strings.Index(sec, heading)
+	if i < 0 {
+		t.Fatalf("docs/gcp-live-checklist.md: the Check 96 section has no %q paragraph", heading)
+	}
+	para := sec[i:]
+	if j := strings.Index(para, "\n\n"); j >= 0 {
+		para = para[:j]
+	}
+	for _, k := range keys {
+		if !strings.Contains(para, "`"+k+"`") {
+			t.Errorf("docs/gcp-live-checklist.md's Check 96 %q paragraph does not name the block key `%s`, which check96.sh's BLOCK_KEYS prints", heading, k)
+		}
+	}
+	if got := readRepoFile(t, "scripts/live_checks_test.go"); !strings.Contains(got, `{"check96.sh", "check96_test.sh"}`) {
+		t.Errorf("scripts/live_checks_test.go does not run %s's own test: the owner-run check's only automated proof is that suite", check96Script)
+	}
+}
+
 func TestDocsChecklistHasNoPipeIntoPythonHeredoc(t *testing.T) {
 	register := readDoc(t, "docs/gcp-live-checklist.md")
 	if m := pipeIntoPythonHeredocRE.FindString(register); m != "" {
 		t.Errorf("docs/gcp-live-checklist.md pipes a document into a python heredoc (%q): bash gives the heredoc stdin, so the script reads EOF instead of the document and the step prints none of its facts. Pass the document as a file or an argv argument (the form the register's other heredocs use), or use `python3 -c`.", m)
+	}
+	// The same rule over Check 96's shell, which is where its blocks live now:
+	// the defect this test was extended for was in the register's step text and
+	// the step text moved into scripts/live-checks/check96.sh, so a rule that
+	// still read only the register would be watching the document the defect
+	// left rather than the script it landed in.
+	if m := pipeIntoPythonHeredocRE.FindString(readRepoFile(t, check96Script)); m != "" {
+		t.Errorf("%s pipes a document into a python heredoc (%q): bash gives the heredoc stdin, so the program reads EOF instead of the document. Check 96 reads every document through its own reader with the document on the program's stdin (`python3 \"$SCRATCH/reader.py\" <file`), which is the form that works.", check96Script, m)
 	}
 }
 
@@ -596,9 +849,21 @@ var apostropheInWordRE = regexp.MustCompile(`[A-Za-z]'[A-Za-z]`)
 func TestDocsCheck96ShellBlocksRunAndCloseTheirHeredocs(t *testing.T) {
 	section := check96Section(t)
 	blocks := bashBlocks(section)
-	if len(blocks) < 6 {
-		t.Fatalf("Check 96 has %d ```bash blocks; the section is the register's shell and it does not have fewer than six", len(blocks))
+	// The section is prose plus the one command now: the five step blocks and
+	// their guard block were replaced by `**Run it:**`, and the shell that used
+	// to be in the register is the script. What is left in the section is the
+	// command itself, and the rules below run over it as before.
+	if len(blocks) < 1 {
+		t.Fatalf("Check 96 has %d ```bash blocks; the section has to carry at least the one command it tells the owner to run", len(blocks))
 	}
+	// The script's own shell is held to the same three rules: it is the artifact
+	// that runs now, so its heredocs are the ones that decide whether a read
+	// happens at all. The whole file is one block for that purpose.
+	script := readRepoFile(t, check96Script)
+	if !strings.Contains(script, "<<'READER_EOF'") {
+		t.Errorf("%s no longer carries a `<<'READER_EOF'` heredoc: Check 96's shell is held here for the heredoc rules, and a script whose reads moved to another file would pass them vacuously", check96Script)
+	}
+	blocks = append(blocks, strings.Split(strings.TrimRight(script, "\n"), "\n"))
 
 	for i, block := range blocks {
 		// 1. Every heredoc a block opens is closed by a delimiter at column 0, and
