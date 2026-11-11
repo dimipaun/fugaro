@@ -680,32 +680,54 @@ const (
 // path segment, ** crosses segments, and the rest is literal. A pattern this
 // code does not translate is answered as undecided and never as "does not
 // cover", which is what the caller reads it as.
+//
+// One reading of GitHub's own semantics is ambiguous, and it is the one this
+// function refuses to guess at: whether a * that ends a pattern may cross a
+// slash (`refs/heads/*` against `refs/heads/release/1.0`). The pattern is
+// matched twice, once each way, and the two readings must agree before either
+// answer is given — a `refs/heads/*` include over a base with a slash in it is
+// undecided, and undecided covers, because the alternative is a ruleset skipped
+// and the App's place on its bypass list never seen.
 func matchRefPattern(pattern, ref string) refPatternMatch {
 	switch pattern {
 	case ref, "~ALL", "~DEFAULT_BRANCH":
 		return refPatternCovers
 	}
-	re, err := refPatternRegexp(pattern)
+	withinSegment, err := refPatternRegexp(pattern, false)
 	if err != nil {
 		return refPatternUndecided
 	}
-	if re.MatchString(ref) {
-		return refPatternCovers
+	acrossSegments, err := refPatternRegexp(pattern, true)
+	if err != nil {
+		return refPatternUndecided
 	}
-	return refPatternDoesNotCover
+	strict, loose := withinSegment.MatchString(ref), acrossSegments.MatchString(ref)
+	switch {
+	case strict && loose:
+		return refPatternCovers
+	case !strict && !loose:
+		return refPatternDoesNotCover
+	}
+	return refPatternUndecided
 }
 
 // refPatternRegexp translates one of GitHub's ref patterns into the expression
 // that matches the same refs, or answers an error for a pattern this code does
-// not translate.
+// not translate. acrossSlash is the one reading of GitHub's fnmatch this code
+// cannot settle: with it, a single * may cross a path segment, without it, it
+// may not.
 //
 // The error is not a rejection of the pattern: GitHub's own pattern language is
 // wider than this translation (a bracket expression, an escape, a pattern that
 // is not a ref at all), and what this function cannot translate it hands back as
 // undecided rather than as a ref the pattern misses.
-func refPatternRegexp(pattern string) (*regexp.Regexp, error) {
+func refPatternRegexp(pattern string, acrossSlash bool) (*regexp.Regexp, error) {
 	if !strings.HasPrefix(pattern, "refs/") {
 		return nil, errors.New("a ref pattern this code does not translate")
+	}
+	star := "[^/]*"
+	if acrossSlash {
+		star = ".*"
 	}
 	var b strings.Builder
 	b.WriteString("^")
@@ -717,7 +739,7 @@ func refPatternRegexp(pattern string) (*regexp.Regexp, error) {
 				i += 2
 				continue
 			}
-			b.WriteString("[^/]*")
+			b.WriteString(star)
 			i++
 		case '?':
 			b.WriteString("[^/]")

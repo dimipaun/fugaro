@@ -606,6 +606,7 @@ func mergeAppActor(appID string) map[string]any {
 func TestMergeMintRefusesBypassActor(t *testing.T) {
 	refusals := []struct {
 		name   string
+		base   string
 		rules  []map[string]any
 		apps   []map[string]any
 		status int
@@ -631,6 +632,11 @@ func TestMergeMintRefusesBypassActor(t *testing.T) {
 			rules: []map[string]any{mergeRuleset([]string{"refs/**"}, mergeAppActor(testAppID))},
 		},
 		{
+			name:  "a ruleset whose include is a wildcard over a base with a slash in it",
+			base:  "release/1.0",
+			rules: []map[string]any{mergeRuleset([]string{"refs/heads/*"}, mergeAppActor(testAppID))},
+		},
+		{
 			name:  "a ruleset whose exclude is a pattern this code cannot decide",
 			rules: []map[string]any{mergeRulesetExcluding([]string{"refs/heads/*"}, []string{"refs/heads/[abc]"}, mergeAppActor(testAppID))},
 		},
@@ -648,6 +654,9 @@ func TestMergeMintRefusesBypassActor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, gh := mergeMintSvc(t)
 			gh.rulesets, gh.protection = tc.rules, tc.apps
+			if tc.base != "" {
+				gh.base = tc.base
+			}
 			// The status is the rulesets read's when no classic bypass list is set
 			// and the protection read's when one is: the two cells that turn a read
 			// into a failure are about the read that carries the list the App is on.
@@ -678,25 +687,30 @@ func TestMergeMintRefusesBypassActor(t *testing.T) {
 
 	admitted := []struct {
 		name  string
+		base  string
 		rules []map[string]any
 		apps  []map[string]any
 	}{
-		{"a ruleset naming another App", []map[string]any{mergeRuleset([]string{"refs/heads/main"}, mergeAppActor("9999"))}, nil},
-		{"a disabled ruleset naming the App", []map[string]any{func() map[string]any {
+		{"a ruleset naming another App", "", []map[string]any{mergeRuleset([]string{"refs/heads/main"}, mergeAppActor("9999"))}, nil},
+		{"a disabled ruleset naming the App", "", []map[string]any{func() map[string]any {
 			rs := mergeRuleset([]string{"refs/heads/main"}, mergeAppActor(testAppID))
 			rs["enforcement"] = "disabled"
 			return rs
 		}()}, nil},
-		{"a ruleset covering another branch", []map[string]any{mergeRuleset([]string{"refs/heads/release"}, mergeAppActor(testAppID))}, nil},
-		{"a ruleset excluding the base", []map[string]any{mergeRulesetExcluding([]string{"refs/heads/*"}, []string{"refs/heads/main"}, mergeAppActor(testAppID))}, nil},
-		{"a repository with no rulesets", nil, nil},
-		{"a classic branch protection naming another App", nil, []map[string]any{{"id": json.Number("9999")}}},
-		{"a classic branch protection naming no App", nil, []map[string]any{{"id": json.Number("9999"), "slug": "other-app"}}},
+		{"a ruleset covering another branch", "", []map[string]any{mergeRuleset([]string{"refs/heads/release"}, mergeAppActor(testAppID))}, nil},
+		{"a ruleset excluding the base", "", []map[string]any{mergeRulesetExcluding([]string{"refs/heads/*"}, []string{"refs/heads/main"}, mergeAppActor(testAppID))}, nil},
+		{"a ruleset whose include is another branch of a base with a slash in it", "release/1.0", []map[string]any{mergeRuleset([]string{"refs/heads/main"}, mergeAppActor(testAppID))}, nil},
+		{"a repository with no rulesets", "", nil, nil},
+		{"a classic branch protection naming another App", "", nil, []map[string]any{{"id": json.Number("9999")}}},
+		{"a classic branch protection naming no App", "", nil, []map[string]any{{"id": json.Number("9999"), "slug": "other-app"}}},
 	}
 	for _, tc := range admitted {
 		t.Run(tc.name, func(t *testing.T) {
 			s, gh := mergeMintSvc(t)
 			gh.rulesets, gh.protection = tc.rules, tc.apps
+			if tc.base != "" {
+				gh.base = tc.base
+			}
 			resp, body := s.mintMerge(t, 7, mergeHead(1))
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("the merge mint refused a base no bypass list binds the App on: HTTP %d %s", resp.StatusCode, body)
