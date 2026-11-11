@@ -188,6 +188,18 @@ type Config struct {
 	// choose among by name (design docs/design/named-oauth-tokens.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
+	// ClaudeAccountAliases are the names the choice keys may hold instead of an
+	// account's own name, each pointing at one account of claude_accounts (or
+	// at "default" for the unsuffixed account), so moving every key that names
+	// the alias to another account is one edit (docs/account-aliases/spec.md
+	// §1, D2090, D2092, D2093). Only the owner sets them, here, never in
+	// fugaro.yaml, the project layer or the shared config, for claude_accounts'
+	// own reason: an alias is resolved by whoever reads the key, and a key a
+	// launcher could write would be a way around that account's allow_data_to.
+	// The alias never reaches the node, the task or the run record by its own
+	// name — every reader resolves it first — so this block is local config and
+	// nothing else moves with it.
+	ClaudeAccountAliases map[string]string `yaml:"claude_account_aliases,omitempty"`
 	// Credentials are the installation's named credentials (design
 	// docs/model-crafts/spec.md §1): a name a craft's access speaks and the
 	// type of the provider that serves it, whose secret value this file never
@@ -729,11 +741,33 @@ func (c *Config) choiceRefProblem(name string) string {
 	if config.AxisNonAccountValue(name) {
 		return config.NonAccountChoiceMessage(name)
 	}
+	// An alias is the other name these keys may hold (docs/account-aliases,
+	// D2091, D2092): the key keeps the alias as written, and whoever reads it
+	// resolves it through ResolveAccount before asking anything else — the
+	// allow-list included — so the lookup below would refuse a name this file
+	// does define. The alias's own name and target rules are
+	// ValidateAccountAliases', applied where the block is loaded; asking them
+	// again here would be a second copy of them.
+	if _, ok := c.ClaudeAccountAliases[name]; ok {
+		return ""
+	}
 	if _, ok := c.ClaudeAccounts[name]; ok {
 		return ""
 	}
 	return fmt.Sprintf("the account %q is not defined here: this key names an account of this file's claude_accounts block, where the account's own allow_data_to decides which repositories may use its token, or %q for the unsuffixed default account — define it as claude_accounts: {%s: {allow_data_to: [owner/name]}}, or drop the key",
 		pluginwire.Printable(name), config.DefaultClaudeAccount, pluginwire.Printable(name))
+}
+
+// ResolveAccount is name resolved through this file's aliases: the account a
+// reader has to work with, and the alias the name came through ("" when it was
+// no alias at all). It is the one step every reader of a choice key takes —
+// the launch, the publish and the job set — and it is taken BEFORE the result
+// is held to the account's own allow_data_to, so the allow-list is always asked
+// about the account the run will hold and never about the alias (F6). A reader
+// that holds an alias back rather than resolving it, or resolves it after the
+// allow-list, is the shape this method exists to keep out of the tree.
+func (c *Config) ResolveAccount(name string) (account, alias string) {
+	return config.ResolveAccountAlias(c.ClaudeAccountAliases, name)
 }
 
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
@@ -2318,6 +2352,16 @@ func (c *Config) validate() error {
 		if msg := config.ModelIDProblem(c.Crafts.Of(name).Model); msg != "" {
 			bad("crafts.%s.model: %s", name, msg)
 		}
+	}
+	// The aliases the account-choice keys may hold (docs/account-aliases, D2090,
+	// D2092, D2093): their names are held to credentialNameProblem's rule and
+	// share one namespace with the accounts, the credentials and the pools, and
+	// their targets are one account of claude_accounts or "default". It is
+	// checked here, above the keys that name them, because both rules are about
+	// the names those blocks hold and this is the one place all four are in
+	// hand.
+	for _, p := range config.ValidateAccountAliases(c.ClaudeAccountAliases, c.ClaudeAccounts, c.Credentials, c.Pools) {
+		bad("%s: %s", p.Path, p.Message)
 	}
 	// The account-choice keys are checked against the REFERENCE rule and not
 	// the definition's: each one names an account a run may use, and "default"

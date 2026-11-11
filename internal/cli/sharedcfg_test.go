@@ -635,6 +635,41 @@ func TestInitPublishFromACodingAgentSession(t *testing.T) {
 	}
 }
 
+// TestSharedConfigRefusesAliases: an alias is a name the account-choice keys
+// may hold in place of an account's own name, so it is local-only for their
+// reason and one indirection in (docs/account-aliases, D2090) — a published
+// alias would let whoever can write the runs bucket's shared file name an
+// account that file never admitted. The publish writes the resolved account
+// into the policy node instead, and localcfg.Config.Shared nils the block, so
+// the reader refuses the key by name before the file is parsed and again on the
+// decoded value, the way review_floor and the catalog are refused.
+func TestSharedConfigRefusesAliases(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "claude_account_aliases") {
+		t.Fatal("sharedForbidden does not name claude_account_aliases, so a published alias would be read")
+	}
+	block := "claude_account_aliases:\n    reviewer: team-a\n"
+	_, err := ParseShared([]byte(validShared()+block), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying claude_account_aliases: was accepted")
+	}
+	for _, want := range []string{"claude_account_aliases", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The decoded half, which no document reaches (the key is refused before
+	// Parse): a config built another way must not publish a block the converge
+	// never writes. The alias's own target is defined here, so what the parse
+	// complains about, if anything, is the block and not the fixture.
+	c, err := localcfg.Parse([]byte(validShared() + "claude_accounts:\n    team-a:\n        allow_data_to:\n            - belong/edgeweb\n" + block))
+	if err != nil {
+		t.Fatalf("the fixture does not read back: %v", err)
+	}
+	if !sharedNeverPublished(c) {
+		t.Error("a decoded config carrying claude_account_aliases: is called publishable, so a shared file could carry an alias")
+	}
+}
+
 // TestSharedConfigRefusesImageCatalog: the image catalog is the owner's policy
 // and is published through the policy node — which the runner reads and fails
 // closed on — precisely because the shared config is the file any launcher with
