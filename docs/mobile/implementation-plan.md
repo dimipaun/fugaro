@@ -12,6 +12,8 @@
 
 **Status as of 2026-10-30 (telemetry Task P7.1a; appended, like the paragraphs above).** **The first half of Task P7.1 is built**: `mobile/package.json` carries `@react-native-firebase/app`, `@react-native-firebase/analytics` and `@react-native-firebase/crashlytics` (`27.1.0`, exact) plus `expo-build-properties` (the iOS build needs dynamic frameworks, which its own plugin source says), `mobile/app.config.js` registers their config plugins, writes `googleServicesFile` from `GOOGLE_SERVICES_JSON` / `GOOGLE_SERVICE_INFO_PLIST` **only when each is set** and blocks `com.google.android.gms.permission.AD_ID`, `mobile/firebase.json` carries the four Android switches, and `mobile/.gitignore` ignores `google-services.json` and `GoogleService-Info.plist` so neither is committed. **The 2026-10-22 paragraph's "nothing of the phase is built" is the state of that date, kept as written**; **superseded 2026-10-30 by Task P7.1b**, which landed the build-time guard (**D260**) and the ad-ID walk, so **P7.1 is built** — and unbuilt remain **P7.2–P7.5**: the always-on statement, the event allow-list and its scan, `mobile/src/telemetry/`, and the store labels and the privacy paragraph. **(`shared/telemetry-consent/`, listed here as unbuilt in the first version of this paragraph, is not a task at all: the plan's §6 removed it with the consent gate D255's answer dropped — amended 2026-10-31.)** **D259 as amended on 2026-10-29**: this half writes no secure-store item and touches no file under `mobile/src/accounts/`.
 
+**Status as of 2026-11-11 (telemetry Task P7.2; appended, like the paragraphs above).** **P7.2 is built, and it ships the statement without a link.** `mobile/src/telemetry/notice.js` carries the always-on statement — the privacy page's own words, D255's answer — and the `/privacy/` URL, put through `shared/url`'s validator rather than handed to a link opener; `mobile/src/app/root.js` renders both as the shell's **third child**, `SHELL.NOTICE`, on every screen and with **no control** (the app has no settings screen, so the shell is the only surface the statement has), and `mobile/src/app/root.test.js` moved in the same commit. **D124's host list is still the owner's, `DEFAULT_HOST_ALLOW_LIST` ships empty, so the URL is refused with `allow-list-empty` and the app draws it as text** — the plan's §6 state, and the assertion that passes rather than one that fails; the owner's answer has to name `fugaro.dev` before check 120's link half can pass. Unbuilt remain **P7.3** (the event module and the scan), **P7.4** (the store labels and the website's paragraph) and **P7.5** (checks 120–122).
+
 **Spec.** [spec.md](spec.md) (the owner's spec, verbatim); [functional-spec-v0.1.md](functional-spec-v0.1.md) (the owner's functional spec, verbatim), reconciled in [functional-spec-reconciliation.md](functional-spec-reconciliation.md). **Reconciliation.** [reconciliation.md](reconciliation.md) — findings F1–F37, decisions D110–D129, open items. **Index.** [README.md](README.md).
 
 **Related.** [voice.md](../design/voice.md) · [2026-10-16-voice.md](../plans/2026-10-16-voice.md) · [desktop-console.md](../design/desktop-console.md) · [desktop-console-v2.md](../design/desktop-console-v2.md) · [managed-projects.md](../design/managed-projects.md) · [console/docs/json-contract.md](../../console/docs/json-contract.md) · [gcp-live-checklist.md](../gcp-live-checklist.md)
@@ -697,7 +699,14 @@ always-on statement, the event allow-list and its scan,
 `mobile/src/telemetry/`, and the store labels and the privacy paragraph.
 **Amended 2026-10-31:** `shared/telemetry-consent/` was listed here with the rest
 and is dropped — §6 removes it with the consent gate D255's answer dropped, so
-it is nothing a task builds.
+it is nothing a task builds. **Amended 2026-11-11 (Task P7.2):** the
+always-on statement and the privacy link are built — `mobile/src/telemetry/notice.js`
+holds both, the shell renders them as its third child (`SHELL.NOTICE`), and
+**the link is refused today**: D124's host list is the owner's answer and
+`shared/url`'s `DEFAULT_HOST_ALLOW_LIST` ships empty, so the URL is drawn as
+text with `allow-list-empty` until that answer names `fugaro.dev`. Unbuilt
+remain **P7.3** (the event allow-list and the scan), **P7.4** (the store labels
+and the website's paragraph) and **P7.5** (checks 120–122).
 
 **The numbers it takes.** **D253–D260** — the next free decision block, read from the tree
 rather than remembered: **D252** is the highest number written anywhere in `docs/` (the website
