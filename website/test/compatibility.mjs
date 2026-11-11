@@ -55,8 +55,6 @@ const STATUSES = ['supported', 'coming-soon', 'built-not-enabled', 'roadmap', 'n
 /** The two editions, and nothing else (D1522). */
 const EDITIONS = ['core', 'subscription']
 
-/** The groups whose spec table carried an Edition column, so whose rows carry an edition. */
-const EDITION_GROUPS = ['local-environment', 'console', 'mobile', 'forges', 'identity-and-roles']
 
 /** The spec's groups, in the spec's order (the plan's "Interfaces"). */
 const GROUP_IDS = [
@@ -323,11 +321,8 @@ export function problems(doc) {
       if (row.edition !== undefined && !EDITIONS.includes(row.edition)) {
         out.push(`${where} carries the edition ${JSON.stringify(row.edition)}; the two are ${JSON.stringify(EDITIONS)} (D1522)`)
       }
-      if (EDITION_GROUPS.includes(group.id) && row.edition === undefined) {
-        out.push(`${where} carries no edition, and the spec's ${group.id} table has an Edition column`)
-      }
-      if (!EDITION_GROUPS.includes(group.id) && row.edition !== undefined) {
-        out.push(`${where} carries an edition, and the spec's ${group.id} table has no Edition column`)
+      if (row.edition === undefined) {
+        out.push(`${where} carries no edition, and every table on the page has an Edition column`)
       }
       if (typeof row.note !== 'string' || row.note === '') out.push(`${where} carries no note`)
       const needs = row.status === 'supported' || row.status === 'built-not-enabled'
