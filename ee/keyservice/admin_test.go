@@ -72,6 +72,25 @@ func TestAdminRefusesAnyoneButTheOwner(t *testing.T) {
 			if rec := f.adminPost(RouteAdminDecide, decide); rec.Code != http.StatusNotFound {
 				t.Errorf("a decline answered %d, want 404: %s", rec.Code, rec.Body.String())
 			}
+			// And the page's own routes asked the wrong way answer the same:
+			// the patterns carry no method, so nothing reaches the mux's own
+			// 405 and its Allow header, which would say the page is here.
+			for _, probe := range []struct {
+				name string
+				rec  *httptest.ResponseRecorder
+			}{
+				{"the mint route read as a page", f.get(RouteAdminMint, url.Values{})},
+				{"the page written to", f.adminPost(RouteAdmin, mint)},
+				{"the page's path with a trailing slash", f.get(RouteAdmin+"/", url.Values{})},
+				{"a path that is not here at all", f.get("/nowhere", url.Values{})},
+			} {
+				if probe.rec.Code != http.StatusNotFound {
+					t.Errorf("%s answered %d, want 404: %s", probe.name, probe.rec.Code, probe.rec.Body.String())
+				}
+				if allow := probe.rec.Header().Get("Allow"); allow != "" {
+					t.Errorf("%s answered Allow: %s, and that says the page is here", probe.name, allow)
+				}
+			}
 			if got := len(f.recording.keys); got != 0 {
 				t.Errorf("a request from %q minted %d key(s), want none", tc.account, got)
 			}
@@ -93,6 +112,78 @@ func TestAdminRefusesAnyoneButTheOwner(t *testing.T) {
 	}
 	if !strings.Contains(page.Body.String(), f.open()[0].ID) {
 		t.Error("the page does not show the request waiting in the queue")
+	}
+
+	// The owner gets the same 404 for the page's routes asked the wrong way, so
+	// what answers there is the page's surface and not the account: the two
+	// refusals are one answer, and nobody learns which of them they met.
+	for _, probe := range []struct {
+		name string
+		rec  *httptest.ResponseRecorder
+	}{
+		{"the mint route read as a page", f.get(RouteAdminMint, url.Values{})},
+		{"the page written to", f.adminPost(RouteAdmin, mint)},
+		{"the page's path with a trailing slash", f.get(RouteAdmin+"/", url.Values{})},
+	} {
+		if probe.rec.Code != http.StatusNotFound {
+			t.Errorf("the owner's %s answered %d, want 404: %s", probe.name, probe.rec.Code, probe.rec.Body.String())
+		}
+	}
+}
+
+// TestAPlanlessRequestStartsTheRowOnThePagePlan: a request the manual form
+// queued named no plan, so the numbers the page renders for it are the page
+// plan's and not the form's own one. The numbers a row renders are what the
+// owner's next click submits, so a row that started at one rendered "Term days
+// 1" and approving it minted and mailed a one-day key — and nothing takes that
+// back: the approval is idempotent on the request and a decline is refused once
+// a key exists.
+func TestAPlanlessRequestStartsTheRowOnThePagePlan(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		// The page plan's own numbers, and neither is one the page renders
+		// anywhere else: the Order-Form form's are the fixture's 1 and 365.
+		f.cfg.PagePlans = []Plan{{
+			Name: enterprisePlanName, Tier: licence.TierEnterprise,
+			Features: []string{"seats"}, Seats: 40, TermDays: 90,
+		}}
+	})
+	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a multi-seat trial"}}))
+
+	open := f.open()
+	if len(open) != 1 || open[0].Plan != "" {
+		t.Fatalf("the manual form queued %+v, want one request that named no plan", open)
+	}
+
+	page := f.adminGet()
+	if page.Code != http.StatusOK {
+		t.Fatalf("the page answered %d, want 200: %s", page.Code, page.Body.String())
+	}
+	for _, want := range []string{`name="seats" value="40"`, `name="term_days" value="90"`} {
+		if !strings.Contains(page.Body.String(), want) {
+			t.Errorf("the queue row does not render %s: %s", want, page.Body.String())
+		}
+	}
+
+	// The numbers the row rendered are the ones the click submits. The
+	// organisation is the owner's own field — a manual request names none —
+	// and the address is the request's, which the form leaves as the page
+	// rendered it.
+	rec := f.adminPost(RouteAdminMint, f.mintForm(url.Values{
+		"application": {open[0].ID}, "plan": {enterprisePlanName},
+		"seats": {"40"}, "term_days": {"90"}, "organisation": {"acme.example"},
+	}))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("the approval answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	records := f.records()
+	if len(records) != 1 {
+		t.Fatalf("the approval wrote %d record(s), want one", len(records))
+	}
+	if got := records[0].Seats; got != 40 {
+		t.Errorf("the key carries %d seat(s), want the row's 40", got)
+	}
+	if got := records[0].Expires.Sub(records[0].Issued); got != 90*24*time.Hour {
+		t.Errorf("the key runs for %s, want the row's 90 days", got)
 	}
 }
 

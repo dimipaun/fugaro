@@ -326,9 +326,13 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("GET "+RouteVerify, s.verifyLink)
 	mux.HandleFunc("POST "+RouteWebhook, s.webhook)
 	// §6's page: where the queue is read and where the owner's key is minted.
-	mux.HandleFunc("GET "+RouteAdmin, s.adminPage)
-	mux.HandleFunc("POST "+RouteAdminMint, s.adminMint)
-	mux.HandleFunc("POST "+RouteAdminDecide, s.adminDecide)
+	// The patterns carry no method, and the exact one beside the subtree is
+	// what keeps the mux from answering a bare /admin with a redirect to
+	// /admin/ before anything is asked: the account is asked before the route
+	// is chosen, so nothing here tells a stranger the page exists
+	// (adminSurface).
+	mux.HandleFunc(RouteAdmin, s.adminSurface)
+	mux.HandleFunc(RouteAdmin+"/", s.adminSurface)
 	return mux
 }
 

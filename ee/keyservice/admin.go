@@ -155,6 +155,30 @@ func pageMint(source string) bool {
 // property of the deployment rather than of the markup.
 const adminCSP = "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
+// adminSurface is the page's door: the account is asked before the method and
+// the path are, so a stranger gets the answer a path that is not here gets
+// whatever they ask the page for. The routes are registered without a method
+// for that reason: Go's mux answers a method its pattern does not hold with 405
+// and an Allow header, before any handler runs, and that answer says the page
+// is here (§6's first row, Check 173 step 1).
+func (s *Service) adminSurface(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.owner(w, r); !ok {
+		return
+	}
+	switch {
+	// A HEAD comes with the page's GET: a mux pattern of "GET /admin" answered
+	// it too, and asking for the headers of a page is not a stranger's question.
+	case (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.URL.Path == RouteAdmin:
+		s.adminPage(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == RouteAdminMint:
+		s.adminMint(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == RouteAdminDecide:
+		s.adminDecide(w, r)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
 // adminPage renders the queue, the mint forms and the record.
 func (s *Service) adminPage(w http.ResponseWriter, r *http.Request) {
 	account, ok := s.owner(w, r)
@@ -640,7 +664,12 @@ func (s *Service) defaultPlanName() string {
 // numbers the mint form starts on — the plan's own when the request named one
 // this deploy has, so approving a free seat is one click.
 func (s *Service) rowFor(a Application) queueRow {
-	row := queueRow{Application: a, Seats: 1, TermDays: 1}
+	// The numbers start at nothing rather than at the form's own one, so the
+	// fallback below runs for a request that named no plan — the manual form's
+	// — and for one whose plan names no numbers of its own. A row that started
+	// at one rendered "Term days 1" for either, and the owner's next click
+	// mints and mails exactly what the row rendered.
+	row := queueRow{Application: a}
 	if plan, known := s.pagePlan(a.Plan); known {
 		row.Seats, row.TermDays = plan.Seats, plan.TermDays
 	}
