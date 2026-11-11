@@ -358,7 +358,9 @@ func TestImageBuildCloud(t *testing.T) {
 	}
 	slug := mustSlug("bitbucket", "acme/app")
 	image := gcp.ImageName("us-east5-docker.pkg.dev/proj-1234/"+gcp.RegistryRepoID(slug), slug, "app")
-	if !strings.HasPrefix(out, "built "+image+"@sha256:") {
+	// The sentence is the step's own line now (CL6), so it is one line of the
+	// account rather than the whole of stdout.
+	if !strings.Contains(out, "built "+image+"@sha256:") {
 		t.Fatalf("output = %q", out)
 	}
 	subs, _ := fb.Last()["substitutions"].(map[string]any)
@@ -387,6 +389,32 @@ func TestImageBuildCloudNoWait(t *testing.T) {
 	}
 }
 
+// A --no-wait build returns before anything knows how long it runs, so its
+// whole reservation is recorded and that write is the command's last act. When
+// that write fails the run still names the build: nothing waited for it, so it
+// is running and billing from here on, and this command is the only thing that
+// ever knew which build it is (G8 — the failure block carries the context a
+// reader needs, and a settle that failed must not be the reason the only line
+// naming the build is lost with it).
+func TestImageBuildNoWaitSettleFailureNamesTheBuild(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	// The settle's own write, and only it: the lease a take writes carries no
+	// "settled" key, so the build is submitted first and this failure lands
+	// after it — the state the test is about.
+	f.db.DenyKeys("settled")
+
+	out, errOut, err := executeBuild(t, "image", "build", "--no-wait", "--base", "b:1")
+	if err == nil {
+		t.Fatalf("the build's spend could not be recorded and the command exited zero:\n%s%s", out, errOut)
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("submitted %d builds, want the one the failure is about\n%s%s", buildPosts(fb), out, errOut)
+	}
+	if !strings.Contains(out, "submitted Cloud Build build ") {
+		t.Errorf("the failed run never names the build it submitted and is still billing:\n%s", out)
+	}
+}
+
 func TestImageBuildCloudRepoMustBeTheCheckout(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	_, _, err := executeBuild(t, "image", "build", "--base", "b:1", "--repo", "acme/other")
@@ -401,9 +429,16 @@ func TestImageBuildCloudRepoMustBeTheCheckout(t *testing.T) {
 func TestImageBuildCloudFailureIsRemote(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	fb.Outcome = "FAILURE"
-	_, errOut, err := executeBuild(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitRemoteError || !strings.Contains(errOut, "log: ") {
-		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, errOut)
+	out, _, err := executeBuild(t, "image", "build", "--base", "b:1")
+	// The submission's own "log:" line is the run's output now — the log's, and
+	// the terminal's under --verbose — so what a failed build shows is the
+	// reporter's block: the step that failed, the error naming the build, and
+	// the path the run's full output is in, which holds that line (G8, D1352).
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(out, markFailed+" app: ") || !strings.Contains(out, "full output: ") {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	}
+	if log := writesALog(t, "image-build"); !strings.Contains(log, "submitted; log: ") {
+		t.Errorf("the run's full output does not hold the build's own submitted line:\n%s", log)
 	}
 }
 
@@ -463,7 +498,7 @@ func TestImageBuildCountsWhatAWatchedBuildSpent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v (%s)", err, stderr)
 	}
-	if !strings.HasPrefix(out, "built ") {
+	if !strings.Contains(out, " built ") {
 		t.Fatalf("output = %q: this test is about a build that ended, so it has to be one this command watched to SUCCESS", out)
 	}
 	if buildPosts(fb) != 1 || buildGets(fb) == 0 {
@@ -704,5 +739,27 @@ func setBucketURL(t *testing.T, f *cloudFixture, u string) {
 	// it had passed a moment ago.
 	if err := localcfg.SaveNameCheck(os.Getenv, "aurora", localcfg.NameCheck{GCPProject: "proj-1234", RunsBucket: u, CheckedAt: time.Now()}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestImageBuildWritesALog: `fugaro image build` keeps a log (D1352), one step
+// for the image it built, and what was the run's own progress line — the Cloud
+// Build submission, which names the build's log — is in that log rather than on
+// the screen.
+func TestImageBuildWritesALog(t *testing.T) {
+	cloudBuildCheckout(t, false)
+	out, _, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	reported(t, out, "app")
+	log := writesALog(t, "image-build")
+	for _, want := range []string{"submitted; log:", "built "} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the log holds no %q line:\n%s", want, log)
+		}
+	}
+	if strings.Contains(out, "submitted; log:") {
+		t.Errorf("the default view still prints the run's own progress line:\n%s", out)
 	}
 }

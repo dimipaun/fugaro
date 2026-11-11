@@ -43,6 +43,25 @@ doing, owns project-level state, detects conflicts early and suggests sequencing
 never authoritative. The spec is the owner's own text; the reconciliation is what the
 repository actually has against it.
 
+**Added 2026-11-11: the roadmap record, parts P9a–P9g, written and not started.** At the owner's
+request the plan gained the parts that make the coordinator's record carry plans, releases and
+cross-plan edges — what the console dependency graph's GV3.1, GV3.2 and GV4.1 wait on: **P9a** the
+record's shape and reader (plans, releases, assignments, edges), **P9b** its compare-and-set writers
+behind a store fenced to the roadmap subtree, **P9c** `fugaro coordinator roadmap publish` (a plan
+pushed from any checkout, its repository kept as provenance only), **P9d** the front door's
+`roadmap:write` scope and tools, dormant, **P9e** those tools served and the front door's database
+role, **P9f** the CLI's front-door login and the `roadmap` commands, **P9g** `SECURITY.md` and the
+website on what that role reaches. The owner answered **D2110–D2123** the same day — every write
+through the front door's `roadmap:write` scope (D2110, not the recommendation), the push model with
+no repository read (D2111, changed the same day), releases stored in the record (D2113, not the
+recommendation), **a database-wide write role on the front door's account (D2118, not the
+recommendation: it reverses the MCP plan's D922/H3 for the roadmap path, and the plan says what that
+reaches)**, the front door's wiring written by the MCP plan as its **M12** (D2119), the rest as
+recommended. **D2124–D2126** are open in the plan: whether to keep D2118's database-wide role or take
+the path-scoped claim grant, where the 30-day prune runs, and whether M12 carries the paired-device
+delivery. **D2110–D2129** is the block reserved for them; D2127–D2129 are unused. With them the plan
+has 16 parts.
+
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | **The owner's spec, verbatim** — *"Fugaro Coordinator Agent — Design Spec"*, sections 1–11, exactly as received. Committed alone, in its own commit, before anything else in this directory. |

@@ -37,10 +37,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -490,12 +491,16 @@ func ValidateURL(raw string, loopbackOK bool) error {
 
 // RootKeys lists the keys at the database root without downloading its data
 // (a shallow read). An empty database has none.
+//
+// A root that holds a value rather than an object is a decode error and never
+// an empty database: a database root is an object, so a scalar one is some
+// other program's, and a caller that reads it as "no keys" goes on to write
+// into it. infra.DB.Check refuses to adopt a database on exactly this error.
 func (c *Client) RootKeys(ctx context.Context) ([]string, error) {
-	res, err := c.do(ctx, http.MethodGet, "", url.Values{"shallow": {"true"}}, nil, nil)
+	body, err := c.shallow(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	body := bytes.TrimSpace(res.body)
 	if len(body) == 0 || string(body) == "null" {
 		return nil, nil
 	}
@@ -503,12 +508,56 @@ func (c *Client) RootKeys(ctx context.Context) ([]string, error) {
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, fmt.Errorf("rtdb: GET /: decoding the root's keys: %w", err)
 	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+	return slices.Sorted(maps.Keys(m)), nil
+}
+
+// Keys lists the keys at path without downloading their values (a shallow
+// read): the child names of one node, sorted. A node that is absent, or one
+// below the root that holds a value rather than an object, has no keys.
+//
+// It is how a caller enumerates a subtree it means to read node by node — the
+// orchestrator subtree, whose every state and audit document is far larger than
+// the names of them — without paying for the values. Below the root a value
+// beside the objects is a shape the tree really has, so a caller asking for one
+// subtree's children is never refused over a value it did not mean to read.
+// The root is not that shape and not this function's to read leniently: asking
+// for it is RootKeys, which refuses a scalar root rather than call it empty.
+func (c *Client) Keys(ctx context.Context, path string) ([]string, error) {
+	if err := validPath(path); err != nil {
+		return nil, err
 	}
-	sort.Strings(keys)
-	return keys, nil
+	if path == "" {
+		return c.RootKeys(ctx)
+	}
+	body, err := c.shallow(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) == 0 || string(body) == "null" {
+		return nil, nil
+	}
+	// A shallow read of a node that holds a value rather than an object answers
+	// with that value, and a scalar has no children: the caller asked for keys,
+	// so it gets none rather than a decode failure that names a subtree it never
+	// meant to read.
+	if body[0] != '{' {
+		return nil, nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, fmt.Errorf("rtdb: GET /%s: decoding the node's keys: %w", path, err)
+	}
+	return slices.Sorted(maps.Keys(m)), nil
+}
+
+// shallow is the read RootKeys and Keys share: one node's child names, with no
+// values, as the server wrote them.
+func (c *Client) shallow(ctx context.Context, path string) ([]byte, error) {
+	res, err := c.do(ctx, http.MethodGet, path, url.Values{"shallow": {"true"}}, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.TrimSpace(res.body), nil
 }
 
 // settingsRules is where a database's security rules live.
