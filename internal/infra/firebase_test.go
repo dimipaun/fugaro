@@ -1020,6 +1020,29 @@ func TestDBRefusals(t *testing.T) {
 	}
 }
 
+// TestDBRefusesADatabaseWhoseRootIsNotAnObject: a root that holds a value is
+// not an empty database, and setup may not adopt one and write over it. Check
+// asks the root's keys first, and the client refuses a root it cannot decode as
+// one node's keys — a database root is an object, so a scalar one is another
+// program's — so the refusal happens before anything is written, not after the
+// first node goes in.
+func TestDBRefusesADatabaseWhoseRootIsNotAnObject(t *testing.T) {
+	d, f := newDB(t, "")
+	f.Set("", "a database this installation did not write")
+
+	if _, err := d.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "decoding the root's keys") {
+		t.Fatalf("Check = %v, and a root holding a value is not a database with no keys", err)
+	}
+	before, _ := json.Marshal(f.Value(""))
+	if _, _, err := d.Plan(context.Background()); err == nil {
+		t.Fatal("the plan went ahead over a database whose root is not an object")
+	}
+	after, _ := json.Marshal(f.Value(""))
+	if string(before) != string(after) || f.RulePuts() != 0 {
+		t.Error("a refusal wrote")
+	}
+}
+
 // Apply stops at a node that changed since the plan, and leaves the rest.
 func TestDBApplyStopsOnAChangedNode(t *testing.T) {
 	d, f := newDB(t, "")

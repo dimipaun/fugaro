@@ -1,9 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/orchestrator-output.schema.json",
-  "title": "fugaro orchestrator --json documents (state, events, patch)",
-  "description": "The three documents `fugaro orchestrator state`, `events` and `patch` print with --json (the stateless-orchestrator plan's O5, D1223). They are the CLI's own contract with whatever reads them — the console, a session, a script — and they are additives-only under version 1: a field never changes meaning, a new one is added, and a renamed one is a new version. The state document carries the generated summary rather than the raw state, because the summary is what the state model itself calls the state as a person or a session reads it and it is capped (internal/orchestrator.Summarize), so a consumer that reads it pays a bounded cost whatever the node grew to; `rev` is the revision the node was at, which is the `base_rev` a patch built from that read carries. The events document is the audit log in the order the server stamped it, oldest first, and it is what `internal/orchestrator.Entry` marshals: the id and the stamp are the log's own, derived on append and never by the caller. The patch document reports the write that landed — which class of actor made it among them. That class is `session` or `person` and never `daemon` or `decision-agent`: no flag, environment variable or field of the document makes the CLI act as either (G1), so this enum is the fence written down. The two timestamp fields the commands format themselves are second-precision UTC RFC 3339; the audit's own stamps are too, because internal/orchestrator.audit's Append truncates them (stamp). The brief and the event texts carry stored text, already cleaned and, for the brief, fenced by the summary that generated it (G3).",
+  "title": "fugaro orchestrator --json documents (ls, state, events, patch)",
+  "description": "The four documents `fugaro orchestrator ls`, `state`, `events` and `patch` print with --json (the stateless-orchestrator plan's O5 and the cli-output-console-graph plan's CG4, D1223, D1358). They are the CLI's own contract with whatever reads them — the console, a session, a script — and they are additives-only under version 1: a field never changes meaning, a new one is added, and a renamed one is a new version. The state document carries the generated summary rather than the raw state, because the summary is what the state model itself calls the state as a person or a session reads it and it is capped (internal/orchestrator.Summarize), so a consumer that reads it pays a bounded cost whatever the node grew to; `rev` is the revision the node was at, which is the `base_rev` a patch built from that read carries. The listing document is the orchestrators an installation has, and it is the one that reads two things rather than one: the database's subtree and this machine's cached briefs. The events document is the audit log in the order the server stamped it, oldest first, and it is what `internal/orchestrator.Entry` marshals: the id and the stamp are the log's own, derived on append and never by the caller. The patch document reports the write that landed — which class of actor made it among them. That class is `session` or `person` and never `daemon` or `decision-agent`: no flag, environment variable or field of the document makes the CLI act as either (G1), so this enum is the fence written down. Every timestamp field the commands format themselves is second-precision UTC RFC 3339 — state's and patch's, and the listing's `updated_at` and `cached_at`; the audit's own stamps are too, because internal/orchestrator.audit's Append truncates them (stamp). The brief and the event texts carry stored text, already cleaned and, for the brief, fenced by the summary that generated it (G3).",
   "oneOf": [
+    { "$ref": "#/$defs/ls" },
     { "$ref": "#/$defs/state" },
     { "$ref": "#/$defs/events" },
     { "$ref": "#/$defs/patch" }
@@ -22,6 +23,51 @@
       "type": "string",
       "description": "A second-precision UTC RFC 3339 instant. It is the database server's clock wherever it is a stamp of the state (D1230): a laptop's own clock is not what the order of the audit log, or the date of an approval, may depend on.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "ls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "orchestrators"],
+      "description": "The orchestrators an installation has (D1358, D1361): every id whose node exists under `orchestrator/` in the project's database, and every cached brief this machine holds. It is written on every run, empty list included, so a consumer reads it without a nil check, and the two reads behind it are what the daemon itself writes — there is no registry of processes and no port.",
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "kind": { "const": "ls" },
+        "orchestrators": {
+          "type": "array",
+          "description": "The orchestrators, by id. An id is one orchestrator however many places name it: one the database holds and this machine caches is a single entry, and its kind is `local`.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "project"],
+            "properties": {
+              "kind": {
+                "description": "Where the orchestrator is kept. `local` is one this machine runs: the daemon here wrote its cached brief. `central` is one only the project's database holds.",
+                "enum": ["local", "central"]
+              },
+              "project": {
+                "description": "The orchestrator id, which is the selected project's name (D1358 puts one orchestrator per project). The pattern is internal/orchestrator's agentRE, the rule every path under orchestrator/<id> is built and checked by.",
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+              },
+              "lease_holder": {
+                "description": "The holder the id's lease node names, which is the daemon driving it. Absent when the node carries no claim, and always absent for an orchestrator this machine caches and the database does not hold.",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+              },
+              "updated_at": {
+                "allOf": [{ "$ref": "#/$defs/stamp" }],
+                "description": "The server time of that holder's last beat, read from the lease node. Absent when there is no claim."
+              },
+              "cached_at": {
+                "allOf": [{ "$ref": "#/$defs/stamp" }],
+                "description": "When this machine's daemon wrote the orchestrator's cached brief — the same freshness stamp `state --brief --offline` prints. Absent for an orchestrator this machine does not run."
+              },
+              "cache_stale": {
+                "type": "boolean",
+                "description": "Whether the id this cached brief belongs to is still being driven, which is what says the brief is being rewritten: true when nothing is beating the id — no lease node at all, or a last beat older than the lease's TTL (internal/orchestrator.LeaseClaim.Fresh) — measured against the database's own clock. It is the lease's answer and not the brief's own age: a daemon beats on the lease's cadence whatever its cycles do, and a cycle that failed writes no cache. Written only when it is true, and never without cached_at."
+              }
+            }
+          }
+        }
+      }
     },
     "state": {
       "type": "object",

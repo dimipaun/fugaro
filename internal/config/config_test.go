@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,9 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
 const minimalYAML = `
@@ -634,6 +638,168 @@ func TestAgentModelsValidation(t *testing.T) {
 	_, ps := Parse([]byte(strings.Replace(minimalYAML, "workflows:", "agent:\n  max_output_tokens: { coder: 128000, reviewer: 0 }\n  max_run_tokens: 0\nworkflows:", 1)))
 	if len(ps) != 0 {
 		t.Fatalf("limits at the bounds: %v", ps)
+	}
+}
+
+// visionRoleIDs are the three role models minimalYAML's agent block leaves
+// unset, written out so a vision-slot fixture is a pinnable run: every row is
+// in the embedded table, so the only pin a test about the fourth slot can be
+// red about is the fourth slot's own.
+const visionRoleIDs = "coder: claude-opus-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5"
+
+// visionAgent parses minimalYAML with the four model slots written.
+func visionAgent(t *testing.T, models string) (*Config, []Problem) {
+	t.Helper()
+	return Parse([]byte(strings.Replace(minimalYAML, "workflows:", "agent:\n  models: {"+models+"}\nworkflows:", 1)))
+}
+
+// TestVisionSlotIsCheckedLikeTheOthers (V1, D2003, D2007): agent.models.vision
+// is the fourth model slot, and every rule the other three are held to reaches
+// it — the loader resolves the key, CheckPins prices it, CheckAllowed judges it
+// against the allow-list, and a value that is not a model ID is refused at the
+// key the owner wrote. It is what a run whose coder cannot read an image points
+// at, so a run that never writes it is the run it was.
+func TestVisionSlotIsCheckedLikeTheOthers(t *testing.T) {
+	const vision = "deepseek/deepseek-v4.1-flash"
+	cfg, ps := visionAgent(t, visionRoleIDs+", vision: "+vision)
+	if len(ps) != 0 {
+		t.Fatalf("a repository that writes agent.models.vision is refused: %v", ps)
+	}
+	pins := cfg.Agent.PinnedModels()
+	if len(pins) != 4 || pins[3] != vision {
+		t.Fatalf("PinnedModels() = %q, want the vision model as the fourth pin", pins)
+	}
+
+	// Priced: the slot is a pin like the other three, so a model no price row
+	// covers is refused at the key the owner edits.
+	if got := paths(CheckPins(cfg.Agent, pricing.Embedded())); got != "agent.models.vision" {
+		t.Errorf("an unpriced vision model: problems at %q, want agent.models.vision", got)
+	}
+	one := 1.0
+	priced, err := pricing.Embedded().With(pricing.Overrides{vision: {InputPerM: one, OutputPerM: one}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ps := CheckPins(cfg.Agent, priced); len(ps) != 0 {
+		t.Errorf("a priced vision model is refused: %v", ps)
+	}
+
+	// Allowed: a run with an allow-list has to name its vision model on it.
+	list := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	if got := paths(CheckAllowed(cfg.Agent, policy.Merge(policy.Layer{AllowedModels: list}), list, nil, nil)); got != "agent.models.vision" {
+		t.Errorf("a vision model outside the allow-list: problems at %q, want agent.models.vision", got)
+	}
+	all := append(slices.Clone(list), vision)
+	if ps := CheckAllowed(cfg.Agent, policy.Merge(policy.Layer{AllowedModels: all}), all, nil, nil); len(ps) != 0 {
+		t.Errorf("a vision model on the allow-list is refused: %v", ps)
+	}
+
+	// An ID: the slot is held to the model-ID shape wherever it is written.
+	_, ps = visionAgent(t, visionRoleIDs+`, vision: "has space"`)
+	if got := paths(ps); got != "agent.models.vision" {
+		t.Errorf("a vision value that is not a model ID: problems at %q, want agent.models.vision", got)
+	}
+}
+
+// TestVisionSlotIsNotAModelForAnyExistingRole (V1, D2003): a run that writes no
+// vision model is the run it was. The slot resolves to the empty string, it is
+// no role's model, and the JSON every configuration hash is taken over carries
+// no vision member at all — so the sums already written down (a run record's
+// config_sha256, a policy node's) stay the sums they were, and a key most files
+// never set cannot invalidate a record.
+func TestVisionSlotIsNotAModelForAnyExistingRole(t *testing.T) {
+	cfg, ps := visionAgent(t, visionRoleIDs)
+	if len(ps) != 0 {
+		t.Fatalf("a repository that writes no vision model is refused: %v", ps)
+	}
+	if got := cfg.Agent.VisionModel(); got != "" {
+		t.Errorf("VisionModel() = %q for a run that writes none, want the empty slot", got)
+	}
+	for _, role := range []Role{RoleCoder, RoleReviewer} {
+		if got := cfg.Agent.ModelFor(role); got == "" || got == cfg.Agent.VisionModel() {
+			t.Errorf("ModelFor(%s) = %q: the vision slot is not a role's model", role, got)
+		}
+	}
+	if pins := cfg.Agent.PinnedModels(); len(pins) != 4 || pins[3] != "" {
+		t.Fatalf("PinnedModels() = %q, want the empty slot as the fourth entry", pins)
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("vision")) {
+		t.Error("the JSON a configuration hashes carries a vision member for a run that writes none, so every hash written down before this key existed would move")
+	}
+	// Writing the empty slot is writing nothing: the same pins and the same sum.
+	blank, ps := visionAgent(t, visionRoleIDs+`, vision: ""`)
+	if len(ps) != 0 {
+		t.Fatalf("a repository that writes an empty vision slot is refused: %v", ps)
+	}
+	if blank.Agent.VisionModel() != "" || !slices.Equal(blank.Agent.PinnedModels(), cfg.Agent.PinnedModels()) {
+		t.Errorf("an empty vision slot pins %q, want %q", blank.Agent.PinnedModels(), cfg.Agent.PinnedModels())
+	}
+	if blank.SHA256() != cfg.SHA256() {
+		t.Errorf("an empty vision slot hashes %s, and writing nothing hashes %s", blank.SHA256(), cfg.SHA256())
+	}
+}
+
+// TestVisionSlotIsJudgedOnlyWhenSet (V1, D2007): the vision slot is the one pin
+// a run may do without, so an empty one is not a problem anywhere — where the
+// coder's and the reviewer's empty pins are "is required with a budget" and the
+// background's is its own sentence. Every check that judges a pin therefore
+// leaves the empty slot alone and reaches it as soon as it holds a model.
+func TestVisionSlotIsJudgedOnlyWhenSet(t *testing.T) {
+	cfg, ps := visionAgent(t, visionRoleIDs)
+	if len(ps) != 0 {
+		t.Fatalf("the fixture is refused: %v", ps)
+	}
+	a := cfg.Agent
+	providers := map[string]ModelProvider{"openrouter": okProvider()}
+	if ps := CheckPins(a, pricing.Embedded()); len(ps) != 0 {
+		t.Errorf("CheckPins judges a run that writes no vision model: %v", ps)
+	}
+	list := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: list}), list, nil, nil); len(ps) != 0 {
+		t.Errorf("CheckAllowed judges a run that writes no vision model: %v", ps)
+	}
+	if ps := CheckProviderAuth(a, providers); len(ps) != 0 {
+		t.Errorf("CheckProviderAuth judges a run that writes no vision model: %v", ps)
+	}
+	if ps := CheckProviderGateway(a, "", providers, "observe"); len(ps) != 0 {
+		t.Errorf("CheckProviderGateway judges a run that writes no vision model: %v", ps)
+	}
+	if ps := CheckProviderPolicy(a, nil, "edgeappinc/edgeweb", providers, pricing.Embedded()); len(ps) != 0 {
+		t.Errorf("CheckProviderPolicy judges a run that writes no vision model: %v", ps)
+	}
+
+	// Set, the same checks reach it: the slot is skipped for being empty and
+	// not for being the vision slot.
+	a.Models.Vision = "deepseek/deepseek-v4.1-flash"
+	if got := paths(CheckPins(a, pricing.Embedded())); got != "agent.models.vision" {
+		t.Errorf("a written vision model unpriced: CheckPins reported %q, want agent.models.vision", got)
+	}
+	if got := problemsText(CheckProviderAuth(a, providers)); !strings.Contains(got, "agent.models.vision") {
+		t.Errorf("a written vision model served by a provider under vertex: CheckProviderAuth reported %q", got)
+	}
+	// The other two provider checks reach it as well, each with the rule it
+	// owns: the allow_data_to rule, which keeps a repository's code from going
+	// to a provider that does not list it, and the gateway rule, which a
+	// provider's calls need on enforce because they are real dollars.
+	prices := providerPrices(t)
+	got := problemsText(CheckProviderPolicy(a, nil, "edgeappinc/edgeweb", providers, prices))
+	if !strings.Contains(got, "agent.models.vision") || !strings.Contains(got, "allow_data_to") {
+		t.Errorf("a written vision model served by a provider whose allow_data_to leaves the repository out: CheckProviderPolicy reported %q", got)
+	}
+	if got := problemsText(CheckProviderGateway(a, "", providers, "observe")); !strings.Contains(got, "agent.models.vision") || !strings.Contains(got, "enforce") {
+		t.Errorf("a written vision model under observe: CheckProviderGateway reported %q", got)
+	}
+	// And neither refuses it once its own condition holds: the repository is on
+	// the provider's list, and the mode enforces.
+	if got := problemsText(CheckProviderPolicy(a, nil, "dimipaun/fugaro", providers, prices)); got != "" {
+		t.Errorf("a vision model the repository is listed for is refused: %s", got)
+	}
+	if got := problemsText(CheckProviderGateway(a, "", providers, "enforce")); got != "" {
+		t.Errorf("a vision model under enforce is refused: %s", got)
 	}
 }
 

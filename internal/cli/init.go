@@ -1406,6 +1406,15 @@ func (r *initRun) progress() io.Writer {
 	return r.cmd.ErrOrStderr()
 }
 
+// stageDetail is where a refresh stage's own lines go: the lines reporting what
+// the stage did — the base it pinned, the check job it moved — are the run's
+// own output, so with a reporter they take the reporter's stream (the log
+// always, the terminal under --verbose: D1352, D1354) and without one the
+// run's writer, where they have always gone. A refresh a caller drives prints
+// through the caller's run, and a run whose log could not be opened prints
+// what it always printed rather than swallowing it (streamOut, G5).
+func (r *initRun) stageDetail() io.Writer { return streamOut(r.rep, r.repLog, r.w) }
+
 // planBlock prints a plan for the person who has to confirm it, and keeps the
 // whole of it for the run's own record: the counts and the changes they must
 // look at first, in Fugaro's words, on the terminal (tf.Brief), and Terraform's
@@ -5071,7 +5080,12 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 	case err != nil:
 		return "", false, remote(err)
 	}
-	fmt.Fprintf(r.w, "Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+	// The build's own two lines are the run's output and not the screen's
+	// account of a step (D1352, D1354): with a reporter they are the stream, so
+	// the default view stays one line per step and the log holds what the build
+	// reported, and a run with no log prints them where it always has.
+	w := r.stageDetail()
+	fmt.Fprintf(w, "Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 	done, err := b.Wait(ctx, res.ID, 0)
 	if err != nil {
 		// The build was submitted and goes on without us: its ID comes back
@@ -5081,7 +5095,7 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 		// running.
 		return res.ID, gcp.TerminalStatus(done.Status), remote(err)
 	}
-	fmt.Fprintf(r.w, "built %s/%s (Cloud Build build %s)\n", spec.Name, name, oneLine(done.ID))
+	fmt.Fprintf(w, "built %s/%s (Cloud Build build %s)\n", spec.Name, name, oneLine(done.ID))
 	r.res.Builds = append(r.res.Builds, done.ID)
 	return done.ID, true, nil
 }

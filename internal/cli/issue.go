@@ -21,18 +21,14 @@ import (
 // bucket. `mine` is the one that reaches the cloud (T-IM6): it reads the
 // project's own store and, on the way, uploads this machine's pending records
 // — which is why the parent's help says so rather than promising that nothing
-// here is uploaded. Filing an issue on GitHub is a later slice, which is why
-// `dismiss` refuses in a coding agent's session even though it writes no cloud
-// record (D1730): the dismissal it makes is what a steered agent would use to
-// bury a real bug.
-//
-// The help names no command that saves an issue, because none is in this tree
-// yet: the diagnosis that writes one is another plan's, and a reference that
-// told a reader to run it would name a command they cannot type.
+// here is uploaded. `submit` builds the post from the record and files it with
+// the person's own `gh`. `dismiss` refuses in a coding agent's session even
+// though it writes no cloud record (D1730): the dismissal it makes is what a
+// steered agent would use to bury a real bug.
 func newIssueCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "issue",
-		Short: "Read the issues saved on this machine, and the ones you reported",
+		Short: "Read the issues saved on this machine, the ones you reported, and file one on GitHub",
 		Long: "Read the issues saved on this machine.\n\n" +
 			"An issue is one Markdown file under the user's state directory, holding\n" +
 			"the whole issue: a strict header and the diagnosis' own words. `list`\n" +
@@ -40,14 +36,18 @@ func newIssueCmd() *cobra.Command {
 			"nothing is filed for it, and `mine` reads the project's own store for\n" +
 			"the issues this user reported. An issue is named by its local ID\n" +
 			"(`local-<run stem>`) until it has been uploaded, and by its number\n" +
-			"(`#0007`) from then on; `show` and `dismiss` take either.\n\n" +
+			"(`#0007`) from then on; `show`, `dismiss` and `submit` take either.\n\n" +
+			"`submit` shows exactly what would be filed on GitHub — the post and the\n" +
+			"sha256 of its bytes — and files nothing until `--ask` is answered with a\n" +
+			"yes at your own terminal; without `gh`, it prints how to install it and\n" +
+			"a new-issue link holding the same post instead.\n\n" +
 			"Nothing `list`, `show` or `dismiss` does leaves this machine. `mine` —\n" +
 			"and `list --mine`, which is the same read — is the one that does: it\n" +
 			"uploads this machine's own pending records to the project's store on the\n" +
 			"way to listing them. Either way the text of a record is printed as data:\n" +
 			"it comes from log text this machine did not write.",
 	}
-	cmd.AddCommand(newIssueListCmd(), newIssueShowCmd(), newIssueDismissCmd(), newIssueMineCmd())
+	cmd.AddCommand(newIssueListCmd(), newIssueShowCmd(), newIssueDismissCmd(), newIssueMineCmd(), newIssueSubmitCmd())
 	return cmd
 }
 

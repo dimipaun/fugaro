@@ -5283,6 +5283,70 @@ func TestSettingsSchemaCoversPlanningKey(t *testing.T) {
 	}
 }
 
+// TestSchemasDecodeTheVisionKey (V1, D2003): the fourth model slot is one key
+// in three schemas — a repository's agent.models, the project layer's
+// defaults.agent.models, and the DEFAULT column $defs.keyDefaults is. A
+// repository's CI and a consumer of the settings read check against the
+// documents, so a key the Go types carry and a document does not is a
+// configuration the CLI accepts and a checker refuses; the value is held to the
+// other three slots' shape in each of them, and to nothing more.
+func TestSchemasDecodeTheVisionKey(t *testing.T) {
+	const vision = "deepseek/deepseek-v4.1-flash"
+	const repoHead = "version: 1\nproject: acme\ngit: { provider: github }\nworkflows:\n  default:\n    commands: { build: make, test: make test }\n"
+	const layerHead = "version: 1\nproject: acme\ngcp_project: acme-1a2b3c\n"
+	for _, tc := range []struct {
+		file string
+		sch  *jsonschema.Schema
+		head string
+		ok   string
+		bad  []string
+	}{
+		{
+			file: "fugaro.schema.json", sch: compile(t, "fugaro.schema.json"), head: repoHead,
+			ok: "agent:\n  models: { vision: " + vision + " }\n",
+			bad: []string{
+				"agent:\n  models: { vision: \"two words\" }\n",
+				"agent:\n  models: { visions: " + vision + " }\n",
+			},
+		},
+		{
+			file: "project-layer.schema.json", sch: compile(t, "project-layer.schema.json"), head: layerHead,
+			ok: "defaults:\n  agent:\n    models: { vision: " + vision + " }\n",
+			bad: []string{
+				"defaults:\n  agent:\n    models: { vision: \"two words\" }\n",
+				"defaults:\n  agent:\n    models: { visions: " + vision + " }\n",
+			},
+		},
+	} {
+		if err := tc.sch.Validate(yamlInstance(t, []byte(tc.head+tc.ok))); err != nil {
+			t.Errorf("%s refuses the vision key: %v", tc.file, err)
+		}
+		for _, bad := range tc.bad {
+			if err := tc.sch.Validate(yamlInstance(t, []byte(tc.head+bad))); err == nil {
+				t.Errorf("%s accepts %q", tc.file, bad)
+			}
+		}
+	}
+
+	data, err := os.ReadFile("settings.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	// Both rows the registry carries: the repository's key and the layer's, each
+	// with the default the registry gives it — the one slot whose unset answer
+	// is not a model, so the read says so in words rather than naming one.
+	for _, key := range []string{"agent.models.vision", "layer.defaults.agent.models.vision"} {
+		got, _ := nodeOf(t, doc, "$defs", "keyDefaults", "properties", key)["default"].(string)
+		if !strings.HasPrefix(got, "unset = ") || !strings.Contains(got, "cannot read an image") {
+			t.Errorf("settings.schema.json %s: the default is %q, want the registry's unset sentence", key, got)
+		}
+	}
+}
+
 // TestSettingsConsoleFixture: console/test/fixtures/settings.json is the answer
 // the console's hermetic CLI stub gives `fugaro settings --json`, and the e2e
 // spec that drives a setting's edit draws it as the CLI's own read (the
