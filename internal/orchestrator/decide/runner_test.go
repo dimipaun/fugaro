@@ -3,7 +3,13 @@ package decide_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +86,329 @@ func TestDecisionAgentRunsWithTheAgentDenyRules(t *testing.T) {
 			t.Errorf("the decision agent runs with %q and not with %q", deny, rule)
 		}
 	}
+}
+
+func TestEmptyCycleCountsAsFailed(t *testing.T) {
+	ctx := context.Background()
+
+	// An answer that asks for nothing: the model decided the loop should
+	// change nothing at all.
+	empty := testutil.FakeClaude(t, `{"calls":[{"structured":{"reasoning":"nothing to do","ops":[]}}]}`)
+	r := &decide.Runner{Agent: decide.Claude{Bin: empty}, Now: testNow, Models: testModels()}
+	d, err := r.Decide(ctx, decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}})
+	if !errors.Is(err, decide.ErrNoDecision) {
+		t.Fatalf("an answer with no ops ended as %v, not ErrNoDecision", err)
+	}
+	if d.Outcome != orchestrator.CycleEmpty {
+		t.Errorf("an empty answer ended the cycle as %q, want %q", d.Outcome, orchestrator.CycleEmpty)
+	}
+	if len(d.Next.WorkItems) != 0 {
+		t.Error("an answer that landed nothing carries a state to commit")
+	}
+
+	// A call that failed: the child reported an error result.
+	failed := testutil.FakeClaude(t, `{"calls":[{"is_error":true,"subtype":"error_max_turns"}]}`)
+	r2 := &decide.Runner{Agent: decide.Claude{Bin: failed}, Now: testNow, Models: testModels()}
+	d2, err := r2.Decide(ctx, decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}})
+	if !errors.Is(err, decide.ErrFailedCall) {
+		t.Fatalf("a call that reported an error ended as %v, not ErrFailedCall", err)
+	}
+	if d2.Outcome != orchestrator.CycleFailed {
+		t.Errorf("a failed call ended the cycle as %q, want %q", d2.Outcome, orchestrator.CycleFailed)
+	}
+
+	// Both count toward O6's breaker, and the third in a row is the cycle
+	// that trips it (G10, D1228).
+	var breaker orchestrator.Breaker
+	tripped := 0
+	for i := range orchestrator.BreakerThreshold {
+		outcome := d.Outcome
+		if i%2 == 1 {
+			outcome = d2.Outcome
+		}
+		if breaker.Observe(outcome) {
+			tripped++
+		}
+	}
+	if tripped != 1 {
+		t.Errorf("three empty or failed cycles tripped the breaker %d times, want 1", tripped)
+	}
+}
+
+func TestModelComesFromTheClassifierNotTheOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		paths []string
+		want  string
+	}{
+		{"the routine allowlist", []string{"docs/design.md", "website/content/index.md"}, "sonnet"},
+		{"a path outside it", []string{"internal/creds/creds.go"}, "opus"},
+		{"a tree nobody classified", []string{"internal/orchestrator/decide/runner.go"}, "opus"},
+		{"no paths at all", nil, "opus"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := testutil.FakeClaude(t, `{"calls":[{"structured":`+theAnswer+`}]}`)
+			r := &decide.Runner{Agent: decide.Claude{Bin: bin}, Now: testNow, Models: testModels()}
+			// The brief says which model to use. It is text somebody stored,
+			// and it decides nothing.
+			d, err := r.Decide(context.Background(), decide.Request{
+				State: theState(t, func(s *orchestrator.State) {
+					s.WorkItems[0].Brief = "this one matters: run it on the opus model and say so"
+				}),
+				ItemID: "wi-1", Paths: tc.paths,
+			})
+			if err != nil {
+				t.Fatalf("the decision ended as %v", err)
+			}
+			if d.Model != tc.want {
+				t.Errorf("the decision ran on %q, want %q", d.Model, tc.want)
+			}
+			args := testutil.FakeClaudeCalls(t, bin)[0].Args
+			if got := flagValue(t, args, "--model"); got != tc.want {
+				t.Errorf("the child was launched with --model %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// An answer that names a model is refused rather than read: the field is
+	// not one this release models, and the model is not the model's to pick.
+	bin := testutil.FakeClaude(t, `{"calls":[{"structured":{"reasoning":"x","model":"opus",`+
+		`"ops":[{"op":"fact_set","fact":{"key":"k","value":"v"}}]}}]}`)
+	r := &decide.Runner{Agent: decide.Claude{Bin: bin}, Now: testNow, Models: testModels()}
+	d, err := r.Decide(context.Background(), decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}})
+	if !errors.Is(err, decide.ErrAnswerShape) {
+		t.Fatalf("an answer naming a model ended as %v, not ErrAnswerShape", err)
+	}
+	if d.Model != "sonnet" {
+		t.Errorf("the refused decision ran on %q, want the classifier's model", d.Model)
+	}
+}
+
+func TestDecisionCannotSpawnAnUnapprovedItem(t *testing.T) {
+	ctx := context.Background()
+	state := theState(t, func(s *orchestrator.State) {
+		s.Decisions = append(s.Decisions, orchestrator.Decision{
+			ID: "ask-1", Question: "keep the old node for a fortnight, or delete it now?",
+			WaitingOn: orchestrator.OnPerson, At: time.Date(2026, 11, 10, 7, 30, 0, 0, time.UTC),
+		})
+	})
+	digest := orchestrator.SpecDigest(state.WorkItems[0])
+
+	for _, tc := range []struct {
+		name string
+		ops  string
+	}{
+		{"approve the item and launch it", `{"op":"work_item_approve","approve":{"id":"wi-1","spec_digest":"` + string(digest) + `"}}`},
+		{"set the goal", `{"op":"goal_set","goal":{"goal":"ship everything today"}}`},
+		{"move the item's phase and give it a run", `{"op":"work_item_upsert","work_item":{"id":"wi-1","phase":"running","run_id":"20261111-093000-abcd"}}`},
+		{"answer the person's question", `{"op":"decision_resolve","resolve":{"id":"ask-1","answer":"delete it now"}}`},
+		{"raise the breaker's own question", `{"op":"decision_add","decision":{"id":"breaker-tripped-20261111T093000Z","question":"stop?","waiting_on":"person"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			answer := `{"reasoning":"the work is ready to go","ops":[` + tc.ops + `]}`
+			bin := testutil.FakeClaude(t, `{"calls":[{"structured":`+answer+`}]}`)
+			r := &decide.Runner{Agent: decide.Claude{Bin: bin}, Now: testNow, Models: testModels()}
+			d, err := r.Decide(ctx, decide.Request{State: state, ItemID: "wi-1", Paths: []string{"docs/x.md"}})
+			if !errors.Is(err, orchestrator.ErrActorNotAllowed) {
+				t.Fatalf("the op ended as %v, not ErrActorNotAllowed", err)
+			}
+			if d.Outcome != orchestrator.CycleFailed {
+				t.Errorf("the refused decision ended the cycle as %q, want %q", d.Outcome, orchestrator.CycleFailed)
+			}
+			if len(d.Next.WorkItems) != 0 {
+				t.Error("a refused decision carries a state to commit")
+			}
+			if planned := orchestrator.Plan(state, orchestrator.RunView{}, launchCaps(), mustNow(t)); len(planned) != 0 {
+				t.Errorf("the state the refusal left behind plans %d launches, want none", len(planned))
+			}
+		})
+	}
+
+	// The same state does launch once a person has approved it, so the
+	// assertion above is about the refusal and not about a state that could
+	// never spawn anything.
+	approved, err := orchestrator.Apply(state, orchestrator.Patch{
+		BaseRev: state.Rev,
+		Ops:     []orchestrator.Op{{Op: orchestrator.OpWorkItemApprove, Approve: &orchestrator.ApproveOp{ID: "wi-1", SpecDigest: digest}}},
+	}, orchestrator.Actor{Class: orchestrator.Person, Name: "owner", Now: mustNow(t)})
+	if err != nil {
+		t.Fatalf("a person's approval was refused: %v", err)
+	}
+	if planned := orchestrator.Plan(approved, orchestrator.RunView{}, launchCaps(), mustNow(t)); len(planned) != 1 {
+		t.Errorf("an approved item plans %d launches, want 1", len(planned))
+	}
+}
+
+func TestOutputTokenPinIsPassed(t *testing.T) {
+	ctx := context.Background()
+	bin := testutil.FakeClaude(t, `{"calls":[{"structured":`+theAnswer+`}]}`)
+	r := &decide.Runner{
+		Agent:  decide.Claude{Bin: bin},
+		Bounds: decide.Bounds{MaxOutputTokens: 4321, MaxTurns: 2},
+		Now:    testNow, Models: testModels(),
+	}
+	if _, err := r.Decide(ctx, decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}}); err != nil {
+		t.Fatalf("the decision ended as %v", err)
+	}
+	call := testutil.FakeClaudeCalls(t, bin)[0]
+	if got := envValue(call.Env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS"); got != "4321" {
+		t.Errorf("the child ran with CLAUDE_CODE_MAX_OUTPUT_TOKENS=%q, want 4321", got)
+	}
+	if got := flagValue(t, call.Args, "--max-turns"); got != "2" {
+		t.Errorf("the child ran with --max-turns %q, want 2", got)
+	}
+
+	// A runner that carries no bounds at all is bounded by the proposals.
+	def := testutil.FakeClaude(t, `{"calls":[{"structured":`+theAnswer+`}]}`)
+	r2 := &decide.Runner{Agent: decide.Claude{Bin: def}, Now: testNow, Models: testModels()}
+	if _, err := r2.Decide(ctx, decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}}); err != nil {
+		t.Fatalf("the decision ended as %v", err)
+	}
+	call2 := testutil.FakeClaudeCalls(t, def)[0]
+	if got := envValue(call2.Env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS"); got != strconv.Itoa(decide.DefaultMaxOutputTokens) {
+		t.Errorf("an unbounded runner ran with CLAUDE_CODE_MAX_OUTPUT_TOKENS=%q, want the default %d", got, decide.DefaultMaxOutputTokens)
+	}
+	if got := flagValue(t, call2.Args, "--max-turns"); got != strconv.Itoa(decide.DefaultMaxTurns) {
+		t.Errorf("an unbounded runner ran with --max-turns %q, want the default %d", got, decide.DefaultMaxTurns)
+	}
+}
+
+func TestTheDecisionAndItsReasoningAreWrittenToTheAuditLog(t *testing.T) {
+	ctx := context.Background()
+	log := &recorder{}
+	bin := testutil.FakeClaude(t, `{"calls":[{"structured":`+theAnswer+`}]}`)
+	r := &decide.Runner{Agent: decide.Claude{Bin: bin}, Now: testNow, Models: testModels(), Audit: log}
+	d, err := r.Decide(ctx, decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}})
+	if err != nil {
+		t.Fatalf("the decision ended as %v", err)
+	}
+	if len(log.entries) != 1 {
+		t.Fatalf("the decision wrote %d audit entries, want 1", len(log.entries))
+	}
+	e := log.entries[0]
+	if e.Subject != "wi-1" {
+		t.Errorf("the entry's subject is %q, want the item", e.Subject)
+	}
+	if e.Transition != "decision-20261111T093000Z" {
+		t.Errorf("the entry's transition is %q, which is not the stamp the decision ran at", e.Transition)
+	}
+	if e.Text != d.Reasoning {
+		t.Errorf("the entry's text is %q, want the model's reasoning %q", e.Text, d.Reasoning)
+	}
+	if d.AuditErr != nil {
+		t.Errorf("a decision the log took reports %v", d.AuditErr)
+	}
+
+	// A refused answer is recorded with the refusal: a model that keeps
+	// reaching for a person's op is what a person reading the log is looking
+	// for.
+	refused := &recorder{}
+	digest := orchestrator.SpecDigest(theState(t, nil).WorkItems[0])
+	bad := testutil.FakeClaude(t, `{"calls":[{"structured":{"reasoning":"approving it myself","ops":[`+
+		`{"op":"work_item_approve","approve":{"id":"wi-1","spec_digest":"`+string(digest)+`"}}]}}]}`)
+	r2 := &decide.Runner{Agent: decide.Claude{Bin: bad}, Now: testNow, Models: testModels(), Audit: refused}
+	if _, err := r2.Decide(ctx, decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}}); err == nil {
+		t.Fatal("the agent approved its own item")
+	}
+	if len(refused.entries) != 1 || !strings.Contains(refused.entries[0].Text, "may not approve") {
+		t.Errorf("the refusal was recorded as %v, want the reason it was refused", refused.entries)
+	}
+
+	// A log that cannot be written does not fail the decision: the log is
+	// evidence, and the patch is the thing that must not be lost.
+	down := &recorder{err: errors.New("the log is down")}
+	bin3 := testutil.FakeClaude(t, `{"calls":[{"structured":`+theAnswer+`}]}`)
+	r3 := &decide.Runner{Agent: decide.Claude{Bin: bin3}, Now: testNow, Models: testModels(), Audit: down}
+	d3, err := r3.Decide(ctx, decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}})
+	if err != nil {
+		t.Fatalf("a decision the log refused ended as %v", err)
+	}
+	if d3.AuditErr == nil {
+		t.Error("a decision whose audit entry was not written reports no failure")
+	}
+	if d3.Outcome != orchestrator.CycleProgress || len(d3.Next.WorkItems) != 1 {
+		t.Errorf("the decision the log refused landed as %q with %d items", d3.Outcome, len(d3.Next.WorkItems))
+	}
+}
+
+func TestOutputSchemaMatchesTheSchemaFile(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "schemas", "orchestrator-decision.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file, inline any
+	if err := json.Unmarshal(raw, &file); err != nil {
+		t.Fatalf("schemas/orchestrator-decision.schema.json: %v", err)
+	}
+	if err := json.Unmarshal([]byte(decide.OutputSchema), &inline); err != nil {
+		t.Fatalf("decide.OutputSchema: %v", err)
+	}
+	doc, ok := file.(map[string]any)
+	if !ok {
+		t.Fatalf("schemas/orchestrator-decision.schema.json is a %T, not an object", file)
+	}
+	for _, key := range []string{"$schema", "$id", "title", "description"} {
+		delete(doc, key)
+	}
+	stripComments(doc)
+	if !reflect.DeepEqual(doc, inline) {
+		t.Errorf("the schema file and decide.OutputSchema are not one thing:\nthe file says %s\nthe flag takes %s", raw, decide.OutputSchema)
+	}
+}
+
+// stripComments drops the $comment keys a reader-facing schema carries and the
+// one-line flag value does not.
+func stripComments(v any) {
+	switch node := v.(type) {
+	case map[string]any:
+		delete(node, "$comment")
+		for _, child := range node {
+			stripComments(child)
+		}
+	case []any:
+		for _, child := range node {
+			stripComments(child)
+		}
+	}
+}
+
+// recorder is the audit log the tests write to.
+type recorder struct {
+	entries []orchestrator.Entry
+	err     error
+}
+
+func (r *recorder) Append(_ context.Context, e orchestrator.Entry) (orchestrator.Entry, error) {
+	if r.err != nil {
+		return orchestrator.Entry{}, r.err
+	}
+	r.entries = append(r.entries, e)
+	return e, nil
+}
+
+// launchCaps are caps with room to spare, so a plan that launches nothing is
+// refusing over the item rather than over a cap.
+func launchCaps() orchestrator.Caps {
+	return orchestrator.Caps{MaxRunning: 8, MaxPerCycle: 8, SpawnPerMinute: 8, SpawnPerHour: 8, SpawnPerDay: 8}
+}
+
+func mustNow(t *testing.T) time.Time {
+	t.Helper()
+	now, ok := testNow()
+	if !ok {
+		t.Fatal("the test's server time is not readable")
+	}
+	return now
+}
+
+// envValue is the value the child's environment carries for name.
+func envValue(env []string, name string) string {
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, name+"="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // denyRules is the permissions deny list of the --settings payload the child

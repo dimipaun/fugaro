@@ -211,7 +211,14 @@ func (r *Runner) Decide(ctx context.Context, req Request) (Decision, error) {
 
 	parsed, err := ParseAnswer(reply.Structured)
 	if err != nil {
+		// An answer that asks for nothing is a cycle that achieved nothing,
+		// which is what the breaker counts; one this release cannot read at
+		// all is a call that failed. Both are the same to a person watching
+		// (G10), and they are not the same in the record.
 		d.Outcome = orchestrator.CycleFailed
+		if errors.Is(err, ErrNoDecision) {
+			d.Outcome = orchestrator.CycleEmpty
+		}
 		return d, err
 	}
 	d.Reasoning = parsed.Reasoning
@@ -308,6 +315,10 @@ func (r *Runner) call(bounds Bounds, model string, brief Brief) (Call, error) {
 // env is the child's environment: the caller's, plus the output pin. The pin
 // is the agent package's own key (agent.PinVars) rather than a name spelled
 // again here, so the daemon and the runs set the same variable.
+//
+// A pinned name the environment already carries is replaced rather than
+// appended to: the child reads the first entry of a name and the parent's
+// value is the one that would win, which is the opposite of a pin.
 func (r *Runner) env(bounds Bounds) []string {
 	env := slices.Clone(r.Env)
 	if env == nil {
@@ -320,6 +331,9 @@ func (r *Runner) env(bounds Bounds) []string {
 	}
 	slices.Sort(names)
 	for _, name := range names {
+		env = slices.DeleteFunc(env, func(e string) bool {
+			return strings.HasPrefix(e, name+"=")
+		})
 		env = append(env, name+"="+pins[name])
 	}
 	return env
