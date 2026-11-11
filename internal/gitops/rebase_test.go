@@ -3,6 +3,7 @@ package gitops
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -114,6 +115,34 @@ func TestGitopsRebaseResolvesAndContinues(t *testing.T) {
 	}
 	if body, err := repo.ShowFile(ctx, "HEAD", "README.md"); err != nil || string(body) != "both sides\n" {
 		t.Fatalf("README.md = %q, %v, want the resolution", body, err)
+	}
+}
+
+// TestGitopsRebaseContinueRefusesUnresolvedMarkers: a resolution nobody made
+// is refused, not committed. The markers git wrote are ordinary content as
+// far as `git add` is concerned, so a continue over them would replay the
+// commit carrying the conflict and push those lines to the branch as the
+// run's own work: the call says ErrRebaseConflict instead, leaving the
+// checkout as the stage found it, and the abort still puts the branch back.
+func TestGitopsRebaseContinueRefusesUnresolvedMarkers(t *testing.T) {
+	repo, _, start, _ := theBranch(t,
+		map[string]string{"README.md": "the branch's side\n"},
+		map[string]string{"README.md": "the base's side\n"})
+	if err := repo.Rebase(ctx, "main"); !errors.Is(err, ErrRebaseConflict) {
+		t.Fatalf("Rebase err = %v, want ErrRebaseConflict", err)
+	}
+	err := repo.RebaseContinue(ctx)
+	if !errors.Is(err, ErrRebaseConflict) || !strings.Contains(err.Error(), "README.md") {
+		t.Fatalf("RebaseContinue err = %v, want ErrRebaseConflict naming README.md", err)
+	}
+	if !repo.RebaseInProgress(ctx) {
+		t.Fatal("the rebase is not in progress after the refusal")
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "refs/heads/fugaro/x"); got != start {
+		t.Fatalf("the branch is at %s, want %s", got, start)
+	}
+	if err := repo.RebaseAbort(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 

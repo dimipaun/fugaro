@@ -1,11 +1,13 @@
 package gitops
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // rebaseState are what git keeps in the git directory while a rebase is
@@ -60,20 +62,35 @@ func (r *Repo) RebaseInProgress(ctx context.Context) bool {
 	return false
 }
 
-// RebaseContinue stages what the resolution left and lets the rebase go on.
-// Everything is staged, the way a person's `git add -A` before a continue is:
-// the conflicted paths carry the markers git wrote until the resolution
-// replaced them, and a resolution that added or removed a file has to reach
-// the commit the same way. No editor ever opens — the commit message of the
+// RebaseContinue stages the resolution of the paths git stopped on and lets
+// the rebase go on. Only the unmerged paths are staged, not the whole tree:
+// the commit being replayed must stay the commit it was, and a stage that
+// edited a file the conflict had nothing to do with would otherwise have that
+// edit carried into it. No editor ever opens — the commit message of the
 // commit being replayed is the one it already had — and no hook runs, as on
 // every other commit this package makes for a run.
 //
 // ErrRebaseConflict says the rebase stopped again: the resolution left paths
-// git could not carry over, or another commit of the branch conflicts with
-// the base.
+// git could not carry over, another commit of the branch conflicts with the
+// base, or nothing was resolved at all.
 func (r *Repo) RebaseContinue(ctx context.Context) error {
-	if _, err := r.git(ctx, "add", "-A"); err != nil {
+	paths, err := r.UnmergedPaths(ctx)
+	if err != nil {
 		return err
+	}
+	if len(paths) > 0 {
+		// A resolution nobody made is refused rather than committed: the
+		// working tree still holds the markers git wrote, and staging them
+		// would carry those lines into the commit being replayed and out to
+		// the branch as content.
+		if left, err := r.conflictMarkersLeft(ctx, paths); err != nil {
+			return err
+		} else if left {
+			return fmt.Errorf("%s still holds the conflict markers git wrote: %w", strings.Join(paths, ", "), ErrRebaseConflict)
+		}
+		if _, err := r.git(ctx, append([]string{"add", "--"}, paths...)...); err != nil {
+			return err
+		}
 	}
 	env := append(r.processEnv(), "GIT_EDITOR=true")
 	if err := r.gitRun(ctx, env, noHooks, nil, nil, "rebase", "--continue"); err != nil {
@@ -83,6 +100,54 @@ func (r *Repo) RebaseContinue(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// leftoverMarker is what `git diff --check` calls a line git wrote into a
+// conflicted file and nobody took out: the reading is English, as
+// isNonFastForward's is, and a git that localizes it leaves the resolution
+// to the rebase itself, which refuses to continue over unmerged paths.
+const leftoverMarker = "leftover conflict marker"
+
+// conflictMarkersLeft reports whether any of paths, as they now are in the
+// working tree, still holds a line git wrote as a conflict marker. It is
+// `git diff --check` over exactly those paths against the index, which is
+// git's own reading of a leftover marker (a whitespace problem is not one:
+// only that message counts) — asked before the resolution is staged, because
+// what is judged is the file the stage left, not the diff of the commit
+// being replayed.
+func (r *Repo) conflictMarkersLeft(ctx context.Context, paths []string) (bool, error) {
+	var out bytes.Buffer
+	// --check exits non-zero when it found anything, so its error is the
+	// report itself: only what it wrote is read, and a git that never ran
+	// writes nothing and is caught by the continue below.
+	if err := r.gitIO(ctx, nil, &out, append([]string{"diff", "--check", "--"}, paths...)...); err != nil && out.Len() == 0 {
+		return false, err
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasSuffix(line, ": "+leftoverMarker) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// UnmergedPaths are the paths git stopped the rebase on: the conflicted ones,
+// which the index still holds both sides of. A resolution that replaced the
+// markers in the working tree is listed until RebaseContinue stages it, so a
+// caller reads this to name what conflicts, never to tell a resolved file
+// from an unresolved one.
+func (r *Repo) UnmergedPaths(ctx context.Context) ([]string, error) {
+	out, err := r.git(ctx, "diff", "--name-only", "--diff-filter=U", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
 }
 
 // RebaseAbort puts the branch back where the rebase found it: the commits it
