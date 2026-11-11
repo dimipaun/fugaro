@@ -592,8 +592,8 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	// refused without a cloud call and without being echoed.
 	// The kind is kept, not just checked: it is what says what shape this
 	// name's value has to be — one line (every model credential and the
-	// upstream Bitbucket token), a PEM (the App key), or a mapping of key,
-	// secret and workspace (the Bitbucket read consumer).
+	// upstream Bitbucket token), a PEM (the App key), or a mapping of three
+	// named fields (the Bitbucket read consumer's, the provider credential's).
 	_, kind, _, ok := credsvc.CredentialKey(name)
 	if !ok {
 		return credsNameRefusal()
