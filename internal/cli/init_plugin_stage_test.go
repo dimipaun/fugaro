@@ -280,31 +280,26 @@ func TestInitPluginStageInstallsWhereTheMachineDoesNotKnowTheRepository(t *testi
 	}
 }
 
-// The other half of D955: the gate the plan keeps for the checkout write U5
-// adds, kept whole where the checkout carries a pin at all (s.pin). This
-// checkout's origin repository is not one the machine's config lists, so
-// nothing authorises writing the pin's .claude/settings.json, and the gate's
-// answer is the stage's, as it was before U8: the install half and the removal
-// share one stage, so a pin this run may not take out is also the machine's
-// install not made here, and the reader is sent to the door that enrols the
-// repository.
-//
-// That is the corner D955 leaves open and it is not a silent one: the line
-// names `fugaro setup`, the run exits 1 with that step left for the user, and
-// the stage behind it — the repository's own, which would say the same thing —
-// is where the reader would otherwise have been sent. What the checkout's gate
-// does not do any more is decide for a checkout with no pin in it
-// (TestInitPluginStageInstallsWhereTheMachineDoesNotKnowTheRepository), which
-// is the machine F24 is about.
+// The other half of D955, and the teammate's own case: the gate the plan keeps
+// for the checkout write U5 adds, kept whole where the checkout carries a pin
+// at all (s.pin) — and it is about that write alone. This checkout's origin
+// repository is not one the machine's config lists, so nothing authorises
+// writing the pin's .claude/settings.json: the pin stays exactly as it is and
+// the gate's door is what the run leaves for the reader. The machine's own
+// install is not the checkout's, so it happens all the same (D955, U8): the
+// teammate who upgraded and now runs the one documented command in a checkout
+// still carrying the release before this one gets their plugin, and the enrol
+// step is a line beside it rather than a stop in front of it.
 //
 // The session is the teammate's own agent session, which is the one F23 and
 // D955 are about: its --yes covers no onboarding of a repository the machine
 // does not list (D12, canConfirmTyped), so the gate's answer is needs-you with
 // the door that enrols it.
-func TestInitPluginStageLeavesAPinWhereTheRepositoryIsNotEnrolled(t *testing.T) {
+func TestInitPluginStageInstallsWhereThePinCannotBeTakenOut(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	settings := wiringCheckoutAt(t, "https://github.com/acme/other.git", pinnedAmongOthers)
 	e, out := stageEngine(t, "", &initOptions{door: updateDoor.name, yes: true})
 	t.Setenv(agentMarkers[0], "1")
@@ -313,17 +308,21 @@ func TestInitPluginStageLeavesAPinWhereTheRepositoryIsNotEnrolled(t *testing.T) 
 	if got, _ := os.ReadFile(settings); string(got) != pinnedAmongOthers {
 		t.Errorf("the checkout was written in a repository this machine does not list:\n%s", got)
 	}
+	if stateOf(res, "plugin") != initflow.Changed || res.Failed != nil {
+		t.Fatalf("the plugin stage is %v (failed %+v), want the machine's own install made: %+v\n%s", stateOf(res, "plugin"), res.Failed, res.Stages, out)
+	}
+	if !slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
+		t.Errorf("the machine's own plugin was not installed although the pin's gate refused the checkout:\n%s", out)
+	}
 	if seen := out.String(); !strings.Contains(seen, setupDoor.name) {
 		t.Errorf("the reader is not sent to the door that enrols the repository:\n%s", seen)
 	}
-	if stateOf(res, "plugin") != initflow.NeedsYou || res.Failed != nil {
-		t.Fatalf("the plugin stage is %v (failed %+v), want the gate's own answer: %+v\n%s", stateOf(res, "plugin"), res.Failed, res.Stages, out)
+	l, ok := leftOf(res, initflow.Plugin)
+	if !ok || l.Kind != initflow.LeftCommand || res.ExitCode() != 1 {
+		t.Fatalf("the run leaves %+v (exit %d), want the enrol step the gate names\n%s", res.Left, res.ExitCode(), out)
 	}
-	if changes := f.Changes(t); len(changes) != 0 {
-		t.Errorf("the machine was written to although the pin's gate refused this checkout: %v\n%s", changes, out)
-	}
-	if l, ok := leftOf(res, initflow.Plugin); !ok || l.Kind != initflow.LeftCommand || res.ExitCode() != 1 {
-		t.Errorf("the run leaves %+v (exit %d), want the enrol step the gate names", res.Left, res.ExitCode())
+	if !strings.Contains(l.Text+strings.Join(l.Commands, " "), setupDoor.name) {
+		t.Errorf("the step left for the user does not name %s: %+v", setupDoor.name, l)
 	}
 }
 
