@@ -1379,7 +1379,12 @@ here is small enough to pull forward.
   invoker grants and its IAM checks are the coordinator work's, and M4 must not silently take them
   over — where they overlap, the coordinator's plan wins and this one adapts.
 - **The console's graph write.** D927 keeps `roadmap:write` out of v1; GV3.1 and GV3.2 stay blocked
-  and that work comes back to ask.
+  and that work comes back to ask. **It came back on 2026-11-11**: the owner answered the coordinator's
+  **D2110** with a front-door `roadmap:write` scope, which **amends D927** as D1227 did; the scope,
+  its tools and their serving are the coordinator plan's P9d and P9e
+  (`docs/coordinator/implementation-plan.md`), and P9e waits, like M8's tools and the stateless
+  plan's O16b, on the task that mounts this front door on a binary — which that plan's open
+  **D2119** asks this folder to write. No task of this plan changes for it.
 - **The central-orchestrator plan.** D196 answered that the coordinator's service is its own; the
   orchestrator reaches it as a client like any other, and this plan adds nothing to it.
 - **The stateless-orchestrator spec** (open as **#1682**, not on `main` when this was written). Its

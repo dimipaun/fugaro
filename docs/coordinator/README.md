@@ -43,14 +43,22 @@ doing, owns project-level state, detects conflicts early and suggests sequencing
 never authoritative. The spec is the owner's own text; the reconciliation is what the
 repository actually has against it.
 
-**Added 2026-11-11: the roadmap record, parts P9a–P9d, written and not started.** At the owner's
-request the plan gained four parts that make the coordinator's record carry tasks, releases and
+**Added 2026-11-11: the roadmap record, parts P9a–P9f, written and not started.** At the owner's
+request the plan gained the parts that make the coordinator's record carry plans, releases and
 cross-plan edges — what the console dependency graph's GV3.1, GV3.2 and GV4.1 wait on: **P9a** the
-record's shape and reader, **P9b** its compare-and-set writers and who may write them, **P9c** the
-sweep's refresh from the plans' graph artifacts, **P9d** the cross-plan edge command. They need the
-owner's go, by name, and the answers to **D2110–D2117** (written in the plan, open, each with its
-recommendation first); **D2110–D2129** is the block reserved for them, and D2118–D2129 are unused.
-With them the plan has 13 parts.
+record's shape and reader (plans, releases, assignments, edges), **P9b** its compare-and-set writers,
+**P9c** `fugaro coordinator roadmap publish` (a plan pushed from any checkout, its repository kept as
+provenance only), **P9d** the front door's `roadmap:write` scope and tools, dormant, **P9e** those
+tools served and applied by a non-public job, **P9f** the CLI's front-door login and the `roadmap`
+commands. The owner answered **D2110–D2117** the same day — every write through the front door's
+`roadmap:write` scope (D2110, not the recommendation), the push model with no repository read
+(D2111, changed the same day), releases stored in the record (D2113, not the recommendation), the
+rest as recommended — and **D2118–D2123**, which those answers raise, are open in the plan: how a
+front-door write reaches the database without a database role on the public service, **who writes
+the front door's wiring task that P9e waits on**, the releases' bounds and optional import, who may
+hold the scope, how the CLI holds the token, and same-named plans from two repositories.
+**D2110–D2129** is the block reserved for them; D2124–D2129 are unused. With them the plan has 15
+parts.
 
 | File | What it is |
 | --- | --- |

@@ -43,5 +43,10 @@ proposed for coordinator P4 only.
 
 No decision or tension of this folder is open. Each task still needs the owner's explicit go; GV3.1,
 GV3.2 and GV4.1 also wait on the coordinator's record, which since 2026-11-11 is the coordinator
-plan's parts **P9a–P9d** (`docs/coordinator/implementation-plan.md`) and its open decisions
-**D2110–D2117**.
+plan's parts **P9a–P9f** (`docs/coordinator/implementation-plan.md`). The owner answered that plan's
+**D2110–D2117** on 2026-11-11: every write to the record — a published plan, a move, an edge, a
+release — goes through the MCP front door's `roadmap:write` scope; plans are pushed from any checkout,
+with their repository as provenance only; releases are documents of the record, not read from
+`docs/release-streams.yaml`. So GV4.1 can be built now against fixtures, and **GV3.1 and GV3.2 move a
+real task only once the front door is served — which waits on a wiring task no plan has written yet**
+(that plan's open **D2119**, beside D2118 and D2120–D2123).
