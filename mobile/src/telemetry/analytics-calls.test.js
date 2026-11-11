@@ -38,12 +38,15 @@
 //      API's `log(instance, ...)` are one door reached three ways, and the
 //      fence is about the argument. §7.3 makes a breadcrumb a constant from the
 //      module's own list, or a value that has been through `shared/digest`'s
-//      redactor first, so a call site may pass
-//      exactly two things: a literal named in `BREADCRUMBS`, and a call to
-//      **`breadcrumb` the file that calls it binds from the telemetry module**
-//      -- not merely a function of that name, and not that name bound from
-//      anywhere else or renamed on the way in. Both must be the WHOLE
-//      argument: `'screen_mailbox' + message.text` and
+//      redactor first, so a call site may pass exactly two things: a literal
+//      named in `BREADCRUMBS`, and a call to **`breadcrumb` the file that calls
+//      it binds from the telemetry module** -- not merely a function of that
+//      name, not that name bound from anywhere else or renamed on the way in,
+//      and not a file that gives the name a second meaning of its own: a nested
+//      parameter or declaration shadows the import in a scope this text scan
+//      cannot see into, so a file that declares a `breadcrumb` anywhere is
+//      refused rather than read. Both must be the WHOLE argument:
+//      `'screen_mailbox' + message.text` and
 //      `breadcrumb(text, secrets).trim()` are refused, because either would put
 //      a runtime value beside a constant the list reviewed. Those two shapes are
 //      what keeps §7.3's redaction reachable as well: a fence that refused every
@@ -186,14 +189,36 @@ function bindsBreadcrumb(clause) {
 }
 
 /**
+ * The ways a file can give the name `breadcrumb` a meaning of its own: a
+ * declaration, a destructured name, a parameter, an arrow's parameter. An
+ * import binding cannot be redeclared in the same scope, but a nested scope can
+ * shadow it -- a parameter, a block's `const`, a function inside the call's own
+ * function -- and a text scan cannot tell which scope a call sits in, so a file
+ * that gives the name a meaning anywhere is refused rather than trusted.
+ */
+const BREADCRUMB_DECLARATIONS = [
+  /\bfunction\s*\*?\s*breadcrumb\b/,
+  /\bclass\s+breadcrumb\b/,
+  /\b(?:const|let|var)\s+breadcrumb\b/,
+  /\b(?:const|let|var)\s*\{[^}]*\bbreadcrumb\b/,
+  /\b(?:const|let|var)\s*\[[^\]]*\bbreadcrumb\b/,
+  /\(\s*breadcrumb\s*[,)=]/,
+  /,\s*breadcrumb\s*[,)=]/,
+  /\bbreadcrumb\s*=>/,
+];
+
+/**
  * Whether the `breadcrumb` a file calls is the module's own: an import that
  * binds that name from a specifier the file's own directory resolves to
- * `BREADCRUMBS_MODULE`. Binding the name is what closes the shadowing hole --
- * a module that imports `breadcrumb` cannot also declare one, so the name the
- * call reaches is the import's -- and a file that bound the name from anywhere
- * else, or declared its own, is not the app's one redaction rule.
+ * `BREADCRUMBS_MODULE`, **and no other meaning of the name anywhere in the
+ * file**. The name a call reaches is the import's only while nothing else in
+ * the file has a `breadcrumb` of its own, and that is as far as a text scan
+ * sees: a file that declares the name at all is refused, so a call in a nested
+ * scope that shadowed the import cannot pass on the strength of an import
+ * somewhere above it.
  */
 function importsBreadcrumb(body, file) {
+  if (BREADCRUMB_DECLARATIONS.some((pattern) => pattern.test(body))) return false;
   const specifier = breadcrumbSpecifier(file);
   const wanted = new Set([specifier, specifier.replace(/\.js$/, '')]);
   for (const match of body.matchAll(/\bimport\s+([^;]*?)\s+from\s*['"]([^'"]+)['"]/g)) {
@@ -302,6 +327,40 @@ const RULES = [
         source:
           "import { breadcrumb } from './helpers.js';\n" +
           'crashlytics().log(breadcrumb(message.text, secrets));',
+      },
+      // The module's import, and a `breadcrumb` of the file's own beside it:
+      // the import is real, but a nested scope shadows it, and the scan cannot
+      // tell which one the call reaches. A file that gives the name a meaning
+      // at all is refused.
+      {
+        file: 'src/app/offender.js',
+        source:
+          "import { breadcrumb } from '../telemetry/breadcrumbs.js';\n" +
+          'export function f(message) {\n' +
+          '  const breadcrumb = (text) => text;\n' +
+          '  return crashlytics().log(breadcrumb(message.text));\n' +
+          '}',
+      },
+      // The same shadow as a parameter ...
+      {
+        file: 'src/app/offender.js',
+        source:
+          "import { breadcrumb } from '../telemetry/breadcrumbs.js';\n" +
+          'export function f(breadcrumb) {\n' +
+          '  return crashlytics().log(breadcrumb(message.text));\n' +
+          '}',
+      },
+      // ... and as a block's own declaration.
+      {
+        file: 'src/app/offender.js',
+        source:
+          "import { breadcrumb } from '../telemetry/breadcrumbs.js';\n" +
+          'export function f(message) {\n' +
+          '  if (message.text) {\n' +
+          '    let breadcrumb = (text) => text;\n' +
+          '    crashlytics().log(breadcrumb(message.text));\n' +
+          '  }\n' +
+          '}',
       },
       // ... and even the module's own redactor is refused when the call is not
       // the whole argument, which is the half the import cannot decide.
