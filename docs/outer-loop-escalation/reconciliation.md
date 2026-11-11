@@ -3,7 +3,7 @@
 **Checked against** `main` at `d19e2b1cf` (fetched 2026-11-10), by symbol and path, not line. Where this page disagrees
 with [spec.md](spec.md), this page wins. **Spec owner:** Dimi Paun. **Date:** 2026-11-10.
 
-**Numbers this work holds:** decisions **D2030-D2069** (D2030-D2045 used), checks **540-549** (540-541 used). The highest
+**Numbers this work holds:** decisions **D2030-D2069** (D2030-D2046 used), checks **540-549** (540-541 used). The highest
 numbers found were D2019 on `main` and D1961 in open pull requests; Check 522 on `main` and 481 in open pull requests.
 
 ## Headline: spec concept, what the repo already has
@@ -65,11 +65,10 @@ is off the axis (`Rank()` 0, blocks only security and wrong-fix findings). `agen
 in shadow in T-TR7a. The spec's "interaction with triage" assumes it runs everywhere. Consequence: the ladder must not depend on
 triage output; it reads the run record and the review verdicts, and uses triage's deferrals only where present.
 
-**F7 (Exists/Gap). Cost and time are a chain, not a counter.** `docs/run-limit-carry-over` (L0-L3 merged) carries a chain budget
-"a restart cannot reset" with chain membership in the run records. Orchestrator `WorkItem` has `Attempts`, `Phase`, `RunID`,
+**F7 (Exists/Gap). Cost and time come from the item's runs.** `docs/run-limit-carry-over` (L0-L3 merged) carries a chain budget "a restart cannot reset", but a chain exists **only when a launch names a limit** (D1041), so most items have none. The ladder therefore sums the item's own run records through its intents, and uses the chain's figure where one exists. Orchestrator `WorkItem` has `Attempts`, `Phase`, `RunID`,
 `DependsOn` but no first-start time, no cumulative cost, no rung. Consequence: D2038 (resolution): cost and time per PR come from
-the chain; the ledger stores only the rung, its reason and the counters the chain cannot give (outer attempts, rung entry times).
-`escalation.cost_ceiling` is a ceiling over the chain's cost, never a second meter.
+the sum of the item's own run records (the chain where there is one); the ledger stores only the rung, its reason and the counters the chain cannot give (outer attempts, rung entry times).
+`escalation.cost_ceiling` is a ceiling over that sum, never a second meter.
 
 **F8 (Gap). No model grades.** `models.strong` would also read next to `agent.models`, a different thing (per-role). Consequence:
 D2039 (resolution): the grades are `model_grades.strong` and `model_grades.strongest` in the project layer
@@ -118,7 +117,8 @@ naming the merge commit), which is a measurable proxy, and the owner is told tha
 in the report; a person edits the local config (nothing applies one).
 
 **F15 (Exists). "Blocks other tasks" is the reverse of `DependsOn`.** The orchestrator's items already carry `DependsOn`. A
-PR blocks others when another non-terminal item names its item. Consequence: the critical-path flag is computed each tick from
+PR blocks others when another **approved**, non-terminal item names its item (a session-class actor can add an unapproved item
+with a `DependsOn`, so counting unapproved edges would let an agent halve a PR's thresholds and raise its model grade). Consequence: the critical-path flag is computed each tick from
 state, never typed in; it halves the thresholds (`critical_path_factor` default 0.5) and raises the rung 2 grade to `strongest`.
 
 **F16 (Rule). Loosening must not reach a repo file or the project policy.** Mode precedence lets a repo set a looser mode.
@@ -144,9 +144,9 @@ review`, per `.claude/rules/credentials-service.md` and the owner's rule (securi
 default needs no migration. The orchestrator state is not optional-friendly:
 `schemas/orchestrator-state.schema.json` says `schema_version` is bumped whenever a field is added, the daemon's decoder refuses a
 field it does not model, and a reader that finds a higher version must stop. So the ledger needs **`schema_version` 2 with a
-`Migrate`** shipped through `update`, and the new block must be listed in `bookkeepingFields` (`state.go`), or `SpecDigest` (it
+`Migrate`**, which **the daemon runs itself at start-up** (`orchestrator_run.go`: "`fugaro update` no longer touches a node under orchestrator/"; `update` re-renders the unit and the daemon restarts into the migration), and the new block must be listed in `bookkeepingFields` (`state.go`), or `SpecDigest` (it
 hashes every `WorkItem` field but those) would read each ledger write as a changed spec and revoke the approval. The deployed
-RTDB rules do not pin the node's shape (`.write: false` for a token writer), so no rules change is needed. A new recipe ships in the catalog and is reached by `update`. The release's operator section is "run
+RTDB rules do not pin the node's shape (`.write: false` for a token writer), so the state needs no rules change; **the digest's read of it does** (F27). A new recipe ships in the catalog and is reached by `update`. The release's operator section is "run
 `fugaro update`". The plan pins this with a test that an installation at the previous state version converges.
 
 **F21 (Rule). Follow-ups are filed, never approved.** D1226 (stateless-orchestrator): the rule never approves a work item, and
@@ -168,14 +168,34 @@ covers its ladder runs (R0 per head, one R2, one judge), bounded per item by the
 runs only. This amends D1226 visibly (T4).
 
 **F24 (Wrong in an earlier draft). Provider calls.** `ApplyReady` only adds reviewers and labels on a PR already made ready; it
-does not un-draft, and neither it nor any checks read takes a head SHA. Consequence: E8 adds `MarkReady(number, expectedHeadSHA)`
-(re-reads the head, refuses on a mismatch, then sets `Draft:false`), `Merge(number, expectedHeadSHA)` and `Checks(number, sha)`.
+does not un-draft (`UpdatePR` with `Draft:false` does, and E8 wraps it), and neither it nor any checks read takes a head SHA. Consequence: E8 adds `MarkReady(number, expectedHeadSHA)`
+(re-reads the head, refuses on a mismatch, then calls `UpdatePR`), `Merge(number, expectedHeadSHA)` and `Checks(number, sha)`.
 A provider whose merge API has no expected-head precondition (Bitbucket's is unchecked, UNVERIFIED) makes the ladder **refuse
 to merge** there and raise `waiting_on: person`. A merge never bypasses branch protection (no admin merge).
 
+**F25 (Gap, the headline for the owner). The ladder can merge only `Routine` PRs, which are `docs/` and `website/`.** D1234's allowlist
+(`internal/orchestrator/sensitivity/classify.go`, `routineRules`) holds those two trees, "added by a person deciding it". And
+Fugaro's own CI runs only when dispatched by hand, so its pull requests report no checks and read as `CIUnknown`, never green.
+Consequence: under D2030 and D2037, R3 auto-merges a docs-only PR in a repository that has checks, and **every code PR, and every
+PR on Fugaro's own repository, ends R3 with `waiting_on: person` and the judge's verdict attached**. The ladder still ends the
+20-40 hour stall (the person gets a ready, judged, rebased PR and one decision), but it does not by itself merge a stalled code
+PR. Widening the allowlist or letting the ladder dispatch CI is the owner's call, not this plan's (O3).
+
+**F26 (Gap). The merge credential.** The GitHub provider authenticates with an App installation token (`gitprov.TokenSource`: the
+adapter's own mint with the App key, or the credentials service), never a person's login, and the daemon holds no provider today.
+An App can sit on a ruleset's bypass list, so "no admin flag" is not "no bypass". Consequence: D2045 is amended: the daemon's
+ready and merge calls use the same installation `TokenSource` as the runs, E8 refuses when the actor is on the base's bypass list
+or the list cannot be read, and the App needs the permission to merge, which is an owner step (O4, Check 540 states it).
+
+**F27 (Gap). The digest job cannot read the ledger.** The ledger sits in each person's `orchestrator/<id>/state` node
+(`.read: "USER"`), and the reports job (periodic-reviews E4) is granted read on `runs/` and write on `reports/` only. Consequence:
+E12 adds a read grant for the reports job's account on the ledger's escalation block only (a rules change in
+`internal/budget/rules/rules.json.tmpl`, with its rules-version bump and its `update` step, a security-tier change), rather than
+copying the ledger into the run records.
+
 ## Decisions
 
-Each answer below is the owner's, given in this conversation on 2026-11-10, and each was the recommendation unless said so.
+D2030-D2037, D2041 and D2042 are the owner's answers, given in this conversation on 2026-11-10; each was the recommendation unless said so. D2038-D2040 and D2043-D2046 are resolutions or defaults of the reconciliation, marked as such.
 
 | D | Question | Recommendation and cost | Owner's answer |
 | --- | --- | --- | --- |
@@ -191,13 +211,13 @@ Each answer below is the owner's, given in this conversation on 2026-11-10, and 
 | D2038 | Cost and time source (F7). | Resolution, one defensible answer: the run chain, not a new meter. | stated, no question |
 | D2039 | Grade keys and defaults (F8). | Resolution: `model_grades.strong|strongest` in the project layer; no built-in model; an unset grade makes the rung refuse and ask. | stated, no question |
 | D2040 | Follow-up importance (F12). | Resolution: one optional field `importance` on the follow-up block; a deterministic rule when no judge ran. | stated, no question |
-
-| D2042 | What covers the ladder's extra launches (F23)? | The item's approval covers its ladder runs, bounded by the cost ceiling. Cost: one approval authorizes a costlier model for that item. Alternatives: each rung needs its own approval; a local switch `auto_launch`. | **Approval covers the ladder**, 2026-11-10 (the recommendation). D1226 is amended. |
-| D2043 | May rung 0 merge a rebased head (review finding)? | Resolution, one defensible answer: **never directly.** A merge is eligible only at a head covered by a review verdict or the judge's verdict, with the path set and findings computed at that head. A conflict-resolved R0 head always goes to the judge. | stated, no question |
+| D2042 | What covers the ladder's extra launches (F23)? | The item's approval covers every run the ladder launches (R0, R1 runs beyond the two an approval already covers, one R2, one judge), bounded by the cost ceiling. Cost: one approval authorizes a costlier model for that item. Alternatives: each rung needs its own approval; a local switch `auto_launch`. | **Approval covers the ladder**, 2026-11-10 (the recommendation). D1226 is amended. |
+| D2043 | May rung 0 merge a rebased head (review finding)? | Resolution, one defensible answer: **never directly.** A merge is eligible only at a head covered by a scored review verdict (with severities, so the gate's "no critical finding" is not fed by the judge), with the path set computed at that head. A conflict-resolved R0 head gets a `review-only` run at that head first; the judge then adds vetoes only. | stated, no question |
 | D2044 | A judge that fails, times out or returns nothing (review finding)? | Resolution: an absent, failed, malformed or late verdict is a **veto** (blocked), never a merge. | stated, no question |
-| D2045 | Merge credential and branch protection (review finding)? | Resolution: the daemon merges and readies through `gitprov` under the operator's own login, never an admin merge; a base branch whose required reviews it cannot satisfy refuses and raises `waiting_on: person`. `README.md`, `SECURITY.md`, `docs/design/v1.md` and D13's pages say "Fugaro never merges" and are amended (E0, E14). | stated, no question |
+| D2045 | Merge credential and branch protection (review finding)? | Resolution: the daemon merges and readies through `gitprov` with the installation token its `TokenSource` mints (F26), never an admin or bypass merge; a base whose protection it cannot satisfy, or whose bypass list it cannot read, refuses and raises `waiting_on: person`. `README.md`, `SECURITY.md`, `docs/design/v1.md` and D13's pages say "Fugaro never merges" and are amended (E0, E14). | stated, no question |
+| D2046 | Does `escalation.ready_drafts` ship off (T3)? | My own design call layered on D2041: **default off**, so the owner switches the new authority on once after Check 540. Cost: the stalled-draft case stays with a person until then. | **Recommended default, awaiting the owner's confirmation** (T3). |
 
-D2038-D2040 and D2043-D2045 are resolutions the owner may overturn at the plan's review; each has one defensible reading and a named task.
+D2038-D2040 and D2043-D2046 are resolutions or defaults the owner may overturn at the plan's review; each has one defensible reading and a named task.
 
 ## Rows of the spec, as read after this reconciliation
 
@@ -222,6 +242,9 @@ D2038-D2040 and D2043-D2045 are resolutions the owner may overturn at the plan's
    this live. Confirm that a veto-only judge is acceptable on the stack's security tier.
 3. **O1: "regressions traced to merges" is a proxy (F14).** Confirm "a revert in 7 days" is enough.
 4. **O2: console dashboard** is out of this plan (a console plan of its own); confirm.
+5. **O3 (F25):** the ladder merges only `Routine` (docs and website) PRs and, with no CI on Fugaro's own repository, none there; decide
+   whether to widen D1234's allowlist or let the ladder dispatch CI. **O4 (F26):** the GitHub App needs the permission to merge and
+   must not sit on a ruleset bypass list; an owner step.
 5. **T3: D2041 against D1245 and `docs/recipes.md`.** D1245 merges a ready PR and readiness is "unchanged and not
    configurable". D2041 gives the daemon the right to ready a draft. The two are reconciled by the head-SHA binding and the
    unchanged gate (Routine paths, green CI, no critical finding, judge not vetoing), but D1245's text and the recipes page both
