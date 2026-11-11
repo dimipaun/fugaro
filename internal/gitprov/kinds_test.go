@@ -25,12 +25,12 @@ import (
 // The first table is Go, and TestEveryKindSwitchIsInventoried holds it complete:
 // it finds a kind wherever a non-test Go file names one, as an identifier or as
 // a string literal, and a file with no row fails. The second is hand-kept,
-// because a yaml, a .tf, a .ts or a .md has no identifiers to parse: its rows
-// name the sites outside Go, each with the line it must still carry, so a row
-// that goes stale fails. Neither table sees a site nobody has listed yet — what
-// makes the Go half complete is the scan, and the non-Go half is a list a
-// reader has to keep, which is why the switches a third forge must visit are
-// named here rather than left to be rediscovered.
+// because a yaml, a .tf, a .md or the console's TypeScript has no identifiers to
+// parse: its rows name the sites outside Go, each with the line it must still
+// carry, so a row that goes stale fails. Neither table sees a site nobody has
+// listed yet — what makes the Go half complete is the scan, and the non-Go half
+// is a list a reader has to keep, which is why the switches a third forge must
+// visit are named here rather than left to be rediscovered.
 //
 // A file is the unit, not a line: a file may switch on the kinds in several
 // places and one row covers them all, and what the row says is what the file
@@ -85,15 +85,24 @@ var forgeKindGoSites = map[string]string{
 }
 
 // forgeKindNonGoSites are the places outside Go where a forge kind is written
-// down, each with a line it must still carry: the console and the plugin's
-// skills, the image build's credential step, Terraform's validation, its secret
-// name and the two conditions only GitHub satisfies, and the schema. No scan
-// finds these (a yaml, a .tf, a .ts or a .md has no Go identifiers to parse), so
-// this half is checked for staleness alone — each row's needle must still be
-// there, or the row is the to-do list pointing at nothing.
+// down, each with a line it must still carry: the plugin's skills, the image
+// build's credential step, Terraform's validation, its secret name and the two
+// conditions only GitHub satisfies, and the schema. No scan finds these (a yaml,
+// a .tf or a .md has no Go identifiers to parse), so this half is checked for
+// staleness alone — each row's needle must still be there, or the row is the
+// to-do list pointing at nothing.
 //
 // A new non-Go site is not caught by anything: this list is a reader's to keep,
 // which is why it names every switch a third forge has to visit today.
+//
+// The console is the one such artifact that is deliberately NOT here, and a
+// second forge still has to visit it: it holds a launch and a pull-request
+// provider list, a per-provider link host and its own provider type. Its files
+// are not paths this module may name — the module's console boundary test keeps
+// every Go file from writing one down unless the file is on its allow-list, a
+// list whose size is pinned so an entry is an argued widening of that boundary
+// rather than a habit (plan Task 0.3 a3) — so its half of this to-do list is the
+// console's to keep.
 var forgeKindNonGoSites = []struct {
 	path   string
 	needle string
@@ -143,26 +152,6 @@ var forgeKindNonGoSites = []struct {
 		path:   "schemas/fugaro.schema.json",
 		needle: `"provider": { "enum": ["github", "bitbucket"] }`,
 		what:   "fugaro.yaml's schema for git.provider",
-	},
-	{
-		path:   "console/src/main/launchrules.ts",
-		needle: `const LAUNCH_PROVIDERS: readonly string[] = Object.freeze(['github', 'bitbucket'])`,
-		what:   "the providers the console admits a launch for",
-	},
-	{
-		path:   "console/src/main/window.ts",
-		needle: `['bitbucket', { host: 'bitbucket.org', segment: 'pull-requests' }],`,
-		what:   "the web host and pull-request segment each provider's links open at",
-	},
-	{
-		path:   "console/src/renderer/screens/coordinator.ts",
-		needle: `export const PULL_PROVIDERS: readonly string[] = Object.freeze(['github', 'bitbucket'])`,
-		what:   "the providers the coordinator screen reads a pull request for",
-	},
-	{
-		path:   "console/src/renderer/screens/run.ts",
-		needle: `export type GitProvider = 'github' | 'bitbucket'`,
-		what:   "the console's own provider type, and the host and path it builds from one",
 	},
 }
 
