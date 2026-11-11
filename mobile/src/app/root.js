@@ -23,6 +23,19 @@
 // deliberately absent from the tree, because a tree is the one thing that ends
 // up in a screenshot, a crash report and a debug overlay.
 //
+// **The widening of 2026-11-11, which this rule asks to be recorded (P7.2).**
+// The shell draws one more thing: the statement that the app's reports are on
+// and that there is no switch, with the privacy page's URL beside it. D255 was
+// answered *always on*, so the app has nothing to turn off and owes the reader
+// the sentence rather than a control -- and the app **has no settings screen**,
+// so the shell is the only surface that sentence has. The words and the URL
+// come from `src/telemetry/notice.js`, which is the single source for both, and
+// the URL is drawn as **text**: it is a link only when `shared/url`'s validator
+// says it may be opened, and until the owner answers D124 the validator refuses
+// every host, so the app shows what the URL is and draws no control that would
+// pretend to open it. Nothing else is added to what the shell may show: this is
+// the only widening, and a later one belongs in this paragraph.
+//
 // **The demo banner, and why it is drawn here.** The owner's ruling requires
 // that every screen a reviewer sees while demo mode is on carries "Demo mode:
 // sample data", and that there is always a visible way to leave. Both are the
@@ -41,6 +54,7 @@
 // saying so in this file.
 
 import { DEMO_BANNER, LEAVE_DEMO } from '../demo/index.js';
+import { notice } from '../telemetry/notice.js';
 
 /** The element type names the shell uses, in one place so a test can name
  * them too. They are the react-native primitives the entry passes in. */
@@ -50,7 +64,18 @@ export const SHELL = Object.freeze({
   BANNER: 'fugaro.banner',
   LEAVE: 'fugaro.banner.leave',
   BODY: 'fugaro.body',
+  NOTICE: 'fugaro.notice',
 });
+
+/** The statement the app shows about its reports, and the privacy page's URL.
+ *
+ * It is built **once**, when the module loads, because it is a fact about the
+ * build rather than about a render: the SDKs are in this build (or they are
+ * not) and the host list `shared/url` refuses by is the one compiled in. The
+ * module it comes from is the single source of both the words and the URL --
+ * see `../telemetry/notice.js` for the link's rule and for why the URL is
+ * drawn as text until the owner answers D124. */
+const NOTICE = notice();
 
 /** The title the app shows. A constant, never a value from an account. */
 export const APP_TITLE = 'Fugaro';
@@ -153,6 +178,19 @@ export function createRoot({ React, store, View, Text, Pressable, useDemo, scree
         ),
       ];
     children.push(React.createElement(View, { type: SHELL.BODY, key: 'body' }, ...body));
+
+    // The statement, as the shell's third child and on every screen: it is the
+    // only surface the app has for it, and a reader who reaches the app at all
+    // is owed it. Both texts are `src/telemetry/notice.js`'s -- the shell
+    // renders the sentence and the URL rather than copying either -- and the
+    // URL is a Text and never a control, which is what "there is no switch"
+    // looks like on the screen.
+    children.push(React.createElement(
+      View,
+      { type: SHELL.NOTICE, key: 'notice' },
+      React.createElement(Text, { type: SHELL.NOTICE, key: 'statement' }, NOTICE.text),
+      React.createElement(Text, { type: SHELL.NOTICE, key: 'privacy' }, NOTICE.url),
+    ));
 
     return React.createElement(View, { type: SHELL.ROOT }, ...children);
   };
