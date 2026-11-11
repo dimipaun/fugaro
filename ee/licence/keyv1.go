@@ -263,17 +263,22 @@ func VerifyV1(raw []byte, now time.Time, ring Keyring, firebaseProjectID string)
 //
 // The two parts are decoded here rather than through key.go's decodePart, which
 // names the key id in its refusal: a v1 key has no id in the clear, and the
-// refusal for a part that will not decode must not carry one. Both parts go
-// through the strict decoder for the same reason the older format's do -- a
-// malleable encoding is a second spelling of a key, and one key has one
-// spelling.
+// refusal for a part that will not decode must not carry one.
+//
+// Both parts are checked against the alphabet (key.go's isBase64url) before
+// either is decoded, and that check is what the strict decoder does not give:
+// Go's base64 skips carriage returns and newlines wherever it meets them, so a
+// text with one folded into a part decodes to the same key as the text without
+// it and verifies. A malleable encoding is a second spelling of a key, and one
+// key has one spelling -- the rule key.go's decodePart states and this keeps.
+// Outer whitespace is still trimmed above, because a key arrives by paste.
 func splitKeyV1(raw []byte) (payload, signature []byte, err error) {
 	rest, ok := strings.CutPrefix(strings.TrimSpace(string(raw)), keyPrefixV1)
 	if !ok {
 		return nil, nil, ErrMalformedV1
 	}
 	parts := strings.Split(rest, ".")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || !isBase64url(parts[0]) || !isBase64url(parts[1]) {
 		return nil, nil, ErrMalformedV1
 	}
 	payload, err = base64.RawURLEncoding.Strict().DecodeString(parts[0])

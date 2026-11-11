@@ -202,11 +202,29 @@ func TestVerifyFgkKey(t *testing.T) {
 		{"an empty signature part", keyPrefixV1 + parts[0] + "."},
 		{"a part outside the alphabet", keyPrefixV1 + "%%%.%%%"},
 		{"a part that is not a whole number of bytes", keyPrefixV1 + "A." + parts[1]},
+		// Go's base64 skips a carriage return or a newline wherever it meets
+		// one, so both of these decode to the key above and verify unless the
+		// parts are held to the alphabet: a text with a line folded into it
+		// would be a second spelling of one key, which is the rule key.go's
+		// decodePart states and splitKeyV1 keeps.
+		{"a payload part with a newline in it", keyPrefixV1 + parts[0][:4] + "\n" + parts[0][4:] + "." + parts[1]},
+		{"a signature part with a carriage return in it", keyPrefixV1 + parts[0] + "." + parts[1][:4] + "\r\n" + parts[1][4:]},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got, state, err := VerifyV1([]byte(tt.key), atV1(30), ringOf(fixture), firebaseProjectV1)
 			refusedAs(t, got, state, err, ErrMalformedV1)
 		})
+	}
+
+	// The rule above is about the *inside* of a part, not the key's outer
+	// whitespace: a key pasted with a newline after it is the key, and it
+	// answers its claims.
+	got, state, err = VerifyV1([]byte(key+"\n"), atV1(30), ringOf(fixture), firebaseProjectV1)
+	if err != nil {
+		t.Fatalf("a key with a trailing newline is refused: %v -- a key arrives by paste, and the whitespace around the text is not part of it", err)
+	}
+	if state != Active || !sameClaimsV1(got, want) {
+		t.Fatalf("a key with a trailing newline answered the claim set %+v in state %s, want the key's own", got, state)
 	}
 
 	// A payload signed as it is spelled and then re-spelled is a different byte
@@ -510,6 +528,7 @@ func TestGraceUsesTheKeysOwnDays(t *testing.T) {
 		{"ten days into a forty-five day grace", 45, paidThrough.Add(10 * 24 * time.Hour), Grace},
 		{"the same instant with no grace at all", 0, paidThrough.Add(10 * 24 * time.Hour), Expired},
 		{"a second past a term with no grace", 0, paidThrough.Add(time.Second), Expired},
+		{"a second past a term whose grace is negative", -1, paidThrough.Add(time.Second), Expired},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			claims := v1Claims()
@@ -523,6 +542,81 @@ func TestGraceUsesTheKeysOwnDays(t *testing.T) {
 			}
 			if state != tt.want {
 				t.Fatalf("a key with %d days of grace read at %s is %s, want %s", tt.grace, tt.at, state, tt.want)
+			}
+		})
+	}
+}
+
+// TestGraceDaysPastADurationIsTheLongestGrace pins graceDuration's clamp, which
+// nothing else holds: a duration in nanoseconds runs out at about 106,751 days,
+// and with the clamp deleted the multiply wraps, so a key whose grace_days is
+// past what a duration holds answers a window far shorter than the one it
+// states -- expired, for a grace a licence server meant to outlast the term.
+func TestGraceDaysPastADurationIsTheLongestGrace(t *testing.T) {
+	longest := graceDuration(maxIntervalDays + 1)
+	if longest < 36500*24*time.Hour {
+		t.Fatalf("a grace past what a duration holds is %v, want the longest grace there is: the arithmetic wrapped instead of stopping at the bound", longest)
+	}
+	for _, days := range []int{maxIntervalDays + 1, 1 << 40, (1 << 62) - 1} {
+		if got := graceDuration(days); got != longest {
+			t.Fatalf("graceDuration(%d) is %v, want %v: every grace past the bound is the same grace", days, got, longest)
+		}
+	}
+
+	// End to end, because the state is what a caller reads: a key with a grace
+	// longer than any duration is still in grace a century after its paid term.
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+	claims := v1Claims()
+	claims.PaidThrough = atV1(-36500)
+	claims.IssuedAt = atV1(-36500 - 365)
+	claims.GraceDays = 1 << 40
+	_, state, err := VerifyV1([]byte(fixture.signClaimsV1(t, claims)), atV1(0), ringOf(fixture), firebaseProjectV1)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if state != Grace {
+		t.Fatalf("a key with %d days of grace read a century past its paid term is %s, want %s: a grace past what a duration holds is the longest grace, not a shorter window", claims.GraceDays, state, Grace)
+	}
+}
+
+// TestParseISODurationRefusesWhatItCannotHold pins the bound on the two forms
+// F16 admits. A duration in nanoseconds runs out at about 106,751 days, so the
+// parser stops at maxIntervalDays and refuses a longer text rather than letting
+// the multiply wrap it into a window far shorter than the key says; `P<n>W`
+// multiplies by seven, so its bound is the same span counted in weeks.
+//
+// Nothing else holds either guard: with the bound deleted the whole package is
+// green, and `P99999999999999999999D` answers a wrapped duration and no error.
+func TestParseISODurationRefusesWhatItCannotHold(t *testing.T) {
+	longest := time.Duration(maxIntervalDays) * 24 * time.Hour
+	for _, tt := range []struct {
+		name string
+		text string
+		want time.Duration
+		ok   bool
+	}{
+		{"the longest count of days there is", fmt.Sprintf("P%dD", maxIntervalDays), longest, true},
+		{"one day past it", fmt.Sprintf("P%dD", maxIntervalDays+1), 0, false},
+		{"the longest count of weeks there is", fmt.Sprintf("P%dW", maxIntervalDays/7), longest, true},
+		{"one week past it", fmt.Sprintf("P%dW", maxIntervalDays/7+1), 0, false},
+		{"a run of digits nobody meant", "P99999999999999999999D", 0, false},
+		{"the same run in weeks", "P99999999999999999999W", 0, false},
+		{"the largest number an int64 holds", "P9223372036854775807D", 0, false},
+		{"no interval at all", "P0D", 0, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseISODuration(tt.text)
+			if !tt.ok {
+				if !errors.Is(err, ErrDuration) {
+					t.Fatalf("ParseISODuration(%q) is %v and %v, want the duration refusal: a span past what a duration holds must not be wrapped into a shorter one", tt.text, got, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseISODuration(%q): %v", tt.text, err)
+			}
+			if got != tt.want {
+				t.Fatalf("ParseISODuration(%q) is %v, want %v", tt.text, got, tt.want)
 			}
 		})
 	}
@@ -683,6 +777,8 @@ var boundaryVectorsV1 = []string{
 	"a key a second past its grace",
 	"a key at the longest term its tier allows",
 	"a term a second past the tier's maximum",
+	"a check interval longer than a duration holds",
+	"a grace longer than a duration holds",
 }
 
 // loadVectorsV1 reads the v1 file the two verifiers are read against.
@@ -929,6 +1025,20 @@ func generateVectorsV1(t *testing.T) vectorFileV1 {
 	hourly := "PT1H"
 	badInterval.CheckInterval = &hourly
 	refuse("a check interval this verifier does not read", sign(badInterval), "duration")
+
+	// The two bounds on a span. An interval past what a duration holds is not an
+	// interval this verifier reads, and a grace past it is the longest grace
+	// there is rather than the shorter window the arithmetic would wrap into.
+	absurdInterval := base()
+	absurd := "P99999999999999999999D"
+	absurdInterval.CheckInterval = &absurd
+	refuse("a check interval longer than a duration holds", sign(absurdInterval), "duration")
+
+	longGrace := base()
+	longGrace.IssuedAt = days(-400)
+	longGrace.PaidThrough = days(-30)
+	longGrace.GraceDays = 1 << 40
+	accept("a grace longer than a duration holds", sign(longGrace), Grace, longGrace)
 
 	noWorkspace := base()
 	noWorkspace.WorkspaceID = ""
