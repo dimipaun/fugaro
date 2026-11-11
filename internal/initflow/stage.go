@@ -72,11 +72,13 @@ func NeedsBilling(name string) bool {
 // stages and knows them by name, and the invariant it carries — no cloud read,
 // no write outside this machine — is a property of the stage's own code, kept
 // by hand where that code is (Plugin, internal/cli/init_plugin_stage.go: the
-// user's own Claude Code, through the claude CLI, and the checkout's own
-// settings file when a pin an older fugaro left is there to take out). A stage
-// whose local half sits beside a cloud write is not one of these, whatever it
-// also writes: Checkout is the case that says so — its cloud step is a cloud
-// write, and the loop cannot tell the two halves apart.
+// plugin installed in the user's own Claude Code through the claude CLI, and
+// the checkout's own .claude/settings.json only where a pin an older fugaro
+// left is there to take out — a write a coding agent's session refuses, so a
+// marked session's own writes are the machine's). A stage whose local half sits
+// beside a cloud write is not one of these, whatever it also writes: Checkout
+// is the case that says so — its cloud step is a cloud write, and the loop
+// cannot tell the two halves apart.
 //
 // The tool that runs such a stage after a stop reads the managed gate before it
 // writes and refuses on the gate's zero value (the plugin stage's removal): a
