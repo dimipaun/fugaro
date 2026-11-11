@@ -192,6 +192,7 @@ import {
   PROJECTS_MANAGED_CLASS,
   PROJECTS_MODELS_BUSY,
   PROJECTS_RETIREMENTS_CLASS,
+  PROJECTS_SEATS_CLASS,
   PROJECTS_SETTINGS_BUSY,
   SETTINGS_PENCIL_CLASS,
 } from '../../src/renderer/screens/projects'
@@ -209,6 +210,12 @@ import {
   LICENCE_TITLE,
 } from '../../src/renderer/screens/licence'
 import { MANAGED_BUSY, MANAGED_TITLE } from '../../src/renderer/screens/managed'
+import {
+  SEATS_ADVISORY,
+  SEATS_BUSY,
+  SEATS_OVER_WARNING,
+  SEATS_TITLE,
+} from '../../src/renderer/screens/seats'
 import { POLICY_NODE_TITLE } from '../../src/renderer/screens/policynotes'
 import { RETIREMENTS_BUSY, RETIREMENTS_SET_TITLE } from '../../src/renderer/screens/retirements'
 import type { SkeletonShape } from '../../src/renderer/skeleton'
@@ -238,7 +245,7 @@ import {
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
 /**
- * READ_METHODS is the twenty reads `entry.ts` may reach for (`ReadBridge`'s own
+ * READ_METHODS is the twenty-one reads `entry.ts` may reach for (`ReadBridge`'s own
  * list less `summaryRuns`, which `queueBridge` answers with its own recorder),
  * by the name the preload exposes. Every one of them is on the fake bridge
  * below, and every one records its call -- so "this read was never made" is a
@@ -252,7 +259,10 @@ const CONSOLE_ROOT = join(__dirname, '..', '..')
  * Project tab's later sections read them (CM10). `readLicence` is the
  * subscriptions plan's S2.7 row: the Project tab's licence key, which is the one
  * read here whose answer is not a `Snapshot` around a CLI document -- that
- * operation spawns no child at all. `graphWatch` is the graph plan's CG9b row
+ * operation spawns no child at all. `readSeats` is the subscriptions plan's
+ * S4.2 row: the same tab's advisory seat estimate, which reads the
+ * installation's own bucket and is therefore the one read of that tab whose
+ * answer is a minute rather than a second out. `graphWatch` is the graph plan's CG9b row
  * and the last: the Graph tab's own live feed, which is why a case that drives
  * the Graph and never leaves it is a case that keeps a `fugaro graph --watch`
  * child alive -- so this bridge answers it, and the call it records is how the
@@ -278,6 +288,7 @@ const READ_METHODS = [
   'policyShow',
   'environmentReport',
   'readLicence',
+  'readSeats',
   'graphWatch',
 ] as const
 
@@ -5187,6 +5198,31 @@ const LICENCE_REFUSAL = 'the licence key’s signature does not verify'
  * carries it, so no case here needs a key-shaped string to say so. */
 const PASTED_KEY = 'the key the operator pasted'
 
+/** A_SEATS_REPLY is one `seats.read` answer (S4.2; `fugaro seats --json`): five
+ * people over the licence's own four seats, which is what makes the section
+ * warn. The licence below is `A_LICENCE_REPLY`, whose claim set carries four,
+ * so the two documents are read against each other -- and neither is written
+ * anywhere: the estimate is the panel's own arithmetic over a document the CLI
+ * printed for it. */
+const A_SEATS_REPLY: Readonly<Record<string, unknown>> = Object.freeze({
+  document: {
+    project: 'acme',
+    days: 90,
+    since: '2026-08-13',
+    until: '2026-11-11',
+    people: [
+      { person: 'ana', sources: ['launcher', 'requester'] },
+      { person: 'bo', sources: ['launcher'] },
+      { person: 'cyd', sources: ['operator'] },
+      { person: 'dee', sources: ['operator'] },
+      { person: 'eli', sources: ['requester'] },
+    ],
+    not_counted: [],
+    unreadable: 0,
+    notes: [],
+  },
+})
+
 /** QUEUE_OFFER is the one repository identity the open installation offers: the
  * `<provider>/<owner>/<name>` string the launch form's `select` holds as an
  * option's value, and the value the form sends. */
@@ -5557,6 +5593,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       'policyShow',
       'environmentReport',
       'readLicence',
+      'readSeats',
     ])
     expect(
       calls.slice(before).some((call) => call.name === 'listRuns'),
@@ -5603,14 +5640,15 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
             name === 'showBudget' ||
             name === 'listModels' ||
             name === 'readSettings' ||
-            name === 'readLicence',
+            name === 'readLicence' ||
+            name === 'readSeats',
         ),
-    ).toEqual(['showBudget', 'listModels', 'readSettings', 'readLicence'])
-    // While all eight are out, the tab says which read each of its marks is --
+    ).toEqual(['showBudget', 'listModels', 'readSettings', 'readLicence', 'readSeats'])
+    // While all nine are out, the tab says which read each of its marks is --
     // one mark per section, on the section's own host (CM10's four siblings are
-    // the last four, the licence key's the eighth, and the policy panel's read
-    // wears no mark of its own: it is a member of the body's model, drawn with
-    // it).
+    // in the middle, the licence key's the eighth, S4.2's seat estimate the
+    // ninth, and the policy panel's read wears no mark of its own: it is a
+    // member of the body's model, drawn with it).
     expect(busyLabels(document)).toEqual([
       PROJECTS_BUSY,
       PROJECTS_MODELS_BUSY,
@@ -5620,6 +5658,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       RETIREMENTS_BUSY,
       CREDENTIALS_SERVICE_BUSY,
       LICENCE_BUSY,
+      SEATS_BUSY,
     ])
     await flush()
     // Each section paints its own answer, and the models section paints the
@@ -6184,6 +6223,54 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // to act on, and one read was made because nothing was kept.
     expect(busyLabels(document)).toEqual([])
     expect(calls.filter((call) => call.name === 'readLicence')).toHaveLength(1)
+  })
+
+  it('draws the advisory seat estimate beside the key’s own seats, and warns over without blocking', async () => {
+    // S4.2, the whole of the console's half. The estimate and the key's own
+    // seats are two documents read by two sections of one tab, and the panel is
+    // where they meet: it finds the seats claim `buildLicence` drew rather than
+    // reading the key itself, so the tab is never at risk of one section
+    // disagreeing with another about what the licence carries.
+    //
+    // What the estimate is drawn *against* is the point of the section: a
+    // installation over its seats says so and stops there. **Nothing is
+    // blocked** -- there is no control under this panel at all, and the section
+    // takes no view of what the operator may launch (D439: seats are compared,
+    // never enforced).
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        readLicence: () => ({ ok: true, data: A_LICENCE_REPLY }),
+        readSeats: () => ({ ok: true, data: A_SEATS_REPLY }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    const panel = classed(panelOf(document), PROJECTS_SEATS_CLASS)[0] as FakeNode
+    expect(panel, 'the tab drew no seats section').toBeDefined()
+    expect(holdsText(panel, SEATS_TITLE)).toBe(true)
+    // Five people, four seats: the estimate is marked as compute is (`est.`) and
+    // the key's own count is the licence's, drawn as the measured number it is.
+    expect(holdsText(panel, 'est. 5')).toBe(true)
+    expect(holdsText(panel, '4')).toBe(true)
+    expect(holdsText(panel, SEATS_OVER_WARNING)).toBe(true)
+    expect(holdsText(panel, SEATS_ADVISORY)).toBe(true)
+    // The read happened, and the panel is the only place it is drawn: no mark is
+    // left up, because the section's own read landed.
+    expect(calls.filter((call) => call.name === 'readSeats')).toHaveLength(1)
+    expect(busyLabels(document)).toEqual([])
+    // The one case that would make this section a gate, and it is not:
+    // no button, no input, no link.
+    expect(
+      everyNode(panel).filter((node) =>
+        ['button', 'input', 'select', 'textarea', 'form', 'a'].includes(node.tagName.toLowerCase()),
+      ),
+    ).toEqual([])
   })
 
   it('asks for no models read at all below the command’s floor, and says which version it needs', async () => {
