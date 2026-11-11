@@ -3696,6 +3696,53 @@ func TestResultSchemaAcceptsCacheFields(t *testing.T) {
 	}
 }
 
+// TestResultSchemaAcceptsModelTokens (G1.1, F8): the run's cost object carries
+// the tokens per model a repricing of the run reads. The field is additive and
+// optional -- a record written before it existed has none, and one whose run no
+// path filled has none either -- and each model's entry carries the same five
+// counts. Pinned here beside the cache totals for their reason: cost's
+// additionalProperties is false, so a field the record writes and the schema
+// does not name is a record the schema rejects.
+func TestResultSchemaAcceptsModelTokens(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	head := `{"version":1,"run_id":"20261027-100000-abcd","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1.23,"started_at":"2026-10-27T10:00:00Z","cost":{"model_usd":1.23,"compute_usd":0,"compute_estimated":false,"total_usd":1.23,"estimate":true,"model_basis":"api-list"`
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(head + lit + `}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	entry := `{"input":1200,"output":340,"cache_read":40000,"cache_write_5m":900,"cache_write_1h":100}`
+	for _, lit := range []string{
+		``, // a record written before the field existed
+		`,"model_tokens":{}`,
+		`,"model_tokens":{"claude-opus-5-5":` + entry + `}`,
+		// A model whose path could not split its cache writes, or that used
+		// none: the counts are zeroes, not absent members.
+		`,"model_tokens":{"claude-haiku-4-5":{"input":10,"output":5,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0}}`,
+		`,"model_tokens":{"claude-opus-5-5":` + entry + `,"claude-haiku-4-5":{"input":10,"output":5,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0}}`,
+	} {
+		if err := validate(lit); err != nil {
+			t.Errorf("schema rejects cost%s: %v", lit, err)
+		}
+	}
+	for _, lit := range []string{
+		// A short entry is a truncated write, not a model that used no
+		// tokens: the writer always writes all five counts.
+		`,"model_tokens":{"claude-opus-5-5":{"input":1200,"output":340,"cache_read":40000,"cache_write_5m":900}}`,
+		`,"model_tokens":{"claude-opus-5-5":{"input":1200,"output":340,"cache_read":40000,"cache_write_5m":900,"cache_write_1h":100,"web_searches":3}}`,
+		`,"model_tokens":{"claude-opus-5-5":{"input":-1,"output":340,"cache_read":40000,"cache_write_5m":900,"cache_write_1h":100}}`,
+		`,"model_tokens":{"claude-opus-5-5":{"input":"1200","output":340,"cache_read":40000,"cache_write_5m":900,"cache_write_1h":100}}`,
+		`,"model_tokens":{"claude-opus-5-5":3}`,
+		`,"model_tokens":[` + entry + `]`,
+	} {
+		if err := validate(lit); err == nil {
+			t.Errorf("schema accepts cost%s", lit)
+		}
+	}
+}
+
 // TestResultSchemaAcceptsServiceTiers: the run's cost object carries the
 // service tiers its calls came back at that the price table has no
 // multiplier for (design §6.1). Those calls were charged conservatively, so

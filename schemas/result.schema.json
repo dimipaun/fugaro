@@ -105,6 +105,23 @@
         "unreconciled": { "type": "number", "minimum": 0, "description": "USD charged from reservations rather than from reported usage." },
         "cache_read_tokens": { "type": "integer", "minimum": 0, "description": "The run's prompt-cache read token total, summed from the gateway's per-call usage. A token count and not a dollar split: the price table returns one blended figure per call, so a cache read's dollars cannot be told from a write's (P12). Absent when the run read nothing from cache, and for a run with no gateway." },
         "cache_write_tokens": { "type": "integer", "minimum": 0, "description": "The run's prompt-cache write token total, summed from the gateway's per-call usage, both cache TTLs together. Absent when the run wrote nothing to cache, and for a run with no gateway." },
+        "model_tokens": {
+          "type": "object",
+          "description": "The run's token counts by model: the counts a repricing of the run reads, so `fugaro estimate` can price a run's own usage again on another model (F8). A key is a model ID the run's own path keyed usage under, never a string an upstream response claimed. cache_read_tokens and cache_write_tokens are the sums of these per-model figures. The 5m/1h split is what each path could tell -- the gateway prices every call from pricing.Usage, which keeps the two cache TTLs apart, and a run without a gateway records the agent's single cache-creation count as cache_write_5m -- so a zero is 'none, or this path could not tell', never a guess. Absent for a run that recorded no tokens, and in records written before this field existed.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["input", "output", "cache_read", "cache_write_5m", "cache_write_1h"],
+            "description": "One model's counts. Every count is written, zero included, so a reader never has to tell 'used none' from 'not recorded'; a short entry is a truncated write and is refused. Web searches are not here: they are priced apart and a repricing of the run's tokens does not carry them.",
+            "properties": {
+              "input": { "type": "integer", "minimum": 0 },
+              "output": { "type": "integer", "minimum": 0 },
+              "cache_read": { "type": "integer", "minimum": 0 },
+              "cache_write_5m": { "type": "integer", "minimum": 0, "description": "Cache-creation tokens written with the 5-minute TTL, and -- on a run with no gateway -- every cache-creation token the agent reported, which that path cannot split." },
+              "cache_write_1h": { "type": "integer", "minimum": 0, "description": "Cache-creation tokens written with the 1-hour TTL. Always 0 on a run with no gateway, whose agent reports one cache-creation count." }
+            }
+          }
+        },
         "usage_unparsed": { "type": "integer", "minimum": 0, "description": "Calls settled at their reservation because their usage could not be read." },
         "service_tiers": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "The service tiers the run's calls came back at that the price table has no multiplier for, spelled as a violation is (`usage.service_tier \"priority\"`). Those calls were charged the conservative multiple of the rates each call was priced at -- or, where the route reported what the call cost, the dearer of that multiple and the provider's own figure plus the route fee, up to the reservation that call made -- rather than failing their stage, so model_usd counts that charge and this is what names it. At most eight distinct names, then one `+N more` entry counting the distinct names beyond them, so a provider that answers a new tier on every call cannot grow the record with the call count. Absent when every call was priced at the model's own rates." },
         "catalog_stale": { "type": "boolean", "description": "True when the built-in provider price catalog was older than its own 30-day threshold (catalog.StaleAfter, internal/pricing/catalog), so every model it priced was charged the dearest end of its tier's range rather than the end price_policy asked for. The run over-counts on purpose and logs one `budget: price catalog stale` WARN. Absent when the catalog was fresh, or when no catalog-priced model was charged." }
