@@ -47,10 +47,16 @@ version-4 reader refuses a version-5 node — the two members sit *inside* a poo
 own decode reads strictly, so it is unreadable there rather than listed in the unknown keys — and
 the other direction refuses too: a version-4 node is refused by this release's runs, by `fugaro
 project policy publish` and by `fugaro doctor`, and all three name `fugaro update`, whose migration
-rewrites the node in place and keeps the members it carries. The delete-then-publish is what this
-release names for a node *below* the migration chain's first step — versions 1 and 2, which 0.8.0
-and 0.8.5 wrote and no step reaches — where a republish is the only move and rebuilds the node from
-the operator's own config.
+rewrites the node in place and keeps the members it carries. `fugaro update` itself reads it carried
+forward, which is what makes the upgrade one run: its repository stage runs *before* the stage that
+migrates the node, and the repository root is applied with what it reads there — whether this
+repository's Bitbucket credential is brokered, and what the node's image catalog and map say — so it
+reads the document the migration of that same run is about to write
+(`projectpolicy.ReadCarriedForwardShapeFree`, from the shape-free floor up, and below it the refusal
+the strict read gives, where the node needs the operator's republish). The delete-then-publish is
+what this release names for a node *below* the migration chain's first step — versions 1 and 2,
+which 0.8.0 and 0.8.5 wrote and no step reaches — where a republish is the only move and rebuilds
+the node from the operator's own config.
 
 Version 4 (0.14.0) is the node that came before it, and this release keeps it. Version 4 added
 `bitbucket_token.allow_repos` (the repositories the project's Bitbucket credential may reach),

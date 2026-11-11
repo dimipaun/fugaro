@@ -73,8 +73,31 @@ func ReadCarriedForward(ctx context.Context, db *rtdb.Client) (*Policy, bool, er
 	return DecodeCarriedForward(raw)
 }
 
+// ReadCarriedForwardShapeFree is ReadCarriedForward for a caller that acts on
+// the node rather than asking a question about it, and may therefore only carry
+// a predecessor whose migration needs nothing outside the node
+// (DecodeCarriedForwardShapeFree, projectpolicy.ShapeFreeFloor).
+//
+// It exists for `fugaro update`'s repository stage: that stage runs before the
+// stage that migrates the node, and what it decides by the node — whether this
+// repository's git credential is brokered (internal/infra's
+// resolveBitbucketProxied), and the node's published image catalog and map — is
+// an enforcement, so it must read the document the migration of the same run
+// writes and not a refusal. From ShapeFreeFloor up that is exactly what a carry
+// in memory produces; below it the answer is Read's own refusal, because the
+// node behind the floor needs the operator's republish (the floor's doc is the
+// argument) and a document that states an enforcement nobody published is not
+// one to act on.
+func ReadCarriedForwardShapeFree(ctx context.Context, db *rtdb.Client) (*Policy, bool, error) {
+	raw, found, err := readNode(ctx, db)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	return DecodeCarriedForwardShapeFree(raw)
+}
+
 // readNode is the two rules above, up to the bytes: the marker gate shared by
-// Read and ReadCarriedForward.
+// Read, ReadCarriedForward and ReadCarriedForwardShapeFree.
 func readNode(ctx context.Context, db *rtdb.Client) (json.RawMessage, bool, error) {
 	gen, err := rulesGeneration(ctx, db)
 	if err != nil {
