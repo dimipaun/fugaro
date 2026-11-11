@@ -241,7 +241,7 @@ restore_detail() {
     users="no run identity was minted, so no Firebase Auth user of this check's was created"
   elif [ -z "$SURVIVORS_READ" ]; then
     left=${UIDS_CREATED[*]}
-    users="the run identity users were attempted and the project's own user list was NOT read back ($DELETED_N of ${#UIDS_CREATED[@]} deletions answered 200), so whether they exist is unread rather than absent: the uids this check may have created are $left, and this is the call that deletes each of them — $delete_call"
+    users="whether the run identity users are gone is unread rather than absent: the project's own user list was NOT read back, and $DELETED_N of ${#UIDS_CREATED[@]} deletions answered 200. The uids this check may have created are $left, and this is the call that deletes each of them — $delete_call"
   elif [ "$SURVIVORS_READ" = 0 ]; then
     users="the run identity users were deleted ($DELETED_N of ${#UIDS_CREATED[@]} answered 200) and the project's own user list was read back holding none of their uids"
   else
