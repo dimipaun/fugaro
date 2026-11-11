@@ -181,9 +181,12 @@ const (
 // `project clone-url` family -- `settings set` can make no cross-key check
 // between an entry's canonical name and its URL, which is the node's own rule
 // (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
-// list does not.
+// list does not. The account aliases moved it once more, by one row and not the
+// allowlist's, for the clone URLs' reason: the block is local-only (D2090) and
+// its owner is the `accounts` family, because `fugaro accounts alias` is what
+// repoints one and converges the node and the job set with it (D2096).
 const (
-	cfmRegistryRows   = 412
+	cfmRegistryRows   = 413
 	cfmAllowlistNamed = 101
 )
 

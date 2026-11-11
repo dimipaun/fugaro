@@ -459,6 +459,9 @@
         "caps.mode": {
           "default": "unset = observe"
         },
+        "claude_account_aliases": {
+          "default": "unset = none: no alias is defined, and every choice key names an account of claude_accounts directly"
+        },
         "claude_account_auto": {
           "default": "unset = false: nothing chooses an account for the owner"
         },

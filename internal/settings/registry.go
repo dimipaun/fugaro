@@ -856,6 +856,14 @@ var localRows = []Row{
 		Doc:      docModels,
 		TypedWhy: "this lets Fugaro choose an account for the owner: a run then spreads one project across several accounts, which is the owner's own decision about the terms the subscriptions are held under",
 	},
+	// The choice keys' own vocabulary (docs/account-aliases, D2090–D2093): one
+	// name the owner points at one account, so moving every stage that names it
+	// is one edit. Local-only for `claude_account_auto`'s reason and one of its
+	// own — a launcher who could write an alias into the shared file could name
+	// an account the file never admitted, one indirection in — and the owner is
+	// the `accounts` family rather than the generic path, because the write that
+	// repoints one converges the node and the job set with it (D2096).
+	locLocal("claude_account_aliases", "none: no alias is defined, and every choice key names an account of claude_accounts directly", "accounts", docModels),
 	// The installation's credentials, pools and crafts (docs/model-crafts/
 	// spec.md §1–3). They are local-only for claude_accounts' reason, and the
 	// one key here that names a credential rather than holding one is why: a
