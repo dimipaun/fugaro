@@ -239,6 +239,97 @@ func TestProjectProfileRefusesInAnAgentSession(t *testing.T) {
 	}
 }
 
+// projectProfileAccountExtra is a config whose profile admits one repository
+// and whose account reaches another: a state that publishes, and one an edit
+// naming the account on the profile turns into a node the publisher refuses.
+const projectProfileAccountExtra = `
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - acme/other
+profiles:
+  standard:
+    provider: github
+    cpu: 2
+    memory: 4Gi
+    timeout_class: 6h
+    allow_repos:
+      - github/acme/widgets
+`
+
+// projectProfileBitbucketExtra is the same shape one rule over: a bitbucket
+// profile with its own exact list, and the token's block reaching a different
+// repository. Mounting the token on the profile is the edit that breaks it.
+const projectProfileBitbucketExtra = `
+project_secrets:
+  bitbucket-token:
+    allow_data_to:
+      - acme/other
+profiles:
+  standard:
+    provider: bitbucket
+    cpu: 2
+    memory: 4Gi
+    timeout_class: 6h
+    allow_repos:
+      - bitbucket/acme/widgets
+`
+
+// TestProjectProfileRefusesAConfigThePublisherWouldRefuse: the door this family
+// writes through holds the edited bytes to the rules the publisher applies to
+// the same blocks (projectProfileCheck), so an edit whose result `fugaro update`
+// would refuse to publish is refused here, with nothing written and the
+// publisher's own sentence carried in the refusal.
+//
+// Both halves of the profiles rule are asked, and each case is an edit that
+// CREATES the break — the config publishes before it, so what the refusal names
+// is the change the command was asked for and not a state the fixture was in.
+// The account half is the profile's list against the account's, which the node
+// derives from claude_accounts; the Bitbucket half is a property of two blocks
+// together — a profile mounting bitbucket-token admits only what
+// bitbucket_token.allow_repos admits — and it is the half that reads the token
+// block, so a guard that asked only the profile's own rules would let it
+// through and the next `fugaro update` would refuse the publish.
+func TestProjectProfileRefusesAConfigThePublisherWouldRefuse(t *testing.T) {
+	cases := []struct {
+		name  string
+		extra string
+		args  []string
+		want  []string
+	}{
+		{
+			name:  "an account that does not cover the profile's repositories",
+			extra: projectProfileAccountExtra,
+			args:  []string{"project", "profile", "set", "standard", "claude_accounts", "team-a"},
+			want:  []string{"would not publish as a policy", "team-a", "github/acme/widgets"},
+		},
+		{
+			name:  "the Bitbucket token mounted outside its block's reach",
+			extra: projectProfileBitbucketExtra,
+			args:  []string{"project", "profile", "set", "standard", "secrets", "bitbucket-token"},
+			want:  []string{"would not publish as a policy", "bitbucket_token.allow_repos", "bitbucket/acme/widgets"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, path := modelsWriteHomeWith(t, tc.extra)
+			before := readFileString(t, path)
+			out, _, err := execute(t, tc.args...)
+			if err == nil {
+				t.Fatalf("the write landed a config the publisher refuses:\n%s", out)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			if after := readFileString(t, path); after != before {
+				t.Errorf("a refused write changed the file:\n%s", after)
+			}
+		})
+	}
+}
+
 // TestProjectProfilePrintsOnlyFugaroUpdateNext: every local edit ends with one
 // line, and it is `next: fugaro update` — never a list of steps (spec §1).
 func TestProjectProfilePrintsOnlyFugaroUpdateNext(t *testing.T) {

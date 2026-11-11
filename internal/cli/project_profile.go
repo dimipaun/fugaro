@@ -569,13 +569,20 @@ func projectConfigEditLocal(cmd *cobra.Command, lc *localcfg.Config, sel localcf
 	return applySettingsEdit(cmd, lc, e)
 }
 
-// projectProfileCheck holds the edited config to the rule the publisher applies
-// to the same block, over the accounts the same file derives: the profiles a
-// policy carries must define standard, name a known provider, be a Cloud Run
-// shape, carry a timeout within the ceiling, admit only repositories their own
-// provider's patterns reach and only accounts the policy defines (projectpolicy.
-// validProfiles, reached here through CheckProfiles). A config that sets no
-// profiles block sets no profile at all, and there is nothing to check.
+// projectProfileCheck holds the edited config to the rules the publisher
+// applies to the same blocks, over the two blocks the same file derives: the
+// profiles a policy carries must define standard, name a known provider, be a
+// Cloud Run shape, carry a timeout within the ceiling, admit only repositories
+// their own provider's patterns reach and only accounts the policy defines
+// (projectpolicy.validProfiles, reached here through CheckProfiles) — and a
+// profile that mounts the Bitbucket token must admit only what that token's
+// block admits, which is the half of the rule that is a property of the two
+// blocks together (CheckBitbucketProfileRepos, over the token
+// DeriveBitbucketToken answers, exactly as buildProjectPolicy derives the pair
+// and checkPolicyBytes judges the node). Both halves are the publisher's own
+// functions rather than a second copy of the rule, and both are asked in the
+// order the node's decoder asks them. A config that sets no profiles block sets
+// no profile at all, and there is nothing to check.
 func projectProfileCheck(path string, lc *localcfg.Config) error {
 	if len(lc.Profiles) == 0 {
 		return nil
@@ -584,6 +591,13 @@ func projectProfileCheck(path string, lc *localcfg.Config) error {
 	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
 	if err == nil {
 		err = projectpolicy.CheckProfiles(profiles, accounts)
+	}
+	var token *projectpolicy.BitbucketToken
+	if err == nil {
+		token, err = projectpolicy.DeriveBitbucketToken(profiles, lc.ProjectSecrets)
+	}
+	if err == nil {
+		err = projectpolicy.CheckBitbucketProfileRepos(profiles, token)
 	}
 	if err != nil {
 		return userErr("%s would not publish as a policy: %v", path, err)
