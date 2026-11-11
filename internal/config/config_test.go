@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -697,6 +698,88 @@ func TestVisionSlotIsCheckedLikeTheOthers(t *testing.T) {
 	_, ps = visionAgent(t, visionRoleIDs+`, vision: "has space"`)
 	if got := paths(ps); got != "agent.models.vision" {
 		t.Errorf("a vision value that is not a model ID: problems at %q, want agent.models.vision", got)
+	}
+}
+
+// TestVisionSlotIsNotAModelForAnyExistingRole (V1, D2003): a run that writes no
+// vision model is the run it was. The slot resolves to the empty string, it is
+// no role's model, and the JSON every configuration hash is taken over carries
+// no vision member at all — so the sums already written down (a run record's
+// config_sha256, a policy node's) stay the sums they were, and a key most files
+// never set cannot invalidate a record.
+func TestVisionSlotIsNotAModelForAnyExistingRole(t *testing.T) {
+	cfg, ps := visionAgent(t, visionRoleIDs)
+	if len(ps) != 0 {
+		t.Fatalf("a repository that writes no vision model is refused: %v", ps)
+	}
+	if got := cfg.Agent.VisionModel(); got != "" {
+		t.Errorf("VisionModel() = %q for a run that writes none, want the empty slot", got)
+	}
+	for _, role := range []Role{RoleCoder, RoleReviewer} {
+		if got := cfg.Agent.ModelFor(role); got == "" || got == cfg.Agent.VisionModel() {
+			t.Errorf("ModelFor(%s) = %q: the vision slot is not a role's model", role, got)
+		}
+	}
+	if pins := cfg.Agent.PinnedModels(); len(pins) != 4 || pins[3] != "" {
+		t.Fatalf("PinnedModels() = %q, want the empty slot as the fourth entry", pins)
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("vision")) {
+		t.Error("the JSON a configuration hashes carries a vision member for a run that writes none, so every hash written down before this key existed would move")
+	}
+	// Writing the empty slot is writing nothing: the same pins and the same sum.
+	blank, ps := visionAgent(t, visionRoleIDs+`, vision: ""`)
+	if len(ps) != 0 {
+		t.Fatalf("a repository that writes an empty vision slot is refused: %v", ps)
+	}
+	if blank.Agent.VisionModel() != "" || !slices.Equal(blank.Agent.PinnedModels(), cfg.Agent.PinnedModels()) {
+		t.Errorf("an empty vision slot pins %q, want %q", blank.Agent.PinnedModels(), cfg.Agent.PinnedModels())
+	}
+	if blank.SHA256() != cfg.SHA256() {
+		t.Errorf("an empty vision slot hashes %s, and writing nothing hashes %s", blank.SHA256(), cfg.SHA256())
+	}
+}
+
+// TestVisionSlotIsJudgedOnlyWhenSet (V1, D2007): the vision slot is the one pin
+// a run may do without, so an empty one is not a problem anywhere — where the
+// coder's and the reviewer's empty pins are "is required with a budget" and the
+// background's is its own sentence. Every check that judges a pin therefore
+// leaves the empty slot alone and reaches it as soon as it holds a model.
+func TestVisionSlotIsJudgedOnlyWhenSet(t *testing.T) {
+	cfg, ps := visionAgent(t, visionRoleIDs)
+	if len(ps) != 0 {
+		t.Fatalf("the fixture is refused: %v", ps)
+	}
+	a := cfg.Agent
+	providers := map[string]ModelProvider{"openrouter": okProvider()}
+	if ps := CheckPins(a, pricing.Embedded()); len(ps) != 0 {
+		t.Errorf("CheckPins judges a run that writes no vision model: %v", ps)
+	}
+	list := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: list}), list, nil, nil); len(ps) != 0 {
+		t.Errorf("CheckAllowed judges a run that writes no vision model: %v", ps)
+	}
+	if ps := CheckProviderAuth(a, providers); len(ps) != 0 {
+		t.Errorf("CheckProviderAuth judges a run that writes no vision model: %v", ps)
+	}
+	if ps := CheckProviderGateway(a, "", providers, "observe"); len(ps) != 0 {
+		t.Errorf("CheckProviderGateway judges a run that writes no vision model: %v", ps)
+	}
+	if ps := CheckProviderPolicy(a, nil, "edgeappinc/edgeweb", providers, pricing.Embedded()); len(ps) != 0 {
+		t.Errorf("CheckProviderPolicy judges a run that writes no vision model: %v", ps)
+	}
+
+	// Set, the same checks reach it: the slot is skipped for being empty and
+	// not for being the vision slot.
+	a.Models.Vision = "deepseek/deepseek-v4.1-flash"
+	if got := paths(CheckPins(a, pricing.Embedded())); got != "agent.models.vision" {
+		t.Errorf("a written vision model unpriced: CheckPins reported %q, want agent.models.vision", got)
+	}
+	if got := problemsText(CheckProviderAuth(a, providers)); !strings.Contains(got, "agent.models.vision") {
+		t.Errorf("a written vision model served by a provider under vertex: CheckProviderAuth reported %q", got)
 	}
 }
 

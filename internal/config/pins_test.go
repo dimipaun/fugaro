@@ -55,6 +55,31 @@ func TestPinnedModelsAreTheFourPins(t *testing.T) {
 	}
 }
 
+// TestPinPathsNameTheVisionSlot (V1, D2007): the fourth pin path is
+// agent.models.vision, and it is the one pin a run may do without. pins() drops
+// it while it is empty rather than handing it to the checks, which is what
+// makes the slot's absence unjudged everywhere the three roles' absences are
+// judged ("is required with a budget") — and it hands it over the moment the
+// repository writes a model, so the price rule and the allow-list reach it as
+// they reach a role.
+func TestPinPathsNameTheVisionSlot(t *testing.T) {
+	if len(pinPaths) != 4 || pinPaths[3] != "agent.models.vision" {
+		t.Fatalf("pinPaths = %q, want the vision slot as the fourth", pinPaths)
+	}
+	if got := pins(pinnedAgent()); len(got) != 3 {
+		t.Errorf("pins() of a run with no vision model = %v, want the three roles", got)
+	}
+	a := pinnedAgent()
+	a.Models.Vision = "deepseek/deepseek-v4.1-flash"
+	got := pins(a)
+	if len(got) != 4 || got[3].path != pinPaths[3] || got[3].model != a.Models.Vision {
+		t.Fatalf("pins() = %v, want the vision model at %s", got, pinPaths[3])
+	}
+	if ps := CheckPins(a, pricing.Embedded()); paths(ps) != "agent.models.vision" {
+		t.Errorf("an unpriced vision model: CheckPins reported %q, want agent.models.vision", paths(ps))
+	}
+}
+
 // placeholderPrices is Embedded() with the placeholder row a provider model
 // used to get from it, built by hand: the built-in catalog prices provider
 // models now, so no embedded row carries Unverified, but the flag, its source
