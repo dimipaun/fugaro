@@ -215,7 +215,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 					lc.Name, accesslib.PathNode, selfCommand()))
 		}
 		return pairRefuse(ev, o, pairRefusedUnplaced,
-			fmt.Errorf("%s holds no role at project scope in %s, so a device it paired would have no role to inherit: a device node records a role and no scope (D1588), so the role it inherits is the pairing user's highest project-scope one, and a repository- or all-repos-scoped grant is not one a device can carry; ask an admin of %s to place you at project scope with '%s update --operator %s', which writes that grant",
+			fmt.Errorf("%s holds no role at project scope in %s, so a device it paired would have no role to inherit: a device records a role and no scope, so the role it inherits is the pairing user's highest role at project scope, and a role held only in repositories is not one a device can carry; ask an admin of %s to grant you one at project scope with '%s update --operator %s', which writes that grant",
 				me, lc.Name, lc.Name, selfCommand(), me))
 	}
 	if o.role != "" {
