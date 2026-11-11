@@ -27,15 +27,21 @@ const imageScanLimit = 10
 
 // imageNamesInTask are the words of text that name an image file, in the order
 // they appear and without repeats: a name whose last extension is one of the
-// kinds agent.ImageReadExtensions holds (docs/shot.png), and the kind's own
+// kinds agent.ImageBlockExtensions holds (docs/shot.png), and the kind's own
 // word (a task that says the golden is a PNG). Both are names, and a task that
 // only mentions a picture is deliberately enough to refuse on (V5, D2005): the
 // check cannot tell a task that reads the file from one that talks about it,
 // and a task refused for the mention costs the owner one config line, while
 // the run that reads a picture nobody named dies at implement — which is the
 // failure the check exists to prevent.
+//
+// The block list, and not the read list the deny rules are built from: this
+// check exists for the gateway's refusal, and the gateway counts a document
+// apart from an image — a PDF is served whatever the model's image rate
+// (agent.documentReadExtensions, forward.go's own two counts), so refusing a
+// task that names one would refuse a run that would have succeeded.
 func imageNamesInTask(text string) []string {
-	exts := agent.ImageReadExtensions()
+	exts := agent.ImageBlockExtensions()
 	var out []string
 	seen := map[string]bool{}
 	for _, word := range strings.FieldsFunc(text, func(r rune) bool { return !imageNameRune(r) }) {
@@ -71,7 +77,9 @@ func namesAnImage(word string, exts []string) bool {
 }
 
 // imageScanArgs is the one git command the repository scan runs: the files of
-// HEAD's tree whose name ends in one of the image kinds. The pathspecs are what
+// HEAD's tree whose name ends in one of the image kinds the gateway refuses,
+// agent.ImageBlockExtensions (imageNamesInTask's own list, for the same
+// reason). The pathspecs are what
 // bounds it — git matches them against the tree's paths and reports the
 // matches, so a checkout of many files is never listed whole — and they are why
 // the scan is not the ls-tree the same question suggests: ls-tree takes no
@@ -81,7 +89,7 @@ func namesAnImage(word string, exts []string) bool {
 // warning this feeds is a log line about the repository, not a refusal.
 func imageScanArgs() []string {
 	args := []string{"ls-files", "-z", "--with-tree=HEAD", "--end-of-options", "--"}
-	for _, ext := range agent.ImageReadExtensions() {
+	for _, ext := range agent.ImageBlockExtensions() {
 		args = append(args, "*."+ext)
 	}
 	return args

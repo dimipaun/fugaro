@@ -30,14 +30,18 @@ func scanRepo(t *testing.T, files map[string]string) *gitops.Repo {
 // and the tree's other files are never listed at all — a checkout of a
 // thousand files costs one line per picture — and the list it hands back stops
 // at imageScanLimit, so a repository that tracks thousands of pictures is not
-// printed into the job log either.
+// printed into the job log either. The kinds are the gateway's own
+// (agent.ImageBlockExtensions), so the document kind is neither a pathspec nor
+// a file the scan reports.
 //
 // Mutation (list the tree whole and filter it here, `ls-tree -r --name-only`):
 // the pathspec assertion fails, and every file of the checkout is read.
 // Mutation (drop the imageScanLimit break): the cap case fails.
+// Mutation (scan agent.ImageReadExtensions instead): the PDF case reports a
+// file the gateway serves, and the pathspec assertion fails.
 func TestImageScanIsBounded(t *testing.T) {
 	t.Run("a checkout of many files", func(t *testing.T) {
-		files := map[string]string{"docs/shot.png": "x\n", "mobile/assets/icon.png": "x\n"}
+		files := map[string]string{"docs/shot.png": "x\n", "mobile/assets/icon.png": "x\n", "docs/spec.pdf": "x\n"}
 		for i := range 1000 {
 			files[fmt.Sprintf("src/f%04d.txt", i)] = "x\n"
 		}
@@ -63,8 +67,8 @@ func TestImageScanIsBounded(t *testing.T) {
 				break
 			}
 		}
-		want := make([]string, 0, len(agent.ImageReadExtensions()))
-		for _, ext := range agent.ImageReadExtensions() {
+		want := make([]string, 0, len(agent.ImageBlockExtensions()))
+		for _, ext := range agent.ImageBlockExtensions() {
 			want = append(want, "*."+ext)
 		}
 		if !slices.Equal(pats, want) {
@@ -88,13 +92,15 @@ func TestImageScanIsBounded(t *testing.T) {
 
 // TestImageNamesInTaskReadsNamesAndKindWords (V5, D2005): the task-text half
 // of the check reads a name — a file whose last extension is one of the kinds
-// agent.ImageReadExtensions holds, and the kind's own word — and it is
+// agent.ImageBlockExtensions holds, and the kind's own word — and it is
 // deliberately willing to be wrong in one direction: a task that only mentions
 // a PNG in prose is refused, because the check cannot tell the mention from a
 // read, and a task refused for a mention costs one config line while a picture
 // read that nobody foresaw costs the stage (D2005, D2006). A word that merely
 // contains a kind's letters ("icon" holds "ico") is not a name, and neither is
-// a file of another kind.
+// a file of another kind — including the document kind, which the gateway
+// serves whatever the model's image rate, so a task naming a PDF is a run this
+// check must not refuse.
 func TestImageNamesInTaskReadsNamesAndKindWords(t *testing.T) {
 	for _, c := range []struct {
 		why  string
@@ -107,6 +113,8 @@ func TestImageNamesInTaskReadsNamesAndKindWords(t *testing.T) {
 		{"a quoted name", `Re-render "docs/golden/grid.webp", please`, []string{"docs/golden/grid.webp"}},
 		{"a name twice", "docs/a.png and docs/a.png again", []string{"docs/a.png"}},
 		{"another kind of file", "Update docs/notes.md and the README", nil},
+		{"a document, not an image", "Re-render docs/spec.pdf from the source", nil},
+		{"the document kind's own word", "Fix the PDF export", nil},
 		{"a word holding a kind", "Refactor the palette handling and the icon font", nil},
 		{"no file at all", "Add a feature", nil},
 	} {
