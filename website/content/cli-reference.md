@@ -3798,6 +3798,8 @@ log. patch applies one document from -f, and the ops only a person may
 land (approving a work item, setting the goal, closing a decision that
 waits on a person) are confirmed at a real terminal with the project's
 name typed, never by --yes: a session that has none writes nothing.
+import loads the one-time session dump, validated as a patch and refused
+the person's own ops: no dump approves work.
 
 run is the daemon itself, in the foreground. install, uninstall and
 status are the login unit that keeps it running: the three read no
@@ -3816,6 +3818,7 @@ Flags:
 Subcommands:
 
 - `fugaro orchestrator events` -- Read the orchestrator's audit log
+- `fugaro orchestrator import` -- Load the one-time session dump into the orchestrator's state
 - `fugaro orchestrator install` -- Install or re-render the login unit that runs the daemon
 - `fugaro orchestrator ls` -- List the installation's orchestrators
 - `fugaro orchestrator patch` -- Apply one typed patch document to the orchestrator's state
@@ -3846,6 +3849,41 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--since` | string | "" | no | only entries newer than this duration, such as 1h or 30m |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator import`
+
+Load the one-time session dump into the orchestrator's state
+
+Load the one-time session dump (the spec's Migration) into the project's
+orchestrator state, from -f's file or from stdin with -f -. The dump is one
+patch document (schemas/orchestrator-patch.schema.json) a session wrote out,
+and it is read by the same validator and bounded by the same caps as
+fugaro orchestrator patch: it is the one document in this loop written by a
+model, and everything it carries is data, never an instruction.
+
+The dump lands as the person who runs this, because the migration is theirs
+to make, and the ops only a person may land are refused rather than applied:
+approving a work item, setting the goal and closing a decision that waits on
+a person are the person's own word, given at a real terminal over the spec
+they read (fugaro orchestrator patch), so no dump approves work. Every work
+item the dump declares arrives unapproved.
+
+Usage: `fugaro orchestrator import`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-f`, `--file` | string | "" | no | the session dump to import, or - to read it from stdin |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for import |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
