@@ -547,7 +547,7 @@ var licenceKeyDesignGroups = []struct {
 	},
 	{
 		subject: "renewal, overlap and revocation",
-		why:     "the latest valid key is the one a verifier acts on and the overlap is why an issuing outage is survivable (T26); the only contact with the server is the visible job in the customer's own project, and an unreachable server never revokes -- only an explicit `revoked` answer does (D2131, D2140)",
+		why:     "the latest valid key is the one a verifier acts on and the overlap is why an issuing outage is survivable (T26); the check itself phones home about nothing and the contact a key causes is the visible job in the customer's own project, the other contacts being commands the user runs, and an unreachable server never revokes -- only an explicit `revoked` answer does (D2131, D2140)",
 		phrases: []string{
 			"renew_before_days",
 			"two keys are simply two keys the store holds",
@@ -560,13 +560,13 @@ var licenceKeyDesignGroups = []struct {
 	},
 	{
 		subject: "limits",
-		why:     "these are the accepted limits, and the tier maximum is stated with what it bounds and what it does not, so a verifier author does not build the length check as a defence against a leaked signing key that it is not; revocation is advisory rather than a defence, and the project store is licence-grade rather than secret",
+		why:     "these are the accepted limits, and the tier maximum is stated with what it bounds and what it does not, so a verifier author does not build the length check as a defence against a leaked signing key that it is not; its per-tier number and the issue lead that number assumes are the policy table's and are marked open, because the key carries its own `renew_before_days`; revocation is advisory rather than a defence, and the project store is licence-grade rather than secret",
 		phrases: []string{
 			"maximum lifetime",
 			"not the same as bounding a leaked signing key",
 			"`issued_at` is the minter's to choose",
 			"a tier's maximum is its term plus the issue lead its renewal uses",
-			"one year and 30 days for every tier today",
+			"the per-tier maxima, and the lead each assumes, are open",
 			"without a change to the key format",
 			"never in the verifier alone",
 			"revocation is advisory",

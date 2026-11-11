@@ -9,11 +9,14 @@ the commands (K3.2–K3.4), the renewal job (K4.1, K4.2) and the key service (K2
 is empty, so no key exists in the field and the replacement orphans nothing (D2130); the old
 `<key id>.<payload>.<signature>` format stays in the tree, untouched, until K7.3 removes it.
 
-It **supersedes** licensing plan task L3.1 and, where they name the old claims, subscriptions plan
-S2.1, S2.3, S2.4 and S3.1–S3.4 (K7.2 writes those notes). The rules of the old note that the amended
-decisions keep are carried here: the signature over the raw bytes before the claims, the offline check
-at the registration point, the read-only lapse, the overlap, the tier's maximum lifetime, the staging
-key's refusal, and where each product keeps the key.
+It **supersedes** licensing task L3.1 and subscriptions **S2.1/S2.3** (the format) and **amends**
+S2.4, S2.5, S2.7–S2.10, S3.1–S3.4 and S6.1 where they name the old claims (K7.2 writes the notes for
+the plans and the key-signing-service design; S6.1's own note,
+[the read-only state after a lapse](../design/lapse-read-only.md), carries this note's key states and
+claim names from 2026-11-11). The rules of the old note that the amended decisions keep are carried
+here: the signature over the raw bytes before the claims, the offline check at the registration point,
+the read-only lapse, the overlap, the tier's maximum lifetime, the staging key's refusal, and where each
+product keeps the key.
 
 ## The key
 
@@ -212,12 +215,16 @@ These are stated as limits rather than defended against; the Terms are the enfor
   above makes that the longest key the design mints: a renewal is minted `renew_before_days` before the
   key it follows expires, and its `issued_at` is the day it is minted while its `paid_through` is the
   end of the term it covers — a ceiling of the bare term would refuse the very renewal the overlap
-  exists for. **The maxima are this note's number and not the Terms'**: one year and 30 days for every
-  tier today, from the longest term the ruled issuance already gives a key — section 10.2(b)'s
-  open-source key is "valid for one year", and the Team and Enterprise annual terms run for a year (B4;
-  a monthly Team term is shorter and sits under the same ceiling) — with section 10.3's three-month
-  commercial evaluation key (D440) well under it. K1.1's `TestKeyBeyondTheTierLifetimeIsRefused` is what
-  enforces the bound: a tier's maximum moves here, in a decision, and **never in the verifier alone**.
+  exists for. The lead is the key's own `renew_before_days`, so the number a ceiling has to clear is the
+  **longest lead that tier's policy may mint**, not a fixed one. **The longest term is the ruled
+  issuance's** — section 10.2(b)'s open-source key is "valid for one year", and the Team and Enterprise
+  annual terms run for a year (B4; a monthly Team term is shorter and sits under the same ceiling) —
+  with section 10.3's three-month commercial evaluation key (D440) well under it. **The per-tier maxima,
+  and the lead each assumes, are open**: the plan's per-tier policy table gives `renew_before_days` no
+  default, so this note states the rule and not the number, and a lead above the one a ceiling was
+  written against would have the server mint keys the verifier refuses — the two move together, in one
+  decision, here. K1.1's `TestKeyBeyondTheTierLifetimeIsRefused` is what enforces the bound: a tier's
+  maximum moves here, in a decision, and **never in the verifier alone**.
   **It bounds one key's length from that key's own `issued_at`, which is not the same as bounding a
   leaked signing key**: `issued_at` is the minter's to choose, so a key minted with an `issued_at` far
   in the future passes the length check and then reads `active` under the state table for as long as its
