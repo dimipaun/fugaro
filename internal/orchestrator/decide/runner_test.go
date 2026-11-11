@@ -598,9 +598,10 @@ func mustNow(t *testing.T) time.Time {
 	return now
 }
 
-// envCount is how many entries of the child's environment carry name. The
-// child reads the first of them, so more than one is a value the pin does not
-// own.
+// envCount is how many entries of the environment carry name. A name carried
+// twice is a pin nobody can read off the Call — which entry wins depends on who
+// starts the child, os/exec keeping the last and a shell the first — so more
+// than one is a value the pin does not own.
 func envCount(env []string, name string) int {
 	n := 0
 	for _, e := range env {

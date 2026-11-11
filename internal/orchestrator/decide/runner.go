@@ -77,22 +77,31 @@ type Request struct {
 }
 
 // Decision is what one call produced: which class and model it ran as, the
-// reasoning the model gave, the patch it asked for and the state that patch
-// makes.
+// reasoning the model gave, what the model asked for and the state to commit.
 //
 // Next is the state to commit, not a state to write: the runner applied the
-// patch to the state it was given, and a caller commits Next under the same
-// compare-and-swap every other writer uses (G9). It carries the call's own
-// record whatever became of the answer — a patch refused, an empty answer, a
-// child that failed — because the call was made, and the money is spent
-// whatever the model answered.
+// call's own record and then the answer's patch to the state it was given, and
+// a caller commits Next under the same compare-and-swap every other writer
+// uses (G9). It carries the call's own record whatever became of the answer —
+// a patch refused, an empty answer, a child that failed — because the call was
+// made, and the money is spent whatever the model answered.
+//
+// A call that was never made spends nothing and records nothing, and there
+// Next is the zero State: the caps refused it, or the state carries no such
+// item, or the call could not be built. There is nothing to commit, and a
+// caller that writes it anyway is refused by the state's own validator
+// (orchestrator.EncodeState) rather than erasing a node.
 type Decision struct {
 	Class     sensitivity.Class
 	Model     string
 	ItemID    string
 	Reasoning string
-	Patch     orchestrator.Patch
-	Next      orchestrator.State
+	// Patch is the patch the answer asked for, already applied in Next and
+	// applied there on top of the call's record: it is what the model wanted,
+	// against the recorded state's revision rather than the caller's, so a
+	// caller commits Next and does not re-apply this to the state it passed in.
+	Patch orchestrator.Patch
+	Next  orchestrator.State
 	// Outcome is how this cycle ended, in O6's vocabulary: progress for a
 	// decision that landed, empty or failed for one that did not. It is the
 	// tick's own summary of itself, which is what the breaker counts (G10).
