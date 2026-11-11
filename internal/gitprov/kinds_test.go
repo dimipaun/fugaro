@@ -126,7 +126,7 @@ var forgeKindNonGoSites = []struct {
 	{
 		path:   "deploy/terraform/gcp/modules/installation/variables.tf",
 		needle: `alltrue([for r in var.coordinator.repos : r.provider != "github"])`,
-		what:   "the coordinator's App ID, required exactly when it reconciles no GitHub repository",
+		what:   "the coordinator's App ID, required exactly when one of the repositories it reconciles is GitHub (a coordinator whose repositories are all Bitbucket names no App)",
 	},
 	{
 		path:   "deploy/terraform/gcp/modules/installation/coordinator.tf",
