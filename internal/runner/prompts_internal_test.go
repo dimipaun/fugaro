@@ -3,6 +3,10 @@ package runner
 import (
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // TestReviewPromptWithFocusEmptyChangesNothing: a level that names no focus is
@@ -89,5 +93,50 @@ func TestBaseInstructionsBlockKeepsEverythingUnderTheCap(t *testing.T) {
 	}
 	if strings.Contains(block, "left out") {
 		t.Errorf("the block claims it left something out of a base that fits:\n%s", block)
+	}
+}
+
+// TestSystemPromptIsUnchangedWithAnImageRate: the image rule follows the price
+// row of the stage's own model, and a coder that HAS an image rate gets the
+// brief every run got before the rule existed (D2016). Such a coder sends the
+// image itself, so nothing about images is added, and the prompt is byte for
+// byte the prompt of a run that names no image state at all. The other
+// direction is the same decision read off the same row: a coder priced
+// without an image rate is the run the rule is for.
+//
+// Mutation (set NoImageReads from the run rather than from the stage's model,
+// e.g. always true): the image-rate case gains the rule and the byte-for-byte
+// assertion fails.
+func TestSystemPromptIsUnchangedWithAnImageRate(t *testing.T) {
+	mk := func(model string) (PromptData, string) {
+		r := &run{
+			d:    Deps{StateDir: "/s"},
+			rec:  &runstore.Record{Branch: "fugaro/x"},
+			cfg:  &config.Config{},
+			spec: &task.Spec{},
+		}
+		r.cfg.Git.BaseBranch = "main"
+		r.cfg.Agent.Models.Coder = model
+		pd := r.systemPromptData()
+		return pd, SystemPrompt(pd, "")
+	}
+	for _, c := range []struct {
+		model string
+		want  bool
+	}{
+		{"claude-sonnet-5-5", false},
+		{"deepseek/deepseek-v4-flash", true},
+	} {
+		pd, got := mk(c.model)
+		if pd.NoImageReads != c.want {
+			t.Errorf("coder %s: NoImageReads = %v, want %v", c.model, pd.NoImageReads, c.want)
+		}
+		if c.want {
+			continue
+		}
+		base := SystemPrompt(PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}, "")
+		if got != base {
+			t.Errorf("coder %s: the brief is not the one every run had before the image rule:\n%s", c.model, got)
+		}
 	}
 }

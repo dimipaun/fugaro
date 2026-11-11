@@ -7,6 +7,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -161,6 +162,44 @@ func TestFindingsAreBoundedAndQuoted(t *testing.T) {
 // name alone would miss the mention the prompt would really carry, which is
 // the `fugaro cancel <run>` shape.
 var runCommandRE = regexp.MustCompile("`(?:fugaro )?(?:cancel|run --retry|--review-run|review show|--run-id)\\b")
+
+// TestTextOnlyCoderBriefNamesImageFilesAndTheFix: a coder whose stage cannot
+// send an image is told so and told what to do instead (D2014). The brief
+// names every kind the stage's managed settings deny a Read of, so what the
+// agent is told and what it is permitted are one list, and it names the fix
+// rather than leaving the coder to guess: the owner sets `agent.models.vision`
+// and prices that model's images with `model_prices`' `image_tokens`. The
+// rule is one line, and it is written once: a brief is a prompt, and a coder
+// that stopped to weigh a paragraph about images would spend the stage's
+// context on it.
+//
+// Mutation (build the kinds from a list of its own rather than from
+// agent.ImageReadExtensions): a kind the deny rules carry and this brief
+// forgets fails here, which is the drift the one list exists to prevent.
+func TestTextOnlyCoderBriefNamesImageFilesAndTheFix(t *testing.T) {
+	got := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true}, "")
+	for _, ext := range agent.ImageReadExtensions() {
+		if kind := "*." + ext; !strings.Contains(got, kind) {
+			t.Errorf("the brief does not name %s:\n%s", kind, got)
+		}
+	}
+	for _, want := range []string{"Never read a binary file", "priced without an image rate", "say so in the pull request description", "agent.models.vision", "`model_prices`' `image_tokens`"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the brief lacks %q:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "Never read a binary file"); n != 1 {
+		t.Errorf("the image rule is written %d times, want once:\n%s", n, got)
+	}
+	// The coder is told where to say it, which is the file the run's own
+	// prompt already sends its account to: a follow-up's, not the pull
+	// request description a first run writes.
+	followUp := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true,
+		FollowUp: []string{"- follow-up rule"}}, "")
+	if !strings.Contains(followUp, "say so in /s/followup.md") {
+		t.Errorf("a follow-up's brief does not name the follow-up file:\n%s", followUp)
+	}
+}
 
 func TestPromptsCarryShortIDRule(t *testing.T) {
 	for _, d := range []runner.PromptData{

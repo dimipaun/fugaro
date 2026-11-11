@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -357,11 +358,51 @@ func (r *run) providerServedReview() bool {
 	return r.reviewClassRun() && r.pairingNamesTheProjectsProviderKey()
 }
 
+// denyBinaryReads reports whether stage's managed settings deny a Read of an
+// image file: a review stage always — its built input names a binary with its
+// size and never attaches it, and the reviewer must not Read what it would
+// then send — and any other stage whose own model is priced without an image
+// rate, which is the model the gateway refuses an image for (D2014). Denying
+// the read is what keeps such a stage from dying on a refused request: Claude
+// Code puts what it read into the next Messages body as a base64 image block.
+func (r *run) denyBinaryReads(stage string) bool {
+	if config.IsReviewStage(stage) {
+		return true
+	}
+	model := r.stageModel(stage)
+	// A stage pinned to no model runs Claude Code's own default, which no
+	// price row of this run names: the gateway prices whatever the request
+	// names, and that is an Anthropic model with an image rate in every
+	// configuration this program ships, so the read is not denied on a guess.
+	if model == "" {
+		return false
+	}
+	return !r.modelTakesImages(model)
+}
+
+// modelTakesImages reports whether model can send an image, which is one fact
+// about it: its price row's image rate (D2000). That is the question the
+// gateway's own image rule asks before it refuses a call
+// (internal/gateway/forward.go) and the ceiling the reservation counts an
+// image with (pricing/worst.go), so the two answers cannot disagree. A run
+// with no price table of its own — the budget off, with no overrides — is
+// answered by the embedded table, the one every run starts from; the built-in
+// provider catalog prices no image at all (its own D8), so a route's model is
+// one without a rate.
+func (r *run) modelTakesImages(model string) bool {
+	t := r.spend.Prices
+	if t == nil {
+		t = pricing.Embedded()
+	}
+	m, ok := t.Lookup(model)
+	return ok && m.ImageTokens > 0
+}
+
 // writeManagedSettings writes the managed settings for stage: the gateway's
 // variables, the pins, and the stage's deny list — the web tools for every
-// stage, and the binary reads for a review stage, whose reviewer would
-// otherwise be free to Read a changed PNG and have the gateway refuse the
-// image block that puts in the next request (agent.deniedBinaryReads). It
+// stage, and the image reads for a stage that cannot send one (denyBinaryReads),
+// which would otherwise be free to Read a PNG and have the gateway refuse the
+// image block that puts in the next request (agent.imageReadExtensions). It
 // does nothing without the gateway: a budget-off run writes no file, and so
 // carries no deny rule at all. A failure is an error, since the settings are
 // what keep a repository's own settings from rerouting the agent.
@@ -404,7 +445,7 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 			vars[k] = v
 		}
 	}
-	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, config.IsReviewStage(stage))
+	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, r.denyBinaryReads(stage))
 	if r.review {
 		// A review-mode run's stage reads a pull request's own head, so the
 		// settings it is launched under are the review posture (D894(a)):

@@ -166,17 +166,28 @@ func TestManagedSettingsDenyWebTools(t *testing.T) {
 	}
 }
 
-// denyExtensions are the file kinds the review stage's settings deny a Read
-// of: the ones the review input never carries as bytes, and whose bytes
-// Claude Code would put into the next Messages body as an image block.
+// denyExtensions are the file kinds the settings deny a Read of when the
+// stage's image reads are denied: the ones the review input never carries as
+// bytes, and whose bytes Claude Code would put into the next Messages body as
+// an image block.
 var denyExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "pdf", "heic", "tiff"}
 
 // TestDenyRulesPerStage: the two parts of the deny list are independent, and
-// a review stage's is the web tools plus one Read rule per binary kind. That
-// list is what makes the review stage's prompt rule enforced rather than
+// a stage denied its image reads carries the web tools plus one Read rule per
+// kind. That list is what makes a stage's prompt rule enforced rather than
 // merely said: the reviewer runs with --dangerously-skip-permissions and a
 // full Read tool, and one Read of a changed PNG is the whole of the failure
 // run 20261021-002046-31cc ended on (`images aren't priced for model ...`).
+//
+// Which stages those are is the caller's answer and not this function's
+// (runner.denyBinaryReads: a review stage, and any stage whose own model is
+// priced without an image rate), so the cases here are the two flags rather
+// than the stages' names.
+//
+// The list the rules are built from is the one list of image kinds this
+// program has: the runner's brief names it and the runner's own scan of a
+// task and a repository asks for it, so a kind added to the rules and not to
+// ImageReadExtensions, or the other way about, fails here.
 //
 // D891(a)'s five tools are deliberately NOT part of it: a review stage is not
 // the independent review job, and a coding run's own review rounds keep their
@@ -186,30 +197,33 @@ var denyExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
 // both directions: none of the five may appear in a stage's list, and the
 // job's list is exactly the five.
 //
-// Mutation (return deniedWebTools alone whatever review says): the review
-// assertion fails. Mutation (return the binary reads for every stage): the
-// non-review assertion fails. Mutation (drop one extension from
-// deniedBinaryReads): the list assertion fails. Mutation (add a rule the
-// specifier of which is not a Read of a file kind, e.g. "Read(/etc/**)"):
+// Mutation (return deniedWebTools alone whatever denyBinaries says): the
+// image-read assertion fails. Mutation (return the image reads for every
+// stage): the web-tools-alone assertion fails. Mutation (drop one extension
+// from imageReadExtensions): the list assertion fails. Mutation (add a rule
+// the specifier of which is not a Read of a file kind, e.g. "Read(/etc/**)"):
 // the list assertion fails. Mutation (return deniedReviewTools from DenyRules
 // for every stage, which is where this list was before the review job was
-// told apart from a review stage): the non-review assertion and the row below
-// fail.
+// told apart from a review stage): the web-tools-alone assertion and the row
+// below fail.
 func TestDenyRulesPerStage(t *testing.T) {
-	reviewRules := denyExtensionsOf()
+	if got := ImageReadExtensions(); !slices.Equal(got, denyExtensions) {
+		t.Fatalf("ImageReadExtensions() = %v, want %v", got, denyExtensions)
+	}
+	imageRules := denyExtensionsOf()
 	for _, c := range []struct {
-		name    string
-		denyWeb bool
-		review  bool
-		want    []string
+		name         string
+		denyWeb      bool
+		denyBinaries bool
+		want         []string
 	}{
-		{"implement, fix or plan", true, false, []string{"WebSearch", "WebFetch"}},
-		{"a review stage", true, true, append([]string{"WebSearch", "WebFetch"}, reviewRules...)},
-		{"a review stage with no gateway", false, true, reviewRules},
+		{"the web tools alone", true, false, []string{"WebSearch", "WebFetch"}},
+		{"the image reads too", true, true, append([]string{"WebSearch", "WebFetch"}, imageRules...)},
+		{"the image reads with no gateway", false, true, imageRules},
 		{"neither", false, false, nil},
 	} {
-		if got := DenyRules(c.denyWeb, c.review); !slices.Equal(got, c.want) {
-			t.Errorf("%s: DenyRules(%v, %v) = %v, want %v", c.name, c.denyWeb, c.review, got, c.want)
+		if got := DenyRules(c.denyWeb, c.denyBinaries); !slices.Equal(got, c.want) {
+			t.Errorf("%s: DenyRules(%v, %v) = %v, want %v", c.name, c.denyWeb, c.denyBinaries, got, c.want)
 		}
 	}
 	if got := ReviewJobDenyRules(); !slices.Equal(got, deniedReviewTools) {
@@ -229,7 +243,7 @@ func TestDenyRulesPerStage(t *testing.T) {
 	}
 }
 
-// denyExtensionsOf is the Read rule per binary kind a review stage carries,
+// denyExtensionsOf is the Read rule per image kind the deny list carries,
 // spelled the way DenyRules spells it.
 func denyExtensionsOf() []string {
 	reads := make([]string, 0, len(denyExtensions))
