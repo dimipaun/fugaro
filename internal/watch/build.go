@@ -106,13 +106,22 @@ type RunRow struct {
 	Models    string
 	Recipe    string // the run's recipe when not default
 	Auth      string
-	Notional  bool // auth is oauth: Spent is notional dollars
-	Spent     budget.Micros
-	HasSpent  bool
-	Age       time.Duration
-	HasAge    bool
-	Health    Health
-	Deadline  Deadline
+	// Mode is the rigor mode the run resolved and From is the layer that won
+	// it (rigor-modes plan T1.7): the run writes the two from its own record
+	// (budget.AgentEntry.Mode and .From), so watch shows the same value the
+	// record's Mode/From hold rather than a second resolution. "-" when the
+	// entry has neither — a run under rules that predate the child writes its
+	// entry without them, which is "not recorded", never a mode this package
+	// picked.
+	Mode     string
+	From     string
+	Notional bool // auth is oauth: Spent is notional dollars
+	Spent    budget.Micros
+	HasSpent bool
+	Age      time.Duration
+	HasAge   bool
+	Health   Health
+	Deadline Deadline
 	// DeadlineAt is e.StageDeadline, epoch ms; 0 when the registry has none.
 	// The detail view formats it; Deadline above is only the OK/near/over
 	// flag the row and the colour of FLAGS use.
@@ -480,6 +489,8 @@ func runRow(slug, run string, e budget.AgentEntry, now time.Time) RunRow {
 		HasSpent:   e.Spent != 0,
 		Halted:     clean(e.Halted),
 		Recipe:     clean(e.Recipe),
+		Mode:       dash(e.Mode),
+		From:       dash(e.From),
 		StartedAt:  e.StartedAt,
 		PRURL:      prURL,
 		PRNumber:   prNumberOf(prURL),

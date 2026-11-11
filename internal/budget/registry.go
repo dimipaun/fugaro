@@ -44,7 +44,7 @@ func clipString(s string) string {
 }
 
 func clipEntry(e *AgentEntry) {
-	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted, &e.Action, &e.Credential} {
+	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted, &e.Action, &e.Credential, &e.Mode, &e.From} {
 		*p = clipString(*p)
 	}
 	// The rules refuse the whole entry for a tokens value outside
@@ -76,6 +76,23 @@ func (s *Session) Start(ctx context.Context, entry AgentEntry) error {
 		return s.db.Patch(ctx, "", map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): entry})
 	}
 	err := s.retryBoot(ctx, "registry", write)
+	if errors.Is(err, ErrPermissionDenied) && (entry.Mode != "" || entry.From != "") {
+		// Rules deployed before the rigor mode reached the registry have no
+		// key for these children, and their $other refuses the whole entry
+		// rather than ignoring them: go on without them for the whole
+		// session. The newest children are probed first, so an older one the
+		// rules do know (the recipe, below) is never dropped for a refusal
+		// that was not about it. Warn only once the second write succeeded: a
+		// second refusal is a genuinely bad credential, not old rules.
+		entry.Mode, entry.From = "", ""
+		s.mu.Lock()
+		s.entry, s.noMode = entry, true
+		s.mu.Unlock()
+		err = s.retryBoot(ctx, "registry", write)
+		if err == nil {
+			s.log.Warn("budget: the database's rules predate the rigor mode in the registry, so the registry entry goes without it; run fugaro update --firebase-project <gcp-project-id> to update the rules")
+		}
+	}
 	if errors.Is(err, ErrPermissionDenied) && entry.Recipe != "" {
 		// Rules from before 0.5.0 have no recipe key, and their $other
 		// refuses the whole entry: go on without it for the whole session.
@@ -154,6 +171,9 @@ func (s *Session) Update(fn func(*AgentEntry)) {
 	fn(&s.entry)
 	if s.noRecipe {
 		s.entry.Recipe = ""
+	}
+	if s.noMode {
+		s.entry.Mode, s.entry.From = "", ""
 	}
 	if s.newKeysRefused {
 		s.entry.Action, s.entry.Tokens = "", 0
