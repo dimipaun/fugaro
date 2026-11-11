@@ -372,9 +372,13 @@ func TestTelemetryPlanLinksResolve(t *testing.T) {
 // switch names, and the app's dependency list names the SDKs the switches are
 // read by. The first half is the plan's "nothing here is built" claim from the
 // side a reader can check -- the names an implementer has to write down; the
-// second half moved when P7.1a wired the SDKs in, and what it pins now is that
-// the three packages the plan names are the ones the app declares, and that the
-// telemetry module the flags will be read from is still P7.2's and P7.3's.
+// second half moved when P7.1a wired the SDKs in and the third when P7.3 built
+// the allow-list, so what it pins now is that the three packages the plan names
+// are the ones the app declares, and that the module the flags are read in is
+// the one P7.3 wrote, holding the seven events D256's answer fixes. **P7.2's
+// half of that module -- the always-on statement in `notice.js` -- is
+// deliberately not asserted here**: the two tasks are parallel and land
+// independently, and P7.2's own test is where the statement is held.
 func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 	plan := readDoc(t, telemetryPlan)
 	for _, want := range []string{
@@ -405,8 +409,23 @@ func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 			t.Errorf("mobile/package.json does not name %s: P7.1a wired the three packages in, and the plan's Task P7.1 names them as the dependency the flags depend on", want)
 		}
 	}
-	if _, err := os.Stat("../../mobile/src/telemetry"); err == nil {
-		t.Errorf("mobile/src/telemetry exists: the plan's telemetry module is P7.2's and P7.3's, and neither is built")
+	for _, name := range []string{
+		"mobile/src/telemetry/events.js",
+		"mobile/src/telemetry/analytics-calls.test.js",
+		"mobile/src/telemetry/events.test.js",
+	} {
+		if _, err := os.Stat("../../" + name); err != nil {
+			t.Errorf("%s is missing: P7.3 wrote the allow-list and the two fences the plan's section 7.4 names, and the module the native flags are read in is that one", name)
+		}
+	}
+	events := readDoc(t, "mobile/src/telemetry/events.js")
+	for _, want := range []string{
+		"'app_launch'", "'account_added'", "'account_switched'", "'screen_shown'",
+		"'command_refused'", "'pairing_finished'", "'crash_reported'",
+	} {
+		if !strings.Contains(events, want) {
+			t.Errorf("mobile/src/telemetry/events.js does not name %s: section 7.2's allow-list is the seven events D256's answer fixes, and none may be dropped from the module they are sent from", want)
+		}
 	}
 }
 
