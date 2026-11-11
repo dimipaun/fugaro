@@ -21,7 +21,8 @@
 //     last test here wires the real controller and the real screens to show
 //     the two together: tap "Try the demo", the banner appears, tap "Leave
 //     demo mode", it goes.
-//   * **the shell says what the app reports, as its third child, and draws no
+//   * **the shell says what the app reports, as its last child -- after the
+//     body, and after the demo banner when that is on -- and draws no
 //     control**: the app has no settings screen, so the statement lives on the
 //     shell (P7.2). The words and the URL are `src/telemetry/notice.js`'s --
 //     this file asserts that the shell renders them, that the URL is drawn as
@@ -204,11 +205,17 @@ test('the shell says what the app reports, and draws no control', () => {
   }
   assert.deepEqual(nodesOfType(() => tree, SHELL.LEAVE), [], 'the statement carries no control at all');
 
-  // ... and it is on the shell in both states: the shell is the app's only
-  // surface, so a statement that only one screen carried would be a statement
-  // a reader could reach the app without seeing.
+  // ... and it is on the shell in both states, last in both: the shell is the
+  // app's only surface, so a statement that only one screen carried would be a
+  // statement a reader could reach the app without seeing -- and the demo
+  // banner is pushed above the body, so "after the body" is a different
+  // position in each state and the assertion is the one that holds in both.
   const withDemo = shellFor({ state: { active: true } })();
   assert.equal(render(() => withDemo).includes(STATEMENT), true);
+  for (const [label, root] of [['off', tree], ['on', withDemo]]) {
+    const children = root.children.map((child) => child.props.type);
+    assert.equal(children[children.length - 1], SHELL.NOTICE, `the statement is the shell's last child, with the demo ${label}`);
+  }
 });
 
 test('the demo is off: no banner, no way out, and the first screen', () => {

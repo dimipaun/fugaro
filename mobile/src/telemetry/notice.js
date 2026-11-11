@@ -9,8 +9,9 @@
 // of the app and a reader of the page are told the same thing. The app **has no
 // settings screen** -- no phase of the mobile plan builds one -- so the only
 // surface the sentence has is the shell, and `mobile/src/app/root.js` renders
-// it as its third child (`SHELL.NOTICE`). It is not a gate, not a modal and not
-// a first-launch prompt: it is part of the shell, drawn on every screen.
+// it as its last child (`SHELL.NOTICE`), after the body. It is not a gate, not
+// a modal and not a first-launch prompt: it is part of the shell, drawn on
+// every screen.
 //
 // **The two rulings, and which half of the sentence each one leaves standing.**
 // The owner answered **D255** on 2026-10-19 as *always on* -- no switch, no
@@ -26,12 +27,20 @@
 // **T3.1**'s: the app's one collection call site, read
 // from the project's own `settings` node, and the page's paragraph beside it.
 // Neither has landed, so this module carries **the half of the statement both
-// rulings leave standing** -- the facts the live privacy page already states and
-// that no ruling moves -- and makes **no claim about how collection is turned
-// off**, in either direction: not D255's *"no switch inside the app"*, which
-// D731 removes, and not an opt-out control, which the build does not have yet.
-// The superseded clauses are pinned absent by `notice.test.js`, so putting one
-// back is a deliberate act rather than a slip.
+// rulings leave standing** -- and makes **no claim about how collection is
+// turned off**, in either direction: not D255's *"no switch inside the app"*,
+// which D731 removes, and not an opt-out control, which the build does not have
+// yet. The superseded clauses are pinned absent by `notice.test.js`, so putting
+// one back is a deliberate act rather than a slip.
+//
+// **What that half is, is what the build sends, not what the plans intend.**
+// Both Firebase reporters ship today -- T3.1 drops Analytics under D731, and it
+// has not landed -- so the statement names both, exactly as the live page does.
+// `notice.test.js` reads `mobile/package.json` and holds the statement to the
+// reporter packages it finds, in both directions: a package with no words in
+// the statement fails, and a clause whose package has gone fails too. The
+// Analytics sentences therefore leave with the package, in T3.1's own change,
+// and nothing here has to remember to do it.
 //
 // **The link, and how it is built.** The statement carries the URL of the
 // privacy page, and a URL leaves this app only through **P0.3's validator**
@@ -61,27 +70,39 @@
 import { DEFAULT_HOST_ALLOW_LIST, validateExternalUrl } from '../../../shared/url/index.js';
 
 /**
- * The statement the app shows, in the privacy page's own sentences: the builds
- * that carry a crash report send it to the Fugaro project and not to the
- * reader's own, what a report holds, and the three things that never leave the
- * device.
+ * The statement the app shows, in the privacy page's own sentences: what the
+ * builds send and to whose project, what each kind of report holds, why the
+ * reports are read, and the three things that never leave the device.
  *
- * "What a report holds" is not decoration: a statement that says only where
- * reports go leaves a reader unable to judge what they are agreeing to, which
- * is the whole reason a reader is shown a sentence instead of a switch. The
- * four sentences are the page's own, and `notice.test.js` holds each of them to
- * that page, so a rewrite there fails here rather than leaving the app quoting
- * a page that no longer says this.
+ * **It describes what the app sends today, and the build is what says so.** The
+ * app ships both Firebase reporters (the crash reporter and Analytics), and
+ * `notice.test.js` reads `mobile/package.json` and requires the statement to
+ * name the product of every reporter package it finds -- so a statement that
+ * leaves one out fails there, and the package that leaves (T3.1 drops Analytics
+ * under D731) fails until the clause leaves with it. That is the rule this text
+ * exists under: the disclosure is the app's own dependencies, not the posture
+ * the plans intend.
+ *
+ * "What a report holds", and why it is read, are not decoration: a statement
+ * that says only where reports go leaves a reader unable to judge what they are
+ * agreeing to, which is the whole reason a reader is shown a sentence instead
+ * of a switch. Every sentence is the page's own, and `notice.test.js` holds
+ * each of them to that page, so a rewrite there fails here rather than leaving
+ * the app quoting a page that no longer says this.
  *
  * A constant and not a parameter: it is the app's answer to what it reports,
  * and a caller that composed its own sentence would be a second statement
  * nobody checked against the page.
  */
-export const STATEMENT = 'The app versions that carry crash reports send them to a Firebase '
-  + 'project the Fugaro project operates, and not to your own. A crash report holds the crash\'s '
-  + 'logs, diagnostics and app performance data. Never sent: the contents of any message, '
-  + 'anything from your installation or its mailbox, your credentials and your keys. The app '
-  + 'carries no advertising identifier.';
+export const STATEMENT = 'The app versions that carry these reports send two things to a Firebase '
+  + 'project the Fugaro project operates, and not to your own: crashes, through Firebase '
+  + 'Crashlytics, and anonymous usage, through Firebase Analytics. A crash report holds the '
+  + 'crash\'s logs, diagnostics and app performance data, and the usage count says which screens '
+  + 'were opened. Firebase gives the app an app-instance identifier of its own, and that travels '
+  + 'with both. The reports are read to find and fix crashes and to see which screens are used, '
+  + 'and for nothing else. Never sent: the contents of any message, anything from your '
+  + 'installation or its mailbox, your credentials and your keys. The app carries no advertising '
+  + 'identifier.';
 
 /** The privacy page, as the one URL this app may hand to a browser. */
 export const PRIVACY_URL = 'https://fugaro.dev/privacy/';

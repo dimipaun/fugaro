@@ -170,9 +170,11 @@ export function createRoot({ React, store, View, Text, Pressable, useDemo, scree
       ];
     children.push(React.createElement(View, { type: SHELL.BODY, key: 'body' }, ...body));
 
-    // The statement, as the shell's third child and on every screen: it is the
-    // only surface the app has for it, and a reader who reaches the app at all
-    // is owed it. Both texts are `src/telemetry/notice.js`'s -- the shell
+    // The statement, as the shell's LAST child -- after the body, which is why
+    // it is the fourth element while the demo banner is on -- and on every
+    // screen: it is the only surface the app has for it, and a reader who
+    // reaches the app at all is owed it. Both texts are
+    // `src/telemetry/notice.js`'s -- the shell
     // renders the sentence and the URL rather than copying either -- and the
     // notice is read here, where it is drawn, rather than frozen at module
     // load: its `openable` is the verdict the task that grows the link opener

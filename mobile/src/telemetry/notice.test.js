@@ -72,13 +72,15 @@ const OWN_HOST = Object.freeze(['fugaro.dev']);
  * `website/src/pages/privacy.astro`, and each one asserted against both the
  * page and the statement below. A clause is a fragment rather than a whole
  * sentence because the page and the app address different numbers of versions
- * (the page says "sends two things", the app names the crash report), and the
- * point of the list is that neither side can be edited into disagreeing with
- * the other.
+ * (the page says "the app version that carries these reports", the app says
+ * "the app versions"), and the point of the list is that neither side can be
+ * edited into disagreeing with the other.
  *
- * The second clause is the one a statement needs before it is a statement: one
- * that says only where reports go leaves a reader unable to judge what a report
- * is, which is the whole reason a reader is shown words instead of a switch.
+ * Three of them are what the app collects, and not only where it goes: the app
+ * ships both Firebase reporters today, so a statement that named only the crash
+ * one would tell a reader that the crash reports are the whole of the
+ * collection. Which reporters ship is `mobile/package.json`'s business, and the
+ * test below holds the statement to that file rather than to this list.
  *
  * When `website/src/pages/privacy.astro` is rewritten (task T3.1 moves its app
  * paragraph with the Analytics package), a clause that moves with it fails here
@@ -86,20 +88,75 @@ const OWN_HOST = Object.freeze(['fugaro.dev']);
  */
 const PAGE_CLAUSES = [
   'to a Firebase project the Fugaro project operates, and not to your own',
+  'crashes, through Firebase Crashlytics, and anonymous usage, through Firebase Analytics',
   'A crash report holds the crash\'s logs, diagnostics and app performance data',
+  'the usage count says which screens were opened',
+  'Firebase gives the app an app-instance identifier of its own, and that travels with both',
+  'The reports are read to find and fix crashes and to see which screens are used, and for nothing else',
   'Never sent: the contents of any message, anything from your installation or its mailbox, your credentials and your keys',
   'The app carries no advertising identifier',
 ];
 
-/** Whitespace is the page's line wrapping, not its wording. */
+const PACKAGE = JSON.parse(
+  readFileSync(join(import.meta.dirname, '..', '..', 'package.json'), 'utf8'),
+);
+
+/**
+ * The Firebase packages that report, and the words the statement owes each
+ * one's product. `@react-native-firebase/app` is the core and reports nothing,
+ * so it is named here as the exception rather than left to look like a gap.
+ *
+ * This is the mobile-side reading of the same pair `website/test/privacy.mjs`
+ * holds as `APP_TELEMETRY`: there, a package the app declares and the page does
+ * not name is a collection the reader was not told about. The app's own
+ * statement owes the reader the same thing, so the same rule runs here.
+ */
+const REPORTING_PACKAGES = Object.freeze({
+  '@react-native-firebase/crashlytics': 'Firebase Crashlytics',
+  '@react-native-firebase/analytics': 'Firebase Analytics',
+});
+const CORE_PACKAGE = '@react-native-firebase/app';
+
+/** The tags that end a paragraph or a block, which is where the page's prose is
+ * cut: everything else is emphasis and line wrapping. */
+const BLOCK_END = /<\/(?:p|div|li|ul|ol|h[1-6]|section|table|tr)>|<(?:br|hr)\s*\/?>/gi;
+
+/** What a reader sees, read as one line per block: the page's markup and line
+ * wrapping are not its wording, so a clause reads the same whether the page
+ * holds it in one line or five, and whether it is plain or emphasised -- the two
+ * reporter names are `<strong>` in the page, and the app has no markup at all,
+ * so an app that had to spell the page's tags would be quoting the file rather
+ * than the page. The block ends are kept as line breaks so that a clause can
+ * only ever match inside one paragraph: the page's paragraphs separate subjects
+ * (what the reports hold, what is never sent), and a reading that ran them
+ * together could accept a sentence the page never says as one.
+ */
 function flattened(text) {
-  return text.replace(/\s+/g, ' ');
+  return text
+    .split(BLOCK_END)
+    .map((block) => block
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/ ([,.;:])/g, '$1')
+      .trim())
+    .join('\n');
+}
+
+/** Whether a clause is on one of the lines of a text read this way. */
+function carriesLine(text, clause) {
+  return flattened(text).split('\n').some((line) => line.includes(clause));
 }
 
 /** Whether the live page carries a clause, by the same reading this file uses
- * for the statement: one whitespace-insensitive substring. */
+ * for the statement: one markup- and whitespace-insensitive substring, inside
+ * one of the page's paragraphs. */
 function pageCarries(clause) {
-  return flattened(PAGE_SOURCE).includes(clause);
+  return carriesLine(PAGE_SOURCE, clause);
+}
+
+/** Whether the statement carries a clause, read the same way the page is. */
+function statementCarries(clause) {
+  return carriesLine(STATEMENT, clause);
 }
 
 /** The clauses D255's answer put in the statement and the owner's ruling of
@@ -120,7 +177,7 @@ function switchesIn(text) {
 test('the statement is the page\'s own facts, and the ruling\'s superseded clauses are gone', () => {
   // The control first, so that a green run below is the page agreeing with the
   // statement rather than the page failing to be read: a clause this file made
-  // up is refused by the same reading that accepts the four real ones.
+  // up is refused by the same reading that accepts the real ones.
   assert.equal(
     pageCarries('the app never sends anything to anyone'),
     false,
@@ -136,7 +193,7 @@ test('the statement is the page\'s own facts, and the ruling\'s superseded claus
       true,
       `website/src/pages/privacy.astro no longer carries ${JSON.stringify(clause)}, so the app's statement quotes a page that has moved: change both in the same task`,
     );
-    assert.ok(STATEMENT.includes(clause), `the statement does not carry ${JSON.stringify(clause)}`);
+    assert.ok(statementCarries(clause), `the statement does not carry ${JSON.stringify(clause)}`);
   }
   // The supersession, asserted rather than described. D731 orders the statement
   // amended (T0.1) and the switch built (T3.1); until both land, the one thing
@@ -147,6 +204,37 @@ test('the statement is the page\'s own facts, and the ruling\'s superseded claus
       STATEMENT.includes(clause),
       false,
       `the statement still carries ${JSON.stringify(clause)}: the owner's ruling of 2026-10-30 (D731) supersedes D255's always-on answer`,
+    );
+  }
+});
+
+test('the statement names every reporter the app ships, and none it does not', () => {
+  const dependencies = Object.keys(PACKAGE.dependencies ?? {});
+  const firebase = dependencies.filter((name) => name.startsWith('@react-native-firebase/')).sort();
+  // The controls first: the file this reads is the app's manifest and the app
+  // does carry a Firebase reporter, so the assertions below are not true of a
+  // misread file with nothing in it.
+  assert.ok(dependencies.length > 5, `mobile/package.json declares ${dependencies.length} dependencies: this scan is reading the wrong file`);
+  assert.ok(firebase.length > 0, 'no `@react-native-firebase/` package is in mobile/package.json, and the app has at least one reporter');
+  for (const pkg of firebase) {
+    assert.ok(
+      pkg === CORE_PACKAGE || Object.hasOwn(REPORTING_PACKAGES, pkg),
+      `mobile/package.json carries ${pkg} and this scan does not know what the statement owes it: add it to REPORTING_PACKAGES with the words the statement has to carry`,
+    );
+  }
+
+  // Both directions, and the second is the one that keeps the statement honest
+  // when a package goes: the statement may not name a reporter the app no
+  // longer ships -- T3.1 drops Analytics under D731, and this is what makes the
+  // statement leave with it in the same change.
+  for (const [pkg, product] of Object.entries(REPORTING_PACKAGES)) {
+    const shipped = firebase.includes(pkg);
+    assert.equal(
+      STATEMENT.includes(product),
+      shipped,
+      shipped
+        ? `the statement does not name ${product}, and mobile/package.json carries ${pkg}: what the app sends is a fact about the build, so a reporter the app ships and the statement leaves out is a reader told less than the truth`
+        : `the statement names ${product}, and mobile/package.json no longer carries ${pkg}: the app stopped sending it, so the clause has to leave the statement with the package`,
     );
   }
 });
