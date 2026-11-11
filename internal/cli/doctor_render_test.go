@@ -822,21 +822,34 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		t.Errorf("--all does not carry the check's own text:\n%s", all)
 	}
 
-	// A check `fugaro update` does not put right on its own is not an update
-	// item: what differs for plugin-install is the installed plugin, so the
-	// line names the update that writes the pin and Claude Code's own install
-	// from it, rather than the update alone.
+	// A check whose own state `fugaro update` does not put right is not an
+	// update item, whatever its ID's class. plugin-install *is* one since D942
+	// (U3 of docs/plugin-user-scope/implementation-plan.md): the plugin stage
+	// installs the plugin on this machine now, so the class's command is what
+	// repairs "no plugin on this machine" and an older one. U3 turned this
+	// block around — it asserted the opposite until then, which is the
+	// executable form of the class comment's old "not here yet" note — and the
+	// line keeps Claude Code's by-hand form beside the command, because a
+	// machine with no claude on PATH has nothing else (noClaudeHint says the
+	// same, and the check's own fix string carries it too).
 	for id, want := range map[string]string{
-		"plugin-install": "`fugaro update`",
+		"plugin-install": "`fugaro update`, or install it in Claude Code",
 	} {
 		c := doctorCheck{ID: id, Severity: "warning", Problem: "what is wrong here",
 			Fix: "a fix long enough that the default view prints the short form instead: " + strings.Repeat("and its own words ", 10)}
-		if got := doctorClassOf(c); got == doctorClassUpdate {
-			t.Errorf("%s is an update item, and fugaro update does not do this: %q", id, got)
+		if got := doctorClassOf(c); got != doctorClassUpdate {
+			t.Errorf("%s is %q, want %q: the plugin stage installs the plugin, so fugaro update is its remedy", id, got, doctorClassUpdate)
+		}
+		if got := doctorClassOf(c); got == doctorClassMeasure {
+			t.Errorf("%s is a measurement, and a measurement nothing acts on is the silent pass the classes exist to prevent", id)
 		}
 		line := doctorItemLine(t, c)
 		if !strings.Contains(line, want) {
-			t.Errorf("%s's line does not name %s: %q", id, want, line)
+			t.Errorf("%s's line does not name %q: %q", id, want, line)
+		}
+		// And its own long text is not the line: --all and --json carry it.
+		if strings.Contains(line, "its own words") {
+			t.Errorf("%s's line prints the check's own long fix: %q", id, line)
 		}
 	}
 
@@ -919,7 +932,7 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 	// installation that did not answer, which is a finding whatever it says
 	// (TestDoctorReadFailureIsCounted).
 	for _, id := range []string{
-		"cli-version", "plugin-install", "cosign", "provider-price-catalog",
+		"cli-version", "cosign", "provider-price-catalog",
 		"provider-zdr-unverified",
 		"routing-resolution", "routing-cache-markers", "project-layer", "project-layer-drift",
 		"shared-config", "shared-config-differs", "xdg-temp-dir", "policy-published",
@@ -1134,8 +1147,13 @@ func doctorCleanState(t *testing.T, r *doctorRig, root string) *doctorRig {
 	}
 	t.Setenv("PATH", r.dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	// No installed plugin of this machine's own: what Claude Code installed is
-	// read from a directory the test owns.
+	// read from a directory the test owns — and that machine has Fugaro's
+	// plugin, which is what a clean installation is since D942 (U3 of
+	// docs/plugin-user-scope/implementation-plan.md): the plugin on this
+	// machine is what carries the skills, so an installation with none is one
+	// with something to do, whatever its checkout pins.
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	installUserPlugin(t, "0.2.0")
 	return r
 }
 

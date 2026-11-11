@@ -878,9 +878,18 @@ the binary's tag and commit), `error`° (**why doctor could not run its checks �
 parseable JSON).
 
 `doctorCheck`: `id`, `ok` bool, `problem`°, `fix`°,
-`severity`°. **The environment view renders `problem` and `fix` verbatim**, as
+`severity`°, **`skipped`°** (CLI 0.24.0, the plugin-user-scope plan's U3: the
+check was not run at all, which only `doctor --offline` ever writes). **The
+environment view renders `problem` and `fix` verbatim**, as
 the CLI worded them — including the "not on the `PATH` the console gives the
 CLI" class of finding the design's §3.4 rule 5 describes.
+
+**`skipped` is absent on every run the console makes** — the console passes
+neither `--offline` nor `--strict` — and a reader may ignore it without
+misreading a check: it is always `true` beside `ok: false` and a `problem`
+naming what the run could not read, never `ok: true`, so "was not asked" can
+never be rendered as "is fine". A check that carries it is counted in no view's
+total: it is not a finding, and `--all` is where the CLI prints it.
 
 **Three check ids are new in CLI 0.10.0** (credentials-service C1.21), all
 `severity: "warning"` — so all three fail `--strict` and none is an `ok: false`
@@ -899,11 +908,15 @@ note covers both of the marks findings, which are answered by one read of the
 subtree.
 
 **Flags** (`newDoctorCmd`): `--dir` (default `.`), `--plugin`, `--strict`,
-`--json`, **`--check-github-app`** — the last of which reads the App's private
+`--json`, **`--offline`** (CLI 0.24.0: the update class's local-file checks
+plus a recorded skip for every check that would need a credential or the
+network, which is the session-start nudge the skills run), **`--check-github-app`**
+— the last of which reads the App's private
 key out of Secret Manager and is therefore unreachable by the console by
 argument list, not by command name (design §5.1's second table). The console
 passes `--dir D` and **never `--strict`** (its failure mode is the checkout's
-plugin wiring, not the environment the console draws).
+plugin wiring, not the environment the console draws), and never `--offline`
+either: that flag's document is the session-start nudge's, not a screen's.
 
 ### 6.5 `fugaro accounts ls --json`
 
