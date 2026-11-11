@@ -53,9 +53,15 @@ var forgeCheckEntries = []forgeCheckEntry{
 		subject: "the author, the committer and the trailers",
 		settles: []string{"d648", "u9", "d606", "d645", "squash", "fugaro-run"},
 		prereqs: []string{"a release", "sandbox", "git.author: launcher"},
+		// The range is read from a fetched ref rather than from `HEAD`: a
+		// checkout on `main` makes `origin/main..` an empty, successful listing,
+		// which is the one reading that would have the owner record "no
+		// trailers" for a listing that never looked at the run's commits.
 		commands: []string{
 			`fugaro run --title "Check 230"`,
-			`git log --format='%an <%ae> | %cn <%ce>%n%(trailers)' origin/main..`,
+			`git fetch origin <the run's branch>`,
+			`git log --format='%an <%ae> | %cn <%ce>%n%(trailers)' origin/main..FETCH_HEAD`,
+			`git fetch origin main`,
 			`git log -1 --format='%an <%ae>%n%B' origin/main`,
 		},
 	},
@@ -195,6 +201,32 @@ func TestDocsForgeChecksWritten(t *testing.T) {
 	for _, text := range []string{checkRow(register, "230"), c230} {
 		if strings.Contains(strings.ToLower(text), "three trailers") {
 			t.Errorf("Check 230 asks for \"three trailers\": D602 leaves `Fugaro-Model` off the runner's own commits and off every commit of a stage that pins no model, so the phrase is a reading the check cannot make on every repository it names")
+		}
+	}
+
+	// Check 232's second review round: the refusal is U7's reading only when it
+	// is made against a repository the context token **names** — a push to the
+	// run's own `origin` with that token is refused because the token does not
+	// name it, which measures nothing. So the two halves have to print the same
+	// three pushes, the section has to send the context token to the context
+	// repositories' own URLs and to say where the token is obtained, and the
+	// count the row states is the count the section states.
+	c232 := flattenDoc(checkSection(t, register, "232"))
+	for _, want := range []string{
+		// Flattened text has `//` collapsed to a space (flattenDoc), so the
+		// scheme is left out of the pin and the URL's own text is what is read.
+		"git push https: github.com/<owner>/<repo-b>.git HEAD",
+		"git push https: github.com/<owner>/<repo-c>.git HEAD",
+		"git push origin HEAD",
+		"github-app-key",
+	} {
+		if !strings.Contains(c232, want) {
+			t.Errorf("Check 232's section does not carry %q: a push with the context token to the run's own `origin` is refused for the trivial reason that the token does not name it, so the refusal the owner records has to be made against a context repository's own URL", want)
+		}
+	}
+	for _, half := range []string{checkRow(register, "232"), c232} {
+		if !strings.Contains(half, "three push attempts") {
+			t.Errorf("Check 232's two halves do not both state three push attempts (two refused, one that lands): the row and the section are one registration, and a count that differs between them is a command block the owner cannot read")
 		}
 	}
 
