@@ -8,8 +8,14 @@ import (
 )
 
 func TestOverridesRoundTrip(t *testing.T) {
+	// One entry writes an image rate and the other leaves it out:
+	// FUGARO_MODEL_PRICES is the third carrier of model_prices (D2001), so
+	// the round trip has to keep an explicit 0 a ceiling the owner wrote and
+	// an absent member absent — omitempty must not drop the first, and
+	// nothing may turn the second into a 0.
+	zero := int64(0)
 	o := Overrides{
-		"claude-alpha-1": {InputPerM: 4.4, OutputPerM: 22, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.05, WebSearchPer1k: 10},
+		"claude-alpha-1": {InputPerM: 4.4, OutputPerM: 22, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.05, WebSearchPer1k: 10, ImageTokens: &zero},
 		"claude-new-9":   {InputPerM: 3, OutputPerM: 15, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1, LongContext: &Tier{AboveInputTokens: 200_000, InputPerM: 6, OutputPerM: 22.5}},
 	}
 	s, err := o.Env()
@@ -66,6 +72,7 @@ func TestOverridesRejectBad(t *testing.T) {
 		"missing input":     `{"claude-alpha-1":{"output_per_m":20}}`,
 		"missing output":    `{"claude-alpha-1":{"input_per_m":4}}`,
 		"input above 1000":  `{"claude-alpha-1":{"input_per_m":1000.5,"output_per_m":20}}`,
+		"negative images":   `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20,"image_tokens":-1}}`,
 		"multiplier 11":     `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20,"cache_write_1h":11}}`,
 		"unknown field":     `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20,"batch":0.5}}`,
 		"alias key":         `{"sonnet":{"input_per_m":4,"output_per_m":20}}`,
@@ -104,6 +111,17 @@ func TestOverridesRejectBad(t *testing.T) {
 		if _, err := testTable().With(Overrides{"claude-alpha-1": ov}); err == nil {
 			t.Errorf("With() accepted %s", name)
 		}
+	}
+	// The image ceiling is held to the same rule on every entry point, not
+	// only where the wire is parsed: a negative one would shrink the
+	// reservation's bound.
+	negative := int64(-1)
+	bad := Overrides{"claude-alpha-1": {Rates: opusLike(), ImageTokens: &negative}}
+	if _, err := bad.Env(); err == nil {
+		t.Error("Env() accepted a negative image ceiling")
+	}
+	if _, err := testTable().With(bad); err == nil {
+		t.Error("With() accepted a negative image ceiling")
 	}
 }
 

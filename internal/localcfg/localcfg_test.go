@@ -841,6 +841,7 @@ func TestBudgetValidation(t *testing.T) {
 		"unknown field":         {"budget: { mode: off, per_run: 5 }\n", "per_run"},
 		"price without rates":   {"model_prices: { claude-sonnet-5-5: { cache_read: 0.1 } }\n", "input_per_m"},
 		"negative price":        {"model_prices: { claude-sonnet-5-5: { input_per_m: -1, output_per_m: 10 } }\n", "claude-sonnet-5-5"},
+		"negative image rate":   {"model_prices: { claude-sonnet-5-5: { input_per_m: 1, output_per_m: 10, image_tokens: -1 } }\n", "image_tokens"},
 		"alias key":             {"model_prices: { sonnet: { input_per_m: 1, output_per_m: 10 } }\n", "alias"},
 		"unknown price field":   {"model_prices: { claude-sonnet-5-5: { input_per_m: 1, output_per_m: 10, tokens: 3 } }\n", "tokens"},
 		"two keys one model":    {"model_prices: { claude-haiku-4-5: { input_per_m: 1, output_per_m: 5 }, 'claude-haiku-4-5@20251001': { input_per_m: 1, output_per_m: 5 } }\n", "both price"},
@@ -929,8 +930,17 @@ func TestModelPricesCarryAnImageRate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("round trip: %v\n%s", err, data)
 	}
-	if o2, err := back.Overrides(); err != nil || o2["deepseek/deepseek-v4.1-flash"].ImageTokens == nil || *o2["deepseek/deepseek-v4.1-flash"].ImageTokens != 6000 {
-		t.Fatalf("round trip overrides = %v, %v", o2, err)
+	o2, err := back.Overrides()
+	if err != nil {
+		t.Fatalf("round trip overrides: %v", err)
+	}
+	if got := o2["deepseek/deepseek-v4.1-flash"].ImageTokens; got == nil || *got != 6000 {
+		t.Fatalf("round trip image_tokens = %v, want 6000", got)
+	}
+	// The zero is written and read back too: a Marshal that dropped it would
+	// turn "this model takes no image" into "keep the ceiling it had".
+	if got := o2["claude-mine-1"].ImageTokens; got == nil || *got != 0 {
+		t.Fatalf("round trip image_tokens = %v, want the explicit 0", got)
 	}
 }
 
