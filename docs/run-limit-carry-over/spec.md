@@ -209,9 +209,10 @@ again, favouring the bound as above, and never a refusal of the read's own. A ch
 chain reading as spent, so the launch then stops at the rule every exhausted chain stops at (§5, D1047) —
 not for the read, but for the number the read is charged — and the ways past it are the caller's own
 `--used-*`, which states the figure the engine could not measure (D1048), or a raise of the chain's limit in
-the run that began it (D1061). Nothing durable replaces the pruned ledger today: a record's only token
-members are the gateway's cache sums (`schemas/result.schema.json`), which are not the input and output
-tokens a cap counts, so the charge is the bound and not the run's own figure (F8).
+the run that began it (D1061). Nothing durable replaces the pruned ledger today: the token members a
+record carries are the gateway's cache sums, which are not the input and output tokens a cap counts, and
+the per-model counts that would carry a total (`model_tokens`) have no writer in the runner, so the charge
+is the bound and not the run's own figure (F8).
 
 **The caller never supplies `used`** (D1048). A caller-supplied usage number is accepted only as a *further
 tightening*: a `--used-usd X` that is **larger** than what the engine read raises the charge, and one that is
