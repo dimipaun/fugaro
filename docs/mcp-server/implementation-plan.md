@@ -1393,7 +1393,7 @@ here is small enough to pull forward.
   `apply_patch` under D1227's `state:read` and `state:write`, which amends D927
   ([reconciliation.md](reconciliation.md) §4a). M7 is merged, so **no task of this plan changes for it**:
   the registry, the vocabulary and the default-scope rule are edited by the stateless plan's **O16a**, and
-  serving the group is its **O16b**, which waits on its D2020 and on a task that wires this front door's
+  serving the group is its **O16b**, which waits (its D2020 answered (a) on 2026-11-10) on a task that wires this front door's
   read tools into a binary — the same wiring M8 waits for.
 - **The managed gate's decisions.** The gate landed while this design was open
   (`internal/cli/managed_gate.go`, `docs/managed-agent-converge/`), and M4's operator path runs

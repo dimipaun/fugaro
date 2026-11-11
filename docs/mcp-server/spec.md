@@ -523,7 +523,7 @@ and are enforced in one place, ahead of every handler:
 | `list_tasks` | `tasks:read` | Recent runs of the project, with filters | Must not list another project's runs |
 | `get_state` | `state:read` | **The stateless orchestrator's state group (amended 2026-11-10, below).** One orchestrator's generated brief, its revision and its state's `schema_version`, the fields `fugaro orchestrator state --json` prints | Must not answer stored text unfenced; must not write anything |
 | `get_events` | `state:read` | One orchestrator's audit log, in the server's order, optionally since a duration — the fields of `fugaro orchestrator events --json`; no cursor | Must not answer an entry's text uncleaned |
-| `apply_patch` | `state:write` | **Catalogued and not served** (the stateless orchestrator's D2021, open): its scope is decided so that nothing can register it under another | Must never act as a person (D1225), and never reach `spawn_task` |
+| `apply_patch` | `state:write` | **Catalogued and not served** (the stateless orchestrator's D2021, answered (a) on 2026-11-10): its scope is decided so that nothing can register it under another | Must never act as a person (D1225), and never reach `spawn_task` |
 
 **The state group, amended 2026-11-10 (the stateless orchestrator's T3 and T4).** §11 left the group's names and scopes to
 [`docs/stateless-orchestrator`](../stateless-orchestrator/reconciliation.md), and that design answered both on 2026-11-04: the names are
@@ -536,7 +536,7 @@ call acts as a session, never as a person** (D1225, with H1 and the stateless de
 item, setting the goal and closing a person's decision are refused here); and **the group depends on no launch** — it neither calls nor needs
 `spawn_task` (that design's T2). What the group may **not** do yet is reach the database: this front door's account holds no database grant
 (§8, "A state-group token"), so the stateless design's task O16a builds the scopes, the catalogue rows and the two read handlers registered by
-nothing — as M8's read tools are — and O16b serves them once its D2020 is answered and a task wires the front door.
+nothing — as M8's read tools are — and O16b serves them once a task wires the front door (its D2020 was answered (a) on 2026-11-10).
 
 **The tool is `spawn_task`, not the `submit_task` of §0** — the owner's name for it, answered on
 2026-11-04, and the one this design, [reconciliation.md](reconciliation.md) and
@@ -1130,13 +1130,14 @@ orchestrator's **generated brief and audit log** in the project — work-item ti
 — and no credential: the state carries none (the stateless design's D1241 has the person's own credential write it, and its validator caps
 and cleans free text, G3). That text is **stored-prompt-injection material** written by sessions that may have been hostile, so the two read
 tools answer it fenced and cleaned and never above anything the coordinator says itself (§5, "a tool returns data"). A stolen `state:write`
-token reaches **nothing**, because `apply_patch` is catalogued and served by nothing (that design's D2021, open); if it is ever served it acts
+token reaches **nothing**, because `apply_patch` is catalogued and served by nothing (that design's D2021, answered (a) on 2026-11-10); if it is ever served it acts
 as a **session** and never as a person, so the worst it does is what a hostile session can already do through the CLI's `patch` — propose
 work items and decisions, which still need a person's approval before anything launches (that design's D1225, D1226). **The front door holds
 no database grant today** (`deploy/terraform/gcp/modules/installation/coordinator.tf:300-322`): serving the group needs one, and because the
 Realtime Database has no path-level IAM, **any grant reaches every node of the database** — `pairing/`, `mailbox/`, `config/` and the rest —
-not the `orchestrator/` subtree alone. That is the cost the stateless design's **D2020** puts to the owner (a read-only role, a copy written by
-the coordinator's sweep, or no grant), and until it is answered the group is built and not served. **A compromised front door after D2020
+not the `orchestrator/` subtree alone. That is the cost the stateless design's **D2020** put to the owner (a read-only role, a copy written by
+the coordinator's sweep, or no grant), answered (a), a read-only role, on 2026-11-10; until a task wires the front door the group is built
+and not served. **A compromised front door after D2020
 (a)** reads the whole database and writes none of it; after a write grant (D2021 (b)) it could rewrite any node, which is the shape D935's
 answer keeps database admin off this service to prevent.
 
@@ -1337,8 +1338,9 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   back as D927's. **Answered (recorded 2026-11-10):** #1682 merged, and its D1224 and D1227 (both answered
   2026-11-04) name the group `get_state`, `get_events` and `apply_patch` under two scopes of its own,
   `state:read` and `state:write` — the question came back as D927's and D1227 is its answer (§5, "The state
-  group"; §8, "A state-group token"; [reconciliation.md](reconciliation.md) §4a). What stays open is that
-  design's D2020 and D2021: how this front door reaches the database, and whether `apply_patch` is served.
+  group"; §8, "A state-group token"; [reconciliation.md](reconciliation.md) §4a). That design's D2020
+  and D2021 were answered as recommended on 2026-11-10: this front door reads the database through a read-only role, and `apply_patch` is
+  not served.
 - **The client-credentials caller's own ergonomics** — how a script stores a client secret, and what
   `fugaro` command (if any) mints one — is left to the implementation tasks rather than settled here,
   because §7 fixes the shape and not the surface.

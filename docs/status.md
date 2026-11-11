@@ -23,7 +23,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 
 | Spec | Merged | Left |
 | --- | --- | --- |
-| stateless-orchestrator | 12/20 | O9 (draft #2193), O12 (draft #2290), O11, O13, O14; O16a (launchable, dormant), O16b (waits on D2020 and the MCP wiring), O19 (waits on D2022 and W7 #2275); D2020-D2022 open; owner Checks 301 to 304 (300 PASSED 2026-11-10); 305 reserved for O16b |
+| stateless-orchestrator | 12/20 | O9 (draft #2193), O12 (draft #2290), O11, O13, O14; O16a (approved, launchable after #1994, dormant), O16b (approved, waits on the MCP wiring), O19 (approved, waits on W7 #2275); D2020-D2022 answered as recommended 2026-11-10; owner Checks 301 to 304 (300 PASSED 2026-11-10); 305 reserved for O16b |
 | api-key-review | 6/11 | AK6b (draft #2172), AK7, AK9, AK10; owner Check 330 |
 | secrets-brokering | 18/30 | B1.13 flip (draft #2166, held on Check 191), B1.15, B1.16, B2.1 to B5.1; owner Checks 191 and 192. Dynamic-delivery subfolder: DS0.1, DS1.3 and DS2.0 merged, DS2.1 in a run |
 | vision-model | plan only, 0/9 built (V0–V8); not started, nothing approved; owner Checks 520 and 521 not run |

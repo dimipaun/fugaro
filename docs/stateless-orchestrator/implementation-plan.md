@@ -3,9 +3,9 @@
 **Status (2026-11-10): twelve of the plan's twenty tasks are merged on `main`** — O0 (#1823), O1 (#1822), O2 (#1945), O3 (#1954), O4 (#1825),
 O5 (#2043), O6 (#1950), O7 (#2040), O8 (#2064), O10 (#2191), O17 (#2024) and O18 (#2112). Open as drafts: O9 (#2193) and O12 (#2290). Not
 started: O11, O13, O14 (it follows #2193 and #2207), and the three this revision writes — **O16 is now two tasks**: **O16a** (the state scopes,
-the catalogue rows and the read handlers, dormant; launchable on the owner's go, gated by no open decision) and **O16b** (serving them; waits
-on D2020 and the MCP folder's wiring task), and **O19** (a workspace's refusal pauses the queue; waits on D2022 and on W7, #2275). **No task
-is approved by this revision, and D2020-D2022 are open** (reconciliation section 8). The paragraph below is the status of 2026-11-08, kept.
+the catalogue rows and the read handlers, dormant; **approved and launchable**, after the open #1994) and **O16b** (serving them; approved,
+waits on the MCP folder's wiring task), and **O19** (a workspace's refusal pauses the queue; approved, waits on W7, #2275). **The owner answered
+D2020-D2022 as recommended and approved all tasks on 2026-11-10** (reconciliation section 8). The paragraph below is the status of 2026-11-08, kept.
 
 **Status (2026-11-08): six tasks of this plan are built, all merged on `main`.** **Task O0, the state schema, the typed patch and the validator, is merged on `main`** on
 2026-11-07 — pull request #1823, commit `36abeffc` — whose eleven files `internal/orchestrator/state.go`, `patch.go`, `validate.go`, `summary.go`, their tests,
@@ -75,7 +75,7 @@ Findings are cited as F#, decisions as D#, open tensions as T# (reconciliation s
 | **T7 (2026-11-05, not the recommendation; amends Q2)** | **`fugaro update` re-renders the daemon's unit when the rendered template changed, so the HARD RULE is literally true**: it only ever re-renders and reloads a unit that is **already installed** (never installs one, never creates one for a project that did not choose it), behind the same plan-and-confirm rules as every other `update` step (a managed project's gate stays, a terminal asks for the step's class); `fugaro setup` still installs the first one (Q2); `fugaro orchestrator install` stays the explicit command but no release's `### For operators` ever needs it; the daemon's self-restart and its start-up `Migrate` stay | O8, O9, G11 |
 | Q3 | The macOS notification plus the owner's existing mobile push; Linux falls back to the desktop notifier. What the tree actually carries is U9: no push implementation, and the mailbox is a foreground channel | O7, O9 |
 | Q4 | Slice 2 (O12, O13) is approved only after slice 1 has run 14 days and Check 303 measured the cycle cost | O12, O13, D1228 |
-| **D2020-D2022 (2026-11-10, OPEN — not answered)** | Asked when O16 and O19 were made tasks: the front door's read of the node (D2020), whether `apply_patch` is served (D2021), what O19 delivers (D2022). Each recommendation is what O16a, O16b and O19 are written to; reconciliation section 8 | O16a (D2021), O16b (D2020), O19 (D2022) |
+| **D2020-D2022 (2026-11-10, all the recommendation)** | Asked when O16 and O19 were made tasks: the front door reads the node through a read-only custom role (D2020 (a)), `apply_patch` is not served in this plan (D2021 (a)), O19 is a workspace's refusal pausing the queue (D2022 (a)). Each answer is what O16a, O16b and O19 are written to; reconciliation section 8 | O16a (D2021), O16b (D2020), O19 (D2022) |
 
 **Tensions** (reconciliation section 6): the ones the plan must not resolve are T2 (the launch in v1 is the local `fugaro run` path, never an MCP
 `spawn_task`; the state group must not depend on it), T3 (the new scopes are an edit to the MCP design), T4 (MCP-dependent work waits for the MCP
@@ -85,7 +85,8 @@ rollback is the manual one the owner ruled). **T6 — Q2's offer against the man
 2026-11-04** (the install moved to `fugaro setup`, so the question of what an offer does in a managed project no longer arises). **T7 — the carve-out
 of the HARD RULE that answer left behind — was ruled on 2026-11-05, and not the recommendation: `fugaro update` re-renders an installed unit when the
 rendered template changed, so the HARD RULE is literally true and no second operator command is ever needed** (O9, G11). **No question of 2026-11-04 to 2026-11-08 is left
-open; the pass of 2026-11-10 that made O16 and O19 tasks put three new ones to the owner, D2020-D2022, all OPEN** (section 6). **BF1 is not a tension but an external input**: the triage rule BF2 adds (O14) reads the findings file BF1's runner writes when it finalizes at
+open; the pass of 2026-11-10 that made O16 and O19 tasks put three new ones to the owner, D2020-D2022, answered the same day, all the
+recommendation** (section 8). **BF1 is not a tension but an external input**: the triage rule BF2 adds (O14) reads the findings file BF1's runner writes when it finalizes at
 80% of the budget, BF1 is not on `main` (reconciliation U10), and O14 fails closed without it.
 
 ## 2. Conventions
@@ -710,10 +711,10 @@ reach the `orchestrator/` node: its account holds no database grant (`deploy/ter
 F27), and **M8's own read tools are built and served by no binary** (`docs/mcp-server/README.md`, the status line). So the task splits
 where the MCP folder's own tasks split: **O16a** builds the scopes, the catalogue rows and the read handlers over an interface, registered
 by a function nothing calls yet — the way M8's `RegisterReadTools` (`ee/coordinator/mcpauth/tool_status.go:112`) is — and **O16b** serves
-them, which waits on an owner decision and on the MCP wiring. `apply_patch` is catalogued and **not served** by either half (D2021's
-recommendation, open).
+them, which waits on the MCP wiring (its decision, D2020, was answered (a) on 2026-11-10). `apply_patch` is catalogued and **not served** by
+either half (D2021, answered (a) on 2026-11-10).
 
-#### O16a. The state scopes, the catalogue rows and the read handlers, dormant (`ee/`; launchable on the owner's go)
+#### O16a. The state scopes, the catalogue rows and the read handlers, dormant (`ee/`; approved 2026-11-10, launchable after #1994)
 
 - **Files (7):** `ee/coordinator/mcpauth/limits.go` (edit: the two scopes, the vocabulary, the refusal's message, a `DefaultScopes` list),
   `ee/coordinator/mcpauth/limits_test.go` (edit: the vocabulary pin at `:414` names four scopes), `ee/coordinator/mcpauth/authorize.go`
@@ -764,14 +765,14 @@ recommendation, open).
 - **Owner-run:** none (nothing is served; Check 305 is O16b's).
 - **Reviewer:** **security, level 3 in the run** (`--review-levels`): an authorization server's scope vocabulary and default.
 
-#### O16b. The state group served: the front door's reach into the node (`ee/` + Terraform; WAITS)
+#### O16b. The state group served: the front door's reach into the node (`ee/` + Terraform; approved 2026-11-10; WAITS on the wiring)
 
-- **Waits on, and the trigger for each:** (1) **D2020** answered (how the front door reads the node; recommendation (a), a read-only role);
+- **Waits on, and the trigger for each:** (1) **D2020** answered — **done 2026-11-10, (a), a read-only role** (how the front door reads the node);
   (2) **an MCP-folder task that serves M8's read tools from a binary** — `docs/mcp-server/README.md` says M8 is built "except the wiring
   that would serve its four read tools, which no binary has and no task of this plan carries"; the trigger is the owner assigning that
   wiring task, and O16b registers `RegisterStateTools` beside `RegisterReadTools` in whatever file that task names; (3) O16a merged.
-  `apply_patch` stays out unless **D2021** is answered other than its recommendation, in which case O16b is rewritten, not extended.
-- **What can be named now (for D2020 (a)):** `ee/coordinator/mcpauth/state_reach.go` (new: `StateReach` over `internal/rtdb`, read-only,
+  `apply_patch` stays out: **D2021** was answered (a) on 2026-11-10, so O16b serves the two read tools only.
+- **What can be named now (D2020 (a), the answer):** `ee/coordinator/mcpauth/state_reach.go` (new: `StateReach` over `internal/rtdb`, read-only,
   as the front door's own account) and its test; a custom role holding **`firebasedatabase.instances.get` and nothing else**, bound to the
   `mcp_server` account under the same `var.mcp_server` switch, in a file of `deploy/terraform/gcp/modules/installation/` beside
   `mcpauth_store.tf` (never `coordinator.tf`, whose comment pins that it names the account exactly twice, `coordinator.tf:316-322`);
@@ -814,7 +815,7 @@ recommendation, open).
 - **Depends on:** O17. **Level 3.** **Commit:** `feat(ee): batch approval for orchestrator work items (O18)`. **Red step:** `TestBatchDefaultIsTenAndOnlyAPersonRaisesIt`.
   **Reviewer:** security.
 
-### O19. `ee/`: a workspace's refusal pauses the queue (slice 3; WAITS on D2022 and W7)
+### O19. `ee/`: a workspace's refusal pauses the queue (slice 3; approved 2026-11-10; WAITS on W7)
 
 **What "workspace caps" can mean, read against `main` on 2026-11-10** (reconciliation section 8, F29). D1222 put "workspace caps" in `ee/`
 and said nothing more. The workspaces work is now mostly on `main`: W0-W6 and W8 are merged and **W7 — the cap's meter, its alarm and the
@@ -824,8 +825,8 @@ are closed to every reader (`internal/budget/rules/workspace.json.tmpl`); the he
 interface). The daemon runs on the **person's** credential and reads its own project's kill switch (`internal/cli/orchestrator_run.go:351-378`).
 So **no read path from the daemon to the workspace's stop or room exists or is planned**, and a run the daemon starts into a stopped workspace is
 a started run whose refusal counts as an attempt (G4) — it spends its approval's allowance, and the breaker pauses the daemon only after three
-such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** puts the choice to the owner; **this task is written for its
-recommendation (a)** and is rewritten, not patched, if another option is chosen.
+such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** put the choice to the owner, who answered **the recommendation
+(a)** on 2026-11-10; **this task is written for it**.
 
 - **Files (13):** `internal/orchestrator/hooks.go` (edit: a `WorkspaceFuncs` seam, `Refused func(RunReport) bool`, set once by
   `ee/register`; **the core default answers false**, so an untagged build behaves exactly as today), `internal/orchestrator/hooks_test.go`
@@ -851,8 +852,8 @@ recommendation (a)** and is rewritten, not patched, if another option is chosen.
   `TestSetWorkspaceRefusesASecondCall`, `TestWorkspaceRefusedReadsOnlyTheRunRecord` (no database, no network), `TestRunViewCarriesTheWorkspaceRefusal` (the CLI reader), `TestCoreBuildsWithoutEE`
   (the eeboundary guard is run).
 - **Command:** `go test ./internal/orchestrator/ -run 'Workspace|Breaker|Tick' -count=1 && go test ./internal/cli/ -run TestRunViewCarriesTheWorkspaceRefusal -count=1 && go test ./ee/orchestrator/ ./ee/register/ -run 'Workspace|Orchestrator' -count=1 && go test ./internal/eeboundary/ -count=1`
-- **Depends on:** O6, O7, O8 and O18 (merged), **O14** (it writes `tick.go` at level 7), and externally **D2022 answered (a)** and **W7
-  merged** (#2275). **Serializes after** the open #2207 (`internal/cli/orchestrator_run.go`) and #2202 (`internal/cli/orchestrator_run_test.go`), and after O13 and O14 (`tick.go`,
+- **Depends on:** O6, O7, O8 and O18 (merged), **O14** (it writes `tick.go` at level 7), and externally **D2022 answered (a)** (done
+  2026-11-10) and **W7 merged** (#2275). **Serializes after** the open #2207 (`internal/cli/orchestrator_run.go`) and #2202 (`internal/cli/orchestrator_run_test.go`), and after O13 and O14 (`tick.go`,
   `orchestrator_run.go`). **Level 8**, and gated until both external triggers fire.
 - **What waits, exactly, and the trigger:** the `RunReport` field and the reader's mapping wait for **W7's merge**: the trigger is #2275
   landing, and the first act is reading how a call the workspace refused (its stop, its cap or a failed settle) reaches the run record. **If
@@ -872,9 +873,9 @@ O10 <- O5, O8 (**D1243's answer: the cache is O8's writer**); O17 <- O0, O3, O4;
 O9 no longer needs O0 or O3**); O13 <- O8, O12, O11; O18 <- O17; O11 <- O5, O8, O9; **O14 <- O0, O1, O3, O7, O8** (the rule),
 **and O14 <- O9, O11, O13** — not for anything the rule needs, but because all four regenerate the same `website/content/cli-reference.md`, which has one
 writer per level. **Added 2026-11-10:** **O16a <- O0, O3, O5** (all merged; it shares no file with any task of this plan, and outside it
-serializes after the open #1994 on `ee/coordinator/mcpauth/authorize.go`); **O16b <- O16a**, plus D2020 and the MCP folder's wiring task
-(external); **O19 <- O6, O7, O8, O18** (the rule) **and O19 <- O14** (both write `internal/orchestrator/tick.go`, and O13 before it writes
-`internal/cli/orchestrator_run.go`), plus D2022 and W7 (#2275) external.
+serializes after the open #1994 on `ee/coordinator/mcpauth/authorize.go`); **O16b <- O16a**, plus the MCP folder's wiring task (external;
+D2020 answered 2026-11-10); **O19 <- O6, O7, O8, O18** (the rule) **and O19 <- O14** (both write `internal/orchestrator/tick.go`, and O13 before it writes
+`internal/cli/orchestrator_run.go`), plus W7 (#2275) external (D2022 answered 2026-11-10).
 
 | Level | Tasks (can all run at once) |
 | --- | --- |
@@ -886,8 +887,8 @@ serializes after the open #1994 on `ee/coordinator/mcpauth/authorize.go`); **O16
 | 5 | O11 |
 | 6 | O13 |
 | 7 | O14 (BF2) |
-| 8 | **O19** (gated: D2022, W7) |
-| gated | **O16b** (D2020 and the MCP wiring task) |
+| 8 | **O19** (gated: W7) |
+| gated | **O16b** (the MCP wiring task) |
 
 **Critical path:** O0 -> O3 -> O5 -> O8 -> O9 -> O11, six levels, unchanged by D1243 (O10's own path is O0 -> O3 -> O5 -> O8 -> O10, five). Slice 1
 (O0-O11 minus O12/O13) completes at level 5; slice 2 adds O12 at level 2 and O13 at level 6 (after O11, because both regenerate `cli-reference.md`),
@@ -1034,14 +1035,16 @@ follows the ruling through O9, G11 and the conventions above.
   person's own credential writes the node, so **O2's gate is lifted**; D1242 the terminal Typed confirmation now and a paired-device channel later, so
   **nothing is gated**; D1243 the session-start print reads a local cache, so **O8 gains the cache writer and O10 depends on O8 (level 4)**.
   **D1248-D1249 stay reserved.**
-- **OPEN, put to the owner on 2026-11-10 (reconciliation section 8; none answered, and answering one approves no task):**
+- **Put to the owner on 2026-11-10 and answered the same day, all three as recommended (reconciliation section 8); the owner also approved all
+  tasks that day:**
   **D2020** — how the front door reads the `orchestrator/` node once the state group is served; recommendation (a), a custom role holding
   `firebasedatabase.instances.get` alone on the `mcp_server` account, which costs a whole-database read on a public service (U11); it gates
   O16b only. **D2021** — whether `apply_patch` is served through the front door; recommendation (a), catalogued and not served (the CLI's
   `patch` stays the write), because serving it needs a database write on the public service and the owner's D935 answer keeps database admin
   off it; it shapes O16a's `TestApplyPatchIsCataloguedAndNotServed` and nothing else. **D2022** — what O19 ("workspace caps") delivers;
   recommendation (a), a workspace's refusal pauses the queue at once, with no new read and no new cap number; it gates O19. **D2023-D2029
-  are reserved.** **O16a is gated by none of them** and is launchable on the owner's go.
+  are reserved.** **O16a was gated by none of them** and is approved and launchable, after the open #1994; O16b (approved) waits on the
+  MCP wiring task and O19 (approved) on W7, #2275.
 - **BF2, 2026-11-08: the long-run triage rule (D1244-D1247), one task, O14, all four the recommendation.** A run past the local threshold
   `orchestrator.triage_after` (default `2h`, under the run's budget) is triaged by code from three reads — the run's record, the pull request's state and
   **its CI state** (through the provider read this task adds), and BF1's open-findings file — and the outcome is one of four: **merge as-is plus a follow-up task** (the owner's default, and automatic **only** on

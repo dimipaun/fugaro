@@ -933,8 +933,9 @@ is four names instead of two. What follows from D1227's own reason, and is state
 names no scope keeps getting the task pair only (today `requestedScopes` answers the whole vocabulary,
 `ee/coordinator/mcpauth/authorize.go:504-507`), a task-scope token reaches no state tool and a state-scope token no task tool, and a
 state-group call acts as a session and never as a person. [spec.md](spec.md) §5 carries the three rows, §8 the threat-model paragraph
-("A state-group token") and §11 the answer. **Two questions stay open on that design's side**, D2020 (how this front door would read
-the database, which its account holds no grant on today) and D2021 (whether `apply_patch` is served at all); the code is that design's
+("A state-group token") and §11 the answer. **Two questions on that design's side were answered as recommended on 2026-11-10**: D2020
+(this front door reads the database, which its account holds no grant on today, through a read-only role) and D2021 (`apply_patch` is not
+served); the code is that design's
 task O16a, which edits `limits.go`, `authorize.go` and `tools.go` in `ee/coordinator/mcpauth/` and adds `tool_state.go`.
 
 ## 4b. The decision the amendment added
