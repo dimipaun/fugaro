@@ -494,7 +494,7 @@ func TestEveryOpThePromptOffersLandsForThisAgent(t *testing.T) {
 		s.WorkItems = append(s.WorkItems, orchestrator.WorkItem{
 			ID: "wi-2", Title: "land the state migration", Repo: "owner/repo",
 			Recipe: "standard", RigorTier: "medium",
-			Brief: "Move the sweep onto the daemon.",
+			Brief:     "Move the sweep onto the daemon.",
 			DependsOn: []string{}, Phase: orchestrator.PhaseDone,
 		})
 	})
