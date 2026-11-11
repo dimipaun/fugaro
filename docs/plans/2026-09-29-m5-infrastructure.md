@@ -785,7 +785,7 @@ Commit these three files first, alone: `git commit -m "infra: golden M4 job spec
           - run: sh deploy/terraform/scan.sh   # the same pinned Trivy images/scan.sh installs: trivy config --exit-code 1 --severity HIGH,CRITICAL deploy/terraform
     ```
     `deploy/terraform/scan.sh` reuses `images/scan.sh`'s pinned Trivy install. **No step has credentials.** `terraform init -backend=false` only downloads the provider.
-  - Trivy findings: fix them, or justify each in `.trivyignore` with a comment. The expected justified ones: bucket versioning (the runs bucket is intentionally unversioned, since it holds runs with lifecycle deletion), customer-managed keys (Google-managed keys are the design), and bucket access logging.
+  - Trivy findings: fix them, or justify each in `.trivyignore` with a comment. The expected justified ones: customer-managed keys (Google-managed keys are the design) and bucket access logging. Bucket versioning was on this list when the module shipped — the runs bucket was intentionally unversioned then, because it holds runs with lifecycle deletion — and it came off with T9 of the no-prompt-policy build (the 2026-11-07 ruling hardens the managed audit record in that bucket, so the bucket now carries versioning and Trivy has no versioning finding left to justify).
 - [ ] **Step 4: Run them to see them pass.** The same commands, plus `tflint --chdir=deploy/terraform/gcp --recursive` and `terraform fmt -check -recursive deploy/terraform`. Expected: PASS, and no tflint issues.
 - [ ] **Step 5: Commit.** `git commit -m "terraform: the installation module and root, embedded, with fmt, validate, tflint, trivy and terraform test in CI"`
 

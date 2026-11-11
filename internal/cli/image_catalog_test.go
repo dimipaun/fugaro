@@ -10,10 +10,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -353,6 +355,269 @@ func TestImageRmRefusesAnEntryAJobStillPointsAt(t *testing.T) {
 	}
 	if lc.ImageCatalog == nil || len(lc.ImageCatalog.Entries) != 1 || lc.ImageCatalog.Entries[0].Name != "tools" {
 		t.Fatalf("ImageCatalog = %+v, want only tools left", lc.ImageCatalog)
+	}
+}
+
+// publishedMapFixture is catalogFixture with the map in the published policy
+// node: acme/app's jobs run tools, and the file here states no map at all —
+// the shape a machine that did not write the map has, which is every machine
+// the owner did not publish it from (D1906). It returns the database, so a
+// test can break the node the map is read from.
+func publishedMapFixture(t *testing.T) (*cloudFixture, *gcpfake.RTDB) {
+	t.Helper()
+	return publishedMapNodesFixture(t, projectpolicy.ImageMap{"acme/app": "tools"})
+}
+
+// publishedMapNodesFixture is publishedMapFixture with the map's own contents
+// stated by the test: the repositories a published map names are not
+// necessarily the ones this machine's config lists, and the guard has to answer
+// about the node's own claim either way.
+func publishedMapNodesFixture(t *testing.T, imap projectpolicy.ImageMap) (*cloudFixture, *gcpfake.RTDB) {
+	t.Helper()
+	f := catalogFixture(t)
+	db := gcpfake.NewRTDB(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), &projectpolicy.Policy{
+		Version:  projectpolicy.Version,
+		Budget:   projectpolicy.Budget{Mode: "off"},
+		ImageMap: imap,
+	})
+	f.appendConfig(t, "budget: { mode: off, rtdb_url: "+db.URL+" }\n")
+	return f, db
+}
+
+// TestImageRmRefusesAnEntryThePublishedMapPointsAt: the map that gives a
+// repository's job an entry is a member of the published node, and the machine
+// that runs the removal is normally not the one that published it, so the file
+// here states no map. A guard reading the file alone saw no mapping, fell back
+// to the catalog's default and removed an entry a job runs — and the node went
+// on pointing acme/app at the entry that is gone, which refuses the checkout's
+// next `fugaro update` and every `fugaro run` of that repository with
+// catalog.UnknownMappedEntryError: a state only another command could repair,
+// against the HARD RULE on update.
+//
+// The second half is a node this machine cannot read. Failing open there
+// deletes an entry the guard could not check, which is the same removal by
+// accident, so the removal is refused instead.
+func TestImageRmRefusesAnEntryThePublishedMapPointsAt(t *testing.T) {
+	_, db := publishedMapFixture(t)
+	// The workflow names nothing: what gives its job tools is the map.
+	catalogCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	path := os.Getenv("FUGARO_CONFIG")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = execute(t, "image", "rm", "tools")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v, want the removal refused: the published map points this repository at the entry", ExitCode(err), err)
+	}
+	for _, want := range []string{"tools", "acme/app", "app"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %v lacks %q", err, want)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("a refused rm still wrote the config")
+	}
+
+	db.DenyRead(projectpolicy.PathShared())
+	if _, _, err := execute(t, "image", "rm", "tools"); err == nil {
+		t.Fatal("the removal went ahead without reading the map: an entry a job may run was deleted on an unread node")
+	}
+	after, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("a refused rm still wrote the config")
+	}
+}
+
+// TestImageRmRefusesAnEntryTheMapPointsAtWithoutACheckout: the map is the
+// project's own claim about a repository's job (D1906), and it is the claim a
+// removal can leave dangling whether or not this machine has a checkout of that
+// repository. A guard that skipped a repository with no checkout asked nothing
+// about it and removed the entry the map gives it — the same state the checkout
+// half of TestImageRmRefusesAnEntryThePublishedMapPointsAt covers, reached from
+// the machine that has no file to read: the node goes on pointing the
+// repository at an entry that is gone, and its next `fugaro update` and every
+// `fugaro run` of it refuse with catalog.UnknownMappedEntryError until someone
+// republishes the map.
+//
+// The removal of an entry the map gives nobody is still allowed, so what
+// refuses here is the mapping and not the missing checkout.
+func TestImageRmRefusesAnEntryTheMapPointsAtWithoutACheckout(t *testing.T) {
+	publishedMapFixture(t)
+	// No catalogCheckout here: this machine has no checkout of acme/app, which
+	// the project's config lists and the published map gives tools.
+	path := os.Getenv("FUGARO_CONFIG")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = execute(t, "image", "rm", "tools")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v, want the removal refused: the published map points acme/app at the entry, and a checkout here is not what makes that true", ExitCode(err), err)
+	}
+	for _, want := range []string{"tools", "acme/app", "image_map"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %v lacks %q", err, want)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("a refused rm still wrote the config")
+	}
+
+	// The control: the default entry the map gives nobody is still removable.
+	if _, _, err := execute(t, "image", "rm", "base"); err != nil {
+		t.Fatalf("removing the entry no mapping names: %v", err)
+	}
+}
+
+// TestImageRmRefusesAnEntryTheMapGivesARepositoryThisMachineDoesNotList: the
+// published map is the project's, and the repositories it names are not
+// necessarily the ones this machine's config lists — a teammate's repository,
+// or one whose repos: entry a person removed here, keeps its mapping in the
+// node because `fugaro update` publishes the node and never cross-checks the
+// list. A guard that iterated the config's repositories alone therefore removed
+// the entry that mapping names, and the node went on pointing the repository at
+// an entry that is gone: that repository's deploy and every launch of it refuse
+// with catalog.UnknownMappedEntryError until someone runs another command,
+// which is what the HARD RULE on update forbids.
+//
+// The removal of an entry the map gives no repository at all is still allowed,
+// so what refuses here is the mapping and not the repository the config omits.
+func TestImageRmRefusesAnEntryTheMapGivesARepositoryThisMachineDoesNotList(t *testing.T) {
+	publishedMapNodesFixture(t, projectpolicy.ImageMap{"acme/other": "tools"})
+	// No checkout of anything: acme/other is not in this config's repos: at
+	// all, which is the state the guard has to answer about from the node.
+	path := os.Getenv("FUGARO_CONFIG")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = execute(t, "image", "rm", "tools")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v, want the removal refused: the published map gives acme/other the entry, and whether this machine lists that repository is not what makes it a claim", ExitCode(err), err)
+	}
+	for _, want := range []string{"tools", "acme/other", "image_map"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %v lacks %q", err, want)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("a refused rm still wrote the config")
+	}
+
+	// The control: the entry the map gives nobody is still removable.
+	if _, _, err := execute(t, "image", "rm", "base"); err != nil {
+		t.Fatalf("removing the entry the map gives nobody: %v", err)
+	}
+}
+
+// TestImageRmAllowsAnEntryAListedRepositoriesJobDoesNotRun: the sweep over the
+// map's values is for the repositories this machine's config does not list, and
+// a repository it DOES list was already judged by the resolver asked above it:
+// a workflow's own image_name: beats the map (T1 b), and a clone or shared
+// workflow runs the installation's own image and never an entry. A sweep that
+// read a listed key as a claim too refused the removal of an entry no job runs
+// — the direction D1145 does not forbid, and the entry the person is removing
+// because nothing uses it.
+//
+// The control is this file's TestImageRmRefusesAnEntryThePublishedMapPointsAt:
+// the same fixture with the workflow silent, where the map IS the job's answer
+// and the removal is refused. What tells the two apart is the workflow, not the
+// key.
+func TestImageRmAllowsAnEntryAListedRepositoriesJobDoesNotRun(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml string
+	}{
+		// base is the catalog's default and another entry of the catalog, so
+		// the workflow's job runs an image no removal here touches.
+		{"a workflow that names another entry", "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { image_name: base, commands: { build: sh build.sh, test: sh test.sh } }\n"},
+		{"a clone workflow", "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			publishedMapFixture(t)
+			catalogCheckout(t, tc.yaml)
+
+			if _, _, err := execute(t, "image", "rm", "tools"); err != nil {
+				t.Fatalf("removing the entry this repository's job does not run: %v", err)
+			}
+			data, err := os.ReadFile(os.Getenv("FUGARO_CONFIG"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			lc, err := localcfg.Parse(data)
+			if err != nil {
+				t.Fatalf("the config after the rm: %v\n%s", err, data)
+			}
+			if lc.ImageCatalog == nil || len(lc.ImageCatalog.Entries) != 1 || lc.ImageCatalog.Entries[0].Name != "base" {
+				t.Fatalf("ImageCatalog = %+v, want tools gone and base left", lc.ImageCatalog)
+			}
+		})
+	}
+}
+
+// TestImageRmAllowsAnEntryARepositorySpelledDifferentlyDoesNotRun: the map's
+// keys are canonical (D1906) and a repos: key is the operator's own spelling
+// (localcfg.Config.RepoFor canonicalizes both sides to match them), so a config
+// whose repositories: entry is Acme/App while the node names acme/app is one
+// repository read two ways. A sweep that looked the map's key up in the repos
+// map directly read that repository as unlisted, judged it again by the map
+// after the resolver had already judged it, and refused the removal of an entry
+// its job does not run — over a capital letter.
+//
+// The control is TestImageRmAllowsAnEntryAListedRepositoriesJobDoesNotRun: the
+// same workflow and the same repository, spelled the way the node spells it,
+// where both the old lookup and this one leave it to the resolver.
+func TestImageRmAllowsAnEntryARepositorySpelledDifferentlyDoesNotRun(t *testing.T) {
+	publishedMapFixture(t)
+	catalogCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { image_name: base, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	// The checkout's origin is acme/app, as catalogCheckoutFiles sets it, so the
+	// repository is this machine's whatever the key's case is.
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spelled := strings.Replace(string(data), "\n  acme/app:", "\n  Acme/App:", 1)
+	if spelled == string(data) {
+		t.Fatalf("the fixture's config no longer states a repos: key to respell:\n%s", data)
+	}
+	if err := os.WriteFile(path, []byte(spelled), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := execute(t, "image", "rm", "tools"); err != nil {
+		t.Fatalf("removing the entry this repository's job does not run, its key spelled as a person writes it: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Parse(after)
+	if err != nil {
+		t.Fatalf("the config after the rm: %v\n%s", err, after)
+	}
+	if lc.ImageCatalog == nil || len(lc.ImageCatalog.Entries) != 1 || lc.ImageCatalog.Entries[0].Name != "base" {
+		t.Fatalf("ImageCatalog = %+v, want tools gone and base left", lc.ImageCatalog)
 	}
 }
 

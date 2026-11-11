@@ -396,6 +396,25 @@ export interface FugaroSource {
    */
   listModels(args: ValidatedArguments): Promise<Snapshot>
   /**
+   * readSeats is the Project tab's advisory seat estimate (`seats --json`,
+   * subscriptions plan S4.2, D439 and D433): one row per identity the estimate
+   * counts, one per identity it lists and cannot count, the window the
+   * requesters were read over and how many runs of it could not be read.
+   *
+   * It takes **no argument at all** -- the command is cobra's `NoArgs` and the
+   * operation declares no key -- so an implementation adds no word of its own to
+   * the argv, which is the spawn row's own two words plus the installation's
+   * `--project`. The window is the ruling's own 90 days and no flag moves it, so
+   * two consoles on one installation read the same estimate.
+   *
+   * **It is core data and nothing else**: the child reads this machine's own
+   * launcher and operator lists and the requesters of the last 90 days of runs,
+   * so it stores nothing, sends nothing and consults no key, licence or server.
+   * The document is a count of people, and it is **advisory**: nothing in the
+   * console is refused or gated by it.
+   */
+  readSeats(args: ValidatedArguments): Promise<Snapshot>
+  /**
    * readSettings is the Project tab's settings section (`settings --json`, the
    * settings-edit plan's C1; `console/docs/json-contract.md` §6.19): the
    * project's settings, each with the value a run gets, the layer that decided
@@ -699,6 +718,7 @@ export function handlersFor(
     'secrets.inventory': (args) => source.listSecrets(args),
     'accounts.inventory': (args) => source.listAccounts(args),
     'models.list': (args) => source.listModels(args),
+    'seats.read': (args) => source.readSeats(args),
     'settings.read': (args) => source.readSettings(args),
     'environment.report': (args) => source.environmentReport(args),
     'link.openExternal': async (args) => {

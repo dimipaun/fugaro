@@ -1020,6 +1020,29 @@ func TestDBRefusals(t *testing.T) {
 	}
 }
 
+// TestDBRefusesADatabaseWhoseRootIsNotAnObject: a root that holds a value is
+// not an empty database, and setup may not adopt one and write over it. Check
+// asks the root's keys first, and the client refuses a root it cannot decode as
+// one node's keys — a database root is an object, so a scalar one is another
+// program's — so the refusal happens before anything is written, not after the
+// first node goes in.
+func TestDBRefusesADatabaseWhoseRootIsNotAnObject(t *testing.T) {
+	d, f := newDB(t, "")
+	f.Set("", "a database this installation did not write")
+
+	if _, err := d.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "decoding the root's keys") {
+		t.Fatalf("Check = %v, and a root holding a value is not a database with no keys", err)
+	}
+	before, _ := json.Marshal(f.Value(""))
+	if _, _, err := d.Plan(context.Background()); err == nil {
+		t.Fatal("the plan went ahead over a database whose root is not an object")
+	}
+	after, _ := json.Marshal(f.Value(""))
+	if string(before) != string(after) || f.RulePuts() != 0 {
+		t.Error("a refusal wrote")
+	}
+}
+
 // Apply stops at a node that changed since the plan, and leaves the rest.
 func TestDBApplyStopsOnAChangedNode(t *testing.T) {
 	d, f := newDB(t, "")
@@ -1097,5 +1120,73 @@ func TestFirebaseOutputsMustBelongToOneProject(t *testing.T) {
 	loop.RTDBURL = "http://127.0.0.1:9000"
 	if CheckFirebaseOutputsFor(loop, "aurora-fp", false) == nil || CheckFirebaseOutputsFor(loop, "aurora-fp", true) != nil {
 		t.Error("loopback rule")
+	}
+}
+
+// W7: the member's own pin is the ONLY source of the workspace's read of this
+// project's database. The Firebase root's tfvars carry the account the pin
+// names — under the module's variable name, so the value a plan binds can be
+// read back to the config it came from — and the module's own count reads ""
+// as "no workspace", so a member of none creates neither the role nor the
+// binding.
+//
+// Fails when the wiring defaults the account from anything of this
+// installation's (a job account, a history account, an output): a workspace is
+// another project's Fugaro installation and its credentials service is its
+// own, so only what the member wrote down can be bound.
+func TestTheWorkspaceReadIsTheMembersPinAndNothingElse(t *testing.T) {
+	inst := installationSpec(t)
+	account := "fugaro-credentials@ws-1234.iam.gserviceaccount.com"
+
+	for _, in := range []FirebaseInputs{
+		{FP: "aurora-fp"},
+		{FP: "aurora-fp", WorkspaceServiceAccount: account},
+	} {
+		fs, err := Firebase(inst, in)
+		if err != nil {
+			t.Fatalf("%+v: %v", in, err)
+		}
+		if fs.WorkspaceServiceAccount != in.WorkspaceServiceAccount {
+			t.Errorf("the Firebase spec carries the account %q for a pin of %q", fs.WorkspaceServiceAccount, in.WorkspaceServiceAccount)
+		}
+		data, err := FirebaseVars(fs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var vars map[string]any
+		if err := json.Unmarshal(data, &vars); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := vars[tf.WorkspaceAccessVariable].(string)
+		if got != in.WorkspaceServiceAccount {
+			t.Errorf("the Firebase root's %s = %q for a pin of %q, want the pin's value: the module binds it and an empty one creates nothing", tf.WorkspaceAccessVariable, got, in.WorkspaceServiceAccount)
+		}
+		// And no other account of this installation is in the vars under any
+		// name: a member's own pin is the only principal that reaches the
+		// workspace's read, so a first apply's outputs cannot move it.
+		if in.WorkspaceServiceAccount == "" {
+			for _, v := range vars {
+				if s, ok := v.(string); ok && strings.Contains(s, "credentials@") {
+					t.Errorf("a pin that names no workspace carries %q", s)
+				}
+			}
+		}
+	}
+
+	// The shape is checked here rather than at the plan, and for the same
+	// reason every other account is: IAM refuses a member it cannot find, and
+	// a value the module's variable refuses would fail the apply after the
+	// member's owner has confirmed it.
+	for _, bad := range []string{
+		"ws-1234",
+		"fugaro-credentials@ws-1234",
+		"user:someone@example.com",
+		"fugaro-credentials@ws-1234.iam.gserviceaccount.com ",
+	} {
+		if _, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp", WorkspaceServiceAccount: bad}); err == nil {
+			t.Errorf("%q was taken for the workspace's account", bad)
+		} else if !strings.Contains(err.Error(), "workspace service account") {
+			t.Errorf("the refusal of %q is %v, and it does not name what was wrong", bad, err)
+		}
 	}
 }

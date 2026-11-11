@@ -81,6 +81,7 @@ import {
   startupCompatibility,
 } from './ipc'
 import type { ConsoleHandlers, ValidatedArguments } from './ipc'
+import { lapseHandlers } from './licence-state'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
 import type { BoundInstallation } from '../source/cli'
@@ -93,7 +94,7 @@ import {
 import type { StoredInstallation } from './installations'
 import type { ActiveInstallation } from './installations'
 import { LICENCE_FILE_NAME, createLicenceStore, refusedLicenceStore } from './licence-store'
-import type { LicenceStore } from './licence-store'
+import type { LicenceReply, LicenceStore } from './licence-store'
 import type { CliCompatibility } from '../shared/version'
 import { NO_INSTALLATION_SURFACE } from '../source/source'
 import type { InstallationSurface } from '../source/source'
@@ -484,6 +485,43 @@ function licenceRead(): unknown {
   return licenceStore.read(activeLicenceProject(), new Date())
 }
 
+/**
+ * licenceReplyFor is the state the lapse gate reads (`lapseHandlers`,
+ * `src/main/licence-state.ts`, subscriptions plan S6.2): the store's answer about
+ * the key of the installation the operation acts on -- the installation the row's
+ * own payload names (`installationArgument` in `ipc.ts`, which is `run.launch`'s
+ * `installation` today), or, for a row that names none, the console's active
+ * binding, which is the installation those rows act on (`settings.edit` writes
+ * the settings document of the installation this console is driving).
+ *
+ * **The target installation is read, never assumed.** `run.launch` resolves the
+ * name its payload carries against this console's records and spawns **that**
+ * installation, handing its child that installation's key (`src/main/launch.ts`)
+ * -- so a gate keyed on `activeBinding` alone would admit a launch of a lapsed
+ * installation while the console was driving a valid one, and would refuse a
+ * valid installation's launch after the rail moved. The row says where the name
+ * is spelled and this function turns it into the store's answer; a name no
+ * installation answers for is the store's `none`, which refuses nothing and is
+ * right: the launch's own lookup is what refuses an installation this console
+ * does not have.
+ *
+ * **It is tolerant where `licenceRead` throws, and that is the rest of the
+ * difference.** `licence.read` answers a *renderer* that asked about the console
+ * it is driving, so the console's own no-installation sentence
+ * (`NO_ACTIVE_INSTALLATION`, D13) is the right answer there. The gate is not a
+ * read: it decides whether an operation may run, and this process may be asked
+ * that before an installation is chosen -- the renderer's launch form is drawn
+ * from the rail, not from a binding. A wrapper that threw here would turn a
+ * launch into a refusal with `dispatch`'s own sentence about the installation,
+ * which is a refusal of the wrong thing; `{state: 'none'}` is the state that
+ * refuses nothing.
+ */
+function licenceReplyFor(installation: string | undefined): LicenceReply {
+  const project = installation ?? activeBinding()?.project
+  if (project === undefined) return { state: 'none' }
+  return licenceStore.read(project, new Date())
+}
+
 /** licenceSave is `licence.save`'s handler, and the console's third write: the
  * key the operator pasted, verified before it is kept. A key that does not
  * verify is a **throw**, which `registerConsoleHandlers` turns into the reply's
@@ -860,9 +898,10 @@ let settingsEditRunner: SettingsEditRunner = DECLINING_SETTINGS_EDITOR
  * and the licence section's two, which read the console's own licence store
  * (`CliBackedHandlers` in `src/source/source.ts` says so from the other side).
  *
- * `reducedModeHandlers` wraps the result in `registerHandlers` below rather than
- * here, so that what this constant holds is the surface and what the wrapper
- * holds is the gate over it.
+ * The gates wrap the result in `registerHandlers` below rather than here, so that
+ * what this constant holds is the surface and what the wrappers hold is the gate
+ * over it -- `reducedModeHandlers` for the handshake's answer, and
+ * `lapseHandlers` outside it for the key's (subscriptions plan S6.2).
  */
 const gated: ConsoleHandlers = {
   ...handlersFor(boundSource, {
@@ -971,11 +1010,26 @@ let registered = false
  * The wrapper is `reducedModeHandlers`: the handshake's answer decides which
  * operations refuse before the source is reached, and it is read per call, so a
  * handler registered here can never answer for a mode the console is not in.
+ *
+ * **`lapseHandlers` is outermost.** The two gates refuse disjoint sets today --
+ * reduced mode withholds the spend, caps and kill views' *reads*, and the lapse
+ * takes the launch and the settings write, which reduced mode admits -- so the
+ * order is unobservable, and it is written down rather than left to chance: the
+ * lapse gate is outside because its state is the installation's own and it is
+ * read per call from the licence store, exactly as the handshake's is from the
+ * stored answer, so a renewal pasted during a session lifts the launch's refusal
+ * at the next call. The state it reads is the one belonging to the installation
+ * the operation acts on -- the name in the row's own payload where it carries one,
+ * the active binding otherwise (`licenceReplyFor` above). A reduced console still
+ * launches; a lapsed one does not.
  */
 function registerHandlers(): void {
   if (registered) return
   registered = true
-  registerConsoleHandlers(ipcMain, reducedModeHandlers(gated, storedCompatibility))
+  registerConsoleHandlers(
+    ipcMain,
+    lapseHandlers(reducedModeHandlers(gated, storedCompatibility), licenceReplyFor),
+  )
 }
 
 /**

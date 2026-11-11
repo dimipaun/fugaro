@@ -445,10 +445,13 @@ func TestSealRedactRemovesBothSpellings(t *testing.T) {
 type envRecorder struct {
 	backend.Backend
 	env, secretEnv []string
+	// timeout is the task timeout the launcher named, which the backend turns
+	// into the execution's own by adding backend.TaskTimeoutSlack to it.
+	timeout time.Duration
 }
 
 func (b *envRecorder) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.ExecutionRef, error) {
-	b.env, b.secretEnv = spec.Env, spec.SecretEnv
+	b.env, b.secretEnv, b.timeout = spec.Env, spec.SecretEnv, spec.Timeout
 	return b.Backend.Launch(ctx, spec)
 }
 

@@ -30,7 +30,6 @@
     claude setup-token
     fugaro secrets set claude-oauth-token --repo 'ac me/ap'\''p'
 [plugin/update] command: fugaro update-skills
-[plugin/fork] command: fugaro update-skills --allow-fork
 [repository] prompt: in your own terminal window, not through a coding agent or a pipe, in the checkout, run the command below: it asks you nothing and each apply goes ahead
     fugaro setup
 [repository/onboard] command: fugaro setup --onboard-repo acme/app

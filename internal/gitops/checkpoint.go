@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -22,8 +23,9 @@ var ErrNotFastForward = errors.New("the branch on origin is not an ancestor of t
 var ErrGitBusy = errors.New("the checkout is not settled on the branch")
 
 // inProgress are what git keeps in the git directory while an operation
-// is unfinished.
-var inProgress = []string{"rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG"}
+// is unfinished: the rebase's own two, which a rebase run starts and reads
+// for itself (rebase.go), and the rest.
+var inProgress = slices.Concat(rebaseState, []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG"})
 
 // CheckpointTip returns the tip of the local branch when the checkout is
 // settled on it: HEAD is the symbolic ref refs/heads/<branch> and no

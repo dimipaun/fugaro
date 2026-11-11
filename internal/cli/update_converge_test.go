@@ -41,8 +41,12 @@ var argsUpdUser = []string{"plugin", "update", "fugaro@fugaro", "--scope", "user
 //     policy-rules-skew fires and the rules stage has to deploy;
 //   - the local config records the previous release's base image, so
 //     policy-vs-jobs fires and the images stage has to re-pin it;
-//   - the checkout is pinned to the previous release's plugin and has it
-//     installed, so plugin-pin fires and the checkout stage has to move both.
+//   - the checkout still carries the pin the previous release wrote, and that
+//     release's plugin is installed, so plugin-pin fires — the pin is a
+//     leftover nothing in the tree moves any more (U2 of
+//     docs/plugin-user-scope/implementation-plan.md, D949), which U5's
+//     migration takes out — and the checkout stage has to move the
+//     installation.
 type convergeRig struct {
 	*imagesRig
 	root     string
@@ -249,9 +253,16 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 func converge(t *testing.T, node map[string]any, stale []string) {
 	t.Helper()
 	r := newConvergeRig(t, node)
-	convergeOn(t, r, stale)
-	if got := upgradeRead(t, r.settings); !strings.Contains(got, `"ref": "v`+convergeRelease+`"`) {
-		t.Errorf("the plugin pin is still not this release's:\n%s", got)
+	out := convergeOn(t, r, stale)
+	// Nothing in the tree writes a pin any more (U2, D949): the settings the
+	// checkout carried come out of the run byte for byte as they went in, and
+	// what the run moves is the plugin Claude Code has installed, at user
+	// scope — the one the plugin stage is about now.
+	if got := upgradeRead(t, r.settings); got != wiredAt("v"+convergePrev) {
+		t.Errorf("the checkout's settings changed, and nothing writes a pin any more:\n%s", got)
+	}
+	if !strings.Contains(out, "plugin: done: installed "+convergeRelease) {
+		t.Errorf("the plugin step did not converge the install on this release's version:\n%s", out)
 	}
 	// This run onboarded the repository itself (it is the run the anchor writes
 	// fugaro.yaml's gcp_project: line in, which leaves the working tree
@@ -306,10 +317,20 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	}
 
 	after := doctorChecks(t, r.root)
-	for _, id := range []string{"cli-version", "plugin-pin", "base-image", "policy-vs-jobs", "policy-older-than-binary", "policy-rules-skew"} {
+	for _, id := range []string{"cli-version", "base-image", "policy-vs-jobs", "policy-older-than-binary", "policy-rules-skew"} {
 		if c, ok := doctorCheckByID(after.Checks, id); ok && !c.OK {
 			t.Errorf("after fugaro update, doctor's %s check still fires: %s (fix: %s)", id, c.Problem, c.Fix)
 		}
+	}
+	// plugin-pin is asserted the other way round, and the assertion is not an
+	// omission: the pin this fixture carries is a leftover no run writes or
+	// moves any more (U2, D949), so what this run must NOT do is report it
+	// converged — a pass here would be the merge's write coming back. The
+	// fixture is asserted stale above, with every other id, and still stale
+	// here. U5's migration is what takes the entry out, inside this same
+	// `fugaro update`, and this is the assertion it flips.
+	if c, ok := doctorCheckByID(after.Checks, "plugin-pin"); !ok || c.OK {
+		t.Errorf("after fugaro update, doctor's plugin-pin check reads %+v: the fixture still carries the previous release's pin and nothing in this tree moves one, so the check must still fire (U5's migration is what removes the entry)", c)
 	}
 	for _, c := range after.Checks {
 		// The per-workflow settings comparison, which is the update's own
@@ -379,6 +400,120 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 	}
 	if p.BakesRepos() {
 		t.Error("the published node bakes repos, want it not to: the reader every run uses is what a run would act on")
+	}
+}
+
+// TestUpdateConvergesNoCatalogDefault is O4 reading (b) at the door the HARD
+// RULE is about: a project whose image catalog marks no default still converges
+// with `fugaro update` alone. The catalog is the one thing that could take the
+// per-repository image away, so a project that publishes entries without
+// choosing one has to keep the images its workflows were built as — every job
+// on the per-repository tag, and the images stage rebuilding exactly those —
+// rather than stopping on a project that names no entry for a workflow.
+//
+// The alternative the plan rejected, a resolver that refuses when no default
+// exists, would leave this installation needing a second command: `fugaro
+// image build` and a catalog edit before the next `fugaro update`.
+func TestUpdateConvergesNoCatalogDefault(t *testing.T) {
+	const entry = "tools"
+	r := newConvergeRig(t, v4Node())
+	r.appendConfig(t, "image_catalog:\n  entries:\n    - name: "+entry+"\n      tags: [node]\n      source: { kind: inline, inline: \"FROM scratch\\n\" }\n")
+	registerInstallation(t, r.initRig)
+	if p := convergeNode(t, r); p.ImageCatalog != nil {
+		t.Fatalf("the fixture's node already carries a catalog (%v): it is not an installation whose policy predates it", p.ImageCatalog)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 1 || p.ImageCatalog.Entries[0].Name != entry {
+		t.Fatalf("after one fugaro update, the published node's image_catalog = %+v, want the one local entry: the catalog did not reach the node", p.ImageCatalog)
+	}
+	for _, e := range p.ImageCatalog.Entries {
+		if e.Default {
+			t.Errorf("after one fugaro update, the published entry %s is the default, want none: the project's config named no entry for its workflows", e.Name)
+		}
+	}
+	// Two builds reach Cloud Build, one per workflow, and both are the checkout
+	// stage's cloud step's — as in the converge rig's own count above: each of
+	// the two workflows carries a build record of the release behind, so the
+	// repository stage offers no first build (infra.NeedsBuild), and what the
+	// cloud step rebuilds off those records is each workflow's own job image.
+	if n := len(r.builder.specs); n != 2 {
+		t.Fatalf("%d job image(s) reached Cloud Build, want one per workflow, the cloud step's: with no catalog default every workflow keeps its own image", n)
+	}
+	// The pin the fixture records carries a digest the fake source registry
+	// answers differently, so what is compared is the repo:tag the pin names.
+	pinned, _, _ := strings.Cut(pinnedRef("base", convergeRelease), "@")
+	for _, s := range r.builder.specs {
+		if strings.Contains(s.Image, "catalog-"+entry) {
+			t.Errorf("workflow %s was built as %s, want the repository's own derived image: no catalog entry is this project's default, so no job runs one (O4 b)", s.Workflow, s.Image)
+		}
+		if base, _, _ := strings.Cut(s.Base, "@"); base != pinned {
+			t.Errorf("workflow %s was built from %s, want this release's pinned base %s: the rebuild is the per-repository image's", s.Workflow, s.Base, pinned)
+		}
+	}
+}
+
+// TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage is the HARD
+// RULE at the one shape this release's D1900 could have broken: a project whose
+// catalog marks a PREBUILT entry as its default, in a checkout whose workflows
+// wrote a `dockerfile:` of their own. On the release behind those workflows
+// were left out of the catalog entirely, so they ran the image this project
+// builds for them and the installation deployed; D1900 routes every workflow
+// through the catalog, and the default it would have handed such a workflow is
+// an entry the job-spec builder refuses (D1191, infra's unbuiltOnBaked) — so
+// the door would have stopped and asked for a manual config edit, which is the
+// second command the HARD RULE (F15) rules out.
+//
+// The resolver sets that default aside for a workflow that wrote an image of
+// its own (catalog.JobImage), so the installation converges on the images it
+// already runs: no catalog entry is any job's, and the images stage rebuilds
+// exactly the per-repository images the records show. Both workflows write the
+// key, because a workflow that wrote none has no image of its own to keep and
+// is refused in so many words — the shape D1191 exists for, on this release and
+// on the one behind alike.
+func TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage(t *testing.T) {
+	const entry = "standard"
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+		"  app: { dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n" +
+		"  api: { dockerfile: .fugaro/api.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	r := newConvergeRigYAML(t, v4Node(), yaml)
+	// The two Dockerfiles the workflows name, as the repository behind had
+	// them: `fugaro validate` reads a workflow's dockerfile: as a file that is
+	// there, so a checkout without them is not the shape this test is about.
+	const def = "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"
+	for _, wf := range []string{"app", "api"} {
+		checkoutFile(t, filepath.Join(r.root, ".fugaro", wf+".Dockerfile"), def)
+	}
+	// The prebuilt default is what the release behind deploys with: the entry
+	// is the project's own image, already built and pushed, so no job of this
+	// installation has a build of it to wait for.
+	r.appendConfig(t, "image_catalog:\n  entries:\n"+
+		"    - name: "+entry+"\n      default: true\n      tags: [node]\n"+
+		"      source: { kind: image, image: ghcr.io/dimipaun/"+entry+":1.0 }\n")
+	registerInstallation(t, r.initRig)
+	if p := convergeNode(t, r); p.ImageCatalog != nil {
+		t.Fatalf("the fixture's node already carries a catalog (%v): it is not an installation whose policy predates it", p.ImageCatalog)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 1 || p.ImageCatalog.Entries[0].Name != entry || !p.ImageCatalog.Entries[0].Default {
+		t.Fatalf("after one fugaro update, the published node's image_catalog = %+v, want the one local entry %s, marked default: the catalog did not reach the node", p.ImageCatalog, entry)
+	}
+	// The same two builds as the converge rig's own count: a workflow that
+	// wrote a dockerfile: keeps the image this project builds for it, so the
+	// cloud step rebuilds each workflow's own job image and no job is handed
+	// the prebuilt entry the catalog marks.
+	if n := len(r.builder.specs); n != 2 {
+		t.Fatalf("%d job image(s) reached Cloud Build, want one per workflow: a workflow that wrote a dockerfile: of its own keeps its own image, because the catalog's default is one its job cannot run", n)
+	}
+	for _, s := range r.builder.specs {
+		if strings.Contains(s.Image, "catalog-"+entry) {
+			t.Errorf("workflow %s was built as %s, want the repository's own derived image: the prebuilt default holds no checkout of this repository, so it is set aside for a job that wrote an image of its own (D1191, D1900)", s.Workflow, s.Image)
+		}
 	}
 }
 

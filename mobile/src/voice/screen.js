@@ -27,8 +27,9 @@
 // events, and none of it is implemented here), no prompt queue (P6.5, which is
 // not a dependency of this task -- see `interrupt.js` on the one place the two
 // disagree), and no writing of its own: **every** write goes through the client
-// (`accept` calls `client.send` and nothing else), which is what keeps D113's
-// "one write path" true.
+// (`accept` calls `client.send`, and asks `client.licenceRefusal` before its own
+// offline refusal so the licence's answer wins -- a question, not a write),
+// which is what keeps D113's "one write path" true.
 //
 // **The queue is bounded and refuses rather than evicting.** A queue that
 // dropped its oldest entry to make room would lose an update silently, which is
@@ -135,9 +136,13 @@ export function createVoiceScreen({
   utterance: dialogue = null,
 } = {}) {
   if (!isVoicePipeline(pipeline)) throw new TypeError('pipeline is a VoicePipeline');
+  // `licenceRefusal` is the third name this screen needs (S6.3): the offline
+  // refusal asks the licence first, and a client that cannot be asked would
+  // turn that into a crash inside `accept` rather than a wiring failure here.
   if (client === null || typeof client !== 'object'
-    || typeof client.send !== 'function' || typeof client.poll !== 'function') {
-    throw new TypeError('client is a mailbox client: send(text) and poll()');
+    || typeof client.send !== 'function' || typeof client.poll !== 'function'
+    || typeof client.licenceRefusal !== 'function') {
+    throw new TypeError('client is a mailbox client: send(text), poll() and licenceRefusal(text)');
   }
   if (typeof now !== 'function') throw new TypeError('now is a function');
   if (typeof holder !== 'string' || holder.length === 0) throw new TypeError('holder is a non-empty string');
@@ -263,17 +268,45 @@ export function createVoiceScreen({
    * recorded as well as returned: a refusal nobody renders is a message the
    * owner believes they sent.
    *
+   * **The licence is asked first, and its answer wins over this screen's**
+   * (S6.3; the design's §5.7). Being offline and having lapsed can both be true
+   * of one utterance, and only one of the two sentences helps: "the
+   * orchestrator is offline" sends the owner to wait for a network that is not
+   * the problem, while the licence's names the key screen, which is never
+   * gated. A pre-check that answered first would be exactly the masking the
+   * design forbids -- and this screen cannot make the licence's refusal itself
+   * (the lapse is decided in the write path and nowhere else), so it asks the
+   * client before it refuses anything of its own. Nothing is written either
+   * way: the licence's refusal is reported by the client, and this screen's
+   * refusal is not a write at all.
+   *
    * And a message that **is** accepted clears what the last refusal left: the
    * snapshot's `refused` is the screen's current state, not a history of every
    * refusal it ever made.
    *
+   * `options` is the classification the caller already made, handed on to the
+   * client unchanged: P6.12's dialogue passes `{ verb: 'launch' }` for D162's
+   * pass-through, because the client cannot tell a launch from chatter and the
+   * lapse (S6.3) refuses the one and keeps the other. A caller with nothing to
+   * classify passes nothing, and this screen classifies nothing itself.
+   *
    * @param {unknown} text what the owner said
+   * @param {{action?: object, verb?: string}} [options] what the caller knows
+   *   about it: the client's own options, forwarded
    * @returns {Promise<object>} the client's own verdict, or this screen's refusal
    */
-  async function accept(text) {
+  async function accept(text, options) {
     if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
-    if (offline()) return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
-    const sent = await client.send(text);
+    if (offline()) {
+      const refusedByLicence = await client.licenceRefusal(text, options);
+      // The licence's refusal is the client's and is returned as itself -- it
+      // is not recorded here, because this screen records its own refusals and
+      // this one is not this screen's (the rule the client's stale refusal
+      // follows too).
+      if (refusedByLicence !== null) return refusedByLicence;
+      return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
+    }
+    const sent = await client.send(text, options);
     if (sent.ok) lastRefused = null;
     return sent;
   }

@@ -126,6 +126,10 @@ func TestOnboardRepoFlag(t *testing.T) {
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(dir)
 	e, _ := stageEngine(t, "", &initOptions{yes: true, nonInteractive: true, onboardRepo: "acme/app", githubAppID: "12345"})
+	// After the engine: the rig takes claude off PATH itself.
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
 	unknownRepo(e)
 	ran := false
 	rs := newRepositoryStage(e)
@@ -134,8 +138,11 @@ func TestOnboardRepoFlag(t *testing.T) {
 	if err != nil || !ran || stateOf(res, "plugin") != initflow.Changed || stateOf(res, "repository") != initflow.Done {
 		t.Fatalf("%v ran %v %+v", err, ran, res.Stages)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); err != nil {
-		t.Errorf("the opted-in repository was not wired: %v", err)
+	// The plugin stage's write is the install in Claude Code now, and the pin
+	// it used to leave in the opted-in checkout went with the merge that wrote
+	// it (U2, D949).
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Errorf("the opted-in repository was wired, and nothing in the tree writes that file any more (err %v)", err)
 	}
 	for _, flag := range []string{"acme/other", "other/app", "acme/app2"} {
 		for _, known := range []bool{false, true} {

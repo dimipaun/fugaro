@@ -559,6 +559,68 @@ run "bad_coordinator_account" {
   expect_failures = [var.coordinator_account]
 }
 
+# W7's binding (docs/workspaces/spec.md §5): one project grant, of one custom
+# role holding exactly the instance's read, to the account the member's own
+# config pins — and nothing at all for an installation that pins no workspace,
+# which is every install that has not joined one.
+run "TestWorkspaceReadGrant" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    workspace_service_account = "fugaro-credentials@ws-1234.iam.gserviceaccount.com"
+  }
+
+  assert {
+    condition = (length(google_project_iam_member.workspace_read) == 1 &&
+      google_project_iam_member.workspace_read[0].project == "fp-1234" &&
+      google_project_iam_member.workspace_read[0].role == "projects/fp-1234/roles/fugaroWorkspaceRead" &&
+    google_project_iam_member.workspace_read[0].member == "serviceAccount:fugaro-credentials@ws-1234.iam.gserviceaccount.com")
+    error_message = "the pinned account holds the read-only role on the FP, and it is the only member bound here"
+  }
+  assert {
+    condition = (length(google_project_iam_custom_role.workspace_read) == 1 &&
+      contains(google_project_iam_custom_role.workspace_read[0].permissions, "firebasedatabase.instances.get") &&
+    !contains(google_project_iam_custom_role.workspace_read[0].permissions, "firebasedatabase.instances.update"))
+    error_message = "the role is the instance's read and no write: a member's database is the member's, and this grant is IAM's half of that"
+  }
+}
+
+run "TestNoWorkspaceReadWithoutAPin" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    workspace_service_account = ""
+  }
+
+  assert {
+    condition = (length(google_project_iam_member.workspace_read) == 0 &&
+    length(google_project_iam_custom_role.workspace_read) == 0)
+    error_message = "an installation in no workspace creates neither the role nor the binding: the absent pin is not an account"
+  }
+}
+
+run "bad_workspace_account" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    workspace_service_account = "not-an-email"
+  }
+
+  expect_failures = [var.workspace_service_account]
+}
+
 run "bad_member" {
   command = plan
 

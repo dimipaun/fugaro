@@ -821,8 +821,8 @@ type ProjectLayer struct {
 	YAML       string `json:"yaml"`                 // the exact text
 }
 
-// ABArm, ABPublish and ABChallengerSource are the pair block's three closed
-// vocabularies. Each is a named string type with one exported list, as
+// ABArm, ABPublish, ABChallengerSource and ABSlot are the pair block's four
+// closed vocabularies. Each is a named string type with one exported list, as
 // rigor.Mode and tier.Tier are, because a near miss is a launcher's bug
 // rather than a run's opinion about which arm it is — and a named type is
 // what keeps an arbitrary string out of a field the schemas pin to an enum.
@@ -830,6 +830,7 @@ type (
 	ABArm              string
 	ABPublish          string
 	ABChallengerSource string
+	ABSlot             string
 )
 
 const (
@@ -848,15 +849,28 @@ const (
 	// (D556). It is the seam D572 reserves for a later auto-flip writer —
 	// nothing reads it to pick a challenger, and nothing writes another one.
 	ABChallengerOwner ABChallengerSource = "owner"
+	// ABSlotCoder is the slot a coder pair varies, and the slot an absent
+	// one means (AB.EffectiveSlot): the challenger is a second full run of
+	// the task on another coder model, and every reviewer stays fixed, which
+	// is what keeps the two arms' review findings comparable (D555, D571).
+	ABSlotCoder ABSlot = "coder"
+	// ABSlotL1, ABSlotL2 and ABSlotL3 are the three review slots (D728): the
+	// pair varies that level's reviewer, and it does so by replaying the
+	// level over the champion's own recorded patch (AB.ChampionRun, B1.2),
+	// so the two reviewers judge one diff rather than two runs' code.
+	ABSlotL1 ABSlot = "l1"
+	ABSlotL2 ABSlot = "l2"
+	ABSlotL3 ABSlot = "l3"
 )
 
-// ABArms, ABPublishes and ABChallengerSources are each whole vocabulary,
-// closed the way rigor.Modes and tier.Tiers are: a value outside one is
-// refused where it is written, never matched as an unknown arm later.
+// ABArms, ABPublishes, ABChallengerSources and ABSlots are each whole
+// vocabulary, closed the way rigor.Modes and tier.Tiers are: a value outside
+// one is refused where it is written, never matched as an unknown arm later.
 var (
 	ABArms              = []ABArm{ABArmChampion, ABArmChallenger}
 	ABPublishes         = []ABPublish{ABPublishNone}
 	ABChallengerSources = []ABChallengerSource{ABChallengerOwner}
+	ABSlots             = []ABSlot{ABSlotCoder, ABSlotL1, ABSlotL2, ABSlotL3}
 )
 
 // AB is the pair block a sampled launch carries (docs/model-ab-testing,
@@ -873,6 +887,13 @@ var (
 // here and never through Overrides.Model, which a run with no per-role models
 // applies to every stage (Spec.Apply) and would change the reviewer both arms
 // share — Validate refuses a task carrying both for that reason.
+//
+// Slot says which one thing the pair varies (D728). A coder pair — the slot
+// an absent one means — varies the coder and holds every reviewer fixed,
+// which is D555 as it stands. A pair at a review slot varies that level's
+// reviewer and holds the coder fixed, and its challenger arm is not a second
+// run at all: it replays that level over the champion's own recorded patch
+// (ChampionRun, B1.2), so both reviewers read one diff.
 type AB struct {
 	// PairID names the pair both arms belong to: one value, written by the
 	// launcher onto both tasks, so a reader joins the two records by it. It
@@ -892,6 +913,41 @@ type AB struct {
 	// champion: the owner set that model in the project layer, never the
 	// repository's own file (D556).
 	ChallengerSource ABChallengerSource `json:"challenger_source,omitempty"`
+	// Slot is the one thing the pair varies (D728), empty on a coder pair:
+	// the empty spelling is not a hole but the value itself (EffectiveSlot),
+	// because every block written before this field — A1.1's own tasks and
+	// records — is a coder pair, and re-reading them must not turn them into
+	// pairs nobody could score.
+	Slot ABSlot `json:"slot,omitempty"`
+	// ChampionRun is the champion's run ID on a challenger at a review slot,
+	// and empty everywhere else: it names the run whose recorded patch
+	// (runstore.PatchName) this arm's reviewer reads, which is what makes the
+	// two arms of a review pair judge the same code (D728, B1.2). A champion
+	// is the run its own block names; a coder pair's challenger runs the
+	// whole task itself. Validate refuses it in both places rather than
+	// ignoring it, as it does with the fields that describe a challenger.
+	ChampionRun string `json:"champion_run,omitempty"`
+}
+
+// EffectiveSlot is the slot the pair varies with the empty spelling
+// resolved: a block that names no slot is a coder pair (D728), which is what
+// every task and record written before the field says by saying nothing. A
+// reader that asked Slot directly would read those as "no slot" and would
+// have to repeat the rule; this is the one place it is written.
+func (ab *AB) EffectiveSlot() ABSlot {
+	if ab.Slot == "" {
+		return ABSlotCoder
+	}
+	return ab.Slot
+}
+
+// IsReviewer reports whether the slot varies a review level rather than the
+// coder: such a pair's challenger is a shadow replay of that level over the
+// champion's patch (D728, B1.2) and never a second coding loop, which is the
+// one thing a reader has to tell apart. It is a method rather than a list
+// checked at each call site, so the closed vocabulary and the reader agree.
+func (s ABSlot) IsReviewer() bool {
+	return s == ABSlotL1 || s == ABSlotL2 || s == ABSlotL3
 }
 
 // MaxAuthorNameLen and MaxAuthorEmailLen bound the two fields of an author
@@ -1349,13 +1405,31 @@ func (s *Spec) Validate() error {
 	// refused on it rather than ignored. That last rule is what keeps a task
 	// and the record the runner echoes from it (A2.1) in step with the
 	// published result schema, which refuses a champion carrying any of the
-	// three. An absent block is legal, and is what every launch writes today.
+	// three. The slot (D728) is judged the same way: it is a closed value,
+	// and the champion's run ID goes with a challenger at a review slot and
+	// with nothing else, so a block that describes no pair any runner could
+	// run is refused here rather than at bootstrap. An absent block is legal,
+	// and is what every launch writes today.
 	if ab := s.AB; ab != nil {
 		if strings.TrimSpace(ab.PairID) == "" {
 			bad("task spec: ab.pair_id is required")
 		}
 		if !slices.Contains(ABArms, ab.Arm) {
 			bad("task spec: ab.arm %q must be %s or %s", ab.Arm, ABArmChampion, ABArmChallenger)
+		}
+		if ab.Slot != "" && !slices.Contains(ABSlots, ab.Slot) {
+			bad("task spec: ab.slot %q must be %s, %s, %s or %s, or empty for %s", ab.Slot,
+				ABSlotCoder, ABSlotL1, ABSlotL2, ABSlotL3, ABSlotCoder)
+		}
+		// The champion's run ID belongs to a challenger at a review slot
+		// (D728): that arm replays a level over the champion's own recorded
+		// patch (B1.2) and so cannot be run without naming the run it reads,
+		// while a champion is the run its own block names and a coder pair's
+		// challenger runs the task itself. A field that described neither is
+		// refused rather than ignored, the way the three above are.
+		if ab.ChampionRun != "" && (ab.Arm != ABArmChallenger || !ab.EffectiveSlot().IsReviewer()) {
+			bad("task spec: ab.champion_run belongs to a challenger at a review slot (ab.slot %s, %s or %s): a coder pair's challenger runs the task itself, and a champion is the run it names",
+				ABSlotL1, ABSlotL2, ABSlotL3)
 		}
 		switch ab.Arm {
 		case ABArmChampion:
@@ -1377,6 +1451,13 @@ func (s *Spec) Validate() error {
 			}
 			if ab.ChallengerSource != "" && !slices.Contains(ABChallengerSources, ab.ChallengerSource) {
 				bad("task spec: ab.challenger_source %q must be %s or empty", ab.ChallengerSource, ABChallengerOwner)
+			}
+			// The replay's own input: the pair is only comparable if the
+			// challenger reads a real run's patch, so the ID is a run ID here
+			// the way run_id is — a blank or invented one would send the
+			// runner looking for an object nobody wrote (B1.2).
+			if ab.EffectiveSlot().IsReviewer() && !ValidRunID(ab.ChampionRun) {
+				bad("task spec: ab.champion_run %q must be the champion's run ID, the way run_id looks", ab.ChampionRun)
 			}
 		}
 		// The challenger never travels as an override (D555): with no

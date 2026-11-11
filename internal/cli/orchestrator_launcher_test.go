@@ -344,14 +344,23 @@ func newLauncherProfilesFixture(t *testing.T) *launcherProfilesFixture {
 // the sentence `fugaro run` from outside a checkout gives, in either directory —
 // with a checkout of the item's repository and with none — because without a
 // checkout the launch cannot tell a clone workflow's shared job from a baked
-// workflow's own. What a refusal must not leave behind is a claim, a budget
-// token, a Cloud Run call or an execution. The task is stored: the refusal is
-// the start's own, past the writes `fugaro run` also makes first.
+// workflow's own, and the daemon's launch is the one that carries no checkout
+// (A2's withoutCheckout, so the read A3 adds is never a read of the directory
+// either: both subtests reach the same refusal, and it is the installation with
+// no credentials service, which is what this fixture is). The refusal is the
+// gates' own, because the workflow's kind is what those gates are judged by:
+// the read A3 adds is the gates' read as much as the job decision's, so a
+// launch whose read cannot be made refuses where `fugaro run` refuses the same
+// case, before anything of the launch is written. What a refusal must not leave
+// behind is a task, a claim, a budget token, a Cloud Run call or an execution —
+// and it leaves none of them.
 //
-// Mutation (run, restored): mark only prepare with withoutCheckout, as the
-// launcher did before, and hand launchRun the caller's context — the first
-// subtest launches, and one jobs.run call names the shared project job of the
-// profile with one execution behind it: the launch these gates exist to refuse.
+// Mutation (run, restored): drop the withoutCheckout switch from Launch, so
+// both the gates and the start read the daemon's directory — the first subtest
+// never reaches the sentence above: its gates read the directory's own
+// `checkout: clone` workflow and refuse it for a base image this installation
+// does not have, which is the kind of judgement the switch exists to keep off
+// the directory.
 func TestRunLauncherTakesNoJobFromItsWorkingDirectory(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -375,14 +384,14 @@ func TestRunLauncherTakesNoJobFromItsWorkingDirectory(t *testing.T) {
 			if ExitCode(err) != ExitUserError {
 				t.Fatalf("err = %v, want a user error", err)
 			}
-			for _, want := range []string{"cannot tell which Cloud Run job it targets", "acme/app", "clone workflow"} {
+			for _, want := range []string{"acme/app", "checkout", "credentials service"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the refusal does not say %q: %v", want, err)
 				}
 			}
 			s := f.runStore(t, runID)
-			if _, err := s.ReadTask(ctx); err != nil {
-				t.Errorf("the refusal came before the task was stored: %v", err)
+			if _, err := s.ReadTask(ctx); !errors.Is(err, runstore.ErrNotFound) {
+				t.Errorf("the refused launch stored a task: %v", err)
 			}
 			if _, err := s.ReadClaim(ctx); !errors.Is(err, runstore.ErrNotFound) {
 				t.Errorf("the refused launch took the launch claim: %v", err)

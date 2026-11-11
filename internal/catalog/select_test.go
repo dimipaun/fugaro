@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -340,60 +341,315 @@ func TestAnUnknownBackendHasNoDockerDaemon(t *testing.T) {
 	}
 }
 
-// TestAppliesIsTheJobsTheCatalogGivesAnImageTo pins which workflows the
-// catalog speaks for at all, because two callers ask it and each of them
-// refuses on the answer: the deploy-time job spec, and the launcher judging
-// the same job's image against the backend it picks. A workflow one of them
-// judged by the catalog and the other did not would be refused for an entry it
-// does not run, or asked for a Docker socket it never needed. MayApply, the
-// half of the question that reads no catalog, is pinned here beside it: doctor
-// asks it for a catalog it could not read.
-//
-// Mutation (drop the override arm, or the clone/shared arm): the launcher
-// judges a job the deploy gave the repository's own image — and a catalog
-// whose default is docker-tagged then refuses that launch on Cloud Run, or
-// asks a VM installation with no gid recorded for a socket nobody needs.
-func TestAppliesIsTheJobsTheCatalogGivesAnImageTo(t *testing.T) {
-	// defaulted marks one entry as the project default, which is what a
-	// repository that names nothing needs to be the catalog's at all.
-	defaulted := testCatalog()
-	defaulted.Entries[1].Default = true
-	override := config.Workflow{Image: config.Image{Apt: []string{"jq"}}}
-	baked := config.Workflow{Checkout: config.CheckoutBaked}
+// mustImage is JobImage with the error treated as a failure: the selections
+// these tests are about are the ones the resolver answers.
+func mustImage(t *testing.T, req ImageRequest) Selection {
+	t.Helper()
+	sel, err := JobImage(req)
+	if err != nil {
+		t.Fatalf("JobImage(%+v) = %v", req, err)
+	}
+	return sel
+}
 
+// TestMayApplyIsWhichWorkflowsTheSelectionCouldSpeakFor pins the half of the
+// question that reads no project at all, because doctor asks it for a project
+// whose catalog it could not read: whether the image selection could speak for
+// a workflow, without asking the catalog whether it marks a default or the map
+// whether it names this repository. The two checkout kinds whose image is the
+// installation's own are the ones it refuses; every other workflow is one the
+// selection may speak for, whatever its keys say.
+//
+// Mutation (refuse a workflow that keeps its own image definition): doctor
+// would read a repository outside the catalog's reach as one it is judging,
+// where the whole point of the question in that state is that the node nobody
+// read may still give it an entry (D1900).
+func TestMayApplyIsWhichWorkflowsTheSelectionCouldSpeakFor(t *testing.T) {
 	for name, tt := range map[string]struct {
-		cat  config.Catalog
 		w    config.Workflow
 		want bool
 	}{
-		"a repository that needs a tag":               {testCatalog(), config.Workflow{Checkout: config.CheckoutBaked, Needs: []string{"node"}}, true},
-		"a repository that pins an entry":             {testCatalog(), config.Workflow{Checkout: config.CheckoutBaked, ImageName: "backend"}, true},
-		"a repository that names nothing, a default":  {defaulted, baked, true},
-		"a repository that names nothing, no default": {testCatalog(), baked, false},
-		"its own image definition":                    {testCatalog(), override, false},
-		"its own Dockerfile": {
-			testCatalog(),
-			config.Workflow{Checkout: config.CheckoutBaked, Dockerfile: "docker/Dockerfile"},
-			false,
-		},
-		"a clone workflow":  {testCatalog(), config.Workflow{Checkout: config.CheckoutClone, Needs: []string{"node"}}, false},
-		"a shared workflow": {testCatalog(), config.Workflow{Checkout: config.CheckoutShared, Needs: []string{"node"}}, false},
+		"a repository that needs a tag":   {config.Workflow{Checkout: config.CheckoutBaked, Needs: []string{"node"}}, true},
+		"a repository that pins an entry": {config.Workflow{Checkout: config.CheckoutBaked, ImageName: "backend"}, true},
+		"a repository that names nothing": {config.Workflow{Checkout: config.CheckoutBaked}, true},
+		"its own image definition":        {config.Workflow{Checkout: config.CheckoutBaked, Image: config.Image{Apt: []string{"jq"}}}, true},
+		"its own Dockerfile":              {config.Workflow{Checkout: config.CheckoutBaked, Dockerfile: "docker/Dockerfile"}, true},
+		"a clone workflow":                {config.Workflow{Checkout: config.CheckoutClone, Needs: []string{"node"}}, false},
+		"a shared workflow":               {config.Workflow{Checkout: config.CheckoutShared, Needs: []string{"node"}}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := Applies(tt.cat, tt.w); got != tt.want {
-				t.Fatalf("Applies = %v, want %v", got, tt.want)
+			if got := MayApply(tt.w); got != tt.want {
+				t.Fatalf("MayApply = %v, want %v", got, tt.want)
 			}
-			// MayApply is the half of it that reads no catalog: it answers the
-			// same except for the one row where the default is what decides —
-			// a workflow that names nothing, in a catalog that marks none.
-			// Doctor asks it for a catalog it could not read, where whether a
-			// default is marked is exactly what is not known.
-			wantMay := tt.want
-			if name == "a repository that names nothing, no default" {
-				wantMay = true
+		})
+	}
+}
+
+// TestJobImageIgnoresRepoLevelConfig is D1900's rule in the resolver: a
+// repository's own image definition is not what its job runs while the project
+// gives it an image, and every key that asked for one says so once.
+//
+// The frozen workflow is the tree's own per-repository shape (image.apt, a
+// dockerfile, a rebuild: block), which is what the warning is read against: a
+// key this resolver did not name would leave the person's `image:` block in
+// their file meaning nothing, with no line anywhere saying so.
+func TestJobImageIgnoresRepoLevelConfig(t *testing.T) {
+	// The default is an entry this job can run, which is what makes the
+	// workflow's own keys ignored rather than the default set aside: a project
+	// whose default is a prebuilt image keeps the workflow's own image instead
+	// (TestJobImageKeepsOwnImageWhenTheDefaultCannotRun).
+	cat := config.Catalog{Entries: []config.Entry{
+		{Name: "frontend", Default: true, Tags: []string{"node"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/images", Path: "frontend/Dockerfile"}},
+		entry("frontend", "node", false),
+		entry("data", "postgres redis", false),
+	}}
+	w := config.Workflow{
+		Checkout:   config.CheckoutBaked,
+		Image:      config.Image{Apt: []string{"jq"}},
+		Dockerfile: "docker/Dockerfile",
+		Rebuild:    config.Rebuild{Check: "weekly"},
+	}
+	sel := mustImage(t, ImageRequest{Catalog: &cat, Workflow: w, Backend: CloudRun, Canonical: "acme/api"})
+	if sel.Source != SourceCatalog || sel.Entry.Name != "frontend" {
+		t.Fatalf("resolved %+v, want the project's default entry frontend: a repository's own image keys are ignored while the project gives the job an image (D1900)", sel)
+	}
+	want := []string{"image:", "dockerfile:", "rebuild:"}
+	if len(sel.Warnings) != len(want) {
+		t.Fatalf("warnings = %q, want one for each of %q", sel.Warnings, want)
+	}
+	for i, key := range want {
+		if !strings.Contains(sel.Warnings[i], key) {
+			t.Errorf("warning %d = %q, want it to name %s", i, sel.Warnings[i], key)
+		}
+	}
+}
+
+// TestJobImageKeepsOwnImageWhenTheDefaultCannotRun is D1900 read against the
+// two defaults a job cannot run: D1191's prebuilt entry, which holds no
+// checkout of the repository a baked image builds from, and D1149's
+// docker-tagged entry on a backend with no daemon. A workflow that wrote an
+// image definition of its own keeps running it, with a warning naming the key
+// and the entry, because the alternative is refusing a configuration that
+// deploys today — the manual config edit the HARD RULE on `fugaro update`
+// rules out. A workflow that wrote no definition of its own has nothing of its
+// own to keep and is left to the refusal, which names where its fix is.
+func TestJobImageKeepsOwnImageWhenTheDefaultCannotRun(t *testing.T) {
+	prebuilt := config.Catalog{Entries: []config.Entry{entry("standard", "", true)}}
+	dockerTagged := config.Catalog{Entries: []config.Entry{{
+		Name:    "standard",
+		Default: true,
+		Tags:    []string{DockerTag},
+		Source:  config.Source{Kind: config.SourceInline, Inline: "FROM scratch\n"},
+	}}}
+	builtDefault := config.Catalog{Entries: []config.Entry{{
+		Name:    "frontend",
+		Default: true,
+		Source:  config.Source{Kind: config.SourceDockerfile, Repo: "acme/images", Path: "frontend/Dockerfile"},
+	}}}
+	baked := func(w config.Workflow) config.Workflow {
+		w.Checkout = config.CheckoutBaked
+		return w
+	}
+	for name, tt := range map[string]struct {
+		cat config.Catalog
+		w   config.Workflow
+		key string
+		why string
+	}{
+		"dockerfile: against a prebuilt default": {
+			cat: prebuilt,
+			w:   baked(config.Workflow{Dockerfile: "docker/Dockerfile"}),
+			key: "dockerfile:", why: "prebuilt",
+		},
+		"image: against a prebuilt default": {
+			cat: prebuilt,
+			w:   baked(config.Workflow{Image: config.Image{Apt: []string{"jq"}}}),
+			key: "image:", why: "prebuilt",
+		},
+		"dockerfile: against a docker-tagged default": {
+			cat: dockerTagged,
+			w:   baked(config.Workflow{Dockerfile: "docker/Dockerfile"}),
+			key: "dockerfile:", why: DockerTag,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sel := mustImage(t, ImageRequest{Catalog: &tt.cat, Workflow: tt.w, Backend: CloudRun, Canonical: "acme/api"})
+			if sel.Source != SourceRepo {
+				t.Fatalf("resolved %+v, want the repository's own image: the default is an entry this job cannot run and the workflow wrote a definition of its own", sel)
 			}
-			if got := MayApply(tt.w); got != wantMay {
-				t.Fatalf("MayApply = %v, want %v", got, wantMay)
+			if len(sel.Warnings) != 1 {
+				t.Fatalf("warnings = %q, want the one the set-aside default carries", sel.Warnings)
+			}
+			for _, want := range []string{tt.key, "standard", tt.why} {
+				if !strings.Contains(sel.Warnings[0], want) {
+					t.Errorf("warning = %q, want it to name %s", sel.Warnings[0], want)
+				}
+			}
+		})
+	}
+
+	// The controls. A workflow that wrote only rebuild: has no image of its own,
+	// so it is not this shape and the prebuilt default stays its answer — which
+	// the job-spec builder then refuses (D1191). A workflow that wrote nothing
+	// at all met the docker-tagged default on Cloud Run before this fallback and
+	// still does: the refusal is the resolver's own (D1149), and there is no
+	// image of the job's own for the catalog's answer to be set aside in favour
+	// of. A default this job *can* run stays the answer for a workflow that
+	// wrote a definition, with D1900's warning for the key it set aside, on
+	// Cloud Run and on the VM alike.
+	sel := mustImage(t, ImageRequest{Catalog: &prebuilt, Workflow: baked(config.Workflow{Rebuild: config.Rebuild{Check: "weekly"}}), Backend: CloudRun, Canonical: "acme/api"})
+	if sel.Source != SourceCatalog || sel.Entry.Name != "standard" {
+		t.Fatalf("resolved %+v, want the prebuilt default standard: rebuild: alone is no image of the workflow's own to keep", sel)
+	}
+	if _, err := JobImage(ImageRequest{Catalog: &dockerTagged, Workflow: baked(config.Workflow{}), Backend: CloudRun, Canonical: "acme/api"}); err == nil {
+		t.Fatal("a docker-tagged default was given to a workflow that wrote nothing of its own on Cloud Run")
+	} else if !errors.Is(err, ErrDockerOnCloudRun) {
+		t.Fatalf("refusal of the docker-tagged default = %v, want D1149's refusal", err)
+	}
+	for name, back := range map[string]Backend{"Cloud Run": CloudRun, "the VM": Batch} {
+		t.Run(name, func(t *testing.T) {
+			sel := mustImage(t, ImageRequest{Catalog: &builtDefault, Workflow: baked(config.Workflow{Dockerfile: "docker/Dockerfile"}), Backend: back, Canonical: "acme/api"})
+			if sel.Source != SourceCatalog || sel.Entry.Name != "frontend" {
+				t.Fatalf("resolved %+v, want the project's default frontend: it is an entry this job can run", sel)
+			}
+			if len(sel.Warnings) != 1 || !strings.Contains(sel.Warnings[0], "dockerfile:") {
+				t.Fatalf("warnings = %q, want the ignored dockerfile: named once", sel.Warnings)
+			}
+		})
+	}
+	// The same catalogue on the VM: the docker-tagged default is runnable there
+	// (the backend's container carries the host's socket), so it is the answer
+	// and not a default set aside.
+	sel = mustImage(t, ImageRequest{Catalog: &dockerTagged, Workflow: baked(config.Workflow{Dockerfile: "docker/Dockerfile"}), Backend: Batch, Canonical: "acme/api"})
+	if sel.Source != SourceCatalog || sel.Entry.Name != "standard" {
+		t.Fatalf("resolved %+v, want the docker-tagged default on the VM: the backend has a daemon", sel)
+	}
+}
+
+// TestJobImageUsesImageMap is D1906's map in the resolver, and T1 reading (b)
+// against it: a repository the project maps runs the entry it is mapped to,
+// while a repository that states a reference of its own — a pin or a needed
+// tag — is resolved by that reference and never by the map.
+func TestJobImageUsesImageMap(t *testing.T) {
+	cat := testCatalog()
+	cat.Entries[1].Default = true // frontend, the default a mapped repo never reaches
+	imap := map[string]string{"acme/api": "backend"}
+	req := func(w config.Workflow) ImageRequest {
+		return ImageRequest{Catalog: &cat, ImageMap: imap, Workflow: w, Backend: CloudRun, Canonical: "acme/api"}
+	}
+	sel := mustImage(t, req(config.Workflow{Checkout: config.CheckoutBaked, Image: config.Image{Apt: []string{"jq"}}}))
+	if sel.Source != SourceCatalog || sel.Entry.Name != "backend" {
+		t.Fatalf("resolved %+v, want the mapped entry backend", sel)
+	}
+	if len(sel.Warnings) != 1 || !strings.Contains(sel.Warnings[0], "image:") {
+		t.Fatalf("warnings = %q, want the ignored image: named once", sel.Warnings)
+	}
+	// The map is keyed by canonical repository name: a checkout spelled with
+	// capitals is the same repository's job.
+	upper := req(config.Workflow{Checkout: config.CheckoutBaked})
+	upper.Canonical = "Acme/API"
+	if got := mustImage(t, upper).Entry.Name; got != "backend" {
+		t.Fatalf("a repository spelled Acme/API resolved %q, want backend: the map is read under the repository's canonical name (ValidImageMap)", got)
+	}
+	// T1 (b): a reference of the repository's own wins over the map.
+	if got := mustImage(t, req(config.Workflow{Checkout: config.CheckoutBaked, ImageName: "data"})).Entry.Name; got != "data" {
+		t.Fatalf("a repository that pins data resolved %q, want data: a catalog reference beats the map (T1 b)", got)
+	}
+	if got := mustImage(t, req(config.Workflow{Checkout: config.CheckoutBaked, Needs: []string{"postgres", "redis"}})).Entry.Name; got != "data" {
+		t.Fatalf("a repository that needs postgres and redis resolved %q, want data: needs: are a catalog reference and beat the map (T1 b)", got)
+	}
+	// A map that names an entry the catalog does not hold is refused, and the
+	// sentence names the map: that is where the person's fix is.
+	missing := req(config.Workflow{Checkout: config.CheckoutBaked})
+	missing.ImageMap = map[string]string{"acme/api": "nowhere"}
+	if _, err := JobImage(missing); err == nil {
+		t.Fatal("a map entry no catalog holds was accepted")
+	} else if !strings.Contains(err.Error(), "image_map") {
+		t.Fatalf("the refusal of an unknown mapped entry is %q, want it to name the image_map", err)
+	}
+}
+
+// TestJobImageNoDefaultFallsBack is O4 reading (b): a project that has not
+// curated its catalog gives no entry to a repository that names nothing, and
+// refusing there would stop `fugaro update` for every installation that has
+// not been through the image skill. The repository keeps the image this
+// project builds for it until a default exists, and nothing is warned about:
+// no key was ignored, because no project image took its place.
+func TestJobImageNoDefaultFallsBack(t *testing.T) {
+	cat := testCatalog() // no entry marked default
+	w := config.Workflow{Checkout: config.CheckoutBaked, Image: config.Image{Apt: []string{"jq"}}}
+	sel := mustImage(t, ImageRequest{Catalog: &cat, Workflow: w, Backend: CloudRun, Canonical: "acme/api"})
+	if sel.Source != SourceRepo {
+		t.Fatalf("resolved %+v, want the repository's own image", sel)
+	}
+	if len(sel.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none: no project image took the workflow's own away", sel.Warnings)
+	}
+	// A project with no catalog at all is the same answer, and so is one whose
+	// repository names nothing while nothing maps it.
+	for name, req := range map[string]ImageRequest{
+		"no catalog":       {Workflow: w, Backend: CloudRun, Canonical: "acme/api"},
+		"an empty catalog": {Catalog: &config.Catalog{}, Workflow: w, Backend: CloudRun, Canonical: "acme/api"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := mustImage(t, req); got.Source != SourceRepo {
+				t.Fatalf("resolved %+v, want the repository's own image", got)
+			}
+		})
+	}
+}
+
+// TestJobImageCheckoutKindsAreTheInstallationsImages: the two checkout kinds
+// whose image is not a project image at all — the base image a clone job runs
+// and the shared dependency layer a shared job runs — are answered before any
+// of the project's configuration is read, so a catalog entry, a map or a
+// default cannot move them.
+func TestJobImageCheckoutKindsAreTheInstallationsImages(t *testing.T) {
+	cat := testCatalog()
+	cat.Entries[1].Default = true
+	for name, tt := range map[string]struct {
+		w    config.Workflow
+		want Source
+	}{
+		"clone":  {config.Workflow{Checkout: config.CheckoutClone}, SourceBase},
+		"shared": {config.Workflow{Checkout: config.CheckoutShared}, SourceShared},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sel := mustImage(t, ImageRequest{
+				Catalog:   &cat,
+				ImageMap:  map[string]string{"acme/api": "backend"},
+				Workflow:  tt.w,
+				Backend:   CloudRun,
+				Canonical: "acme/api",
+			})
+			if sel.Source != tt.want || sel.Entry.Name != "" {
+				t.Fatalf("resolved %+v, want source %s and no entry", sel, tt.want)
+			}
+		})
+	}
+}
+
+// TestSelectionImageNamesTheImageOfItsSource: the four sources name four
+// references, and the two the resolver must not know — the installation's base
+// image and the place a catalog entry's image lives — come from the caller.
+func TestSelectionImageNamesTheImageOfItsSource(t *testing.T) {
+	im := Images{
+		Base:    "base:1",
+		Repo:    "registry/acme/api:latest",
+		Catalog: func(e config.Entry) string { return "registry/catalog-" + e.Name + ":latest" },
+	}
+	for name, tt := range map[string]struct {
+		sel  Selection
+		want string
+	}{
+		"the base image":   {Selection{Source: SourceBase}, "base:1"},
+		"the repository's": {Selection{Source: SourceRepo}, "registry/acme/api:latest"},
+		"a shared layer":   {Selection{Source: SourceShared}, "registry/acme/api:latest"},
+		"a catalog entry":  {Selection{Source: SourceCatalog, Entry: entry("frontend", "node", true)}, "registry/catalog-frontend:latest"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := tt.sel.Image(im); got != tt.want {
+				t.Fatalf("Image = %q, want %q", got, tt.want)
 			}
 		})
 	}

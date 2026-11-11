@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -24,6 +25,28 @@ import (
 // bucket and handed to a build, so a definition larger than this is refused
 // where it is resolved rather than carried.
 const MaxDockerfileBytes = gitprov.MaxContentsBytes
+
+// BuildsImage reports whether a Fugaro catalog build writes an image from e's
+// source kind (PIC4). It is the classification two readers share — the
+// deploy-time job spec, which refuses a prebuilt entry on a baked job (D1191,
+// infra's unbuiltOnBaked), and the resolver's own reading of the default a job
+// cannot run — so neither can hold an entry to be built that the other refuses
+// to run.
+//
+// builtSourceKinds is what a build writes rather than what it does not, so a
+// kind added to the catalog later is classified as prebuilt until someone
+// states that a build writes it. That is the direction the failure is safe in:
+// the list lagging behind a kind the catalog gains refuses a configuration by
+// name, and the refusal names both ways out, where the opposite list would
+// hold a kind to be built that no build in this installation writes — the
+// shape D1191 refuses.
+func BuildsImage(e config.Entry) bool {
+	return slices.Contains(builtSourceKinds, e.Source.Kind)
+}
+
+// builtSourceKinds are the catalog source kinds a Fugaro build writes an image
+// from (PIC4): a Dockerfile at a repository or inline in the catalog.
+var builtSourceKinds = []config.SourceKind{config.SourceDockerfile, config.SourceInline}
 
 // Fetch resolves e's source into the Dockerfile bytes a catalog build reads
 // (D1140, PIC3): a repo reference is read out of the named repository, at
