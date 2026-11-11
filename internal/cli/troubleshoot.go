@@ -174,10 +174,11 @@ func runTroubleshoot(cmd *cobra.Command, o *troubleshootOptions, ref string) err
 	// The credential is resolved before the evidence is collected, and not
 	// because collecting needs one: whatever credential the diagnosis may use
 	// has to be in the redaction list the evidence files are written through
-	// (F4, spec.md), and the project account's token is in the log's own
-	// machine as readily as the person's own. Its failure is reported later,
-	// where it was reported before: after the source fetch, so that D1608's
-	// answer about the machine is the one the person reads.
+	// (F4, spec.md), and the project account's token is a value this machine's
+	// logs may hold — a command that printed it, an API body that carried it.
+	// Its failure is reported later, where it was reported before: after the
+	// source fetch, so that D1608's answer about the machine is the one the
+	// person reads.
 	handle, credErr := troubleshootCredential(ctx, res)
 	secrets := cliSecrets(getenvOS)
 	if credErr == nil {
@@ -642,10 +643,10 @@ func troubleshootChecker(root *cobra.Command) diagnoseagent.Checker {
 				break
 			}
 			// A hidden command is in the tree without being one Fugaro offers
-			// a person: the service's own entry point is the one such command
-			// in the CLI. The skill lint refuses a line that names one, and
-			// the label here says Fugaro endorses the line, so it is refused
-			// the same way.
+			// a person: the credentials service's entry point is hidden on
+			// purpose, and cobra's own help and completion are hidden by
+			// default. The skill lint refuses a line naming one, and the label
+			// here says Fugaro endorses the line, so it is refused as well.
 			if sub.Hidden {
 				return fmt.Errorf("%s is not a command Fugaro offers a person", sub.CommandPath())
 			}
