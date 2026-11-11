@@ -69,16 +69,26 @@ type JSONRepo struct {
 }
 
 type JSONRun struct {
-	Run      string   `json:"run"`
-	Slug     string   `json:"slug"`
-	Repo     string   `json:"repo"`
-	Title    string   `json:"title"`
-	Stage    string   `json:"stage"`
-	Round    string   `json:"round"`
-	Verify   string   `json:"verify"`
-	Models   string   `json:"models"`
-	Recipe   string   `json:"recipe,omitempty"`
-	Auth     string   `json:"auth"`
+	Run    string `json:"run"`
+	Slug   string `json:"slug"`
+	Repo   string `json:"repo"`
+	Title  string `json:"title"`
+	Stage  string `json:"stage"`
+	Round  string `json:"round"`
+	Verify string `json:"verify"`
+	Models string `json:"models"`
+	Recipe string `json:"recipe,omitempty"`
+	Auth   string `json:"auth"`
+	// Mode is the rigor mode the run resolved and From is the layer that won
+	// it (runstore.RigorRecord's Mode and From, which the run writes into its
+	// registry entry and this document reads back from there; rigor-modes plan
+	// T1.7). Always present, "-" when the entry carries neither, exactly as
+	// Stage and Verify are: every live run has a mode, so an absent one is a
+	// run whose rules predate the two children rather than a row with nothing to say.
+	// The mode is the run's own — the project's observe/enforce switch is this
+	// document's top-level `mode`, which is a different thing.
+	Mode     string   `json:"mode"`
+	From     string   `json:"from"`
 	Notional bool     `json:"notional"` // SpentUSD is a subscription's list price
 	SpentUSD *float64 `json:"spent_usd"`
 	AgeSecs  *float64 `json:"age_seconds"`
@@ -286,6 +296,7 @@ func BuildJSON(project string, v View) JSONDoc {
 		for _, run := range r.Runs {
 			j := JSONRun{Run: run.Run, Slug: jr.Slug, Repo: r.Name, Title: run.Title, Stage: run.Stage, Round: run.Round,
 				Verify: run.Verify, Models: run.Models, Recipe: run.Recipe, Auth: run.Auth, Notional: run.Notional, Halted: run.Halted,
+				Mode: run.Mode, From: run.From,
 				Health:      [...]string{HealthOK: "ok", HealthSilent: "silent", HealthLost: "lost"}[run.Health],
 				Deadline:    [...]string{DeadlineOK: "ok", DeadlineNear: "near", DeadlineOver: "over"}[run.Deadline],
 				Queued:      run.Queued,

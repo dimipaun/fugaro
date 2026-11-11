@@ -640,8 +640,10 @@ export interface LiveRunRow {
   /** the console's sentence about a flag the run's own age cannot support, or
    * `null` when there is nothing impossible to report */
   readonly contradiction: string | null
-  /** the run's rigor block, or `null`. **It is not in the live document**: the
-   * frame is `JSONRun`, which carries no rigor, so this is a join against
+  /** the run's rigor block, or `null`. **It is the join, not a frame field**:
+   * the live frame carries the run's mode and the layer that set it and nothing
+   * else of the block, and a run's rigor is read through the one reader the
+   * console's screens share (`shared/rigor.ts`), so this is a join against
    * `runs ls --json` by run id (`shared/rigor.ts`'s `rigorIndex`) and the
    * caller is what makes it. `null` is "no record of this run's rigor" -- a
    * run from before the block, one that died before bootstrap, or a run the
@@ -1076,13 +1078,13 @@ const NO_RIGOR: ReadonlyMap<string, RigorView> = new Map()
  * fresh one and gets a one-bar sparkline, which is the truth about a console
  * that has seen one document.
  *
- * `rigor` is the Live screen's one **join**, keyed by run id: the frame is
- * `JSONRun`, which carries no rigor block, so the mode on a row comes from
- * `runs ls --json` and is matched here (`rigorIndex`). A caller that has not
- * made that read passes nothing, and every row is then drawn with no chip --
- * which is the same cell a run with no block draws, and the reason the
- * parameter is a map rather than a reason string: the screen is not degraded by
- * a join it does not have, it simply says less.
+ * `rigor` is the Live screen's one **join**, keyed by run id: the frame's own
+ * `mode`/`from` are the run's mode and layer and no more, so a row's rigor
+ * comes from `runs ls --json` and is matched here (`rigorIndex`). A caller
+ * that has not made that read passes nothing, and every row is then drawn with
+ * no chip -- which is the same cell a run with no block draws, and the reason
+ * the parameter is a map rather than a reason string: the screen is not
+ * degraded by a join it does not have, it simply says less.
  */
 export function buildLiveModel(
   document: LiveDocument,

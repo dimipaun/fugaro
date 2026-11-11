@@ -675,6 +675,14 @@ func (r *initRun) coverReasonsFirebase(p *tf.Plan, imports []tf.ImportKey) []str
 // it is the refusal.
 type stepCover struct {
 	notCovered func(*tf.Plan, []tf.ImportKey) []string
+	// split is the same answer in the two halves D1545 asks for — integrity,
+	// the reasons that still refuse (D1549), and content, the ones the gate
+	// records and warns about — taken from the cover notCovered answers whole
+	// rather than from a second reading of the review. nil is a cover that has
+	// no split, and the gate then reads every reason as integrity: the
+	// fail-closed direction, since a reason that might have been content being
+	// refused costs a confirmation and never a rule applied unrecorded.
+	split func(*tf.Plan, []tf.ImportKey) ([]string, []string)
 }
 
 func (c stepCover) NotCovered(p *tf.Plan, imports []tf.ImportKey) []string {
@@ -684,13 +692,62 @@ func (c stepCover) NotCovered(p *tf.Plan, imports []tf.ImportKey) []string {
 	return c.notCovered(p, imports)
 }
 
+// NotCoveredSplit is managed.Cover's other question (D1545). The two halves
+// together are NotCovered's answer, in its order and with its wording, so the
+// gate's warnings, its refusals and the record they are written into cannot
+// disagree about one change.
+func (c stepCover) NotCoveredSplit(p *tf.Plan, imports []tf.ImportKey) (integrity, content []string) {
+	if c.split == nil {
+		return c.NotCovered(p, imports), nil
+	}
+	return c.split(p, imports)
+}
+
 // coverOf is the cover of one step of this run, or one that refuses: a run
 // whose review was never built has no cover for any root, and the reasons are
 // empty in that case because there is no plan to ask about — an answer the gate
 // must not read as "nothing to refuse".
+//
+// which and the split are taken together, and both off the review's own cover:
+// a constructor that took one without the other is how a step's whole answer
+// and its halves would come to be about different plans.
 func (r *initRun) coverOf(which func(*tf.Plan, []tf.ImportKey) []string) stepCover {
 	if r.review == nil || r.review.cover == nil {
 		return stepCover{}
 	}
-	return stepCover{notCovered: which}
+	return stepCover{notCovered: which, split: r.coverSplit()}
+}
+
+// coverOfFirebase is coverOf for the root whose Firebase project may not be
+// Fugaro's: the step's own fact is prepended to the cover's reasons exactly as
+// coverReasonsFirebase prepends it to the whole answer, and it is an integrity
+// reason — a project that is not verified as Fugaro's refuses the plan
+// (D1549), which is not something a warning may carry.
+func (r *initRun) coverOfFirebase() stepCover {
+	if r.review == nil || r.review.cover == nil {
+		return stepCover{}
+	}
+	return stepCover{notCovered: r.coverReasonsFirebase, split: r.coverSplitFirebase()}
+}
+
+// coverSplit is the review cover's own two halves, asked of the same value
+// coverReasons asks its whole answer of (r.review.cover()), so the halves are
+// that answer's own division and not a second opinion about it.
+func (r *initRun) coverSplit() func(*tf.Plan, []tf.ImportKey) ([]string, []string) {
+	return func(p *tf.Plan, imports []tf.ImportKey) ([]string, []string) {
+		return r.review.cover().NotCoveredSplit(p, imports)
+	}
+}
+
+// coverSplitFirebase is coverSplit for the Firebase root, mirroring
+// coverReasonsFirebase's own rule: an unverified Firebase project is one
+// reason about the whole plan and the cover is not asked at all, while a
+// verified one leaves the cover's own answer, halves and all.
+func (r *initRun) coverSplitFirebase() func(*tf.Plan, []tf.ImportKey) ([]string, []string) {
+	return func(p *tf.Plan, imports []tf.ImportKey) ([]string, []string) {
+		if why := r.firebaseReason(); why != "" {
+			return []string{why}, nil
+		}
+		return r.coverSplit()(p, imports)
+	}
 }

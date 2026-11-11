@@ -17,7 +17,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -120,13 +119,13 @@ func updateStages(t *testing.T, e *initEngine, names ...string) *initflow.Result
 	return res
 }
 
-// A checkout whose plugin pin and installed plugin predate this binary, and
-// whose repository is behind this release's base image: `fugaro update` runs
-// fugaro upgrade's own steps for it, so all three move — the pin to this
-// release's tag and the plugin in Claude Code through the plugin stage, which
-// took the two over (U1), and the job images through the checkout stage's
-// refresh.
-func TestUpdateRunsPinPluginAndImages(t *testing.T) {
+// A checkout with a plugin to install and a repository behind this release's
+// base image: `fugaro update` runs fugaro upgrade's own steps for it, so the
+// plugin goes into Claude Code through the plugin stage (which took the step
+// over, U1) and the job images through the checkout stage's refresh. The pin an
+// older fugaro left in the checkout is not moved: the merge that wrote it is
+// gone (U2).
+func TestUpdateRunsThePluginAndImages(t *testing.T) {
 	_, root := upgradeRig(t)
 	settings := filepath.Join(root, ".claude", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
@@ -146,10 +145,10 @@ func TestUpdateRunsPinPluginAndImages(t *testing.T) {
 		t.Fatalf("the run did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
 	}
 	if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
-		t.Errorf("the plugin stage is %q, want %q: the pin and the plugin are its steps (U1)\n%s", got, initflow.Changed, out)
+		t.Errorf("the plugin stage is %q, want %q: the machine's install is its step (U1)\n%s", got, initflow.Changed, out)
 	}
-	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin != pluginwire.OK {
-		t.Errorf("the pin was not moved to this release: %+v\n%s", r, out)
+	if upgradeRead(t, settings) != wiredAt("v0.5.0") {
+		t.Errorf("the run rewrote the checkout's settings, and nothing writes a pin any more (U2):\n%s", upgradeRead(t, settings))
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in Claude Code\n%s", out)
@@ -216,6 +215,38 @@ func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
 		}
 		if got := stateOf(res, checkoutStageName); got != initflow.Done {
 			t.Errorf("the checkout stage is %q on a checkout already at this release, want %q\n%s", got, initflow.Done, out)
+		}
+		if len(*ran) != 0 {
+			t.Errorf("a checkout already at this release refreshed its job images: %q\n%s", *ran, out)
+		}
+	})
+
+	t.Run("a checkout at this release beside a behind project install", func(t *testing.T) {
+		r, root := upgradeRig(t)
+		settings := filepath.Join(root, ".claude", "settings.json")
+		checkoutFile(t, settings, wiredAt("v0.5.1"))
+		// The pin a wired checkout carries installs the plugin at project
+		// scope when the folder is trusted, and that install can stand at
+		// another version than the machine's own. The step maintains the
+		// machine's own install, so this run is still done: a check that
+		// called the checkout's install the one behind would make every run
+		// do something it cannot do (D949, U2).
+		checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
+			`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"},{"scope":"project","version":"0.5.0","projectPath":"`+root+`"}]}}`)
+		r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+		useFakeClaude(t, testutil.NewClaudePluginFake(t, "[]", "[]"))
+		ran := fakeSteps(t, "", nil)
+
+		e, out := checkoutEngine(t, &initOptions{yes: true})
+		res := updateStages(t, e, initflow.Plugin, checkoutStageName)
+		if res.Failed != nil || len(res.Left) != 0 {
+			t.Fatalf("a current checkout was not done: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+		}
+		if got := stateOf(res, string(initflow.Plugin)); got != initflow.Done {
+			t.Errorf("the plugin stage is %q beside a behind project install, want %q: the install it maintains is current\n%s", got, initflow.Done, out)
+		}
+		if got := stateOf(res, checkoutStageName); got != initflow.Done {
+			t.Errorf("the checkout stage is %q, want %q: the run has nothing to move\n%s", got, initflow.Done, out)
 		}
 		if len(*ran) != 0 {
 			t.Errorf("a checkout already at this release refreshed its job images: %q\n%s", *ran, out)
@@ -298,8 +329,9 @@ func TestUpdateOutsideACheckoutSkipsCheckoutSteps(t *testing.T) {
 }
 
 // agentCheckout is the fixture the two agent-session tests share: a checkout
-// whose pin and installed plugin predate this binary, with a fake claude that
-// can install 0.5.1, and CLAUDECODE set — the session a coding agent runs in.
+// carrying a pin an older fugaro left and no plugin installed on this machine,
+// with a fake claude that can install 0.5.1, and CLAUDECODE set — the session a
+// coding agent runs in.
 func agentCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]string) {
 	t.Helper()
 	_, root := upgradeRig(t)
@@ -320,9 +352,9 @@ func agentCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]string)
 
 // The local steps are the ones a marker leaves alone: through the loop the
 // converge drives (never a direct Apply — the loop's own agent gate is what
-// the stages answer with LocalUnderAgent), the plugin stage moves the pin and
-// installs the plugin in the user's own Claude Code, exactly as fugaro upgrade
-// --local does in the same session. The cloud half is then the step this
+// the stages answer with LocalUnderAgent), the plugin stage installs the plugin
+// in the user's own Claude Code and leaves the checkout's files alone, exactly
+// as fugaro upgrade --local does in the same session. The cloud half is then the step this
 // session leaves for the user
 // (TestUpdateAgentSessionLeavesTheCloudStepForTheUser), so the run exits 1:
 // its local half is done and the checkout is not.
@@ -337,8 +369,8 @@ func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 	if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
 		t.Fatalf("the plugin stage is %q in an agent's session, want %q\n%s", got, initflow.Changed, out)
 	}
-	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin != pluginwire.OK {
-		t.Errorf("the pin was not moved in an agent's session: %+v\n%s", r, out)
+	if upgradeRead(t, settings) != wiredAt("v0.5.0") {
+		t.Errorf("an agent's session rewrote the checkout's settings (U2):\n%s", upgradeRead(t, settings))
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in an agent's session\n%s", out)
@@ -373,7 +405,7 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 	// and looked right by saying nothing: the plugin stage is the one that
 	// writes on this machine, and the checkout stage's cloud step is parked.
 	if stateOf(res, string(initflow.Plugin)) != initflow.Changed ||
-		pluginwire.Status(settings, "0.5.1", "").Pin != pluginwire.OK || len(f.Changes(t)) == 0 {
+		upgradeRead(t, settings) != wiredAt("v0.5.0") || len(f.Changes(t)) == 0 {
 		t.Errorf("the local steps did not run in an agent's session:\n%s", out)
 	}
 }
@@ -409,7 +441,7 @@ func agentUpdateCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]s
 // TestUpdateAgentSessionRunsThePluginBeforeTheCheckout: the stage ORDER,
 // through the whole converge the way `fugaro update` runs it. The plugin stage
 // runs BEFORE the repository stage and the checkout stage, on the same checkout
-// and the same pin, and it is LocalUnderAgent since U1 of
+// and the same leftover pin, and it is LocalUnderAgent since U1 of
 // docs/plugin-user-scope/implementation-plan.md (D941): a coding agent's
 // session applies it — the pin and the plugin in Claude Code are this machine's
 // own writes, and the install is the step that clears the staleness line every
@@ -436,8 +468,8 @@ func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 	if got, want := res.state(initflow.Plugin), "changed"; got != want {
 		t.Errorf("the plugin stage is %q under the marker, want %q: its writes are on this machine, which is what LocalUnderAgent is for\n%s", got, want, out)
 	}
-	if r := pluginwire.Status(settings, "0.2.0", ""); r.Pin != pluginwire.OK {
-		t.Errorf("the pin was not moved in a coding agent's session: %+v\n%s", r, out)
+	if upgradeRead(t, settings) != wiredAt("v0.1.0") {
+		t.Errorf("a coding agent's session rewrote the checkout's settings (U2):\n%s", upgradeRead(t, settings))
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in Claude Code in a coding agent's session:\n%s", out)
@@ -510,14 +542,12 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 		t.Errorf("the left-for-you names %q, want %q (the parked step's own two commands, as its refusal words them)", l.Commands, want)
 	}
 
-	// The second run of the session: nothing local is left to do — the pin and
-	// the plugin in Claude Code are the plugin stage's halves now (U1), and
-	// they are this release's, as a session that reached that stage leaves them
-	// — no cloud step is reached, and the step the session may not take is
-	// still left for the user. The stage's check says so (it does not read the
-	// parked step as done), the plan's line keeps naming it, and the JSON
-	// carries it. The pin and the plugin are the plugin stage's halves (U1), so
-	// the step this stage's plan drops and names is the cloud one.
+	// The second run of the session: this checkout's own plan holds no local
+	// step at all — the pin went with the merge (U2, D949), and the install in
+	// Claude Code is the machine-side stage's business, not this checkout's —
+	// so the one step left is the cloud half, the step the session may not
+	// take. The stage's check says so (it does not read the parked step as
+	// done), the plan's line keeps naming it, and the JSON carries it.
 	checkoutFile(t, settings, wiredAt("v0.5.1"))
 	*ran = nil
 	e2, out2 := checkoutEngine(t, &initOptions{yes: true})
@@ -527,6 +557,11 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	}
 	if len(*ran) != 0 {
 		t.Errorf("the second run reached the cloud: steps %q\n%s", *ran, out2)
+	}
+	for _, gone := range []string{"pin:", "plugin:"} {
+		if strings.Contains(out2.String(), gone) {
+			t.Errorf("the second run's plan holds a %s step, and a checkout has no local step any more:\n%s", gone, out2)
+		}
 	}
 	if !strings.Contains(out2.String(), "skipped here: cloud") {
 		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
@@ -547,9 +582,9 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 }
 
 // The no-terminal refusal is about a step somebody has to confirm at a
-// terminal, and a coding agent's session is not that case: the pin and the
-// plugin are this machine's files, which is the whole of what LocalUnderAgent
-// says the two stages that write them do there. A gate that answered the
+// terminal, and a coding agent's session is not that case: the plugin is this
+// machine's own install, which is the whole of what LocalUnderAgent says the
+// plugin stage does there. A gate that answered the
 // marker's no-terminal run with needs-you left the checkout unmoved, and the
 // run's own account of it said the opposite — the failure F13 describes, where
 // the step that clears the staleness line every command prints is the one left
@@ -557,8 +592,8 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 //
 // Mutation (run, restore): drop `u.agent == ""` from the checkout Apply's gate
 // or the plugin stage's own marker arm and this test fails on that stage: it
-// answers needs-you, and the pin, the plugin or the cloud half's own line does
-// not move.
+// answers needs-you, and the plugin or the cloud half's own line does not
+// move.
 func TestUpdateLocalStepsRunInAgentSessionWithoutAYes(t *testing.T) {
 	settings, f, ran := agentCheckout(t)
 	noTerminal(t)
@@ -571,8 +606,8 @@ func TestUpdateLocalStepsRunInAgentSessionWithoutAYes(t *testing.T) {
 	if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
 		t.Fatalf("the plugin stage is %q in an agent's session with no terminal and no --yes, want %q\n%s", got, initflow.Changed, out)
 	}
-	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin != pluginwire.OK {
-		t.Errorf("the pin was not moved in an agent's session: %+v\n%s", r, out)
+	if upgradeRead(t, settings) != wiredAt("v0.5.0") {
+		t.Errorf("an agent's session rewrote the checkout's settings (U2):\n%s", upgradeRead(t, settings))
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in an agent's session\n%s", out)
@@ -705,10 +740,13 @@ func TestUpdateFailsOnAnOriginItCannotRead(t *testing.T) {
 	})
 }
 
-// A checkout whose fugaro.yaml names another project is not this run's: the
-// pin and the job images are not moved into it, the same gate the plugin stage
-// puts on its own wiring. The plugin in the user's own Claude Code is the
-// same plugin for every project, and the step still runs.
+// A checkout whose fugaro.yaml names another project is not this run's: the job
+// images are not refreshed in it, and nothing writes a pin any more (U2). The
+// plugin stage keeps the same gate on the half that is the checkout's — the
+// write U5 adds (F24, D955) — but the install is not the checkout's business:
+// the plugin in the user's own Claude Code is the same one for every project,
+// so a checkout this run may not wire is not a machine that needs nothing, and
+// the step still runs.
 func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 	_, root := upgradeRig(t)
 	settings := filepath.Join(root, ".claude", "settings.json")
@@ -750,12 +788,10 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 // A checkout with no origin remote has no repository for the refresh to work
 // on: the cloud step is skipped, which is where this differs from fugaro
 // upgrade, whose cloud step fails the same read because there the refresh was
-// asked for by name. The pin is skipped with it — the plugin stage reads the
-// same origin to tell a checkout of this project's from one it may not wire,
-// and a checkout with no origin is not one (U1: the wiring half's gate is the
-// step's own now, so it gates the pin exactly as it gates the settings) —
-// while the plugin in Claude Code, which is the same one for every repository,
-// is still installed.
+// asked for by name. The leftover pin is not this run's business any more (U2:
+// nothing writes one), and the plugin in Claude Code, which is the same one for
+// every repository, is still installed: the gate is the checkout write's (F24,
+// D955), not the machine's own install.
 func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
 	_, root := upgradeRig(t)
 	settings := filepath.Join(root, ".claude", "settings.json")
@@ -782,8 +818,8 @@ func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
 	if len(*ran) != 0 {
 		t.Errorf("the refresh ran in a checkout with no repository to refresh: %q\n%s", *ran, out)
 	}
-	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin != pluginwire.Outdated {
-		t.Errorf("the pin moved in a checkout with no origin (its fugaro.yaml makes it one Fugaro's to run in, and its origin is what says it is this project's): %+v\n%s", r, out)
+	if upgradeRead(t, settings) != wiredAt("v0.5.0") {
+		t.Errorf("the checkout's settings moved in a checkout with no origin:\n%s", upgradeRead(t, settings))
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in a checkout with no origin\n%s", out)
@@ -899,7 +935,10 @@ func TestUpdateRecognisesACheckoutByItsFugaroYAML(t *testing.T) {
 }
 
 // The steps the checkout stage calls are fugaro upgrade's own, and fugaro
-// upgrade still runs them: the stage added a caller, not a copy.
+// upgrade still runs them: the stage added a caller, not a copy. Since U2 the
+// step it runs for the plugin is the machine's install, so a checkout with no
+// claude on PATH is skipped with the slash commands to type — and its settings
+// file is left exactly as it was.
 func TestUpgradeStillWorks(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
@@ -907,8 +946,13 @@ func TestUpgradeStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if r := pluginwire.Status(settings, "0.5.2", ""); r.Pin != pluginwire.OK {
-		t.Errorf("fugaro upgrade --local no longer pins the plugin: %+v\n%s", r, out)
+	if upgradeRead(t, settings) != wiredAt("v0.5.1") {
+		t.Errorf("fugaro upgrade --local rewrote the checkout's settings:\n%s", upgradeRead(t, settings))
+	}
+	for _, want := range []string{"plugin: skipped: claude is not on PATH", "  " + root + ": plugin skipped, cloud skipped, rules skipped, policy skipped"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
 	}
 }
 

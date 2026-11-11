@@ -169,7 +169,8 @@ could touch).
 | `internal/creds/select.go` | L3 | AK6b (the tier-C candidate the provider key is offered as) |
 | `internal/creds/select_test.go` | L3 | AK6b (the same) |
 | `internal/runner/agentenv.go` | L3 | AK7 |
-| `internal/runner/agentenv_test.go` | L3 | AK7 |
+| `internal/runner/agentenv_test.go` | L3 | AK7 (booked; no change — the class is unreachable from its package) |
+| `internal/runner/runner.go` | L3 | AK7 (the effort's call site, restored by the task's own review) |
 | `docs/gcp-live-checklist.md` | L4 | AK8 |
 | `internal/credsvc/auth.go` | — | AK9 (the two refusals that say Claude account) |
 | `internal/credsvc/auth_test.go` | — | AK9 (the same) |
@@ -220,8 +221,17 @@ is the same accident twice: `settingsStageAccountRule` (#2123, which landed the 
 last amended and after it) is the write path's own reading of a `stages.<s>.claude_account` value, and
 its sentinel arm was added for AK4/AK5's value alone — so a second axis value that
 `config.ValidClaudeAccountRef` admits falls through to the declared-account lookup, whose sentence
-prescribes `fugaro accounts add <value>`, which `config.ValidateClaudeAccounts` refuses. A task that
-needs a file another **level** holds adds itself to this table in the same commit.
+prescribes `fugaro accounts add <value>`, which `config.ValidateClaudeAccounts` refuses. **AK7 books
+`internal/runner/runner.go` on the same terms, and the task's own review is what found it** (its
+section carries the amendment, 2026-11-10): CSR18's `runner.go` call-site clause was dropped on the
+premise that `agentenv.go` held the only call site of the provider question, and it does not —
+`reviewEffort` asks the same question to decide whether a stage takes a reasoning effort, so without
+the file this task's own stage is launched as a provider's only half-way (`MAX_THINKING_TOKENS=0`
+beside a `CLAUDE_CODE_EFFORT_LEVEL` that is a no-op). Its neighbour row is the mirror image:
+`internal/runner/agentenv_test.go` is booked and takes **no** change, because the class is unreachable
+from its package — `runner_test`'s harness builds local runs — and the class's `agentenv.go` half is
+pinned from `internal/runner/routing_internal_test.go` instead. A task that needs a file another
+**level** holds adds itself to this table in the same commit.
 
 ## 3. The tasks
 
@@ -723,20 +733,43 @@ carries moves", and with **D1418** both are the bundle's — the service builds 
 the document it holds, so the gateway's upstream kind does not move and no task writes that file; and
 CSR18's `internal/runner/runner.go` call-site clause is dropped too, because the one call site
 `agentenv.go` already has is the call site. `internal/runner/agentenv_test.go`, which CSR18 booked and
-this plan had not, is kept.
+this plan had not, is kept. **Amended 2026-11-10: the second of those two clauses is restored by this
+task's own review — the next paragraph, §2's AK7 rows, and §6 item 9.**
 
-**Files (4):** `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`,
-`internal/runner/agentenv.go`, `internal/runner/agentenv_test.go`. **No file outside
-`internal/runner`**: with **D1418** the provider's base URL and auth shape never leave the service's
-bundle, so the runner names no provider endpoint and no host — the property §7's third attack question
-answers.
+**Amended 2026-11-10, by AK7's own change and the review of it** (§2's AK7 rows and the paragraph after
+its table): **the dropped `internal/runner/runner.go` call-site clause is restored.** Its premise — "the
+one call site `agentenv.go` already has is the call site" — was wrong, and the review of this task's
+change is what found it: `reviewEffort` asks the same *is this stage a provider's?* question, to decide
+whether to merge `CLAUDE_CODE_EFFORT_LEVEL` into the stage's pins, and it asked only the stage's own
+route. Left that way, this task's own run is launched as a provider's only half-way — the stage's
+`MAX_THINKING_TOKENS=0` turns its thinking off while an effort variable beside it looks applied and is a
+no-op (G5, D725) — and `reviewFacts` records a reasoning level the calls never ran at. Both places now
+ask one question of one predicate (`stageServedByProvider`, `agentenv.go`), which is this task's to
+write, since the pairing it admits is what makes the second answer differ from the first. **And
+`internal/runner/agentenv_test.go` takes no change**: it is booked here and in §2, and the class cannot
+be reached from it — its harness builds **local** runs (`Deps.Local: true`,
+`internal/runner/runner_test.go:213`), while a review class run's identity is the platform's own report
+of the execution *and* the job's account segment, which a local run has neither of, so
+`reviewClassRun()` fails closed. The class's `agentenv.go` half is pinned from
+`internal/runner/routing_internal_test.go` (package `runner`), where every other test of the class
+lives; the row stays so that a later task knows the file is taken and why it is quiet.
+
+**Files (5, one of them unchanged):** `internal/runner/routing.go`,
+`internal/runner/routing_internal_test.go`, `internal/runner/agentenv.go`, `internal/runner/runner.go`
+(the restored clause above), and `internal/runner/agentenv_test.go`, booked and unchanged (above).
+**No file outside `internal/runner`**: with **D1418** the provider's base URL and auth shape never leave
+the service's bundle, so the runner names no provider endpoint and no host — the property §7's third
+attack question answers.
 
 **Interfaces:** `checkReviewClassModelPath` stops refusing the provider-served pairing: the class takes
 the provider-key account as a pairing it admits (AK6a's value), and the call the service then forwards
 is the provider's, which the runner names no part of — `internal/runner/agentenv.go`'s gateway
 variables carry what a provider's model list needs and no host. The pins and the allow-list are
 unchanged: the review is still held to the project policy's `budget.allowed_models` (**D1425**), and
-`agentenv.go` is the only file here that writes an environment.
+`agentenv.go` is the only file here that writes an environment. **The one amendment to that, same date:**
+the *effort* the pins take for a review level is dropped for a provider-served stage, like a route's —
+the restored `runner.go` clause — so the stage is not given a reasoning level it does not run at; the
+model pins and the allow-list are the unchanged ones this paragraph means.
 
 **Tests and command:**
 `GOFLAGS=-p=2 go test ./internal/runner/ -run 'TestReviewRunOnAProviderKeyReachesTheProvider|TestReviewRunIsStillHeldToTheAllowList|TestReviewRunIsServedByTheProjectsAnthropicKey' -count=1`
@@ -783,7 +816,7 @@ register.
 
 **Commit:** `docs(checklist): check 330, the api-key review`
 
-### AK9 — the tree's own sentences stop saying a review is served by a Claude account (SEC)
+### AK9 — the tree's own sentences stop saying a review is served by a Claude account (SEC) — **FOLDED INTO MC6, not scheduled here**
 
 **Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows); **folded into
 MC6 of `docs/model-crafts` on 2026-11-10** (§6 item 12, that folder's D1638 and F26), so this task stays
@@ -858,7 +891,7 @@ what was refused is a security-relevant inaccuracy rather than a wording prefere
 
 **Commit:** `credsvc, cli: the review sentences name the account axis, not a Claude account`
 
-### AK10 — the credential write refuses a bundle the deployed service cannot read (SEC)
+### AK10 — the credential write refuses a bundle the deployed service cannot read (SEC) — **FOLDED INTO MC6, not scheduled here**
 
 **Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows), **folded into
 MC6 of `docs/model-crafts` on 2026-11-10** (§6 item 12, that folder's D1638 and F26: written and not
@@ -1164,8 +1197,13 @@ reconciliation with `docs/model-crafts` of 2026-11-10 and the fold of AK9 and AK
    offer and its forward — 9 files). **AK7 is amended** to CSR18 minus two clauses: `internal/gateway/gateway.go`
    is dropped (its own condition was "if the upstream kind or the auth shape moves", and with D1418
    both are the bundle's, so nothing moves) and `internal/runner/runner.go`'s call site with it, while
-   `internal/runner/agentenv_test.go` is kept. **§2 books every file of both tasks, drops the
-   conditional gateway row, and says which L2 rows AK6a re-enters**, and **§6.7 itself is amended in
+   `internal/runner/agentenv_test.go` is kept. **On 2026-11-10, by AK7's own review, the dropped
+   `runner.go` clause is restored and `internal/runner/runner.go` is in AK7's files**: the premise it
+   was dropped on ("the one call site `agentenv.go` already has") is false — `reviewEffort` asks the
+   same question of a stage, so the class's stage was launched as a provider's only half-way; AK7's
+   section and §2's AK7 rows carry that fifth file and the reason
+   `internal/runner/agentenv_test.go` stays quiet. **§2 books every file of both tasks and of AK7, drops
+   the conditional gateway row, and says which L2 rows AK6a re-enters**, and **§6.7 itself is amended in
    the same pass** — CSR17 and CSR18 now point at AK6a, AK6b and AK7 rather than at this plan's old
    AK6, and CSR17's "**Files (sketched, 6–8)**" is corrected: it covered the service half only and was
    short of the axis's own readers.

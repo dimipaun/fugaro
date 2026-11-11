@@ -7,7 +7,8 @@ paths:
 # Terraform and the cloud side
 
 - Run `terraform fmt -check -recursive deploy/terraform` before pushing. A missed `fmt` turned main's `terraform` job red after #951.
-- In each root under `deploy/terraform/gcp/roots` (`installation`, `firebase`, `repo`, `compute`), run `init -backend=false -lockfile=readonly`, `validate` and `terraform test`, as the `terraform` job in `.github/workflows/ci.yml` does.
+- In each root under `deploy/terraform/gcp/roots` (`installation`, `firebase`, `repo`, `compute`, `workspace`), run `init -backend=false -lockfile=readonly`, `validate` and `terraform test`, as the `terraform` job in `.github/workflows/ci.yml` does.
+- That job's root loop is what CI reaches, and it is one word behind the roots: it runs `installation firebase repo compute`, and the `workspace` root is staged as `docs/pending-workflows/ci.yml` for the owner to copy in (`docs/pending-workflows/README.md`, `## ci.yml`). Until the copy-in, a change to the workspace root is validated only where you run it — `go test ./images/ -run TestCIWorkflowTestsEveryTerraformRoot` reads the staged copy and is green either way.
 - Set `TF_DATA_DIR` outside the tree. `deploy/terraform` is embedded in the Go binary, so a root's `.terraform/` would end up inside it.
 - A change to a module under `deploy/terraform/gcp/modules` changes every root that uses it. `installation` uses both `installation` and `project`. Test every affected root, not just the one you meant to change.
 - When a module's plan changes, regenerate the golden plans in `internal/infra/tf/testdata/golden` with `scripts/gen-golden-plans.sh`. Never edit them by hand.

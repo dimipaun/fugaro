@@ -283,7 +283,10 @@ func (r *run) stageAgentEnv(stage string, pins map[string]string) ([]string, err
 // gateway there are none and a run sets no variable the budget-off runs never
 // set. When the stage's model or the background model is served by a provider
 // route, agent.ProviderRouteVars are added: a Claude stage is never touched by
-// them.
+// them. So is a stage of a review the project's provider key serves
+// (providerServedReview), whose model reaches a provider whatever its ID says.
+// Both halves are the one question stageServedByProvider asks, and reviewEffort
+// asks it too: a stage a provider serves carries no reasoning effort either.
 //
 // A stage the run's stage account serves has none either, whatever the
 // gateway's state: the pins are its route table's and its price table's, and
@@ -301,10 +304,25 @@ func (r *run) stagePins(stage string) map[string]string {
 	a := r.cfg.Agent
 	model, bg := r.stageModel(stage), r.backgroundModel()
 	pins := agent.PinVars(model, bg, a.MaxOutputFor(role))
-	if r.stageOnProviderRoute(model, bg) {
+	if r.stageServedByProvider(model, bg) {
 		maps.Copy(pins, agent.ProviderRouteVars())
 	}
 	return pins
+}
+
+// stageServedByProvider reports whether a stage whose model and background are
+// model and bg is served by a provider rather than by Anthropic: its own route
+// claims one of the two (stageOnProviderRoute), or the run is a review the
+// project's provider key serves (providerServedReview), whose model reaches a
+// provider whatever its ID says.
+//
+// It is the one question the two places that care ask, and they have to ask it
+// alike: stagePins gives such a stage agent.ProviderRouteVars, whose
+// MAX_THINKING_TOKENS=0 turns the stage's thinking off, and reviewEffort gives
+// it no reasoning effort, which beside that switch would look applied and be a
+// no-op (G5, D725).
+func (r *run) stageServedByProvider(model, background string) bool {
+	return r.stageOnProviderRoute(model, background) || r.providerServedReview()
 }
 
 // stageOnProviderRoute reports whether model or background is claimed by a
@@ -317,6 +335,26 @@ func (r *run) stageOnProviderRoute(model, background string) bool {
 		}
 	}
 	return false
+}
+
+// providerServedReview reports whether this run's stages are served by the
+// project's provider key rather than by Anthropic: the run is a review class
+// run (reviewClassRun) and the pairing it was admitted to is that key's
+// (pairingNamesTheProjectsProviderKey).
+//
+// Every call such a run makes is a provider's call whatever the stage's model
+// ID says: the credentials service attaches the project's provider key and
+// sends the call to the provider's own endpoint with the provider's auth shape,
+// both of them out of its own document (D1418), and the runner names neither.
+// So the stage's model list is a provider's and takes agent.ProviderRouteVars.
+//
+// The run cannot ask its own routes: a review class run is in a shared project
+// job, whose environment carries no FUGARO_MODEL_PROVIDERS
+// (internal/infra's projectJobEnv), and the class's credential is the pairing's
+// and not the job's. The pairing is the fact, and it is the one the class's own
+// admission reads (checkReviewClassModelPath).
+func (r *run) providerServedReview() bool {
+	return r.reviewClassRun() && r.pairingNamesTheProjectsProviderKey()
 }
 
 // writeManagedSettings writes the managed settings for stage: the gateway's
@@ -367,12 +405,16 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 		}
 	}
 	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, config.IsReviewStage(stage))
-	if r.review {
+	if r.review || stage == stageTriage {
 		// A review-mode run's stage reads a pull request's own head, so the
 		// settings it is launched under are the review posture (D894(a)):
 		// managed hooks only, no project MCP server, and setting sources
 		// from the user and managed levels alone. A coding run's own stages
-		// — its in-loop review rounds included — keep the file they had.
+		// — its in-loop review rounds included — keep the file they had, and
+		// the triage judge is the one stage of such a run that joins the
+		// review-mode one here: it reads a round's findings and must touch
+		// nothing, so no hook of the checkout it was shown text from runs
+		// while it reads (F25).
 		write = agent.WriteReviewManagedSettings
 		if r.reviewJob() {
 			// The independent review job is the one review stage that runs

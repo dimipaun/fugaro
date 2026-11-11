@@ -46,8 +46,11 @@ var (
 	// fugaro's own add writes and never at a scope whose settings the checkout
 	// commits.
 	removeUser = []string{"plugin", "marketplace", "remove", pluginwire.Marketplace, "--scope", "user"}
-	// scopes an update may name, in the order Decide updates them.
-	scopes = []string{"local", "project", "user"}
+	// scopes an update may name: user only. The plugin fugaro maintains is the
+	// machine's own install, and an install a checkout's settings declare at
+	// project or local scope is the repository's, not this step's to move
+	// (D949, U2 of docs/plugin-user-scope/implementation-plan.md).
+	scopes = []string{"user"}
 )
 
 // addMarket is the add call for a marketplace at a git ref. Claude Code's own
@@ -172,7 +175,7 @@ func Find(lookPath func(string) (string, error)) (string, error) {
 // Runner runs claude at Bin with Dir as its working directory.
 type Runner struct {
 	Bin string    // absolute, from Find
-	Dir string    // absolute: the checkout's top, where a project or local scope update runs
+	Dir string    // absolute: the checkout's top, where no call runs any more (needsCheckout)
 	Out io.Writer // what a change prints goes here, made safe
 }
 
@@ -230,10 +233,11 @@ func (r *Runner) Change(ctx context.Context, args ...string) error {
 }
 
 // needsCheckout reports whether args acts on the checkout it runs in: only
-// a project or local scope update does. Every other call runs in a fresh
-// empty directory, so that "owner/name" given to marketplace add can never
-// match a local directory of that name in the checkout (claude might treat
-// it as a local path instead of GitHub).
+// a project or local scope update would. No call fugaro makes is one any more
+// (D949, U2: scopes is user only, and Allowed refuses the others), so every
+// call runs in a fresh empty directory, where "owner/name" given to
+// marketplace add can never match a local directory of that name in the
+// checkout (claude might treat it as a local path instead of GitHub).
 func needsCheckout(args []string) bool {
 	return slices.Equal(args, updatePlugin("project")) || slices.Equal(args, updatePlugin("local"))
 }

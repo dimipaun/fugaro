@@ -1941,13 +1941,20 @@ export const PROJECTS_CREDENTIALS_SERVICE_CLASS = 'projects-credentials-service-
  * are. */
 export const PROJECTS_LICENCE_CLASS = 'projects-licence-section'
 
+/** PROJECTS_SEATS_CLASS is the host the advisory seat estimate is drawn into
+ * (the subscriptions plan's S4.2): the ninth sibling of `projects-body`, drawn
+ * for `PROJECTS_MODELS_CLASS`'s reason. It reads `fugaro seats --json`, and it
+ * sits beside the licence key because the two figures it draws are the pair
+ * D439 compares -- the estimate and the seats that key carries. */
+export const PROJECTS_SEATS_CLASS = 'projects-seats-section'
+
 /** DrawnProjectsFrame is the screen with nothing in it: the root, the section a
  * read fills, and the slot the entry's busy mark goes in. Every later section is
  * a `host`/`slot` pair of its own, drawn the same way -- `models` and `settings`
  * from the tab's second and third reads, and `managed`, `accountKeys`,
  * `retirements` and `credentialsService` from the three CM10 added, two of which
  * feed two sections apiece (the account keys the settings read, the retirements
- * the managed state's). */
+ * the managed state's), and `licence` from S2.7 and `seats` from S4.2. */
 export interface DrawnProjectsFrame {
   readonly root: ScreenElement
   readonly body: ScreenElement
@@ -1966,6 +1973,8 @@ export interface DrawnProjectsFrame {
   readonly credentialsServiceSlot: ScreenElement
   readonly licence: ScreenElement
   readonly licenceSlot: ScreenElement
+  readonly seats: ScreenElement
+  readonly seatsSlot: ScreenElement
 }
 
 /**
@@ -2016,6 +2025,10 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
   // key belongs to an installation, which is what this tab is about.
   const licence = make(factory, 'div', PROJECTS_LICENCE_CLASS)
   const licenceSlot = cell(licence, factory, 'div', BUSY_SLOT_CLASS)
+  // The seat estimate (S4.2), beside the key it is compared against: it reads a
+  // command of its own and owns the mark of that read, like every section here.
+  const seats = make(factory, 'div', PROJECTS_SEATS_CLASS)
+  const seatsSlot = cell(seats, factory, 'div', BUSY_SLOT_CLASS)
   root.append(body)
   root.append(models)
   root.append(settings)
@@ -2024,6 +2037,7 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
   root.append(retirements)
   root.append(credentialsService)
   root.append(licence)
+  root.append(seats)
   return {
     root,
     body,
@@ -2042,6 +2056,8 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
     credentialsServiceSlot,
     licence,
     licenceSlot,
+    seats,
+    seatsSlot,
   }
 }
 

@@ -105,10 +105,12 @@ func TestAccountsRmRemovesTheDeclarationAndTheProfileEntry(t *testing.T) {
 }
 
 // accountsRmTypedLocal is the account's typed entry already named by the rest
-// of the config: a craft served by it and a pool whose members list it. Both
-// are the state a removal of the entry must refuse under — the craft because
-// its access would resolve to nothing, the pool because a member that is not
-// defined is the file its own loader rejects.
+// of the config: a craft served by it and a pool whose members list it. The
+// pool is the state a removal of the entry must refuse under — a member no
+// block defines is the file this config's own loader rejects, and `accounts
+// pool rm` is what drops one; the craft's access is not, because no command of
+// this release writes a crafts key, so the entry's own crafts are cleared with
+// it (accountsRmCraftAccesses, and the test below).
 const accountsRmTypedLocal = addRigLocal + `
 credentials:
   - name: team-a
@@ -121,6 +123,17 @@ pools:
   - name: paid
     members:
       - team-a
+`
+
+// accountsRmTypedCraftLocal is the same entry named by a craft alone.
+const accountsRmTypedCraftLocal = addRigLocal + `
+credentials:
+  - name: team-a
+    type: claude-oauth
+crafts:
+  coder:
+    model: deepseek-v4-1
+    access: team-a
 `
 
 // TestAccountsRmTakesTheTypedEntryWithTheAccount is the other end of `accounts
@@ -158,12 +171,12 @@ func TestAccountsRmTakesTheTypedEntryWithTheAccount(t *testing.T) {
 	}
 }
 
-// TestAccountsRmRefusesWhileACredentialIsStillNamed is the same guard at the
-// other end: while a craft is served by the entry or a pool lists it, the
-// removal is refused rather than leaving either pointing at a credential that
-// is gone. The refusal names both fields, because both are what the owner has
-// to point elsewhere first, and nothing is written.
-func TestAccountsRmRefusesWhileACredentialIsStillNamed(t *testing.T) {
+// TestAccountsRmRefusesWhileAPoolStillListsTheCredential is the same guard at
+// the other end for the half that has a remedy: while a pool lists the entry,
+// the removal is refused rather than leaving the pool with a member no block
+// defines, and the refusal names the pool and the command that drops one.
+// Nothing is written.
+func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 	r := newAddRigWith(t, accountsRmTypedLocal)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
 	before, err := os.ReadFile(r.cfg)
@@ -178,21 +191,55 @@ func TestAccountsRmRefusesWhileACredentialIsStillNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(before, after) {
-		t.Errorf("the command wrote %s while a craft and a pool still named the credential:\n%s", r.cfg, after)
+		t.Errorf("the command wrote %s while a pool still listed the credential:\n%s", r.cfg, after)
 	}
 	if rmErr == nil {
-		t.Fatalf("the account was removed while its typed entry was still named by crafts.coder.access and pools.paid.members")
+		t.Fatalf("the account was removed while its typed entry was still a member of pools.paid.members")
 	}
-	for _, want := range []string{"credentials.team-a", "crafts.coder.access", "pools.paid.members", "nothing was written"} {
+	for _, want := range []string{"credentials.team-a", "pools.paid.members", "accounts pool rm", "nothing was written"} {
 		if !strings.Contains(rmErr.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, rmErr)
 		}
+	}
+	if strings.Contains(rmErr.Error(), "crafts.coder.access") {
+		t.Errorf("the refusal names a craft key no command of this release could have repointed: %v", rmErr)
 	}
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Errorf("the command deleted %v while it was refusing", got)
 	}
 	if _, err := localcfg.Load(r.cfg); err != nil {
 		t.Fatalf("the config that command left is one its own next load refuses: %v", err)
+	}
+}
+
+// TestAccountsRmClearsTheCraftThatNamedTheCredential: a craft's access is the
+// one key that names a credential and that no command of this release can write
+// — `fugaro update`'s own conversion writes it (init_craft_migrate.go) and the
+// generic settings path refuses a family-owned row — so refusing here would
+// leave the owner a hand edit as the only way through. The access goes with the
+// entry it named, the sentence names the key it cleared, and the file that is
+// left is one this config's own loader reads.
+func TestAccountsRmClearsTheCraftThatNamedTheCredential(t *testing.T) {
+	r := newAddRigWith(t, accountsRmTypedCraftLocal)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	lc := r.addLocal(t)
+	if got := lc.Credentials; len(got) != 0 {
+		t.Errorf("credentials.team-a is still declared after the removal: %v", got)
+	}
+	if got := lc.Crafts.Of(config.CraftCoder).Access; got != "" {
+		t.Errorf("crafts.coder.access = %q, want the key cleared with the entry it named", got)
+	}
+	if got := lc.Crafts.Of(config.CraftCoder).Model; got != "deepseek-v4-1" {
+		t.Errorf("crafts.coder.model = %q, want the model half left alone", got)
+	}
+	if !strings.Contains(out, "clear crafts.coder.access, which named that entry") {
+		t.Errorf("the sentence does not name the craft key it cleared:\n%s", out)
+	}
+	if _, err := localcfg.Load(r.cfg); err != nil {
+		t.Fatalf("the config this command wrote does not load: %v", err)
 	}
 }
 

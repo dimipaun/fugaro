@@ -6,7 +6,6 @@ package mcpauth
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"html/template"
@@ -14,7 +13,9 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 )
@@ -41,25 +42,25 @@ import (
 // value of its own — a redirect URI of the caller's own choosing beside the
 // binding still goes to the record's URI.
 //
-// **Number matching is M-a's second half, and what is built here is the page
-// half of it, not the device half.** The flow carries its own six-digit number,
-// the page shows it, and the approval has to present it back, compared in
-// constant time. What that establishes is that the answer came from the page
-// that rendered this flow: the number travels from that page to this form
-// beside the binding it was rendered with, and nothing outside the page has to
-// know it.
+// **Number matching is two acts, and the approving one is M5b's.** The flow
+// carries its own six-digit number and the page shows it, and the number is
+// presented back with a sign-in in a POST of the act's own — the flow's id, the
+// number the person read off the screen, and a Firebase ID token — and it is
+// that act which records the approval (approval.go). **The page's own answer
+// carries neither the number nor the token**: it is the binding and the person's
+// decision, and it mints the code for a flow that carries an approval.
 //
-// What it does NOT establish is what M-a asks for — that the approval was made
-// on the device paired to the installation. The device never sees the number,
-// so a page rendering a flow of its own displays its own number, and whoever
-// fills that page's form hands over the number and the ID token together: this
-// check cannot tell that approval from the one it is meant to be. **M-a's
-// device-side half — the number shown on, or entered into, the paired device,
-// so the approval is bound there — is not built and is in no task**, because it
-// is new behaviour and a decision of the owner's rather than something a task
-// already answered. The other limit is the token itself: nothing here spends
-// one, so a leaked ID token approves flows until it expires — raised as a
-// finding for the owner beside the device half rather than fixed here.
+// **What that act is proved by is the ID token, and by nothing a device holds**,
+// so the two acts are told apart by their shape and not by who sent them: the
+// act's values — the flow's id, the number on the page, a pasted sign-in — are
+// every one of them a page's to have or to collect, and a page that rendered a
+// flow of its own reads its number off its own text, so it produces the same act
+// a paired device does. **M-a's first requirement, that the approval is the
+// paired device's, is therefore not met by this endpoint** — that gap is H1's
+// accepted residual risk and spec.md §3 and §8 state it — and what the server
+// checks is the shape, the number and the sign-in, which is everything it can
+// check. H1's device-held signing key, which would bind the act to one device,
+// is built by no task.
 //
 // **The client is shown as UNVERIFIED** (M-a, the unverified client name).
 // `client_name` is the client's own assertion about itself — RFC 7591 takes it
@@ -110,16 +111,16 @@ gave when it registered, and nothing in this installation checked it.</p>
 <strong>{{.Host}}</strong>.</p>
 <p>It will be able to:</p>
 <ul>{{range .Scopes}}<li>{{.}}</li>{{end}}</ul>
-<p>This flow's number is <strong>{{.Number}}</strong>. Approving sends it back
-with this page's own binding, which is what shows this page answered the
-request.</p>
-<p>The Firebase ID token is what proves the sign-in. This page asks you to paste
-it here: the approval is answered in this browser and not on a device the
-installation paired with you.</p>
+<p>This flow's number is <strong>{{.Number}}</strong>. Approve this flow on the
+device this installation paired with you: that device takes this number, and
+the sign-in its own session produces is what proves who is approving. Reading
+the number off this screen and entering it there is what shows you approved the
+request that is in front of you.</p>
+<p>Nothing is approved from this page. Once the device has approved this flow,
+answer here: Allow sends the code to the host above, and Deny ends the
+flow.</p>
 <form method="post" action="{{.Action}}">
 <input type="hidden" name="request_id" value="{{.RequestID}}">
-<p><label>Number <input name="number" inputmode="numeric" autocomplete="off"></label></p>
-<p><label>Firebase ID token <input name="id_token" autocomplete="off"></label></p>
 <button type="submit" name="decision" value="allow">Allow</button>
 <button type="submit" name="decision" value="deny">Deny</button>
 </form>
@@ -152,6 +153,29 @@ const refusalPage = `<!doctype html>
 // prevent. Everything after that point is redirected back with the `state` the
 // client sent (RFC 6749 §4.1.2.1).
 func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
+	// The bound first, exactly as the registration endpoint's is first there,
+	// and for the same reason: a source past its window is refused for the
+	// cost of one map lookup, before anything else this endpoint does.
+	//
+	// **This is the endpoint that needed it most**, and the review of this
+	// branch is why it has it: the GET records one pending request per call, a
+	// caller needs a single registered client to loop it, and a loop that is
+	// written but never swept is the store growing at whatever rate the
+	// caller's script runs at. The sweep removes what the window admits, so
+	// without the window the sweep is the only thing between this endpoint and
+	// the store, and the sweep has a page (sweepPage) where the loop has no
+	// ceiling.
+	if !s.authorizations.allow(registerSource(r), s.now()) {
+		tooManyAuthorizations(w)
+		return
+	}
+	// The second trigger of the store's sweep (M12). This is the other
+	// unauthenticated write of the flow — one pending request per request,
+	// written by anybody for a client this installation knows — so it is where
+	// a loop that registers one client and then asks for flows would leave its
+	// records, and the sweep is triggered by the traffic that writes them
+	// rather than by the registration endpoint alone (register.go, maybeSweep).
+	s.maybeSweep(r.Context())
 	q := r.URL.Query()
 	clientID, redirectURI, state := q.Get("client_id"), q.Get("redirect_uri"), q.Get("state")
 
@@ -280,15 +304,21 @@ func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// serveAuthorizeConsent is the approval: the person's answer to the page above,
-// carrying the flow's binding, the flow's number and the ID token their paired
-// device produced.
+// serveAuthorizeConsent is this endpoint's POST, and M5b makes it two acts
+// rather than one: the **approving act** (approval.go), which is what carries
+// the flow's number and the ID token, and the **page's answer**, which carries
+// the flow's binding and the person's decision and no credential at all. They
+// are told apart by the token's field, which only one of them may carry, and a
+// body carrying that field beside a decision is refused — that shape is M5's
+// page posting its own number back beside a token, and one body carrying both
+// is neither act. **The shape is what tells them apart and not the sender**:
+// the act's values are a page's to have or to collect, so a page that posts the
+// act and then its decision approves the flow, and M-a's first requirement is
+// not met here (the file's header).
 //
-// The binding is spent first and everything is judged afterwards, which is the
-// fail-closed direction this endpoint takes on purpose: an approval that fails
-// any of the checks below has still answered the flow, and the alternative — a
-// binding that survives a refused approval — is a page a stranger can keep
-// guessing a number against.
+// Both go through the endpoint rather than through a path of their own because
+// the paths of this front door are mounted in server.go's `Mount`
+// (approval.go's note): a route added here would be one nothing mounts.
 func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 	// The same rule the GET keeps, over the same two names: a token in a URL is
 	// a token in a log line, and `access_token` is the name a caller reaches for
@@ -302,7 +332,48 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 		refusePage(w, http.StatusBadRequest, "This approval is not a form this endpoint can read.")
 		return
 	}
-	pending, err := s.store.TakeRequest(r.Context(), form.Get("request_id"))
+	switch device := isDeviceAct(form); {
+	case device && form.Get("decision") != "":
+		refusePage(w, http.StatusBadRequest, deviceApprovalRefusal)
+	case device:
+		s.serveDeviceApproval(w, r, form)
+	default:
+		s.servePageAnswer(w, r, form)
+	}
+}
+
+// servePageAnswer is the page's own answer to a flow: the binding and the
+// person's decision, which is what the page above posts (M5b).
+//
+// The flow is read before it is spent, and that order is the one place this
+// function differs from an answer that is judged first and spent afterwards. A
+// page whose Allow arrives before any device approved the flow is refused, and
+// it is refused **without spending the binding**: the person has done what the
+// page asked and the device has simply not caught up, so the page is still the
+// page that finishes this flow once the device approves — the same page, the
+// same binding, one press of Continue. Spending it there would end the flow on
+// the person for pressing a button in the wrong order, and the flow would have
+// to be started again from the client. Nothing is granted by the refusal: a
+// flow carrying no approval still mints no code, and the take below re-reads the
+// same record, so the approval this decides on is the approval the mint acts
+// on.
+//
+// Past that check the binding is spent first and everything is judged
+// afterwards, which is the fail-closed direction this endpoint takes on
+// purpose: an answer that fails any of the checks below has still answered the
+// flow, and the alternative — a binding that survives a refused answer — is a
+// page a stranger can keep guessing against.
+//
+// The flow has to carry an approval by the time the code is minted, and that
+// check is the one M5b adds here: the identity the code acts for is the
+// device's (`taken.Approval`), and a page that minted without one would be the
+// page approving on its own. It is made on both reads — the one the guard above
+// makes of the record the request carried and the one the mint makes of the
+// record it took — because they can disagree only by a clock that moved
+// backwards between them, and an Allow that reached the mint with no approval
+// behind it would be a nil dereference rather than a refusal.
+func (s *Server) servePageAnswer(w http.ResponseWriter, r *http.Request, form url.Values) {
+	pending, err := s.store.GetRequest(r.Context(), form.Get("request_id"))
 	switch {
 	case errors.Is(err, ErrRequestNotFound), errors.Is(err, ErrRequestUsed):
 		refusePage(w, http.StatusBadRequest, "This approval does not carry the binding of a flow this installation is waiting for. A flow is answered once, and only from the page it was rendered on.")
@@ -311,40 +382,57 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 		refusePage(w, http.StatusInternalServerError, "This approval could not be read.")
 		return
 	}
-	if s.now().After(pending.ExpiresAt) {
-		s.redirectError(w, r, pending.RedirectURI, pending.State, oauthError(oidc.ErrAccessDenied(),
+	// An Allow for a flow with no approval is refused here, before the binding
+	// is spent: the person pressed Continue on a page whose flow the device has
+	// not approved yet, and what they need is to press it again afterwards
+	// rather than a new flow. The expiry is checked beside it so that a flow
+	// that is over is still answered with the client's own error below instead
+	// of this page.
+	if form.Get("decision") == "allow" && !s.now().After(pending.ExpiresAt) && pending.Approval == nil {
+		refusePage(w, http.StatusBadRequest, "This flow has not been approved on the device this installation paired with you. Approve it there first — the number on this page is the one the device takes — and continue on this page afterwards.")
+		return
+	}
+	taken, err := s.store.TakeRequest(r.Context(), pending.ID)
+	switch {
+	case errors.Is(err, ErrRequestNotFound), errors.Is(err, ErrRequestUsed):
+		refusePage(w, http.StatusBadRequest, "This approval does not carry the binding of a flow this installation is waiting for. A flow is answered once, and only from the page it was rendered on.")
+		return
+	case err != nil:
+		refusePage(w, http.StatusInternalServerError, "This approval could not be read.")
+		return
+	}
+	if s.now().After(taken.ExpiresAt) {
+		s.redirectError(w, r, taken.RedirectURI, taken.State, oauthError(oidc.ErrAccessDenied(),
 			"the authorization request expired before it was answered"))
 		return
 	}
-	// The person's answer is read before the two checks only an approval needs,
-	// because the page renders one form behind both buttons: a Deny is the same
-	// submission as an Allow, and nobody refusing a client has a reason to paste
-	// the flow's number or an ID token into it. The client is waiting on its own
-	// callback, so a deny that ended on a refusal page would be an answer this
-	// server never sends (RFC 6749 §4.1.2.1). The binding is what makes the deny
-	// an answer to this flow, and it is spent by the time this is read.
+	// The person's answer is read before the approval is, because the page
+	// renders one form behind both buttons: a Deny is the same submission as an
+	// Allow, and nobody refusing a client has a reason to have approved the
+	// flow on a device first. The client is waiting on its own callback, so a
+	// deny that ended on a refusal page would be an answer this server never
+	// sends (RFC 6749 §4.1.2.1). The binding is what makes the deny an answer
+	// to this flow, and it is spent by the time this is read.
 	if form.Get("decision") != "allow" {
-		s.redirectError(w, r, pending.RedirectURI, pending.State, oauthError(oidc.ErrAccessDenied(),
+		s.redirectError(w, r, taken.RedirectURI, taken.State, oauthError(oidc.ErrAccessDenied(),
 			"the person did not allow this client to call the MCP endpoint"))
 		return
 	}
-	// The number is compared over the whole value and in constant time, before
-	// the token is even read: an approval that did not carry this flow's number
-	// has not answered this flow. It shows that the answer came back from the
-	// page that rendered the flow and nothing about a paired device — the
-	// number is displayed and echoed on that same page, so the check is a page
-	// binding and not M-a's device-side approval (see the note at the top of
-	// this file).
-	if subtle.ConstantTimeCompare([]byte(form.Get("number")), []byte(pending.Number)) != 1 {
-		refusePage(w, http.StatusBadRequest, "This approval does not carry the number the page showed. Approve from the page that asked, and present the number that page displayed.")
-		return
-	}
-	identity, err := s.verifySignIn(r.Context(), form.Get("id_token"))
-	if err != nil {
-		// The sign-in step, and it is not the client's failure: a person whose
-		// approval did not verify gets a page telling them what to do, and the
-		// client is not told anything that would let it retry in a loop.
-		refusePage(w, http.StatusUnauthorized, "The sign-in was not verified. Approve this client on a device paired to the installation, and present the Firebase ID token that approval produced in this form's body.")
+	// The approval the code is minted from is read again here, off the record
+	// the take returned rather than the one the request carried. The two reads
+	// are one read apart and a clock that stepped backwards between them — an
+	// injected clock, a skew — is the one way they can disagree: the guard
+	// above lets an Allow through on a flow it read as expired, and this read
+	// then sees the flow live with no approval behind it. The identity the code
+	// is minted for is the device's and there is none, so the mint would act for
+	// an approval that is not there; it is answered with the error the expiry
+	// above answers with, to the client, because the answer has spent the
+	// binding either way. A page that minted without an approval would be the
+	// page approving on its own, which is the one thing M5b's two acts exist to
+	// prevent.
+	if taken.Approval == nil {
+		s.redirectError(w, r, taken.RedirectURI, taken.State, oauthError(oidc.ErrAccessDenied(),
+			"the authorization request was answered without an approval from the device this installation paired with it"))
 		return
 	}
 
@@ -355,17 +443,17 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.PutCode(r.Context(), Code{
 		Hash:        TokenHash(code),
-		ClientID:    pending.ClientID,
-		RedirectURI: pending.RedirectURI,
-		Challenge:   pending.Challenge,
-		Identity:    identity,
-		Scopes:      pending.Scopes,
+		ClientID:    taken.ClientID,
+		RedirectURI: taken.RedirectURI,
+		Challenge:   taken.Challenge,
+		Identity:    taken.Approval.Identity,
+		Scopes:      taken.Scopes,
 		ExpiresAt:   s.now().Add(CodeTTL),
 	}); err != nil {
 		refusePage(w, http.StatusInternalServerError, "This approval could not be recorded.")
 		return
 	}
-	s.redirectWith(w, r, pending.RedirectURI, pending.State, url.Values{"code": {code}})
+	s.redirectWith(w, r, taken.RedirectURI, taken.State, url.Values{"code": {code}})
 }
 
 // verifySignIn verifies the Firebase ID token an approval carried and answers
@@ -557,6 +645,18 @@ func (s *Server) redirectWith(w http.ResponseWriter, r *http.Request, redirectUR
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	http.Redirect(w, r, u.String(), http.StatusFound)
+}
+
+// tooManyAuthorizations is the refusal of a source past its window on this
+// endpoint's write, and it is the registration endpoint's refusal in this
+// endpoint's shape: the same 429, the same Retry-After, and a page rather than
+// RFC 6749 §5.2's JSON document, because the caller here is a person's browser
+// being sent to a sign-in. Like that one, the sentence is fixed and names
+// nothing about the caller — no address, and nothing that would tell a caller
+// what this door counted it as.
+func tooManyAuthorizations(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(authorizeWindow/time.Second)))
+	refusePage(w, http.StatusTooManyRequests, "Too many sign-in requests from this address. This endpoint records one flow per request, so it is bounded the same way the registration endpoint is: wait a moment and start the sign-in again.")
 }
 
 // refusePage is a refusal a person reads, and it is deliberately terse: the

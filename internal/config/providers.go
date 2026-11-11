@@ -907,11 +907,12 @@ func checkProviderURL(s string) error {
 }
 
 // CheckProviderAuth is the auth rule for models routed to a provider: the
-// coder, the reviewer and the background model that a provider claims need
-// agent.auth api-key. oauth is a subscription credential that cannot leave
-// Anthropic, and vertex is Claude on Vertex; neither can carry a provider
-// key, so a provider-claimed model is refused under either of them. The
-// owner's ruling of 2026-11-04 (task B0) permits exactly one mix of
+// coder, the reviewer, the background model and — when it is set — the vision
+// model that a provider claims need agent.auth api-key. oauth is a subscription
+// credential that cannot leave Anthropic, and vertex is Claude on Vertex;
+// neither can carry a provider key, so a provider-claimed model is refused
+// under either of them. The owner's ruling of 2026-11-04 (task B0) permits
+// exactly one mix of
 // credentials and leaves this function's answer unchanged: an api-key run
 // may declare one stage-scoped Claude OAuth account for its review and
 // adversarial stages, beside the provider key its coder runs on
@@ -936,6 +937,7 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 		{"agent.models.coder", a.ModelFor(RoleCoder)},
 		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
 		{"agent.models.background", a.Models.Background},
+		{"agent.models.vision", a.VisionModel()},
 	} {
 		name, _, ok := ProviderFor(providers, r.model)
 		if !ok {
@@ -959,8 +961,8 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 // a provider's calls are real dollars (and an injected agent could send what
 // the pins would stop), so the owner's default is enforce. mode is the run's
 // effective budget mode ("" and "off" are the gateway off); bg is the run's
-// effective background model. One problem per role that names a provider
-// model.
+// effective background model. One problem per pin that names a provider model,
+// the vision slot's included when it is set.
 func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider, mode string) []Problem {
 	if mode == "enforce" {
 		return nil
@@ -974,6 +976,7 @@ func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider
 		{"agent.models.coder", a.ModelFor(RoleCoder)},
 		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
 		{"agent.models.background", bg},
+		{"agent.models.vision", a.VisionModel()},
 	} {
 		if _, _, ok := ProviderFor(providers, r.model); ok {
 			ps = append(ps, Problem{Path: r.path, Message: fmt.Sprintf("%s is served by a provider, %s", CodeSpan(r.model), why)})
@@ -1025,6 +1028,7 @@ func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[s
 		{"agent.models.coder", a.ModelFor(RoleCoder)},
 		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
 		{"agent.models.background", a.Models.Background},
+		{"agent.models.vision", a.VisionModel()},
 		{"agent.model", a.Model},
 	} {
 		// agent.model is the role models' default: said once, under the role.
