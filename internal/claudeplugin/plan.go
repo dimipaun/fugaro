@@ -64,12 +64,13 @@ type Call struct {
 }
 
 // Plan is the change calls to make, in order (none: nothing to do), the plugin
-// version that applied to the checkout before them ("" for none), and the calls
-// that put back what a Clear removes (nil when nothing is cleared), in the
-// order they are needed: the marketplace declared as it was, then the plugin
-// installed from it, because claude uninstalls every install of a marketplace
-// it removes. A Declare that fails runs them, so a failed add leaves the machine
-// with the marketplace and the plugin it had.
+// version installed on this machine before them ("" for none: the step's own
+// subject, claudeplugin.UserVersion, and not what applies to the checkout,
+// Effective), and the calls that put back what a Clear removes (nil when
+// nothing is cleared), in the order they are needed: the marketplace declared
+// as it was, then the plugin installed from it, because claude uninstalls every
+// install of a marketplace it removes. A Declare that fails runs them, so a
+// failed add leaves the machine with the marketplace and the plugin it had.
 type Plan struct {
 	Calls   []Call
 	Before  string
@@ -108,8 +109,10 @@ func Applying(root string, installed []Install) []Install {
 
 // Effective is the plugin version that applies to root: a project or local
 // install's over the user one, "" when none applies. It is the checkout's own
-// question (D942), and not the version pluginwire's installState answers with:
-// that one is the machine's own install, which is the one this step maintains.
+// question (D942) — what a checkout's settings installed there, which is not
+// what this step maintains and no longer what its own line reports — and it is
+// kept answering it for doctor, which asks it of the machine (U3). The version
+// this step's own check asks about is UserVersion's, the machine's.
 func Effective(root string, installed []Install) string {
 	v := ""
 	for _, in := range Applying(root, installed) {
@@ -154,15 +157,18 @@ func refNewer(ref, want string) bool {
 //   - otherwise the marketplace declared at Ref (missing, or there at another
 //     ref that is not newer, in which case the declaration it is refused by is
 //     cleared first, and Restore is what puts back what the clear takes) and
-//     refreshed, then the plugin installed at user scope when nothing applies
-//     or a Clear is in the plan — on the cleared path it is what puts back the
-//     install the clear takes from a machine whose own settings leave the name
-//     undeclared — and a stale user install updated. (A stale project or local
-//     install is not updated, and is not a reason to do anything: those
-//     installs are a checkout's own settings and not this step's to move,
-//     D949.) The install and that update are Repair
-//     when a Clear is in the plan: which of them the clear left anything to do
-//     is not knowable before it runs.
+//     refreshed, then the plugin installed at user scope when the machine has
+//     no install of it or a Clear is in the plan — on the cleared path it is
+//     what puts back the install the clear takes from a machine whose own
+//     settings leave the name undeclared — and a stale user install updated.
+//     (A stale project or local install is not updated, and is not a reason to
+//     do anything: those installs are a checkout's own settings and not this
+//     step's to move, D949. Neither does one stand in for the machine's own:
+//     a checkout whose settings installed the plugin at project scope has no
+//     user-scope install, and the step's promise — and its own check after the
+//     calls — is that one exists at this release.) The install and that update
+//     are Repair when a Clear is in the plan: which of them the clear left
+//     anything to do is not knowable before it runs.
 //
 // Every call it returns passes Allowed.
 func Decide(in Input) (Plan, error) {
@@ -200,7 +206,14 @@ func Decide(in Input) (Plan, error) {
 	// failure.
 	moved := market != nil && market.Ref != in.Ref && !refNewer(market.Ref, in.Ref)
 	applying := Applying(in.Root, in.Installed)
-	p := Plan{Before: Effective(in.Root, in.Installed)}
+	// The machine's own install is the user-scope one, and the only install
+	// this step maintains (D949, U2). A checkout-scoped install applies to the
+	// checkout but is not it: it neither makes the machine current nor stands in
+	// for the install this step puts at user scope, so the early return below
+	// asks about this one and the install below is planned whenever it is
+	// missing.
+	own := UserVersion(in.Installed)
+	p := Plan{Before: own}
 	var stale []string
 	for _, a := range applying {
 		// Only the machine's own install is this step's to move, whatever made
@@ -211,7 +224,7 @@ func Decide(in Input) (Plan, error) {
 			stale = append(stale, a.Scope)
 		}
 	}
-	if !moved && market != nil && len(applying) > 0 && len(stale) == 0 {
+	if !moved && market != nil && own == in.Want && len(stale) == 0 {
 		return p, nil
 	}
 	if market == nil || moved {
@@ -238,11 +251,18 @@ func Decide(in Input) (Plan, error) {
 	// Repair: which of them the clear left anything to do is not knowable before
 	// it runs, and the check after the calls is what sees whether the machine
 	// came out of them with an install that applies.
+	//
+	// own == "" is the machine having no install of the plugin at all, and that
+	// is what asks for this call: the step maintains the user-scope install, so
+	// a machine whose only install is a checkout's own (a trusted folder's
+	// project install, say) is not one it has left alone — it is one that has
+	// none, whatever applies to the checkout, and the check after the calls
+	// would fail the step for the install this call is what makes.
 	kind := Change
 	if moved {
 		kind = Repair
 	}
-	if len(applying) == 0 || moved {
+	if own == "" || moved {
 		install := slices.Clone(installUser)
 		p.Calls = append(p.Calls, Call{Args: install, Kind: kind})
 		if moved && len(applying) > 0 {

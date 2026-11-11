@@ -52,12 +52,21 @@ func TestDecide(t *testing.T) {
 		{"user install behind", pinned, []Install{user("0.5.1")}, [][]string{upd, updU}, "0.5.1", nil},
 		// A project or local install is a checkout's own settings and not this
 		// step's to move (D949, U2): a stale one is not something to do, so it
-		// is no call and no reason for one. It is still an install that applies
-		// to the checkout, which is what Before reports — a checkout's version
-		// is doctor's question (Effective, D942), not the machine's.
-		{"this checkout's project install behind", pinned, []Install{user("0.5.2"), project("0.5.1", root)}, nil, "0.5.1", nil},
+		// is no call and no reason for one. It is no install of the machine's
+		// own either, so it is not what Before reports: that is the user-scope
+		// install, the one this step's line and its check after the calls are
+		// about, and a checkout's version is doctor's question (Effective,
+		// D942).
+		{"this checkout's project install behind", pinned, []Install{user("0.5.2"), project("0.5.1", root)}, nil, "0.5.2", nil},
 		{"another checkout's install is not ours to update", pinned, []Install{user("0.5.2"), project("0.4.0", other)}, nil, "0.5.2", nil},
-		{"both behind", pinned, []Install{project("0.5.0", root), user("0.5.1")}, [][]string{upd, updU}, "0.5.0", nil},
+		{"both behind", pinned, []Install{project("0.5.0", root), user("0.5.1")}, [][]string{upd, updU}, "0.5.1", nil},
+		// The machine has no install of the plugin at all — the only one that
+		// applies to the checkout is the checkout's own, put there by its
+		// settings when the folder was trusted. That is not an install this step
+		// has left alone; it is one it has none of, so the user-scope install is
+		// planned even though something applies (D949, U2), which is also what
+		// the check after the calls asks for.
+		{"this checkout's project install alone, at this release", pinned, []Install{project("0.5.2", root)}, [][]string{upd, inst}, "", nil},
 		{"another plugin does not count", pinned, []Install{{ID: "superpowers@claude-plugins-official", Version: "6.4.1", Scope: "user"}}, [][]string{upd, inst}, "", nil},
 		{"a managed install is left alone", pinned, []Install{{ID: "fugaro@fugaro", Version: "0.4.0", Scope: "managed"}}, [][]string{upd, inst}, "", nil},
 		{"marketplace missing, plugin current", nil, []Install{user("0.5.2")}, [][]string{add}, "0.5.2", nil},
@@ -78,8 +87,9 @@ func TestDecide(t *testing.T) {
 		// This checkout's own settings declare the marketplace too, so the clear
 		// leaves the project install standing, at the version it was installed
 		// at, and a checkout's own install is not this step's to move (D949, U2):
-		// the user scope install is all the plan makes.
-		{"unpinned marketplace, this checkout's project install", unpinned, []Install{project("0.5.1", root)}, [][]string{rm, add, upd, inst}, "0.5.1", [][]string{back, inst}},
+		// the user scope install is all the plan makes. Before is "" — the
+		// machine's own install is the one it had none of.
+		{"unpinned marketplace, this checkout's project install", unpinned, []Install{project("0.5.1", root)}, [][]string{rm, add, upd, inst}, "", [][]string{back, inst}},
 		// Nothing installed, so the clear takes the declaration alone, and the
 		// declaration alone is what a failed add puts back.
 		{"unpinned marketplace, nothing installed", unpinned, nil, [][]string{rm, add, upd, inst}, "", [][]string{back}},

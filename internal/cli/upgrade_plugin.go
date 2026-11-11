@@ -68,6 +68,10 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return fail(err)
 	}
 	if len(plan.Calls) == 0 {
+		// plan.Before is the machine's own install (claudeplugin.UserVersion),
+		// which is the one this step maintains and the one pluginCheck reads off
+		// Claude Code's record (D949, U2): a checkout-scoped install standing at
+		// another version is not reported here as if it were the machine's.
 		return stepResult{state: stepCurrent, reason: "installed " + pluginwire.Printable(plan.Before)}
 	}
 	// cleared is whether a Clear ran, and so whether a failed add has anything

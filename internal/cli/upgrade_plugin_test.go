@@ -449,7 +449,9 @@ func TestUpgradePluginCurrentRunsOnlyTheLists(t *testing.T) {
 // — and this step no longer moves one (D949, U2). A behind project install
 // beside the machine's own current install is nothing to do, and no call is
 // planned in the checkout for it: what applies there is doctor's question
-// (claudeplugin.Effective, D942).
+// (claudeplugin.Effective, D942). The version the line names is the machine's
+// own, so this line and fugaro upgrade --check's say the same thing about the
+// same machine.
 func TestUpgradePluginLeavesThisCheckoutsProjectInstall(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
@@ -457,8 +459,31 @@ func TestUpgradePluginLeavesThisCheckoutsProjectInstall(t *testing.T) {
 	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), plugins)
 	useFakeClaude(t, f)
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
-	if err != nil || len(f.Changes(t)) != 0 || !strings.Contains(out, "plugin: current") {
+	if err != nil || len(f.Changes(t)) != 0 || !strings.Contains(out, "plugin: current: installed 0.5.2") {
 		t.Fatalf("%v, changes %q\n%s", err, f.Changes(t), out)
+	}
+}
+
+// TestUpgradePluginInstallsAtUserScopeBesideThisCheckoutsProjectInstall: the
+// machine has no install of the plugin at all — the only one that applies to
+// the checkout is the checkout's own, put there by its settings when the folder
+// was trusted. That is not an install this step has left alone; it is one it
+// has none of, so the user-scope install is planned even though something
+// applies, which is what the step's promise and its check after the calls ask
+// for (D949, U2).
+func TestUpgradePluginInstallsAtUserScopeBesideThisCheckoutsProjectInstall(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	project := `{"id":"fugaro@fugaro","version":"0.5.2","scope":"project","projectPath":"` + root + `"}`
+	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), "["+project+"]")
+	f.On(t, "plugins", "["+project+`,{"id":"fugaro@fugaro","version":"0.5.2","scope":"user","enabled":true}]`, argsInstall...)
+	useFakeClaude(t, f)
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if err != nil || !slices.EqualFunc(f.Changes(t), [][]string{argsUpdMarket, argsInstall}, slices.Equal[[]string]) {
+		t.Fatalf("%v, changes %q\n%s", err, f.Changes(t), out)
+	}
+	if !strings.Contains(out, "plugin: done: installed 0.5.2; restart running Claude Code sessions to apply it") {
+		t.Errorf("the machine's own install was not reported as what the step made:\n%s", out)
 	}
 }
 
