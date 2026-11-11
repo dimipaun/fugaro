@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // estimateDocVersion is the document's first version, and the number a member
@@ -331,10 +332,14 @@ func printEstimate(cmd *cobra.Command, doc estimateDoc, cost *runstore.Cost, mod
 	for _, r := range doc.Models {
 		total += r.Micros
 	}
+	// A person reads runs by their ending (spec.md §1): the whole ID is the
+	// document's, --json's `run`. The --run the reader typed is unaffected --
+	// this is the line that says which run was priced.
+	ref := task.ShortRun(oneLine(doc.Run))
 	if doc.PR != 0 {
-		fmt.Fprintf(out, "%s  %s repriced at %s (PR %d)\n", money(total), doc.Run, doc.Model, doc.PR)
+		fmt.Fprintf(out, "%s  %s repriced at %s (PR %d)\n", money(total), ref, doc.Model, doc.PR)
 	} else {
-		fmt.Fprintf(out, "%s  %s repriced at %s\n", money(total), doc.Run, doc.Model)
+		fmt.Fprintf(out, "%s  %s repriced at %s\n", money(total), ref, doc.Model)
 	}
 	if cost.ModelUSD > 0 {
 		usd, _ := pricing.FromUSD(cost.ModelUSD)

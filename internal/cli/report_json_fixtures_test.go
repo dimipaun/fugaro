@@ -188,6 +188,19 @@ var jsonCases = map[string]jsonCase{
 			return []string{"doctor"}
 		},
 	},
+	"estimate": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			id := "20260927-100000-abcd"
+			seedEstimateRun(t, f, id, estimateSeed{
+				tokens:   map[string]runstore.ModelTokenCounts{"claude-sonnet-5": {Input: 1_000_000, Output: 10_000}},
+				modelBy:  map[string]float64{"claude-sonnet-5": 4},
+				modelUSD: 4,
+			})
+			return []string{"estimate", "--run", appSlug + "/" + id, "--model", "claude-opus-5-5"}
+		},
+	},
 	"image build": {
 		why: "the run's confirmation is typed at a terminal, and --json never gives one, so the command refuses before it prints any document",
 	},

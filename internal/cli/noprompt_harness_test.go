@@ -247,16 +247,20 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// set that reaches the command's body; what the body answers in this world is
 	// the leaf's own business, and what the harness reads is that it answers with
 	// its stdin closed and asks nothing.
-	"fugaro accounts clear":       {args: []string{"team-a"}},
-	"fugaro accounts rm":          {args: []string{"team-a"}},
-	"fugaro allow-delete":         {args: []string{"someone@example.com"}},
-	"fugaro artifacts get":        {args: []string{"run-1"}},
-	"fugaro artifacts ls":         {args: []string{"run-1"}},
-	"fugaro budget preview":       {args: []string{"--recipe", "r", "--runs", "1"}},
-	"fugaro budget history":       {args: []string{"--sweep"}},
-	"fugaro cancel":               {args: []string{"run-1"}},
-	"fugaro creds set":            {args: []string{"NAME"}},
-	"fugaro diagnose":             {args: []string{"run-1"}},
+	"fugaro accounts clear": {args: []string{"team-a"}},
+	"fugaro accounts rm":    {args: []string{"team-a"}},
+	"fugaro allow-delete":   {args: []string{"someone@example.com"}},
+	"fugaro artifacts get":  {args: []string{"run-1"}},
+	"fugaro artifacts ls":   {args: []string{"run-1"}},
+	"fugaro budget preview": {args: []string{"--recipe", "r", "--runs", "1"}},
+	"fugaro budget history": {args: []string{"--sweep"}},
+	"fugaro cancel":         {args: []string{"run-1"}},
+	"fugaro creds set":      {args: []string{"NAME"}},
+	"fugaro diagnose":       {args: []string{"run-1"}},
+	// estimate's own run is looked up in this world's bucket, which holds
+	// none: the leaf reaches its lookup and its "no run" answer, the same
+	// shallowest set cancel, diagnose and logs are driven to.
+	"fugaro estimate":             {args: []string{"--run", "run-1", "--model", "claude-opus-5-5"}},
 	"fugaro exec":                 {args: []string{"--bucket", "file:///nonexistent"}},
 	"fugaro image add":            {args: []string{"base"}},
 	"fugaro image gate":           {args: []string{"--record", "r", "--slug", "s", "--bucket", "file:///nonexistent"}},
