@@ -207,6 +207,7 @@ var exemptAnswers = map[string]string{
 	"models add":             "writes the claim, the price and the allow-list entry, and prints what it wrote",
 	"models rm":              "drops the claim, the price and the allow-list entry, and prints what it dropped",
 	"models use":             "writes one repository's own config in its working tree, and prints the line it wrote",
+	"orchestrator import":    "lands the one-time session dump into the state, and prints what it wrote and what the person is left to approve",
 	"orchestrator patch":     "applies one typed patch document to the state, and prints the state it wrote",
 	"orchestrator run":       "runs the daemon in the foreground and streams its own log, which no step account fits",
 	"pair":                   "prints the code a phone types to pair, which is one answer rather than a run's account",
