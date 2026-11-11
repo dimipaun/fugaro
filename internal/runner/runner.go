@@ -2511,6 +2511,30 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s is mode: %s, but the task says mode: %s", rrec.Name, rcp.Mode, spec.Mode)
 	}
 	r.artifact, r.out = rcp.Mode == recipe.ModeArtifact, rcp.Outputs
+	// The artifact boundary on the Batch backend (plan
+	// 2026-10-19-compute-backend.md Task 10 step 5, Global Constraint 13, design
+	// artifact-runs.md §8.5 and D11): an artifact-producing run is never run on
+	// cloud-batch, because a Batch run's account is not per-repository and the
+	// same run's inputs, artifacts and record would then be readable and
+	// overwritable by every run on the profile.
+	//
+	// This is the arm the launcher's own gate cannot be, and the plan says which
+	// is which: the launch gate reads the REF's copy of the recipe (a repository
+	// recipe by name, resolved in the working tree), and the ref can be stale --
+	// a task launched against a base whose recipe was mode: implement an hour ago
+	// launches, and the runner is the process that actually reads the recipe it
+	// will run. So the runner refuses on the RESOLVED recipe, before any stage
+	// and before any model call, and the gate's ref read stays as defence in
+	// depth beside it rather than as the substitute for it.
+	//
+	// Keyed on FUGARO_BACKEND, which every job of either backend carries
+	// (backend.BackendEnv, written by internal/infra into every job): the
+	// platform a run's job is on is a fact of its own environment, and nothing
+	// else here knows it -- the launch gate runs in the launcher, on the other
+	// side of the job.
+	if r.artifact && r.jobEnv(backend.BackendEnv) == backend.CloudBatch {
+		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket, and this run's job is on the cloud-batch backend: an artifact-producing run is never launched on it, because a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/design/artifact-runs.md §8.5 and D11, plan 2026-10-19-compute-backend.md Global Constraint 13). Launch an artifact recipe on backend: cloud-run", rrec.Name)
+	}
 	// A task that attached files under a resolved recipe of another mode
 	// fails the run before its first step (design §8.2): the launcher
 	// refuses this for every launch that resolves a recipe, and this is the
