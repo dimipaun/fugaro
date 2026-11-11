@@ -374,6 +374,15 @@ type run struct {
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
 	routeBy      map[string]pricing.Micros
+	// modelTokens is the run's token counts by model, from whichever path
+	// filled them: the gateway's per-call usage under the model it priced
+	// each call for, taken from its ledger when it closes, or, with no
+	// gateway, the agent's own per-model usage, taken stage by stage (G1.2,
+	// F8). The record carries them so `fugaro estimate` can price the run's
+	// own usage again on another model. Empty until one of the two fills it,
+	// which for a gateway run is its last step, as the cache totals beside
+	// them are.
+	modelTokens  map[string]runstore.ModelTokenCounts
 	routed       bool // the gateway has provider routes, so route_by exists
 	reported     pricing.Micros
 	unreconciled pricing.Micros
@@ -4707,6 +4716,10 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	} else {
 		r.rec.CostUSD += res.CostUSD
 	}
+	// The stage's own per-model tokens, which a run with no gateway has no
+	// other account of (G1.2, F8): it ignores the report of a gateway run,
+	// whose counts are the gateway's per-call sums.
+	r.recordAgentModelTokens(res)
 	r.updateCost()
 	// The relay has seen the whole stream by now, so its counts of the
 	// stage's sub-agent tool calls and of the most times one identical shell

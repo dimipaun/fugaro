@@ -882,6 +882,11 @@ func (r *run) closeGateway() {
 	// what the splits (model_by, route_by) are built from.
 	r.gwUsed, r.gwNotional = led.Used, led.Notional
 	r.gwCacheRead, r.gwCacheWrite = led.CacheReadTokens, led.CacheWriteTokens
+	// The run's token counts by model are the ledger's, like the totals
+	// beside them and for the same reason: a call that settled after its
+	// stage's wait ran out is in them (G1.2, F8). The two are the same calls'
+	// tokens, so a reader that sums these entries gets exactly those totals.
+	r.modelTokens = modelTokenCounts(led.ModelTokens)
 	// The run's own model figure is the ledger's totals plus the stages the
 	// ledger never saw, an account stage's own among them (P11, P12): the
 	// ledger's figure alone would drop them from the record here, at the last
