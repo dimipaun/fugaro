@@ -55,8 +55,6 @@ const STATUSES = ['supported', 'coming-soon', 'built-not-enabled', 'roadmap', 'n
 /** The two editions, and nothing else (D1522). */
 const EDITIONS = ['core', 'subscription']
 
-/** The groups whose spec table carried an Edition column, so whose rows carry an edition. */
-const EDITION_GROUPS = ['local-environment', 'console', 'mobile', 'forges', 'identity-and-roles']
 
 /** The spec's groups, in the spec's order (the plan's "Interfaces"). */
 const GROUP_IDS = [
@@ -323,11 +321,8 @@ export function problems(doc) {
       if (row.edition !== undefined && !EDITIONS.includes(row.edition)) {
         out.push(`${where} carries the edition ${JSON.stringify(row.edition)}; the two are ${JSON.stringify(EDITIONS)} (D1522)`)
       }
-      if (EDITION_GROUPS.includes(group.id) && row.edition === undefined) {
-        out.push(`${where} carries no edition, and the spec's ${group.id} table has an Edition column`)
-      }
-      if (!EDITION_GROUPS.includes(group.id) && row.edition !== undefined) {
-        out.push(`${where} carries an edition, and the spec's ${group.id} table has no Edition column`)
+      if (row.edition === undefined) {
+        out.push(`${where} carries no edition, and every table on the page has an Edition column`)
       }
       if (typeof row.note !== 'string' || row.note === '') out.push(`${where} carries no note`)
       const needs = row.status === 'supported' || row.status === 'built-not-enabled'
@@ -525,12 +520,12 @@ test("the Claude OAuth row carries D1539's sentence, and no other row names term
 
 test('a date and a price in a row are refused', () => {
   refused(
-    planted('        note: "The same Expo codebase as iOS."', '        note: "The same Expo codebase as iOS, planned for 2027."'),
+    planted('        note: "The same app as iOS."', '        note: "The same app as iOS, planned for 2027."'),
     'carries a date',
     'A row must carry no date: an unbuilt row promises none (D1523), and a date on the page is a claim the repository cannot back.',
   )
   refused(
-    planted('        note: "No plan for email."', '        note: "No plan for email; Slack costs $5 a month."'),
+    planted('        note: "Alongside Slack and Teams."', '        note: "Alongside Slack and Teams; Slack costs $5 a month."'),
     'carries a price',
     'A row must carry no price: the page carries none, so no note may add one.',
   )
@@ -538,7 +533,7 @@ test('a date and a price in a row are refused', () => {
 
 test('a Web row, and a group the spec does not have, are refused', () => {
   refused(
-    planted('      - name: "Android"', '      - name: "Web"\n        status: coming-soon\n        edition: subscription\n        note: "From the same Expo codebase."\n      - name: "Android"'),
+    planted('      - name: "Android"', '      - name: "Web"\n        status: coming-soon\n        edition: subscription\n        note: "From the same app."\n      - name: "Android"'),
     'carries a Web row',
     'A Web row must be refused: there is no web build, so F7/D1521 removes the row rather than giving it a status.',
   )
