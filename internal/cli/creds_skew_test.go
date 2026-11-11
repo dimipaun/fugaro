@@ -202,6 +202,113 @@ func providerValueDoc(t *testing.T) string {
 	return "key: " + credsValue(t, "provider") + "\nbase_url: https://api.example.com/v1\nauth: bearer\n"
 }
 
+// providerEntryNode is the same entry as the bundle document writes it: the
+// mapping under the entry's own key, one level in. It is what the seed of the
+// test below needs — a document that ALREADY holds the entry, which is the
+// guard's second trigger.
+func providerEntryNode(t *testing.T) string {
+	t.Helper()
+	return config.ProviderKeySecret + ":\n  key: " + credsValue(t, "provider") + "\n  base_url: https://api.example.com/v1\n  auth: bearer\n"
+}
+
+// TestCredsSetRefusesAnUnrelatedWriteIntoABundleHoldingTheProviderEntry is the
+// guard's SECOND trigger (bundleHoldsProviderEntry): the entry is not the one
+// this run is writing, it is already in the document this run is editing. The
+// write leaves the document holding the entry, and the document is what the
+// deployed service reads — so it is the same skew, caught at the same place,
+// for a credential that needs no release of its own.
+//
+// Why this arm is load-bearing: without it the write lands. The tree's own
+// loader knows the entry, so `credsvc.ParseBundle` accepts the document this
+// command builds, and the older service refuses the WHOLE document
+// (`ErrBundleUnknownKey`) at its next read — a service-wide refusal, halting
+// every caller of that service, coding runs included.
+//
+// Its precision is the other half and is pinned here too: the trigger is the
+// DOCUMENT's answer and not the release alone, so an unrelated write into a
+// bundle that does not hold the entry is written even against a service older
+// than the constant — an old service refuses nothing about a document it can
+// read, and a guard that refused that write would take the whole command away
+// from every installation that has not updated yet.
+func TestCredsSetRefusesAnUnrelatedWriteIntoABundleHoldingTheProviderEntry(t *testing.T) {
+	// write is the command under test: one ordinary credential — claude-oauth-token,
+	// whose own reader is as old as the bundle — into a document that holds the
+	// provider entry or does not, against a service whose serving revision is
+	// serving.
+	write := func(t *testing.T, holds bool, serving string) (*credsFixture, error) {
+		t.Helper()
+		skew := newRunServiceSkew(t)
+		f, _ := credsSkewFixture(t, "none", skew)
+		doc := config.ClaudeOAuthToken + ": " + credsValue(t, "existing") + "\n"
+		if holds {
+			doc += providerEntryNode(t)
+		}
+		f.seed(t, []byte(doc))
+		skew.deployedService(credentialsImage(providerEntrySince), credentialsImage(serving))
+		_, _, err := executeStdin(t, credsValue(t, "replacement")+"\n", "creds", "set", config.ClaudeOAuthToken)
+		return f, err
+	}
+
+	t.Run("a service older than the entry refuses it", func(t *testing.T) {
+		f, err := write(t, true, "0.18.0")
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("writing an ordinary credential into a bundle holding the entry against a 0.18.0 service = %v, want a user error", err)
+		}
+		if !strings.Contains(err.Error(), "fugaro update") {
+			t.Errorf("the refusal names no way out: %v", err)
+		}
+		if !strings.Contains(err.Error(), config.ProviderKeySecret) {
+			t.Errorf("the refusal does not name the entry that makes the document unreadable: %v", err)
+		}
+		if strings.Contains(err.Error(), credsValue(t, "replacement")) {
+			t.Errorf("the refusal repeated the value: %v", err)
+		}
+		if n := f.writes(); n != 0 {
+			t.Fatalf("%d version(s) written, want none", n)
+		}
+	})
+
+	t.Run("a bundle without the entry is written against the same service", func(t *testing.T) {
+		f, err := write(t, false, "0.18.0")
+		if err != nil {
+			t.Fatalf("writing an ordinary credential into a bundle that holds no entry: %v", err)
+		}
+		if n := f.writes(); n != 1 {
+			t.Fatalf("%d version(s) written, want one", n)
+		}
+		// The document this write leaves is one the old service reads: it holds
+		// no entry the loader would refuse.
+		doc := f.value(t)
+		if ok := bundleHoldsProviderEntry([]byte(doc)); ok {
+			t.Errorf("the written document holds the provider entry:\n%s", doc)
+		}
+		if _, err := credsvc.ParseBundle([]byte(doc)); err != nil {
+			t.Fatalf("the document written is one the loader refuses: %v", err)
+		}
+	})
+
+	t.Run("a service that reads the entry is written", func(t *testing.T) {
+		f, err := write(t, true, providerEntrySince)
+		if err != nil {
+			t.Fatalf("writing an ordinary credential into a bundle holding the entry against a current service: %v", err)
+		}
+		if n := f.writes(); n != 1 {
+			t.Fatalf("%d version(s) written, want one", n)
+		}
+		// The entry this write was not about is kept, and kept readable.
+		b, err := credsvc.ParseBundle([]byte(f.value(t)))
+		if err != nil {
+			t.Fatalf("the document written is one the loader refuses: %v", err)
+		}
+		if _, ok := b.ProviderKey(); !ok {
+			t.Errorf("the entry this write was not about is gone:\n%s", f.value(t))
+		}
+		if !strings.Contains(f.value(t), config.ClaudeOAuthToken+": "+credsValue(t, "replacement")) {
+			t.Errorf("the credential this write was about is not the value read:\n%s", f.value(t))
+		}
+	})
+}
+
 // TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead is the red step:
 // the write of a document carrying the provider entry against a deployed
 // service older than the constant is refused, nothing is written, and the
