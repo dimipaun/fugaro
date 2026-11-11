@@ -4265,8 +4265,8 @@ func launchDetail(w io.Writer, res launchResult) error {
 // recordedLaunch is what a run recorded about its own launch, read without
 // writing anything: launch.json as it stands, or — when the CLI that launched
 // the run died before writing one — the launch the run's own record names,
-// result.json's execution through backend.ParseExecution, which is the
-// backfill existingLaunch stores. staged tells the two apart.
+// result.json's execution through backend.ParseExecution, which is what
+// existingLaunch's backfill is built from. staged tells the two apart.
 //
 // It has two callers and that is the point: the "already launched" check
 // below, and the job a launch continuing this run reuses (project_job.go,
@@ -4332,9 +4332,11 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	// the constant Cloud Run's: a backfilled launch of a run that ran
 	// elsewhere must be recorded as that backend's, or fugaro logs, cancel
 	// and diagnose read the record against the wrong platform's names
-	// (design compute-backend.md §2.5).
-	l.RunID, l.Backend, l.PlanTask = runID, launchBackend(env.be), spec.PlanTask
-	if err := s.WriteLaunch(ctx, l); errors.Is(err, runstore.ErrExists) {
+	// (design compute-backend.md §2.5). The execution and the job are the
+	// run's own record's (recordedLaunch); the run id and the plan task are
+	// this call's, as they are for a fresh launch.
+	backfill := &runstore.Launch{Version: 1, RunID: runID, Backend: launchBackend(env.be), Execution: l.Execution, Job: l.Job, PlanTask: spec.PlanTask, LaunchedAt: l.LaunchedAt}
+	if err := s.WriteLaunch(ctx, backfill); errors.Is(err, runstore.ErrExists) {
 		if l, err = s.ReadLaunch(ctx); err != nil {
 			return nil, remote(err)
 		}
@@ -4342,7 +4344,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	} else if err != nil {
 		return nil, remote(err)
 	}
-	return l, nil
+	return backfill, nil
 }
 
 // catalogDockerAsk answers whether this run needs a Docker daemon because the
