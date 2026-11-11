@@ -11320,9 +11320,11 @@ writing.
 
 **What it depends on.** The deployed read mint — **T2.4** (the service's Terraform) and **T2.5**
 (the read path) — and **T2.6**'s runbook section, which this check executes; the row and the section
-are **T0.2**'s. It is a **sandbox** check: the installation name `belong` is refused before any write
-whether you typed it as `--installation` or the config in force answers it, nothing runs in CI, and
-**no agent runs any step of it**.
+are **T0.2**'s. It is a **sandbox** check: `belong` is refused before any write **by every name it
+arrives under** — the one you typed as `--installation`, and the name **and** the project ID the
+config in force answers with, which is what catches it, since the owner's installation is named
+`belong` in the project `fugaro-belong` and a guard reading only the project ID would pass. Nothing
+runs in CI, and **no agent runs any step of it**.
 
 **Restore.** The script cleans up after itself, including on a Ctrl-C: the scratch directory — which
 holds the whole bundle document while the stop is being made, and every token the drill mints — is

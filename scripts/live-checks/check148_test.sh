@@ -1504,6 +1504,27 @@ test_belong_is_refused() {
 # The name typed and the config in force are two things, and this check writes
 # whatever it is pointed at: a config naming another installation is the same
 # refusal as naming the owner's own.
+# AND THE CONFIG'S OWN NAME, which is the shape that hides a project ID: the
+# owner's installation is named `belong` and its project is `fugaro-belong`, so a
+# guard that read the ID alone passes here — the ID does not start with `belong`
+# — and the drill writes the owner's live bundle four times. Doctor's answer is
+# what has to be refused, and before any write: no cloud tool is reached at all.
+test_a_config_that_names_belong_stops() {
+  setup_case configbelong
+  write_doctor "$dir" "fugaro-belong" "belong"
+  default_args
+  run148 --installation "fugaro-belong"
+  expect_status "$status" 2 "a config naming belong"
+  expect_contains "$out" "FACT aborted: FAIL — " "a config naming belong: the run is aborted"
+  expect_contains "$out" "FACT installation: FAIL — " "a config naming belong: the installation row fails"
+  expect_contains "$out" "name belong, project fugaro-belong" "a config naming belong: the row names what the config answered"
+  expect_contains "$out" "the bundle it is pointed at" "a config naming belong: the row says why it is refused"
+  expect_contains "$(cat "$dir/err")" "never runs against the owner's own installation" "a config naming belong: the guard names it"
+  expect_no_bundle_write "$dir" "a config naming belong"
+  expect_absent "$(cat "$dir/state/calls")" "gcloud" "a config naming belong: no cloud tool was called"
+  assert_no_secret "$dir" "a config naming belong"
+}
+
 test_the_name_and_the_config_have_to_agree() {
   setup_case disagree
   write_doctor "$dir" "$PROJECT_B"
@@ -1768,6 +1789,7 @@ t test_a_refused_baseline_stops
 t test_no_confirmation_is_no_write
 t test_the_typed_confirmation_runs_it
 t test_belong_is_refused
+t test_a_config_that_names_belong_stops
 t test_the_name_and_the_config_have_to_agree
 t test_a_project_without_a_coordinator_job_stops
 t test_two_coordinator_jobs_stop

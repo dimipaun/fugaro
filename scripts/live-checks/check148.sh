@@ -28,10 +28,13 @@
 # Needs:      bash, mktemp, python3, gcloud, fugaro and curl on PATH. Nothing is
 #             installed and nothing is fetched; if one of those is missing the
 #             script stops with one line naming it.
-# Where:      SANDBOX installations only, and never `belong`: the name is
-#             refused, whether you typed it as the installation or the config in
-#             force answers it. It WRITES: the bundle of the installation you
-#             name, four times. It deletes nothing and touches no other project.
+# Where:      SANDBOX installations only, and never `belong`. The name you type
+#             and the name AND the project ID the config in force answers with
+#             are all refused: the owner's own installation is named `belong` and
+#             its project is `fugaro-belong`, so a guard that read only the
+#             project ID would let it through. It WRITES: the bundle of the
+#             installation you name, four times. It deletes nothing and touches
+#             no other project.
 # Costs:      four Secret Manager versions, one disabled, and the read mints
 #             around them. No model call, no run, no image, no Terraform.
 # Runs:       by YOU, after the confirmation line below and one answer at the
@@ -295,20 +298,28 @@ guard_xtrace() {
   fact xtrace PASS "this shell is not tracing, so no trace of this run carries the bundle document or a token"
 }
 
+# is_belong VALUE: whether a name or a project ID is the owner's own
+# installation. `belong` is what that installation is called and `belong-*` is a
+# shape its project IDs have taken, so both are matched — and the comparison is
+# lowercased, because an installation name is not a project ID and nothing stops
+# one being spelled in capitals.
+is_belong() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+  belong | belong-*) return 0 ;;
+  esac
+  return 1
+}
+
 # guard_sandbox: `belong` is the owner's own installation and this check WRITES
 # its bundle, so the name is refused here — before doctor is asked — and doctor's
 # own answer is refused the same way a moment later, because the name you type
 # and the config in force are two things and the check has to see the same one
 # twice.
 guard_sandbox() {
-  local lowered
-  lowered=$(printf '%s' "$INSTALLATION" | tr '[:upper:]' '[:lower:]')
-  case "$lowered" in
-  belong | belong-*)
+  if is_belong "$INSTALLATION"; then
     fact installation FAIL "the installation named is $INSTALLATION, which is the owner's own: Check 148 writes the bundle it is pointed at, and it is a sandbox check"
     stop "Check 148 never runs against 'belong'. Name a sandbox installation: bash scripts/live-checks/check148.sh --installation <sandbox> ..."
-    ;;
-  esac
+  fi
 }
 
 # guard_endpoint NAME VALUE: the two Bitbucket roots this check calls are
@@ -414,6 +425,14 @@ step_installation() {
   PROJECT=$project
   REGION=$region
   NAME=$name
+  # And the config's own answer is refused by name before it is held to anything
+  # else, because the owner's installation is named `belong` in a project whose
+  # ID does not say so (`fugaro-belong`): a guard that read the project ID alone
+  # passes here and writes the owner's live bundle four times.
+  if is_belong "$NAME" || is_belong "$PROJECT"; then
+    fact installation FAIL "the local config in force describes the $NAME installation on project $PROJECT, which is the owner's own: Check 148 writes the bundle it is pointed at, and it is a sandbox check"
+    stop "Check 148 never runs against the owner's own installation (the config in force answers name $NAME, project $PROJECT). Point FUGARO_CONFIG at a sandbox installation's config, or name that installation"
+  fi
   # The name typed is held to the config: a config naming another installation is
   # the same refusal as naming `belong` by hand, because this check WRITES the
   # bundle of whatever it is pointed at and the two have to be the same thing.
