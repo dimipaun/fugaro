@@ -98,6 +98,7 @@ var secretReaderExceptions = []struct {
 	{id: "E19", keys: []string{"internal/infra/apis.go"}},
 	{id: "E20", keys: []string{"internal/infra/tf/cover.go"}},
 	{id: "E21", keys: []string{"internal/managed/stateaccounts.go"}},
+	{id: "E22", keys: []string{"internal/cli/doctor_batch.go"}},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it
