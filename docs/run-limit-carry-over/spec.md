@@ -266,7 +266,12 @@ caches (F17). The writeback does not touch the ledger. Three cases, and the desi
    and halts at once.
 2. **The ledger cannot be read** — the container died between the halt and the release and the node is gone,
    or the read itself fails. The usage is **never zero** (D1049): the run is charged its **full per-run cap**,
-   the most it could have been holding (§4), and a caller's `--used-*` may only raise that charge.
+   the most it could have been holding (§4), and a caller's `--used-*` may only raise that charge. Where the
+   installation sets **no** per-run cap for a dimension there is no figure to charge that run with, and the
+   answer is **not** a refusal either: that dimension is reported **unmeasured**, the launch proceeds, and the
+   chain is charged the sum the read could establish and nothing else (§4). This is the node-gone case the
+   rollover makes ordinary — a run's ledger is deleted eight days after its last share while its record stays
+   (`internal/budget/rollover.go`, `PruneAfter`) — so it is the case an old chain meets on every continuation.
 3. **The halt was the cap itself, mid-call.** This is where the "$5 held, $0.25 needed" message comes from —
    and that message is **not about spend**. It is the per-run cap compared against the lease's **outstanding**
    amount: `run cap %s reached (%s held, %s needed)`, where "held" is `Reserved − Released`

@@ -414,6 +414,50 @@ func TestRunContinuesWithAnUnmeasuredLedgerAndNoCapReportsIt(t *testing.T) {
 	}
 }
 
+// TestRunContinuesChargesWhatAnUnmeasuredDimensionCouldRead: reporting an
+// unmeasured dimension (above) is not the same as forgetting what the read
+// found, and the difference is the charge. The chain is charged **the sum the
+// read could establish** — the runs whose ledgers it did read — so a chain that
+// can still pay hands the continuation what is left of its limit and not the
+// whole limit again (D1052): reading the dimension as nothing is the same hole
+// F14 names for a zero ledger, by the other door.
+//
+// Here the chain limits 900000 tokens, the run that began it holds 500000 in
+// the database and the run in front of it has no ledger node at all — so the
+// dimension is unmeasured, the launch proceeds, and what it may spend is 400000.
+func TestRunContinuesChargesWhatAnUnmeasuredDimensionCouldRead(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	limitsImage(t, f.cloudFixture)
+	limitsCheckout(t)
+	root, tip := chainRun, wallRunIDAt(1, "090000", "f6f6")
+	limit := int64(900_000)
+	seedChainRun(t, f.cloudFixture, root, chainSpent, task.Overrides{MaxTokens: &limit})
+	// The run in front of it carries the link and no PR, and its own ledger node
+	// is the one the database lacks — the rollover's own case.
+	seedSpec(t, f.cloudFixture, firstRunSpec(tip), false)
+	rec := prRecord(tip, "", 0, chainSpent)
+	rec.Branch, rec.PR = "fugaro/"+root, nil
+	rec.FollowUp = &runstore.FollowUp{PreviousRun: root}
+	writeRecord(t, f.cloudFixture, tip, rec)
+	// The root's ledger is readable and holds 500000 tokens, and no per-run token
+	// cap is set: the dimension the absent node leaves is reported rather than
+	// charged a cap, and the figure the read did establish is what the chain owes.
+	f.db.Set(budget.PathRun(appSlug, root), budget.RunLedger{Tokens: 500_000})
+	_, errOut, err := execute(t, "run", "--repo", limitsRepo, "--continues", tip, "--run-id", chainFu, "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := chainTask(t, f.cloudFixture, chainFu).Overrides; o.MaxTokens == nil || *o.MaxTokens != 400_000 {
+		t.Fatalf("overrides = %+v, want the 400000 tokens left over the 500000 the read could establish — not the chain's whole 900000 again", o)
+	}
+	if !strings.Contains(errOut, "does not measure its token") || !strings.Contains(errOut, "500000 tokens") {
+		t.Fatalf("stderr = %q, want the unmeasured-dimension note to name the figure the read could establish", errOut)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the continuation launched", n)
+	}
+}
+
 // TestRunContinuesWithAPerRunTokenCapChargedTheCap: the same chain with the
 // installation's own per-run cap set, which is the figure D1049 charges an
 // unreadable ledger instead of leaving the dimension unmeasured. The chain is
