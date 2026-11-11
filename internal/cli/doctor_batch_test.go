@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // The Batch half of `fugaro doctor` (plan 2026-10-19-compute-backend.md Task 8
@@ -818,6 +819,91 @@ func TestDoctorBatchSkipsAreNeverPasses(t *testing.T) {
 		if c.OK || c.Severity != "info" || !strings.Contains(c.Problem, "not checked") {
 			t.Errorf("%s = %+v, want an info line that says it was not checked: nothing was read", id, c)
 		}
+	}
+}
+
+// TestDoctorBatchRefusesAMintingInstallation is design §1.6's pair, read at
+// the gate: an installation that mints budget tokens cannot launch any run on
+// Batch at all, because every launch carries the budget token's seal key in an
+// environment entry the backend's job definition refuses -- after the token was
+// minted and dropped. Reading the pair here is what the design asks for (an
+// early refusal rather than jobs.create's doorstep), and Task 10 is the enable
+// that made it reachable.
+//
+// The check asks budgetMintOn, the function a launch decides with, so these
+// three configs are the three states of its own answer: a mode that is not off
+// with a database and a signer (mints, and no policy is read), a mode that is
+// off with nothing published (does not mint), and a mode that is off with a
+// published policy (mints -- the arm a config alone cannot answer, and the
+// reason the check reads the node at all).
+//
+// Mutation (drop the check from doctorBatchChecks): the two minting cases read
+// as absent, and every "doctor reports no batch-budget-seal check" assertion
+// fails. Mutation (ask the config arm alone -- budgetBackendOn without the
+// policy read): the published-policy case stops being refused.
+func TestDoctorBatchRefusesAMintingInstallation(t *testing.T) {
+	// budgetYAML is one installation's budget block, with a database of its own
+	// per case: a policy published for one case must not be found by another.
+	budgetYAML := func(t *testing.T, mode string, publish bool) string {
+		t.Helper()
+		db := gcpfake.NewRTDB(t)
+		if publish {
+			db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+			db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version})
+		}
+		return "budget: { mode: " + mode + ", per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + db.URL + ", token_signer: " + testSigner + " }\n"
+	}
+	for _, tc := range []struct {
+		name    string
+		mode    string
+		publish bool
+		mints   bool
+	}{
+		{name: "a budget mode that mints", mode: "enforce", mints: true},
+		{name: "a budget mode that is off with nothing published", mode: "off"},
+		{name: "a budget mode that is off with a published policy", mode: "off", publish: true, mints: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			batchProvisioned(t, r, f)
+			r.withBatchSelected(t, f, batchBlock, batchLists+budgetYAML(t, tc.mode, tc.publish))
+			o := r.runDoctorJSON(t)
+			c, ok := doctorCheckByID(o.Checks, "batch-budget-seal")
+			if !ok {
+				t.Fatalf("doctor reports no batch-budget-seal check for an installation that selects the backend")
+			}
+			if !tc.mints {
+				if !c.OK {
+					t.Fatalf("an installation that does not mint is refused by the pair check: %+v", c)
+				}
+				return
+			}
+			if c.OK {
+				t.Fatalf("an installation that mints and selects the backend reads ok: %+v", c)
+			}
+			if c.Severity != "" {
+				t.Errorf("the pair has severity %q, want doctor's own hard failure: an installation that selects the backend is refused for it", c.Severity)
+			}
+			for _, want := range []string{"mints budget tokens", "docs/design/budget-token-channel.md", "§1.6"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("the finding does not name %q: %s", want, c.Problem)
+				}
+			}
+			// The repair is the installation's own answer, and it is the one
+			// thing provisioning cannot change: this backend stays unselected.
+			for _, want := range []string{"cloud-run", "Task 14"} {
+				if !strings.Contains(c.Fix, want) {
+					t.Errorf("the fix does not name %q: %s", want, c.Fix)
+				}
+			}
+			if !o.OK {
+				// The gate itself: doctor refuses the installation, not merely
+				// one of its lines.
+				if len(failingChecks(o)) == 0 {
+					t.Errorf("doctor is refused with no hard failure to name: %+v", o.Checks)
+				}
+			}
+		})
 	}
 }
 

@@ -692,10 +692,13 @@ that names a budget database with budget mode on, or a published policy, a
 signer being required in both cases — and an installation
 has one backend, so such a project gets **every** launch refused, after the
 token was minted and dropped, and has to stay on `backend: cloud-run`. There is
-no per-run fallback: the refusal is at `jobs.create`'s doorstep, not in
-`fugaro validate`, and a `doctor`/`validate` check for the pair (a minting
-installation selecting `cloud-batch`) is a **Task 10 condition** rather than
-something this task builds.
+no per-run fallback: the refusal is at `jobs.create`'s doorstep, and the pair —
+a minting installation selecting `cloud-batch` — is refused early as well, by
+`fugaro validate`'s offline arm (the budget backend's own switch,
+`internal/cli/validate_batch.go`) and by `fugaro doctor`'s `batch-budget-seal`
+check, which asks `budgetMintOn` itself so a published policy counts too
+(`internal/cli/doctor_batch.go`). Both were a **Task 10 condition**, and Task
+10 — the task that enabled the name — built them.
 
 - The VM (Batch-created) runs as a service account; omit the field and it is
   the default Compute Engine service account, set it and it is the one named
@@ -4359,7 +4362,16 @@ senior reviewer before merge, not just the normal one.
    the sink and its exclusion, the price table, the launcher's conditioned
    `jobsEditor`, the run accounts' `serviceAccountUser`, the job account's
    `agentReporter` and `logWriter`, and the reaper's account, its five
-   permissions and its invocation. **The propagation hazard is handled where
+   permissions and its invocation. **One check on that list is not Task 8's
+   but this task's own, and §1.6 is why**: the seal's pair —
+   `batch-budget-seal`, an installation that mints budget tokens
+   (`budgetMintOn`) and whose config selects the backend — is refused by name
+   here, because every launch of such an installation is refused at
+   `jobs.create`'s doorstep and the gate is the last place an operator can be
+   told before paying for one, and `fugaro validate`'s offline arm
+   (`batchValidateProblems`, on the budget backend's own switch) refuses the
+   half a config alone answers, without a cloud read.
+   **The propagation hazard is handled where
    it is met**: `internal/infra/compute.go`'s `propagating` is the predicate a
    binding read answers through, and the check's message says the binding is
    propagating rather than sending the operator to re-provision. **The

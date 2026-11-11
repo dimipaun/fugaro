@@ -85,6 +85,14 @@ import (
 //     pull-through repository of the project serves whatever its upstream's
 //     owner published, so a job image out of one is a stranger's code running
 //     as the installation's own run account.
+//   - The seal's pair (design §1.6, Task 14, the owner's answer P1): an
+//     installation that mints budget tokens cannot launch a run on Batch at
+//     all -- a launch carries the budget token's seal key in an environment
+//     entry and a Batch job's variables are the job's own definition -- so
+//     this is the last place an operator is told before paying for a launch
+//     that is refused at create. It is here rather than in validate alone
+//     because minting has a published-policy half no config answers; validate
+//     refuses the half a config alone decides, offline.
 //
 // A read that cannot be made is a warning that says so and never a pass (the
 // same rule doctor's other cloud checks follow), and a test configuration
@@ -120,6 +128,10 @@ func doctorBatchChecks(ctx context.Context, lc *localcfg.Config, c *crm.Service)
 			"provision the backend (fugaro setup --provision-batch in "+lc.GCPProject+"), which writes the block and applies the compute root, then rerun fugaro doctor")}
 	}
 	var out []doctorCheck
+	// The seal's pair is read first: it is the one finding on this path that no
+	// apply clears, so an operator who has it reads it before the provisioning
+	// below rather than after it.
+	out = append(out, doctorBatchBudgetSeal(ctx, lc)...)
 	out = append(out, doctorBatchAPIs(ctx, lc)...)
 	out = append(out, doctorBatchJobDefinition(lc))
 	out = append(out, doctorBatchCost(lc))
@@ -180,6 +192,52 @@ func doctorBatchArtifactBoundary() doctorCheck {
 	return doctorCheck{ID: "batch-artifact-boundary", Severity: "info",
 		Problem: "an artifact-producing run is never launched on cloud-batch (docs/design/artifact-runs.md §8.5 and D11): a Batch run's account is not per-repository, so the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile. fugaro validate refuses `artifacts:` with `backend: cloud-batch`, and a launch naming an artifact recipe is refused by the launch's own gate",
 		Fix:     "keep artifact-producing recipes on backend: cloud-run. This is the boundary a later plan removes, with the per-run prefix condition or the per-run account it is waiting for (plan 2026-10-19-compute-backend.md, Global Constraint 13)"}
+}
+
+// doctorBatchBudgetSeal is the pair no provisioning clears: an installation
+// that mints budget tokens and selects `backend: cloud-batch`.
+//
+// Every launch of an installation that mints carries the budget token's seal
+// key, and internal/backend/batch's jobDefinition refuses a launch carrying
+// that environment entry before the job is created: a Batch job's `variables`
+// are the job's definition -- a standing copy readable by every launcher the
+// IAM Condition admits and by the reaper -- so the key has no carrier on this
+// backend and the refusal is the owner's answer rather than a gap
+// (docs/design/budget-token-channel.md, "The Batch backend refuses a sealed
+// launch"; plan 2026-10-19-compute-backend.md Task 14 and P1). Minting is the
+// installation's and an installation has one backend, so there is no per-run
+// fallback: the whole installation stays on cloud-run.
+//
+// The design asks for this check by name -- the pair read at the gate rather
+// than met at jobs.create's doorstep, after a token was minted and dropped --
+// and Task 10 is the enable that made the pair reachable at all, since a name
+// nothing selects cannot be minting on this backend
+// (docs/design/compute-backend.md §1.6, §8.1 task 9).
+//
+// The minting question is budgetMintOn's, the same function a launch decides
+// with: a gate that mints where a launch does not, or the other way round,
+// would be a check disagreeing with the runs it is about. It is asked only of a
+// config that selects the backend -- an installation that mints and runs on
+// cloud-run has no such pair, and this check reads nothing for it.
+func doctorBatchBudgetSeal(ctx context.Context, lc *localcfg.Config) []doctorCheck {
+	const id = "batch-budget-seal"
+	if lc.Backend() != backend.CloudBatch {
+		return nil
+	}
+	mints, err := (&cloudEnv{lc: lc}).budgetMintOn(ctx)
+	if mints {
+		return []doctorCheck{batchProblem(lc, id,
+			"this installation mints budget tokens -- a budget database with a mode that is not off and a signer, or a published policy -- and its project config selects backend: cloud-batch (docs/design/compute-backend.md §1.6), so every launch of it is refused before the job is created. A launch carries the budget token's seal key in an environment entry, and a Batch job has no carrier for one: its variables are the job's definition, a standing copy readable by every launcher the IAM Condition admits and by the reaper (docs/design/budget-token-channel.md, \"The Batch backend refuses a sealed launch\"). Minting is the installation's, not a run's, so there is no per-run fallback and no budget-off run here",
+			"keep this installation on backend: cloud-run, or stop minting on it (drop the published policy and the budget mode): the seal's carrier is a documented limit rather than something this installation can provision around (plan 2026-10-19-compute-backend.md Task 14, P1)")}
+	}
+	if err != nil {
+		// The read a config alone cannot answer was attempted and failed: never
+		// a pass, which is the rule every cloud check here follows. The mode
+		// arm above has already answered what a config alone decides, so what
+		// reaches here is the policy read.
+		return []doctorCheck{batchUnchecked(id, "whether this installation mints budget tokens", batchReadFix, err, lc)}
+	}
+	return []doctorCheck{{ID: id, OK: true}}
 }
 
 // batchUnchecked is a read that could not be made, in the shape every cloud

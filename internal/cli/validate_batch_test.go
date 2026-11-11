@@ -93,6 +93,52 @@ workflows:
     timeouts: { total: 30m }
 `
 
+// TestValidateRefusesAMintingInstallationOnCloudBatch is design §1.6's pair on
+// validate's offline arm: an installation whose budget backend is on mints a
+// token for every launch, and a Batch job has no carrier for the token's seal
+// key, so the whole installation is refused here rather than at jobs.create's
+// doorstep. The other arm of the pair -- a published policy with the mode off --
+// needs a read validate does not make, and `fugaro doctor` is where it is
+// answered (TestDoctorBatchRefusesAMintingInstallation).
+//
+// Mutation (drop the arm): a minting installation that selects the backend
+// validates clean, and the operator meets the refusal after a token was minted
+// and dropped. Mutation (fire for every installation): the cloud-run cases and
+// the budget-off case below fail.
+func TestValidateRefusesAMintingInstallationOnCloudBatch(t *testing.T) {
+	cfg := batchValidateConfig(t, batchValidateYAML)
+	minting := func(t *testing.T, backendName, mode string) *localcfg.Config {
+		t.Helper()
+		lc := batchValidateRig(t, "e2-standard-4", backendName)
+		lc.Budget = &localcfg.Budget{Mode: mode, RTDBURL: "https://example.invalid/"}
+		return lc
+	}
+	rcp := &recipe.Recipe{Name: "impl", Mode: recipe.ModeImplement}
+
+	for _, mode := range []string{"observe", "enforce"} {
+		ps := batchValidateProblems(minting(t, backend.CloudBatch, mode), cfg, rcp)
+		if len(ps) != 1 {
+			t.Fatalf("a mode: %s minting installation on cloud-batch = %v, want the one pair refusal", mode, ps)
+		}
+		if ps[0].Path != "backend" {
+			t.Errorf("the refusal is at %q, want backend: the fix is the backend the installation selects", ps[0].Path)
+		}
+		for _, want := range []string{"docs/design/budget-token-channel.md", "§1.6", "cloud-run", "seal"} {
+			if !strings.Contains(ps[0].Message, want) {
+				t.Errorf("the refusal does not name %q: %s", want, ps[0].Message)
+			}
+		}
+	}
+	// The pair is the minting installation's: a budget backend that is off, and
+	// the same minting configuration on cloud-run, are both left alone.
+	if ps := batchValidateProblems(minting(t, backend.CloudBatch, "off"), cfg, rcp); len(ps) != 0 {
+		t.Errorf("an installation whose budget backend is off is refused on cloud-batch: %v", ps)
+	}
+	if ps := batchValidateProblems(minting(t, backend.CloudRun, "enforce"), cfg, rcp); len(ps) != 0 {
+		t.Errorf("a minting installation on cloud-run is refused by the Batch check: %v", ps)
+	}
+}
+
 // TestValidateRefusesAnArtifactRunOnCloudBatch is Global Constraint 13's
 // boundary, and the reason step 4 exists: an artifact-producing run stays on
 // the per-repository Cloud Run backend until a per-run prefix condition or a

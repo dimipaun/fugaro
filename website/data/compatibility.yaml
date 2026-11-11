@@ -173,7 +173,7 @@ groups:
         evidence: "internal/backend/gcp"
       - name: "VM / Cloud Batch"
         status: built-not-enabled
-        note: "Built behind the backend seam; the configuration validation still refuses the cloud-batch setting, so a run cannot select it."
+        note: "Built behind the backend seam, and opt-in per installation: the project config accepts cloud-batch as a known name, and what refuses an installation that selects it is fugaro doctor, which fails until the backend's own checks pass."
         evidence: "internal/backend/batch"
   - id: forges
     title: "Forges"
