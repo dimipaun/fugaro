@@ -2339,8 +2339,11 @@ func TestUpdateFirebaseProjectKeepsItsOwnConfirmationOnAManagedProject(t *testin
 		t.Errorf("the run wrote %d audit record(s), want none: the run that plans this binding has no gate, so the managed cover never saw the plan and did not refuse it", len(recs))
 	}
 	// The coding agent's own refusal, the command the owner is left with, and no
-	// apply of that root: the step is the member's owner's to take.
-	if !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
+	// apply of that root: the step is the member's owner's to take. The step's
+	// line in the run's list is truncated (the whole sentence is in the log the
+	// line prints the path of), so what is matched is the opening clause that
+	// line always carries — initflow.AgentRefusal's first words.
+	if !strings.Contains(got, "a coding agent's session is present") {
 		t.Errorf("the session does not read the refusal a step it cannot confirm is left with:\n%s", got)
 	}
 	if strings.Contains(got, "no confirmation reaches past a refusal (D1012)") {
