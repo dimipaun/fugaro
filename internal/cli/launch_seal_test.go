@@ -25,6 +25,13 @@ import (
 // not refused by the seal's image gate.
 const releaseSeal = "ghcr.io/dimipaun/fugaro-base:" + sealSince
 
+// releaseSealAndPair is releaseSeal for a fixture that is also launched with a
+// pair registered: a runner at or past abSince decodes the ab block both arms'
+// tasks carry (pairImageWhy), which the seal's own release predates. The two
+// gates judge the same image from different releases, and the later one is the
+// whole of what the fixture's build record has to satisfy.
+const releaseSealAndPair = "ghcr.io/dimipaun/fugaro-base:" + abSince
+
 // markerKey is the seal key a launch handed its execution: the marker's value,
 // strictly parsed. A launch that minted and handed anything else is a failure.
 func markerKey(t *testing.T, env map[string]string) []byte {

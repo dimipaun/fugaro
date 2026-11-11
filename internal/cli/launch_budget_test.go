@@ -55,9 +55,11 @@ func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 	f.db.Set("config/caps/global", map[string]any{"dailyMicros": 100 * usd1, "perRunMicros": 10 * usd1})
 	f.db.Set("config/caps/defaults", map[string]any{"repoDailyMicros": 50 * usd1, "repoPerRunMicros": 5 * usd1})
 	f.db.Set("config/limits", map[string]any{"maxReserveMicros": 5 * usd1})
-	// The job image's runner reads the sealed token: a launch that mints is
-	// judged against it (the seal gate, sealSince).
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSeal)
+	// The job image's runner reads the sealed token and decodes a task's ab
+	// block: a launch that mints is judged against the seal gate (sealSince),
+	// and a sampled pair's task is one only a runner at or past abSince takes
+	// (pairImageWhy, which drops the pair rather than the launch).
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSealAndPair)
 	return f
 }
 

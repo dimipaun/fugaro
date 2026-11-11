@@ -1045,15 +1045,6 @@ func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string,
 		pairSkip(warn, why)
 		return nil, why
 	}
-	// The pair's own image gate, before anything of the pair is written: a
-	// runner older than the ab field refuses the whole task at bootstrap
-	// (task.Parse decodes with DisallowUnknownFields), so a pair written onto
-	// such an image would cost the champion the run it was launched for. A
-	// pair is dropped, the launch is not (D554, pairImageWhy).
-	if why := pairImageWhy(ctx, env, slug, run.Spec); why != "" {
-		pairSkip(warn, why)
-		return nil, why
-	}
 	// A launch that attaches files samples nothing. An --attach launch uploads
 	// them under its own run's prefix and a mode: artifact run downloads them
 	// from there (runstore.InputKey), so the challenger — a run id of its own —
@@ -1102,6 +1093,16 @@ func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string,
 	}
 	if pair.Challenger.RunID == spec.RunID {
 		why := "the challenger carries the champion's own run id"
+		pairSkip(warn, why)
+		return nil, why
+	}
+	// The pair's own image gate, after the checks that judge the pair's shape
+	// and before the two that read the cloud for room and for money: a runner
+	// older than the ab field refuses the whole task at bootstrap (task.Parse
+	// decodes with DisallowUnknownFields), so a pair written onto such an image
+	// would cost the champion the run it was launched for. A pair is dropped,
+	// the launch is not (D554, pairImageWhy).
+	if why := pairImageWhy(ctx, env, slug, run.Spec); why != "" {
 		pairSkip(warn, why)
 		return nil, why
 	}

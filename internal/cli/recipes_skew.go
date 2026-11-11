@@ -1249,19 +1249,20 @@ const abSince = "0.14.0"
 // job runs the installation's base image itself and a derived one runs the
 // binary of the base its build record was built FROM. This is asked before
 // the gates that resolve a workflow, so neither judge is known to be the
-// job's and both are asked — and, unlike there, an image neither judge can
-// show a release for drops the pair: no release to read is no proof the image
-// reads the block, which is what this gate needs.
+// job's and both are asked — either one predating drops the pair.
+//
+// An image neither judge can show a release for is one no judge here can date
+// (a development build, a hand-pushed image), and it is sampled on: dropping
+// the pair there would take the feature off every installation built from
+// source, and what that would buy back — a development image whose runner
+// predates the block — is a build from a checkout older than the release that
+// writes pairs.
 func pairImageWhy(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) string {
-	base, baseKnown := releaseOf(env.lc.BaseImage(config.BaseKind))
-	record, recordKnown := recordBaseRelease(ctx, env, slug, spec)
-	if !baseKnown && !recordKnown {
+	predates := func(rel string, known bool) bool { return known && imagePredates(rel, abSince) }
+	if rel, known := releaseOf(env.lc.BaseImage(config.BaseKind)); predates(rel, known) {
 		return pairOldImage
 	}
-	if baseKnown && imagePredates(base, abSince) {
-		return pairOldImage
-	}
-	if recordKnown && imagePredates(record, abSince) {
+	if rel, known := recordBaseRelease(ctx, env, slug, spec); predates(rel, known) {
 		return pairOldImage
 	}
 	return ""
