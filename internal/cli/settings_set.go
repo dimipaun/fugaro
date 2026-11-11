@@ -243,6 +243,16 @@ var settingsGenericKeys = map[string]bool{
 	"layer.ab":                               true,
 	"layer.profiles.*.commands.rerun_failed": true,
 	"layer.profiles.*.cache":                 true,
+	// The four members of a repository's entry a person writes (G10, D1173):
+	// a map of scalars and one list, which is the shape §2 reaches, so they are
+	// this path's rather than `fugaro project repos set`'s. The two members of
+	// that entry `fugaro update` records — vertex and
+	// credentials_service_ready — are NOT here and keep the `project` owner in
+	// the registry: a person writes no record of what a run applied.
+	"repos.*.provider":      true,
+	"repos.*.base_branch":   true,
+	"repos.*.workflows":     true,
+	"repos.*.github_app_id": true,
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
@@ -555,14 +565,14 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 // spelling is what the allowlist and the row's own sentences name.
 //
 // Only a wildcard row the allowlist carries is matched, which is how
-// `stages.*.claude_account` and the blocks D1161 hands this path — a
-// repository's `workflows.*.*` and the project layer's `profiles.*.*` — are
-// reachable at all. The registry's other wildcard rows — the project family's
-// `repos.*.*`, the models family's `providers.*.*` and `model_prices.*.*`, the
-// rigor family's `layer.defaults.rigor.areas.*.*` and the accounts family's
-// `claude_accounts.*.allow_data_to` — are other paths' keys: matching one would
-// hand back a row this command does not write, and the refusal a person gets
-// should be the one about the name, not a row that was never theirs.
+// `stages.*.claude_account`, the D1161 blocks (`workflows.*.*`, `profiles.*.*`)
+// and the four `repos.*` members a person writes (D1173) are reachable at all.
+// The registry's other wildcard rows — the models family's `providers.*.*` and
+// `model_prices.*.*`, the rigor family's `layer.defaults.rigor.areas.*.*`, the
+// accounts family's `claude_accounts.*.allow_data_to` and a run's own records
+// (`repos.*.vertex`, `repos.*.credentials_service_ready`) — are other paths'
+// keys: matching one would hand back a row this command does not write, and the
+// refusal a person gets should be about the name, not a row never theirs.
 func settingsWriteLookup(key string) (settings.Row, string, bool) {
 	if row, found := settings.Lookup(key); found {
 		return row, key, true

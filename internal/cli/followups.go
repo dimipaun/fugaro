@@ -238,7 +238,7 @@ func runFollowUps(cmd *cobra.Command, o cloudOptions, ref string, launch bool, m
 			if err != nil {
 				return err
 			}
-			res, err := finishLaunch(ctx, env, &runOptions{}, slug, spec, false, warn, false)
+			res, err := finishLaunch(ctx, env, &runOptions{}, slug, spec, false, false, warn, false)
 			if err != nil {
 				// The tasks before this one are filed and running: say so
 				// before the refusal reaches the caller, because the way on is

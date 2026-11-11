@@ -172,7 +172,7 @@ const (
 // list does not.
 const (
 	cfmRegistryRows   = 409
-	cfmAllowlistNamed = 97
+	cfmAllowlistNamed = 101
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

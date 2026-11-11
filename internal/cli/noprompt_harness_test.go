@@ -448,6 +448,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro project policy publish": "refuses before its ask: the deployed rules here carry no policy marker",
 	"fugaro project policy show":    "prints that this installation has published no policy",
 	"fugaro project repos ls":       "prints the no-project-config refusal",
+	"fugaro project repos set":      "prints the no-project-config refusal: this world selects no project, and the selection is read before either of the command's two shapes is",
 	"fugaro project show":           "prints the no-project-config refusal",
 	"fugaro project sync":           "refuses before its write: the deployed rules this world serves carry no policy marker",
 	"fugaro reaper":                 "prints the no-project-config refusal",

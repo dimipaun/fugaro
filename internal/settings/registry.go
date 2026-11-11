@@ -1020,10 +1020,23 @@ var localRows = []Row{
 	// the classes' two ends are the two answers an absent key can take).
 	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "project policy", docOrchestrator),
 
-	loc("repos.*.provider", "none", "project", docSetup),
-	loc("repos.*.base_branch", "the project's base_branch", "project", docSetup),
-	loc("repos.*.workflows", "every workflow the repository defines", "project", docSetup),
-	loc("repos.*.github_app_id", "none", "project", docSetup),
+	// The four members of a repository's entry a PERSON writes are the generic
+	// writer's (D1173, docs/config-management/spec.md §3.4): they are a map of
+	// scalars and one list, which is what `fugaro settings set
+	// repos.<owner/name>.<key>` writes, and the key's own name is the entry's —
+	// the shape a bare scalar cannot express (a whole `workflows` selection) is
+	// `fugaro project repos set`'s and is not a reason to give these four a
+	// second path. They are listed in the generic allowlist beside them
+	// (settingsGenericKeys), because an owner string is not an admission.
+	//
+	// vertex and credentials_service_ready below keep the `project` owner and
+	// are NOT in that allowlist: they are not a person's settings at all — a
+	// run records what it read and applied (this file's row comments) — so the
+	// generic path's refusal is the right answer for them.
+	loc("repos.*.provider", "none", "config", docSetup),
+	loc("repos.*.base_branch", "the project's base_branch", "config", docSetup),
+	loc("repos.*.workflows", "every workflow the repository defines", "config", docSetup),
+	loc("repos.*.github_app_id", "none", "config", docSetup),
 	loc("repos.*.vertex", "false", "project", docSetup),
 	// The credentials service's switch, as `fugaro update` recorded it:
 	// written from the bundle it read AND the agent.auth the plan was built
