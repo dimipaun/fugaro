@@ -1204,16 +1204,16 @@ its own confirmation. No other step is asked of an operator (HARD RULE).
 | D504 | B1.5 (G8); B1.10 (and the cancel window) |
 | D505 | B1.7 (per-repository only); S5 (B5.1–B5.9) |
 | D506 | B1.2; B1.12 step 2 |
-| D2070 (open) | B2.1 |
-| D2071 (open) | B2.2, B2.3 |
-| D2072 (open) | B2.3, B2.7 |
-| D2073 (open) | B3.1 |
-| D2074 (open) | B3.3 |
-| D2075 (open) | B3.5 (E5's exit) |
-| D2076, D2077 (open) | B4.3 |
-| D2078 (open) | B5.1 |
-| D2079 (open) | docs/bitbucket-workspace-token's T2.2, after B5.3 and B5.7 |
-| D2080 (open) | The order of S2–S5 and the critical path of "Later slices, planned 2026-11-10" |
+| D2070 (answered 2026-11-10, as recommended) | B2.1 |
+| D2071 (answered 2026-11-10, as recommended) | B2.2, B2.3 |
+| D2072 (answered 2026-11-10, as recommended) | B2.3, B2.7 |
+| D2073 (answered 2026-11-10, as recommended) | B3.1 |
+| D2074 (answered 2026-11-10, as recommended) | B3.3 |
+| D2075 (answered 2026-11-10, as recommended) | B3.5 (E5's exit) |
+| D2076, D2077 (answered 2026-11-10, as recommended) | B4.3 |
+| D2078 (answered 2026-11-10, as recommended) | B5.1 |
+| D2079 (answered 2026-11-10, as recommended) | docs/bitbucket-workspace-token's T2.2, after B5.3 and B5.7 |
+| D2080 (answered 2026-11-10, as recommended) | The order of S2–S5 and the critical path of "Later slices, planned 2026-11-10" |
 
 ## Parallel execution
 
