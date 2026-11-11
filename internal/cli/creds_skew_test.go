@@ -486,11 +486,13 @@ func TestCredsSetIsUnaffectedByAnInstallationWithNoService(t *testing.T) {
 }
 
 // TestProviderEntrySinceHasAReleaseBullet: providerEntrySince names the
-// release whose credentials service reads the provider entry, which is not
-// tagged when this constant lands, so docs/release.md's Before-you-tag list is
-// what holds the constant to the release actually cut — the job every other
-// *Since constant's bullet does. A release that first shipped the entry
-// earlier would otherwise keep refusing writes its own service reads.
+// release whose credentials service first read the provider entry, and the tag
+// that shipped it is a fact about the past rather than a slot to fill, so
+// docs/release.md's Before-you-tag list is what holds the constant to that
+// release and to the direction that matters — a raise. A value above it refuses
+// the write on installations whose deployed service already reads the entry,
+// which is every installation on the release that shipped it, and the
+// refusal's own remedy (`fugaro update`) would change nothing for them.
 func TestProviderEntrySinceHasAReleaseBullet(t *testing.T) {
 	var bullet string
 	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
@@ -505,7 +507,7 @@ func TestProviderEntrySinceHasAReleaseBullet(t *testing.T) {
 	if !strings.Contains(bullet, "currently `\""+providerEntrySince+"\"`") {
 		t.Errorf("docs/release.md's providerEntrySince bullet does not carry the constant's release (%q)", providerEntrySince)
 	}
-	for _, want := range []string{config.ProviderKeySecret, "not tagged yet", "fugaro creds set"} {
+	for _, want := range []string{config.ProviderKeySecret, "the release that shipped the entry", "fugaro creds set", "must not raise it"} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's providerEntrySince bullet does not say %q", want)
 		}

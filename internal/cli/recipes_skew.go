@@ -562,10 +562,15 @@ const reviewAdmissionSince = "0.21.0"
 // the write instead of warning about it — the alternative is a write that
 // halts every caller of the service.
 //
-// It names 0.23.0 ("Tapir", the CLI minor after the tagged 0.22.0), which is
-// not tagged yet: docs/release.md's ("Before you tag") list verifies the
-// number against the release whose service was built with the entry's reader.
-const providerEntrySince = "0.23.0"
+// It names 0.22.0, the release AK6b's own commit (`26e72426`, #2172) went out
+// in and therefore the first release whose credentials service was built with
+// the entry's reader: the constant is the tag that shipped it and not the
+// release this guard is written in, and a release that raised it would refuse
+// the write on installations whose deployed service already reads the entry —
+// which is every installation on that release, and `fugaro update` would be no
+// remedy for them. docs/release.md's ("Before you tag") list carries that
+// reading.
+const providerEntrySince = "0.22.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
