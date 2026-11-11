@@ -771,6 +771,7 @@ var localRows = []Row{
 	loc("model_prices.*.cache_write_1h", "the built-in price", "models", docModels),
 	loc("model_prices.*.cache_read", "the built-in price", "models", docModels),
 	loc("model_prices.*.web_search_per_1k", "the built-in price", "models", docModels),
+	loc("model_prices.*.image_tokens", "the built-in price", "models", docModels),
 	loc("model_prices.*.long_context.above_input_tokens", "the built-in price", "models", docModels),
 	loc("model_prices.*.long_context.input_per_m", "the built-in price", "models", docModels),
 	loc("model_prices.*.long_context.output_per_m", "the built-in price", "models", docModels),

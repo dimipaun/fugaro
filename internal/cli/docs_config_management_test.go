@@ -134,8 +134,14 @@ const (
 // project-layer key `defaults.agent.models.vision` are both the `models`
 // family's, and a row claiming a family is refused before the allowlist is
 // asked — the same shape as the two rows above it.
+//
+// The image rate (docs/vision-model, V2) moved it by one more, and this one
+// did move the gap: `model_prices.*.image_tokens` belongs to the `models`
+// family and so is refused by a family command like the rows above, but the
+// block it sits in is a wildcard block no prefix reaches either, so it is one
+// of the rows with no generic writer — 225 of them now, not 224.
 const (
-	cfmRegistryRows   = 400
+	cfmRegistryRows   = 401
 	cfmAllowlistNamed = 96
 )
 

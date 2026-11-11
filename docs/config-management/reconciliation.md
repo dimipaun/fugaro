@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 400 rows and the generic writer carries 176 of them.** 96 by name
+- **F1 — the registry is 401 rows and the generic writer carries 176 of them.** 96 by name
   (`internal/cli/settings_set.go:96`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -34,7 +34,7 @@ what the guard at the end of this section re-runs.
   does not carry them — and 80 through the nine prefixes
   (`internal/cli/settings_set.go:241`: `agent.`, `git.`, `followup.`, `governance.`, `watch.`,
   `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`): 13 + 7 + 2 + 1 + 37 + 36 = 96.
-  **224 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **225 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
   and the bake switch above is — and it moved again by the stop rule's two rows,
@@ -46,9 +46,12 @@ what the guard at the end of this section re-runs.
   `agent.` prefix reaches — and the switch's own carrier in the local project config, the top-level
   `triage` the publisher copies into the policy node (D1854), is a third row: its owner is the
   `project` family and not the generic path, so it widens this figure and not the allowlist's. The
-  vision slot (docs/vision-model, V1) added the last two: `agent.models.vision` in `fugaro.yaml` and
+  vision slot (docs/vision-model, V1) added two more: `agent.models.vision` in `fugaro.yaml` and
   its project-layer key `defaults.agent.models.vision`, both owned by the `models` family, so the
-  registry is two rows wider and this count has not moved. A key
+  registry is two rows wider and this count has not moved. The image rate (docs/vision-model, V2)
+  added one on top of them — `model_prices.*.image_tokens`, the member that prices a provider's
+  images — and it is the first row of that block no prefix and no name in this list reaches, so the
+  registry is one row wider still and the rows without a generic writer are 225 rather than 224. A key
   the registry carries and this list does not is
   refused by `settings set` whatever it is, and a row claiming a family is pointed at that command
   before this list is asked, so the figures are the allowlist's own and move only when it moves.
