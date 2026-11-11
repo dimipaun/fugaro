@@ -46,7 +46,7 @@
 // and there is no second name to keep in step. `projects()` is the one place
 // that mapping is written.
 
-import { COMMAND, ROUTE, foldSpokenName, routeUtterance } from '../../../shared/command/index.js';
+import { COMMAND, MAX_ENTRIES, REFUSAL, ROUTE, foldSpokenName, routeUtterance } from '../../../shared/command/index.js';
 
 /** How this module refuses. Every code here is about the *switcher's* own
  * inputs: the router's refusals and the store's are carried unchanged, because
@@ -59,7 +59,11 @@ export const SWITCH_CODES = Object.freeze({
   /** Two held labels that the voice router folds into one name. It is the
    * router's own code string for the same condition, so a caller reading either
    * vocabulary sees one word for one thing. */
-  AMBIGUOUS_SPOKEN_NAME: 'ambiguous-spoken-name',
+  AMBIGUOUS_SPOKEN_NAME: REFUSAL.AMBIGUOUS_SPOKEN_NAME,
+  /** More held labels than the router will read at once. The router's own code
+   * for the same list, and taken from it for the same reason as the name above:
+   * the two are one condition, so they are one word. */
+  TOO_MANY_PROJECTS: REFUSAL.INVALID_PROJECTS,
 });
 
 function refuse(code, field) {
@@ -105,6 +109,24 @@ export function createSwitcher({ store } = {}) {
    *     router's own rule: an ambiguity is not this module's to resolve, and
    *     the entry that loses would be unreachable by voice for ever with no
    *     sign that it was ever there.
+   *
+   * **And the list is not longer than the router will read.** `checkEntries`
+   * refuses a list of more than `MAX_ENTRIES` entries **whole** as well, so the
+   * same failure comes back through the list's *length*: a store holding one
+   * account more than the bound would leave every installation unreachable by
+   * voice, `where-am-i` with it. The bound is the router's own constant, taken
+   * from there rather than restated, and it is checked on the list this module
+   * is about to hand over -- the ids left out above are not the router's
+   * business and do not count against it.
+   *
+   * Refused, and not trimmed to the first `MAX_ENTRIES`: which installations
+   * lost their voice would then be decided by the store's own sort by id, so an
+   * installation would go silent because of where its label falls in the
+   * alphabet, and a later pairing could silently take another one's place. The
+   * empty-key rule above can leave an entry out because nothing that could have
+   * been routed is lost -- an entry past the bound is speakable and matchable,
+   * and is lost only because the list is too long. A refusal says which thing
+   * is wrong; a trimmed list says "not configured" about installations that are.
    */
   async function projects() {
     const listed = await store.list();
@@ -118,6 +140,7 @@ export function createSwitcher({ store } = {}) {
       byName.add(key);
       projects.push(Object.freeze({ id: account.id, spokenName: account.id }));
     }
+    if (projects.length > MAX_ENTRIES) return refuse(SWITCH_CODES.TOO_MANY_PROJECTS, 'projects');
     return Object.freeze({ ok: true, projects: Object.freeze(projects) });
   }
 

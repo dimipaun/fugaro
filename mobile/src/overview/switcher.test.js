@@ -23,7 +23,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { COMMAND, ROUTE, routeUtterance } from '../../../shared/command/index.js';
+import { COMMAND, MAX_ENTRIES, ROUTE, routeUtterance } from '../../../shared/command/index.js';
 import { AccountStore, MemorySecureStore, MemorySettingsStore, ResourceRegistry, SecretStore, SettingsStore } from '../accounts/index.js';
 import { SWITCH_CODES, createSwitcher } from './switcher.js';
 
@@ -126,6 +126,58 @@ test('two labels the voice folds into one name are refused, not chosen between',
   assert.equal(folded.ok, false);
   assert.equal(folded.code, SWITCH_CODES.AMBIGUOUS_SPOKEN_NAME);
   assert.equal(folded.field, 'projects');
+});
+
+test('a list longer than the router will read is refused, not handed over', async () => {
+  // The router refuses a list of more than `MAX_ENTRIES` entries **whole**
+  // (`checkEntries`), so the poisoning above comes back through the list's
+  // *length*: one account past the bound would make every "switch to <label>"
+  // and every "where-am-i" refused for every installation, with no repair in
+  // this build. The bound is the router's own constant, and the list it is
+  // checked against is the one this module hands over.
+  const { store } = makeStore();
+  const added = [];
+  for (let i = 0; i < MAX_ENTRIES; i += 1) {
+    const id = `acct-${String(i).padStart(2, '0')}`;
+    added.push(id);
+    assert.equal((await store.add({ id, firebaseProjectId: `fp-${i}`, authUid: `uid-${i}`, fugaroProject: 'aurora' })).ok, true, id);
+  }
+  const switcher = createSwitcher({ store });
+  const full = await switcher.projects();
+  assert.equal(full.ok, true);
+  assert.equal(full.projects.length, MAX_ENTRIES, 'the bound itself is not off by one');
+  assert.equal((await routeUtterance({ utterance: 'Fugaro, switch to acct-00', projects: full.projects })).command, COMMAND.SWITCH_PROJECT);
+
+  // One more account and the list is one the router refuses whole. The switcher
+  // refuses it first, with the router's own word for it, so a caller is told the
+  // *list* is the problem rather than every installation answering "not
+  // configured" one at a time -- and nothing is handed over that the router
+  // would refuse.
+  await store.add({ id: 'acct-99', firebaseProjectId: 'fp-99', authUid: 'uid-99', fugaroProject: 'aurora' });
+  const over = await switcher.projects();
+  assert.equal(over.ok, false);
+  assert.equal(over.code, SWITCH_CODES.TOO_MANY_PROJECTS);
+  assert.equal(over.field, 'projects');
+  // ... and it is the router's own refusal for the same list, which is what the
+  // guard stands in front of.
+  const raw = routeUtterance({
+    utterance: 'Fugaro, switch to acct-00',
+    projects: [...added, 'acct-99'].map((id) => ({ id, spokenName: id })),
+  });
+  assert.equal(raw.ok, false);
+  assert.equal(raw.code, SWITCH_CODES.TOO_MANY_PROJECTS);
+
+  // The bound is on the list handed over, not on the store: an id that folds to
+  // nothing is left out above and does not count against it, so the same 33
+  // accounts with one unaddressable label are still all readable.
+  const { store: withUnspeakable } = makeStore();
+  for (let i = 0; i < MAX_ENTRIES; i += 1) {
+    await withUnspeakable.add({ id: `acct-${String(i).padStart(2, '0')}`, firebaseProjectId: `fp-${i}`, authUid: `uid-${i}`, fugaroProject: 'aurora' });
+  }
+  await withUnspeakable.add({ id: '_', firebaseProjectId: 'fp-underscore', authUid: 'uid-underscore', fugaroProject: 'aurora' });
+  const listed = await createSwitcher({ store: withUnspeakable }).projects();
+  assert.equal(listed.ok, true);
+  assert.equal(listed.projects.length, MAX_ENTRIES);
 });
 
 test('“Fugaro, switch to phone” tears the previous account down before it opens the next', async () => {
