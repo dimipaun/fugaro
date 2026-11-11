@@ -253,6 +253,7 @@ func (r *run) startGateway(ctx context.Context) error {
 	r.gwAgent = &agent.Gateway{BaseURL: gw.URL(), Token: gw.Token()}
 	r.modelBy = map[string]pricing.Micros{}
 	r.routeBy = map[string]pricing.Micros{}
+	r.modelTokens = map[string]runstore.ModelTokenCounts{}
 	r.stageExtra = r.endGatewayStage
 	r.mu.Unlock()
 	return nil
@@ -570,6 +571,19 @@ func (r *run) endGatewayStage(stage string) ([]string, int64) {
 	}
 	for m, v := range rep.ByRoute {
 		r.routeBy[m] += v
+	}
+	// The stage's token counts by model, keyed by the model the gateway
+	// priced each of its calls for, never by the serving model a response
+	// named (G1.2, F8). The record's counts carry no web searches, so a
+	// call's search fee stays priced in model_by and in no token figure.
+	for m, u := range rep.ByModelTokens {
+		r.addModelTokens(m, runstore.ModelTokenCounts{
+			Input:        u.Input,
+			Output:       u.Output,
+			CacheRead:    u.CacheRead,
+			CacheWrite5m: u.CacheWrite5m,
+			CacheWrite1h: u.CacheWrite1h,
+		})
 	}
 	r.reported += rep.Reported
 	r.unreconciled += rep.Unreconciled

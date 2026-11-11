@@ -178,8 +178,20 @@ type StageReport struct {
 	// the spelling the service sent. A tier-A call is Notional and is in no
 	// key here, and a call that did not go through the service is in none
 	// either: it is real money but no tier.
-	ByTier        map[string]pricing.Micros
-	ByModel       map[string]pricing.Micros // by serving model
+	ByTier  map[string]pricing.Micros
+	ByModel map[string]pricing.Micros // by serving model
+	// ByModelTokens is the stage's token counts by the model the gateway
+	// priced each call under: the model the request named, which the gateway
+	// admitted as one of the stage's pins and charged the table's rates for
+	// (G1.2). It is deliberately not keyed by the serving model ByModel uses:
+	// that one is the model the upstream's own response named, which is a
+	// claim -- a snapshot suffix, or another model entirely -- and the counts
+	// a repricing of this run reads back have to be the run's own. A call
+	// whose usage the gateway could not read is in no key: its worst case was
+	// charged and no count was reported (UsageUnparsed). Only the token kinds
+	// a repricing reads are here; web searches are priced apart and are not
+	// among them (runstore.ModelTokenCounts).
+	ByModelTokens map[string]pricing.Usage
 	ByRoute       map[string]pricing.Micros // by provider route (Claude calls have none)
 	Reported      pricing.Micros            // what providers said their calls cost: for comparison, and the floor under an unpriced tier's charge
 	Unreconciled  pricing.Micros            // charged from reservations, not from reported usage
@@ -547,9 +559,10 @@ func (s *Server) BeginStage(st Stage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stage = &stageState{st: st, agents: map[string]struct{}{}, rep: StageReport{
-		ByTier:  map[string]pricing.Micros{},
-		ByModel: map[string]pricing.Micros{},
-		ByRoute: map[string]pricing.Micros{},
+		ByTier:        map[string]pricing.Micros{},
+		ByModel:       map[string]pricing.Micros{},
+		ByModelTokens: map[string]pricing.Usage{},
+		ByRoute:       map[string]pricing.Micros{},
 	}}
 }
 
@@ -562,7 +575,8 @@ func (s *Server) EndStage() StageReport {
 	s.stage = nil
 	s.mu.Unlock()
 	if st == nil {
-		return StageReport{ByTier: map[string]pricing.Micros{}, ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}
+		return StageReport{ByTier: map[string]pricing.Micros{}, ByModel: map[string]pricing.Micros{},
+			ByModelTokens: map[string]pricing.Usage{}, ByRoute: map[string]pricing.Micros{}}
 	}
 	done := make(chan struct{})
 	go func() { st.calls.Wait(); close(done) }()
@@ -593,6 +607,10 @@ func (s *Server) stageReport(st *stageState) StageReport {
 	rep.ByModel = make(map[string]pricing.Micros, len(st.rep.ByModel))
 	for k, v := range st.rep.ByModel {
 		rep.ByModel[k] = v
+	}
+	rep.ByModelTokens = make(map[string]pricing.Usage, len(st.rep.ByModelTokens))
+	for k, v := range st.rep.ByModelTokens {
+		rep.ByModelTokens[k] = v
 	}
 	rep.ByRoute = make(map[string]pricing.Micros, len(st.rep.ByRoute))
 	for k, v := range st.rep.ByRoute {

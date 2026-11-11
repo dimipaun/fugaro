@@ -117,19 +117,27 @@ type charge struct {
 	// that did not go through the service, which settles as it always did.
 	// It decides whether the call is notional or money (C1.16, D140).
 	tier string
-	// cacheRead is the call's reported cache-read tokens, which is what the
-	// next switch's cache-miss cost is estimated from (F24). It is kept for
-	// every call, whatever served it: the call a switch follows is as often
-	// an ordinary one as a tier A one. It means something only when usageRead
-	// says the call reported usage at all.
-	cacheRead int64
-	// cacheWrite is the call's reported cache-write tokens, both TTLs
-	// together. It is summed into the run's total and read for nothing else:
-	// it is what the run's own record needs to answer design §3's
-	// prompt-caching risk (a compressed session's cache prefix can change,
-	// turning cheap reads into dearer writes), and like cacheRead it means
-	// something only when usageRead is set.
-	cacheWrite int64
+	// usage is the call's reported token counts as the gateway priced them,
+	// which is what the run's cache totals are summed from and what its
+	// per-model token counts are keyed by (G1.2). The counts are the call's
+	// own, whatever served it: the call a switch follows is as often an
+	// ordinary one as a tier A one, and the cache reads here are what the
+	// switch's cache-miss cost is estimated from (F24). The cache writes keep
+	// their 5m and 1h TTLs apart -- a response that reported one unsplit count
+	// is booked at the dearest write the request allowed (usageAcc.usage) --
+	// which is the split the run's record answers design §3's prompt-caching
+	// risk with (a compressed session's cache prefix can change, turning cheap
+	// reads into dearer writes).
+	usage pricing.Usage
+	// pricedModel is the model the gateway priced this call under: the model
+	// the request named, which the gateway admitted as a pin and charged the
+	// table's rates for. It is what the per-model token counts are keyed by,
+	// and it is not the charge's `model`, which is the serving model an
+	// upstream response named: that is the upstream's claim, and it may be a
+	// snapshot of the pin or another model entirely. The dollars follow the
+	// claim (that is where the money went); the counts a repricing of the run
+	// reads back follow the run's own choice.
+	pricedModel string
 	// usageRead is true for a call whose usage this gateway read (its report,
 	// complete or partial). A call that settled with no usage -- one that
 	// never reached the upstream, a relayed model or provider error, a
@@ -175,13 +183,20 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	// and a switch after it must record itself unmeasured rather than as a
 	// miss that cost nothing (F24).
 	if c.usageRead {
-		s.lastCacheRead, s.lastCacheKnown = c.cacheRead, true
+		s.lastCacheRead, s.lastCacheKnown = c.usage.CacheRead, true
 		// The run's cache totals are of the calls whose usage was read, for
 		// the same reason the switch estimate is: a call that reported none
 		// says nothing about what the run had cached, and adding its zero
 		// would read as a cache that did nothing (P12, F24).
-		s.cacheRead = int64(satAdd(pricing.Micros(s.cacheRead), pricing.Micros(c.cacheRead)))
-		s.cacheWrite = int64(satAdd(pricing.Micros(s.cacheWrite), pricing.Micros(c.cacheWrite)))
+		s.cacheRead = int64(satAdd(pricing.Micros(s.cacheRead), pricing.Micros(c.usage.CacheRead)))
+		s.cacheWrite = int64(satAdd(pricing.Micros(s.cacheWrite), pricing.Micros(c.usage.CacheWrite5m+c.usage.CacheWrite1h)))
+		// The stage's token counts by the model the gateway priced this call
+		// under, so the run's record can carry what `fugaro estimate`
+		// reprices (G1.2, F8). The same gate and the same caveat as the
+		// totals above, and deliberately the same calls: with a gateway the
+		// per-model sums and the run's cache totals are the same tokens
+		// counted two ways, which is what a reader of either adds up.
+		st.rep.ByModelTokens[c.pricedModel] = addUsage(st.rep.ByModelTokens[c.pricedModel], c.usage)
 	} else {
 		s.lastCacheRead, s.lastCacheKnown = 0, false
 	}
@@ -441,6 +456,21 @@ func satAdd(a, b pricing.Micros) pricing.Micros {
 		return math.MaxInt64
 	}
 	return a + b
+}
+
+// addUsage adds two reported counts, kind by kind, saturating at the largest
+// int64 the way satAdd does for money: a stage's per-model sum is bounded,
+// never wrapped.
+func addUsage(a, b pricing.Usage) pricing.Usage {
+	add := func(x, y int64) int64 { return int64(satAdd(pricing.Micros(x), pricing.Micros(y))) }
+	return pricing.Usage{
+		Input:        add(a.Input, b.Input),
+		CacheWrite5m: add(a.CacheWrite5m, b.CacheWrite5m),
+		CacheWrite1h: add(a.CacheWrite1h, b.CacheWrite1h),
+		CacheRead:    add(a.CacheRead, b.CacheRead),
+		Output:       add(a.Output, b.Output),
+		WebSearches:  add(a.WebSearches, b.WebSearches),
+	}
 }
 
 // satMul multiplies an amount by n ≥ 0, saturating.
