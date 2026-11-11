@@ -500,8 +500,8 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   second command, which is the HARD RULE), `TestUpdateNeverInstallsAUnit` (no unit installed: `update` writes none and the plan line says why, so a
   project that did not choose the daemon never gets one), `TestUpdateLeavesACurrentUnitAlone` (the rendered text equals the file: no write and no
   reload, so a repeated `update` is quiet), `TestUpdateRerendersWhenTheBinaryPathChanged` (the render carries the stable path, so a moved Homebrew
-  prefix re-renders), `TestUpdateUnitStepNeedsATypedConfirmation` (the class is `Typed`: `--yes` does not cover it and an agent-marker run writes no
-  unit), `TestUpdateUnitStepTouchesNoSystemPath` (the write stays under the person's home and no `sudo` is asked for), and
+  prefix re-renders), `TestUpdateUnitStepAsksNothingAndIsLeftForThePerson` (the step asks nothing at a terminal, and `--yes` still does not cover it:
+  an agent-marker run writes no unit), `TestUpdateUnitStepTouchesNoSystemPath` (the write stays under the person's home and no `sudo` is asked for), and
   `TestUpdateUnitStepUsesTheInstallersRenderer` (the step calls `service.Render` and the installer's reload, so there is no second renderer). Tests
   render into `t.TempDir()` and never call
   `launchctl` or `systemctl` (an interface is faked).

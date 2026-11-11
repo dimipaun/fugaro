@@ -28,6 +28,9 @@ type unitFake struct {
 	// reloadErr is the manager refusing to read the file, which is the one
 	// state a written unit can be left in.
 	reloadErr error
+	// removeErr is the manager refusing to unload it: the one answer that has
+	// to stop the file's deletion.
+	removeErr error
 }
 
 func (f *unitFake) Platform() string { return f.platform }
@@ -43,7 +46,7 @@ func (f *unitFake) Reload(_ context.Context, u service.Unit) error {
 
 func (f *unitFake) Remove(_ context.Context, u service.Unit) error {
 	f.removes = append(f.removes, u)
-	return nil
+	return f.removeErr
 }
 
 // fakeUnitService puts the fake behind the command family's own seam.
@@ -85,6 +88,42 @@ func currentUnit(t *testing.T) service.Unit {
 	return u
 }
 
+// TestTheClosedStdinWorldHasNoLoginUnit: the harness's world isolates the XDG
+// directories, which is where Linux puts the unit, and macOS puts it under the
+// person's own home — so a world that isolates only the first would hand the
+// harness's uninstall leaf the developer's real unit and delete it. This pins
+// the world itself, on both platforms, rather than the one leaf that reads it.
+func TestTheClosedStdinWorldHasNoLoginUnit(t *testing.T) {
+	real, err := os.UserHomeDir()
+	if err != nil {
+		real = ""
+	}
+	closedStdinWorld(t)
+	old := orchestratorGOOS
+	t.Cleanup(func() { orchestratorGOOS = old })
+	for _, platform := range []string{"darwin", "linux"} {
+		orchestratorGOOS = platform
+		u, err := orchestratorUnit()
+		if err != nil {
+			t.Fatalf("the world cannot render its own unit on %s: %v", platform, err)
+		}
+		if real != "" && strings.HasPrefix(u.Path, real+string(filepath.Separator)) {
+			t.Errorf("the closed-stdin world's %s unit is at %s, under the developer's own home: a leaf would read this machine rather than the world",
+				platform, u.Path)
+		}
+		was, ok, err := unitTextOnDisk(u)
+		if err != nil {
+			t.Fatalf("reading %s on %s: %v", u.Path, platform, err)
+		}
+		if ok {
+			t.Errorf("the closed-stdin world already has a login unit at %s on %s (%d bytes), so a leaf would read the machine rather than the world",
+				u.Path, platform, len(was))
+		}
+	}
+}
+
+// TestInstallWritesOnlyUnderTheUserHome: the unit's file is the person's own,
+// under their own home, and the run writes nothing anywhere else.
 func TestInstallWritesOnlyUnderTheUserHome(t *testing.T) {
 	dir := unitHome(t)
 	f := fakeUnitService(t)
@@ -253,6 +292,35 @@ func TestUninstallRemovesWhatInstallWrote(t *testing.T) {
 	}
 	if !strings.Contains(statusOut, "is not installed") {
 		t.Errorf("status does not report the missing unit:\n%s", statusOut)
+	}
+}
+
+// TestUninstallLeavesTheFileWhenTheManagerRefusesToUnload: the manager is asked
+// before the file goes, and a manager that reports the unload as failed is
+// believed — the unit may still be loaded, so the file that names it stays where
+// it is and the run says why. Deleting it first would take away the only thing
+// that names the daemon still running.
+func TestUninstallLeavesTheFileWhenTheManagerRefusesToUnload(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	typed(t)
+	if _, _, err := executeStdin(t, "install\n", "orchestrator", "install"); err != nil {
+		t.Fatal(err)
+	}
+	u := currentUnit(t)
+	f.removeErr = errors.New("the manager refused")
+	out, _, err := execute(t, "orchestrator", "uninstall")
+	if err == nil {
+		t.Fatalf("uninstall succeeded although the manager refused to unload the unit:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "unloading the login unit") || !strings.Contains(err.Error(), u.Name) {
+		t.Errorf("the failure does not name the unload that failed: %v", err)
+	}
+	if data, readErr := os.ReadFile(u.Path); readErr != nil || string(data) != u.Text {
+		t.Errorf("the file was deleted or changed although the manager refused (read %v)", readErr)
+	}
+	if len(f.removes) != 1 {
+		t.Errorf("the manager was asked to remove %v, want one call", f.removes)
 	}
 }
 

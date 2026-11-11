@@ -648,11 +648,12 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 // A machine with no unit is OK, and so is a platform with no login unit at all
 // (Windows): this check is about a unit that is there and stale, and the machine
 // that never installed one is a project that did not choose the daemon rather
-// than a machine to warn about. Only a file that cannot be read is an unknown,
-// and it is marked as such rather than answered "ok" (unread) and carries its
-// own fix (ownFix): a read that failed is not something `fugaro update` repairs,
-// and the class's line would send the reader to a command that fails the same
-// way.
+// than a machine to warn about. Only a read that cannot be answered is an
+// unknown — a unit that cannot even be rendered (no home to put it under), or a
+// file that cannot be read — and it is marked as such rather than answered "ok"
+// (unread) and carries its own fix (ownFix): a read that failed is not something
+// `fugaro update` repairs, and the class's line would send the reader to a
+// command that fails the same way.
 func doctorOrchestratorUnit() doctorCheck {
 	const id = "orchestrator-unit"
 	u, err := orchestratorUnit()

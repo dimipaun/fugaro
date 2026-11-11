@@ -157,17 +157,18 @@ func TestUpdateRerendersWhenTheBinaryPathChanged(t *testing.T) {
 	}
 }
 
-// TestUpdateUnitStepNeedsATypedConfirmation: the step's class is the strictest
-// one, a unit being code that runs at login. --yes never covers it, so a run
-// that cannot ask a person leaves the unit where it is and says which command
-// does it; and a coding agent's session writes nothing at all, which is what
-// keeps the drift on the doctor's report until a person runs the command.
+// TestUpdateUnitStepAsksNothingAndIsLeftForThePerson: the step asks nothing at a
+// terminal (T8), and it is still never covered by --yes, a unit being code that
+// runs at login: a run that cannot put a person at the terminal leaves the unit
+// where it is and says which command does it. A coding agent's session writes
+// nothing at all, which is what keeps the drift on the doctor's report until a
+// person runs the command.
 //
 // What the step does NOT do is ask: the plan line is a line of the plan the
 // update showed at the person's own terminal, and re-rendering a unit they
 // installed themselves is not a new write of code into their login. An extra
 // confirmation here would be the operator step the ruling exists to remove.
-func TestUpdateUnitStepNeedsATypedConfirmation(t *testing.T) {
+func TestUpdateUnitStepAsksNothingAndIsLeftForThePerson(t *testing.T) {
 	unitHome(t)
 	f := fakeUnitService(t)
 	typed(t)
@@ -206,6 +207,36 @@ func TestUpdateUnitStepNeedsATypedConfirmation(t *testing.T) {
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != previousTemplate {
 		t.Errorf("an agent's session wrote the unit (err %v):\n%s", err, data)
+	}
+}
+
+// TestUpdateUnitStepWritesNothingWithoutAPersonTheStepCovers: the stage asks its
+// own question as well as leaning on the loop. `--ask` at a terminal is the one
+// mode where the loop does reach Apply with a person the step's class does not
+// cover (the step it cannot ask about is left for the person like every other
+// uncovered step), so it is the path that exercises the stage's own guard: the
+// step ends as needs-you, the installed unit is left exactly as it was, and the
+// manager is never handed a file nothing wrote. An agent's session is the other
+// half, above.
+func TestUpdateUnitStepWritesNothingWithoutAPersonTheStepCovers(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	typed(t)
+	terminal(t, true)
+	e, _ := updateUnitEngine(t, &initOptions{ask: true})
+	path := unitFileAt(t, previousTemplate, time.Now())
+	res, _ := runUnitStage(t, e, newUpdateUnitStage(e))
+	if got := stateOf(res, initflow.Unit); got != initflow.NeedsYou {
+		t.Fatalf("the step is %s under --ask at a terminal, want needs-you:\n%+v", got, res.Stages)
+	}
+	if len(res.Left) != 1 || !strings.HasSuffix(res.Left[0].Text, " update") {
+		t.Errorf("the step's left-for-you is %v, want the command that does it in the person's own terminal", res.Left)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != previousTemplate {
+		t.Errorf("the step wrote the unit without a person it covers (err %v):\n%s", err, data)
+	}
+	if len(f.reloads) != 0 {
+		t.Errorf("the step reloaded the service although it wrote nothing: %v", f.reloads)
 	}
 }
 

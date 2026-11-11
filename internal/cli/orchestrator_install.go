@@ -149,9 +149,12 @@ func installUnit(ctx context.Context, m service.Manager, u service.Unit) error {
 
 // removeUnit takes the unit out of the person's login: the manager is told to
 // stop reading it, and the file is deleted. The manager is asked first, while
-// the file it names is still there; a failure to unload is returned so the
-// person is told the daemon may still be running, and the file is left where it
-// is, because a unit the manager is still reading is not one to delete.
+// the file it names is still there, and a manager that reports the unload as
+// failed stops the deletion here: a unit the manager may still be reading is
+// not one to delete out from under it, and the person is told so. Both
+// managers this CLI ships treat a failing unload as "there was nothing to
+// unload" (the service package's own reading of a unit that was never loaded),
+// so this is the branch a manager that does report one gets.
 func removeUnit(ctx context.Context, m service.Manager, u service.Unit) error {
 	if err := m.Remove(ctx, u); err != nil {
 		return fmt.Errorf("unloading the login unit %s: %w", u.Name, err)

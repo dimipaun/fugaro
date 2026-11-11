@@ -290,7 +290,10 @@ func TestDocsStatelessOrchestratorUnitRerenderAsksNothing(t *testing.T) {
 		}
 	}
 	src := stageSource(t, "update_unit_stage.go")
-	for _, gone := range []string{"r.confirm(", "r.typed("} {
+	// The two helpers that put a question to a person at a terminal: the plain
+	// confirmation and the typed one, whose name is askTyped and not a shorter
+	// spelling of it. A step that asks nothing calls neither.
+	for _, gone := range []string{"r.confirm(", "r.askTyped("} {
 		if strings.Contains(src, gone) {
 			t.Errorf("update_unit_stage.go calls %s: T8 rules that the step asks nothing", gone)
 		}

@@ -682,6 +682,13 @@ func closedStdinWorld(t *testing.T) *budgetFixture {
 	// build command and take minutes, and the harness would be measuring the
 	// machine rather than the command.
 	t.Setenv("FUGARO_STATE_DIR", "")
+	// The login unit's file belongs under the person's own home on macOS —
+	// launchd reads $HOME, where Linux reads the XDG directories the fixture
+	// already isolates — and this harness drives the uninstall leaf. Without
+	// this, a developer who has the daemon installed would have their own unit
+	// deleted by a test run, and the leaf would fail on the file it found
+	// rather than on the machine having none.
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
 	// Which machine this is must not decide what a run does: a coding agent's
 	// session refuses writes the closed-stdin case would otherwise reach, and a
 	// real terminal is what this harness is the opposite of.

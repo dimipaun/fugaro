@@ -903,7 +903,7 @@ var propertyAgentSites = map[string]string{
 	// the command in their own terminal. Both doors share the read, and one
 	// test drives each: the setup door's skip, and the update door's — which
 	// leaves the installed unit exactly as it was.
-	"init_orchestrator_stage.go unitStepRead": "TestSetupNeverInstallsUnderAnAgentMarker (the setup door) and TestUpdateUnitStepNeedsATypedConfirmation (the update door)",
+	"init_orchestrator_stage.go unitStepRead": "TestSetupNeverInstallsUnderAnAgentMarker (the setup door) and TestUpdateUnitStepAsksNothingAndIsLeftForThePerson (the update door)",
 	// The compute stage refuses a marker itself rather than leaning on the
 	// loop's gate, and it refuses FIRST, before the root's tfvars are written
 	// and planned: the stage is registered noYes, so the loop's own agent arm
