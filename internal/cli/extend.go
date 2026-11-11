@@ -196,6 +196,12 @@ type PlannedRun struct {
 type Pair struct {
 	Champion   task.AB
 	Challenger *task.Spec
+	// Skip is why the planner sampled nothing, on a Pair it returns with no
+	// Challenger: one of its closed reasons (D556), which the launcher prints
+	// as its one skip line and carries in fugaro run --json. Empty is the
+	// answer with nothing to say — not eligible, or the rate's own roll said
+	// no — and a nil Pair says the same thing.
+	Skip string
 }
 
 // LaunchPlanner is the build's A/B planner: the one call a launch makes

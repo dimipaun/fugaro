@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -834,6 +835,41 @@ func TestPairPrecheckRefusedLaunchesChampionAloneUnmarked(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "ab:") {
 		t.Errorf("the refused pair was silent: %q", errOut)
+	}
+}
+
+// TestPlannerSkipReasonInJSON: a planner that declines names a closed reason
+// (D556), and that reason is in `fugaro run --json` as well as on stderr, so
+// the console reads why a project with a challenger configured sampled
+// nothing.
+func TestPlannerSkipReasonInJSON(t *testing.T) {
+	f := newLaunchBudget(t, "observe")
+	installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
+		return &Pair{Skip: "no-challenger"}, nil
+	})
+	out, errOut, err := runBudget(t, "--json")
+	if err != nil {
+		t.Fatalf("a declined pair failed the launch: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the champion alone", n)
+	}
+	if spec := readSpec(t, f.cloudFixture, budgetRun); spec.AB != nil || spec.Batch != "" {
+		t.Errorf("the champion carries %+v / %q, want no pair block and no batch", spec.AB, spec.Batch)
+	}
+	var doc struct {
+		Pair *struct {
+			Reason string `json:"reason"`
+		} `json:"pair"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("the document is not JSON: %v\n%s", err, out)
+	}
+	if doc.Pair == nil || doc.Pair.Reason != "no-challenger" {
+		t.Errorf("pair = %+v in %s, want the planner's reason", doc.Pair, out)
+	}
+	if !strings.Contains(errOut, "ab: no pair sampled: no-challenger") {
+		t.Errorf("the skip line = %q, want the closed reason", errOut)
 	}
 }
 

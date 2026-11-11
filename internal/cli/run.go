@@ -97,16 +97,21 @@ type launchResult struct {
 	ProjectLayer *launchProjectLayer `json:"project_layer,omitempty"`
 	// Pair is the A/B pair this launch sampled (A3.0), nil for a launch that
 	// sampled none; Challenger is the challenger's run id, empty until that
-	// arm has started.
+	// arm has started, and Reason is why nothing was sampled when a planner
+	// was asked and declined.
 	Pair *launchPair `json:"pair,omitempty"`
 }
 
-// launchPair is launchResult's --json view of the pair a launch sampled: the
-// pair's id, the one batch label both arms carry, and the challenger's run.
+// launchPair is launchResult's --json view of the A/B decision this launch
+// made: the pair's id and the one batch label both arms carry, the challenger's
+// run once that arm has started, and — for a launch that sampled nothing — the
+// reason it did not (D556: the closed reason a person reads on stderr is in
+// --json too).
 type launchPair struct {
-	ID         string `json:"id"`
+	ID         string `json:"id,omitempty"`
 	Batch      string `json:"batch,omitempty"`
 	Challenger string `json:"challenger,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // launchProjectLayer is launchResult's --json view of a task's project
@@ -841,8 +846,9 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// that errs, leaves this launch exactly as it was — no ab block, no batch
 	// label, today's single pre-check — with one line saying why (D554).
 	var pair *Pair
+	var pairWhy string
 	if plan && prior == nil {
-		if pair = sampledPair(ctx, env, o, slug, spec, warn); pair != nil {
+		if pair, pairWhy = sampledPair(ctx, env, o, slug, spec, warn); pair != nil {
 			skipBudget = true
 		}
 	}
@@ -891,9 +897,16 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// The second arm, once the champion has actually gone: the pair's own
 	// pre-check leased both arms, and a champion that turned out to be a run
 	// that already launched samples nothing beside itself.
-	if pair != nil && res.Status == "launched" {
-		res.Pair = &launchPair{ID: pair.Champion.PairID, Batch: spec.Batch}
-		res.Pair.Challenger = launchChallenger(ctx, env, slug, spec, pair, warn)
+	if res.Status == "launched" {
+		switch {
+		case pair != nil:
+			res.Pair = &launchPair{ID: pair.Champion.PairID, Batch: spec.Batch}
+			res.Pair.Challenger = launchChallenger(ctx, env, slug, spec, pair, warn)
+		case pairWhy != "":
+			// Nothing was sampled, and a planner was asked and said why: the
+			// line it printed on stderr is in the document too (D556).
+			res.Pair = &launchPair{Reason: pairWhy}
+		}
 	}
 	return res, nil
 }
@@ -904,30 +917,42 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 // and a nil is never a refusal of the launch: the champion goes on alone,
 // unmarked, on the single pre-check every launch makes, with one line saying
 // why (D554).
-func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, warn io.Writer) *Pair {
+func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, warn io.Writer) (*Pair, string) {
 	if !planning() {
-		return nil // no planner registered: an untagged launch does none of this
+		return nil, "" // no planner registered: an untagged launch does none of this
 	}
 	run, why := plannedRun(ctx, env, o, slug, spec)
 	if why != "" {
 		pairSkip(warn, why)
-		return nil
+		return nil, why
 	}
 	pair, err := planLaunch(ctx, env, run)
 	if err != nil {
-		pairSkip(warn, "the planner failed: "+oneLineCLI(err.Error()))
-		return nil
+		why := "the planner failed: " + oneLineCLI(err.Error())
+		pairSkip(warn, why)
+		return nil, why
 	}
 	if pair == nil {
 		// Not eligible, or the rate's own roll said no. Both are the ordinary
 		// answer of a launch that samples nothing, and neither is worth a line:
 		// most launches of a project with a challenger configured are one.
-		return nil
+		return nil, ""
+	}
+	if pair.Challenger == nil {
+		// The planner's own refusal, with its closed reason (D556). A reason
+		// is the whole of what it has to say, so a pair with none is a
+		// planner bug and is reported as one.
+		why := pair.Skip
+		if why == "" {
+			why = "the planner answered a pair with no challenger"
+		}
+		pairSkip(warn, why)
+		return nil, why
 	}
 	label, why := pairLabel(o.batch, pair)
 	if why != "" {
 		pairSkip(warn, why)
-		return nil
+		return nil, why
 	}
 	// Both arms' blocks are judged here, before either is written: the task
 	// codec refuses a block the runner would refuse at bootstrap
@@ -939,33 +964,37 @@ func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string,
 	for _, ab := range []*task.AB{&pair.Champion, pair.Challenger.AB} {
 		probe.AB = ab
 		if err := probe.Validate(); err != nil {
-			pairSkip(warn, "the pair is not a pair: "+oneLineCLI(err.Error()))
-			return nil
+			why := "the pair is not a pair: " + oneLineCLI(err.Error())
+			pairSkip(warn, why)
+			return nil, why
 		}
 	}
 	if _, err := runstore.RunTime(pair.Challenger.RunID); err != nil {
-		pairSkip(warn, fmt.Sprintf("the challenger's run id %q is not one: %v", oneLine(pair.Challenger.RunID), oneLineCLI(err.Error())))
-		return nil
+		why := fmt.Sprintf("the challenger's run id %q is not one: %v", oneLine(pair.Challenger.RunID), oneLineCLI(err.Error()))
+		pairSkip(warn, why)
+		return nil, why
 	}
 	if pair.Challenger.RunID == spec.RunID {
-		pairSkip(warn, "the challenger carries the champion's own run id")
-		return nil
+		why := "the challenger carries the champion's own run id"
+		pairSkip(warn, why)
+		return nil, why
 	}
 	// Room for two, before the money: a pair is two runs at once, and a launch
 	// that cannot hold both starts neither (the shape runAttempts checks for a
 	// batch). The champion's own gate below asks the same question for one run,
 	// so a pair this refuses still starts the champion if there is room for it.
 	if err := checkMaxParallelFor(ctx, env, 2); err != nil {
-		pairSkip(warn, oneLineCLI(err.Error()))
-		return nil
-	}
-	if why := env.pairBudgetPrecheck(ctx, slug, spec); why != "" {
+		why := oneLineCLI(err.Error())
 		pairSkip(warn, why)
-		return nil
+		return nil, why
+	}
+	if why := env.pairBudgetPrecheck(ctx, slug, spec, warn); why != "" {
+		pairSkip(warn, why)
+		return nil, why
 	}
 	spec.AB = &pair.Champion
 	spec.Batch = label
-	return pair
+	return pair, ""
 }
 
 // plannedRun is what the planner is handed. It answers a reason instead of a

@@ -1036,7 +1036,11 @@ const pairHeadroomCaps = 5
 // (D554). An unreadable database is a reason too, for the same reason — and
 // --no-budget-check is one as well, because D573 never samples beside a
 // skipped check.
-func (e *cloudEnv) pairBudgetPrecheck(ctx context.Context, slug string, spec *task.Spec) string {
+//
+// Its own notes print to warn, once for the pair, exactly as a batch's do:
+// the champion's single pre-check is skipped below (skipBudget), so this is
+// the launch's one budget reading.
+func (e *cloudEnv) pairBudgetPrecheck(ctx context.Context, slug string, spec *task.Spec, warn io.Writer) string {
 	on, err := budgetBackendOn(e.lc)
 	if err != nil {
 		return oneLine(err.Error())
@@ -1045,9 +1049,9 @@ func (e *cloudEnv) pairBudgetPrecheck(ctx context.Context, slug string, spec *ta
 		return "the project has no budget backend, so a pair has no headroom to be judged against"
 	}
 	if e.noBudgetCheck {
-		return "--no-budget-check"
+		return "the launch skips the budget pre-check (--no-budget-check), and a pair is never sampled beside a skipped pre-check"
 	}
-	if err := e.batchBudgetPrecheck(ctx, slug, spec.Repo, 2, io.Discard); err != nil {
+	if err := e.batchBudgetPrecheck(ctx, slug, spec.Repo, 2, warn); err != nil {
 		return oneLine(err.Error())
 	}
 	db, err := newBudgetClient(ctx, e.lc.Budget.RTDBURL, e.lc.Endpoints.NoAuth)
