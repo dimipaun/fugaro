@@ -131,6 +131,8 @@ first non-Go file under `ee/`.
 - **Produces:** an approved `ee/LICENSE` text with the licensor filled in, handed to L4.1.
 - **Depends on:** nothing. **Blocks:** L4.1 and L0.2. **Not on the 0.11.0 critical path** (T1
   ruling, 2026-10-24).
+- **Status 2026-11-11:** done. The owner answered F3 (a), F3 (b) and D307 (see
+  [reconciliation.md](reconciliation.md), F3).
 
 #### L0.2 — Install the hosted CLA app (OWNER-RUN)
 - **What:** install a hosted CLA app on the repository, give it the CLA text from L0.1, allow-list
