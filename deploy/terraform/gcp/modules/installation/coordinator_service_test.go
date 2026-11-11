@@ -503,8 +503,18 @@ func TestTheFrontDoorCarriesItsOwnSwitchAndNothingElseDoes(t *testing.T) {
 	if !strings.Contains(svc, `name = "`+entry+`"`) {
 		t.Fatalf("%s: the front door's container sets no %s, so a revision that runs this service mounts no door and answers 404 on every path of it (ee/coordinator's FrontDoor reads exactly this entry)", coordinatorTF, entry)
 	}
+	// The origin is asserted whole rather than by its suffix, because it is the
+	// value a security decision rests on and the only one in the entry that is
+	// not the installation's own data: it is the authorization server's
+	// identifier and the `iss` of every token the door mints, and this template
+	// builds it by hand because the service's own `uri` attribute is computed by
+	// the apply that creates it. A derivation missing the project's *number* —
+	// the platform's URL is <service>-<number>.<region>.run.app, and the number
+	// and not the id is what Cloud Run puts there — would be an origin that
+	// resolves nowhere and a document no client can check, and `run\.app` alone
+	// passes a URL missing the service, the number and the region alike.
 	for _, want := range []struct{ what, re string }{
-		{"the service's own origin, built from the service name, the project's number and the region", `run\.app`},
+		{"the service's own origin, built from the service name, the project's number and the region", `issuer\s*=\s*"https://\$\{var\.mcp_server\.service\}-\$\{data\.google_project\.this\[0\]\.number\}\.\$\{var\.region\}\.run\.app"`},
 		{"the launcher list, reduced to the entries D933 reads", `launchers = local\.front_door_launchers`},
 		{"the operator list, reduced the same way", `operators = local\.front_door_operators`},
 	} {

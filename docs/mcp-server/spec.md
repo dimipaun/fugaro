@@ -1254,7 +1254,15 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   registrations, the pending requests and the codes the open shapes leave behind are removed once
   their own lifetime has passed (`SweepExpired`, `RegistrationTTL`, the sweep triggered by the two
   unauthenticated writes; `TestRegistrationsExpireAndAreSwept`), with the guard deleted and replaced
-  by `TestTheFrontDoorIsServedOnlyWhenEnabled`. **M5b was owed beside them**
+  by `TestTheFrontDoorIsServedOnlyWhenEnabled`. **A spent code is the one record that outlives its
+  own moment, and deliberately**: its marker is the only record a later presentation of that code
+  acts on — the already-redeemed refusal, and the family the first exchange minted, which is what a
+  replay revokes (OAuth 2.1 §4.1.3) — so it is kept while that family is in the store and inside
+  both of its own bounds (`FamilyTTL`, `FamilyIdleTTL`), and the code's own moment is the earliest
+  moment its marker may go rather than the moment it goes
+  (`ee/coordinator/mcpauth/register.go`, `SweepExpired`; `TestRegistrationsExpireAndAreSwept` plants
+  both directions — the marker bound to a live family stays and is still answered as redeemed, and
+  the one whose family was revoked goes). **M5b was owed beside them**
   (the owner's ruling of 2026-11-07) **and is built**, and **what it left owed is more than the
   delivery**: **M-a's first requirement, that the approval is the paired device's, is not met on the
   server's side and no task of this plan meets it** — the act is proved by a Firebase ID token and

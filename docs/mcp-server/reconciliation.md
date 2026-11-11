@@ -722,8 +722,14 @@ owed: the endpoint refuses a source past its own window (`ee/coordinator/mcpauth
 the codes the unauthenticated shapes leave behind are removed once their own lifetime has passed
 (`SweepExpired`, `RegistrationTTL`, the sweep the two open writes trigger,
 `TestRegistrationsExpireAndAreSwept` — the red step named above as
-`TestARegisteredClientIsExpiredAndSwept`, which is that test under the name M12 gave it). **The guard
-is gone with them**: `TestNoBinaryLinksTheFrontDoorYet` is deleted, and what stands where it stood is
+`TestARegisteredClientIsExpiredAndSwept`, which is that test under the name M12 gave it). **A spent
+code is the one record the sweep keeps past its own moment, on purpose**: its marker is what a later
+presentation of that code is answered with — already redeemed, naming the family the first exchange
+minted, which is the revocation OAuth 2.1 §4.1.3 asks for — and the review of this branch found the
+marker going at the code's own moment, one `CodeTTL` after the exchange, which ended both. It is now
+kept while the family it names is in the store and inside both of that family's bounds (`FamilyTTL`,
+`FamilyIdleTTL`), so what bounds a marker is the chain it stands for rather than forever, and
+`TestRegistrationsExpireAndAreSwept` plants both directions. **The guard is gone with them**: `TestNoBinaryLinksTheFrontDoorYet` is deleted, and what stands where it stood is
 `TestTheFrontDoorIsServedOnlyWhenEnabled`, so what holds the door now is the switch rather than a
 test — the door mounts nothing without the entry the module writes under `var.mcp_server`, no release
 writes that entry (D934), and a build without M12b's device delivery refuses to enable a door at all

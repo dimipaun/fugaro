@@ -1063,8 +1063,10 @@ type spentRecord struct {
 	// BindCodeFamily's rewrite. It is here for M12's sweep and it is the only
 	// reason the field is written: a marker holds no fields of the record it
 	// replaced, so without it a spent record would be an object with no
-	// lifetime at all — and the code markers, one per completed flow, would
-	// outlive the codes they stand for by forever.
+	// lifetime at all. It is the moment the sweep may remove the record from,
+	// and not always the moment it does: a spent code whose marker names a
+	// family that can still be revoked is kept past it, because the marker is
+	// the only record a replay of that code acts on (sweepSingleUse).
 	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 

@@ -522,19 +522,22 @@ func (s *Server) maybeSweep(ctx context.Context) {
 //
 // The order is families first, then the three prefixes, and the order matters
 // for one reason: what a registration is judged by is whether any family names
-// it, and that set has to be one read of the families rather than a read per
-// registration. A record that disappears between the list and the read is
-// skipped rather than reported: something else — a rotation's revoke, another
-// sweep — took it, and a sweep is not an audit of its own prefixes.
+// it, and what a spent code's marker is judged by is whether the family it
+// names can still be revoked — and both answers come out of one read of the
+// families rather than a read per record. A record that disappears between the
+// list and the read is skipped rather than reported: something else — a
+// rotation's revoke, another sweep — took it, and a sweep is not an audit of
+// its own prefixes.
 //
 // **What it leaves is the direction it errs in.** A client a family still names
-// stays; a record whose expiry is not stated stays; a record whose expiry is in
-// the future stays. Every one of those is a record kept too long rather than a
-// record removed too early, which is the only way round that a lifecycle
-// nobody watches can be wrong.
+// stays; a spent code whose family is still revocable stays; a record whose
+// expiry is not stated stays; a record whose expiry is in the future stays.
+// Every one of those is a record kept too long rather than a record removed too
+// early, which is the only way round that a lifecycle nobody watches can be
+// wrong.
 func (r records) SweepExpired(ctx context.Context) (Swept, error) {
 	var swept Swept
-	named, err := r.clientsWithFamilies(ctx)
+	named, families, err := r.families(ctx)
 	if err != nil {
 		return swept, err
 	}
@@ -567,43 +570,53 @@ func (r records) SweepExpired(ctx context.Context) (Swept, error) {
 		}
 		swept.Registrations++
 	}
-	if swept.Requests, err = r.sweepSingleUse[Request](ctx, requestPrefix, now); err != nil {
+	if swept.Requests, err = r.sweepSingleUse[Request](ctx, requestPrefix, now, nil); err != nil {
 		return swept, err
 	}
-	if swept.Codes, err = r.sweepSingleUse[Code](ctx, codePrefix, now); err != nil {
+	if swept.Codes, err = r.sweepSingleUse[Code](ctx, codePrefix, now, families); err != nil {
 		return swept, err
 	}
 	return swept, nil
 }
 
-// clientsWithFamilies is the set of client ids a family still names. A family
-// record is written by the mint and deleted by the revoke, and its client id is
-// the registration the whole chain belongs to: a client in this set is a client
-// whose tokens are still being refreshed, which is the one thing that keeps a
-// registration past its own lifetime.
-func (r records) clientsWithFamilies(ctx context.Context) (map[string]bool, error) {
+// families is the sweep's one read of the family records, in both of the shapes
+// it judges a record by: the client ids they name, which is what keeps a
+// registration past its own lifetime, and the records themselves by their own
+// id, which is what keeps a spent code's marker.
+//
+// One read answers both because the two questions are about the same objects: a
+// family record is written by the mint and deleted by the revoke, and its client
+// id is the registration the whole chain belongs to. A family whose id is empty
+// is a record no build of this package wrote and one nothing can look up, which
+// is the same reading `aged` gives a family whose age is unknown.
+func (r records) families(ctx context.Context) (map[string]bool, map[string]Family, error) {
 	keys, err := r.objs.list(ctx, familyPrefix)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	named := make(map[string]bool, len(keys))
+	byID := make(map[string]Family, len(keys))
 	for _, key := range keys {
 		var f Family
 		if err := r.get(ctx, key, &f); err != nil {
 			if errors.Is(err, errMissing) {
 				continue
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		if f.ClientID != "" {
 			named[f.ClientID] = true
 		}
+		if f.ID != "" {
+			byID[f.ID] = f
+		}
 	}
-	return named, nil
+	return named, byID, nil
 }
 
 // sweepSingleUse removes the records of one single-use prefix whose own moment
-// has passed — spent or not.
+// has passed — spent or not — and leaves a spent code's marker while the family
+// it names can still be revoked.
 //
 // It reads the marker first, and that is not an optimization: a spent record is
 // the same object under the same key with a marker in it (spentRecord), so a
@@ -615,10 +628,24 @@ func (r records) clientsWithFamilies(ctx context.Context) (map[string]bool, erro
 // without that field its marker would outlive the code it stands for by
 // forever.
 //
+// **A spent code's marker is read for the family it names as well as for its
+// lifetime.** A spent code is the only single-use record a later presentation
+// can act on: the second exchange is refused as already redeemed and the family
+// the first one minted is revoked, which is the replay OAuth 2.1 §4.1.3 asks
+// for (ConsumeCode's own note). So the marker is kept for as long as that
+// revocation would mean anything — while the family it names is in the store
+// and inside both of its own bounds — and the code's moment is then the
+// earliest moment its marker may go rather than the moment it goes. A family
+// the store no longer holds was revoked already, and one past `aged` can be
+// rotated no longer, so a marker kept for either names a chain nothing can act
+// on; and a family is the only thing here that bounds the marker, because
+// nothing else deletes a family and a marker kept for one forever is exactly
+// the growth this sweep exists to end.
+//
 // A record with no stated expiry is left exactly where a record a family names
 // is left: the marker of a record written before this field existed decodes
 // with the zero time, and the sweep is not the place to guess.
-func (r records) sweepSingleUse[T expiring](ctx context.Context, prefix string, now time.Time) (int, error) {
+func (r records) sweepSingleUse[T expiring](ctx context.Context, prefix string, now time.Time, families map[string]Family) (int, error) {
 	keys, err := r.objs.list(ctx, prefix)
 	if err != nil {
 		return 0, err
@@ -632,8 +659,9 @@ func (r records) sweepSingleUse[T expiring](ctx context.Context, prefix string, 
 		if err != nil {
 			return removed, err
 		}
+		var marker spentRecord
 		var expires time.Time
-		if marker := spentMarkerIn(data); marker.Consumed {
+		if marker = spentMarkerIn(data); marker.Consumed {
 			expires = marker.ExpiresAt
 		} else {
 			var rec T
@@ -644,6 +672,11 @@ func (r records) sweepSingleUse[T expiring](ctx context.Context, prefix string, 
 		}
 		if expires.IsZero() || !now.After(expires) {
 			continue
+		}
+		if marker.Consumed && marker.FamilyID != "" {
+			if f, ok := families[marker.FamilyID]; ok && !f.aged(now) {
+				continue
+			}
 		}
 		if err := r.objs.delete(ctx, key); err != nil {
 			return removed, err

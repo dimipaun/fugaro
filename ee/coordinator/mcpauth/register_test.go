@@ -6,6 +6,7 @@ package mcpauth
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -458,8 +459,17 @@ func TestRegistrationIsRateLimitedPerSource(t *testing.T) {
 // exists to end, and a record removed too early is a person's sign-in ended by
 // housekeeping. So every plant below has a twin: a registration with no family
 // goes and one a family names stays, an expired flow goes and a live one stays,
-// a spent record goes with its unspent twin, and a record whose moment has not
+// a spent code goes with its unspent twin, and a record whose moment has not
 // *passed* — equal to now — stays for all three.
+//
+// **And a spent code has a third reading, which is not about the code at all**:
+// its marker is the record a second presentation acts on — the already-redeemed
+// answer and the family the first exchange minted, which is what a replay
+// revokes (the review of this branch found the marker going at the code's own
+// moment, one CodeTTL after the exchange, which ended both). So the code's own
+// moment is where its marker *may* go and the family it names is what decides
+// whether it does: the plant bound to a live family stays and is still answered
+// as redeemed, and the one whose family was revoked goes.
 func TestRegistrationsExpireAndAreSwept(t *testing.T) {
 	ctx := t.Context()
 	now := testNow
@@ -504,10 +514,12 @@ func TestRegistrationsExpireAndAreSwept(t *testing.T) {
 
 	expired := TokenHash("a code that expired")
 	redeemed := TokenHash("a code that expired and was redeemed")
+	orphaned := TokenHash("a code whose exchange's family was revoked")
 	live := TokenHash("a code still redeemable")
 	for _, code := range []Code{
 		{Hash: expired, ClientID: "a-registration-made-just-now", ExpiresAt: now.Add(-time.Minute)},
 		{Hash: redeemed, ClientID: "a-registration-made-just-now", ExpiresAt: now.Add(-time.Minute)},
+		{Hash: orphaned, ClientID: "a-registration-made-just-now", ExpiresAt: now.Add(-time.Minute)},
 		{Hash: live, ClientID: "a-registration-made-just-now", ExpiresAt: now.Add(time.Minute)},
 	} {
 		must(store.PutCode(ctx, code))
@@ -516,6 +528,18 @@ func TestRegistrationsExpireAndAreSwept(t *testing.T) {
 		t.Fatalf("redeeming a code: %v", err)
 	}
 	must(store.BindCodeFamily(ctx, redeemed, "the-family-a-client-still-has"))
+	if _, err := store.ConsumeCode(ctx, orphaned); err != nil {
+		t.Fatalf("redeeming a code: %v", err)
+	}
+	must(store.PutFamily(ctx, Family{
+		ID:          "the-family-that-was-revoked",
+		ClientID:    "a-registration-made-just-now",
+		Identity:    "user:person@example.com",
+		RefreshHash: TokenHash("the refresh token that family held"),
+		CreatedAt:   now.Add(-time.Hour),
+	}, 0))
+	must(store.BindCodeFamily(ctx, orphaned, "the-family-that-was-revoked"))
+	must(store.RevokeFamily(ctx, "the-family-that-was-revoked"))
 	// A spent record is a marker and not the record any more, so the moment it
 	// was readable at is the one field that has to survive both writes: the
 	// sweep below can only remove it by that field.
@@ -541,9 +565,10 @@ func TestRegistrationsExpireAndAreSwept(t *testing.T) {
 		requestPrefix + "a-flow-waiting-for-its-consent",
 		requestPrefix + "a-flow-exactly-at-its-moment",
 		codePrefix + live,
+		codePrefix + redeemed,
 	} {
 		if _, ok := held[key]; !ok {
-			t.Errorf("the sweep removed %s; a registration a family names, an operator's own record, a live flow, a code still redeemable and a record whose moment has not passed are all records this bound does not reach", key)
+			t.Errorf("the sweep removed %s; a registration a family names, an operator's own record, a live flow, a code still redeemable, a spent code whose family can still be revoked and a record whose moment has not passed are all records this bound does not reach", key)
 		}
 	}
 	for _, key := range []string{
@@ -551,11 +576,26 @@ func TestRegistrationsExpireAndAreSwept(t *testing.T) {
 		requestPrefix + "a-flow-a-stranger-abandoned",
 		requestPrefix + "a-flow-that-was-answered",
 		codePrefix + expired,
-		codePrefix + redeemed,
+		codePrefix + orphaned,
 	} {
 		if _, ok := held[key]; ok {
-			t.Errorf("the sweep left %s: it is a record nobody has asked for since its own moment passed, which is exactly what a sweep is for", key)
+			t.Errorf("the sweep left %s: it is a record nobody has asked for since its own moment passed — and, for the spent code, since the family its marker named was revoked — which is exactly what a sweep is for", key)
 		}
+	}
+
+	// And what the marker kept is kept for: the second presentation of a
+	// redeemed code is still answered as already redeemed, and still names the
+	// family the first exchange minted, which is the record the caller revokes
+	// (OAuth 2.1 §4.1.3). A sweep that removed it at the code's own moment
+	// would answer this as an unknown code and leave that family alive, and the
+	// same replay of the orphaned code — whose family is gone — has nothing
+	// left to revoke and is answered as the store answers any code it does not
+	// hold.
+	if replay, err := store.ConsumeCode(ctx, redeemed); !errors.Is(err, ErrCodeUsed) || replay.FamilyID != "the-family-a-client-still-has" {
+		t.Errorf("a second presentation of a redeemed code after the sweep answered %+v (%v); want %v naming the family the first exchange minted", replay, err, ErrCodeUsed)
+	}
+	if _, err := store.ConsumeCode(ctx, orphaned); !errors.Is(err, ErrCodeNotFound) {
+		t.Errorf("a second presentation of a code whose family was revoked answered %v after the sweep; want %v: its marker stands for a revocation nothing could act on, so the sweep is what removes it", err, ErrCodeNotFound)
 	}
 
 	// A second sweep finds nothing, and that is what makes the interval safe:
