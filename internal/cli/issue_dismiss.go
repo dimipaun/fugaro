@@ -44,9 +44,11 @@ func newIssueDismissCmd() *cobra.Command {
 func runIssueDismiss(cmd *cobra.Command, ref string) error {
 	// The guard `recipes publish` uses: an agent-set marker refuses whatever the
 	// terminal, and the IDE extension's marker alone refuses only without one,
-	// so a person in their own IDE terminal may dismiss (D1730, F10).
+	// so a person in their own IDE terminal may dismiss (D1730, F10). The
+	// refusal names the command a person runs: a session that only read "not
+	// through a coding agent" would not know which command to hand back.
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was dismissed: %s", initflow.AgentRefusal(m))
+		return userErr("nothing was dismissed: fugaro issue dismiss is a person's own decision, because a steered diagnosis could otherwise bury a real bug: %s", initflow.AgentRefusal(m))
 	}
 	ctx := cmd.Context()
 	store, err := openIssueStore()

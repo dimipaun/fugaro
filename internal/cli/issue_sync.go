@@ -145,7 +145,7 @@ func runIssueSync(cmd *cobra.Command) error {
 	// terminal, and the IDE extension's marker alone refuses only without one,
 	// so a person in their own IDE terminal may sync (F10).
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was uploaded: %s", initflow.AgentRefusal(m))
+		return userErr("nothing was uploaded: fugaro issue sync writes to the project's store, so a person runs it at their own terminal: %s", initflow.AgentRefusal(m))
 	}
 	ctx := cmd.Context()
 	store, err := openIssueStore()
