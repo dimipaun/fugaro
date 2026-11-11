@@ -272,25 +272,50 @@ func chainFrom(ctx context.Context, env *cloudEnv, slug string, o *runOptions, s
 }
 
 // continuesPRChain is the pull request the run --continues names is part of: the
-// one it opened (Record.PR, the runner's own write at finalize) or the one it
-// continues (Record.FollowUp.PR, a --pr follow-up's link), and 0 for a run that
-// is in no pull request's chain — the chain --continues is for. A run the
-// bucket holds no record for never started, so it opened nothing and follows
-// nothing: it reads as 0, which is the run a chain with no pull request is
-// continued from (D1045).
+// one it opened (Record.PR, the runner's own write at finalize), the one it
+// continues (Record.FollowUp.PR, a --pr follow-up's link at bootstrap) or the
+// one it reviews (Spec.ReviewPRs, the review mode's own link into that chain,
+// D1058), and 0 for a run that is in no pull request's chain — the chain
+// --continues is for, a halted run that opened nothing (D1045).
+//
+// Both objects a run is known by are read, because either can be the only one
+// that holds the link. A run the bucket holds no record for never started — the
+// record is written as a run starts — while its stored task was written by the
+// launch and names the pull request it was launched for, so a --pr follow-up
+// that was launched and never started would read as a chain with no pull request
+// and be handed that chain's limit in full while not being in it: the launch T4
+// refuses, arriving through the one gap in the record. The stored task is the
+// other way round the only one for a review run, whose record carries no pr and
+// no follow_up at all. A run with neither object never launched, so it opened
+// nothing, follows nothing and reviews nothing: it reads as 0, which is the run
+// a chain with no pull request is continued from.
 func continuesPRChain(ctx context.Context, env *cloudEnv, slug, id string) (int, error) {
 	rec, err := runstore.Open(env.bucket.Bucket, slug, id).ReadRecord(ctx)
+	switch {
+	case err == nil:
+		if rec.PR != nil && rec.PR.Number != 0 {
+			return rec.PR.Number, nil
+		}
+		if rec.FollowUp != nil && rec.FollowUp.PR != 0 {
+			return rec.FollowUp.PR, nil
+		}
+	case !errors.Is(err, runstore.ErrNotFound):
+		return 0, remote(err)
+	}
+	spec, err := readTask(ctx, env, slug, id)
 	switch {
 	case errors.Is(err, runstore.ErrNotFound):
 		return 0, nil
 	case err != nil:
-		return 0, remote(err)
+		return 0, err
 	}
-	if rec.PR != nil && rec.PR.Number != 0 {
-		return rec.PR.Number, nil
+	if spec.PR != 0 {
+		return spec.PR, nil
 	}
-	if rec.FollowUp != nil && rec.FollowUp.PR != 0 {
-		return rec.FollowUp.PR, nil
+	// One pull request, the length chainFrom reads a review launch's chain from:
+	// a review of several is in no single pull request's chain.
+	if len(spec.ReviewPRs) == 1 {
+		return spec.ReviewPRs[0], nil
 	}
 	return 0, nil
 }
@@ -486,16 +511,21 @@ func chainRemaining(b chainBehind, spec *task.Spec, o *runOptions, warn io.Write
 		spent := runstore.Amount(0)
 		if measured {
 			spent = u.Amount
-		} else if !b.gap {
+		} else if b.chain != nil {
 			// The chain does not measure this dimension: with the budget off
 			// there is no ledger, and no run record carries a whole-run token
 			// total (D1051, F8). Saying so is the report, and the chain's own
 			// limit then stands for this run — never a figure the read invented,
-			// and never the limit read as unspent. A gap says none of this: the
-			// dimension is unmeasured because the spend could not be read, not
-			// because the chain has no figure, and the limit in hand is the
-			// previous run's remaining rather than the chain's own — the warning
-			// chainInherit printed is the report there, and it is true.
+			// and never the limit read as unspent. The other two shapes have no
+			// chain to report on, and naming one would invent it: a launch that
+			// begins a chain read nothing — its own --max-* IS the chain's limit
+			// (D1041) and nothing measured it, while this note would name a chain
+			// behind the launch and a cause (the budget is off) that an enforced
+			// installation does not have — and a gap leaves the dimension
+			// unmeasured because the spend could not be read, not because the
+			// chain has no figure, with the previous run's remaining in hand
+			// rather than the chain's own limit: the warning chainInherit printed
+			// is the report there, and it is true.
 			fmt.Fprintf(warn, "note: the chain behind this launch does not measure its %s (the budget is off, and a run's record carries no such figure): the chain's own %s limit stands for this run, and nothing enforces it\n",
 				chainDimensionWord(d), chainDimensionWord(d))
 		}

@@ -255,6 +255,61 @@ func TestRunRefusesAContinuesOfARunInAPRChain(t *testing.T) {
 		wantRefused(t, f, "that run is part of PR #7's chain",
 			"run", "--repo", limitsRepo, "--continues", chainFu, "--run-id", wallRunIDAt(0, "140000", "d4d4"), "A task")
 	})
+	t.Run("a run that only launched", func(t *testing.T) {
+		f := chainRig(t)
+		// The record is written as the run starts, so a --pr follow-up that was
+		// launched and never started has its stored task alone — and the task is
+		// what names the pull request it was launched for. Read from the record
+		// alone this run is a chain with no pull request, and the launch would be
+		// handed the chain's limit in full while not being in the chain.
+		seedSpec(t, f, followUpSpec(chainFu, chainRun, chainRun, 7), false)
+		wantRefused(t, f, "that run is part of PR #7's chain",
+			"run", "--repo", limitsRepo, "--continues", chainFu, "--run-id", wallRunIDAt(0, "140000", "d4d4"), "A task")
+	})
+	t.Run("a review job's run", func(t *testing.T) {
+		f := chainRig(t)
+		usd := chainUSD
+		seedChainPRRoot(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+		// A review job joins its pull request's chain by ReviewPRs (D1058), and
+		// its record carries neither a pr nor a follow_up: the stored task is the
+		// only thing that says which pull request it is in.
+		if _, _, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--recipe", "review-only", "--run-id", chainFu); err != nil {
+			t.Fatal(err)
+		}
+		launched := len(f.run.Executions())
+		_, _, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainFu, "--run-id", wallRunIDAt(0, "140000", "d4d4"), "A task")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "that run is part of PR #7's chain") {
+			t.Fatalf("err = %v, want the continues of a review run refused as a pull request's chain", err)
+		}
+		if n := len(f.run.Executions()); n != launched {
+			t.Fatalf("%d executions, want the review run's %d alone", n, launched)
+		}
+	})
+}
+
+// TestRunBeginningAChainReportsNoUnmeasuredDimension: the note that a chain
+// does not measure one of its dimensions is about a chain this launch read, and
+// a launch that begins one read none — its own --max-* IS the chain's limit
+// (D1041), so no dimension of it was measured by anything. Printed there it
+// states a chain that is not behind the launch and a cause that is not there:
+// "the budget is off" is read out of an installation running the budget in
+// enforce mode. The figures are right either way; only the report was wrong.
+func TestRunBeginningAChainReportsNoUnmeasuredDimension(t *testing.T) {
+	f := chainRig(t)
+	// --used-usd is what reaches the write for a launch that begins a chain
+	// (chainRemaining returns early without one), and --max-tokens is a
+	// dimension whose limit only this launch's own flag sets.
+	_, errOut, err := execute(t, "run", "--repo", limitsRepo, "--run-id", chainFu,
+		"--max-usd", "4", "--max-tokens", "500000", "--used-usd", "1", "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(errOut, "does not measure") {
+		t.Fatalf("stderr = %q, want no unmeasured-dimension note for a launch that begins a chain", errOut)
+	}
+	if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD == nil || *o.MaxUSD != 3 {
+		t.Fatalf("overrides = %+v, want the 4 dollars this launch asked for less the 1 it stated as used", o)
+	}
 }
 
 // TestRunContinuesWithAnUnreadableLedgerChargedTheCap: a chain's ledger that
