@@ -1060,6 +1060,57 @@ func TestIssueSubmitPreviewUploadsNothing(t *testing.T) {
 	}
 }
 
+// TestIssueSubmitAskResolvesALocalIDAfterTheUpload: the upload `--ask` makes
+// first renames the file it uploads, and the reference is still resolved after
+// it. A local ID is the name a person typed before anything was uploaded (F23),
+// and the upload numbers the record and moves the file to that number, so the
+// resolution runs against a folder the reference's own file name no longer
+// appears in: what the record keeps wherever it is filed is its LocalID, and
+// `submit --ask local-<run>` files the issue it just uploaded instead of
+// answering that no issue of that name exists.
+func TestIssueSubmitAskResolvesALocalIDAfterTheUpload(t *testing.T) {
+	rig := newMineRig(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+	local := rig.save(mineRec("48213", "sig-local-id"))
+	if local.Number != 0 || local.Uploaded {
+		t.Fatalf("the seeded record is numbered %d (uploaded %t), want it pending in this folder as an offline run leaves it", local.Number, local.Uploaded)
+	}
+
+	out, _, err := executeStdin(t, "y\n", "issue", "submit", local.LocalID, "--ask")
+	if err != nil {
+		t.Fatalf("submit --ask of a local ID: %v\n%s", err, out)
+	}
+	if got := len(spy.creates()); got != 1 {
+		t.Fatalf("submit --ask of a local ID filed %d issue(s), want once", got)
+	}
+	rows := sharedRows(t, rig.bucket)
+	if len(rows) != 1 {
+		t.Fatalf("the project's store holds %d issue(s), want the one the upload added: %+v", len(rows), rows)
+	}
+	back, err := rig.store.Get(local.LocalID)
+	if err != nil {
+		t.Fatalf("reading this machine's copy back by the name it was typed under: %v", err)
+	}
+	if back.Number != rows[0].Number || !back.Uploaded {
+		t.Errorf("this machine's copy is numbered %d (uploaded %t), want the uploaded number %d", back.Number, back.Uploaded, rows[0].Number)
+	}
+	if back.Status != issues.StatusSubmitted || back.URL != filedIssueURL {
+		t.Errorf("this machine's copy is %q with URL %q, want %q with %q", back.Status, back.URL, issues.StatusSubmitted, filedIssueURL)
+	}
+	filed, err := issues.SharedIssue(context.Background(), rig.bucket, rows[0].Number)
+	if err != nil {
+		t.Fatalf("reading the shared issue back: %v", err)
+	}
+	if filed.Status != issues.StatusSubmitted || filed.URL != filedIssueURL {
+		t.Errorf("the project's record is %q with URL %q, want %q with %q", filed.Status, filed.URL, issues.StatusSubmitted, filedIssueURL)
+	}
+	if c := sharedClaim(t, rig.bucket, rows[0].Number); c != nil {
+		t.Errorf("the filed issue is still under the claim %+v, want it given back", c)
+	}
+}
+
 // TestIssueSubmitAgentSessionRefusesBeforeAnyPreview: the refusal a coding
 // agent's session gets comes before anything is shown or written (F10). `--ask`
 // is the half of the command that uploads and files, so the guard is answered
