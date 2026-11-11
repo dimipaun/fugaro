@@ -87,9 +87,11 @@
 #             check's to undo — the amendment on the base branch is yours, and the
 #             follow-up's commits on the pull-request branch are the run's.
 #
-# The knobs (CHECK480_*, and the flags that override them) change only how long
-# the check waits and how often it looks: nothing here can point it at another
-# repository, and no argument can make it read the graph itself.
+# The knobs (CHECK480_*, and the flags that override them) change how long the
+# check waits, how often it looks, and — CHECK480_RUN_ID — the run id the
+# follow-up is minted with, which is the one a re-run names to continue the run
+# the first attempt sent instead of spending a second one: nothing here can point
+# it at another repository, and no argument can make it read the graph itself.
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: a trace prints the
