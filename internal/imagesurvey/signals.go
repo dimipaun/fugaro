@@ -1,0 +1,382 @@
+// Package imagesurvey is the image survey's signal rules: the fixed set of
+// paths one repository is read at, the shape a value taken out of one must
+// have, and the signals a repository's answers amount to.
+//
+// The list is fixed and never discovered, and that is the whole of this
+// package's design. gitprov.ContentsReader reads the file a caller names and
+// lists nothing, so a survey that walked a repository's tree is one the
+// interface cannot support; every path here is therefore a literal, and the
+// rules are what a repository's fixed answers mean (the reconciliation's F22).
+//
+// Every value a rule answers with is either a constant of this package or the
+// capture of that rule's own regexp, bounded by it before it is stored, and
+// printed through pluginwire.Printable before it leaves Findings. Nothing here
+// trusts the repository: a lockfile's name is the survey's, a version is a
+// version-shaped token or nothing, and a FROM line is a reference-shaped one,
+// so the bytes of a repository the project does not own cannot reach an agent's
+// context as anything but a value this package has already bounded.
+package imagesurvey
+
+import (
+	"context"
+	"errors"
+	"regexp"
+	"slices"
+	"strings"
+
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
+)
+
+// The kinds a signal is reported as. They are a closed vocabulary — the
+// document `fugaro image survey --json` prints its kinds from these constants
+// and schemas/image-survey.schema.json lists them — so a consumer branches on
+// a kind only where a release has said what that kind means.
+const (
+	KindLockfile       = "lockfile"
+	KindVersion        = "version"
+	KindDockerfile     = "dockerfile"
+	KindCI             = "ci"
+	KindCompose        = "compose"
+	KindTestcontainers = "testcontainers"
+)
+
+// Signal is one fixed path the survey reads, and the kind its answer is
+// reported as. The paths are exported (Signals) so a caller can say what the
+// survey reads without reading this package's rules, and so a test can pin
+// that the read is exactly this list.
+type Signal struct {
+	Kind string `json:"kind"`
+	Path string `json:"path"`
+}
+
+// Finding is one signal a repository answered with: the kind, the fixed path
+// the answer came from, and the value the rule bounded — a manager's name, a
+// version, a base image reference, a set of service hints, or "" for a rule
+// whose answer is the file's presence alone.
+type Finding struct {
+	Kind  string `json:"kind"`
+	Path  string `json:"path"`
+	Value string `json:"value,omitempty"`
+}
+
+// File is one file the survey read for a repository: a fixed path and what was
+// there. It is what Findings judges, so the rules can be tested without a
+// provider.
+type File struct {
+	Path string
+	Data []byte
+	// NoBytes is set for a path the reader answered for without its bytes:
+	// the file is there and the read was refused because of what the file is
+	// (empty, or over gitprov.MaxContentsBytes — the two errors the adapters
+	// name). Only the rules whose signal is the file's own existence can be
+	// answered for it, and Findings does exactly that.
+	NoBytes bool
+}
+
+// rule is one fixed path and how its answer is read.
+//
+// read answers (value, ok). ok false is "this file is not an answer of this
+// rule's at all", and it contributes no finding: the capture rules answer it
+// when their regexp does not match the file (a version file whose content is
+// not a version, a package.json with no engines.node, a go.mod with no go
+// directive) and the Testcontainers rule when the file carries no marker. ok
+// true with the empty value is a different thing and is kept: the file is there
+// and names nothing this package carries (a Dockerfile whose FROM line is not a
+// reference-shaped token, a compose file naming no service Fugaro starts), so
+// the report shows the repository has that file with no value beside it.
+type rule struct {
+	kind string
+	path string
+	read func([]byte) (string, bool)
+}
+
+// rules is the whole fixed list, in one settled order: the paths a reader of
+// the report sees grouped by kind, and the order the reads are made in.
+var rules = []rule{
+	// A lockfile's own name is the signal, and the manager it implies is this
+	// package's constant: nothing in the file is read.
+	{KindLockfile, "package-lock.json", presence("npm")},
+	{KindLockfile, "pnpm-lock.yaml", presence("pnpm")},
+	{KindLockfile, "yarn.lock", presence("yarn")},
+	{KindLockfile, "bun.lock", presence("bun")},
+	{KindLockfile, "go.sum", presence("go")},
+	{KindLockfile, "Cargo.lock", presence("cargo")},
+	{KindLockfile, "poetry.lock", presence("poetry")},
+	{KindLockfile, "requirements.txt", presence("pip")},
+	{KindLockfile, "Gemfile.lock", presence("bundler")},
+	{KindLockfile, "composer.lock", presence("composer")},
+
+	// A version file names the version the image has to carry. Each regexp
+	// captures a version-shaped token and nothing else: a file whose text is
+	// not one contributes no finding rather than a token nobody bounded.
+	{KindVersion, ".nvmrc", capture(nodeVersion)},
+	{KindVersion, ".python-version", capture(pythonVersion)},
+	{KindVersion, ".tool-versions", capture(asdfTool)},
+	{KindVersion, "go.mod", capture(goDirective)},
+	{KindVersion, "rust-toolchain.toml", capture(rustChannel)},
+	{KindVersion, "package.json", capture(nodeEngines)},
+
+	// The Dockerfile's own presence is the signal, and its first FROM line is
+	// what the skill would build the project's image on.
+	{KindDockerfile, "Dockerfile", dockerfileHint},
+
+	// CI is the signal — the runner is this package's constant — because a
+	// repository with a pipeline is one whose image has to carry what the
+	// pipeline runs.
+	{KindCI, ".github/workflows/ci.yml", presence("github-actions")},
+	{KindCI, ".gitlab-ci.yml", presence("gitlab")},
+	{KindCI, "bitbucket-pipelines.yml", presence("bitbucket")},
+	{KindCI, "Jenkinsfile", presence("jenkins")},
+	{KindCI, ".circleci/config.yml", presence("circleci")},
+	{KindCI, "azure-pipelines.yml", presence("azure")},
+
+	// A compose file's service names are what the catalog entry's own services:
+	// list is written from (D1904), and only the names images/common's
+	// fugaro-services knows are answered with: the words of the file itself
+	// never reach the report.
+	{KindCompose, "docker-compose.yml", serviceHints},
+	{KindCompose, "docker-compose.yaml", serviceHints},
+	{KindCompose, "compose.yaml", serviceHints},
+	{KindCompose, "compose.yml", serviceHints},
+
+	// Testcontainers is the same hint from a build file: the marker alone is
+	// the signal, and the services named beside it are the value.
+	{KindTestcontainers, "pom.xml", testcontainersHints},
+	{KindTestcontainers, "build.gradle", testcontainersHints},
+	{KindTestcontainers, "build.gradle.kts", testcontainersHints},
+	{KindTestcontainers, "requirements.txt", testcontainersHints},
+	{KindTestcontainers, "package.json", testcontainersHints},
+}
+
+// Signals is the fixed list of what the survey reads, as a copy of the rules'
+// own paths: a caller cannot change the read by writing to the answer.
+func Signals() []Signal {
+	out := make([]Signal, 0, len(rules))
+	for _, r := range rules {
+		out = append(out, Signal{Kind: r.kind, Path: r.path})
+	}
+	return out
+}
+
+// Paths is the repository-relative paths the survey reads, once each and in the
+// rules' own order: two rules may judge one file (a package.json is a version
+// file and a Testcontainers build file), and a repository is read once per path
+// however many rules judge it. It is the count Read answers with, and the list
+// a caller that has to say how much was read reads it from.
+func Paths() []string {
+	out := make([]string, 0, len(rules))
+	for _, r := range rules {
+		if !slices.Contains(out, r.path) {
+			out = append(out, r.path)
+		}
+	}
+	return out
+}
+
+// Findings judges the files a repository answered with against the fixed rules
+// and answers the signals, in the rules' own order. A path the caller did not
+// read — because the file is not there — contributes nothing: the survey's
+// answer is what a repository HAS, and a missing file is not a mistake of the
+// reader.
+func Findings(files []File) []Finding {
+	byPath := make(map[string]File, len(files))
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+	out := make([]Finding, 0, len(rules))
+	for _, r := range rules {
+		f, ok := byPath[r.path]
+		if !ok {
+			continue
+		}
+		// A file whose bytes were not read answers only the kinds whose
+		// signal is the file's own existence: a package-lock.json of two
+		// megabytes is still a repository whose image carries npm, while a
+		// version or a FROM line nobody could read is not a version or a
+		// base image, and saying it is would be a claim about bytes that
+		// were never read.
+		if f.NoBytes && !presenceOnly(r.kind) {
+			continue
+		}
+		value, ok := r.read(f.Data)
+		if !ok {
+			continue
+		}
+		// Every value leaves this package through Printable, whatever the rule
+		// that produced it: a rule bounds its own value by shape, and this is
+		// the one place that bounds the text that reaches a report, a terminal
+		// or an agent, so a rule added later cannot forget it.
+		out = append(out, Finding{Kind: r.kind, Path: r.path, Value: pluginwire.Printable(value)})
+	}
+	return out
+}
+
+// Read reads every path of the fixed list out of r, at ref ("" for the
+// repository's default branch), and answers the findings and how many of those
+// paths the reader answered for.
+//
+// The count is not the number of signals found: it is how many files were
+// actually read, and it is what keeps the two empty answers apart — a
+// repository whose files were read and name none of the signals, and a
+// repository no read reached at all. Zero is the second, and a caller must not
+// print it as the first: ContentsReader answers one error both for a file that
+// is not there and for a read that could not be made, so zero is what a
+// repository that does not exist, a credential that reads nothing there and a
+// repository whose files are none of these all look like. Telling those apart
+// is the caller's, and it starts by knowing it read nothing.
+//
+// A path whose read fails contributes nothing else: a survey is not the place
+// to decide a repository cannot be read from a file it is allowed not to have.
+// The one failure that is not "that file is not there" is a read refused
+// because of what the file is — empty, or over gitprov.MaxContentsBytes, which
+// both adapters refuse and neither host would serve — and that file is there:
+// it is recorded with no bytes, so the presence rules answer for it (a
+// package-lock.json of two megabytes is a repository whose image carries npm)
+// and no rule claims anything about bytes nobody read. A cancelled context is
+// the caller's own, and it stops the read.
+func Read(ctx context.Context, r gitprov.ContentsReader, ref string) ([]Finding, int, error) {
+	paths := Paths()
+	files := make([]File, 0, len(paths))
+	for _, path := range paths {
+		data, err := r.Contents(ctx, path, ref)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, 0, ctxErr
+			}
+			if errors.Is(err, gitprov.ErrContentsEmpty) || errors.Is(err, gitprov.ErrContentsTooLarge) {
+				files = append(files, File{Path: path, NoBytes: true})
+			}
+			continue
+		}
+		files = append(files, File{Path: path, Data: data})
+	}
+	return Findings(files), len(files), nil
+}
+
+// presenceOnly is whether a kind's signal is the file's own existence, with
+// nothing in it read: a lockfile's manager and a CI file's runner are this
+// package's own constants (the rules' table), so those two kinds are what a
+// file recorded without its bytes can answer. Every other kind takes its value
+// out of the file, and a read that returned none is no answer.
+func presenceOnly(kind string) bool {
+	return kind == KindLockfile || kind == KindCI
+}
+
+// presence is a rule whose answer is the file's own existence, with value as
+// the kind's constant.
+func presence(value string) func([]byte) (string, bool) {
+	return func([]byte) (string, bool) { return value, true }
+}
+
+// capture is a rule whose answer is the first submatch of re, and nothing when
+// the text does not match: the token a report carries is one this package
+// bounded by shape, never a line of someone else's file.
+func capture(re *regexp.Regexp) func([]byte) (string, bool) {
+	return func(data []byte) (string, bool) {
+		m := re.FindSubmatch(data)
+		if m == nil {
+			return "", false
+		}
+		return string(m[1]), true
+	}
+}
+
+// dockerfileHint is the Dockerfile rule: the file's presence is the signal,
+// and the base image its first FROM line names is the value. A Dockerfile
+// whose FROM line is not a reference this package carries still answers — a
+// repository with a Dockerfile is one the skill has something to say about —
+// with the empty value and no text of that line.
+func dockerfileHint(data []byte) (string, bool) {
+	if m := dockerfileFrom.FindSubmatch(data); m != nil {
+		return string(m[1]), true
+	}
+	return "", true
+}
+
+// serviceHints is a compose rule: the services a compose file names, from the
+// closed list below, deduplicated and sorted, and "" when it names none of
+// them. The file's presence is a finding either way — a repository with a
+// compose file is one the skill has to ask about, which is what the empty value
+// beside the path says — and only the service names are ever answered with.
+func serviceHints(data []byte) (string, bool) {
+	return serviceWordsIn(data, false)
+}
+
+// testcontainersHints is a Testcontainers rule: the marker in a build file is
+// the signal, and the services named beside it are the value. A file with no
+// marker contributes nothing.
+func testcontainersHints(data []byte) (string, bool) {
+	return serviceWordsIn(data, true)
+}
+
+// services are the names a catalog entry's own `services:` key may hold (F12,
+// D1904), each with the words a repository writes it as — compiled once, and
+// matched against the file's bytes and nothing else. They are the closed list
+// images/common/fugaro-services accepts and config.ServiceNames holds, and what
+// a rule answers with is a list a consumer writes straight into an entry, so
+// every name here is one `fugaro validate` takes and the script starts: the
+// Firebase emulator is the service `firebase`, not the `firebase-emulator` tag
+// an entry may carry beside it (internal/cli/image_catalog.go). Only these are
+// ever answered with: a service a repository names that Fugaro has no starter
+// for is not one this survey can propose, so no word of the file ever reaches
+// the report.
+var services = []struct {
+	service string
+	words   []*regexp.Regexp
+}{
+	{"postgres", []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bpostgres\b`),
+		regexp.MustCompile(`(?i)\bpostgresql\b`),
+	}},
+	{"redis", []*regexp.Regexp{regexp.MustCompile(`(?i)\bredis\b`)}},
+	{"firebase", []*regexp.Regexp{regexp.MustCompile(`(?i)\bfirebase\b`)}},
+}
+
+var testcontainersMarker = regexp.MustCompile(`(?i)\btestcontainers\b`)
+
+// serviceWordsIn answers the closed-list services the text names. marker is
+// whether the answer requires testcontainersMarker to be there as well.
+func serviceWordsIn(data []byte, marker bool) (string, bool) {
+	if marker && !testcontainersMarker.Match(data) {
+		return "", false
+	}
+	found := make([]string, 0, len(services))
+	for _, s := range services {
+		if slices.ContainsFunc(s.words, func(re *regexp.Regexp) bool { return re.Match(data) }) {
+			found = append(found, s.service)
+		}
+	}
+	if len(found) == 0 {
+		// The file is there and names no service this survey knows: the kind
+		// answers "" rather than nothing, so the report still shows that the
+		// repository has a compose file (or a Testcontainers build).
+		return "", true
+	}
+	slices.Sort(found)
+	return strings.Join(found, ","), true
+}
+
+// The version rules. Each captures one token with a version's or a
+// reference's own alphabet, so what a version file contributes is a version
+// and never the line it was written on.
+var (
+	// nodeVersion: .nvmrc, "20", "v20.11.0" or "lts/*"'s numeric half.
+	nodeVersion = regexp.MustCompile(`(?m)^\s*v?([0-9]+(?:\.[0-9]+){0,2})\s*$`)
+	// pythonVersion: .python-version, "3.12" or "3.12.1".
+	pythonVersion = regexp.MustCompile(`(?m)^([0-9]+\.[0-9]+(?:\.[0-9]+)?)\s*$`)
+	// asdfTool: .tool-versions, "nodejs 20.11.0" — one tool and its version.
+	asdfTool = regexp.MustCompile(`(?m)^([A-Za-z0-9_.+-]{1,32} +[0-9][0-9A-Za-z_.+-]{0,31})\s*$`)
+	// goDirective: go.mod's "go 1.23" line.
+	goDirective = regexp.MustCompile(`(?m)^go ([0-9]+\.[0-9]+(?:\.[0-9]+)?)$`)
+	// rustChannel: rust-toolchain.toml's own channel, a release or one of the
+	// three names a toolchain file may carry.
+	rustChannel = regexp.MustCompile(`(?m)^\s*channel\s*=\s*"([0-9]+(?:\.[0-9]+){0,2}|stable|beta|nightly)"`)
+	// nodeEngines: package.json's engines.node range, which is a range and not
+	// a version: its own alphabet, bounded in length.
+	nodeEngines = regexp.MustCompile(`"node"\s*:\s*"([A-Za-z0-9.^~<>=*|x -]{1,32})"`)
+	// dockerfileFrom: the first FROM line's own reference — a registry host, a
+	// path, a tag and a digest, which is everything a base image reference may
+	// carry.
+	dockerfileFrom = regexp.MustCompile(`(?mi)^FROM\s+([A-Za-z0-9][A-Za-z0-9._/:@-]{0,127})`)
+)

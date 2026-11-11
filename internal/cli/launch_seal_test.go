@@ -494,8 +494,8 @@ func TestTheSealKeyTravelsAsASecretEnvEntry(t *testing.T) {
 	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.env) != 0 {
-		t.Errorf("the launch put %v in the plain Env list: the budget marker's value is the launch's seal key, and a plain entry is readable through the job's definition by every launcher (backend.LaunchSpec.SecretEnv)", rec.env)
+	if plain := withoutServicesStamp(t, rec.env); len(plain) != 0 {
+		t.Errorf("the launch put %v in the plain Env list: the budget marker's value is the launch's seal key, and a plain entry is readable through the job's definition by every launcher (backend.LaunchSpec.SecretEnv)", plain)
 	}
 	var key string
 	for _, kv := range rec.secretEnv {

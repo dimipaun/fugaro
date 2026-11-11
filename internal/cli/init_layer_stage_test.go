@@ -327,6 +327,152 @@ func TestUpdatePublishesTheProjectLayerWhenItIsUnpublished(t *testing.T) {
 	}
 }
 
+// TestUpdatePublishesALayerFileAWriterJustWrote is G5's own step (D1176): the
+// layer file a writer of this plan wrote is published by `fugaro update`, the
+// one command the owner already runs, and no second command has to be typed
+// after an edit. The write goes through the write path rather than through
+// recordLayer, which is what makes this the seam between the plan's two
+// halves: the bytes published here are a writer's own, not a fixture's.
+//
+// The published object is the writer's file byte for byte — the write path
+// hands the file to this stage, and this stage publishes that file, so what
+// the repositories of the project resolve against is what the writer wrote —
+// the file itself is left as it was written, and the next run, finding the two
+// equal, publishes nothing rather than the same bytes again.
+func TestUpdatePublishesALayerFileAWriterJustWrote(t *testing.T) {
+	r := newLayerRig(t, testProjectLayer)
+	path := localLayerPath(t)
+	recordLayer(t, testProjectLayer, "0")
+
+	out, errOut, err := execute(t, "settings", "set", "layer.defaults.agent.max_budget_usd", "30", "--layer", "project", "--yes")
+	if err != nil {
+		t.Fatalf("the write path refused the key: %v\n%s%s", err, out, errOut)
+	}
+	wrote, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatalf("the write path wrote nothing at %s: %v", path, rerr)
+	}
+	if !strings.Contains(string(wrote), "max_budget_usd: 30") {
+		t.Fatalf("the write path did not write the entry into %s:\n%s", path, wrote)
+	}
+
+	out, errOut, err = executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("fugaro update did not publish the file the write path wrote: %v\n%s%s", err, out, errOut)
+	}
+	got, ok := layerObject(t, r)
+	if !ok {
+		t.Fatalf("nothing was published from the writer's file:\n%s%s", out, errOut)
+	}
+	if !strings.Contains(got, "max_budget_usd: 30") {
+		t.Errorf("the published object does not carry the entry the writer wrote:\n%s", got)
+	}
+	if got != string(wrote) {
+		t.Errorf("the published object is not the file the writer wrote:\nobject:\n%s\nfile:\n%s", got, wrote)
+	}
+	if data, _ := os.ReadFile(path); string(data) != string(wrote) {
+		t.Errorf("the publish rewrote the writer's file:\n%s", data)
+	}
+
+	out, errOut, err = executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("the second fugaro update: %v\n%s%s", err, out, errOut)
+	}
+	all := out + errOut
+	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markDone+" done") {
+		t.Errorf("the run after the publish does not find the file and the object equal: %q\n%s", row, all)
+	}
+	if again, _ := layerObject(t, r); again != got {
+		t.Errorf("the second run published something else:\n%s", again)
+	}
+}
+
+// TestUpdateLayerStageIsANoOpWhenNothingChanged: an unchanged file is a no-op
+// that says so. The file, the object and the generation recorded for this
+// machine's config all agree, so the stage asks nothing, writes nothing and
+// says which of the three states it is in — the idempotence the plan's
+// interface names, and the reason a writer's `next: fugaro update` is safe to
+// run twice.
+func TestUpdateLayerStageIsANoOpWhenNothingChanged(t *testing.T) {
+	r := newLayerRig(t, testProjectLayer)
+	path := localLayerPath(t)
+	recordLayer(t, testProjectLayer, "0")
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
+	}
+	all := out + errOut
+	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markDone+" done") {
+		t.Errorf("the layer stage is not the no-op it is: %q\n%s", row, all)
+	}
+	if _, log := onlyLog(t, "update"); !strings.Contains(log, "the local layer file "+path+" is the published project layer") {
+		t.Errorf("the run does not say the file is already the published layer:\n%s", log)
+	}
+	for _, what := range []string{layerPublishWhat, layerSeedWhat, layerReseedWhat} {
+		if strings.Contains(all, what) {
+			t.Errorf("a run with nothing to do asked to write:\n%s", all)
+		}
+	}
+	if got, ok := layerObject(t, r); !ok || got != testProjectLayer {
+		t.Errorf("the object moved under a run with nothing to do: %q", got)
+	}
+	if data, _ := os.ReadFile(path); string(data) != testProjectLayer {
+		t.Errorf("the file moved under a run with nothing to do:\n%s", data)
+	}
+}
+
+// TestUpdateLayerStageSkipsWhenNoLayerFile: there is no local layer file, so
+// there is nothing this stage may publish — the object is the project's, and a
+// run with no file of the owner's never writes one. With nothing published
+// either, the whole stage is skipped and said to be; with a published layer,
+// what stays is the publish (the object is left exactly as it is, generation
+// and all) and the seed D830 gives the owner a file to edit. The publish half
+// is the one this test owns: it may never write an object it did not read from
+// a local file.
+func TestUpdateLayerStageSkipsWhenNoLayerFile(t *testing.T) {
+	t.Run("nothing is published", func(t *testing.T) {
+		r := newLayerRig(t, "")
+
+		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		if err != nil {
+			t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
+		}
+		all := out + errOut
+		if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
+			t.Errorf("the layer stage is not skipped: %q\n%s", row, all)
+		}
+		if _, ok := layerObject(t, r); ok {
+			t.Error("an object was published with no local layer file behind it")
+		}
+		if _, rerr := os.Stat(localLayerPath(t)); !errors.Is(rerr, os.ErrNotExist) {
+			t.Errorf("a local layer file was written with nothing to seed it from: %v", rerr)
+		}
+	})
+
+	t.Run("the project has published one", func(t *testing.T) {
+		r := newLayerRig(t, testProjectLayer)
+
+		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		if err != nil {
+			t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
+		}
+		all := out + errOut
+		if !strings.Contains(all, layerSeedWhat) {
+			t.Errorf("the run does not ask the seed's own question:\n%s", all)
+		}
+		if _, log := onlyLog(t, "update"); !strings.Contains(log, "this run seeds it from the published project layer") {
+			t.Errorf("the stage does not do the one thing it can do without a file:\n%s", log)
+		}
+		if got, ok := layerObject(t, r); !ok || got != testProjectLayer {
+			t.Errorf("the run published with no local layer file: %q", got)
+		}
+		if data, rerr := os.ReadFile(localLayerPath(t)); rerr != nil || string(data) != testProjectLayer {
+			t.Errorf("the published layer was not seeded into the local file: %v\n%s", rerr, data)
+		}
+	})
+}
+
 // TestUpdateLayerStageSkipsWithNoLocalFileAndNoPublishedLayer: the one state
 // with nothing to seed from and nothing to publish is said in a sentence, and
 // the stage is skipped rather than done.
@@ -338,11 +484,11 @@ func TestUpdateLayerStageSkipsWithNoLocalFileAndNoPublishedLayer(t *testing.T) {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
 	all := out + errOut
-	if !strings.Contains(all, "[skipped]    layer") {
-		t.Errorf("the layer stage is not skipped:\n%s", all)
+	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
+		t.Errorf("the layer stage is not skipped: %q\n%s", row, all)
 	}
-	if !strings.Contains(all, "no local layer file at "+localLayerPath(t)) {
-		t.Errorf("the stage does not say why it did nothing:\n%s", all)
+	if _, log := onlyLog(t, "update"); !strings.Contains(log, "no local layer file at "+localLayerPath(t)) {
+		t.Errorf("the stage's whole reason is not in the log:\n%s", log)
 	}
 }
 
@@ -581,8 +727,11 @@ func TestUpdateLayerStageSkipsAGSBucketOnFakeEndpoints(t *testing.T) {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
 	all := out + errOut
-	if !strings.Contains(all, "[skipped]    layer") || !strings.Contains(all, "could not be read") {
-		t.Errorf("the layer stage did not skip the fake-endpoint bucket:\n%s", all)
+	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
+		t.Errorf("the layer stage did not skip the fake-endpoint bucket: %q\n%s", row, all)
+	}
+	if _, log := onlyLog(t, "update"); !strings.Contains(log, "could not be read") {
+		t.Errorf("the stage's whole reason is not in the log:\n%s", log)
 	}
 	if _, rerr := os.Stat(localLayerPath(t)); !errors.Is(rerr, os.ErrNotExist) {
 		t.Errorf("a local layer file was written with no bucket read: %v", rerr)

@@ -44,6 +44,31 @@ var PlatformEnvNames = []string{"FUGARO_BUCKET", "FUGARO_BACKEND", "FUGARO_GCP_P
 // (runner.ImageEntryEnv aliases this) and imports internal/backend/gcp.
 const ImageEntryEnv = "FUGARO_IMAGE_ENTRY"
 
+// ServicesEnv is the job environment variable the launcher writes the services
+// a run's image provides under (D1904): the catalog entry's own list, space
+// separated, which the runner starts through `fugaro-services start` before
+// the run's tests.
+//
+// It is written on EVERY launch, the empty value included, and that is the
+// ImageEntryEnv precedent exactly: the runner reads its own environment, which
+// on a job whose image is a catalog entry's includes the image's own ENV, so
+// an image that set FUGARO_SERVICES would otherwise have the run start
+// services no entry declared — the very thing the entry's list is the only
+// source of. A key the launch sets overrides whatever the image holds, and an
+// empty value means "no entry provides a service": the runner starts nothing
+// rather than the services script's own default of all three.
+//
+// It is not in ReservedEnvNames, which is the difference between it and
+// ImageEntryEnv: that one is written by the deploy (internal/infra sets it on
+// the job) and must therefore be refused from a launch entry, while this one
+// has no deploy-time writer — the job's image and its entry are read back at
+// launch, because a job's image is fixed when it is deployed and the entry the
+// run starts on is the deployed one (D1149) — so the launcher is the writer and
+// a launch entry naming it is that writer's own. The spelling lives here,
+// beside ImageEntryEnv, because the runner reads it (runner.ServicesEnv
+// aliases this) and internal/runner cannot be imported here.
+const ServicesEnv = "FUGARO_SERVICES"
+
 // ReservedEnvNames is the reserved list both backends hand LaunchEnv: the
 // names a backend's own job definition writes (own) and the platform's five
 // (PlatformEnvNames). It is one function rather than two lists because the

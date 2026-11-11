@@ -1,5 +1,34 @@
 # Bitbucket workspace and project tokens
 
+**Status as of 2026-11-10: T1.1 (with the pointer sentence D490 added to it, and its pin), T1.2,
+T1.3 (Check 180 written and registered), T2.1 (as the D493 re-plan amended it), T2.3 and T2.8 are
+merged; T2.2, T2.4 and T2.6 are not started, T2.9 is closed as replaced by the proxy chain (D1981),
+T2.11's notes were delivered as docs/secrets-brokering's 0.14.0 draft and its missing step 5 is now
+a dated amendment there (D1984), and T1.4 and T2.7 are the owner's own runs, unperformed.**
+The 2026-11-07 census below reads `origin/main` at `0c705ec8` and is **stale in two places that
+matter**: T1.1's remainder and T1.3 both merged afterwards, in `3bcbd1dd` (#1880).
+[reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) is the reading of every
+task against the secrets-brokering proxy chain, and [status.md](../status.md) carries the current
+table.
+
+**Amended 2026-11-10: the plan is read against the secrets-brokering proxy chain, task by task.**
+[reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) takes that reading on
+`origin/main` and answers the question [status.md](../status.md) leaves open — "the proxy chain
+probably makes T2.2 and T2.9 moot". **T2.9 is moot**: `internal/runner/projectjob.go` has no
+Bitbucket check and should not have one, because the boundary is now
+`internal/gitproxy/rules.go`'s `Decide` and `CheckPRWrite`, behind
+`internal/credsvc/bitbucketproxy.go`, where an agent cannot reach it. **T2.2 is not moot**: the
+proxy takes the token off the *run's git traffic* — the job's own mount stays until the flip — and
+it does not make the service admit a *shared* job —
+`internal/infra/projectjobs.go`'s `SharedJobProvider` still admits `github` alone, and T2.1's own
+`projectpolicy.SharedBitbucketProfile` has no production caller. T2.2, T2.4, T2.6's phase-3 half
+and T2.7 wait on B5.1 (S5), which is not started. **Done since the census:** T1.1's remainder and
+T1.3. **The reading's decisions are D1980–D1984, and the owner answered all five on 2026-11-10, as
+recommended**: T2.2 stays owed and waits on B5.1 (D1980); T2.9 closes as replaced (D1981); T2.4 is
+kept for S5 (D1982); and D1983 and D1984 are **done** — the three corrections in
+`docs/git-providers.md`, and T2.11's step 5 as a dated amendment to the shipped 0.14.0 operator
+draft. Its block is D1980–D1999.
+
 **Status (2026-11-07): T1.2, T2.1 (as the D493 re-plan amended it), T2.3 and T2.8 are merged, T1.1 is merged except for the one pointer sentence D490 added to it, T2.11's operator notes were delivered as docs/secrets-brokering's 0.14.0 draft, and T1.3, T2.2, T2.4, T2.6 and T2.9 are not started — [status-2026-11-07.md](status-2026-11-07.md) censuses every task against `origin/main`, names the commit and the test behind each state, and lists what can launch now; it records what the tree holds and approves no task, and T1.4 and T2.7 stay the owner's own runs, unperformed.**
 
 The owner ruled D460–D463 on 2026-10-27:
@@ -56,7 +85,8 @@ nothing. The docs present that path as an exception, so the 0.12.1 slice is docs
 | [spec.md](spec.md) | The owner's request of 2026-10-27, verbatim |
 | [reconciliation.md](reconciliation.md) | What exists (§2); Atlassian's facts (§3); findings F1–F18 (§4); decisions D460–D477, all answered 2026-10-27 (§5); the release split (§6); tensions T1–T2 and open items O1–O7 (§7); UNVERIFIED U1–U8 (§9). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices S1–S2 (S3 superseded by run dc73); tasks T1.1–T1.4 and T2.1–T2.11 (T2.5 folded into T2.9, T2.10 off, T3.1 superseded), each with its files, tests, red step, command and reviewer tier; levels, critical path, shared-files table, and Checks 180–181. **Only T1.1 and T1.2 are approved** (0.12.1, after dc73 merges) |
-| [status-2026-11-07.md](status-2026-11-07.md) | The census of 2026-11-07, read on `origin/main` at `0c705ec8`: every task in the plan with its state, the merged commit and the test that proves it, what blocks it, and the tasks that can launch now, in dependency order |
+| [status-2026-11-07.md](status-2026-11-07.md) | The census of 2026-11-07, read on `origin/main` at `0c705ec8`: every task in the plan with its state, the merged commit and the test that proves it, what blocks it, and the tasks that can launch now, in dependency order. **Stale in two places**: T1.1's remainder and T1.3 merged afterwards |
+| [reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) | The plan read against the secrets-brokering proxy chain (2026-11-10): what the chain changed here (§1); every task with its verdict — Done, Superseded or Kept (§2); decisions D1980–D1984, **answered 2026-11-10 as recommended** (§3); the numbers this reading holds (§4); UNVERIFIED (§5) |
 
 ## Typos fixed in the spec
 
@@ -68,3 +98,4 @@ None.
 | --- | --- |
 | **D460–D489** | **D460–D477** are written (all ruled 2026-10-27; D469–D472 are resolutions). **D478–D489** are reserved and unused. The block sits above the subscriptions work's D430–D459, on `main` and in every open PR |
 | **Checks 180–189** | **180–181** are proposed (owner-run, NOT RUN). **182–189** are reserved and unused. The block sits above Checks 170–179 |
+| **D1980–D1999** | **The block [reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) takes** (2026-11-10), because D1959 is the highest decision on `main` and no open PR writes D1960 or above. **D1980–D1984** were answered there on 2026-11-10, all five as recommended; **D1985–D1999** are reserved and unused. It sits above this work's own D460–D489 and above the credentials folder's D1960–D1979, which the same reading takes |

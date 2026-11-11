@@ -4602,8 +4602,8 @@ with a display exercises it against the built app and the frozen menu this run i
 **amended 2026-11-10: the *build* half of that moved and the signing half did
 not.** The owner's ruling of 2026-10-20 gives the console a Windows **build**
 too, and it is the *Linux* `fugaro` inside a WSL distribution rather than a
-Windows one, packed by `electron-builder --win` in the staged
-`docs/pending-workflows/console-windows.yml` and run at release time only
+Windows one, packed by `electron-builder --win` in
+`.github/workflows/console-windows.yml` and run at release time only
 ([the Windows section below](#the-windows-pack-unsigned-and-not-yet-run),
 [docs/console-windows/](../docs/console-windows/README.md)); what stays out is
 the **signing**, because there is still no Authenticode identity for this
@@ -4805,8 +4805,9 @@ the asset names carry, so a bump moves them together.
 **No Linux auto-update** (design §7.3 is Squirrel.Mac and an `electron-updater`
 feed; the AppImage has no such feed here), **no arm64 Linux build** until one can
 be built and verified on a runner that has it, **no Flatpak, snap or rpm**, **no
-Linux Homebrew cask**, **no Windows build** (the Windows pack is staged and has
-never been run — the section below is where it is described), and **no signature
+Linux Homebrew cask**, **no Windows build** (the pack job that would produce one
+is `.github/workflows/console-windows.yml` and has never been run — the section
+below is where it is described), and **no signature
 of any kind**.
 Each is a later decision and not an oversight: this ruling is the smallest thing
 that makes "Linux is supported" true.
@@ -4893,10 +4894,11 @@ rest of the pack does here is unverified rather than known to work.
 portable executable, no arm64 — and **no release asset**: the installer is the
 job's own build artifact and is **not** attached to `console-vX.Y.Z`
 (`docs/release.md`; the release carries macOS and Linux and nothing else). The
-job that produces it is staged under `docs/pending-workflows/`, and its own
-document is `docs/pending-workflows/README.md`'s `## console-windows.yml`
-section, which carries the job's status, the copy-in commands and the reason it
-is a workflow of its own rather than a leg of the tests job. It runs on
+job that produces it is `.github/workflows/console-windows.yml` — copied in on
+2026-11-10 — and its own document is `docs/pending-workflows/README.md`'s
+`## console-windows.yml` section, which carries the job's status, the copy-in
+that applied it and the reason it is a workflow of its own rather than a leg of
+the tests job. It runs on
 `windows-latest` **at release time only** — the release tag or a manual
 dispatch, never on a pull request — holds no secret at all, and is what the
 release checklist's by-hand dry run dispatches before a tag.

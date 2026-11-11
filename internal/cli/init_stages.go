@@ -65,6 +65,23 @@ type initEngine struct {
 	credentialsRead   bool
 	credentialsErr    error
 
+	// checkoutBehind: this run found the checkout behind this release, which
+	// the plugin stage is where to read (the pin it wires is this release's tag,
+	// and the plugin in Claude Code is this release's too). The checkout stage
+	// runs the cloud half of fugaro upgrade for this checkout, and this is the
+	// fact it decides on: the cloud step's own check reads fugaro.yaml and the
+	// local config and never a build record (cloudCheck, U9), and the images
+	// stage has already pinned this release's base in that config by the time
+	// the checkout stage is checked — so a checkout whose job images are still
+	// on the previous release's base reads as a finished cloud half there, while
+	// this run, the one that moves the checkout to this release, is exactly the
+	// run those images move with.
+	//
+	// Set and never cleared: the pin it was read from is written by this same
+	// run, so the answer is about the run rather than about the file as it
+	// stands now (init_plugin_stage.go's Check, init_checkout_upgrade.go's).
+	checkoutBehind bool
+
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
 }
 
@@ -229,6 +246,14 @@ func initStages(e *initEngine) []initflow.Stage {
 	// (initflow.CredentialsService has the order and the window the order
 	// leaves; the owner's ruling of 2026-11-10).
 	stages = append(stages, newCredentialsStage(e))
+	// The workspace's own project's root BEFORE the record, and both after the
+	// policy one: this stage creates the identity the workspace's own service
+	// runs as — its own service account and the one grant that reaches the
+	// workspace's database — and the record stage right after it publishes the
+	// node that identity reads (workspace_create.go, W3). An installation that
+	// declares no workspace is not a workspace's own and skips it without
+	// opening a workdir.
+	stages = append(stages, newWorkspaceProjectStage(e))
 	// The workspace record after the policy one: both are documents a run of
 	// `fugaro update` publishes from the local config, and this one is the
 	// workspace OWNER's — the member list and the cap the workspace's own
@@ -369,6 +394,14 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// printResult for the reason the two above are: what it printed and
 	// recorded belongs to this run's result.
 	e.raiseBudgetMode(ctx)
+	// And D1940's, the last of the three steps this hook owns: the roster's
+	// project-scoped admins, published for the intake that admits a caller to
+	// the shared prefix and may hold no database role (update.go's
+	// writeAdminList). It is here for the reason above — the converge has
+	// applied everything it had, so the roster it reads is the one this run
+	// leaves behind — and it returns no error either: the list is a derived
+	// object, and failing an upgrade over one is what the HARD RULE forbids.
+	e.writeAdminList(ctx)
 	if err := r.printResult(); err != nil {
 		return err
 	}
@@ -1074,7 +1107,7 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	if err != nil {
 		return false, remote(err)
 	}
-	fmt.Fprint(r.w, tf.Summary(plan))
+	r.planBlock(plan)
 	// The managed gate judges this plan exactly as it judges the installation
 	// root's own: it is a second apply inside the same stage, and a session the
 	// gate let through may not make one it never read. It is handed no imports

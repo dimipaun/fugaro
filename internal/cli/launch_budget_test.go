@@ -1425,7 +1425,9 @@ func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 			// gates is reached, which would make every row a test of that gate
 			// instead of the one it names.
 			policy := tc.policy
-			if tc.base == old {
+			// The row at the proxy's release is the same installation one
+			// release later (0.22.0), still before the version-5 node's.
+			if tc.base == old || strings.HasSuffix(tc.base, ":"+proxySince) {
 				policy = strings.Replace(policy, `"version":5`, `"version":4`, 1)
 			}
 			publishPolicy(t, f, policy)

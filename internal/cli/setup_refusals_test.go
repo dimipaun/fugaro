@@ -104,6 +104,8 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newPolicyMigrateStage(e) }},
 	{stage: initflow.CredentialsService, ctor: "newCredentialsStage(", covered: true, self: true,
 		build: func(e *initEngine) initflow.Stage { return newCredentialsStage(e) }},
+	{stage: initflow.WorkspaceProject, ctor: "newWorkspaceProjectStage(", noYes: true, self: true,
+		build: func(e *initEngine) initflow.Stage { return newWorkspaceProjectStage(e) }},
 	{stage: initflow.Workspace, ctor: "newWorkspaceStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newWorkspaceStage(e) }},
 	{stage: initflow.Layer, ctor: "newLayerStage(", self: true,

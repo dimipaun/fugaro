@@ -5,10 +5,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -78,6 +81,35 @@ func TestPolicyCeilingClampsBothFiles(t *testing.T) {
 	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}))
 	if err != nil || st[2] != 403 || rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap || !strings.Contains(rec.Halt.Detail, "$0.10") {
 		t.Fatalf("statuses %v, rec = %+v, err = %v", st, rec, err)
+	}
+}
+
+// TestRepositoryKeyCannotWidenTheList is P2's runner half. fugaro.yaml sits
+// inside the checkout the run's own agent writes, so it is not a file the
+// binary allow rule reads: internal/config decodes strictly and the key does
+// not exist there, so a repository that writes one does not load at all rather
+// than load and be ignored — and the layer that file becomes (FileLayer)
+// carries no binaries field to set. What the check reads is the run's resolved
+// policy, whose list is the owner's node's, and the merge only ever intersects
+// a list, so nothing under the ceiling can add a path to it.
+func TestRepositoryKeyCannotWidenTheList(t *testing.T) {
+	if _, probs := config.Parse([]byte(fixtureYAML(t) + "binaries:\n  allow: [\"**\"]\n")); len(probs) == 0 {
+		t.Fatal("a fugaro.yaml naming binaries loaded: the key is the policy node's alone (D986)")
+	} else if !strings.Contains(probs[0].Message, "binaries") {
+		t.Fatalf("the file was refused for %q, not for the binaries key", probs[0].Message)
+	}
+	cfg, probs := config.Parse([]byte(fixtureYAML(t)))
+	if len(probs) > 0 {
+		t.Fatal(probs)
+	}
+	if file := runner.FileLayer(cfg); file.BinariesAllow != nil || file.BinariesMaxBytes != 0 {
+		t.Fatalf("FileLayer carries binaries: %+v", file)
+	}
+	ceiling := policy.Layer{BinariesAllow: []string{"brand/*.png", "website/public/**"}, BinariesMaxBytes: 1048576}
+	e := policy.Merge(ceiling, runner.FileLayer(cfg))
+	if want := []string{"brand/*.png", "website/public/**"}; !slices.Equal(e.BinariesAllow, want) || e.BinariesMaxBytes != 1048576 {
+		t.Fatalf("BinariesAllow = %v, cap = %d, want %v and 1048576: the repository's own file moved the rule",
+			e.BinariesAllow, e.BinariesMaxBytes, want)
 	}
 }
 

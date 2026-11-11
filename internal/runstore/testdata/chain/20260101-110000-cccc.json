@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "run_id": "20260101-110000-cccc",
+  "repo": "acme/app",
+  "status": "running",
+  "stage": "implement",
+  "outcome": "none",
+  "branch": "fugaro/20260101-090000-aaaa",
+  "started_at": "2026-01-01T11:00:00Z",
+  "pr": {"number": 7, "url": "https://example.test/acme/app/pull/7"},
+  "follow_up": {"pr": 7, "previous_run": "20260101-100000-bbbb"},
+  "reviews": [
+    {"round": 1, "verdict": "changes"}
+  ]
+}

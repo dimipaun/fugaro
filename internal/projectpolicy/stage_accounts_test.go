@@ -1,6 +1,7 @@
 package projectpolicy
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -182,5 +183,64 @@ func TestDecodeToleratesTheAccountChoiceMembersUnderAnOlderReadersKeys(t *testin
 	}
 	if got := strings.Join(p.UnknownKeys, ","); got != "claude_account_stages,default_claude_account" {
 		t.Errorf("UnknownKeys = %q, want the two members", got)
+	}
+}
+
+// TestInstallationAtThePreviousVersionReadsThisReleasesStageMember is the
+// stage member's half of what TestInstallationAtThePreviousPolicyConverges
+// pins for the triage member: an installation that has not rebuilt its images
+// still reads the node this release publishes.
+//
+// The member's *names*, unlike its shape, are read against the vocabulary of
+// the reader — each stage is checked with config.CheckStageSegment, which is
+// the reader's own config.RunStages — and one name it does not know refuses the
+// whole node, the runner's unreadablePolicy. A reader is a job image, and
+// `fugaro update` rebuilds the images behind its own confirmation, so for as
+// long as an operator takes to confirm an installation runs images built by the
+// release behind (an in-flight run included). A node carrying a stage added
+// since would therefore stop every run of the project, which is the one thing
+// an update must never do (docs/design/update-in-flight.md).
+//
+// The reader of the release behind is modelled the way the rest of this
+// package models one — the same Decode, met with that release's vocabulary —
+// because the check reads config.RunStages rather than a table looked up by the
+// key set: RunStages takes the released names for the length of the test and
+// the real decoder then runs the real rule. What the test pins is that the
+// names the publisher may publish are exactly the ones such a reader accepts
+// (config.AccountStagesAReleasedImageKnows), and that an entry outside them —
+// the triage one this release's publisher holds back — is what would refuse the
+// node.
+func TestInstallationAtThePreviousVersionReadsThisReleasesStageMember(t *testing.T) {
+	released := []string{"plan", "implement", "review_first", "review", "adversarial", "fix"}
+	if !slices.Equal(config.AccountStagesAReleasedImageKnows, released) {
+		t.Fatalf("AccountStagesAReleasedImageKnows = %v, want %v: this test reads the member as the release behind does, and the two have to name one vocabulary",
+			config.AccountStagesAReleasedImageKnows, released)
+	}
+	// The name held back is one this release does run: a vocabulary that lacked
+	// it everywhere would make the assertions below pass without anything being
+	// held back at all. Read before the vocabulary is narrowed for exactly that
+	// reason — IsRunStage answers for the run as it is, not as this test sets it.
+	if !config.IsRunStage("triage") {
+		t.Fatal("triage is not a stage of this run: nothing needs holding back, and the assertions below hold vacuously")
+	}
+	defer func(old []string) { config.RunStages = old }(config.RunStages)
+	config.RunStages = slices.Clone(released)
+
+	// The node this release publishes for a project whose only stage account is
+	// the senior review's: every name in it is one the vocabulary above carries,
+	// so it decodes and reads as it does on this release.
+	p, err := decodeNode(t, `{"version": 4, "claude_account_stages": {"review": "acme-overflow"}}`)
+	if err != nil {
+		t.Fatalf("the release behind refused this release's node: %v", err)
+	}
+	if p.ClaudeAccountStages["review"] != "acme-overflow" {
+		t.Errorf("ClaudeAccountStages = %v: the member has to read the same on both sides", p.ClaudeAccountStages)
+	}
+	// The same node with the entry the publisher holds back: this is the
+	// refusal an installation meets after `fugaro update` if the publisher ever
+	// writes it, and it names the stage, which is what the finding reproduced.
+	if _, _, err := Decode([]byte(`{"version": 4, "claude_account_stages": {"review": "acme-overflow", "triage": "acme-overflow"}}`)); err == nil ||
+		!strings.Contains(err.Error(), `"triage" is not a stage of a run`) {
+		t.Fatalf("the release behind read a node naming triage: %v — that is the failure config.AccountStageHeldBack exists to keep out of the node", err)
 	}
 }

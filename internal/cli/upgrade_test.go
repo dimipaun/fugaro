@@ -77,9 +77,10 @@ func TestUpgradeLocalPinsThenPinCurrent(t *testing.T) {
 // TestUpgradeEveryStepIsImplemented: pin, plugin and cloud run in that order
 // and none is a placeholder, so each mode reports every step's own state:
 // here pin current, plugin skipped (no claude on PATH, or --check with no
-// install recorded), cloud skipped (no fugaro.yaml; under --local and in an
-// agent session before anything is read, U7, so with their reason). With no
-// step left unchecked the checkout is "nothing to do" and the exit is 0.
+// install recorded), cloud skipped because no local project config selects
+// this checkout — under --local and in an agent session the step is skipped
+// before anything is read at all, U7, so with their reason. With no step left
+// unchecked the checkout is "nothing to do" and the exit is 0.
 func TestUpgradeEveryStepIsImplemented(t *testing.T) {
 	var names []string
 	for _, s := range upgradeSteps {
@@ -109,8 +110,8 @@ func TestUpgradeEveryStepIsImplemented(t *testing.T) {
 			if err != nil || upgradeRead(t, settings) != wiredAt("v0.5.2") {
 				t.Fatalf("%v\n%s", err, out)
 			}
-			cloud := "cloud: skipped: no fugaro.yaml yet, so no job image to refresh"
-			rules := "rules: skipped: no fugaro.yaml yet, so no job image to refresh"
+			cloud := "cloud: skipped: no local project config selects this checkout"
+			rules := "rules: skipped: no local project config selects this checkout"
 			switch tc.name {
 			case "local":
 				cloud, rules = "cloud: skipped: --local", "rules: skipped: --local"
@@ -547,7 +548,7 @@ func TestUpgradeDevBuildChangesNothing(t *testing.T) {
 func TestUpgradeDevBuildSkipsEveryPath(t *testing.T) {
 	upgradeEnv(t, "dev")
 	notCheckout := t.TempDir()
-	plain, _ := skillCheckout(t, "")
+	plain := plainCheckout(t)
 	out, _, err := executeStdin(t, "", "upgrade", "--local", notCheckout, plain)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
@@ -565,7 +566,7 @@ func TestUpgradeDevBuildSkipsEveryPath(t *testing.T) {
 func TestUpgradeEveryPathIsTried(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	notCheckout := t.TempDir()
-	plain, _ := skillCheckout(t, "") // a checkout, but not a Fugaro one
+	plain := plainCheckout(t) // a checkout, but not a Fugaro one
 	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
 	out, _, err := executeStdin(t, "", "upgrade", "--local", notCheckout, plain, root)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "stopped in 2 of 3 checkout(s)") {

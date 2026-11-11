@@ -110,11 +110,21 @@ func (e *BuildOverCapError) Error() string {
 		e.Machine, e.Region, usdFixed(e.Estimate.USD()), budget.MaxBuildSeconds, e.Detail, spent, e.Command)
 }
 
+// buildUnpricedError is a build whose cost could not be estimated: the catalog
+// has no row for its machine in its region, or the read failed. The owner's
+// ruling of 2026-11-10 is that an estimate that cannot be made never stops a
+// build, so openBuildLease runs it uncounted after one line that says so, the
+// way it runs a build on an installation with no budget backend.
+type buildUnpricedError struct{ cause error }
+
+func (e *buildUnpricedError) Error() string { return e.cause.Error() }
+func (e *buildUnpricedError) Unwrap() error { return e.cause }
+
 // take reserves the estimate for one build and returns the lease that holds it.
 // The advisory is the cap refusal observe mode let through, which the caller
 // prints: the build proceeds, and the day counts what it reserved (D1548).
 //
-// A build this command may not submit — an unknown price, a switch, no room in
+// A build this command may not submit — a switch, no room in
 // the day or the run, a price read that failed — returns an error and writes
 // nothing.
 func (c *imageCost) take(ctx context.Context, id string) (budget.BuildLease, *budget.Decision, error) {
@@ -123,9 +133,9 @@ func (c *imageCost) take(ctx context.Context, id string) (budget.BuildLease, *bu
 	var noPrice *budget.NoPriceError
 	switch {
 	case errors.As(err, &noPrice):
-		return budget.BuildLease{}, nil, userErr("this image build is not submitted: %v", err)
+		return budget.BuildLease{}, nil, &buildUnpricedError{cause: userErr("%v", err)}
 	case err != nil:
-		return budget.BuildLease{}, nil, remote(fmt.Errorf("the price of this image build could not be read, so it is not submitted: %w", err))
+		return budget.BuildLease{}, nil, &buildUnpricedError{cause: remote(fmt.Errorf("the price of this image build could not be read: %w", err))}
 	}
 	now := c.now()
 	want := budget.BuildLease{

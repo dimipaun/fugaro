@@ -96,7 +96,9 @@ import (
 // is a publish that admits more to the group than the node already carries:
 // that step is initflow.Typed (D846) and D1026 admits no plan gate's answer for
 // a Typed step, so the one write that decides who is in the group stays the
-// owner's own word and never a mark's (SEC, rule 1).
+// owner's own word and never a mark's (SEC, rule 1); a coding agent's session
+// is refused the widening whatever the class says, which is the fence D1555
+// puts in the class's place (gateStep).
 //
 // The policy stage's own two branches that write NO node are outside the gate
 // as well, and they are the ones this map cannot express: D854's bare re-seed
@@ -700,6 +702,12 @@ var policyAdmittedRules = []string{
 // YesOrTyped step the gate may stand in for, which is what the workspaces design
 // says of this write ("it runs under the gate `update` already opens", §6;
 // reconciliation F32 names it the cloud write of the two that the gate ADMITS).
+//
+// The widening's refusal is read off p.widens and the session's own marker
+// rather than off the class (D1555): the class is the second thing that refuses
+// one, and a fence read off a class the same release deletes would leave the
+// membership unfenced. What a widening therefore still is, class or no class,
+// is a step the gate never admits and a coding agent's session never writes.
 func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) (bool, error) {
 	r := s.e.r
 	if !r.gateUnderway() {
@@ -723,21 +731,32 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
 	if !initflow.GateConfirms(class, r.conditions(), mg) {
-		// The Typed class is the one not-admitted answer with a sentence of the
-		// gate's own, and it is given here rather than left to the caller's
-		// coding-agent refusal: this step's document WAS admitted by the rules
-		// above, so what refuses it is the class rule and nothing about the
-		// session. The marker is asked for beside the class, and it is what
-		// keeps this sentence inside the session the gate is about: it is the
-		// coding agent's alone. A person at a real terminal on a managed project
-		// is not asked for the typed name (the owner's ruling of 2026-11-06,
-		// workspacePublication.confirm), so the widening writes there on a note
-		// with the diff above it — what this admits is read in the added lines
-		// rather than in a sentence worded for a confirmation nobody is asked
-		// for — and every other not-admitted answer (a pipe, --json and
-		// --non-interactive carry no marker and no answer either) keeps the
-		// confirmation the caller would have asked.
-		if class == initflow.Typed && marker != "" {
+		// The publish that admits something to the group is the owner's own
+		// step, and the fence on it is the session's rather than its class's
+		// (D1555, the same fence as D1552's): a widening is what refuses here —
+		// p.widens is every write that puts more in the group, the first record
+		// which chooses the whole of it included — and the marker is what asks
+		// it, so the fence keeps refusing a coding agent's session when the
+		// class system goes (D1555's own reason for the fence being this one
+		// and not Typed). The class stays beside it for everything else: it is
+		// what D1026 keeps out of a plan gate's reach, and a step this gate
+		// admits is one the rules above admitted, so what the sentence below
+		// names is the class rule and no rule that passed.
+		//
+		// The sentence is the coding agent's alone, and the person at a real
+		// terminal on a managed project is not asked for the typed name (the
+		// owner's ruling of 2026-11-06, workspacePublication.confirm), so the
+		// widening writes there on a note with the diff above it — what this
+		// admits is read in the added lines rather than in a sentence worded
+		// for a confirmation nobody is asked for. What it leaves the owner is
+		// the command they run themselves (Left, below): this refusal is about
+		// the step and not about the plan, so the step is theirs.
+		//
+		// Every other not-admitted answer keeps the caller's refusal, because
+		// the gate has no sentence for it: a mark revoked between the two reads
+		// is a project that is not managed at this moment, and a fallback
+		// inventory is not a verdict about this document either.
+		if len(p.widens) > 0 && marker != "" {
 			refused := conv.Refuse()
 			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
 		}
@@ -842,7 +861,7 @@ func (r *initRun) gateRefused(err error, doc []byte, verdict managedmode.Verdict
 	if owner, ok := r.gateDeleteLeft(err.Error(), doc, verdict, cover, imports); ok {
 		return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: initflow.GateRefusedDelete, Owner: owner}
 	}
-	return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal}
+	return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal, Reasons: refusedReasons(verdict)}
 }
 
 // gateRefusalOf is what a step's refusal leaves the person who reads it, read
@@ -1057,4 +1076,23 @@ func refusedRules(v managedmode.Verdict) []string {
 		rules = append(rules, why)
 	}
 	return rules
+}
+
+// refusedReasons is the same verdict as the short lines a person reads: each
+// rule's own words and the half of the gate that wrote them, with the
+// address left out. The address is Terraform's and not Fugaro's, it is what a
+// rule was read at rather than what was refused, and it is in the log beside
+// the sentence the refusal's line shortened (the owner's feedback of
+// 2026-11-09) — so what the terminal names is the thing ("cover: a member the
+// review did not list") and never a module path or a resource type.
+func refusedReasons(v managedmode.Verdict) []string {
+	reasons := make([]string, 0, len(v.Refusals))
+	for _, ref := range v.Refusals {
+		reason := ref.Why
+		if ref.Gate != "" {
+			reason = ref.Gate + ": " + ref.Why
+		}
+		reasons = append(reasons, reason)
+	}
+	return reasons
 }

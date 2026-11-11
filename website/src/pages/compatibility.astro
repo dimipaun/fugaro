@@ -1,0 +1,401 @@
+---
+/**
+ * website/src/pages/compatibility.astro — the compatibility page
+ * (`docs/compatibility-matrix/implementation-plan.md`, Task CM2; the owner's
+ * answers D1520–D1539 of 2026-11-07, and the owner's approval of the navigation entry
+ * of 2026-11-10).
+ *
+ * **The page is the matrix, and it writes no claim of its own.** Every row it prints —
+ * the group, the name, the status, the edition and the note — comes out of
+ * `website/data/compatibility.yaml`, read and validated by `src/content.ts`'s
+ * `loadCompatibility()`. That file is the one place a compatibility claim is written
+ * (D1537): a claim that is wrong is a row to fix there rather than a sentence to rewrite
+ * here, and a status the file stops carrying is a status this page stops printing. The only
+ * words this file holds are the legend (the five statuses' marks and their English), the two
+ * edition labels and the lead — the vocabulary a reader needs to read the file's own words,
+ * and nothing about the product.
+ *
+ * **Why the status is a mark and a word, and why the mark is in a column of its own.** The
+ * site's palette is the one it is, and a colour alone is not a status: a reader who cannot
+ * tell the green from the amber, and a reader who prints the page, both read the word. So
+ * every status is the status's own word with its own mark beside it, the legend spells the
+ * five out above the first table, and the mark sits in a fixed-width column so the column of
+ * marks is something to scan down. The tone is the third telling and not the first — it is
+ * read off the same `data-status` the word is chosen with, from the palette in force, so the
+ * contrast a reader gets is the contrast `website/test/a11y.mjs` computes.
+ *
+ * **The page prints no evidence path, and that is a decision rather than an omission.** Every
+ * `supported` and `built-not-enabled` row carries one in the file — those are the two
+ * statuses that claim something exists today, and the file's own rule is that a claim with no
+ * path behind it is a claim the page cannot back (`website/test/compatibility.mjs` holds every
+ * one of them to this tree) — but a path is the file's proof and not a reader's reading: a row
+ * would carry `internal/backend/gcp` and `docs/console-windows` beside a claim, which are a
+ * directory and a directory, so a link built from one would be a 404 for the reader the page
+ * is for. What a reader is owed is the claim, the status and the note; the file keeps the
+ * proof, in the same commit as the claim.
+ *
+ * **Where the page is reached from.** The docs hub carries it as an entry of its own (the same
+ * group of cards the repository's guides are listed in), and the site's menu carries it in
+ * *Project* beside Docs — **the owner approved that navigation entry on 2026-11-10** ("Yes,
+ * add Compatibility to the nav"), which is what `.claude/rules/website.md` requires before a
+ * nav label and URL change, and what
+ * `docs/compatibility-matrix/reconciliation.md`'s §4 left open when the matrix was specified
+ * (it names the *Project* group as the candidate). `website/test/base-styles.mjs`'s
+ * `GROUPS_WANTED` carries the route from the same commit.
+ *
+ * **What a reader will not find here.** No price (the file's own rule, and the matrix is not
+ * a pricing page), no date (the schedule of anything unbuilt is the owner's, D1523) and none
+ * of the file's `never_say` phrases — the sentences a reader of the spec would expect and the
+ * product cannot back, which `website/test/compatibility-page.mjs` refuses in the built HTML.
+ * The one date-shaped fact the page carries is the `as_of` line under the legend: the release
+ * each half of the matrix was last read against (D1538).
+ */
+import Base from '../layouts/Base.astro'
+import { loadCompatibility, COMPATIBILITY_EDITIONS } from '../content.ts'
+
+/**
+ * The lead: the page's own two sentences and the whole of the prose between the headline and
+ * the legend. It says what the page answers and how to read a row, and it claims nothing about
+ * the product — every claim below it is a row out of the data file. It is also the page's
+ * `<meta name="description">`, so a search result carries the words a reader meets at the top
+ * of the page rather than a second, unread sentence.
+ */
+const LEAD =
+  "What runs where, and what is still to come. Every row carries a status, its edition, and the one thing worth knowing about it."
+
+/** The page's own title, which is also the menu's label for the route and the hub entry's. */
+const TITLE = 'Compatibility'
+
+/**
+ * The five statuses in the order a reader reads them: what is here, what is here and switched
+ * off, what is next, what is planned, and what is refused. The file's own order is its format's
+ * (`supported`, `coming-soon`, `built-not-enabled`, `roadmap`, `not-planned`), and the legend is
+ * a reader's: the two that are true today are together, and the two that are not are together
+ * after them. The reader below refuses a legend that stops covering the file's statuses, so the
+ * two orders cannot drift apart unnoticed.
+ */
+const STATUS_ORDER = ['supported', 'built-not-enabled', 'coming-soon', 'roadmap', 'not-planned'] as const
+
+/** The status, in the words a reader reads. */
+const STATUS_LABEL: Record<string, string> = {
+  supported: 'Supported',
+  'built-not-enabled': 'Built, not enabled',
+  'coming-soon': 'Coming soon',
+  roadmap: 'Roadmap',
+  'not-planned': 'Not planned',
+}
+
+/**
+ * The status, as a mark: one monochrome glyph per status, and the shape says how much of it
+ * exists — filled for what is here, half for what is here and off, an open outline for what is
+ * named and not built, a plain shape for what is planned rather than drawn, and a cross for
+ * what was refused. The site draws no emoji anywhere and this page is not where that starts
+ * (the spec's draft legend was emoji, and the reconciliation's D1520 keeps the statuses and
+ * drops the pictographs). The mark is decoration beside a word that always says the same
+ * thing, so it is `aria-hidden` and a screen reader hears the status once.
+ */
+const STATUS_MARK: Record<string, string> = {
+  supported: '✓',
+  'built-not-enabled': '◐',
+  'coming-soon': '○',
+  roadmap: '◇',
+  'not-planned': '✕',
+}
+
+/**
+ * The two editions, in the words a reader reads: the licence a row is under. `Core` is the
+ * MIT-licensed half and `Subscription` the Subscription Edition (D1522). The label carries
+ * what the word alone would not — a reader who has never met this project's two editions
+ * reads "Core (MIT)" and "Subscription Edition" and knows what the column is saying, so the
+ * page needs no sentence of its own about licensing, which the file does not carry either.
+ */
+const EDITION_LABEL: Record<string, string> = {
+  core: 'Core (MIT)',
+  subscription: 'Subscription Edition',
+}
+
+const { asOf, groups } = loadCompatibility()
+
+/**
+ * The whole of the schema the page depends on, checked once at the top rather than inside the
+ * markup: a status the legend has no mark or word for would render as an empty cell — a row
+ * whose status a reader cannot read at all, which is the one defect this page exists to avoid —
+ * so the build stops here, naming the status, instead of printing it. `loadCompatibility()`
+ * refuses a status outside the five, so this is the page's own belt to that file's braces: the
+ * two will disagree only if one of them is edited alone.
+ */
+for (const group of groups) {
+  for (const row of group.rows) {
+    if (STATUS_MARK[row.status] === undefined || STATUS_LABEL[row.status] === undefined) {
+      throw new Error(
+        `website/src/pages/compatibility.astro: the file gives the row ${JSON.stringify(row.name)} the status ${JSON.stringify(row.status)}, and this page's legend has no mark or no word for it. The legend is what makes a status readable, so a row it cannot render is a row this page may not print.`,
+      )
+    }
+    if (group.edition && (row.edition === null || EDITION_LABEL[row.edition] === undefined)) {
+      throw new Error(
+        `website/src/pages/compatibility.astro: the group ${JSON.stringify(group.id)} prints an Edition column and the row ${JSON.stringify(row.name)} carries ${JSON.stringify(row.edition)}, which this page has no label for.`,
+      )
+    }
+  }
+}
+
+// The two edition labels the loader's own set declares, so a value added to that set without a
+// label here fails at the line that added it rather than as an empty cell in a table.
+for (const edition of COMPATIBILITY_EDITIONS) {
+  if (EDITION_LABEL[edition] === undefined) {
+    throw new Error(`website/src/pages/compatibility.astro: the edition ${JSON.stringify(edition)} has no label on this page.`)
+  }
+}
+---
+
+<Base title={TITLE} description={LEAD}>
+  <article class="compat" data-compatibility-page>
+    {/* The page's first screen: the one word, then the lead. **No word stands between the
+        `h1` and the lead**, and that is a gate's business rather than a taste — D188 reads a
+        page's lead as the text between its `h1` and its first `h2` (`budget.mjs`), and the
+        legend below is the first heading, so anything added here is a word the ceiling counts.
+        The band is a `<div>` and not a `<header>`: it is the page's opening, not a landmark,
+        and the site's landmarks are the layout's (`website/test/a11y.mjs`). */}
+    <div class="compat-hero">
+      <h1 class="compat-title display-xl">
+        <span class="gradient-text">{TITLE}</span>
+      </h1>
+      <p class="compat-lead">{LEAD}</p>
+    </div>
+
+    {/* The legend: the five statuses' marks and words, and the one line that dates the whole
+        page. It is a list rather than a line of words, so a screen reader reads five items and
+        so `website/test/compatibility-page.mjs` can hold the marks below to it. Its items carry
+        the same `data-status` the rows do, so the tone of a mark is written once in the
+        stylesheet rather than twice. */}
+    <section class="compat-section" aria-labelledby="compatibility-legend">
+      <h2 class="display-md compat-heading" id="compatibility-legend">Legend</h2>
+
+      <ul class="compat-legend">
+        {
+          STATUS_ORDER.map((status) => (
+            <li class="compat-legend-item" data-status={status}>
+              <span class="compat-mark" aria-hidden="true">{STATUS_MARK[status]}</span>
+              {STATUS_LABEL[status]}
+            </li>
+          ))
+        }
+      </ul>
+
+      <p class="compat-as-of">
+        Read against the CLI at {asOf.cli} and the console at {asOf.console}.
+      </p>
+    </section>
+
+    {/* One section and one table per group, in the file's own order — which is the spec's
+        (`src/content.ts` refuses a file whose groups moved or multiplied). A group's note, where
+        it has one, is the file's prose above the table rather than a cell in it: it is about
+        the whole group. */}
+    {
+      groups.map((group) => (
+        <section class="compat-section" id={group.id} aria-labelledby={`${group.id}-heading`}>
+          <h2 class="display-md compat-heading" id={`${group.id}-heading`}>
+            {group.title}
+          </h2>
+
+          {group.note !== null && <p class="compat-note">{group.note}</p>}
+
+          <table class="compat-table">
+            <thead>
+              <tr>
+                <th scope="col">What</th>
+                <th scope="col">Status</th>
+                {group.edition && <th scope="col">Edition</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {group.rows.map((row) => (
+                <tr>
+                  {/* The row's name, and its note under it in the same cell: the name is what a
+                      reader scans and the note is what they read once they stopped, and the two
+                      in one cell keeps the table three columns wide at its widest — which is
+                      what a phone needs, because `base.css` narrows a table to the viewport
+                      instead of pushing the page sideways. */}
+                  <th scope="row" class="compat-what">
+                    <span class="compat-name">{row.name}</span>
+                    <span class="compat-row-note">{row.note}</span>
+                  </th>
+                  <td>
+                    <span class="compat-status" data-status={row.status}>
+                      <span class="compat-mark" aria-hidden="true">{STATUS_MARK[row.status]}</span>
+                      {STATUS_LABEL[row.status]}
+                    </span>
+                  </td>
+                  {group.edition && <td class="compat-edition">{row.edition === null ? '' : EDITION_LABEL[row.edition]}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ))
+    }
+  </article>
+</Base>
+
+<style>
+  /* Tokens only (W1.2): every colour below is the palette in force, so the contrast the site's
+     accessibility check computes is the contrast a reader gets. The page adds no colour of its
+     own and no `z-index`: the marks take their tone from the tokens the palette check already
+     covers as text and as UI marks on every ground this page draws on. */
+
+  /* The opening band: the room above the headline and the room under the lead, which is the
+     page's own vertical rhythm rather than `main`'s padding, which the layout gives every page. */
+  .compat-hero {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding-top: var(--space-2xl);
+    padding-bottom: var(--space-2xl);
+  }
+
+  /* The headline: `base.css`'s `.display-xl` — the display scale's largest step — with the
+     page's own measure, so the one word does not run the width of a wide window. */
+  .compat-title {
+    max-width: 20ch;
+  }
+
+  /* The lead: one step up the type scale, the quieter tone, and the measure — the shape the
+     site's other pages set their lead in. */
+  .compat-lead {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+  }
+
+  /* One section: the legend and then a table per group, each with the same room above it, so
+     eleven groups read as one list of tables rather than eleven drawings. */
+  .compat-section {
+    padding-top: var(--space-xl);
+  }
+
+  .compat-heading {
+    margin: 0 0 var(--space-sm);
+  }
+
+  /* A group's own sentence, where the file carries one: the body tone rather than the quieter
+     one, because it is the group's prose and not a caption. */
+  .compat-note {
+    margin: 0 0 var(--space-sm);
+    max-width: var(--measure);
+  }
+
+  /* The legend: the five marks in a row that wraps, the marks aligned in a column of their own
+     the way the rows' marks are, so the legend and the tables read as the same shape. */
+  .compat-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2xs) var(--space-md);
+    margin: 0 0 var(--space-sm);
+    padding: 0;
+    list-style: none;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .compat-legend-item {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2xs);
+  }
+
+  /* The line that dates the page: the smallest step, the quieter tone, under the legend and
+     above the first table. It is the only number a reader meets before the claims. */
+  .compat-as-of {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The table: the site's own table defaults (`base.css`), with the room a table needs above it
+     when it follows a sentence rather than a heading, and the row's notes set as the quieter
+     second line of their cell. */
+  .compat-table {
+    margin-top: var(--space-sm);
+  }
+
+  .compat-what {
+    /* The name column is the widest of the three, and the browser's own column sizing gives it
+       whatever the notes need: this is the ceiling that keeps a one-word name's row from being
+       squeezed to one word per line by a long note beside it. */
+    max-width: 42rem;
+  }
+
+  .compat-name {
+    display: block;
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The row's note, under its name: not a heading's type, whatever the cell it sits in — the
+     header cell's weight, tone and fill are the site's, and the note is the row's prose. The
+     `display: block` is also what `website/test/spacing.mjs` reads as the boundary between the
+     name above it and the note below, which the markup writes no space for. */
+  .compat-row-note {
+    display: block;
+    color: var(--text-muted);
+    font-weight: var(--weight-normal);
+  }
+
+  /* A status: the mark and the word, in the row's cell and in the legend alike. `white-space`
+     keeps "Built, not enabled" on one line, so a status is never something a reader has to
+     reassemble from a wrapped line. */
+  .compat-status {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-2xs);
+    white-space: nowrap;
+  }
+
+  /* The mark: a glyph in a column of its own — the same width in the legend and in every
+     table, so the marks line up down a table and beside each legend's word. It is a mark and
+     not text, so it carries no contrast pair of its own beyond the ones the palette already
+     covers for a UI mark; the word beside it is the status, and it is the table's own text. */
+  .compat-mark {
+    display: inline-block;
+    flex: none;
+    width: 1em;
+    text-align: center;
+  }
+
+  /* The tone of a mark, in one place for the legend and the rows both, because both carry the
+     same `data-status`: the two that are true today in the success tone and the warning tone,
+     the next one in the accent, and the two that are not in the quieter tone. The word beside
+     every mark says the status; this is what a reader sees first and what a reader who cannot
+     see it does not depend on. */
+  [data-status='supported'] .compat-mark {
+    color: var(--ok);
+  }
+
+  [data-status='built-not-enabled'] .compat-mark {
+    color: var(--warn);
+  }
+
+  [data-status='coming-soon'] .compat-mark {
+    color: var(--accent-on-dark);
+  }
+
+  [data-status='roadmap'] .compat-mark,
+  [data-status='not-planned'] .compat-mark {
+    color: var(--text-muted);
+  }
+
+  /* The two statuses that are not here today, in the quieter tone: a table whose four of five
+     statuses shout equally loudly is a table a reader has to read line by line. */
+  .compat-status[data-status='roadmap'],
+  .compat-status[data-status='not-planned'] {
+    color: var(--text-muted);
+  }
+
+  /* The edition: the smallest step and the quieter tone, because it is a column a reader
+     checks once rather than reads. */
+  .compat-edition {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+</style>

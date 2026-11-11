@@ -1378,7 +1378,7 @@ func TestUpdateBuildNeedsConfirmation(t *testing.T) {
 		if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProjectName+", GCP project "+initRepoProject+"): submits a Cloud Build for acme/sandbox/web") && !strings.Contains(res.stderr, "submits a Cloud Build for acme/sandbox/web") {
 			t.Errorf("%v: no build banner:\n%s", args, res)
 		}
-		if !strings.Contains(res.stdout+res.stderr, "the first image build of acme/sandbox/web is billable and was not confirmed") || !strings.Contains(res.stderr, "type the project's name") {
+		if !strings.Contains(res.stdout+res.stderr, "the first image build of acme/sandbox/web is billable and was not confirmed") || !strings.Contains(res.stderr, "it asks you nothing") {
 			t.Errorf("%v: no warning or typed route:\n%s", args, res)
 		}
 		// The rerun the warning names is the door this run is at (the rig runs

@@ -661,8 +661,18 @@ func (s *projectStage) pauseBecause(did []string, why string) error {
 	if s.e.old == nil && s.e.path != "" {
 		next := *s.e.lc
 		next.SetupPending = "billing"
+		// The bake answer travels with the config, and the rebuild it costs is
+		// said here as it is in writeConfig (carryBakeAnswer, init.go): this
+		// path writes the switch and this run never reaches writeConfig at all,
+		// so a run that answered the question would otherwise write it in
+		// silence — and an answer written nowhere would be one no later run
+		// could recover.
+		carried := s.e.r.carryBakeAnswer(&next)
 		if err := s.e.r.writeLocalConfig(&next, s.e.path, nil, true); err != nil {
 			return err
+		}
+		if carried {
+			s.e.r.noteBakeRebuild()
 		}
 	}
 	detail := "billing pending"
