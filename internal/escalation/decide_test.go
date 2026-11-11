@@ -102,10 +102,10 @@ func TestDecideTable(t *testing.T) {
 				facts      Facts
 				want       Step
 				wantReason Reason
-				// atCeiling marks the case the mode's own ceiling answers:
-				// Hotfix's row is asked before the ladder's later steps, so
-				// this one is not read through straight.
-				atCeiling bool
+				// notStraight marks a case whose answer is not read through
+				// straight, because it is not the mode's own rule that answers
+				// it: the mode's ceiling, or a rung the item already stands on.
+				notStraight bool
 			}{
 				{
 					name:       "YoungStalledRebases",
@@ -136,18 +136,27 @@ func TestDecideTable(t *testing.T) {
 					wantReason: ReasonAttempts,
 				},
 				{
-					name:       "AtCeiling",
-					facts:      on(mode, func(f *Facts) { f.Elapsed = atHours(row.ceiling * scale) }),
-					want:       Step{Rung: R3, AtCeiling: row.action},
-					wantReason: clockReason(cp),
-					atCeiling:  true,
+					name:        "AtCeiling",
+					facts:       on(mode, func(f *Facts) { f.Elapsed = atHours(row.ceiling * scale) }),
+					want:        Step{Rung: R3, AtCeiling: row.action},
+					wantReason:  clockReason(cp),
+					notStraight: true,
 				},
 				{
-					name:       "AtCeilingRebasesFirst",
-					facts:      ceilingFacts,
-					want:       ceilingWant,
-					wantReason: ceilingReason,
-					atCeiling:  ceilingAnswers,
+					name:        "AtCeilingRebasesFirst",
+					facts:       ceilingFacts,
+					want:        ceilingWant,
+					wantReason:  ceilingReason,
+					notStraight: ceilingAnswers,
+				},
+				{
+					// The merge decision is where the item stays: no fact this
+					// tick recomputed moves it back down the ladder (G4, G7).
+					name:        "AlreadyAtR3",
+					facts:       on(mode, func(f *Facts) { f.Reached = R3 }),
+					want:        Step{Rung: R3, AtCeiling: row.action},
+					wantReason:  "",
+					notStraight: true,
 				},
 			}
 			// Every case of the critical-path pass carries the flag: it is
@@ -156,7 +165,7 @@ func TestDecideTable(t *testing.T) {
 				cases[i].facts.BlocksOthers = cp
 			}
 			for _, tc := range cases {
-				if !tc.atCeiling {
+				if !tc.notStraight {
 					tc.want, tc.wantReason = straight(tc.want, tc.wantReason)
 				}
 				t.Run(string(mode)+path+"/"+tc.name, func(t *testing.T) {
@@ -465,5 +474,35 @@ func TestDecideNeverLoops(t *testing.T) {
 	})
 	if got, _ := Decide(split, th); got.Rung != R4 {
 		t.Errorf("after a split = %+v; want rung 4", got)
+	}
+
+	// Rung 3 is sticky too, and for the same bound: the merge decision has
+	// been taken, and what follows is D1245's gate or a person (D2037), never
+	// another run. A fact the daemon recomputes each tick cannot walk an item
+	// back off it — least of all the critical-path flag, which G7 re-derives,
+	// or a head that moved under it.
+	stuck := on(rigor.Pro, func(f *Facts) {
+		f.Reached = R3
+		f.Elapsed = atHours(7)
+		f.BlocksOthers = true
+	})
+	if got, _ := Decide(stuck, th); got != (Step{Rung: R3, AtCeiling: CeilingAutoMergeNotify}) {
+		t.Errorf("at rung 3 via the critical path = %+v; want rung 3", got)
+	}
+	cleared := stuck
+	cleared.BlocksOthers = false
+	if got, _ := Decide(cleared, th); got.Rung != R3 {
+		t.Errorf("critical-path flag cleared at rung 3 = %+v; want rung 3", got)
+	}
+	moved := on(rigor.Critical, func(f *Facts) { f.Reached = R3 })
+	moved.HeadSHA = "head-2"
+	if got, _ := Decide(moved, th); got != (Step{Rung: R3, AtCeiling: CeilingWaitPerson}) {
+		t.Errorf("new head at rung 3 = %+v; want rung 3 waiting for a person", got)
+	}
+	// Including an item that reached rung 3 without spending its one pass:
+	// the rung above is where it is, not a step it has to earn again.
+	early := on(rigor.Startup, func(f *Facts) { f.Reached = R3 })
+	if got, _ := Decide(early, th); got.Rung != R3 {
+		t.Errorf("at rung 3 with the pass unspent = %+v; want rung 3", got)
 	}
 }

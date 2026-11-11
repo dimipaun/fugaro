@@ -154,7 +154,9 @@ type Facts struct {
 	// converged from one whose run came back with work still to do.
 	LastReviewBlocking bool
 	// Reached is the highest rung the item has entered, from the ledger
-	// (E7). The zero Rung is an item that has entered none.
+	// (E7). The zero Rung is an item that has entered none. Rung 3 and rung 4
+	// are stops: an item there is left where it is, whatever the rest of these
+	// facts say.
 	Reached Rung
 	// RebasedHeads holds every head an R0 run has produced, oldest first: a
 	// head in it has already had its rebase, so the ladder does not rebase it
@@ -174,8 +176,13 @@ type Facts struct {
 //     mode with no row, a threshold that is not a finite number and a
 //     threshold of zero are all the fail-open direction if they are answered,
 //     so they are not answered.
-//   - A split stands. Rung 4 is where D1246 leaves an item whose spec could
-//     not be salvaged, and the ladder never relaunches the same spec.
+//   - A split stands, and so does the merge decision. Rung 4 is where D1246
+//     leaves an item whose spec could not be salvaged and the ladder never
+//     relaunches it; rung 3 is where the item waits for D1245's gate or for a
+//     person (D2030, D2037). Neither walks back off itself when a fact the
+//     daemon recomputes each tick changes under the item — the critical-path
+//     flag G7 re-derives, a head that moved — because a rung passed is a rung
+//     the item has spent (G4).
 //   - Churn comes before the clock, "whatever the clock says": new minor
 //     findings every round go straight to rung 3, and the same unresolved
 //     finding is one rung 2 and then the split (D2036). It comes before the
@@ -209,6 +216,9 @@ func Decide(f Facts, th Thresholds) (Step, Reason) {
 
 	if f.Reached == R4 {
 		return Step{Rung: R4}, ""
+	}
+	if f.Reached == R3 {
+		return Step{Rung: R3, AtCeiling: row.AtCeiling}, ""
 	}
 
 	switch f.Churn {
