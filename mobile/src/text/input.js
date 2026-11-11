@@ -310,9 +310,15 @@ export function createTypedInput(options = {}) {
   }
 
   /** One utterance the router called agent text: the mailbox client's `send`,
-   * which is the same call the voice path makes and the app's one write. */
-  async function send(text) {
-    const sent = await mailbox.send(text);
+   * which is the same call the voice path makes and the app's one write.
+   *
+   * `options` is the classification this screen already has and the client does
+   * not: a LAUNCH (D162) travels as the owner's own words, so at the write path
+   * it is the same bytes as chatter -- `{ verb }` is what tells the lapse (S6.3)
+   * which of the two it is looking at, and a launch refused there never reaches
+   * the inbox (the design's §4.3). Agent text passes nothing. */
+  async function send(text, options) {
+    const sent = await mailbox.send(text, options);
     if (!sent.ok) return refuse(sent.code, sent.field);
     return Object.freeze({ ok: true, outcome: INPUT_OUTCOME.SENT, id: sent.id, at: sent.at });
   }
@@ -477,6 +483,9 @@ export function createTypedInput(options = {}) {
    * A **launch** (D162) has no read-back and no record: it passes through the
    * machine and goes to the agent as text, through the same mailbox client --
    * which is what "no confirmation" means on the wire as well as on the screen.
+   * It goes with the verb the machine just classified it as: the class of write
+   * is the caller's to say, and saying it is what lets a lapse refuse the
+   * launch while it keeps the chatter.
    */
   async function propose(input = {}) {
     if (!isPlainObject(input)) return refuse(INPUT_CODES.BAD_TEXT, 'propose');
@@ -509,7 +518,10 @@ export function createTypedInput(options = {}) {
 
     if (stepped.outcome === CONFIRM_OUTCOME.PASS_THROUGH) {
       // D162: a launch goes straight through, and the caps are what bound it.
-      return send(text);
+      // The verb goes WITH it -- the machine has just said what this utterance
+      // is, and the write path cannot tell a launch from chatter on its own
+      // (S6.3; the design's §4.3: a lapsed launch never reaches the inbox).
+      return send(text, { verb: stepped.verb });
     }
     return Object.freeze({
       ok: true,

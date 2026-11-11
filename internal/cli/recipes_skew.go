@@ -385,6 +385,53 @@ const digestSince = "0.13.0"
 // exactly as it is for a name this launcher cannot resolve at all.
 const adversarialSince = "0.16.0"
 
+// escalationSince is the first fugaro release whose runner holds the outer
+// loop's own recipe constructs: a review step's hand_over (it ends the run at
+// that review with the verdict recorded and no fix) and the rebase step (rung
+// 0's whole run: put the pull request's branch back on its base, resolve the
+// conflicts, re-run the tests and push). A runner before it refuses both
+// outright — hand_over is an unknown review key ("is not a recipe key") and
+// rebase is not a kind in its version 1 step list ("is not a step type") — so
+// the whole recipe dies at bootstrap, with the launch already paid for. This
+// gate turns that into a refusal at the launcher's terminal, naming fugaro
+// image refresh, exactly as adversarialSince does for its own step.
+//
+// Like artifactsSince it carries no shipped flag: refusing every image that
+// predates the constructs is exactly the direction this gate wants, and an
+// image with no release tag (a dev build, a hand-pushed one) only warns, the
+// same as for every other *Since constant here — safe either way, since a
+// runner that cannot run the step refuses the recipe at bootstrap rather than
+// skipping it. It names 0.23.0 ("Tapir", the CLI minor after the tagged
+// 0.22.0), which is not tagged yet: docs/release.md's ("Before you tag")
+// checklist verifies the constant against the tag actually cut, the way
+// digestSince's and adversarialSince's bullets record.
+const escalationSince = "0.23.0"
+
+// escalationRecipes are the catalog recipe names whose runner half ships in
+// escalationSince's release: `escalate` (one coder pass, one review, the
+// verdict recorded) and `rebase`, which that release adds, and `merge-judge`,
+// the merge judge's own recipe, which E6 adds with the same engine — its name
+// is listed here from the start so the three the escalation ladder launches
+// (E11) are held to the one release in one place, rather than each arrival
+// moving this gate. A recipe of the same name from the repository or the
+// project is that layer's own file and is judged by the constructs it
+// carries, like any other: this list is the catalog's names, not the names.
+var escalationRecipes = []string{"escalate", "rebase", "merge-judge"}
+
+// escalationRecipeNamed reports whether the task's recipe is one of the
+// catalog's escalation recipes: a name the launcher resolved from the catalog
+// itself, never a repository's or the project's own file that happens to
+// share it (resolveRecipe reads those first, and they win). It is the floor
+// under the construct gates: a recipe whose text carries no hand_over and no
+// rebase step this launcher can see — merge-judge, whose file the catalog
+// does not hold yet, and any of the three whose text a later release edits to
+// use fewer constructs — is still held to the release whose runner runs the
+// ladder's recipes, so an image that cannot take the launch is refused at the
+// terminal rather than at bootstrap.
+func escalationRecipeNamed(spec *task.Spec) bool {
+	return spec.Recipe != nil && spec.Recipe.Source == string(recipe.SourceCatalog) && slices.Contains(escalationRecipes, spec.Recipe.Name)
+}
+
 // reviewLevelsSince is the first fugaro release whose runner acts on review
 // levels — the task's review_levels block and fugaro.yaml's agent.levels
 // (L4.2, D720-D727): it inserts the step of an enabled level the recipe lacks
@@ -971,42 +1018,62 @@ func repoRecipeForGate(ctx context.Context, spec *task.Spec) *recipe.Recipe {
 // and start a job whose runner refuses the whole task at bootstrap, the
 // manifest being a field it does not know.
 //
-// The adversarial step is judged from rp too, and it is the newest construct
-// any recipe can carry (adversarialSince), so its case comes first. Unlike
-// the manifest and mode: artifact — a repository recipe's digest run and its
-// mode both reach the task as fields, which carry their own gates above —
-// the step has nothing in the task behind it, so the launcher's read of the
-// file the recipe names is the only place the gate can see it; one this
-// launcher cannot read keeps recipesSince, with the runner's parse refusal as
-// the backstop. Every older construct keeps the gate it always had, judged
-// from the embedded text alone: a repository recipe trips none of them here,
-// which is what its own tests pin.
+// The adversarial step and the escalation constructs are judged from rp too,
+// and they are the newest a recipe can carry (escalationSince, then
+// adversarialSince), so their cases come first. Unlike the manifest and mode:
+// artifact — a repository recipe's digest run and its mode both reach the
+// task as fields, which carry their own gates above — neither the step nor
+// the two escalation constructs has anything in the task behind it, so the
+// launcher's read of the file the recipe names is the only place the gate can
+// see it; one this launcher cannot read keeps recipesSince, with the runner's
+// parse refusal as the backstop. Every older construct keeps the gate it
+// always had, judged from the embedded text alone: a repository recipe trips
+// none of them here, which is what its own tests pin.
+//
+// The catalog's escalation recipes are held to escalationSince by name as
+// well (escalationRecipeNamed), which is the floor under the constructs: the
+// name is what the ladder's launches and a person's terminal carry, and the
+// gate must not move back if a later release edits one of those files to use
+// fewer of them.
 func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 	r := embeddedRecipeOf(spec)
-	if len(spec.DigestRuns) == 0 && r == nil && rp != nil && recipe.UsesAdversarial(rp) {
-		return adversarialSince
+	if len(spec.DigestRuns) == 0 && r == nil && rp != nil {
+		switch {
+		case recipe.UsesRebase(rp) || recipe.UsesHandOver(rp):
+			return escalationSince
+		case recipe.UsesAdversarial(rp):
+			return adversarialSince
+		}
 	}
+	since := ""
 	switch {
 	case len(spec.DigestRuns) > 0:
-		return digestSince
+		since = digestSince
 	case r == nil:
-		return recipesSince
+		since = recipesSince
+	case recipe.UsesRebase(r) || recipe.UsesHandOver(r):
+		since = escalationSince
 	case recipe.UsesAdversarial(r):
-		return adversarialSince
+		since = adversarialSince
 	case recipe.UsesDigest(r):
 		// The digest step is 0.13.0's, newer than every other construct
 		// here, so it is the binding gate; no mode: artifact construct can
 		// come with it, since the step is only legal in mode: implement.
-		return digestSince
+		since = digestSince
 	case recipe.UsesV08(r):
 		// UsesV08 implies UsesV07 (a 0.8.0 construct always comes with a
 		// 0.7.0 one: mode is one), and artifactsSince is the newer of the
 		// two, so it is the binding gate.
-		return artifactsSince
+		since = artifactsSince
 	case recipe.UsesV07(r):
-		return recipesV07Since
+		since = recipesV07Since
+	default:
+		since = recipesSince
 	}
-	return recipesSince
+	if imagePredates(since, escalationSince) && escalationRecipeNamed(spec) {
+		return escalationSince
+	}
+	return since
 }
 
 // checkImageSince refuses a launch whose job image runs a fugaro older than
@@ -1859,6 +1926,74 @@ func triageSubject(repo string, written *bool) (subject, alt string) {
 		return subject, "remove agent.triage from fugaro.yaml: the absent key means the stage on, which is what this file writes, and a job image that predates the stage runs no triage whatever the file says"
 	}
 	return subject, "remove agent.triage from fugaro.yaml only if the off-switch may go with it: a job image that predates the stage runs no triage, and the first image that reads the key finds the stage on again"
+}
+
+// slotSince is the first fugaro release whose runner acts on the A/B pair's
+// slot (docs/review-levels-ab-jobmax, D728 and B1.1; task.AB.Slot and
+// task.AB.ChampionRun): a challenger at a review slot replays that level's
+// review over the champion's own recorded patch and publishes nothing, so a
+// pair at a review slot is one review stage rather than a second coding loop
+// (B1.2).
+//
+// A runner that only decodes the field is not enough, which is why this is not
+// the release the field itself ships in: such a runner, handed a challenger at
+// a review slot, would run the whole task on the challenger's coder model —
+// publish: none keeps it harmless, and it is still a paid run of the entire
+// loop where the pair means one review, which is the "refuses too late"
+// failure proxySince's comment describes. It names 0.24.0, the CLI minor after
+// the untagged 0.23.0, the release the replay is expected in: that release does
+// not exist yet, so no image is at or past it, and the gate refuses every
+// launch that would need the replay until the release carrying it is cut.
+// docs/release.md's Before-you-tag list verifies the number against the release
+// that actually carries B1.2, the way it does for the other *Since constants.
+//
+// The launch that reads it is the reviewer arm's own (B1.4, ee/ab): it writes
+// `ab.slot` and `ab.champion_run` onto the challenger once the champion's patch
+// exists, and it asks this gate first, exactly as the pair launch (A3.3) asks
+// its own gate before writing an `ab` block at all.
+const slotSince = "0.24.0"
+
+// slotKnows names, for the image gates' messages, what the job image's runner
+// has to know: the pair's slot and the champion run the replay reads.
+const slotKnows = "the A/B pair's slot (ab.slot, ab.champion_run)"
+
+// slotAsk is what a launch asks of its job image's runner about the pair's
+// slot, in the terms the refusal names, and "" when it asks nothing: a task
+// with no `ab` block, and one whose block names no slot at all, are launches
+// every release runs identically — the second is the coder pair A1.1 already
+// wrote, which B1.1 reads as coder without a key.
+//
+// The gate is written on the key's presence and not on its value: a slot a
+// launcher spells out is written by the release whose runner acts on slots, and
+// what a reader needs to know is whether the image's runner reads the key at
+// all. A coder pair — the pair A3.3 samples — writes neither key, so this gate
+// is never the one that refuses it: that launch is judged by the `ab` field's
+// own gate (A3.3).
+func slotAsk(spec *task.Spec) string {
+	if spec.AB == nil || spec.AB.Slot == "" {
+		return ""
+	}
+	return fmt.Sprintf("the task's ab.slot (%s)", spec.AB.Slot)
+}
+
+// checkSlotImage refuses a launch whose job image runs a fugaro older than
+// slotSince while the task's pair names a slot: subject is what slotAsk named,
+// and "" — a launch that asks nothing — is never gated. The judge is the build
+// record's base_ref, as every checkImageSince gate's is.
+func checkSlotImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind, subject string, warn io.Writer) error {
+	if subject == "" {
+		return nil
+	}
+	return checkImageSince(ctx, env, slug, spec, kind, slotSince, subject, slotKnows, "", warn)
+}
+
+// checkCloneSlotImage is checkSlotImage for a checkout: clone workflow: see
+// checkCloneImageSince.
+func checkCloneSlotImage(lc *localcfg.Config, spec *task.Spec, subject string, warn io.Writer) error {
+	if subject == "" {
+		return nil
+	}
+	return checkCloneImageSince(lc, spec, slotSince, subject, slotKnows, "", warn)
 }
 
 // triageSources reports, for the launch's triageSince gate, whether the

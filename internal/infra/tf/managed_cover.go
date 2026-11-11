@@ -302,28 +302,116 @@ func (c ManagedCover) WithDeleteEntries(entries []DeleteEntry) Deletable {
 // in full is the fail-closed direction. A narrower reading would be a rule
 // loosened for deletes, which is what this task must not do. The refusal falls
 // back to the confirmation, as every refusal does.
+//
+// It is notCoveredSplit's items whole; NotCoveredSplit is the same walk with
+// D1545's two kinds told apart, and its own comment says which sites are which.
 func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
+	all, _, _ := c.notCoveredSplit(p, imports)
+	return all
+}
+
+// NotCoveredSplit is NotCovered with D1545's two kinds told apart: the
+// integrity refusals (D1549) that still refuse, in integrity, and the content
+// refusals the gate now records and warns, in content. Both halves hold the
+// same items NotCovered returns — told apart by which half an item lands in,
+// not by any difference in its text — in NotCovered's own order, and "no plan"
+// is an integrity refusal, because a plan the cover cannot read is not a
+// judgement about its content.
+//
+// D1545 (docs/no-prompt-policy/reconciliation.md) makes the managed gate
+// audit-only for content: a refusal about WHAT a plan contains no longer stops
+// the apply, it is recorded and warned. The integrity refusals are not
+// judgements about what the plan does, so D1549 keeps them, and they are the
+// configuration and the plan's own shape — the managed configuration rule
+// (managedPlanFields, managedConfiguration, managedProviderProject: no
+// provisioner, only Google providers, no data source, no upload from a local
+// path, no provider endpoint, project or billing redirect), a change whose mode
+// is not managed or whose provider is not Google's, a change with no actions or
+// an action set the managed list does not carry, an object moved here from
+// another address (which no list clears), and everything notCoveredResource
+// returns besides its two cover tables: the authoritative-IAM rule, the
+// service-account-key rule, managedBilling, the import rules, managedResource
+// (the prefix, the runs bucket by name, the locks, the accounts it runs as) and
+// managedProject.
+//
+// The content half is exactly three sites: the managed type table
+// (!managedTypes, managedTypeReason), the grant table (the *_iam_member arm,
+// managedGrant), and the delete rule's own reasons — an address the owner's
+// list does not name (notOnDeleteListReason), an action_reason the rule does
+// not know, and an entry that does not approve the object the plan removes —
+// which are content only for a type D1551 takes (a classified, non-data-bearing
+// one) and stay integrity refusals for a data-bearing or unclassified type
+// (RefusesRemovalType).
+//
+// The type table's content arm does not end the chain: a type outside the
+// allowlist is warned about AND still judged by the rules below it
+// (notCoveredResource), so an off-table resource that lands in another project,
+// or takes over an object this run's discovery never found, is refused as well
+// as warned — the deeper reason in the integrity half, the warning in the
+// content one, both under the same address.
+func (c ManagedCover) NotCoveredSplit(p *Plan, imports []ImportKey) (integrity, content []string) {
+	_, integrity, content = c.notCoveredSplit(p, imports)
+	return integrity, content
+}
+
+// notCoveredSplit is the one walk behind NotCovered and NotCoveredSplit: it
+// fills all, the items in the order NotCovered has always written them, and
+// beside it the two halves D1545 splits them into. The two cover tables
+// (coverFinding.content) and the delete rule's reasons (addRemoval) are content;
+// everything else is integrity.
+func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integrity, content []string) {
 	if p == nil {
-		return []string{"no plan"}
+		return []string{"no plan"}, []string{"no plan"}, nil
 	}
-	out := append(managedPlanFields(p), managedConfiguration(p)...)
-	out = append(out, c.managedProviderProject(p)...)
+	addI := func(s string) { all = append(all, s); integrity = append(integrity, s) }
+	addC := func(s string) { all = append(all, s); content = append(content, s) }
+	for _, s := range managedPlanFields(p) {
+		addI(s)
+	}
+	for _, s := range managedConfiguration(p) {
+		addI(s)
+	}
+	for _, s := range c.managedProviderProject(p) {
+		addI(s)
+	}
 	declared := managedConfigResources(p.Configuration)
 	// The address is one Field, like every other value a plan wrote: an entry
 	// the owner's delete list approves carries it, so an address past
 	// safetext.FieldMax is printed cut and the entry recorded from it matches
 	// nothing — refused, not approved, the limit guard.go's addr records.
-	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
+	addIrc := func(rc ResourceChange, why string) { addI(safetext.Field(rc.Address) + " (" + why + ")") }
+	addCrc := func(rc ResourceChange, why string) { addC(safetext.Field(rc.Address) + " (" + why + ")") }
+	// addRemoval routes one of the delete rule's own reasons: content for a type
+	// D1551 takes (a classified, non-data-bearing one, which the gate now
+	// records and warns), and an integrity refusal for a data-bearing or
+	// unclassified type, whose removal the rule still stops.
+	addRemoval := func(rc ResourceChange, why string) {
+		if RefusesRemovalType(rc.Type) {
+			addIrc(rc, why)
+			return
+		}
+		addCrc(rc, why)
+	}
+	// addFinding routes a notCoveredResource reason by the classification the
+	// rule itself returned (coverFinding): the type table and the grant table
+	// are content, the rest integrity.
+	addFinding := func(rc ResourceChange, f coverFinding) {
+		if f.content {
+			addCrc(rc, f.why)
+			return
+		}
+		addIrc(rc, f.why)
+	}
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
 		// What runs besides the resource's API calls, before its actions: a
 		// no-op still loads its provider, and a read is a data source.
 		switch {
 		case rc.Mode != "managed":
-			add(rc, managedModeReason(rc.Mode))
+			addIrc(rc, managedModeReason(rc.Mode))
 			continue
 		case !managedProviders[rc.ProviderName]:
-			add(rc, managedProviderReason(rc.ProviderName))
+			addIrc(rc, managedProviderReason(rc.ProviderName))
 			continue
 		}
 		// The actions, and then the resource. A delete, or a replace in either
@@ -338,7 +426,20 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 		// a create is, and a resource that is not one a managed plan may carry
 		// is refused although its address is listed — otherwise the list would
 		// be a way past every rule about the resource, which is the failure
-		// this gate exists to avoid.
+		// this gate exists to avoid. The same holds for a removal the list does
+		// NOT admit, and for the reasons the delete rule refuses one with: their
+		// answer is about the removal — a refusal, or D1545's warning for a type
+		// D1551 takes — and the resource is judged underneath it all the same.
+		// Only ONE answer ends the walk here: an integrity removal
+		// (RefusesRemovalType's data-bearing or unclassified type), which refuses
+		// the change whatever else it does. A removal the list warned about does
+		// not, and neither does a destroy: a destroy has nothing in after for the
+		// created view's rules to read, but the resource it REMOVES is read all
+		// the same (removed, below), so a destroy whose object is in another
+		// project, outside the managed prefix, or of a dropped type is refused
+		// for that reason and not waved through on the removal's warning — which
+		// is the hole a warning that ended the walk would open, and the one the
+		// same walk's replace half closes for a replace.
 		// acts is one of managedActions' sets past the switch below, so a set
 		// that names "delete" is a destroy or a replace, and the two are told
 		// apart by how many actions it has.
@@ -346,10 +447,10 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 		destroy := slices.Equal(acts, []string{"delete"})
 		switch {
 		case len(acts) == 0:
-			add(rc, "no actions")
+			addIrc(rc, "no actions")
 			continue
 		case !managedActions(acts):
-			add(rc, "actions "+strings.Join(acts, ", "))
+			addIrc(rc, "actions "+strings.Join(acts, ", "))
 			continue
 		case removes && !slices.ContainsFunc(c.AllowDelete, func(e DeleteEntry) bool { return e.Address == rc.Address }):
 			// The identity of the object the plan removes is printed beside
@@ -359,26 +460,32 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			// the owner reads the address, runs fugaro allow-delete — has
 			// nothing to record but the address, which is no longer an
 			// approval.
-			add(rc, "actions "+strings.Join(acts, ", ")+": "+notOnDeleteListReason(rc))
-			continue
+			addRemoval(rc, "actions "+strings.Join(acts, ", ")+": "+notOnDeleteListReason(rc))
+			if RefusesRemovalType(rc.Type) {
+				continue
+			}
 		// The list names an address, and the object a removal takes away is
 		// the one in before: with a moved block that object was at another
 		// address, so a listed address would admit the delete of an unlisted
 		// one. Refused, as tf.Guard refuses it (removesUnderAnotherAddress).
 		case removes && removesUnderAnotherAddress(rc):
-			add(rc, "actions "+strings.Join(acts, ", ")+": "+movedRemovalReason(rc))
+			addIrc(rc, "actions "+strings.Join(acts, ", ")+": "+movedRemovalReason(rc))
 			continue
 		case removes && !managedRemovalReasons[rc.ActionReason]:
-			add(rc, "actions "+strings.Join(acts, ", ")+": action_reason "+rc.ActionReason+", which the managed delete rule does not know")
-			continue
+			addRemoval(rc, "actions "+strings.Join(acts, ", ")+": action_reason "+rc.ActionReason+", which the managed delete rule does not know")
+			if RefusesRemovalType(rc.Type) {
+				continue
+			}
 		// And the last of the list's own rules: the entry names the address,
 		// and it must name the object the plan removes as well — an approval
 		// that survived the delete it was given for, or a plan whose object
 		// was replaced under the address, is refused here (Task 6.3).
 		case removes:
 			if ok, why := Approves(c.AllowDelete, rc); !ok {
-				add(rc, "actions "+strings.Join(acts, ", ")+": "+why)
-				continue
+				addRemoval(rc, "actions "+strings.Join(acts, ", ")+": "+why)
+				if RefusesRemovalType(rc.Type) {
+					continue
+				}
 			}
 		}
 		if allOf(acts, "no-op", "read") && rc.Change.Importing == nil {
@@ -389,18 +496,20 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 		// (removed) — while a destroy has nothing in after to read and is
 		// judged on the resource it removes alone.
 		if !destroy {
-			if why := c.notCoveredResource(rc, declared, imports); why != "" {
-				add(rc, why)
+			if fs := c.notCoveredResource(rc, declared, imports); len(fs) > 0 {
+				for _, f := range fs {
+					addFinding(rc, f)
+				}
 				continue
 			}
 		}
 		if removes {
-			if why := c.notCoveredResource(removed(rc), declared, imports); why != "" {
-				add(rc, why)
+			for _, f := range c.notCoveredResource(removed(rc), declared, imports) {
+				addFinding(rc, f)
 			}
 		}
 	}
-	return out
+	return all, integrity, content
 }
 
 // managedRemovalReasons are the action_reason values a listed delete or
@@ -464,37 +573,117 @@ func removed(rc ResourceChange) ResourceChange {
 	return rc
 }
 
+// coverFinding is what one rule of the resource chain answers about a change's
+// view: the reason the view is not one a managed plan may contain ("" when it
+// is), and whether that reason is a CONTENT refusal D1545 demotes to a warning
+// rather than an INTEGRITY one D1549 keeps.
+//
+// content is true for the two cover tables alone — the managed type table
+// (!managedTypes, managedTypeReason) and the grant table (the *_iam_member arm,
+// managedGrant) — because those judge WHAT a plan contains, which D1545 leaves
+// to record-and-warn, and only while nothing is being removed: for a removal of
+// a data-bearing or unclassified type the two tables' reasons are integrity ones
+// that refuse (removalRefuses, D1551). Every other rule of the chain is an
+// integrity refusal.
+// Returning the classification beside the reason is what lets NotCoveredSplit
+// tell the two kinds apart without matching a reason against its own words, and
+// what keeps NotCovered's items in the order they have always been written. One
+// change can carry two of these — the type table's content one and an integrity
+// one from the rules below it (notCoveredResource) — and the walk writes the
+// table's first, where the chain has always written it.
+type coverFinding struct {
+	why     string
+	content bool
+}
+
+// removalRefuses is D1551's rule as the two cover tables read it: a delete or a
+// replace of a data-bearing or unclassified type refuses whatever reason is
+// being weighed, so the type table's and the grant table's own reasons — content
+// refusals for a create, which D1545 records and warns — are integrity ones for
+// such a removal and are kept as refusals.
+//
+// It is why those two tables are content only while nothing is being removed. A
+// listed-and-approved delete of a dropped data-bearing type passes the delete
+// rule's own sites (the owner's entry approves the object), and the resource
+// chain is then read on its removed view — removed(rc) keeps the change's own
+// actions — so without this the type table would warn and the removal would
+// apply, which is the one case D1551 exists to keep refused.
+func removalRefuses(rc ResourceChange) bool {
+	return slices.Contains(rc.Change.Actions, "delete") && RefusesRemovalType(rc.Type)
+}
+
 // notCoveredResource is why the resource a change's view shows is not one a
-// managed plan may contain, "" when it is: the rule chain NotCovered reads a
+// managed plan may contain, nil when it is: the rule chain NotCovered reads a
 // create through, which a delete and both halves of a replace are judged by as
 // well. rc is either the change itself (the resource the plan creates, in
 // after) or removed(rc) (the resource it removes, in before).
-func (c ManagedCover) notCoveredResource(rc ResourceChange, declared map[string]ConfigResource, imports []ImportKey) string {
+//
+// It answers TWO findings in one case, and only one: when the type table fires
+// as CONTENT — a type outside the managed allowlist, which D1545 records and
+// warns about rather than stopping — the rules below it are still read
+// (notCoveredIntegrity: the import rules, managedResource and managedProject).
+// They judge the resource itself rather than what the plan contains, so they
+// are integrity refusals D1549 keeps whatever the type is, and a type the table
+// does not carry must not be a way past them: an off-table resource in another
+// project, or one taking over somebody else's object, would otherwise be warned
+// about and then applied. The type's own reason is written first, where the
+// chain has always written it, and the deeper one beside it.
+//
+// A type-table finding that is INTEGRITY — a removal of a data-bearing or
+// unclassified type (removalRefuses) — is the whole answer, because it refuses
+// the change for good whatever the rules below it would say.
+func (c ManagedCover) notCoveredResource(rc ResourceChange, declared map[string]ConfigResource, imports []ImportKey) []coverFinding {
 	t := rc.Type
 	switch {
 	case strings.HasSuffix(t, "_iam_binding") || strings.HasSuffix(t, "_iam_policy") || strings.HasSuffix(t, "_iam_audit_config"):
-		return "an authoritative IAM resource"
+		return []coverFinding{{why: "an authoritative IAM resource"}}
 	case t == "google_service_account_key":
-		return "a service account key"
+		return []coverFinding{{why: "a service account key"}}
 	case c.managedBilling(rc) != "":
 		// Before the type rule: google_billing_budget is off the managed
 		// list, so read after it the billing account would never be read
 		// (managedBilling).
-		return c.managedBilling(rc)
+		return []coverFinding{{why: c.managedBilling(rc)}}
 	case !managedTypes[t]:
-		return c.managedTypeReason(t)
-	case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
-		return "imports " + rc.Change.Importing.ID + ", which is not in the managed project's projects"
-	case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
-		return "imports " + rc.Change.Importing.ID + ", which this run's discovery did not find"
-	case c.managedResource(rc) != "":
-		return c.managedResource(rc)
-	case c.managedProject(rc, declared) != "":
-		return c.managedProject(rc, declared)
-	case strings.HasSuffix(t, "_iam_member"):
-		return c.managedGrant(rc)
+		f := coverFinding{why: c.managedTypeReason(t), content: !removalRefuses(rc)}
+		if !f.content {
+			return []coverFinding{f}
+		}
+		out := []coverFinding{f}
+		if deeper := c.notCoveredIntegrity(rc, declared, imports); deeper.why != "" {
+			out = append(out, deeper)
+		}
+		return out
 	}
-	return ""
+	if f := c.notCoveredIntegrity(rc, declared, imports); f.why != "" {
+		return []coverFinding{f}
+	}
+	if strings.HasSuffix(t, "_iam_member") {
+		if why := c.managedGrant(rc); why != "" {
+			return []coverFinding{{why: why, content: !removalRefuses(rc)}}
+		}
+	}
+	return nil
+}
+
+// notCoveredIntegrity is the part of the chain below the two cover tables: the
+// import rules, managedResource and managedProject, in the order the chain has
+// always read them. It is a function of its own so the type table's content arm
+// can still run them (notCoveredResource): the tables judge what a plan
+// contains, these judge the resource itself, and the one must not take the
+// other's refusals down with it.
+func (c ManagedCover) notCoveredIntegrity(rc ResourceChange, declared map[string]ConfigResource, imports []ImportKey) coverFinding {
+	switch {
+	case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
+		return coverFinding{why: "imports " + rc.Change.Importing.ID + ", which is not in the managed project's projects"}
+	case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
+		return coverFinding{why: "imports " + rc.Change.Importing.ID + ", which this run's discovery did not find"}
+	case c.managedResource(rc) != "":
+		return coverFinding{why: c.managedResource(rc)}
+	case c.managedProject(rc, declared) != "":
+		return coverFinding{why: c.managedProject(rc, declared)}
+	}
+	return coverFinding{}
 }
 
 // managedProviders are the providers a managed plan may use: Google's own two,

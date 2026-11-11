@@ -156,5 +156,19 @@ func (r *settingsRead) sources(now time.Time) []settingsLayer {
 			Note: "repo:" + repo.name,
 		})
 	}
+	// The two cloud layers, each with the state it answered for itself: they are
+	// the last this read touches (spec §2.7) and the two that can be `unread`
+	// with a reason, which is the note a consumer shows beside a row rather than
+	// the same sentence repeated on every key.
+	for _, cl := range []settingsLayer{
+		{Layer: "policy", DurationMS: r.policy.ms, Status: r.policy.status, Note: r.policy.note},
+		{Layer: "caps", DurationMS: r.caps.ms, Status: r.caps.status, Note: r.caps.note},
+	} {
+		if cl.Status == "" {
+			continue
+		}
+		cl.ReadAt = at
+		out = append(out, cl)
+	}
 	return out
 }

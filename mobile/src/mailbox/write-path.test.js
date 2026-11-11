@@ -30,6 +30,23 @@
 //      `transaction`). Rule 2 catches the import; this catches the path, which
 //      is the thing the rules' `$mb == auth.uid` fence is about. Nothing in the
 //      tree names one, and the adapter that will is `index.js`.
+//   4. A `licence/state` specifier, with or without the `.js` Metro does not
+//      need -- the module the lapse's rules live in, and the one a second
+//      enforcement would have to import (S6.3; D436, T12).
+//      The design puts the check in the mailbox client's `send` (§4.3) for the
+//      reason rule 1 exists: `send` is the app's one write path, so a lapse
+//      enforced in a screen would be a second place that decides what the app
+//      may do, and one of the two would be wrong. `client.js` is the only file
+//      that may name the rules: the screens reach the STATE through
+//      `licence/index.js`, which hands out the five names, the refusal code and
+//      its sentence and none of the rules (`index.js` states that as the door's
+//      own rule), so what a screen can reach cannot refuse anything. That half
+//      of the claim is not this pattern's to hold -- the door's own `./state.js`
+//      carries no `licence/` segment, so it is not the specifier below -- so
+//      `verify.test.js` reads the door's export statements and refuses those
+//      five names there. Rule 1 fences what is WRITTEN; this fences what is
+//      REFUSED, and it is the same shape of claim
+//      -- a rule is only as good as the second caller it misses.
 //
 // **What this scan does NOT claim.** It is about MOBILE's source. The consumer
 // (Go) writes the outbox, the heartbeat and everything else; the rules in
@@ -83,24 +100,49 @@ const RULES = [
     name: 'the store is written in one file',
     pattern: /\.write\s*\(/,
     allow: ['src/mailbox/client.js'],
-    control: "await store.write('mailbox/u/inbox/m-1', record);",
+    controls: ["await store.write('mailbox/u/inbox/m-1', record);"],
     why: 'D113: the app writes its own inbox message and its own ack, and nothing else',
   },
   {
     name: 'the database SDK is imported in one file',
     pattern: /['"]@?firebase\/[a-z-]+['"]/,
     allow: ['index.js'],
-    control: "import { getDatabase } from 'firebase/database';",
+    controls: ["import { getDatabase } from 'firebase/database';"],
     why: 'D125: the entry wires the port; a screen that imported the SDK could address any node',
   },
   {
     name: 'no path is named through the SDK',
     pattern: /\.ref\s*\(/,
     allow: ['index.js'],
-    control: "db.ref('mailbox/u/outbox').remove();",
+    controls: ["db.ref('mailbox/u/outbox').remove();"],
     why: 'the path is what the rules fence on; only the adapter may compose one',
   },
+  {
+    name: 'the lapse’s rules are reached by the write path alone',
+    // Three quote styles, and the extension is optional: Metro resolves
+    // `'../licence/state'` to the same file, so a pattern that required `.js`
+    // was a fence a screen walked through by typing one character less.
+    pattern: /['"`][^'"`]*licence\/state(?:\.js)?['"`]/,
+    allow: ['src/mailbox/client.js'],
+    controls: [
+      "import { lapseRefusalAt } from '../licence/state.js';",
+      // Metro resolves a specifier with no extension, and the door's own
+      // `./state.js` shows the shortcut is in use next to it: a pattern that
+      // held only the `.js` spelling let a screen import the rules.
+      "import { lapseRefusalAt } from '../licence/state';",
+      "import { lapseRefusalAt } from './licence/state';",
+      'const rules = await import(`../licence/state.js`);',
+    ],
+    why: 'S6.3, D436: only the one write path may reach the rules; a screen gets the door, which hands out no rule',
+  },
 ];
+
+/** The rule whose allowed file really does contain the offence, and the two
+ * whose allow-lists are promises about files that do not do it yet. Read by
+ * name rather than by index: the vacuity test below is about them. */
+const [WRITE_RULE] = RULES;
+const LAPSE_RULE = RULES[RULES.length - 1];
+const SDK_RULES = RULES.slice(1, -1);
 
 /** Apply one rule to a map of path -> text, returning the offences. */
 function offences(rule, files) {
@@ -129,11 +171,16 @@ for (const rule of RULES) {
   test(`${rule.name} — ${rule.why}`, () => {
     // The positive control first: the rule must flag a planted line, in real
     // code and in each of the import shapes the SDK can be reached through, or
-    // a green run below would mean nothing.
-    const example = { 'src/app/offender.js': `function offence() { ${rule.control} }\n` };
-    assert.deepEqual(offences(rule, new Map(Object.entries(example))), ['src/app/offender.js'], rule.control);
-    // The planted line is not flagged when it is only prose.
-    assert.deepEqual(offences(rule, new Map([['src/app/prose.js', `// ${rule.control}\n`]])), [], rule.control);
+    // a green run below would mean nothing. A rule may carry several: a
+    // specifier has more than one spelling that resolves to the same file (a
+    // missing extension, a `./` segment, a template literal), and a pattern
+    // that holds only one of them is a fence with a gap in it.
+    for (const control of rule.controls) {
+      const example = { 'src/app/offender.js': `function offence() { ${control} }\n` };
+      assert.deepEqual(offences(rule, new Map(Object.entries(example))), ['src/app/offender.js'], control);
+      // The planted line is not flagged when it is only prose.
+      assert.deepEqual(offences(rule, new Map([['src/app/prose.js', `// ${control}\n`]])), [], control);
+    }
 
     // ... and then the tree itself.
     const files = sourceFiles().map((file) => [file, readFileSync(join(ROOT, file), 'utf8')]);
@@ -141,19 +188,26 @@ for (const rule of RULES) {
   });
 }
 
-test('the scan is not vacuous: the writer itself matches the rule it is exempt from', () => {
+test('the scan is not vacuous: the file each rule allows really does match it', () => {
   // An allow-list is only honest when the allowed file really does contain the
   // offence. `client.js` must be flagged when its exemption is removed --
-  // otherwise the rule matches nothing anywhere and the three green runs above
-  // would be three tests about a pattern that no longer exists.
+  // otherwise the rule matches nothing anywhere and the green runs above would
+  // be tests about a pattern that no longer exists.
   const files = sourceFiles().map((file) => [file, readFileSync(join(ROOT, file), 'utf8')]);
-  const [writer] = RULES;
-  const offenders = offences({ ...writer, allow: [] }, new Map(files));
-  assert.deepEqual(offenders, ['src/mailbox/client.js'], 'the store is written by exactly this file');
+  // Two rules allow exactly one file, and both files really do the thing they
+  // are allowed to do: the store is written there (D113) and the lapse is
+  // enforced there (S6.3). Each is flagged the moment its exemption goes.
+  for (const rule of [WRITE_RULE, LAPSE_RULE]) {
+    assert.deepEqual(
+      offences({ ...rule, allow: [] }, new Map(files)),
+      ['src/mailbox/client.js'],
+      rule.name,
+    );
+  }
   // And the two SDK rules match nothing in the tree at all, which is why their
   // allow-list (`index.js`, the entry that will wire the adapter) is a promise
   // about a file that does not do it yet.
-  for (const rule of RULES.slice(1)) {
+  for (const rule of SDK_RULES) {
     assert.deepEqual(offences({ ...rule, allow: [] }, new Map(files)), [], rule.name);
   }
 });

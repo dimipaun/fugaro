@@ -642,6 +642,10 @@ export class FixtureSource implements FugaroSource {
     return this.#document('models.list', args)
   }
 
+  readSeats(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('seats.read', args)
+  }
+
   readSettings(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('settings.read', args)
   }

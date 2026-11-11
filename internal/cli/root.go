@@ -229,7 +229,7 @@ func newCoreRoot() *cobra.Command {
 	root.PersistentFlags().BoolP(verboseFlag, "v", false, "print the run's full output as it goes, not one line per step")
 	root.AddCommand(
 		newVersionCmd(), newValidateCmd(), newConfigCmd(), newVerifyCmd(), newExecCmd(), newImageCmd(),
-		newRunCmd(), newRecipesCmd(), newRunsCmd(), newStatsCmd(), newSeatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newWorkflowCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newIssueCmd(), newPairCmd(), newUserCmd(), newModelsCmd(), newCraftCmd(), newWorkspaceCmd(),
+		newRunCmd(), newRecipesCmd(), newRunsCmd(), newStatsCmd(), newSeatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newWorkflowCmd(), newRigorCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newIssueCmd(), newPairCmd(), newUserCmd(), newModelsCmd(), newCraftCmd(), newWorkspaceCmd(),
 		// The independent review's own command. It is registered like any other
 		// core command, and its launch still refuses where one of E7's two
 		// halves is missing — an installation with no credentials service, or a
@@ -254,6 +254,11 @@ func newCoreRoot() *cobra.Command {
 		// credentials serve` is what the image's CMD names, and hidden so it
 		// is not something an operator is offered.
 		newCredentialsCmd(),
+		// The secrets intake's own entry point (DS2.1): hidden for the same
+		// reason and registered for the same reason, because a Cloud Run
+		// service's container sets no command and the image's CMD is what
+		// names `fugaro intake serve` (intake_serve.go).
+		newIntakeCmd(),
 		// The local diagnosis of a command that failed on this machine: its
 		// log, this machine's configuration and the source at this version,
 		// read by a read-only agent (docs/diagnose-agent, D1604). Beside

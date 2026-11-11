@@ -1650,8 +1650,12 @@ func TestRestoreVerifiesTheCreatedProjectIsManaged(t *testing.T) {
 		"a fact about another":                       {`{"version":2,"gcp_project":"someone-else-1","budget":{"amount":7,"currency":"USD"}}`, ours, false},
 		"no fact":                                    {"", ours, false},
 		// The budget gate, not IsManaged alone: a fact the managed apply's
-		// gate would refuse stops the restore here too.
-		"a version 1 fact":            {`{"version":1,"gcp_project":"` + newProj + `"}`, ours, false},
+		// gate would refuse stops the restore here too. A version-1 fact is
+		// no longer one of those (T9, D1545): it names this project and
+		// records no amount, so the gate opens with a warning the apply's own
+		// gate raises again, and only a figure that fails Budget.Check or a
+		// fact read as another project's still refuses.
+		"a version 1 fact":            {`{"version":1,"gcp_project":"` + newProj + `"}`, ours, true},
 		"a fact with a bad currency":  {`{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"usd"}}`, ours, false},
 		"a fact with too large a sum": {`{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":10000001,"currency":"USD"}}`, ours, false},
 		// The binding: a valid fact in the new project's bucket is not
@@ -1784,18 +1788,20 @@ func TestRestoreAProjectThatAppearsDuringTheConfirmationIsNotAdopted(t *testing.
 
 // TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget: the creation ran
 // and this run marked the project, but the marker in the new project's bucket
-// does not open the managed apply's gate (a version 1, or a version 2 whose
-// figure fails Budget.Check). The restore stops at verifyCreated — before the
-// checkout's line moves and before the apply; the config stays moved (L4).
-// The marker is overwritten after the real creating path ran, which is the
-// shape of an owner or an agent with bucket write changing it in between.
+// does not open the managed apply's gate — a version 2 whose figure fails
+// Budget.Check. (A version 1, which names the project and records no amount,
+// is not one of them any more: T9 makes it D1545's content finding, a warning
+// the apply's own gate raises, and TestRestoreVerifiesTheCreatedProjectIsManaged
+// pins that answer at verifyCreated.) The restore stops at verifyCreated —
+// before the checkout's line moves and before the apply; the config stays moved
+// (L4). The marker is overwritten after the real creating path ran, which is
+// the shape of an owner or an agent with bucket write changing it in between.
 func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 	noAgentSession(t)
 	for name, tc := range map[string]struct {
 		marker string
 		want   string
 	}{
-		"version 1":            {`{"version":1,"gcp_project":"` + newProj + `"}`, "has no budget recorded"},
 		"a lowercase currency": {`{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"usd"}}`, "the budget recorded in the marker"},
 		"above ten million":    {`{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":10000001,"currency":"USD"}}`, "the budget recorded in the marker"},
 	} {

@@ -1,7 +1,12 @@
 package issues
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -95,5 +100,66 @@ func TestSyncSkipsOtherInstallationsIssues(t *testing.T) {
 	}
 	if left.Installation != otherInstallation {
 		t.Errorf("the other project's issue names %q, want %q", left.Installation, otherInstallation)
+	}
+}
+
+// TestSyncRefusesTraversalName: a name read from the store is validated before
+// any path is built from it (F20). The issues folder is a directory a person
+// and any other process can write, so a record whose header names a run outside
+// it must never become a path outside the store, and must never be uploaded as
+// the reporter's own issue. A file whose own name is a traversal is the other
+// half of the same rule: it is not one of ours, and nothing reads it.
+func TestSyncRefusesTraversalName(t *testing.T) {
+	ctx := context.Background()
+	_, env := issueState(t)
+	store := issueStore(t, env)
+	store.Installation = issueInstallation
+	b := sharedBucket(t)
+	dir := store.Dir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("making the store's folder: %v", err)
+	}
+
+	// One file of ours by name, whose header names a run outside the folder:
+	// the name is what the store's reader selects files by, and the header is
+	// what it would then believe.
+	rec := issueLocal()
+	raw, err := Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshalling the record: %v", err)
+	}
+	evil := bytes.ReplaceAll(raw, []byte(rec.Run), []byte("../../evil"))
+	if bytes.Equal(evil, raw) {
+		t.Fatal("the fixture does not carry the run stem it replaces")
+	}
+	if err := os.WriteFile(filepath.Join(dir, rec.LocalID+fileSuffix), evil, 0o600); err != nil {
+		t.Fatalf("writing the record: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "local-..-..-evil"+fileSuffix), raw, 0o600); err != nil {
+		t.Fatalf("writing the second record: %v", err)
+	}
+
+	deps := identityDeps(identityEnv(t), verifiedLookup(testMember))
+	got, err := SyncPending(ctx, store, b, issueInstallation, deps)
+	if err != nil {
+		t.Fatalf("syncing: %v", err)
+	}
+	if got.Uploaded != 0 || len(got.Notes) != 0 {
+		t.Errorf("syncing uploaded %d issue(s) with notes %q, want nothing: neither file is a record of ours", got.Uploaded, got.Notes)
+	}
+	if rows, err := ListShared(ctx, b); err != nil {
+		t.Fatalf("reading the shared store: %v", err)
+	} else if len(rows) != 0 {
+		t.Errorf("the shared store holds %d issue(s), want none", len(rows))
+	}
+	// The two directories `../../` points at from the store: nothing was built
+	// there, and the folder itself is unchanged.
+	for _, outside := range []string{
+		filepath.Join(dir, "..", "..", "evil"+fileSuffix),
+		filepath.Join(dir, "..", "evil"+fileSuffix),
+	} {
+		if _, err := os.Stat(outside); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("sync built the path %s (err = %v)", outside, err)
+		}
 	}
 }

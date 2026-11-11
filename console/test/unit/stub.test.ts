@@ -99,6 +99,11 @@ describe('the stub’s command keys', () => {
       // group's other words -- `policy publish`, `repos add`, `repos rm`, `sync`
       // -- are on no row of this table.
       'project policy show',
+      // The subscriptions plan's S4.2 (`seats.read` / `readSeats`): the Project
+      // tab's advisory seat estimate, and the one read here whose child lists
+      // the installation's bucket -- its key is the command word, because the
+      // 90 days it is measured over and the `--json` are the row's own words.
+      'seats',
       'run',
     ])
     // The console's one spawn table, which since the owner's design ruling of

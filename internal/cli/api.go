@@ -228,6 +228,26 @@ func CheckoutOf(ctx context.Context, repo string) func() *config.Config {
 	return checkoutOf(ctx, repo)
 }
 
+// ProjectLayerOf is the project layer that applies to a project config, read
+// the way a launch and `fugaro config layer` read it (decision L13): the
+// bucket's object on every call, with a cached copy standing in only when the
+// bucket cannot be reached at all and that copy is inside the offline limit —
+// so a layer published since this machine last read one decides the figures
+// that depend on it, rather than the copy the last read left in the cache. The
+// anchor is the config's own project and gcp_project, the anchor
+// `fugaro config layer` builds when it runs outside a checkout, so a caller
+// that is not in one still reads the layer of the project it selected.
+//
+// note is the line such a caller prints when the layer is not the bucket's own
+// object: the cached copy that stood in and how old it is, or why no layer
+// applies. It is "" when the layer is the bucket's own object, and layer is nil
+// when the project has published none. A published object this build cannot use
+// is an error, never "none": the caller asked what the project published, and
+// "nothing" would be a wrong answer to give it.
+func ProjectLayerOf(ctx context.Context, lc *localcfg.Config) (*config.ProjectLayer, string, error) {
+	return projectLayerOf(ctx, lc)
+}
+
 // ParseSince parses a --since value: a positive number of days (7d), a
 // positive Go duration (36h, 90m), or 0 for no bound.
 func ParseSince(s string) (time.Duration, error) { return parseSince(s) }
