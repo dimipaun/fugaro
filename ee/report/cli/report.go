@@ -354,10 +354,15 @@ const reportModeSourceNote = "these rows come from run records (the runs bucket)
 
 // reportShadowSpendNote is the line every spend grouping carries since model
 // A/B testing (D568): a challenger's spend is real money, so it is in the day
-// records, in these rows and in the daily cap, and the day records carry no arm
-// to take it back out by. `fugaro ab` is where the arms are told apart, which
-// is why the note points there rather than at a second grouping.
-const reportShadowSpendNote = "A/B shadow spend is included in these figures: a challenger run's money is spent like any run's, and the day records these rows come from carry no arm to exclude it by (`fugaro ab` is where the two arms are told apart)"
+// records, in these rows and in the daily cap, and no grouping here takes it
+// back out. `fugaro ab` is where the arms are told apart, which is why the note
+// points there rather than at a second grouping.
+//
+// The line's reason is worded for every source: the day records carry no arm,
+// but the by-mode and degraded rows come from run records, which do carry one —
+// a note saying the records have no arm would be false beside the note that
+// says those rows come from records.
+const reportShadowSpendNote = "A/B shadow spend is included in these figures: a challenger run's money is spent like any run's, and no figure here tells a challenger's spend from its champion's (`fugaro ab` is where the two arms are told apart)"
 
 // reportByMode is --by mode: what the project spent in each rigor mode its runs
 // resolved, from the run records. It needs neither Firestore nor the budget

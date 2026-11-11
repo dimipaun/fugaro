@@ -1042,9 +1042,13 @@ func TestReportHistoryNamesComputeAsAnEstimate(t *testing.T) {
 
 // TestSpendNoteSaysShadowIncluded is D568's note: a challenger's spend is real
 // money, so it is in the day records, in every spend grouping and in the daily
-// cap, and the day records carry no arm to take it back out by. A reader of a
-// spend figure has to be told that rather than left to read the sum as the
-// champion's alone — and told where the two arms are told apart.
+// cap, and no grouping takes it back out. A reader of a spend figure has to be
+// told that rather than left to read the sum as the champion's alone — and told
+// where the two arms are told apart.
+//
+// One line serves the day-record rows, the by-mode rows and the degraded rows,
+// so what it says about the rows' source has to be true of all three: the day
+// records carry no arm, while the run records the other two read do.
 func TestSpendNoteSaysShadowIncluded(t *testing.T) {
 	f := newReportFixture(t)
 	f.doc("2026-10-15", repOpts{spent: 1_000_000, final: true})
@@ -1053,6 +1057,9 @@ func TestSpendNoteSaysShadowIncluded(t *testing.T) {
 	note := shadowNote(t, o.Warnings)
 	if !strings.Contains(note, "fugaro ab") {
 		t.Errorf("the shadow-spend note reads %q, want it to name `fugaro ab` as where the arms are told apart", note)
+	}
+	if strings.Contains(note, "day records") {
+		t.Errorf("the shadow-spend note reads %q: it says the rows come from day records, which the by-mode and degraded rows do not", note)
 	}
 	out, _, err := execute(t, "report", "--since", "2026-10-01")
 	if err != nil {
@@ -1064,9 +1071,11 @@ func TestSpendNoteSaysShadowIncluded(t *testing.T) {
 
 	// The by-mode breakdown reads run records rather than day records, and a
 	// challenger is a run like any other there too, so its rows carry the same
-	// note.
+	// note: the same line, not a second one worded for another source.
 	o = f.json(t, "--by", "mode", "--since", "2026-10-01")
-	shadowNote(t, o.Warnings)
+	if got := shadowNote(t, o.Warnings); got != note {
+		t.Errorf("the by-mode note reads %q, want the same line %q", got, note)
+	}
 
 	// A project with no spend history at all still reports run-record totals,
 	// and those hold shadow spend for the same reason.
@@ -1076,7 +1085,9 @@ func TestSpendNoteSaysShadowIncluded(t *testing.T) {
 	if !o.Degraded {
 		t.Fatalf("the fixture without a history mark reported %+v, want the degraded path", o)
 	}
-	shadowNote(t, o.Warnings)
+	if got := shadowNote(t, o.Warnings); got != note {
+		t.Errorf("the degraded note reads %q, want the same line %q", got, note)
+	}
 }
 
 // shadowNote is the one warning a document carries about shadow spend; a

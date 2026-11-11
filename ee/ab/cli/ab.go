@@ -21,7 +21,6 @@ import (
 	"github.com/dimipaun/fugaro/ee/ab"
 	report "github.com/dimipaun/fugaro/ee/report"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
-	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -123,7 +122,10 @@ func runAB(cmd *cobra.Command, o *abOptions, d Deps) error {
 		m.Since = since.UTC().Format(time.RFC3339)
 	}
 	m.Until = fcli.LsNow().UTC().Format(time.RFC3339)
-	rates, rateNote := abRateSource(lc.Name)
+	rates, rateNote, err := abRateSource(ctx, lc)
+	if err != nil {
+		return err
+	}
 	if rateNote != "" {
 		m.Warnings = append(m.Warnings, rateNote)
 	}
@@ -184,20 +186,32 @@ func abRecords(objs []fcli.RunRecord) ([]runstore.Record, int) {
 // supplied it.
 //
 // The table is the project layer's ab.exchange_rate, with every mode it leaves
-// out -- and every mode of a machine that has read no layer -- filled in from
-// the figure Fugaro ships. A report never fetches the layer itself, so the copy
-// the last read of it cached on this machine is what a read-only surface can
-// reach; a machine that has read none is the ordinary case on a fresh checkout
-// rather than a fault, and the note is what keeps the advice honest about it
-// instead of silently reporting another project's rates.
-func abRateSource(project string) (map[rigor.Mode]float64, string) {
-	entry, ok := localcfg.LoadLayerCache(os.Getenv, project)
-	if !ok {
-		return nil, "no project layer is cached on this machine, so every mode's exchange rate is the figure Fugaro ships (run `fugaro config layer`: it reads the layer the bucket holds for this project and caches it, and this command then reports the project's own ab.exchange_rate)"
+// out -- and every mode of a project that has published no layer -- filled in
+// from the figure Fugaro ships.
+//
+// The layer is read the way a launch reads it (fcli.ProjectLayerOf: the
+// bucket's object, with a cached copy standing in only when the bucket cannot
+// be reached at all and that copy is inside the offline limit). Reading the
+// bucket rather than the cache file is what makes a layer published after this
+// machine last read one decide the ADVICE column: the cache holds whatever the
+// last read of the layer left there, however old, and a project that raised its
+// ab.exchange_rate would otherwise keep being judged at the old one.
+//
+// The note keeps the advice honest where the layer is not the bucket's own
+// object -- a cached copy and its age, or why no layer applies -- instead of
+// silently reading the advice at another project's rates.
+func abRateSource(ctx context.Context, lc *localcfg.Config) (map[rigor.Mode]float64, string, error) {
+	layer, note, err := fcli.ProjectLayerOf(ctx, lc)
+	if err != nil {
+		return nil, "", err
 	}
-	layer, problems := config.ParseProjectLayer([]byte(entry.YAML), config.LayerAnchor{Project: project, GCPProject: entry.GCPProject})
-	if layer == nil || len(problems) > 0 {
-		return nil, "the project layer cached on this machine could not be read, so every mode's exchange rate is the figure Fugaro ships"
+	switch {
+	case layer == nil && note == "":
+		return nil, "this project has published no project layer, so every mode's exchange rate is the figure Fugaro ships", nil
+	case layer == nil:
+		return nil, note + "; with no layer of its own, every mode's exchange rate is the figure Fugaro ships", nil
+	case note != "":
+		return layer.AB.ExchangeRates(), note + " (the advice and the exchange rates below are that copy's)", nil
 	}
-	return layer.AB.ExchangeRates(), ""
+	return layer.AB.ExchangeRates(), "", nil
 }

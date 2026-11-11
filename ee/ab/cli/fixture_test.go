@@ -17,6 +17,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -52,6 +53,7 @@ var abDeps = Deps{MaxRuns: fcli.UserStatsMaxRuns}
 // abFixture is a local config pointing at fakes and a file:// runs bucket.
 type abFixture struct {
 	dir    string
+	runs   string // the runs bucket's directory, which is also the layer's
 	bucket string // file:// URL
 }
 
@@ -63,12 +65,17 @@ func newABFixture(t *testing.T) *abFixture {
 	run := gcpfake.NewRun(t)
 	logging := gcpfake.NewLogging(t)
 	run.Project, run.Region = "proj-1234", "us-east5"
-	runs := filepath.Join(f.dir, "runs")
-	if err := os.MkdirAll(runs, 0o755); err != nil {
+	f.runs = filepath.Join(f.dir, "runs")
+	if err := os.MkdirAll(f.runs, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	f.bucket = "file://" + runs
-	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\nbucket_url: " + f.bucket +
+	f.bucket = "file://" + f.runs
+	// The runs bucket carries its installation's default name even though the
+	// local config reads and writes it through a file:// URL: a project layer
+	// read is keyed by that name, and a config naming any other one is left
+	// with no layer at all (findLayer's own rule), which would make every rate
+	// here the shipped figure whatever the fixture published.
+	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\nbucket_url: " + f.bucket +
 		"\nuser: someone@example.com\nmax_parallel: 2\n" +
 		"endpoints: { run: " + run.URL + "/, logging: " + logging.URL + "/, no_auth: true }\n" +
 		"repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
@@ -82,7 +89,7 @@ func newABFixture(t *testing.T) *abFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	markerPath := filepath.Join(runs, filepath.FromSlash(infra.ProjectMarkerObject))
+	markerPath := filepath.Join(f.runs, filepath.FromSlash(infra.ProjectMarkerObject))
 	if err := os.MkdirAll(filepath.Dir(markerPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +140,24 @@ func (f *abFixture) seed(t *testing.T, slug, runID string, rec *runstore.Record)
 	}
 	defer b.Close()
 	if err := runstore.Open(b, slug, runID).WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// publishLayer writes the project layer an operator published, where the layer
+// read the command makes finds it: the object in the runs bucket under the key
+// every layer read of the project reads (config.LayerKey), anchored on the
+// fixture's own project. An empty yaml is still a published layer (the
+// version and anchor lines alone), which is how a project that set nothing in
+// it is told from one that published none.
+func (f *abFixture) publishLayer(t *testing.T, yaml string) {
+	t.Helper()
+	text := "version: 1\nproject: aurora\ngcp_project: proj-1234\n" + yaml
+	path := filepath.Join(f.runs, filepath.FromSlash(config.LayerKey))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

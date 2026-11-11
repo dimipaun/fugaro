@@ -173,56 +173,69 @@ func TestABCommandSaysWhatItCouldNotRead(t *testing.T) {
 	}
 }
 
-// TestABCommandRatesComeFromTheCachedLayer: the advice is read at the mode's
-// exchange rate (D565), which is the project's own when this machine has read
-// the project layer and Fugaro's shipped table when it has not — and the report
-// says which, because the two can give different advice.
-func TestABCommandRatesComeFromTheCachedLayer(t *testing.T) {
+// TestABCommandRatesComeFromThePublishedLayer: the advice is read at the mode's
+// exchange rate (D565), which is the project layer's own when the project has
+// published one and Fugaro's shipped table when it has not. The layer is the
+// bucket's object rather than this machine's copy of it, so a layer published
+// since the last read decides the ADVICE column; a published layer this build
+// cannot use fails the report rather than passing itself off as none.
+func TestABCommandRatesComeFromThePublishedLayer(t *testing.T) {
 	f := newABFixture(t)
 	f.seedPair(t, "pair-one", "20261001-120000-aaaa", "startup", "small", "model-alpha", "model-beta")
 
+	// Nothing published: the shipped table, and a line saying so.
 	doc := f.jsonAB(t, "--since", "0")
 	if rate := abRow(t, doc, "startup").Recommendation.ExchangeRate; rate != 0.25 {
-		t.Errorf("with no layer cached the Startup rate reads %v, want the shipped 0.25", rate)
+		t.Errorf("with no layer published the Startup rate reads %v, want the shipped 0.25", rate)
 	}
-	note := abWarning(t, doc, "no project layer is cached")
-	// The advice names a command that reads the layer the bucket holds and
-	// caches it. `fugaro models ls` reads that cache alone and would leave a
-	// reader exactly where this warning found them.
-	if !strings.Contains(note, "fugaro config layer") {
-		t.Errorf("the no-cache warning reads %q, want it to name `fugaro config layer`, which fills the cache", note)
-	}
+	abWarning(t, doc, "published no project layer")
 
 	// The project's own layer: Startup's allowance is raised, so a pair that
 	// costs a quarter more is inside it rather than outside.
-	seedLayer(t, "aurora", "ab:\n  exchange_rate:\n    startup: 1.5\n")
+	f.publishLayer(t, "ab:\n  exchange_rate:\n    startup: 1.5\n")
 	doc = f.jsonAB(t, "--since", "0")
 	if rate := abRow(t, doc, "startup").Recommendation.ExchangeRate; rate != 1.5 {
-		t.Errorf("with the layer cached the Startup rate reads %v, want the project's 1.5", rate)
+		t.Errorf("with a layer published the Startup rate reads %v, want the project's 1.5", rate)
 	}
 	for _, w := range doc.Warnings {
-		if strings.Contains(w, "no project layer is cached") || strings.Contains(w, "could not be read") {
-			t.Errorf("a report read at the project's own rates warned %q", w)
+		if strings.Contains(w, "project layer") {
+			t.Errorf("a report read at the project's own layer warned %q", w)
 		}
 	}
 
-	// A layer this build cannot read is the shipped table and a line saying so
-	// rather than a silent fallback.
-	seedLayer(t, "aurora", "ab: {exchange_rate: {startup: not-a-number}}\n")
+	// The layer is republished at another rate while this machine's cache still
+	// holds the one the last read left there (seeded as that read's own entry is,
+	// so nothing about it is stale by age): the bucket's object decides, or a
+	// project that raised its exchange rate would go on being judged at the old
+	// one.
+	seedLayer(t, "aurora", "ab:\n  exchange_rate:\n    startup: 1.5\n")
+	f.publishLayer(t, "ab:\n  exchange_rate:\n    startup: 0.4\n")
 	doc = f.jsonAB(t, "--since", "0")
-	if rate := abRow(t, doc, "startup").Recommendation.ExchangeRate; rate != 0.25 {
-		t.Errorf("with an unreadable layer the Startup rate reads %v, want the shipped 0.25", rate)
+	if rate := abRow(t, doc, "startup").Recommendation.ExchangeRate; rate != 0.4 {
+		t.Errorf("with the layer republished the Startup rate reads %v, want the bucket's 0.4 rather than the cached 1.5", rate)
 	}
-	abWarning(t, doc, "could not be read")
+
+	// A published layer this build cannot use is an error rather than a silent
+	// fall back to the shipped table, exactly as it is on a launch.
+	f.publishLayer(t, "ab: {exchange_rate: {startup: not-a-number}}\n")
+	out, _, err := executeAB(t, "ab", "--since", "0")
+	if err == nil || !strings.Contains(err.Error(), "is invalid") {
+		t.Fatalf("ab with an invalid published layer = %v, want the layer read's own refusal", err)
+	}
+	if out != "" {
+		t.Errorf("the refused ab wrote %q to stdout, want nothing", out)
+	}
 }
 
-// seedLayer writes the project layer cache the last cloud read would have left
-// on this machine.
+// seedLayer writes the project layer cache the last read of the layer would
+// have left on this machine, as that read writes it (same bucket key, checked
+// now), so what a test seeds would stand in for a bucket that cannot be
+// reached.
 func seedLayer(t *testing.T, project, yaml string) {
 	t.Helper()
 	entry := localcfg.SharedCacheEntry{
 		GCPProject: "proj-1234",
-		Bucket:     "aurora-layers",
+		Bucket:     "fugaro-runs-proj-1234",
 		CheckedAt:  time.Now().UTC(),
 		YAML:       "version: 1\nproject: " + project + "\ngcp_project: proj-1234\n" + yaml,
 	}
