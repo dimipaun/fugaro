@@ -232,7 +232,21 @@ func issueSubmittable(ctx context.Context, store *issues.Store, sh *issueShared,
 			}
 			return nil, userErr("nothing was filed: %s was already filed%s, and submit files an issue once", issueRef(i), where)
 		}
-		return []issues.Issue{issueStored(ctx, sh, i)}, nil
+		stored, fromStore := issueStored(ctx, sh, i)
+		if fromStore && issueStoreFiled(stored) {
+			// The store's copy is the record this run would file, so its own status
+			// is the one that says whether there is anything left to file (F13):
+			// another machine filed it, or a release resolved it, and this machine's
+			// file was never told. A set-aside issue is not one of these — naming it
+			// is the person's own decision — and issueStoreFiled says why.
+			at := issueURL(stored.URL)
+			why := string(stored.Status)
+			if at != "" {
+				why += " at " + at
+			}
+			return nil, userErr("nothing was filed: the project's own record of %s is %s, and submit files an issue once", issueRef(i), why)
+		}
+		return []issues.Issue{stored}, nil
 	}
 	all, err := store.List()
 	if err != nil {
@@ -243,20 +257,34 @@ func issueSubmittable(ctx context.Context, store *issues.Store, sh *issueShared,
 		if i.Status != issues.StatusPending || issueForeign(i, installation) {
 			continue
 		}
-		todo = append(todo, issueStored(ctx, sh, i))
+		stored, fromStore := issueStored(ctx, sh, i)
+		if fromStore && !issueStoreWaiting(stored) {
+			// The sweep decides on the store's copy and not on the file here (F13):
+			// a teammate's dismissal, a resolution a release recorded and a filing
+			// another machine made all live in the store, and nothing copies any of
+			// them into this machine's folder — `issue list` prints the local status,
+			// and `dismiss` writes it only where it was run. The file still says
+			// `pending`, so left to itself the sweep would file what the project
+			// already decided about.
+			continue
+		}
+		todo = append(todo, stored)
 	}
 	return todo, nil
 }
 
 // issueStored is one issue as the project's store has it: for an issue with a
-// number, the record the store holds, and for one without, this machine's own
-// file (F13, F23).
+// number, the record the store holds and whether it was read, and for one
+// without, this machine's own file (F13, F23).
 //
 // A number is the store's, and the copy here is the one this machine uploaded
-// when it took that number: a teammate may have dismissed the issue or recorded
-// a resolution since, and the file here would still say `pending`. The post is
-// built from the store's copy, because the bytes previewed are the bytes filed
-// (F19) and the store's record is the one every reader of the issue knows.
+// when it took that number: a teammate may have dismissed the issue, a release
+// may have resolved it and another machine may have filed it since, and the file
+// here would still say `pending`. The post is built from the store's copy,
+// because the bytes previewed are the bytes filed (F19) and the store's record
+// is the one every reader of the issue knows — and whether it was read is
+// answered too, because it is the store's own status that decides what there is
+// left to file (issueStoreFiled, issueStoreWaiting) and not the file here.
 //
 // A record the store cannot be read for keeps this machine's own copy and says
 // so in one line: the preview is then a preview of the file here, and the claim
@@ -264,16 +292,38 @@ func issueSubmittable(ctx context.Context, store *issues.Store, sh *issueShared,
 // (issueClaim), so a record that cannot be read is never filed unclaimed. A run
 // with no store at all — no project selected, a coding agent's session — reads
 // nothing and files what this machine has (issueFile).
-func issueStored(ctx context.Context, sh *issueShared, i issues.Issue) issues.Issue {
+func issueStored(ctx context.Context, sh *issueShared, i issues.Issue) (issues.Issue, bool) {
 	if i.Number == 0 || sh.bucket == nil {
-		return i
+		return i, false
 	}
 	stored, err := issues.SharedIssue(ctx, sh.bucket, i.Number)
 	if err != nil {
 		sh.notes = append(sh.notes, "note: the project's issue "+issueRef(i)+" could not be read ("+oneLine(err.Error())+"), so this machine's own copy of it stands in")
-		return i
+		return i, false
 	}
-	return stored
+	return stored, true
+}
+
+// issueStoreFiled is whether the project's own record of an issue says there is
+// nothing left to file: it is on GitHub already, or a release resolved it. A
+// reference that names one is refused before any preview is shown, because a
+// person who names an issue that is filed is told so rather than shown a post
+// that will never be made (F28).
+//
+// A dismissal is deliberately not one of these. It says the issue was set aside
+// rather than that it is finished, and a person who names one has already made
+// the decision to file it all the same (issueSubmittable).
+func issueStoreFiled(i issues.Issue) bool {
+	return i.Status == issues.StatusSubmitted || i.Status == issues.StatusResolved || issueURL(i.URL) != ""
+}
+
+// issueStoreWaiting is whether the sweep has anything to do with the project's
+// own record of an issue: it is still pending and on GitHub nowhere. Every other
+// status, the dismissal included, is a decision the store holds and this
+// machine's file does not (issueStored), so the sweep steps over it rather than
+// filing what the project already settled.
+func issueStoreWaiting(i issues.Issue) bool {
+	return i.Status == issues.StatusPending && issueURL(i.URL) == ""
 }
 
 // issueForeign reports whether a record belongs to an installation this run

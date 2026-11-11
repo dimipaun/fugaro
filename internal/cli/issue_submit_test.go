@@ -1014,3 +1014,172 @@ func TestIssueSubmitRefusesChangedRecord(t *testing.T) {
 		t.Errorf("a refused submit left the shared issue %q with URL %q, want it pending with none", shared.Status, shared.URL)
 	}
 }
+
+// sharedRows is every issue the project's store holds, as the store's own
+// listing reads them: what an upload would have put there, and nothing else.
+// The false it answers with is a failure of the test's own store.
+func sharedRows(t *testing.T, b *blobx.Bucket) []issues.SharedRow {
+	t.Helper()
+	rows, err := issues.ListShared(context.Background(), b)
+	if err != nil {
+		t.Fatalf("listing the shared store: %v", err)
+	}
+	return rows
+}
+
+// TestIssueSubmitPreviewUploadsNothing: a plain `submit` is a read (D1720). The
+// issue it previews stays in this machine's own folder — unnumbered, unuploaded,
+// pending — and the project's store is untouched by it, which is the promise the
+// run's own line makes: "Nothing was filed" is said by a run that put nothing up
+// either. The upload is --ask's, and only --ask's (F10, F22).
+func TestIssueSubmitPreviewUploadsNothing(t *testing.T) {
+	rig := newMineRig(t)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+	local := rig.save(mineRec("48213", "sig-preview"))
+
+	out, _, err := execute(t, "issue", "submit")
+	if err != nil {
+		t.Fatalf("issue submit: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Nothing was filed") {
+		t.Errorf("a preview does not say that nothing was filed:\n%s", out)
+	}
+	if rows := sharedRows(t, rig.bucket); len(rows) != 0 {
+		t.Errorf("a preview uploaded %d issue(s) to the project's store, want none: %+v", len(rows), rows)
+	}
+	back, err := rig.store.Get(local.LocalID)
+	if err != nil {
+		t.Fatalf("reading the issue back: %v", err)
+	}
+	if back.Number != 0 || back.Uploaded {
+		t.Errorf("a preview numbered this machine's record %d (uploaded %t), want it left as it is", back.Number, back.Uploaded)
+	}
+	if got := len(spy.creates()); got != 0 {
+		t.Errorf("a preview filed %d issue(s)", got)
+	}
+}
+
+// TestIssueSubmitAgentSessionRefusesBeforeAnyPreview: the refusal a coding
+// agent's session gets comes before anything is shown or written (F10). `--ask`
+// is the half of the command that uploads and files, so the guard is answered
+// first: no preview reaches the terminal, and the pending issue that --ask would
+// have uploaded is still only in this machine's folder.
+func TestIssueSubmitAgentSessionRefusesBeforeAnyPreview(t *testing.T) {
+	rig := newMineRig(t)
+	withTerminal(t, true)
+	t.Setenv("CLAUDECODE", "1")
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+	local := rig.save(mineRec("48213", "sig-agent"))
+
+	out, _, err := executeStdin(t, "y\n", "issue", "submit", local.LocalID, "--ask")
+	if err == nil || !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
+		t.Fatalf("submit --ask in a coding agent's session: err = %v, want the agent refusal", err)
+	}
+	if strings.Contains(out, "Title:") {
+		t.Errorf("the refusal printed a preview of the issue, want nothing but the refusal:\n%s", out)
+	}
+	if rows := sharedRows(t, rig.bucket); len(rows) != 0 {
+		t.Errorf("a refused session uploaded %d issue(s), want none: %+v", len(rows), rows)
+	}
+	if got := len(spy.creates()); got != 0 {
+		t.Errorf("a refused session filed %d issue(s)", got)
+	}
+}
+
+// TestIssueSubmitSweepLeavesASetAsideIssueAlone: a teammate's dismissal is the
+// store's and nowhere else — `dismiss` writes the status on the machine that ran
+// it, and nothing copies it into this machine's folder, which still says
+// `pending` (F13). The sweep reads the store's copy of a numbered issue and
+// steps over a decided one, so a dismissal is never filed by accident; naming
+// the issue on its own still files it, because a reference is the person's own
+// decision and a dismissal only says it was not worth filing then.
+func TestIssueSubmitSweepLeavesASetAsideIssueAlone(t *testing.T) {
+	rig := newMineRig(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+	local := submitRigIssue(t, rig, "sig-set-aside")
+	if err := issues.SetSharedStatus(context.Background(), rig.bucket, local.Number, issues.StatusDismissed, rig.now); err != nil {
+		t.Fatalf("setting the shared issue aside: %v", err)
+	}
+
+	out, _, err := executeStdin(t, "y\n", "issue", "submit", "--ask")
+	if err != nil {
+		t.Fatalf("issue submit --ask: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Nothing is pending") {
+		t.Errorf("the sweep does not report the set-aside issue as nothing to do:\n%s", out)
+	}
+	if got := len(spy.creates()); got != 0 {
+		t.Errorf("the sweep filed %d issue(s), want the set-aside one left alone", got)
+	}
+	shared, err := issues.SharedIssue(context.Background(), rig.bucket, local.Number)
+	if err != nil {
+		t.Fatalf("reading the shared issue back: %v", err)
+	}
+	if shared.Status != issues.StatusDismissed || shared.URL != "" {
+		t.Errorf("the sweep left the shared issue %q with URL %q, want it %q and unfiled", shared.Status, shared.URL, issues.StatusDismissed)
+	}
+
+	// Named on its own the same issue is filed: the reference overrides the
+	// dismissal, and the record the run files is the store's own copy of it.
+	out, _, err = executeStdin(t, "y\n", "issue", "submit", strconv.Itoa(local.Number), "--ask")
+	if err != nil {
+		t.Fatalf("issue submit --ask of a named set-aside issue: %v\n%s", err, out)
+	}
+	if got := len(spy.creates()); got != 1 {
+		t.Fatalf("a named set-aside issue was filed %d time(s), want once", got)
+	}
+	shared, err = issues.SharedIssue(context.Background(), rig.bucket, local.Number)
+	if err != nil {
+		t.Fatalf("reading the shared issue back: %v", err)
+	}
+	if shared.Status != issues.StatusSubmitted || shared.URL != filedIssueURL {
+		t.Errorf("the filed issue is %q with URL %q, want %q with %q", shared.Status, shared.URL, issues.StatusSubmitted, filedIssueURL)
+	}
+}
+
+// TestIssueSubmitRefusesAnIssueTheStoreAlreadyFiled: the store's copy of a
+// numbered issue is the one this run would file, so its status is what says
+// whether there is anything left to file (F13, F28). Another machine filed the
+// issue and this machine's own file still says `pending`; a reference that names
+// it is refused before the preview, so nobody reads a post that will never be
+// made, and nothing reaches `gh` or the record.
+func TestIssueSubmitRefusesAnIssueTheStoreAlreadyFiled(t *testing.T) {
+	rig := newMineRig(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+	local := submitRigIssue(t, rig, "sig-filed-elsewhere")
+
+	c, err := issues.Claim(context.Background(), rig.bucket, local.Number, "user:bo@example.test", rig.now)
+	if err != nil {
+		t.Fatalf("another submitter's claim: %v", err)
+	}
+	if err := issues.RecordSubmitted(context.Background(), rig.bucket, c, filedIssueURL, rig.now); err != nil {
+		t.Fatalf("another machine's filing: %v", err)
+	}
+	back, err := rig.store.Get(strconv.Itoa(local.Number))
+	if err != nil {
+		t.Fatalf("reading this machine's copy back: %v", err)
+	}
+	if back.Status != issues.StatusPending {
+		t.Fatalf("this machine's copy of the issue is %q, want the %q it was saved as: the file is the half that is not refreshed", back.Status, issues.StatusPending)
+	}
+
+	out, _, err := execute(t, "issue", "submit", strconv.Itoa(local.Number))
+	if err == nil {
+		t.Fatalf("submit previewed an issue the project's own record says is filed:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "submitted") {
+		t.Errorf("the refusal does not say what the store's record says: %q", err.Error())
+	}
+	if strings.Contains(out, "Title:") {
+		t.Errorf("a refused submit printed a preview:\n%s", out)
+	}
+	if got := len(spy.creates()); got != 0 {
+		t.Errorf("a refused submit filed %d issue(s)", got)
+	}
+}
