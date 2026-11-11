@@ -11983,15 +11983,29 @@ by name. The installation's **credentials service must be on**, the sandbox repo
 credentials-service switch** — `agent.auth: cascade` for it, with a model credential in the service's
 bundle and its root re-applied — and the sandbox repository must be **published with `proxy: true`** (the
 plan's B1.7/B1.8). The check reads both halves: `fugaro project policy show --project fugaro --json` for
-the published policy, and `fugaro doctor --project fugaro --json` — its `credentials-service-deployed`
-row, the one reading of the invoker grants, so no `gcloud` call of the check's own — for the switch. It
+the published policy, and the switch from the credentials service's **own IAM policy** (`gcloud run
+services get-iam-policy fugaro-credentials --project fugaro-dev --region us-east5 --format=json`) crossed
+with the repository's **real jobs** (the jobs whose own `FUGARO_REMOTE` names it, from the job list the
+check already reads): it is ON when every one of those jobs runs as an account that policy grants
+`roles/run.invoker` to and at least one job exists, OFF when an existing job's account is not granted, and
+UNREAD — a row the check could not measure — otherwise. `fugaro doctor`'s `credentials-service-deployed`
+sentence is **not** the decision: the released doctor lists job accounts of workflow variants the
+repository does not deploy, so that row is read only for the states where the service cannot serve a run
+at all — the installation has no credentials service, or it has one that admits every job account and
+holds nothing to serve a model credential out of — and its text is carried in the row for context. Those
+states are the ones doctor's own row can be trusted for; where the row is about the invoker grant, doctor
+answered it before it ever read the bundle, so the check reads the bundle itself (`gcloud secrets
+versions list`, of the container `gcloud secrets list` names as the service's own) and stops unmeasured
+when it holds no version Secret Manager will serve. It
 fails the `proxied` row *before it launches anything* when the repository is not admitted, is admitted
 without the proxy, or is off the switch: the published half alone is **inert**, since a repository off the
 switch holds its own Bitbucket token and is served by nothing, so the check stops rather than launch three
 runs at a path the proxy is not on. The remedy is to set `agent.auth: cascade` for that repository (with a
 model credential in the service's bundle), run `fugaro update --repo` for it and run the check again; a
-switch the reading cannot settle is recorded as **unmeasured** (exit `2`, nothing launched) rather than as
-a pass. Three **sandbox** Bitbucket repositories — the proxied one the runs work
+switch the reading cannot settle — and a service doctor reports as not there or as having nothing to
+serve a run's model credential out of, where every model call of a run is refused — is recorded as
+**unmeasured** (exit `2`, nothing launched) rather than as a pass. Three **sandbox** Bitbucket
+repositories — the proxied one the runs work
 in, a second one for the other-repository refusal, and (with `--after-flip`) one the policy does not proxy
 — plus the number of an **open** pull request **in the proxied repository itself** (`CHECK191_OTHER_PR`):
 the run's own repository, and a pull request that is not the run's own. It has to be that repository's,
@@ -11999,8 +12013,11 @@ because a call naming another repository is refused for the repository before th
 reached, so a pull request of the second repository would earn `other_repository` and never
 `other_pull_request`. `bash`,
 `mktemp`, `python3`, `curl`, `gcloud` and `fugaro` on PATH, `gcloud` authenticated as an account that may
-read Cloud Logging for the installation, read the job list, **list the installation's secrets and read the
-IAM policy of the one labelled `fugaro_secret=bitbucket-token`** (Check 192's accessor row: the
+read Cloud Logging for the installation, read the job list, **read the credentials service's own IAM
+policy** (`gcloud run services get-iam-policy`, the switch's own half), **list the installation's secrets
+and read the versions of the credentials service's bundle container** (the check reads them itself where
+doctor's row is about the invoker grant), **read the IAM policy of the one labelled
+`fugaro_secret=bitbucket-token`** (Check 192's accessor row: the
 project-wide container, and a repository that stored the token itself has its own), and
 **write and delete one node** in the installation's Realtime Database (the register's Check 95 step 3 is
 the same write): the ended-run row is set up by hand, as you, with `gcloud auth print-access-token` and
