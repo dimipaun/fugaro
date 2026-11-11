@@ -353,7 +353,12 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	ev.inputs = imagecheck.CatalogInputs{
 		Entry: e.Name, Record: ev.rec, LastCheck: ev.prev, LastBuildStatus: ev.lastStatus,
 		DefinitionSHA256: ev.definitionSHA256, ContextSHA256: ev.contextSHA256,
-		BaseRef: t.base, BaseDigest: t.baseDigest,
+		// The template this job's own binary would build with: a release that
+		// changes the build reaches the entries the release behind built, which
+		// is the blind spot the workflow check closes with the same salt (F33,
+		// D1402).
+		TemplateSalt: gcp.TemplateSalt(Version),
+		BaseRef:      t.base, BaseDigest: t.baseDigest,
 		// The lockfiles trigger is the one trigger this job cannot evaluate: it
 		// is decided from the baked repository's tree, and this job has no
 		// checkout of it and no git credential to read one with. An entry whose
@@ -402,6 +407,9 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 		ServiceAccount: r.BuildServiceAccount, MachineType: t.spec.MachineType,
 		WorkflowSecrets: r.WorkflowSecrets,
 		Bucket:          "gs://" + t.bucket.GCSName,
+		// The rebuild records the template it ran, which is this job's own: the
+		// entry it rebuilds stops firing the template trigger (F33, D1402).
+		TemplateSalt: gcp.TemplateSalt(Version),
 	}
 	if e.Source.Context != "" {
 		commit = ev.contextCommit

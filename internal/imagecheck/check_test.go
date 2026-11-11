@@ -410,6 +410,48 @@ func TestDecideCatalogDoesNotFireOnAnUnchangedContext(t *testing.T) {
 	}
 }
 
+// catalogTemplateInputs is catalogInputs for an entry whose last build ran the
+// template a rebuild would run: the salt the check knows is the one the record
+// carries, so the engine's own way of building has not moved.
+func catalogTemplateInputs(now time.Time) CatalogInputs {
+	in := catalogInputs(now)
+	in.TemplateSalt, in.Record.TemplateSalt = strings.Repeat("d", 64), strings.Repeat("d", 64)
+	return in
+}
+
+// TestDecideCatalogFiresOnATemplateChange: an engine-side change to how a
+// catalog image is built reaches the entries the release behind built. The salt
+// covers the embedded build template and the fugaro version, and the copied
+// definition and the context are the same bytes either way, so without this
+// trigger a release that adds a build step rebuilds every workflow image and no
+// catalog entry at all (F33, D1402's second half). A caller that states no salt
+// fires nothing: it has nothing to compare a record with, which is the workflow
+// check's own rule.
+func TestDecideCatalogFiresOnATemplateChange(t *testing.T) {
+	now := time.Date(2026, 11, 3, 5, 30, 0, 0, time.UTC)
+	in := catalogTemplateInputs(now)
+	if got := DecideCatalog(in); got.Decision != Skip || len(got.Reasons) != 0 {
+		t.Fatalf("an unchanged template: %s %v", got.Decision, got.Reasons)
+	}
+	// The fingerprint carries the salt, so the back-off tells a failed build of
+	// the old template from one of the new, and a template that moved and moved
+	// back is the inputs the last build already ran with.
+	moved := in
+	moved.TemplateSalt = strings.Repeat("e", 64)
+	got := DecideCatalog(moved)
+	if got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonCatalogTemplate}) {
+		t.Fatalf("a changed template: %s %v", got.Decision, got.Reasons)
+	}
+	if got.Inputs.Equal(DecideCatalog(in).Inputs) {
+		t.Fatalf("a changed template fingerprints as the unchanged one (%+v), so the back-off would count it as the same build", got.Inputs)
+	}
+	none := catalogInputs(now)
+	none.Record.TemplateSalt = strings.Repeat("d", 64)
+	if got := DecideCatalog(none); got.Decision != Skip || len(got.Reasons) != 0 {
+		t.Fatalf("a caller that states no template: %s %v", got.Decision, got.Reasons)
+	}
+}
+
 // TestCheckRebuildsACatalogImageOnABaseChange: an entry reuses the base and
 // max-age triggers per entry. A base the entry would now be built from is a
 // rebuild even when its definition did not move (that is the security
