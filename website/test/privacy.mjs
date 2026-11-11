@@ -655,7 +655,7 @@ export function updateCheckFailures({ page, updatecheckSource, updatewarnSource,
 // test whose fixtures spell the host to test the website-boundary rule itself. It is a test, so
 // the scan skips every `_test.go`; this constant is here so the exception is written down rather
 // than inferred from the filter, and so a production file that starts naming the host is not
-// mistaken for it. The two production files that name it are `HOST_NAMING_LINKS`, below.
+// mistaken for it. The production files that name it are `HOST_NAMING_LINKS`, below.
 export const HOST_NAMING_TEST = 'internal/cli/docs_website_boundary_test.go'
 
 // The three production files in the tree that name the site's canonical host and are NOT a
