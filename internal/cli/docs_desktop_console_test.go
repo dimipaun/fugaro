@@ -1358,7 +1358,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-seven argvs and nothing else -- the console's one spawn table
+// the twenty-eight argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1481,6 +1481,16 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// <name>` is what makes it answer for a Finder-launched child, which
 		// has no checkout to resolve a project from.
 		"craft ls --json --project <name> [--config <path>]",
+		// The seat estimate (the subscriptions plan's S4.2, the `seats.read`
+		// operation, D439): who launches jobs on this installation and the
+		// identities the estimate cannot count, over the 90 days the command
+		// itself fixes. **Advisory**: the console draws it beside the licence
+		// key's own seat count and gates nothing on it, which is the whole of
+		// what D439 asks of this surface. Read-only, and the two project flags
+		// are §3.4 rule 3's, so the row spells the whole argv back with no
+		// argument an operation's schema fills -- the window is the command's
+		// own and no word of it reaches a renderer.
+		"seats --json --project <name> [--config <path>]",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
 		// the console's first write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
@@ -1619,7 +1629,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-five commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-six commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -1634,10 +1644,11 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// C3, and the row that is not a read at all), the two managed reads
 	// `managed status --json` and `project policy show --json` (the managed
 	// screens' CM3: the marks with their trail, and the policy node), the
-	// effective-craft read `craft ls --json` (the model-crafts plan's MC8) and
+	// effective-craft read `craft ls --json` (the model-crafts plan's MC8), the
+	// seat estimate `seats --json` (the subscriptions plan's S4.2, D439) and
 	// the launch `fugaro run` (V2.5.1a).
-	if len(allowed) != 25 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 25 (logs has two argvs)", path, argvs, len(allowed))
+	if len(allowed) != 26 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 26 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -1803,7 +1814,10 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     section's `licence.read` and `licence.save`, two of the eleven rows here
 //     that spawn nothing -- to thirty-six, and the graph plan's CG9b --
 //     `graph.watch`, the surface's one long-lived child -- to the thirty-seven
-//     rule 5 carries today.
+//     it carried from 2026-11-09, and the subscriptions plan's S4.2 -- the
+//     Project tab's seat estimate, `seats.read`, the surface's one read whose
+//     child walks the runs bucket -- to the thirty-eight rule 5 carries
+//     today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
