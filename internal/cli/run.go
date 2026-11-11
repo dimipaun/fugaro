@@ -970,7 +970,9 @@ func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string,
 		}
 	}
 	if _, err := runstore.RunTime(pair.Challenger.RunID); err != nil {
-		why := fmt.Sprintf("the challenger's run id %q is not one: %v", oneLine(pair.Challenger.RunID), oneLineCLI(err.Error()))
+		// The error quotes the value, which is the point: what a planner
+		// answered is not a run ID, so there is no ending of one to shorten.
+		why := "the challenger's run id is not one: " + oneLineCLI(err.Error())
 		pairSkip(warn, why)
 		return nil, why
 	}
