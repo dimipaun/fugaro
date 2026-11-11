@@ -178,7 +178,9 @@ func TestInitPluginStageInstallsInClaudeCode(t *testing.T) {
 // sentence for the condition, and it is not a failure: the install half goes to
 // the machine's own marketplace (dimipaun/fugaro) whatever the file says, the
 // file comes out of the run byte for byte as it was, and the run goes on to the
-// next stage (spec §8, U5).
+// next stage (spec §8, U5). U8 (F25) makes that step a left-for-you one as well
+// as a continuing one: the reader is told the pin is theirs to deal with and
+// the exit code says so (TestInitPluginStageLeavesAnUnremovablePinForTheUser).
 func TestInitPluginStageLeavesAPinItCannotRemoveAlone(t *testing.T) {
 	for name, tc := range map[string]struct{ content, said string }{
 		"a fork's marketplace": {
@@ -216,14 +218,103 @@ func TestInitPluginStageLeavesAPinItCannotRemoveAlone(t *testing.T) {
 			if seen := out.String(); !strings.Contains(seen, "the pin is left as it is: ") || !strings.Contains(seen, tc.said) {
 				t.Errorf("the run does not say %q about the pin it may not remove\n%s", tc.said, seen)
 			}
-			if res.Failed != nil || len(res.Left) != 0 {
-				t.Errorf("a pin that cannot be removed is not a failure: failed %+v left %+v", res.Failed, res.Left)
+			if res.Failed != nil {
+				t.Fatalf("a pin that cannot be removed is not a failure: failed %+v", res.Failed)
+			}
+			// And it is left for the user (F25): the sentence the stage printed
+			// is the run's own left-for-you entry, and the exit code says the
+			// run has something a person still owes it.
+			if len(res.Left) != 1 || res.ExitCode() != 1 {
+				t.Fatalf("the refusal is not left for the user: left %+v, exit %d", res.Left, res.ExitCode())
+			}
+			if l := res.Left[0]; l.Stage != initflow.Plugin || !strings.Contains(l.Text, "the pin is left as it is: ") || !strings.Contains(l.Text, tc.said) {
+				t.Errorf("the run leaves %+v, want the sentence about the pin it may not remove", l)
 			}
 			if stateOf(res, "plugin") != initflow.Changed ||
 				!slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
 				t.Errorf("the machine's own install did not happen: %+v\n%s", res.Stages, out)
 			}
 		})
+	}
+}
+
+// D955 (U8, F24): the machine's own install asks nothing about the checkout's
+// repository. The plugin this stage installs is the same one for every
+// checkout, and the gate that reads the machine's config belongs to the pin —
+// it is what authorises writing .claude/settings.json in somebody's checkout —
+// so a repository the project's config does not list is no reason to send a
+// teammate to a second command before their own machine has the plugin. The
+// install runs, the checkout is not written, and no line names `fugaro setup`.
+func TestInitPluginStageInstallsWhereTheMachineDoesNotKnowTheRepository(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	// A repository the machine's config does not list: the rig's config knows
+	// acme/app, and this checkout's origin is another one. `update` does not
+	// enrol by asking (D5), and a coding agent's session — the teammate's own,
+	// which is where this command runs for the person who holds no owner's
+	// role — confirms nothing (canConfirmTyped), so the gate answered
+	// needs-you here before U8 and sent them to fugaro setup for a write that
+	// is not the repository's.
+	settings := wiringCheckoutAt(t, "https://github.com/acme/other.git", "")
+	e, out := stageEngine(t, "", &initOptions{door: updateDoor.name, yes: true})
+	t.Setenv(agentMarkers[0], "1")
+	useFakeClaude(t, f)
+	res := runPlugin(t, e)
+	if st := res.Stages[0]; st.State != initflow.Changed {
+		t.Fatalf("the install half did not run: %+v\n%s", st, out)
+	}
+	if stateOf(res, "plugin") != initflow.Changed ||
+		!slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
+		t.Errorf("the plugin in the user's own Claude Code was not installed: %+v\n%s", res.Stages, out)
+	}
+	if seen := out.String(); strings.Contains(seen, setupDoor.name) || strings.Contains(seen, "not one of project") {
+		t.Errorf("the machine's own install sent the reader to the repository's gate:\n%s", seen)
+	}
+	if len(res.Left) != 0 || res.Failed != nil {
+		t.Errorf("the run left something for the user over a write that is not the repository's: left %+v failed %+v", res.Left, res.Failed)
+	}
+	if _, err := os.Stat(settings); err == nil {
+		t.Errorf("%s was written: the install is the machine's, and the checkout carries no pin to take out", settings)
+	}
+}
+
+// F25 (U8): a pin the removal cannot call its own does not end the run. The
+// refusal is left for the user — the run exits 1 and says what it left — and
+// the stages after this one run: before U8 the refusal was needs-you, which is
+// the loop's stop, and everything behind the plugin waited.
+func TestInitPluginStageLeavesAnUnremovablePinForTheUser(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	settings := wiringCheckout(t, forkAt("acme/fugaro-fork", "v0.1.0")+"\n")
+	e, out := stageEngine(t, "", &initOptions{yes: true})
+	useFakeClaude(t, f)
+	// The stage behind the plugin: a stage the loop reaches only when nothing
+	// before it stopped. It is skipped, so the run needs no cloud for it.
+	next := &engineStage{e: e, name: initflow.Repository, skip: func() string { return "nothing of this run's to onboard" }}
+	res, err := initflow.Run(t.Context(), []initflow.Stage{newPluginStage(e), next}, e.options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(settings); !strings.Contains(string(got), "acme/fugaro-fork") {
+		t.Errorf("the pin the stage may not remove was rewritten:\n%s", got)
+	}
+	if stateOf(res, initflow.Repository) != initflow.Skipped {
+		t.Errorf("the stage behind the plugin is %v, want the loop to have reached it: %+v\n%s", stateOf(res, initflow.Repository), res.Stages, out)
+	}
+	if len(res.Left) == 0 || res.ExitCode() != 1 {
+		t.Fatalf("the refusal is not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
+	}
+	l := res.Left[0]
+	if l.Stage != initflow.Plugin || !strings.Contains(l.Text, "the pin is left as it is: ") ||
+		!strings.Contains(l.Text, "acme/fugaro-fork") {
+		t.Errorf("the run leaves %+v, want the pin and the sentence for it", l)
+	}
+	if stateOf(res, "plugin") != initflow.Changed {
+		t.Errorf("the install half was left behind with the pin: %+v", res.Stages)
 	}
 }
 
@@ -406,9 +497,13 @@ func TestInitPluginStageRemovalLeavesTheProjectScopeInstallAlone(t *testing.T) {
 
 // A fugaro.yaml that cannot be read (a symlink, a FIFO, an oversize file) is
 // unknown, not a pass: the stage cannot tell the checkout is this project's, so
-// nothing is installed from here and the user is told why. A missing one is the
-// first-run flow, and the gates pass.
-func TestInitPluginStageUnreadableConfigIsUnknown(t *testing.T) {
+// the pin an older fugaro left here is not taken out and the reader is told
+// why. A missing one is the first-run flow, and the gates pass. Under D955 (U8)
+// the machine's own install goes on either way — what the file gates is the
+// checkout write, and a checkout whose config cannot be read is not a machine
+// with nothing to install (U1, F13) — and nothing about it is left for the
+// user: the install is this run's own write.
+func TestInitPluginStageUnreadableConfigStillInstallsTheMachine(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	for name, make := range map[string]func(t *testing.T, p string){
 		"a symlink": func(t *testing.T, p string) {
@@ -427,15 +522,26 @@ func TestInitPluginStageUnreadableConfigIsUnknown(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+			f := testutil.NewClaudePluginFake(t, "[]", "[]")
+			f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 			settings := wiringCheckout(t, settingsWithOthers)
 			make(t, filepath.Join(filepath.Dir(filepath.Dir(settings)), "fugaro.yaml"))
-			e, _ := stageEngine(t, "", &initOptions{yes: true})
+			e, out := stageEngine(t, "", &initOptions{yes: true})
+			useFakeClaude(t, f)
 			res := runPlugin(t, e)
 			if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
 				t.Errorf("the file changed in a checkout whose fugaro.yaml could not be read:\n%s", got)
 			}
-			if stateOf(res, "plugin") != initflow.NeedsYou || len(res.Left) != 1 || !strings.Contains(res.Stages[0].Detail, "fugaro.yaml") {
-				t.Fatalf("%+v left %+v", res.Stages, res.Left)
+			if seen := out.String(); !strings.Contains(seen, "fugaro.yaml cannot be read") {
+				t.Errorf("the run does not say the config could not be read, so a pin left in it is unknown work:\n%s", seen)
+			}
+			if stateOf(res, "plugin") != initflow.Changed ||
+				!slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
+				t.Errorf("the machine's own install did not happen: %+v\n%s", res.Stages, out)
+			}
+			if len(res.Left) != 0 || res.Failed != nil {
+				t.Errorf("left %+v failed %+v: the checkout's config gates the pin, not the machine's install", res.Left, res.Failed)
 			}
 		})
 	}
@@ -443,17 +549,31 @@ func TestInitPluginStageUnreadableConfigIsUnknown(t *testing.T) {
 
 func make1MiB() []byte { return []byte(strings.Repeat("#", maxFugaroYAML+2)) }
 
-// Outside a checkout there is no repository to install the plugin from and no
-// directory to run claude in: the stage skips, saying so, and writes nothing
-// anywhere.
-func TestInitPluginStageOutsideACheckoutSkips(t *testing.T) {
+// Outside a checkout the machine's own install still happens (D955, U8): what
+// this stage writes is the user's own Claude Code through the claude CLI, which
+// needs no repository at all, and it runs claude in the directory the command
+// was typed in. A checkout is where the pin an older fugaro left could be, and
+// nowhere else — so the stage that used to skip here installs, and nothing
+// outside the machine is written.
+func TestInitPluginStageOutsideACheckoutInstallsOnTheMachine(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	e, out := stageEngine(t, "", &initOptions{yes: true})
+	useFakeClaude(t, f)
 	res := runPlugin(t, e)
-	if st := res.Stages[0]; st.State != initflow.Skipped || !strings.Contains(st.Detail, "not in a checkout") {
-		t.Fatalf("%+v\n%s", st, out)
+	if stateOf(res, "plugin") != initflow.Changed ||
+		!slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
+		t.Fatalf("the machine's own install did not run outside a checkout: %+v\n%s", res.Stages, out)
+	}
+	if seen := out.String(); strings.Contains(seen, "installs the plugin from the checkout's repository") {
+		t.Errorf("an outside-a-checkout run is still sent away from its own machine's plugin:\n%s", seen)
+	}
+	if len(res.Left) != 0 || res.Failed != nil {
+		t.Errorf("left %+v failed %+v", res.Left, res.Failed)
 	}
 	if es, _ := os.ReadDir(dir); len(es) != 0 {
 		t.Errorf("wrote into %s: %v", dir, es)
