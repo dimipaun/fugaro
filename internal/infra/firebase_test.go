@@ -1232,12 +1232,21 @@ func tfAttr(body, name string) string {
 	return strings.TrimSpace(m[1])
 }
 
-// databaseRoleMembers returns every IAM member this module binds a role that
-// carries a database permission to, keyed "resource" and valued with the member
-// expression (or the member list, for a binding). A role carries one if it is a
-// predefined firebasedatabase role or a custom role this module declares whose
-// permissions name firebasedatabase (the workspace's read,
-// modules/firebase/workspace_access.tf).
+// databaseGrant is one grant of a database role: the member it binds — a member
+// expression, or the member list for a binding — and the set it iterates. The
+// two are read together because `each.value` is only a principal through its
+// own for_each: a member that names a set is one whoever wrote that set, and
+// every grant in this module is spelled that way (iam.tf).
+type databaseGrant struct {
+	member  string
+	forEach string
+}
+
+// databaseRoleMembers returns every grant of a role that carries a database
+// permission in this directory, keyed "resource" and valued with the grant. A
+// role carries one if it is a predefined firebasedatabase role or a custom role
+// this module declares whose permissions name firebasedatabase (the
+// workspace's read, modules/firebase/workspace_access.tf).
 //
 // Both shapes an IAM grant takes are read: an `_iam_member` carries one member
 // and an `_iam_binding` carries a list of them, and a walk that read only the
@@ -1246,7 +1255,7 @@ func tfAttr(body, name string) string {
 // read — they live in a policy document, a data source elsewhere in the tree —
 // so its presence in a directory walked here fails by name: a membership that
 // cannot be read is not one that can be passed.
-func databaseRoleMembers(t *testing.T, dir string) map[string]string {
+func databaseRoleMembers(t *testing.T, dir string) map[string]databaseGrant {
 	t.Helper()
 	blocks := tfResourceBlocks(t, dir)
 	custom := map[string]bool{}
@@ -1258,7 +1267,7 @@ func databaseRoleMembers(t *testing.T, dir string) map[string]string {
 			t.Errorf("%s: %s is an IAM policy document, and the members it binds are in a policy this walk does not read; grant with an _iam_member or an _iam_binding so the fence can see who holds the database", dir, key)
 		}
 	}
-	out := map[string]string{}
+	out := map[string]databaseGrant{}
 	for key, body := range blocks {
 		var member string
 		switch {
@@ -1277,7 +1286,7 @@ func databaseRoleMembers(t *testing.T, dir string) map[string]string {
 			}
 		}
 		if carries {
-			out[key] = member
+			out[key] = databaseGrant{member: member, forEach: tfAttr(body, "for_each")}
 		}
 	}
 	return out
@@ -1293,19 +1302,29 @@ func databaseRoleMembers(t *testing.T, dir string) map[string]string {
 // (D2124).
 func TestNoJobAccountHoldsTheDatabase(t *testing.T) {
 	allowed := map[string]bool{
-		"each.value": true, // the people locals below
 		`"serviceAccount:${var.history_account}"`:           true,
 		`"serviceAccount:${var.coordinator_account}"`:       true,
 		`"serviceAccount:${var.workspace_service_account}"`: true,
 	}
+	// A grant spelled `member = each.value` binds whatever its own for_each
+	// iterates, so the set is half the member: only these two locals are the
+	// installation's people, and a grant iterating anything else — a
+	// var.job_accounts, or a set a later edit adds — is not one of them. The
+	// member expression alone cannot tell the two apart, which is why the walk
+	// reads the for_each.
+	peopleLocals := map[string]bool{"local.people": true, "local.admins": true}
 	members := databaseRoleMembers(t, "gcp/modules/firebase")
 	if len(members) == 0 {
 		t.Fatal("the Firebase module binds no database role: the walk is reading the wrong files")
 	}
-	for key, member := range members {
-		if !allowed[member] {
-			t.Errorf("%s: the Firebase root binds a database role to %s, and the principals it may bind one to are the people, the history account, the coordinator's account and the workspace's", key, member)
+	for key, grant := range members {
+		if allowed[grant.member] {
+			continue
 		}
+		if grant.member == "each.value" && peopleLocals[grant.forEach] {
+			continue
+		}
+		t.Errorf("%s: the Firebase root binds a database role to %s with for_each = %q, and the principals it may bind one to are the people, the history account, the coordinator's account and the workspace's", key, grant.member, grant.forEach)
 	}
 
 	// The two `each.value` grants are the people, and the people are these four
@@ -1338,11 +1357,13 @@ func TestFrontDoorHoldsNoDatabaseWrite(t *testing.T) {
 	dirs := []string{"gcp/modules/firebase", "gcp/modules/installation", "gcp/roots/firebase", "gcp/roots/installation"}
 	boundSomewhere := false
 	for _, dir := range dirs {
-		for key, member := range databaseRoleMembers(t, dir) {
-			if !namesTheFrontDoor(member) {
+		for key, grant := range databaseRoleMembers(t, dir) {
+			// The set as well as the member: `member = each.value` over a set
+			// that names the front door is the same grant as naming it here.
+			if !namesTheFrontDoor(grant.member) && !namesTheFrontDoor(grant.forEach) {
 				continue
 			}
-			t.Errorf("%s: %s binds a database role to %s: the front door holds no database write (D2118, D922/H3)", dir, key, member)
+			t.Errorf("%s: %s binds a database role to %s with for_each = %q: the front door holds no database write (D2118, D922/H3)", dir, key, grant.member, grant.forEach)
 		}
 		// The control that makes the emptiness above mean something: this walk
 		// does see the front door where it is granted something, so a member it
