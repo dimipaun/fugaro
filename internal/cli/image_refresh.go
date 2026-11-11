@@ -688,13 +688,10 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 		return refreshStopped(4, done, o, err)
 	}
 	builds.end(nil)
-	// The two notes stay on the screen — one repeats a fact the default view no
-	// longer shows, the other is the next command for this checkout — and go
-	// into the run's log beside it, which is the run's full output (D1352).
+	// The note stays on the screen — it is the next command for this checkout —
+	// and goes into the run's log beside it, which is the run's full output
+	// (D1352).
 	note := sayThrough(r.rep, r.w)
-	if t.checkJobMissing {
-		fmt.Fprintf(note, "note: step 3 found that the daily image check job was not found, though this repository's spec has one; run fugaro update --repo in %s to deploy it\n", o.checkoutName(p.root))
-	}
 	refreshAnchorNote(ctx, note, p.root, o.checkoutName(p.root), t.lc)
 	if r.rep == nil {
 		// A refresh a caller drives is one stage of that run: its own line says

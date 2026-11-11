@@ -981,49 +981,34 @@ func TestRefreshYesRunsEndToEndNoTerminal(t *testing.T) {
 	}
 }
 
-// Requirement: when step 3 finds the daily image check job missing for a
-// repository whose spec has one, that fact is repeated in the final
-// summary so it is not just a line that scrolled past steps 3 and 4.
-// Mutation (run, restore): remove the t.checkJobMissing block in
-// runImageRefresh after the builds step, and this test fails (the note
-// appears only once instead of twice).
-func TestRefreshFinalSummaryRepeatsMissingCheckJob(t *testing.T) {
-	useVersion(t, "0.5.1")
-	useSelf(t)
-	newAnchorModeRig(t, refreshYAML, true)
-	fakeTerminal(t)
-	old := newRefreshSteps
-	newRefreshSteps = func(r *initRun, e *initEngine, p *refreshPlan) refreshSteps {
-		return refreshSteps{
-			base: func(context.Context) error { return nil },
-			reload: func(context.Context) (*refreshTarget, error) {
-				return &refreshTarget{lc: p.lc, cfg: p.cfg}, nil
-			},
-			checkJob: func(_ context.Context, t *refreshTarget) error {
-				fmt.Fprintln(r.stageDetail(), "  the daily image check job was not found, though this repository's spec has one: run fugaro update --repo in the checkout to deploy it (nothing was updated)")
-				t.checkJobMissing = true
-				return nil
-			},
-			builds: func(context.Context, *refreshTarget) error { return nil },
-		}
-	}
-	t.Cleanup(func() { newRefreshSteps = old })
-	out, _, err := executeStdin(t, "", "image", "refresh")
+// Requirement (D1900, IS2): step 3 over a repository whose spec carries a daily
+// check and whose cloud holds none — the state Readiness leaves every such
+// repository in, since it deploys a check job only where one already exists —
+// says the job is not deployed and names no command. The remedy that line
+// printed before, `fugaro update --repo`, deploys no check job either, so it
+// sent the reader in a loop; the run still finishes, with nothing updated.
+func TestRefreshSaysAMissingCheckJobIsNotDeployed(t *testing.T) {
+	out, err := refreshRealCheckJob(t, false)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	// Step 3's own line is the run's output now and the repeated note is on the
-	// screen, where a person reads it (CL6): both are in the run's full output,
-	// and the note still comes before the line the run ends on.
+	// Step 3's own line is the run's output, which the default view keeps in the
+	// log (CL6, D1352): the screen has the step's line and the closing one.
 	log := writesALog(t, "image-refresh")
-	if n := strings.Count(log, "was not found"); n < 2 {
-		t.Fatalf("the run's full output mentions the missing check job %d time(s), want the step's own line and the repeated note:\n%s", n, log)
+	line := ""
+	for _, l := range strings.Split(log, "\n") {
+		if strings.Contains(l, "is not deployed") {
+			line = l
+		}
 	}
-	if !strings.Contains(out, "was not found") {
-		t.Fatalf("the screen no longer repeats that the check job is missing, where the step's own line is the log's alone:\n%s", out)
+	if line == "" {
+		t.Fatalf("step 3 does not say the check job is not deployed:\n%s", log)
 	}
-	if i, j := strings.Index(out, "Done in "), strings.LastIndex(out, "was not found"); i < 0 || j < 0 || j > i {
-		t.Errorf("the repeated note does not come before the closing line:\n%s", out)
+	if strings.Contains(line, "fugaro ") {
+		t.Errorf("the missing check job's line names a command, and none deploys one (D1900):\n%s", line)
+	}
+	if !strings.Contains(out, markDone+" check job") {
+		t.Errorf("the run did not finish its third step with nothing updated:\n%s", out)
 	}
 }
 
@@ -1041,15 +1026,26 @@ func TestRefreshFinalSummaryRepeatsMissingCheckJob(t *testing.T) {
 // output.
 func refreshWithTheRealCheckJob(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	return refreshRealCheckJob(t, true, args...)
+}
+
+// refreshRealCheckJob is refreshWithTheRealCheckJob with the cloud's own side of
+// step 3 in the caller's hands: job says whether the rig's cloud holds the daily
+// image check job, while the reloaded spec carries one either way (the spec half
+// of the missing-job branch).
+func refreshRealCheckJob(t *testing.T, job bool, args ...string) (string, error) {
+	t.Helper()
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
 	fakeTerminal(t)
 	slug, label := checkJobOwner(t, "github", "acme/app")
 	oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
-	spec, _ := json.Marshal(infra.CheckJobSpec{Repo: "acme/app", BaseImages: map[string]string{"base": oldRef}})
-	r.run.SetJob(gcp.CheckJobName(slug), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: gcp.RoleCheck, gcp.LabelRepo: label}, oldRef)
-	r.run.SetJobEnv(gcp.CheckJobName(slug), map[string]string{infra.CheckSpecEnv: string(spec)})
+	if job {
+		spec, _ := json.Marshal(infra.CheckJobSpec{Repo: "acme/app", BaseImages: map[string]string{"base": oldRef}})
+		r.run.SetJob(gcp.CheckJobName(slug), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: gcp.RoleCheck, gcp.LabelRepo: label}, oldRef)
+		r.run.SetJobEnv(gcp.CheckJobName(slug), map[string]string{infra.CheckSpecEnv: string(spec)})
+	}
 	old := newRefreshSteps
 	newRefreshSteps = func(rr *initRun, e *initEngine, p *refreshPlan) refreshSteps {
 		return refreshSteps{
@@ -1058,7 +1054,8 @@ func refreshWithTheRealCheckJob(t *testing.T, args ...string) (string, error) {
 				lc := *p.lc
 				lc.BaseImages = map[string]string{"base": newRef}
 				return &refreshTarget{lc: &lc, cfg: p.cfg, kinds: []string{"base"},
-					spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label}}, nil
+					spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label,
+						Check: &infra.CheckSpec{Job: gcp.CheckJobName(slug), DeployJob: true}}}, nil
 			},
 			checkJob: func(ctx context.Context, tg *refreshTarget) error { return rr.refreshCheckJob(ctx, tg) },
 			builds:   func(context.Context, *refreshTarget) error { return nil },
