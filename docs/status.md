@@ -56,7 +56,7 @@ As of 2026-11-11, read from `main`, the open pull requests and each plan's task 
 | Spec | State |
 | --- | --- |
 | composite-commands | 1/10; depends on no-prompt-policy |
-| licence-key-v2 | plan only, 0/25 (K0–K7), none approved; D2130–D2146 answered 2026-11-11 (D2134 and D2144 not the recommendation); supersedes L3.1 and the old key's claims; owner Checks 560–564 not run |
+| licence-key-v2 | plan only, 0/25 (K0–K7), none approved; D2130–D2146 answered 2026-11-11 except D2145 (default) (D2134 and D2144 not the recommendation); supersedes L3.1 and the old key's claims; owner Checks 560–564 not run |
 | account-aliases | plan only, 0/5 (AL0–AL4), all approved 2026-11-10 and sequenced after #2274, #2247 and #2252; D2090–D2102 answered as recommended; owner Check 550 not run |
 | mobile-auth | 2/7; parked |
 | repo-image-removal | **PARKED** (2/11; parked by image-setup, D1900) |

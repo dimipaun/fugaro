@@ -12,5 +12,5 @@ extends the built verifier, mint tool and key service in `ee/licence` and `ee/ke
 | [reconciliation.md](reconciliation.md) | Findings F1–F18 against `origin/main`, decisions D2130–D2146 with the owner's answers, open tensions TN1–TN3. It wins over the spec |
 | [implementation-plan.md](implementation-plan.md) | Slices K0–K7, parallel levels, critical path, shared-files table, Checks 560–564 |
 
-Spec owner: the repository owner. Numbers taken: **D2130–D2179** (D2130–D2146 used), **Checks 560–569**
+Spec owner: the repository owner. Numbers taken: **D2130–D2179** (D2130–D2146 used; D2145 is a stated default, not an answer), **Checks 560–569**
 (560–564 used). No spec typo was fixed.

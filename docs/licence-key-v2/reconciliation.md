@@ -78,9 +78,9 @@ pins what the verifier does with the claim and what it leaves unchecked (Open te
 **F9 (Gap): "stored at project level" has no home** (the CLI file and console store are per machine).
 Resolved by D2137: the key text lives in the installation's runs bucket beside the published policy,
 read by `ee/` code only; the renewal job's secret is the installation's Secret Manager's. A viewer
-reaches the key's *state* through `fugaro licence status --json`, never the key.
+reaches the key's *state* through `fugaro licence status --json`; the store has no protection beyond the bucket's IAM.
 
-**F10 (Rule, HARD RULE): a renewal job is a `fugaro update` concern.** A Scheduler job in the customer's
+**F10 (Rule, HARD RULE, D524): a renewal job is a `fugaro update` concern, always applied.** The core reads no key, so `update` cannot apply it only when a key asks; the command no-ops without a key, and on a managed project it applies without a prompt. A Scheduler job in the customer's
 project is Terraform's (`modules/installation`), not something `licence set` creates (a direct API call
 would drift from state, be refused in an agent session, and break the "`fugaro update` is the whole
 upgrade" rule). The spec's "set and login create the renewal job" becomes: they write the key and,
@@ -150,7 +150,7 @@ a viewer **can** copy the key; with an optional `workspace_id` (D2134) the copy 
 | D2132 | Seat enforcement, overturning D439 (F13) | Enforce in `ee` surfaces only; the MIT CLI unaffected (alternatives: advisory; core check, which D524 forbids) | **2026-11-11: the recommendation**, subject to TN1 (the owner's enforcement go) |
 | D2133 | Grace | `grace_days` carried by the key, server default **30** (B17, T26) (alternatives: 14; fixed 30 outside the key) | **2026-11-11: the recommendation.** The spec's 14 becomes 30 |
 | D2134 | What `workspace_id` names | Recommended: a checked installation id | **2026-11-11: NOT the recommendation.** Keep `organisation`, add an optional `workspace_id`, checked only when present. See TN2 |
-| D2135 | Renewal authentication (F7) | A per-key renewal secret, hash in the key, secret in the installation's Secret Manager (alternatives: the scheduler SA's identity; none) | **2026-11-11: the recommendation.** |
+| D2135 | Renewal authentication (F7) | A per-key renewal secret, hash in the key, secret sent over TLS and held in the installation's Secret Manager (alternatives: the scheduler SA's identity; none) | **2026-11-11: the recommendation.** **Amended after review:** the call sends the secret and the server compares its hash, with no HMAC (a hash in the key is readable by every bucket reader). Owner to confirm. |
 | D2136 | Trials | Add the 14-day Team trial beside D440's plans (alternatives: replace D440; none) | **2026-11-11: the recommendation.** One per installation |
 | D2137 | Where the key lives per project (F9) | The runs bucket beside the published policy (alternatives: Secret Manager; per machine) | **2026-11-11: the recommendation.** |
 | D2138 | Grace of trial and air-gapped keys | Trial 0, air-gapped 30 | **2026-11-11: the recommendation.** |
@@ -160,7 +160,7 @@ a viewer **can** copy the key; with an optional `workspace_id` (D2134) the copy 
 | D2142 | Lapse behaviour (F12) | D436 read-only stands | **2026-11-11: the recommendation.** |
 | D2143 | A project with no key | No key is Free; community keys stay optional in the new format | **2026-11-11: the recommendation.** |
 | D2144 | Licence site sign-in (F14) | Recommended: email magic link | **2026-11-11: NOT the recommendation.** Firebase Auth, as the owner asked ("why not use the firebase IDP"); read as the **owner's licence-service project**, TN3 asks the owner to confirm that reading |
-| D2145 | Command spelling (F5) | `licence`, with `license` a hidden alias | **(default)**: stated as a resolution, no question asked |
+| D2145 | Command spelling (F5) | `licence`, with `license` a hidden alias | **(default)**: stated as a resolution, not asked of the owner |
 | D2146 | Unknown fields in a signed key (F4) | Ignore them, signed keys only | **2026-11-11: the recommendation.** |
 
 ## Open tensions and open items for the owner
@@ -176,6 +176,7 @@ a viewer **can** copy the key; with an optional `workspace_id` (D2134) the copy 
   `enterprise` and `trial` keys only.
 - **TN3: Firebase Auth for the licence site.** Confirm it is the owner's own licence-service project and
   not each customer's (F14), and whether a workspace's own token should later prove the binding.
+- **TN4: D2135 was amended after review** (see its cell); the owner confirms the amended text.
 - **Pending the owner's go:** no task is approved. K0.1 (counsel: the Terms' refund and the privacy text
   for the renewal contact) and K0.2 (production signing keys, S3.8) are owner-run.
 
