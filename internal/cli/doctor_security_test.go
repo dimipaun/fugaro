@@ -401,6 +401,10 @@ func TestDoctorMeasuresOnlyTheRowsThisRepositoryWrote(t *testing.T) {
 // GCP project, or another one, gets the floor's rows and its own counted and the
 // layer's not: counting the layer's would put rows in the list doctor reports
 // that the run this checkout launches does not escalate on.
+//
+// The last case is what doctor says about that layer: an unanchored checkout is
+// the state the `project-layer` line beside the security one names, which is why
+// the security line carries no sentence of its own about it.
 func TestDoctorDoesNotCountALayerTheFileIsNotAnchoredTo(t *testing.T) {
 	for _, tc := range []struct{ name, anchor string }{
 		{"no gcp project", ""},
@@ -418,6 +422,23 @@ func TestDoctorDoesNotCountALayerTheFileIsNotAnchoredTo(t *testing.T) {
 			}
 		})
 	}
+
+	// And what doctor says about that layer: the `project-layer` line beside this
+	// one is where a layer's state is reported (doctorLayerChecks), and an
+	// unanchored checkout is the state it names. It is the reason the security
+	// line carries no sentence of its own for this — a second reading of the same
+	// fact, on a line whose subject is a count.
+	t.Run("the project-layer line says it", func(t *testing.T) {
+		r := newDoctorRig(t)
+		noProjectLayerBucket(t)
+		t.Chdir(gitCheckout(t, filepath.Join(r.dir, "app"), doctorSecurityLayerFileWith("", "")))
+
+		o := doctorJSON(t)
+		c, ok := doctorCheckByID(o.Checks, "project-layer")
+		if !ok || !strings.Contains(c.Problem, "no project layer applies to this checkout") {
+			t.Errorf("project-layer = %+v, want the line to say none applies to this checkout", c)
+		}
+	})
 }
 
 // It is the security sweep's: --security carries the measurement, and the
