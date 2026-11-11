@@ -102,12 +102,14 @@ func openRouterServed(s *svc) (Identity, creds.Credential) {
 // instead.
 //
 // Mutation (run, restore): build the provider's destination from
-// upstreamKindAnthropic's address rather than the entry's base URL, and drop the
-// provider branch of send with it. The destination subtest then goes red on the
-// URL alone, which is the claim that stands apart from the key's — where the
-// call goes — and the swap subtest on the credential that goes with it.
-// Dropping readCall's scrub of the caller's own token turns the body assertion
-// red by itself.
+// upstreamKindAnthropic's address rather than the entry's base URL, and the
+// destination subtest goes red on the URL — the swap subtest's own path
+// assertion goes red with it, since where the call goes is read in both places
+// — while the credential the call went with is not what changed. Drop the
+// provider branch of send instead and it is the credential that goes red, as
+// the bearer value that was expected and as the x-api-key the key arrives
+// under. Dropping readCall's scrub of the caller's own token turns the body
+// assertion red by itself.
 func TestOpenRouterCallSwapsKeyAndStreams(t *testing.T) {
 	t.Run("the call is built for OpenRouter's own endpoint", func(t *testing.T) {
 		rec := &recordingTransport{}
