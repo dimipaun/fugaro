@@ -24,17 +24,18 @@
 // up in a screenshot, a crash report and a debug overlay.
 //
 // **The widening of 2026-11-11, which this rule asks to be recorded (P7.2).**
-// The shell draws one more thing: the statement that the app's reports are on
-// and that there is no switch, with the privacy page's URL beside it. D255 was
-// answered *always on*, so the app has nothing to turn off and owes the reader
-// the sentence rather than a control -- and the app **has no settings screen**,
-// so the shell is the only surface that sentence has. The words and the URL
-// come from `src/telemetry/notice.js`, which is the single source for both, and
-// the URL is drawn as **text**: it is a link only when `shared/url`'s validator
-// says it may be opened, and until the owner answers D124 the validator refuses
-// every host, so the app shows what the URL is and draws no control that would
-// pretend to open it. Nothing else is added to what the shell may show: this is
-// the only widening, and a later one belongs in this paragraph.
+// The shell draws one more thing: the statement that says what the app's
+// reports are, with the privacy page's URL beside it. The app **has no settings
+// screen**, so the shell is the only surface that sentence has, and it owes the
+// reader the sentence rather than a control. The words and the URL come from
+// `src/telemetry/notice.js`, which is the single source for both, and the URL
+// is drawn as **text**: the app has no link opener, and until the owner answers
+// D124 `shared/url`'s validator refuses every host, so the shell shows what the
+// URL is rather than a control that would pretend to open it. The verdict the
+// shell draws today is read where it draws (`notice()`), not frozen here: the
+// task that grows the opener reads `openable` from the same call, and this
+// paragraph is where that widening is recorded. Nothing else is added to what
+// the shell may show: this is the only widening, and a later one belongs here.
 //
 // **The demo banner, and why it is drawn here.** The owner's ruling requires
 // that every screen a reviewer sees while demo mode is on carries "Demo mode:
@@ -66,16 +67,6 @@ export const SHELL = Object.freeze({
   BODY: 'fugaro.body',
   NOTICE: 'fugaro.notice',
 });
-
-/** The statement the app shows about its reports, and the privacy page's URL.
- *
- * It is built **once**, when the module loads, because it is a fact about the
- * build rather than about a render: the SDKs are in this build (or they are
- * not) and the host list `shared/url` refuses by is the one compiled in. The
- * module it comes from is the single source of both the words and the URL --
- * see `../telemetry/notice.js` for the link's rule and for why the URL is
- * drawn as text until the owner answers D124. */
-const NOTICE = notice();
 
 /** The title the app shows. A constant, never a value from an account. */
 export const APP_TITLE = 'Fugaro';
@@ -183,13 +174,15 @@ export function createRoot({ React, store, View, Text, Pressable, useDemo, scree
     // only surface the app has for it, and a reader who reaches the app at all
     // is owed it. Both texts are `src/telemetry/notice.js`'s -- the shell
     // renders the sentence and the URL rather than copying either -- and the
-    // URL is a Text and never a control, which is what "there is no switch"
-    // looks like on the screen.
+    // notice is read here, where it is drawn, rather than frozen at module
+    // load: its `openable` is the verdict the task that grows the link opener
+    // reads, and the shell draws no opener of its own.
+    const { text: statement, url: privacyUrl } = notice();
     children.push(React.createElement(
       View,
       { type: SHELL.NOTICE, key: 'notice' },
-      React.createElement(Text, { type: SHELL.NOTICE, key: 'statement' }, NOTICE.text),
-      React.createElement(Text, { type: SHELL.NOTICE, key: 'privacy' }, NOTICE.url),
+      React.createElement(Text, { type: SHELL.NOTICE, key: 'statement' }, statement),
+      React.createElement(Text, { type: SHELL.NOTICE, key: 'privacy' }, privacyUrl),
     ));
 
     return React.createElement(View, { type: SHELL.ROOT }, ...children);

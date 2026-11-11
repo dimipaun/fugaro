@@ -21,13 +21,15 @@
 //     last test here wires the real controller and the real screens to show
 //     the two together: tap "Try the demo", the banner appears, tap "Leave
 //     demo mode", it goes.
-//   * **the shell says what the app reports, as its third child, and carries
-//     no control**: D255's answer is always-on and the app has no settings
-//     screen, so the statement lives on the shell (P7.2). The words and the
-//     URL are `src/telemetry/notice.js`'s -- this file asserts that the shell
-//     renders them, that the URL is drawn as text because the validator
-//     refuses every host today, and that nothing about the reports is a
-//     control a reader can press.
+//   * **the shell says what the app reports, as its third child, and draws no
+//     control**: the app has no settings screen, so the statement lives on the
+//     shell (P7.2). The words and the URL are `src/telemetry/notice.js`'s --
+//     this file asserts that the shell renders them, that the URL is drawn as
+//     text because the app has no opener and the validator refuses every host
+//     today, and that nothing on the shell is a control a reader can press over
+//     the reports. The statement's own words, and which half of them the
+//     owner's ruling of 2026-10-30 (D731) leaves standing, are that module's
+//     assertions and not this file's.
 //
 // React and react-native are not installed (the Expo toolchain is not
 // available in this environment), so both are fakes. What is tested is the
@@ -177,7 +179,7 @@ test('the tree is built from the primitives it was given', () => {
   assert.deepEqual(tree.children.map((child) => child.props.type), [SHELL.TITLE, SHELL.BODY, SHELL.NOTICE]);
 });
 
-test('the shell says what the app reports, and carries no control that stops it', () => {
+test('the shell says what the app reports, and draws no control', () => {
   const tree = shellFor()();
   const shown = render(() => tree);
   // The words are `src/telemetry/notice.js`'s, and the shell renders them
@@ -188,11 +190,12 @@ test('the shell says what the app reports, and carries no control that stops it'
 
   const notice = nodesOfType(() => tree, SHELL.NOTICE);
   assert.equal(notice.length > 0, true, 'the statement is on the shell');
-  // D255's answer is always on: nothing about the reports is a control. The
-  // URL is drawn as text because the validator refuses every host today
-  // (D124's host list is the owner's and is empty), so a pressable one here
-  // would be a link that opens nothing -- and the app has no setting to turn
-  // the reports off, which is what this half asserts structurally.
+  // The shell draws no control over the reports: the statement is text, and the
+  // URL is drawn as text because the app has no link opener and the validator
+  // refuses every host today (D124's host list is the owner's and is empty), so
+  // a pressable one here would be a link that opens nothing. The task that
+  // grows the opener reads `notice()`'s verdict; a control drawn here before
+  // then is what this half refuses.
   for (const node of notice) {
     assert.equal(node.props.onPress, undefined, 'the statement carries no control');
     for (const child of node.children ?? []) {

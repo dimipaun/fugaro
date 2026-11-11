@@ -1,32 +1,42 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
-// The always-on statement and the privacy link (mobile plan, Task P7.2).
+// The app's statement about its reports, and the privacy link (mobile plan,
+// Task P7.2; D731's supersession of D255).
 //
-// **What this file is for.** D255 was answered *always on*: there is no
-// consent switch, no first-launch sheet and no stored choice anywhere in the
-// app, so what the app owes a reader is not a control but **the sentence that
-// says what it does** -- and this module is that sentence, in one place. That
-// makes the module's text an app-visible fact rather than prose: it is what
-// `mobile/src/app/root.js` renders as the shell's third child, and the words a
-// store reviewer reads on the app's only surface.
+// **What this file is for.** What the app owes a reader is not a control but
+// **the sentence that says what the reports are**, and this module is that
+// sentence, in one place. That makes the module's text an app-visible fact
+// rather than prose: it is what `mobile/src/app/root.js` renders as the shell's
+// third child, and part of the words a store reviewer reads on the app's only
+// surface.
+//
+// **Why the statement is the half both rulings leave standing.** D255 (always
+// on) was superseded by the owner's ruling of 2026-10-30 (D731): crash reports
+// on by default and opt-out, and Analytics dropped from the app. The ruling
+// orders P7.2 amended before it is built (task T0.1, in
+// `docs/review-levels-ab-jobmax/implementation-plan.md`) and the switch itself
+// is T3.1's, so this module carries the facts the live privacy page states and
+// that neither ruling moves -- and the two clauses D255 put in the statement
+// are asserted **absent** below, so putting one back is a deliberate act.
 //
 // **The link, and the one thing this file must hold.** The statement carries
 // the link to the privacy page, and the app may open a URL only through
 // `shared/url`'s validator (P0.3; D124, and F27's gap 7 is why it exists at
 // all). The validator's host list is the owner's answer to D124, which has not
 // been given, so `DEFAULT_HOST_ALLOW_LIST` is **empty** and the URL is refused
-// with `allow-list-empty` -- the app must render it as text rather than hand it
-// to a browser. That refusal is therefore the assertion that passes today, and
-// the case below with a list that names the host is what proves the link path
-// is real rather than merely refused: when D124's answer arrives, the same
-// call opens the same URL with no edit here.
+// with `allow-list-empty` -- the app draws it as text rather than handing it to
+// a browser. That refusal is therefore the assertion that passes today, and the
+// case below with a list that names the host is what proves the link path is
+// real rather than merely refused: when D124's answer arrives, the same call
+// answers `openable` for the same URL with no edit here.
 //
-// **The negative half.** A call that sets collection state *is* the switch
-// D255's answer says does not exist, whether it is passed `true` or `false`, so
-// this module -- the one that would carry such a call if the app had a control
-// -- is read for one. The whole-app version of that scan is the telemetry
-// plan's section 7.4, which P7.3 lands; here it is the module this task writes,
-// with a planted control so a green run below means the check can fail.
+// **The negative half.** The amended section 7.4 refuses
+// `setAnalyticsCollectionEnabled(` anywhere in the app, because D731 drops
+// Analytics, and **admits exactly one** `setCrashlyticsCollectionEnabled(`
+// call site -- T3.1's `crash.js`, read from the project's `settings` node.
+// This module is neither of those: it carries no collection call at all, which
+// is what the scan below holds, with a planted call as its control. The
+// app-wide version of that scan lands with the call site it admits.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -42,13 +52,23 @@ const SOURCE = readFileSync(join(import.meta.dirname, 'notice.js'), 'utf8');
  * states it: one exact host, no suffix and no wildcard. */
 const OWN_HOST = Object.freeze(['fugaro.dev']);
 
-/** The statement the page states, and the three facts it has to carry. */
-const PAGE_WORDS = 'The app versions that carry these reports send them. There is no switch '
-  + 'inside the app to turn them off: uninstalling the app stops them, and not installing it '
-  + 'avoids them.';
+/** The page's sentences this statement is made of, as the live page states
+ * them: `website/src/pages/privacy.astro`, whose own gate
+ * (`website/test/privacy.mjs`) holds every one of them to the tree. */
+const PAGE_CLAUSES = [
+  'send them to a Firebase project the Fugaro project operates, and not to your own',
+  'Never sent: the contents of any message, anything from your installation or its mailbox, your credentials and your keys',
+  'The app carries no advertising identifier',
+];
 
-/** The members of the collection switches, as a scan can see them: a call that
- * sets collection state is the switch D255's answer says does not exist. */
+/** The clauses D255's answer put in the statement and the owner's ruling of
+ * 2026-10-30 removes: the app is opt-out now, so neither is the app's to say. */
+const SUPERSEDED_CLAUSES = [
+  'no switch inside the app',
+  'uninstalling the app stops them',
+];
+
+/** The members of the collection switches, as a scan can see them. */
 const SWITCHES = ['setAnalyticsCollectionEnabled(', 'setCrashlyticsCollectionEnabled('];
 
 /** Every collection switch a piece of text carries, as a list. */
@@ -56,17 +76,20 @@ function switchesIn(text) {
   return SWITCHES.filter((call) => text.includes(call));
 }
 
-test('the statement is the page\'s own three facts, as one fixed text', () => {
-  // The text and the page's sentence are the same sentence, deliberately: a
-  // reader who opens the app and a reader who opens the privacy page are owed
-  // one statement, not two readings of one decision.
-  assert.equal(STATEMENT, PAGE_WORDS);
-  for (const fact of [
-    'carry these reports send them',
-    'no switch inside the app',
-    'uninstalling the app stops them',
-  ]) {
-    assert.ok(STATEMENT.includes(fact), `the statement does not carry ${JSON.stringify(fact)}`);
+test('the statement is the page\'s own facts, and the ruling\'s superseded clauses are gone', () => {
+  for (const clause of PAGE_CLAUSES) {
+    assert.ok(STATEMENT.includes(clause), `the statement does not carry ${JSON.stringify(clause)}`);
+  }
+  // The supersession, asserted rather than described. D731 orders the statement
+  // amended (T0.1) and the switch built (T3.1); until both land, the one thing
+  // the app may not do is keep telling a reader that nothing turns the reports
+  // off -- or that the only way to stop them is to uninstall the app.
+  for (const clause of SUPERSEDED_CLAUSES) {
+    assert.equal(
+      STATEMENT.includes(clause),
+      false,
+      `the statement still carries ${JSON.stringify(clause)}: the owner's ruling of 2026-10-30 (D731) supersedes D255's always-on answer`,
+    );
   }
 });
 
@@ -108,20 +131,20 @@ test('the notice is the statement and the link\'s verdict, from one source', () 
   // link's state come back together, so a screen cannot draw one without the
   // other's answer.
   assert.deepEqual(notice(), {
-    text: PAGE_WORDS,
+    text: STATEMENT,
     url: PRIVACY_URL,
     openable: false,
     refusal: URL_REFUSAL.ALLOW_LIST_EMPTY,
   });
   assert.deepEqual(notice(OWN_HOST), {
-    text: PAGE_WORDS,
+    text: STATEMENT,
     url: PRIVACY_URL,
     openable: true,
     refusal: null,
   });
 });
 
-test('the module carries no switch that turns collection off', () => {
+test('the module carries no call that sets collection state', () => {
   // The control first: the scan must flag a planted call, or the green run
   // below would mean nothing. It is asserted against the call names rather
   // than against a pattern, because these are the two names that exist.
@@ -133,5 +156,9 @@ test('the module carries no switch that turns collection off', () => {
     switchesIn('crashlytics().setCrashlyticsCollectionEnabled(true);'),
     ['setCrashlyticsCollectionEnabled('],
   );
-  assert.deepEqual(switchesIn(SOURCE), [], 'the module this task writes has to be able to pass its own scan');
+  // Neither belongs in this file: D731 drops Analytics outright, and the one
+  // `setCrashlyticsCollectionEnabled(` call site the ruling allows is T3.1's
+  // `crash.js`, which reads the project's `settings` node. A statement is not a
+  // switch, and this module has to be able to pass its own scan.
+  assert.deepEqual(switchesIn(SOURCE), [], 'the module this task writes carries no collection call');
 });
