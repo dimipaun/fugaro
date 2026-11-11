@@ -263,6 +263,51 @@ func TestAllDeferredLevelTwoAdvancesToLevelThree(t *testing.T) {
 	}
 }
 
+// TestAllDeferredLevelThreeRoundEndsTheRun: the adversarial level's rounds are
+// judged like the two below it (D1847), and a round a judge deferred whole ends
+// that level wherever the level sits in the plan. Level 2 shipped here, so the
+// adversarial round is the run's last and the only round it blocks on; its
+// second round is not bought — there is nothing left to fix and the reviewer
+// would be asked about the same unchanged code — and the run finalizes ready on
+// the round the judge took whole, with the deferral filed as the follow-up it
+// is (F21). Without the deferrals kept beside level 3's round the run ends a
+// draft on a round the mode does not block on.
+func TestAllDeferredLevelThreeRoundEndsTheRun(t *testing.T) {
+	// Two adversarial rounds configured: a level that simply ran out of them
+	// would reach the second, which the script does not answer.
+	cfg := startupCfg(t, 1, "  levels: { l3: { model: senior-model } }\n  adversarial_rounds: 2\n")
+	h := newHarness(t, cfg, nil)
+	rec, err := h.run(t,
+		implement("feature"),
+		review("ship", 0), // level 2's one round ships, so level 3 reviews the head
+		triageStep("defer"),
+		reviewScored("changes", blockingFinding()), // the adversarial round
+		triageStep("defer"),                        // deferred whole
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review", "triage", "adversarial", "triage") {
+		t.Fatalf("stages = %v, want the adversarial round judged and no second round after it", got)
+	}
+	if tr := rec.Triage; tr == nil || len(tr.Rounds) != 2 {
+		t.Fatalf("the record's triage block = %+v, want one round per review round", rec.Triage)
+	} else if last := tr.Rounds[1]; last.Level != policy.LevelL3 || len(last.Entries) != 1 || last.Entries[0].Source != runstore.TriageSourceAgent {
+		t.Fatalf("the last triage round = %+v, want the adversarial judge's own deferral", last)
+	}
+	if rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("outcome = %s (reason %q), want ready: level 2 shipped and level 3's round was deferred whole", rec.Outcome, rec.Reason)
+	}
+	if want := "review round 1 left 1 finding, tolerated at startup"; rec.Reason != want {
+		t.Errorf("reason = %q, want %q", rec.Reason, want)
+	}
+	if d := deferredOf(rec); len(d) != 1 {
+		t.Errorf("the record's deferred block = %+v, want the round's one deferral filed", rec.Deferred)
+	} else if _, ok := d[findingKeyOf("feature.txt", "unbounded retry loop in the fetch path")]; !ok {
+		t.Errorf("the record's deferred block = %+v, want the finding the adversarial judge deferred", rec.Deferred)
+	}
+}
+
 // TestAReversedDeferralIsNotFiled: the record's deferred block is what took
 // effect when the run ended and not a log of every deferral a judge ever wrote
 // (D1850). Level 2 deferred the finding and ended its level on it; the
