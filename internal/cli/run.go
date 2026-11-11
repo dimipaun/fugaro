@@ -2793,8 +2793,8 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// let one repository's auth decide the whole project's config. The note is
 	// printed once per launch, whatever stage asked for it.
 	declared, note := config.CascadeSkippedStageAccounts(auth, stageAccountsOf(env.lc))
-	if note != "" && !env.stageNote {
-		env.stageNote = true
+	if note != "" && !env.stageAccountNote {
+		env.stageAccountNote = true
 		fmt.Fprint(launchWarn, noteLine(note))
 	}
 	if ps := config.CheckStageAccountMix(auth, declared, "stages"); len(ps) > 0 {

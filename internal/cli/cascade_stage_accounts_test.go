@@ -194,6 +194,39 @@ func TestClaudeAccountForSkipsTheProjectStageAccountsOfACascadeRun(t *testing.T)
 	}
 }
 
+// TestARunOfACascadeRepositoryPrintsTheNote: the note reaches a launch's own
+// stderr through the call the launch itself makes, and the launch itself is
+// what prints it — claudeAccountFor alone would be pinned by the test above.
+//
+// The launch is refused on purpose, at the gate a cascade installation without
+// a service meets (cascadeLaunchRefusal, TestCascadeRefusedWithoutService): the
+// account is resolved while the spec is built, before that gate, so what this
+// pins is that a person typing `fugaro run` reads the operator's project
+// accounts here and is told on one line which of them the cascade skips —
+// whatever answers next in the launch.
+func TestARunOfACascadeRepositoryPrintsTheNote(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, claudeAccountsConfig+"  acme-elsewhere:\n    allow_data_to: [\"acme/person-1\"]\n"+
+		"default_claude_account: acme-elsewhere\n"+
+		stagesBlock("review", "acme-elsewhere", "adversarial", "acme-personal"))
+	projectJobCheckoutYAML(t, cascadeLaunchYAML)
+	var warned bytes.Buffer
+	prev := launchWarn
+	launchWarn = &warned
+	t.Cleanup(func() { launchWarn = prev })
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261111-100000-ca91", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a cascade launch: err = %v, want the installation's refusal", err)
+	}
+	if !strings.Contains(err.Error(), "credentials service") {
+		t.Errorf("the launch was refused for something other than the missing service — the accounts of the project's, say: %v", err)
+	}
+	if got := warned.String(); got != cascadeStageAccountsNote+"\n" {
+		t.Errorf("stderr = %q, want exactly %q printed once by the launch", got, cascadeStageAccountsNote)
+	}
+}
+
 // TestClaudeAccountForKeepsTheApiKeyMixOfTheSameProject: the same fixture with
 // the repository asking for api-key instead. Nothing about the exemption
 // reaches it — the stage keys are the mix's, which is the rung

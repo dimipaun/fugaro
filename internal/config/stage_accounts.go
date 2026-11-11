@@ -175,14 +175,15 @@ func CheckStageSegment(stage, path string) []Problem {
 //
 // Under oauth the keys keep the meaning the accounts design gives them — one
 // account for a stage and another for the rest is what the design's rung 2 is
-// for — so nothing is refused here. Under vertex and cascade a stage account
-// cannot apply at all (neither reaches a Claude OAuth credential), and it is
-// refused rather than ignored, the way a segment outside RunStages is. What
-// cascade gets is the caller's own doing: the readers of the machine's stage
-// accounts drop them before asking this rule (CascadeSkippedStageAccounts), so
-// the map that arrives under cascade holds a repository's own declaration —
-// which no repository can write — rather than the operator's project-wide keys.
-// An unknown auth ("") is not judged: the launch resolves it from a checkout it
+// for — so nothing is refused here. Under vertex a stage account cannot apply
+// at all (vertex reaches no Claude OAuth credential), and it is refused rather
+// than ignored, the way a segment outside RunStages is. Cascade is refused here
+// as well, but the readers that hold the operator's project keys drop them
+// before asking (CascadeSkippedStageAccounts, the exemption of Check 191):
+// those keys are the operator's own, written in the machine's project file and
+// nowhere else, so a cascade repository is told on one line which of them were
+// skipped rather than refused for a project they never chose. An unknown auth
+// ("") is not judged: the launch resolves it from a checkout it
 // may not have yet, and the run itself judges it with the auth it resolves.
 // Every *other* value is refused rather than read as oauth: the auth here can
 // be a committed fugaro.yaml's own bytes (config.AgentOf validates nothing),
