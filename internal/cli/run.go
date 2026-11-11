@@ -1836,6 +1836,24 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 			return config.Inputs{}, err
 		}
 	}
+	if spec.Mode == recipe.ModeEvaluate {
+		// The mode: evaluate gate, artifactsSince's own shape: a runner
+		// older than evaluateSince refuses a task carrying mode
+		// outright ("evaluate" is not a value its task validation
+		// knows), so a judge launch must not reach such a job at all.
+		// Judged from the deployed job's build record exactly as the
+		// gates above are, and from the task's own field rather than the
+		// recipe's constructs: an evaluate recipe trips none of the
+		// parse-time gates, so this is the only gate that can refuse the
+		// launch before it is paid for.
+		if clone {
+			if err := checkCloneImageSince(env.lc, spec, evaluateSince, "a mode: evaluate recipe", "mode: evaluate", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		} else if err := checkImageSince(ctx, env, slug, spec, kind, evaluateSince, "a mode: evaluate recipe", "mode: evaluate", "", warn); err != nil {
+			return config.Inputs{}, err
+		}
+	}
 	if spec.Mode == recipe.ModeReview {
 		// The review job's gate: a review launch starts the review-only
 		// variant, and an image older than reviewJobSince cannot serve
