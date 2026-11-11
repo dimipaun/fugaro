@@ -81,7 +81,9 @@
 //     arrived under the start, a new session begun under a teardown that is
 //     still running, and -- at the other end -- a call of a session that has
 //     been replaced driving the one that replaced it. Each is guarded where it
-//     would be applied (`start`, `setMuted`, `commit`), and each guard is tested.
+//     would be applied (`start`, `setMuted`, `commit`) or, for the microphone,
+//     by the one queue every screen call a pause, a resume or a teardown makes
+//     goes through, and each guard is tested.
 
 import { REMOTE_ACTIONS, SESSION_EVENTS } from './events.js';
 
