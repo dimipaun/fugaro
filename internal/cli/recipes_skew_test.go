@@ -380,6 +380,128 @@ func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
 	}
 }
 
+// TestRecipesSkewRefusesSlotOnOldImage: a launch whose pair names a slot needs
+// a job image whose runner acts on it (B1.1, slotSince, D728). A runner that
+// only decodes the field is not enough: handed a challenger at a review slot
+// it runs the whole coding loop on the challenger's coder model — publish:
+// none keeps that harmless, and it is still a paid run of the entire loop
+// where the pair means one review over the champion's own patch (B1.2). The
+// gate is written on the key's presence, so a pair spelling the coder slot out
+// is judged too, and a task with no block or a block naming no slot — the coder
+// pair A1.1 and A3.3 write — is never gated at all. A base image that is not a
+// release cannot be dated, so it only warns, and an image at the release or
+// later is not gated.
+func TestRecipesSkewRefusesSlotOnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	const championRun = "20261028-090000-1a2b"
+	challenger := func(slot task.ABSlot) *task.AB {
+		return &task.AB{PairID: "20261029-120000-abcd", Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+			Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner,
+			Slot: slot, ChampionRun: championRun}
+	}
+	coder := challenger(task.ABSlotCoder)
+	coder.ChampionRun = ""
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "x", AB: challenger(task.ABSlotL2)}
+	if ask := slotAsk(spec); ask != "the task's ab.slot (l2)" {
+		t.Fatalf("ask = %q, want the slot the launcher wrote", ask)
+	}
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkSlotImage(context.Background(), env, appSlug, spec, "base", slotAsk(spec), &warn)
+		return warn.String(), err
+	}
+	old := shiftRelease(t, slotSince, -1)
+	warn, err := check("ghcr.io/dimipaun/fugaro-base:" + old)
+	if err == nil || !strings.Contains(err.Error(), "needs a job image whose runner knows the A/B pair's slot (ab.slot, ab.champion_run) (fugaro "+slotSince+" or later)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("%s: warn = %q, err = %v", old, warn, err)
+	}
+	if warn != "" {
+		t.Errorf("%s: warning %q, want none", old, warn)
+	}
+	if warn, err := check("ghcr.io/dimipaun/fugaro-base:" + slotSince); err != nil {
+		t.Fatalf("%s: warn = %q, err = %v", slotSince, warn, err)
+	}
+	warn, err = check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// The same launch on a checkout: clone workflow, whose job has no derived
+	// image and so no build record, and the gate raises checkCloneImageSince's
+	// threshold on base_images.base itself.
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:" + old}
+	var cloneWarn bytes.Buffer
+	err = checkCloneSlotImage(&lc, spec, slotAsk(spec), &cloneWarn)
+	if err == nil || !strings.Contains(err.Error(), "fugaro "+slotSince+" or later") || !strings.Contains(err.Error(), "release "+old) || ExitCode(err) != ExitUserError {
+		t.Fatalf("clone %s: warn = %q, err = %v", old, cloneWarn.String(), err)
+	}
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:" + slotSince
+	if err := checkCloneSlotImage(&lc, spec, slotAsk(spec), &bytes.Buffer{}); err != nil {
+		t.Fatalf("clone %s: %v", slotSince, err)
+	}
+	// The pairs that ask nothing: a task with no block at all, one whose block
+	// names no slot (the coder pair A3.3 samples, whose challenger is the
+	// second full run A2.1 already honours), and one spelling coder out — the
+	// last is gated, because the gate judges the key's presence and not which
+	// slot it names.
+	quiet := *spec
+	quiet.AB = nil
+	if ask := slotAsk(&quiet); ask != "" {
+		t.Errorf("a task with no pair block asked %q, want nothing", ask)
+	}
+	quiet.AB = &task.AB{PairID: "20261029-120000-abcd", Arm: task.ABArmChampion}
+	if ask := slotAsk(&quiet); ask != "" {
+		t.Errorf("a pair naming no slot asked %q, want nothing", ask)
+	}
+	quiet.AB = coder
+	if ask := slotAsk(&quiet); ask != "the task's ab.slot (coder)" {
+		t.Errorf("a coder pair spelled out asked %q, want the slot", ask)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+old)
+	if err := checkSlotImage(context.Background(), env, appSlug, &quiet, "base", "", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a launch that asks nothing: %v", err)
+	}
+}
+
+// TestSlotSinceHasAReleaseBullet: slotSince names 0.24.0, which is not tagged,
+// so docs/release.md's Before-you-tag list is what holds the constant to the
+// release actually cut — the job every other *Since constant's bullet does.
+// Nothing else ties the number the gate accepts to the release whose runner
+// replays a reviewer pair's champion patch, and a release that landed the
+// replay elsewhere would otherwise keep refusing images that have it.
+func TestSlotSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `slotSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no slotSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+slotSince+"\"`") {
+		t.Errorf("docs/release.md's slotSince bullet does not carry the constant's release (%q)", slotSince)
+	}
+	for _, want := range []string{"ab.slot", "not tagged yet", "checkSlotImage", "checkCloneSlotImage", "slotAsk"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's slotSince bullet does not say %q", want)
+		}
+	}
+	// The constant names the replay's release, not the field's: a bullet that
+	// promised the field alone would have a release verify against an image
+	// that decodes the slot and then runs the whole loop on the challenger.
+	if !strings.Contains(bullet, "B1.2") || !strings.Contains(bullet, "replay") {
+		t.Errorf("docs/release.md's slotSince bullet does not name the replay half the release must carry")
+	}
+}
+
 // TestRecipesSkewRefusesReviewJobOnAnOldImage is E6: a review launch is gated
 // on reviewJobSince, the release whose runner can serve one — the variant
 // deployed beside the coding job, the marker the launch sets, and (CSR13) the

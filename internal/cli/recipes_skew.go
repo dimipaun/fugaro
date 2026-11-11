@@ -1861,6 +1861,74 @@ func triageSubject(repo string, written *bool) (subject, alt string) {
 	return subject, "remove agent.triage from fugaro.yaml only if the off-switch may go with it: a job image that predates the stage runs no triage, and the first image that reads the key finds the stage on again"
 }
 
+// slotSince is the first fugaro release whose runner acts on the A/B pair's
+// slot (docs/review-levels-ab-jobmax, D728 and B1.1; task.AB.Slot and
+// task.AB.ChampionRun): a challenger at a review slot replays that level's
+// review over the champion's own recorded patch and publishes nothing, so a
+// pair at a review slot is one review stage rather than a second coding loop
+// (B1.2).
+//
+// A runner that only decodes the field is not enough, which is why this is not
+// the release the field itself ships in: such a runner, handed a challenger at
+// a review slot, would run the whole task on the challenger's coder model —
+// publish: none keeps it harmless, and it is still a paid run of the entire
+// loop where the pair means one review, which is the "refuses too late"
+// failure proxySince's comment describes. It names 0.24.0, the CLI minor after
+// the untagged 0.23.0, the release the replay is expected in: that release does
+// not exist yet, so no image is at or past it, and the gate refuses every
+// launch that would need the replay until the release carrying it is cut.
+// docs/release.md's Before-you-tag list verifies the number against the release
+// that actually carries B1.2, the way it does for the other *Since constants.
+//
+// The launch that reads it is the reviewer arm's own (B1.4, ee/ab): it writes
+// `ab.slot` and `ab.champion_run` onto the challenger once the champion's patch
+// exists, and it asks this gate first, exactly as the pair launch (A3.3) asks
+// its own gate before writing an `ab` block at all.
+const slotSince = "0.24.0"
+
+// slotKnows names, for the image gates' messages, what the job image's runner
+// has to know: the pair's slot and the champion run the replay reads.
+const slotKnows = "the A/B pair's slot (ab.slot, ab.champion_run)"
+
+// slotAsk is what a launch asks of its job image's runner about the pair's
+// slot, in the terms the refusal names, and "" when it asks nothing: a task
+// with no `ab` block, and one whose block names no slot at all, are launches
+// every release runs identically — the second is the coder pair A1.1 already
+// wrote, which B1.1 reads as coder without a key.
+//
+// The gate is written on the key's presence and not on its value: a slot a
+// launcher spells out is written by the release whose runner acts on slots, and
+// what a reader needs to know is whether the image's runner reads the key at
+// all. A coder pair — the pair A3.3 samples — writes neither key, so this gate
+// is never the one that refuses it: that launch is judged by the `ab` field's
+// own gate (A3.3).
+func slotAsk(spec *task.Spec) string {
+	if spec.AB == nil || spec.AB.Slot == "" {
+		return ""
+	}
+	return fmt.Sprintf("the task's ab.slot (%s)", spec.AB.Slot)
+}
+
+// checkSlotImage refuses a launch whose job image runs a fugaro older than
+// slotSince while the task's pair names a slot: subject is what slotAsk named,
+// and "" — a launch that asks nothing — is never gated. The judge is the build
+// record's base_ref, as every checkImageSince gate's is.
+func checkSlotImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind, subject string, warn io.Writer) error {
+	if subject == "" {
+		return nil
+	}
+	return checkImageSince(ctx, env, slug, spec, kind, slotSince, subject, slotKnows, "", warn)
+}
+
+// checkCloneSlotImage is checkSlotImage for a checkout: clone workflow: see
+// checkCloneImageSince.
+func checkCloneSlotImage(lc *localcfg.Config, spec *task.Spec, subject string, warn io.Writer) error {
+	if subject == "" {
+		return nil
+	}
+	return checkCloneImageSince(lc, spec, slotSince, subject, slotKnows, "", warn)
+}
+
 // triageSources reports, for the launch's triageSince gate, whether the
 // configuration the run will read writes the key: the repository's own
 // fugaro.yaml and nothing else (Config.RepoTriageSet). There is no layer to

@@ -4158,15 +4158,26 @@ func TestTaskSchemaABBlock(t *testing.T) {
 		return sch.Validate(inst)
 	}
 	const pairID = "20261029-120000-abcd"
+	const championRun = "20261028-090000-1a2b"
 	challenger := &task.AB{PairID: pairID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
 		Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner}
+	// The slot and the champion's run (D728, B1.1): a coder pair is the block
+	// A1.1 wrote, spelled with the slot or without it, and a review pair is a
+	// challenger naming the champion it replays (B1.2).
+	coder := *challenger
+	coder.Slot = task.ABSlotCoder
+	reviewer := *challenger
+	reviewer.Slot, reviewer.ChampionRun = task.ABSlotL2, championRun
 	for _, tc := range []struct {
 		name string
 		ab   *task.AB
 	}{
 		{"no block", nil},
 		{"a champion", &task.AB{PairID: pairID, Arm: task.ABArmChampion}},
+		{"a champion of a review pair", &task.AB{PairID: pairID, Arm: task.ABArmChampion, Slot: task.ABSlotL2}},
 		{"a challenger", challenger},
+		{"a coder pair spelled out", &coder},
+		{"a challenger at a review slot", &reviewer},
 	} {
 		if err := validate(t, tc.ab); err != nil {
 			t.Errorf("schema rejects %s: %v", tc.name, err)
@@ -4189,6 +4200,15 @@ func TestTaskSchemaABBlock(t *testing.T) {
 	blankModel.Challenger = " "
 	unknownSource := *challenger
 	unknownSource.ChallengerSource = "repo"
+	unknownSlot := *challenger
+	unknownSlot.Slot = "l4"
+	reviewerNoRun := reviewer
+	reviewerNoRun.ChampionRun = ""
+	reviewerBadRun := reviewer
+	reviewerBadRun.ChampionRun = "not-a-run-id"
+	coderWithRun := coder
+	coderWithRun.ChampionRun = championRun
+	championWithRun := task.AB{PairID: pairID, Arm: task.ABArmChampion, Slot: task.ABSlotL2, ChampionRun: championRun}
 	for _, tc := range []struct {
 		name string
 		ab   *task.AB
@@ -4203,12 +4223,17 @@ func TestTaskSchemaABBlock(t *testing.T) {
 		{"a blank pair_id", &blankPair},
 		{"a blank challenger model", &blankModel},
 		{"an unknown challenger_source", &unknownSource},
+		{"an unknown slot", &unknownSlot},
+		{"a reviewer-slot challenger with no champion run", &reviewerNoRun},
+		{"a reviewer-slot challenger naming no run ID", &reviewerBadRun},
+		{"a coder pair's challenger naming a champion run", &coderWithRun},
+		{"a champion naming a champion run", &championWithRun},
 	} {
 		if err := validate(t, tc.ab); err == nil {
 			t.Errorf("schema accepts %s", tc.name)
 		}
 	}
-	// A key inside the block that is not one of its five, and a block beside
+	// A key inside the block that is not one of its seven, and a block beside
 	// the override the challenger may never travel as: the block is
 	// additionalProperties: false like the document around it, and the
 	// overrides exclusion is task.Spec.Validate's own rule (D555).
@@ -4255,11 +4280,20 @@ func TestResultSchemaABBlock(t *testing.T) {
 		t.Fatalf("schema rejects a record with no ab block: %v", err)
 	}
 	// A challenger records the shadow arm and the patch it uploaded; a
-	// champion records its own arm and its patch.
+	// champion records its own arm and its patch. The slot and the champion's
+	// run are the pair's own facts (D728, B1.1): a coder pair spells the slot
+	// or omits it, and a reviewer pair's challenger names the run it replayed.
 	for _, ab := range []*task.AB{
 		{PairID: base.RunID, Arm: task.ABArmChampion},
+		{PairID: base.RunID, Arm: task.ABArmChampion, Slot: task.ABSlotL2},
 		{PairID: base.RunID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
 			Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner},
+		{PairID: base.RunID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+			Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner,
+			Slot: task.ABSlotCoder},
+		{PairID: base.RunID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+			Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner,
+			Slot: task.ABSlotL3, ChampionRun: "20261028-090000-1a2b"},
 	} {
 		rec := base
 		rec.AB = ab
@@ -4331,6 +4365,10 @@ func TestABSchemaEnumsMatchTheGoVocabulary(t *testing.T) {
 		"arm":               {string(task.ABArmChampion), string(task.ABArmChallenger)},
 		"publish":           {string(task.ABPublishNone)},
 		"challenger_source": {string(task.ABChallengerOwner)},
+		// The slot (D728, B1.1) is a vocabulary like the other three: a slot
+		// added to Go and not to the schemas would make every task and record
+		// carrying it schema-invalid, which is the drift this test exists for.
+		"slot": {string(task.ABSlotCoder), string(task.ABSlotL1), string(task.ABSlotL2), string(task.ABSlotL3)},
 	}
 	for _, file := range []string{"task.schema.json", "result.schema.json"} {
 		got := read(file)
