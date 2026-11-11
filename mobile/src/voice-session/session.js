@@ -38,7 +38,7 @@
 // `cleanupStaleSessions()` is called from -- a launch-time sweep, not a
 // session's.
 //
-// **Four readings this task makes, each visible in the code below.**
+// **Five readings this task makes, each visible in the code below.**
 //
 //   * **A refused microphone is not an error.** `screen.start()` is P3.4's
 //     `pipeline.start()`, and D122's degradation belongs to the screen: the OS
@@ -63,6 +63,12 @@
 //     rather than handed to a port that has none, and the audio is muted before
 //     the flag and the status that render it -- so a port that would not mute
 //     leaves the session saying what is true.
+//   * **A port call is not a transition.** `native.start()` and
+//     `native.setMuted()` answer when they answer, and the session can move
+//     while they do. What that window forbids is applying something computed
+//     before it: a verdict reduced from a state the session has left, or a
+//     screen started for a session that is already over. Both are guarded where
+//     they would be applied (`start`, `setMuted`), and both guards are tested.
 
 import { REMOTE_ACTIONS, SESSION_EVENTS } from './events.js';
 
@@ -71,7 +77,11 @@ import { REMOTE_ACTIONS, SESSION_EVENTS } from './events.js';
  * answer with (`SCREEN_CODES`, `MACHINE_CODES`).
  */
 export const SESSION_CODES = Object.freeze({
-  /** The native port would not begin, so no session was started. */
+  /**
+   * No session is running after `start()`: the port would not begin, or the
+   * session was over before it answered -- an event ended it while `start()`
+   * was in flight, and the screen is then never started.
+   */
   START_FAILED: 'start-failed',
   /** The teardown the machine asked for did not finish. */
   END_FAILED: 'end-failed',
@@ -331,6 +341,19 @@ export function createVoiceSession({
         return refuse(SESSION_CODES.START_FAILED);
       }
       begun = true;
+      // ...and what happened while the port was answering can be the end of the
+      // session: an event reduced in that window (an error, a stopped service, a
+      // hang-up) tore down nothing, because `begun` was still false. A screen
+      // started now would open a microphone for a session that is already over,
+      // with no port left to end -- so the screen is not started, and the port
+      // that did begin is ended with the reason the session carries. The
+      // caller's question -- did the session start -- is answered with no; the
+      // state says why.
+      if (OVER.includes(current.state)) {
+        startTeardown(current.endReason);
+        await settle();
+        return refuse(SESSION_CODES.START_FAILED);
+      }
       push();
       // D122's degradation is the screen's (see the header): a microphone the
       // OS refused is shown there, and the session goes on without it.
@@ -390,9 +413,19 @@ export function createVoiceSession({
     async setMuted(muted) {
       if (typeof muted !== 'boolean') throw new TypeError('muted is a boolean');
       const action = muted ? REMOTE_ACTIONS.MUTE : REMOTE_ACTIONS.UNMUTE;
-      const verdict = machine.reduce(current, { type: 'remoteAction', action }, ctx);
+      const from = current;
+      const verdict = machine.reduce(from, { type: 'remoteAction', action }, ctx);
       if (!verdict.ok) return verdict;
       await native.setMuted(muted);
+      // The port was muted, and the session may have moved while it was: that
+      // verdict was reduced from a state the session has left, and committing it
+      // would roll the move back -- a hang-up answered with `listening` again,
+      // an interruption pause stripped of the reason and the instant §8's
+      // timeout is measured from. The mute is reduced again where the session is
+      // now, and a session that has ended refuses it rather than being reopened
+      // by a flag: what the port did is the port's, and the state is the
+      // machine's.
+      if (current !== from) return apply({ type: 'remoteAction', action });
       commit(verdict.state);
       return verdict;
     },

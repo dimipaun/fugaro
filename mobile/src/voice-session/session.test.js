@@ -18,6 +18,12 @@
 // (F24) and which is therefore a two-line object here rather than the real one.
 // Nothing below reads a clock, a device or a network: `now` is a variable a test
 // moves (Global Constraint 10).
+//
+// **The port's latency is a state of its own.** `native.start()` and
+// `native.setMuted()` answer when they answer, and an event can arrive before
+// they do. The tests after the plan's six hold one of those calls open and move
+// the session under it, because that is the only way a verdict reduced before a
+// call, or a screen started after one, is seen to be wrong.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -26,7 +32,7 @@ import { SEVERITY } from '../../../shared/digest/index.js';
 import { emptyLeaseState } from '../../../shared/lease/index.js';
 import { FakeAudioIn, FakeStt, FakeTts, createVoicePipeline } from '../audio/index.js';
 import { INTERRUPT_SWITCH, createVoiceScreen } from '../voice/index.js';
-import { INTERRUPTION_SOURCES, REMOTE_ACTIONS } from './events.js';
+import { INTERRUPTION_SOURCES, REMOTE_ACTIONS, SERVICE_STOP_REASONS } from './events.js';
 import * as machine from './machine.js';
 import { SESSION_CODES, createVoiceSession } from './session.js';
 
@@ -52,6 +58,20 @@ const UID = 'AbCdEf0123456789ghIJkl';
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 /**
+ * A port call the test holds open: the window in which the session can move
+ * while a call is in flight. Both of the races below are that window -- an event
+ * arriving between the port being asked and the port answering -- and a promise
+ * the test opens by hand is the only way to put one in it without a timer.
+ */
+function gate() {
+  let open;
+  const promise = new Promise((resolve) => {
+    open = resolve;
+  });
+  return { promise, open: () => open() };
+}
+
+/**
  * §5's `VoiceSessionNative`, recorded: `start`, `updateStatus`, `setMuted` and
  * `end`, which is the whole of it that this module calls. Every call is
  * recorded with the microphone's state at the moment it was made, because that
@@ -62,9 +82,18 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
  * @param {boolean} [options.refuseStart] make `start` reject: Android 14's
  *   background restriction, and the path where nothing ever began
  * @param {boolean} [options.refuseEnd] make `end` reject
+ * @param {object} [options.holdStart] a `gate()` `start` waits on before it
+ *   answers: the session's own events arriving while the port is starting
+ * @param {object} [options.holdSetMuted] a `gate()` `setMuted` waits on
  * @param {() => boolean} [options.microphoneOpen] what each call records
  */
-function nativeDouble({ refuseStart = false, refuseEnd = false, microphoneOpen = null } = {}) {
+function nativeDouble({
+  refuseStart = false,
+  refuseEnd = false,
+  holdStart = null,
+  holdSetMuted = null,
+  microphoneOpen = null,
+} = {}) {
   const calls = [];
   const record = (name, args, verdict) => {
     calls.push(
@@ -79,13 +108,15 @@ function nativeDouble({ refuseStart = false, refuseEnd = false, microphoneOpen =
   return {
     calls,
     start(options) {
-      return record('start', [options], () => (refuseStart ? Promise.reject(new Error('no')) : Promise.resolve()));
+      return record('start', [options], () =>
+        refuseStart ? Promise.reject(new Error('no')) : (holdStart?.promise ?? Promise.resolve()),
+      );
     },
     updateStatus(status) {
       return record('updateStatus', [status], () => Promise.resolve());
     },
     setMuted(muted) {
-      return record('setMuted', [muted], () => Promise.resolve());
+      return record('setMuted', [muted], () => holdSetMuted?.promise ?? Promise.resolve());
     },
     end(reason) {
       return record('end', [reason], () => (refuseEnd ? Promise.reject(new Error('no')) : Promise.resolve()));
@@ -131,7 +162,7 @@ function lockedClient() {
  * on a lease that is already back is a no-op, so the *count* is the only way
  * "the lease goes back exactly once" can be seen.
  */
-function harness({ refuseStart = false, refuseEnd = false, client = null } = {}) {
+function harness({ refuseStart = false, refuseEnd = false, holdStart = null, holdSetMuted = null, client = null } = {}) {
   const audioIn = new FakeAudioIn();
   const stt = new FakeStt();
   const tts = new FakeTts();
@@ -161,7 +192,7 @@ function harness({ refuseStart = false, refuseEnd = false, client = null } = {})
       return built.releaseLease();
     },
   };
-  const native = nativeDouble({ refuseStart, refuseEnd, microphoneOpen: () => audioIn.running() });
+  const native = nativeDouble({ refuseStart, refuseEnd, holdStart, holdSetMuted, microphoneOpen: () => audioIn.running() });
   const session = createVoiceSession({
     machine,
     screen,
@@ -352,6 +383,103 @@ test("the machine's `ended` gives the lease back, exactly once", async () => {
   // not give a lease back twice.
   await h.session.hangUp();
   assert.equal(h.releases(), 1);
+});
+
+test('a session that ends while the port is starting never opens the microphone', async () => {
+  // §9: the platform stops the service while `native.start()` is still in
+  // flight. The session is over before the port answers -- and the teardown that
+  // event would have run found no port, because `begun` was still false.
+  const starting = gate();
+  const h = harness({ holdStart: starting });
+  const begun = h.session.start();
+  await settle();
+  assert.deepEqual(h.native.calls.map((call) => call.name), ['start'], 'nothing follows the port until it answers');
+
+  await h.session.dispatch({ type: 'serviceStopped', reason: SERVICE_STOP_REASONS.SYSTEM });
+  assert.equal(h.session.state().state, 'ended');
+  assert.equal(h.session.state().endReason, 'service_stopped');
+
+  starting.open();
+  assert.deepEqual(await begun, { ok: false, code: SESSION_CODES.START_FAILED, field: null });
+  assert.equal(h.audioIn.calls().starts, 0, 'no microphone is opened for a session that is already over');
+  assert.equal(h.audioIn.running(), false);
+  assert.deepEqual(callsNamed(h.native, 'end').map((call) => call.args[0]), ['service_stopped']);
+});
+
+test('a hang-up while the port is starting ends the port, and starts no screen', async () => {
+  const starting = gate();
+  const h = harness({ holdStart: starting });
+  const begun = h.session.start();
+  await settle();
+
+  // §4: the Live Activity's hang-up arrives while the port is starting. The
+  // machine is in `ending`, and `ending` waits for an `end` -- which is this
+  // module's, so it happens once the port has answered.
+  await h.session.hangUp();
+  assert.equal(h.session.state().state, 'ending');
+
+  starting.open();
+  assert.deepEqual(await begun, { ok: false, code: SESSION_CODES.START_FAILED, field: null });
+  assert.equal(h.session.state().state, 'ended');
+  assert.equal(h.session.state().endReason, 'hangup');
+  assert.equal(h.audioIn.calls().starts, 0);
+  assert.deepEqual(callsNamed(h.native, 'end').map((call) => call.args[0]), ['hangup']);
+  assert.deepEqual(statuses(h.native), [], 'a session that never reached `started` is never pushed');
+});
+
+test('a mute whose port call is in flight does not roll the session back', async () => {
+  const muting = gate();
+  const h = harness({ holdSetMuted: muting });
+  await h.session.start();
+
+  const muted = h.session.setMuted(true);
+  await settle();
+  assert.deepEqual(callsNamed(h.native, 'setMuted').map((call) => call.args[0]), [true]);
+
+  // The hang-up arrives while the port is being muted. The mute's verdict was
+  // reduced from `listening`, and committing it now would answer a hang-up with
+  // `listening` again -- with `endReason` back to null.
+  await h.session.hangUp();
+  assert.equal(h.session.state().state, 'ended');
+
+  muting.open();
+  assert.equal((await muted).ok, false, 'the mute does not land on a session that has ended');
+  assert.equal(h.session.state().state, 'ended', 'the hang-up is not rolled back');
+  assert.equal(h.session.state().endReason, 'hangup');
+  assert.deepEqual(
+    statuses(h.native).map((status) => status.state),
+    ['starting', 'listening'],
+    'a state the session is not in is never pushed',
+  );
+});
+
+test('a mute in flight keeps the pause §8’s timeout is measured from', async () => {
+  const muting = gate();
+  const h = harness({ holdSetMuted: muting });
+  await h.session.start();
+
+  const muted = h.session.setMuted(true);
+  await settle();
+
+  // The interruption arrives while the port is being muted: the pause and the
+  // instant §8's timer runs from are created after the verdict the mute is
+  // holding.
+  await h.session.dispatch({ type: 'interruptionBegan', source: INTERRUPTION_SOURCES.CALL });
+  assert.equal(h.session.state().pauseReason, 'interruption');
+
+  muting.open();
+  await muted;
+  assert.equal(h.session.state().state, 'paused_interruption');
+  assert.equal(h.session.state().pauseReason, 'interruption');
+  assert.equal(h.session.state().pausedAt, T0, 'the pause keeps the instant §8 measures from');
+  assert.equal(h.session.state().muted, true, 'the mute lands on the state the session is in');
+
+  // ...so the window still ends the session when it passes.
+  h.advance(RESUME_MS + 1);
+  await h.session.tick();
+  assert.equal(h.session.state().state, 'ended');
+  assert.equal(h.session.state().endReason, 'interruption_timeout');
+  assert.deepEqual(callsNamed(h.native, 'end').map((call) => call.args[0]), ['interruption_timeout']);
 });
 
 test('a hang-up closes the microphone, then ends the port, and only then is the session over', async () => {
