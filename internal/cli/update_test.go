@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -487,5 +489,49 @@ func TestUpdateNeverCreatesAnything(t *testing.T) {
 		if rq.Method == "POST" && strings.Contains(rq.Path, "projects") {
 			t.Errorf("update created a project: %s %s", rq.Method, rq.Path)
 		}
+	}
+}
+
+// TestUpdateConvergesAnInstallationAtThePreviousRelease: the HARD RULE — one
+// `fugaro update` is the whole upgrade — at the change M12 made to the
+// installation's module. An installation applied by the release behind this one
+// is converged by one run, and what that run renders serves exactly what the old
+// one served: no front door.
+//
+// The door's opt-in is the module's own `var.mcp_server`
+// (deploy/terraform/gcp/modules/installation/variables.tf), and **no writer in
+// this CLI sets it**: D934's answer is that an installation has a front door
+// only once its operator asked for one, so a run that wrote the variable would
+// be a release that mounted a public endpoint on every installation at once.
+// The variable is read by the module as the presence of the door's whole
+// configuration — there is deliberately no second switch
+// (ee/coordinator/service.go) — and the module renders nothing under it, so the
+// convergence this test measures is that absence.
+//
+// Red before M12 shipped the module change with the wiring: a CLI that turned
+// the door on for every installation, which is the mistake a release makes once
+// and cannot take back — the endpoint is public the moment the binding lands.
+func TestUpdateConvergesAnInstallationAtThePreviousRelease(t *testing.T) {
+	r, _ := updateBudgetRig(t)
+	vars := filepath.Join(r.root(), infra.VarsFile)
+	out, _, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("one fugaro update did not converge an installation at the previous release: %v\n%s", err, out)
+	}
+	b, err := os.ReadFile(vars)
+	if err != nil {
+		t.Fatalf("the converged run wrote no %s, so there is no plan to read what it serves: %v", infra.VarsFile, err)
+	}
+	if len(strings.TrimSpace(string(b))) == 0 {
+		t.Fatalf("the converged run wrote an empty %s:\n%s", infra.VarsFile, out)
+	}
+	// And the file is the plan's own variables and not some other file the run
+	// wrote: a reader of the assertion below has to know it read the installation
+	// root's plan rather than an empty document.
+	if !strings.Contains(string(b), `"project"`) {
+		t.Fatalf("%s does not carry the installation's own variables, so it is not the plan this run rendered:\n%s", infra.VarsFile, b)
+	}
+	if strings.Contains(string(b), "mcp_server") {
+		t.Errorf("fugaro update turned the front door on for an installation that never asked for one (D934: off is the absence of the opt-in), and the front door is a public endpoint the moment it is served:\n%s", b)
 	}
 }

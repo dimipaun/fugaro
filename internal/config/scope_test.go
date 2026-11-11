@@ -91,6 +91,54 @@ func TestReviewAllowForksScopeRemoved(t *testing.T) {
 	}
 }
 
+// TestScopesGoldenTableNamesTheVisionKey (V1, D2003) pins the row the golden
+// table below gained, on its own so the reason survives the table: the vision
+// slot is a model a repository sets for itself and the project layer sets for
+// every repository of it, exactly as the coder's row is, and it is written
+// beside the three slots it belongs to.
+func TestScopesGoldenTableNamesTheVisionKey(t *testing.T) {
+	i := slices.IndexFunc(Scopes, func(r ScopeRow) bool { return r.Key == "agent.models.vision" })
+	if i < 0 {
+		t.Fatal("agent.models.vision has no Scopes row: a repository that writes it is refused as an unknown key, and the project layer treats defaults.agent.models.vision as one")
+	}
+	if Scopes[i].In != InProject|InRepo {
+		t.Errorf("agent.models.vision scope = %v, want InProject|InRepo", Scopes[i].In)
+	}
+	if i == 0 || Scopes[i-1].Key != "agent.models.background" {
+		t.Errorf("agent.models.vision is written after %s, want it beside the three slots", Scopes[max(i-1, 0)].Key)
+	}
+}
+
+// TestScopeRefusesTheVisionKeyInAProfile (V1, D2003): the vision slot is a
+// project and repository key and not a profile's. A profile is the launcher's
+// template for one run of one workflow (docs/design/layered-config.md §5), and
+// which model stands in for a stage that cannot read an image is the
+// repository's decision about its own runs — so the project layer refuses the
+// key inside profiles:, at the profile that wrote it.
+func TestScopeRefusesTheVisionKeyInAProfile(t *testing.T) {
+	const doc = `
+version: 1
+project: example
+gcp_project: example-1a2b3c
+profiles:
+  p:
+    agent:
+      models:
+        vision: deepseek/deepseek-v4.1-flash
+`
+	row, ok := ScopeOf("agent.models.vision")
+	if !ok || row.In&InProfile != 0 {
+		t.Errorf("ScopeOf(agent.models.vision) = %v %v, want a row without the profile scope", row.In, ok)
+	}
+	_, ps := ParseProjectLayer([]byte(doc), LayerAnchor{Project: "example", GCPProject: "example-1a2b3c"})
+	if len(ps) != 1 || ps[0].Path != "profiles.p.agent" {
+		t.Fatalf("a profile that sets a vision model: problems = %v, want one at profiles.p.agent", ps)
+	}
+	if !strings.Contains(ps[0].Message, "is not a fugaro.yaml key") {
+		t.Errorf("the refusal reads %q, want the profile-key one", ps[0].Message)
+	}
+}
+
 // TestScopesMatchDesignDoc pins, row by row, the layer set of every key in
 // config.Scopes against the table of docs/design/layered-config.md §5 (the
 // plan's Task 1). A key whose scope changes, or a key added without a row
@@ -117,6 +165,10 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"agent.models.coder":      InProject | InRepo,
 		"agent.models.reviewer":   InProject | InRepo,
 		"agent.models.background": InProject | InRepo,
+		// The vision slot (V1, D2003): a model a stage runs when its own
+		// cannot read an image, set by a repository as its own or by the
+		// project for every repository of it.
+		"agent.models.vision": InProject | InRepo,
 		// The four crafts (docs/model-crafts/spec.md §3). A craft's model is a
 		// project default, as agent.models.* is; its access is not, and is a
 		// repository's own choice among the credentials the owner allow-lists.

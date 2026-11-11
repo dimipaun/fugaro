@@ -1,6 +1,6 @@
 # Implementation plan: management commands for every configuration
 
-**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.** Fourteen tasks, **G0–G13**, each with
+**Status as of 2026-11-10: in progress, 8/14 merged; see [docs/status.md](../status.md) for the current table.** Fourteen tasks, **G0–G13**, each with
 its files, its interface, its **red step** and its named tests. Every task is written against the tree
 of 2026-11-03 and every citation in it was resolved while writing. **Nothing here starts until the owner
 answers the decisions in [reconciliation.md](reconciliation.md) §4** — the tasks name the decision each
