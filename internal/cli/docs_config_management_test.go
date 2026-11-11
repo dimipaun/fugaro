@@ -153,7 +153,7 @@ const (
 // family's, and a row claiming a family is refused before the allowlist is
 // asked — the same shape as the two rows above it.
 const (
-	cfmRegistryRows   = 400
+	cfmRegistryRows   = 407
 	cfmAllowlistNamed = 96
 )
 
