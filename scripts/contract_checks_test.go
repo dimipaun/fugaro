@@ -26,10 +26,14 @@ package scripts_test
 //
 // The rest pin the refusals: Check 480 spends a run and pushes to a branch, so
 // the guards that stop it before either — a traced shell, a checkout that is
-// not the repository the plan describes, the owner's own installation, and
-// contract text that reached the instructions — are as much a part of what it
-// does as the rows it measures. The live-check family keeps the same cases in
-// its own suites (scripts/live-checks/check510_test.sh's
+// not the repository the plan describes, the owner's own installation, a base
+// with nothing amended, and contract text that reached the instructions — are as
+// much a part of what it does as the rows it measures. Two more pin the other
+// side of that: Check 480 reads its repository out of the checkout's origin,
+// which can carry a clone's credential, and nothing it prints — the setup row,
+// the plan, or git's own message about a fetch that failed — may carry it. The
+// live-check family keeps the same cases in its own suites
+// (scripts/live-checks/check510_test.sh's
 // test_belong_is_refused_by_name and test_xtrace_refused), and a later edit
 // that drops one of them has to fail here.
 
@@ -72,6 +76,31 @@ const (
 	contractAfter   = "# The record\n\nThe record carries a name and a kind.\n"
 	contractLeaking = "# The record\n\nthe code that uses the contract matches the contract as it is there\n"
 )
+
+// credentialOrigin is the origin the two credential tests point their checkout
+// at: a token-based clone's URL, with the credential in its userinfo and split by
+// a `/`, which is where a strip that cannot cross one leaves it in place. What
+// it holds is not a credential and opens nothing: it is the word the tests assert
+// never reaches the check's output, so one that appears was printed by this check
+// and by nothing else.
+const credentialOrigin = "https://x-access-token:LEAK-CANARY/with-a-slash@github.com/acme/sandbox.git"
+
+// credentialWords are the pieces of credentialOrigin that only it carries.
+var credentialWords = []string{"x-access-token", "LEAK-CANARY", "with-a-slash"}
+
+// assertNoCredential: none of the words the credentialled origin carries is in
+// what the check printed, and what it printed instead names that repository.
+func assertNoCredential(t *testing.T, out string) {
+	t.Helper()
+	for _, word := range credentialWords {
+		if strings.Contains(out, word) {
+			t.Errorf("check-480 printed %q, which is part of the credential its origin carries:\n%s", word, out)
+		}
+	}
+	if !strings.Contains(out, "https://github.com/acme/sandbox.git") {
+		t.Errorf("check-480 printed no origin naming the repository its origin names:\n%s", out)
+	}
+}
 
 // TestCheck480MeasuresItsOwnFollowUp drives the whole check: the plan read, the
 // dependent read out of the listing, the amendment, the one follow-up, and the
@@ -206,6 +235,57 @@ func TestCheck480RefusesABaseWithNothingAmended(t *testing.T) {
 	if calls := f.calls(t); strings.Contains(calls, "run --pr 7") {
 		t.Errorf("check-480 spent its run on a base with nothing amended:\n%s", calls)
 	}
+}
+
+// TestCheck480KeepsTheOriginsCredentialOutOfItsRows: a checkout made by a
+// token-based clone or by CI leaves its credential in the origin's userinfo, and
+// a dry run prints the origin twice — the setup row and the plan's own line —
+// with nothing fetched and nothing spent. The credential here holds a `/`, which
+// is where a strip that cannot cross one leaves it in place verbatim.
+func TestCheck480KeepsTheOriginsCredentialOutOfItsRows(t *testing.T) {
+	requireTools(t, "bash", "git", "jq")
+
+	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractAfter, contractBefore, true)
+	f.credentialledOrigin(t)
+	out, code := runContractCheck(t, f.sim, f.bin, check480Script, "--pr", "7", "--dry-run")
+
+	if code != 0 {
+		t.Errorf("check-480 exited %d, want 0:\n%s", code, out)
+	}
+	if !strings.Contains(out, "this is the checkout of acme/sandbox (https://github.com/acme/sandbox.git)") {
+		t.Errorf("check-480's setup row does not name the repository and the origin without its credential:\n%s", out)
+	}
+	if !strings.Contains(out, "origin https://github.com/acme/sandbox.git\n") {
+		t.Errorf("check-480's plan does not name the origin without its credential:\n%s", out)
+	}
+	assertNoCredential(t, out)
+}
+
+// TestCheck480KeepsTheOriginsCredentialOutOfAFetchError: git quotes the URL it
+// was given when a fetch fails, credential and all, and this check records that
+// message in the block the owner reads back. The origin is the one above and the
+// fetch cannot succeed, so the message is there to be read: the same strip the
+// origin gets has to reach git's own words about it.
+func TestCheck480KeepsTheOriginsCredentialOutOfAFetchError(t *testing.T) {
+	requireTools(t, "bash", "git", "jq")
+
+	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractAfter, contractBefore, true)
+	f.credentialledOrigin(t)
+	out, code := runContractCheck(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
+
+	if code != 2 {
+		t.Errorf("check-480 exited %d, want 2:\n%s", code, out)
+	}
+	if !strings.Contains(out, "could not be fetched from origin") {
+		t.Errorf("check-480 did not stop on the fetch:\n%s", out)
+	}
+	// The URL git printed has to be in the block for the strip to have had
+	// anything to do: without it the check could pass this test by never showing
+	// git's message at all.
+	if !strings.Contains(out, "'https://github.com/acme/sandbox.git/'") {
+		t.Errorf("check-480 did not record git's own message about the URL it was given:\n%s", out)
+	}
+	assertNoCredential(t, out)
 }
 
 // TestCheck481MeasuresBothBatchesInOnePoll drives the two batches through one
@@ -362,6 +442,17 @@ func buildCheck480Fixture(t *testing.T, origin, baseContract, branchContract str
 	writeFile(t, f.graph, contractCheck480Graph)
 	writeExec(t, filepath.Join(f.bin, "fugaro"), fakeFugaro480(f))
 	return f
+}
+
+// credentialledOrigin points this checkout's origin at a URL carrying a
+// credential in its userinfo, the way a token-based clone and a CI checkout leave
+// it. Nothing is fetched through it: a dry run fetches nothing, and a real run
+// stops at its first fetch, so neither test depends on this URL reaching a
+// repository — what they read is what the check prints about the origin it was
+// given.
+func (f *check480Fixture) credentialledOrigin(t *testing.T) {
+	t.Helper()
+	gitRun(t, f.sim, "remote", "set-url", "origin", credentialOrigin)
 }
 
 // calls is every `fugaro` call the check made, one per line; empty when it made

@@ -311,6 +311,19 @@ guard_xtrace() {
   fact xtrace PASS "this shell is not tracing, so no trace of this run is printed a second time into a log"
 }
 
+# strip_credentials: every `scheme://user:token@` in the text becomes `scheme://`.
+# A token-based clone or a CI checkout carries its credential in the origin's
+# userinfo, and the origin is printed three times — the setup row, the plan, and
+# the message git writes when a fetch fails, which quotes the URL it was given —
+# so one rule strips it wherever it appears. The userinfo ends at the last @
+# before the host, the rule git's own URL parser follows: a pattern that cannot
+# cross a `/` leaves a credential that holds one in place verbatim
+# (https://x-access-token:sec/ret@github.com/o/r.git), and the class stops at
+# whitespace so the match cannot run past the URL into an @ later in the line.
+strip_credentials() {
+  sed -E 's#([a-zA-Z][a-zA-Z0-9+.-]*://)[^@[:space:]]*@#\1#g'
+}
+
 # The repository comes from the checkout's origin rather than from an argument:
 # a check that couples two repositories can be pointed at a second one by
 # mistake, and this one sends a run.
@@ -319,10 +332,9 @@ guard_checkout() {
     || stop "Check 480 stopped: this is not a git checkout, and the repository it reads is that checkout's own origin. Run it from the sandbox repository the plan describes"
   ORIGIN=$(git -C "$ROOT" remote get-url origin 2>/dev/null) \
     || stop "Check 480 stopped: this checkout has no origin remote, so which repository the plan describes is unknown"
-  # A token-based clone carries its credential in the origin's userinfo, and this
-  # origin is printed in the setup row: it goes before anything is matched or
-  # recorded, so what is printed is the repository and nothing that opens it.
-  ORIGIN=$(printf '%s' "$ORIGIN" | sed -E 's#//[^@/]*@#//#')
+  # The credential goes before anything is matched or recorded, so what is
+  # printed is the repository and nothing that opens it.
+  ORIGIN=$(printf '%s' "$ORIGIN" | strip_credentials)
   case "$ORIGIN" in
   *github.com[:/]*/* | *bitbucket.org[:/]*/*) : ;;
   *) stop "Check 480 stopped: this checkout's origin ('${ORIGIN}') names no github.com or bitbucket.org repository, so which repository to read is unknown" ;;
@@ -354,8 +366,15 @@ guard_repository() {
 # fetch_ref BRANCH: fetch one branch and print the commit it points at now.
 # FETCH_HEAD is read at once and by name rather than through a remote-tracking
 # ref, so nothing this check reads depends on how the checkout is configured.
+# git quotes the URL it was given when a fetch fails, credential and all, and the
+# messages that read this file record it in the block the owner pastes: the file
+# is stripped whatever the outcome, before any of them read it.
 fetch_ref() {
-  git -C "$ROOT" fetch --quiet origin "refs/heads/$1" 2>"$SCRATCH/fetch.err" || return 1
+  local failed=""
+  git -C "$ROOT" fetch --quiet origin "refs/heads/$1" 2>"$SCRATCH/fetch.err" || failed=yes
+  strip_credentials <"$SCRATCH/fetch.err" >"$SCRATCH/fetch.err.stripped"
+  mv -f "$SCRATCH/fetch.err.stripped" "$SCRATCH/fetch.err"
+  [ -z "$failed" ] || return 1
   git -C "$ROOT" rev-parse FETCH_HEAD
 }
 
