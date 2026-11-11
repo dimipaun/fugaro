@@ -272,55 +272,62 @@ func TestDocsCheck124EverySectionCarriesTheGuard(t *testing.T) {
 	}
 }
 
-// TestDocsCheck124SaysWhatCannotRunYet: the parts that need a backend this
-// build cannot select say so in their own first lines, and part (a) FACT-lines
-// the two refusals an owner meets today rather than describing them as passes.
+// TestDocsCheck124SaysWhatTheEnableChanged: the enable task landed, so the
+// parts that could not run now can, and the prose has to say what changed and
+// what did not — part (a) FACT-lines the doctor and validate readings an owner
+// meets on the other side of the enable rather than the refusals the enable
+// removed.
 //
 // The standing, read off the tree rather than off the prose:
 //
-//   - `backend: cloud-batch` is refused by internal/localcfg
-//     ("backend %q is not enabled yet (this build runs cloud-run)"), which is
-//     the enable task's business — docs/plans/2026-10-19-compute-backend.md's
-//     Task 10, whose coverage table says "to build". So 124b, 124c and 124d
-//     are written and cannot be run yet, the same way Check 57b is.
-//   - `fugaro doctor`'s Batch half is warning-shaped today, deliberately
-//     (internal/cli/doctor_batch.go: "All of them are WARNINGS, never
-//     failures: nothing in this build can select backend: cloud-batch"), and
-//     the reading that follows from it is the opposite of the obvious one:
+//   - `backend: cloud-batch` is ACCEPTED by internal/localcfg (the enable
+//     task's step 1, docs/plans/2026-10-19-compute-backend.md's Task 10), and
+//     what refuses an installation that selects it is `fugaro doctor`
+//     (internal/cli/doctor_batch.go's THE GATE). So 124b, 124c and 124d are
+//     runnable once 124a has run — a run needs the provisioning and a doctor
+//     that passes on it, not a second command.
+//   - `fugaro doctor`'s Batch half is the gate now: a check carries no
+//     severity for an installation that SELECTS the backend and "warning" for
+//     one that merely carries a batch block. The reading that follows is the
+//     same as before the enable for a provisioned installation:
 //     printDoctorChecks skips an OK check with no severity
-//     (internal/cli/doctor.go), so the seven read checks print nothing at all
-//     on a correctly provisioned installation, and the one line that always
-//     prints is the `info batch-artifact-boundary` one — Severity "info", which
-//     "does not fail doctor, with or without --strict … must not suppress the
-//     summary line either". So the pass is that info line plus
-//     `fugaro doctor: everything checked is ok`, and a `warning batch-` line is
-//     the finding. The FACT has to say which line appears and which do not, and
-//     a section that had it the other way round would have an owner record a
-//     defect on a healthy installation.
+//     (internal/cli/doctor.go), so the sixteen read checks print nothing at
+//     all, and the one line that always prints is the
+//     `info batch-artifact-boundary` one — Severity "info", which "does not
+//     fail doctor, with or without --strict … must not suppress the summary
+//     line either". So the pass is that info line plus
+//     `fugaro doctor: everything checked is ok`, and any other `batch-` line is
+//     the finding. An installation that selects the backend WITHOUT the
+//     provisioning is refused by name, which is what the gate is for.
+//   - `fugaro validate` prints `<path> is valid` for a checkout selecting the
+//     backend, and the old `not enabled yet` refusal is the finding: it means
+//     the build predates the enable.
 //
-// Mutation (verified, run and restored): "**124b, 124c and 124d are written and
-// cannot be run yet**" rewritten to say the backend can be selected today →
-// FAIL (a reader would run a part that cannot pass); the doctor FACT's expected
-// exit of 0 rewritten to 1 → FAIL (the exit code is the half of the reading
-// that says a warning is what a non-zero exit means on this setup).
-func TestDocsCheck124SaysWhatCannotRunYet(t *testing.T) {
+// Mutation (verified, run and restored): "**124b, 124c and 124d are runnable
+// once it has run**" rewritten to say they cannot be run at all → FAIL (a
+// reader would leave an acceptance run unrun); the doctor FACT's expected exit
+// of 0 rewritten to 1 → FAIL (the exit code is the half of the reading that
+// says what a non-zero exit means on this setup).
+func TestDocsCheck124SaysWhatTheEnableChanged(t *testing.T) {
 	flat := flattenDoc(check124Section(t, "a"))
 	for _, want := range []string{
-		"not enabled yet (this build runs cloud-run)",
+		"the enable task has landed",
+		"is what refuses an installation that selects it",
 		"docs/plans/2026-10-19-compute-backend.md",
-		"the enable task",
-		"124b, 124c and 124d are written and cannot be run yet",
-		"WARNINGS, never failures: nothing in this build can select",
+		"124b, 124c and 124d are runnable once it has run",
+		"the gate",
 		// The healthy reading, in the direction the tree gives it: the one
 		// always-printed info line, the summary line that stays, and the
-		// non-zero-exit reading a warning is.
+		// non-zero-exit reading any other batch- line is.
 		"info batch-artifact-boundary",
 		"fugaro doctor: everything checked is ok",
 		"exit: 0",
-		"warning batch-",
+		"batch-",
+		// The offline half, which the enable is what moved.
+		"<path> is valid",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("Check 124a does not say %q: the parts that cannot run yet have to say why in their own text, and the doctor reading has to name the line doctor always prints, the summary line that stays and the line that is the finding", want)
+			t.Errorf("Check 124a does not say %q: the parts the enable made runnable have to say so in their own text, and the doctor reading has to name the line doctor always prints, the summary line that stays and what a failing installation reads", want)
 		}
 	}
 
