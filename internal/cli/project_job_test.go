@@ -1697,7 +1697,7 @@ const projectJobProviderKeyProfile = "profiles: { standard: { provider: github, 
 // sentinel: the two values are two credentials, and a node that keyed one of
 // them by the other's name would admit a repository to a key its job is not
 // the one for.
-const projectJobProviderKeyPolicy = `{"version":4,"allow_repos":["github/acme/*"],` +
+const projectJobProviderKeyPolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"allow_repos":["github/acme/app"],"claude_accounts":["` + config.ProviderKeyAccount + `"]}},` +
 	`"accounts":{"` + config.ProviderKeyAccount + `":{"allow_repos":["github/acme/app"]}}}`
