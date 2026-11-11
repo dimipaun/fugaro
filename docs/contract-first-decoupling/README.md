@@ -4,7 +4,7 @@
 **Numbers reserved: D1810-D1839, checks 480-489** (D1810-D1823 and checks 480 and 481 used).
 **Typo fixes to the spec:** none.
 
-**Status as of 2026-11-10: in progress, 4/7 merged; see [docs/status.md](../status.md) for the current table.**
+**Status as of 2026-11-10: in progress, 6/7 merged (CD4 in #2180; CD7 is in the tree as the `planningSince` gate and its two convergence tests, #2253 and `docs/release.md`); CD5 remains; see [docs/status.md](../status.md) for the current table.**
 
 | File | What it is |
 | --- | --- |

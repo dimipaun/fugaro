@@ -17,17 +17,29 @@ type pin struct {
 	level       string
 }
 
-// pinPaths are the config paths of an Agent's three pins, in the order
+// pinPaths are the config paths of an Agent's four pins, in the order
 // Agent.PinnedModels returns them. One place, so `validate`, `diagnose` and
-// the run's own checks name the same three keys.
-var pinPaths = [...]string{"agent.models.coder", "agent.models.reviewer", "agent.models.background"}
+// the run's own checks name the same keys.
+var pinPaths = [...]string{"agent.models.coder", "agent.models.reviewer", "agent.models.background", visionPinPath}
 
-// pins pairs each of an Agent's pins with its path, for the three loops that
-// judge or warn about all three.
+// visionPinPath is the config path of the vision slot, the one pin a run may
+// leave empty.
+const visionPinPath = "agent.models.vision"
+
+// pins pairs each of an Agent's pins with its path, for the loops that judge or
+// warn about all of them. The vision slot is left out while it names no model:
+// it is the one pin a run may do without (V1, D2007) — no stage runs it until a
+// stage's own model cannot read an image, while every other slot has a fallback
+// (agent.model) or, for the background model, a rule of its own that requires
+// it — and judging the empty entry would refuse every run that never writes the
+// key.
 func pins(a Agent) []pin {
-	out := make([]pin, len(pinPaths))
+	var out []pin
 	for i, m := range a.PinnedModels() {
-		out[i] = pin{path: pinPaths[i], model: m}
+		if m == "" && pinPaths[i] == visionPinPath {
+			continue
+		}
+		out = append(out, pin{path: pinPaths[i], model: m})
 	}
 	return out
 }
@@ -72,10 +84,11 @@ func (r pin) prefix() string {
 	return "level " + r.level + ": "
 }
 
-// CheckPins is the rule for a run under a budget: the coder, the reviewer and
-// the background model each name an explicit model ID that prices knows, never
-// an alias, so the price charged is the price in the table. prices is the
-// embedded table with the owner's overrides.
+// CheckPins is the rule for a run under a budget: the coder, the reviewer, the
+// background model and — when it is set at all — the vision model each name an
+// explicit model ID that prices knows, never an alias, so the price charged is
+// the price in the table. prices is the embedded table with the owner's
+// overrides.
 func CheckPins(a Agent, prices *pricing.Table) []Problem {
 	var ps []Problem
 	for _, r := range pins(a) {
@@ -183,8 +196,9 @@ func catalogWarning(model string, m pricing.Model) string {
 }
 
 // CheckAllowed is the rule for a run under an allow-list of models: the
-// coder, the reviewer and the background model must each be on it. Without a
-// list (policy.Effective.HasAllowList) every model passes. A list that is set
+// coder, the reviewer, the background model and — when it is set — the vision
+// model must each be on it. Without a list (policy.Effective.HasAllowList)
+// every model passes. A list that is set
 // but empty denies everything, and a role that names no model is refused too,
 // because the model the agent would pick is not known to be on the list. Each
 // problem names the role, the model and the layer that set the list; when

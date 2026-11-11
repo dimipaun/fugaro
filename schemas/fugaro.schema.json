@@ -61,11 +61,12 @@
         "models": {
           "type": "object",
           "additionalProperties": false,
-          "description": "A model per stage role; a role left out uses agent.model. With a budget on, each must be an explicit model ID that has a price.",
+          "description": "A model per stage role; a role left out uses agent.model, and vision is used only when it is written — it is the model a stage whose own model cannot read an image runs instead, so it never falls back. With a budget on, each must be an explicit model ID that has a price.",
           "properties": {
             "coder": { "$ref": "#/$defs/modelName", "description": "implement and fix" },
             "reviewer": { "$ref": "#/$defs/modelName", "description": "review" },
-            "background": { "$ref": "#/$defs/modelName", "description": "Claude Code's small background requests" }
+            "background": { "$ref": "#/$defs/modelName", "description": "Claude Code's small background requests" },
+            "vision": { "$ref": "#/$defs/modelName", "description": "the model a stage runs when its own model cannot read an image" }
           }
         },
         "crafts": {

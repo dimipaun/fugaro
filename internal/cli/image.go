@@ -339,7 +339,25 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: %s\n", cloudBuildBanner(repo, name, lc.Build.MachineType, rs.BuildServiceAccountEmail, rs.RegistryPath))
+	// This command's run: the reporter, its log under this command's own name
+	// (D1352), and the one step this build is. All of it opens after the
+	// lease above, so a build nobody can confirm — an agent's session, a
+	// pipe, --json — and one the person declined keeps no log, not even an
+	// empty one (D1354), and no frame is ever drawn over the typed name (G1).
+	sr := stepRunFor(cmd, "image-build", cmd.OutOrStdout())
+	defer sr.close()
+	step := sr.rep.Step(name)
+	// The build's own progress is the run's output (D1352, D1354): the log
+	// always and the terminal under --verbose, so the default view is the step
+	// line alone; a run whose log could not be opened keeps printing it where
+	// it always did (G5, G8).
+	w := streamOut(sr.rep, sr.log, cmd.ErrOrStderr())
+	// The banner is not that progress but the line T4 left where the typed
+	// confirmation stood: what this command is about to bill for, said before it
+	// submits. So the screen keeps it whatever session is running, and the log
+	// keeps it beside everything else the run said (D1352), which is sayThrough:
+	// a person's own line, with the spinner taken down around the write (G1).
+	fmt.Fprintf(sayThrough(sr.rep, cmd.ErrOrStderr()), "fugaro: %s\n", cloudBuildBanner(repo, name, lc.Build.MachineType, rs.BuildServiceAccountEmail, rs.RegistryPath))
 	// Writes the repository's copy of the project layer only now, after the
 	// lease above: like the converge's own buildImages/submitAndWait, a build
 	// this command does not submit — refused by a cap, unpriceable — must
@@ -348,26 +366,35 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if cfg.Layer != nil {
 		rb, err := env.recordBucket(ctx)
 		if err != nil {
-			return withLease(remote(err), lease.release(ctx))
+			return failStep(sr.rep, step, withLease(remote(err), lease.release(ctx)))
 		}
 		if spec.ProjectLayerSHA256, err = prepareLayerCopy(ctx, rb, rs.Slug, cfg.Layer, base); err != nil {
-			return withLease(err, lease.release(ctx))
+			return failStep(sr.rep, step, withLease(err, lease.release(ctx)))
 		}
 	}
 	res, err := b.Submit(ctx, spec)
 	switch {
 	case errors.Is(err, gcp.ErrBadBuildSpec):
-		return withLease(userErr("%v", err), lease.release(ctx))
+		return failStep(sr.rep, step, withLease(userErr("%v", err), lease.release(ctx)))
 	case err != nil:
-		return withLease(remote(err), lease.release(ctx))
+		return failStep(sr.rep, step, withLease(remote(err), lease.release(ctx)))
 	}
+	// The sentence this command has always printed on stdout is the step's own
+	// line now: one line per step, on the screen and in the log.
 	if o.noWait {
-		fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s of %s; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
-		// Nothing waited for this build, so nothing knows how long it runs:
-		// the whole reservation is recorded rather than given back.
-		return lease.settle(ctx, false)
+		submitted := fmt.Sprintf("submitted Cloud Build build %s of %s; log: %s", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+		// The settle is this run's last act on the unwatched arm, and it is the
+		// sentence above that fails with it: nothing waited for this build, so
+		// it is running and billing from here on, and a run that could not
+		// record what it reserved is the last place that knows which build it is
+		// (G8 — the context of the failure, not a "Done" the command did not do).
+		if err := lease.settle(ctx, false); err != nil {
+			return failStep(sr.rep, step, err, submitted)
+		}
+		step.Done(submitted)
+		return nil
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+	fmt.Fprintf(w, "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 	done, waitErr := b.Wait(ctx, res.ID, 0)
 	if done.Image == "" {
 		done.Image = res.Image
@@ -379,36 +406,26 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if waitErr != nil {
 		waitErr = remote(waitErr)
 	}
-	// The lease closes whatever the build's outcome: a build that failed is
-	// a build Cloud Build billed, and the day counts what it spent. A settle
-	// that fails is the error the person sees, because an unrecorded spend
-	// is what the next build's reservation is judged against.
-	//
-	// What the day counts is decided by whether the build ended, not by
-	// whether the wait returned an error: Wait fails both for a build that
-	// finished badly — its status is terminal — and for a watch this command
-	// lost (a status read that failed, a cancelled context), where the build
-	// may still be running. The lost watch records the whole reservation, like
-	// --no-wait and for the same reason: nothing here knows what the minutes
-	// after the last status read cost.
+	// Settled before the step is failed or done: an unrecorded spend is the
+	// error the person sees, and the account never ends on a "Done" it contradicts.
 	if err := lease.settle(ctx, gcp.TerminalStatus(res.Status)); err != nil {
-		return withLease(waitErr, err)
+		return failStep(sr.rep, step, withLease(waitErr, err))
 	}
 	if waitErr != nil {
-		return waitErr
+		return failStep(sr.rep, step, waitErr)
 	}
 	if res.Digest == "" {
 		// SUCCESS covers the promotion, so the tag is there; only the
 		// digest report is missing.
-		fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.ID))
+		step.Done(fmt.Sprintf("built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)", oneLine(res.Image), oneLine(res.ID)))
 		return nil
 	}
 	if res.Superseded {
-		fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s), but a newer build is already recorded, so latest and the record stay as they were\n",
-			oneLine(res.Image), oneLine(res.Digest), oneLine(res.ID))
+		step.Done(fmt.Sprintf("built %s@%s (Cloud Build build %s), but a newer build is already recorded, so latest and the record stay as they were",
+			oneLine(res.Image), oneLine(res.Digest), oneLine(res.ID)))
 		return nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID))
+	step.Done(fmt.Sprintf("built %s@%s (Cloud Build build %s)", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID)))
 	return nil
 }
 

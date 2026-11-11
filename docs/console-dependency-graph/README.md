@@ -41,5 +41,14 @@ proposed for coordinator P4 only.
 
 ## Waiting on the owner
 
-No decision or tension is open. Each task still needs the owner's explicit go; GV3.1, GV3.2 and
-GV4.1 also wait on the coordinator's record (0.11.0).
+No decision or tension of this folder is open. Each task still needs the owner's explicit go; GV3.1,
+GV3.2 and GV4.1 also wait on the coordinator's record, which since 2026-11-11 is the coordinator
+plan's parts **P9a–P9g** (`docs/coordinator/implementation-plan.md`). The owner answered that plan's
+**D2110–D2123** on 2026-11-11: every write to the record — a published plan, a move, an edge, a
+release — goes through the MCP front door's `roadmap:write` scope and is written by the front door's
+own account under a database-wide role (D2118, reversing the MCP plan's D922/H3 for this path);
+plans are pushed from any checkout, with their repository as provenance only; releases are documents
+of the record, not read from `docs/release-streams.yaml`. So GV4.1 can be built now against
+fixtures, and **GV3.1 and GV3.2 move a real task only once the front door is served — which waits on
+the MCP plan's new task M12**, the front door mounted on a binary, and on that plan's open
+**D2124–D2126**.
