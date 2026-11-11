@@ -73,6 +73,14 @@ type Diagnosis struct {
 	// (runview.Row.FailureClass).
 	FailureClass failure.Class    `json:"failure_class,omitempty"`
 	Halt         *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
+	// ChainLimits is the chain the run belongs to and what is left of its
+	// limits (D1055), filled in for a halted run: a halt's first question is
+	// how much is left, which is what this block answers. Embedded, so the
+	// members are the ones `runs show --json` prints and the two documents
+	// cannot spell them differently (D1056). Absent -- never an empty block --
+	// for a run that did not halt, and for one whose chain could not be read,
+	// where the warning says so and the rest of the diagnosis stands.
+	*ChainLimits
 	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
 	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
 	Flaky        []string         `json:"flaky,omitempty"`    // the last test record's flaky tests
@@ -269,6 +277,19 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 	}
 	if err != nil {
 		return nil, remote(err)
+	}
+	// A halted run's first question is how much of its chain's limits is left
+	// (D1055), so a halted run's diagnosis carries the block `runs show` prints.
+	// A chain read that fails is a warning here and not a failure: the halt is
+	// the run's own, the block is what tells a reader what to do about it, and
+	// the rest of the diagnosis is worth having without it.
+	if d.Halt != nil {
+		lim, cerr := chainLimitsOf(ctx, env, s.Slug(), s.RunID(), rec, warn)
+		if cerr != nil {
+			fmt.Fprintf(warn, "warning: %v\n", cerr)
+		} else {
+			d.ChainLimits = lim
+		}
 	}
 	d.FollowUp = followUpOf(d.Row, rec, red)
 	routeOf(d, rec, env.lc, red)
@@ -898,6 +919,9 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 			line += ": " + h.Detail
 		}
 		fmt.Fprintf(&b, "%s\n", oneLine(line))
+		// Directly under the halt: what is left of the chain's limits is the
+		// question the halt line raises (D1055).
+		b.WriteString(chainBlock(d.ChainLimits))
 	}
 	b.WriteString(checkpointBlock(d.Checkpoint))
 	b.WriteString(ownerBlock(d.Row.OwnerDecisions))

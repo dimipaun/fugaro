@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -332,6 +333,20 @@ func printRunsShow(w io.Writer, doc *runsShowDoc) error {
 		fmt.Fprintf(w, "%s\n", oneLine(line))
 	}
 	return nil
+}
+
+// chainBlock is the chain and its limits as diagnose prints them: the blocks of
+// a diagnosis are strings and not a written stream, so the block is rendered
+// into one — by writeChainLimits, so that both commands print one table.
+func chainBlock(lim *ChainLimits) string {
+	if lim == nil {
+		return ""
+	}
+	var b strings.Builder
+	// A strings.Builder's writes cannot fail; writeChainLimits' own failure is
+	// the writer's, and this one has none to report.
+	_ = writeChainLimits(&b, lim)
+	return b.String()
 }
 
 // writeChainLimits prints the chain and its limits, the way both commands print
