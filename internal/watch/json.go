@@ -84,7 +84,7 @@ type JSONRun struct {
 	// registry entry and this document reads back from there; rigor-modes plan
 	// T1.7). Always present, "-" when the entry carries neither, exactly as
 	// Stage and Verify are: every live run has a mode, so an absent one is a
-	// run whose rules predate the child rather than a row with nothing to say.
+	// run whose rules predate the two children rather than a row with nothing to say.
 	// The mode is the run's own — the project's observe/enforce switch is this
 	// document's top-level `mode`, which is a different thing.
 	Mode     string   `json:"mode"`

@@ -6437,7 +6437,12 @@ func orderedJSONKeys(t *testing.T, raw json.RawMessage) []string {
 
 // mayLackOldRecording are the keys a document recorded before the release that
 // added them may leave out: see TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes.
-var mayLackOldRecording = map[string]bool{"leased_usd": true, "max_parallel": true}
+// `mode` and `from` are here for the other reason a required key can be
+// absent: they are always present in a document this release writes (CLI
+// 0.23.0, rigor-modes plan T1.7), but a document an older CLI wrote carries no
+// key for them at all -- which is what the console's own allowance for them
+// says, and why the recording may lack them and still be one this build reads.
+var mayLackOldRecording = map[string]bool{"leased_usd": true, "max_parallel": true, "mode": true, "from": true}
 
 // checkJSONShape walks one JSON value against a struct type: keys in struct
 // order, required keys present (bar those in mayLack), recursing into nested

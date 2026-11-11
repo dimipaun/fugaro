@@ -1050,6 +1050,21 @@ export const REPO_KEYS = [
  * ever issues. A number, never a link: the console builds none from a feed value
  * (design section 5.1 rule 2).
  *
+ * **`mode` and `from` arrived with CLI 0.23.0** (rigor-modes plan T1.7): the
+ * rigor mode a live run resolved and the layer that decided it, which the
+ * runner writes into the run's own registry entry from its record -- the same
+ * pair `runs ls --json`'s `rigor` block carries, and the pair the Live screen's
+ * chip draws today by joining that list to a row by run id
+ * (`shared/rigor.ts`'s `rigorIndex`, `live.test.ts`'s "the mode is not in the
+ * live frame"). It is in the live frame now, so a later console task may read
+ * it here instead of joining; nothing draws it from this row yet, and both keys
+ * are classified already -- `mode` is an enum of the CLI's own table
+ * (`NON_TEXT_STRING_KEYS`) and `from` is the label the graph read's node keys
+ * took -- so accepting them costs the scrub and the sanitizer nothing. They sit
+ * after `auth` in `JSONRun`, as the struct writes them, and both are always
+ * present: a run under rules that predate them writes `-`, which is "not
+ * recorded", never a mode this build picked.
+ *
  * Exported so `schema.test.ts` can pin it against the struct, as it pins
  * `RECORD_KEYS` and `REPO_KEYS`. */
 export const RUN_KEYS = [
@@ -1063,6 +1078,8 @@ export const RUN_KEYS = [
   'models',
   'recipe',
   'auth',
+  'mode',
+  'from',
   'notional',
   'spent_usd',
   'age_seconds',

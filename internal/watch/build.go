@@ -110,7 +110,7 @@ type RunRow struct {
 	// it (rigor-modes plan T1.7): the run writes the two from its own record
 	// (budget.AgentEntry.Mode and .From), so watch shows the same value the
 	// record's Mode/From hold rather than a second resolution. "-" when the
-	// entry has neither — a run under rules that predate the child writes its
+	// entry has neither — a run under rules that predate the children writes its
 	// entry without them, which is "not recorded", never a mode this package
 	// picked.
 	Mode     string
