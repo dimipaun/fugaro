@@ -26,8 +26,12 @@
 //     rebinding: a name that is not `127.0.0.1:<port>` is that page, whatever
 //     credential it carries.
 //   - **No CORS header, on an answer or a refusal**, and `OPTIONS` refused
-//     (TestNoCorsHeaders): a page that cannot read an answer cannot use one,
-//     and the endpoint has nothing an origin is allowed to ask for.
+//     (TestNoCorsHeaders, TestGeneralOptionsIsRefusedLikeAnyOtherRequest): a
+//     page that cannot read an answer cannot use one, and the endpoint has
+//     nothing an origin is allowed to ask for. Refused by these rules and not by
+//     the standard library's own answer to `OPTIONS *`, which is served in front
+//     of the handler and would have made `*` the one target whose Host was never
+//     looked at.
 //   - **Read-only** (TestEndpointIsReadOnly): `GET` and nothing else, and no
 //     route a state change could travel on. The server holds no Store, no Node,
 //     no launcher and no filesystem -- the only thing it can reach is the
@@ -38,9 +42,14 @@
 //     (TestNoSnapshotBeforeTheFirstTickIsAState, H3): the daemon serves its
 //     endpoint from before its first cycle, and a reader that arrives then must
 //     be told the difference between "no state yet" and "gone".
-//   - **A `?token=` is refused, and that refusal prints the path and never the
-//     query** (TestTokenInTheQueryStringIsRefused, TestTheRefusalNeverCarriesTheToken),
-//     so a credential a caller put in a URL cannot reach a log.
+//   - **A `?token=` is refused, and that refusal never prints the query**
+//     (TestTokenInTheQueryStringIsRefused, TestTheRefusalNeverCarriesTheToken),
+//     so a credential a caller put in a URL cannot reach a log -- nor, before
+//     the token is read, can any other word the caller chose: a refusal made
+//     before that check reports the reason and nothing of the request
+//     (TestAPreTokenRefusalLogsNoneOfTheCallersText), because the URL of a
+//     request nobody has authenticated is a string a local process can make as
+//     long as it likes.
 //
 // What answers is the node's own document and nothing else. `GET /state` is
 // the state exactly as `orchestrator.EncodeState` writes it -- byte for byte
@@ -213,6 +222,14 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 	s.srv = &http.Server{
 		Handler:           s,
 		ReadHeaderTimeout: 30 * time.Second,
+		// `OPTIONS * HTTP/1.1` is answered by the standard library itself, in
+		// front of the handler, with a 200 and no body: a request whose Host is a
+		// name of the attacker's choosing would be served by a server that never
+		// looked at the Host, and the endpoint's own answer -- refused, read-only
+		// -- would not be the one that reached the caller. Turning the general
+		// handler off is what makes `*` an ordinary target here, checked like any
+		// other (TestGeneralOptionsIsRefusedLikeAnyOtherRequest).
+		DisableGeneralOptionsHandler: true,
 		// A client's broken connection is not the daemon's news: the endpoint
 		// logs what it decides to log through Log and nothing else.
 		ErrorLog: log.New(io.Discard, "", 0),
@@ -260,8 +277,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// credential it carries -- a real one, replayed from a page -- must not
 	// decide whether it is served.
 	if r.Host != s.addr {
-		s.refuse(w, http.StatusForbidden, "this endpoint answers only "+s.addr)
-		s.report(r, "the request's Host is not the endpoint's own address")
+		reason := "this endpoint answers only " + s.addr
+		s.refuse(w, http.StatusForbidden, reason)
+		s.reportBeforeToken("a Host that is not the endpoint's own address was refused")
 		return
 	}
 	// Every method but GET, OPTIONS included: a preflight is the browser
@@ -280,7 +298,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// is built from the path for exactly that sentence.
 	if r.URL.RawQuery != "" {
 		s.refuse(w, http.StatusBadRequest, "this endpoint takes no query string: pass the token in the "+authorizationHeader+" header")
-		s.report(r, "a query string")
+		s.reportBeforeToken("a query string was refused")
 		return
 	}
 	// Not logged: every local process can reach this port, and a scan is not
@@ -469,9 +487,35 @@ func (s *Server) refuse(w http.ResponseWriter, status int, reason string) {
 // the path. The path and not the request URI: a URI carries the query string,
 // which is where a caller's token may be, and the whole point of refusing a
 // query is that the credential in it reaches nothing -- this line included.
+//
+// It is only ever called for a request that has already proved the token, which
+// is why it may name the path at all: by then the path is one of the two routes
+// the switch above matched, and both are this package's own strings. A refusal
+// made before that is reportBeforeToken's, and it says nothing of the caller's.
 func (s *Server) report(r *http.Request, why string) {
 	if s.log == nil {
 		return
 	}
 	s.log(fmt.Errorf("endpoint: %s %s: %s", r.Method, safetext.OneLine(r.URL.Path), safetext.OneLine(why)))
+}
+
+// reportBeforeToken is what a refusal made before the token was read may write:
+// the fixed reason and nothing the caller chose.
+//
+// Before the token, nothing about the request is the endpoint's to trust. The
+// request line and the URL are whatever the caller typed -- a local process of
+// any user, or a page that reached the port through a name of its own -- and
+// both are unbounded, so a line built from them is a line any process on the
+// machine can write into this daemon's log at whatever length it likes (500 KB
+// in one request, measured). What is worth knowing is that a request of that
+// shape arrived, and that is the reason; the operator who wants to know which
+// route was asked for has the log of a request that got in, which is a request
+// that proved the token. It is also the rule the token and method refusals
+// already follow: a scan is not news the daemon should be made to write about,
+// and it cannot be made to write with the scanner's own words either.
+func (s *Server) reportBeforeToken(why string) {
+	if s.log == nil {
+		return
+	}
+	s.log(fmt.Errorf("endpoint: %s", why))
 }

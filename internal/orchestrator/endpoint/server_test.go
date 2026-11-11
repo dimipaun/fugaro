@@ -5,9 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -223,6 +226,39 @@ func (f *endpointFixture) stream(ctx context.Context, headers map[string]string)
 		req.Header.Set(k, v)
 	}
 	return (&http.Client{}).Do(req)
+}
+
+// raw sends one request line and its headers over a real socket and reads the
+// answer back. It is how the requests a client will not build are tested: `*` is
+// a legal request target and not a URL, and the standard library's answer to
+// `OPTIONS *` happens in front of the handler, so only a socket reaches the
+// server the endpoint actually runs.
+func (f *endpointFixture) raw(requestLine string, headers map[string]string) (int, string) {
+	f.t.Helper()
+	conn, err := net.Dial("tcp", f.srv.Addr())
+	if err != nil {
+		f.t.Fatalf("dialling the endpoint: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	var b strings.Builder
+	b.WriteString(requestLine + "\r\n")
+	for _, k := range slices.Sorted(maps.Keys(headers)) {
+		b.WriteString(k + ": " + headers[k] + "\r\n")
+	}
+	b.WriteString("\r\n")
+	if _, err := conn.Write([]byte(b.String())); err != nil {
+		f.t.Fatalf("writing the request: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		f.t.Fatalf("reading the answer to %q: %v", requestLine, err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		f.t.Fatalf("reading the body of the answer to %q: %v", requestLine, err)
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode, string(body)
 }
 
 // readEvent reads one server-sent event: its id and its data.
@@ -443,14 +479,115 @@ func TestTokenInTheQueryStringIsRefused(t *testing.T) {
 			}
 		}
 	}
-	// The log is the other place it could reach: it prints the path, which is
-	// what tells a person which route was asked for, and never the query.
+	// The log is the other place it could reach. It says that a query string was
+	// refused and nothing else: not the query, which is where the token was, and
+	// not the path either -- this refusal is made before the token is read, so
+	// every word of it is the caller's to choose and none of them is bounded
+	// (ReportBeforeToken, and the case below).
 	written := f.log.String()
 	if strings.Contains(written, token) {
 		t.Errorf("the log carries the token")
 	}
-	if !strings.Contains(written, routeState) {
-		t.Errorf("the log does not name the refused path: %q", written)
+	if strings.Contains(written, "token=") {
+		t.Errorf("the log carries the query: %q", written)
+	}
+	if strings.Contains(written, routeState) {
+		t.Errorf("the log carries the caller's own path: %q", written)
+	}
+	if !strings.Contains(written, "query string") {
+		t.Errorf("the log does not say what was refused: %q", written)
+	}
+}
+
+// TestAPreTokenRefusalLogsNoneOfTheCallersText is the length half of the same
+// rule, and it is the half a reader cannot see in the code: `report` prints the
+// method and the path, and both are unbounded strings the caller writes.
+//
+// A refusal made before the token check is the one every process on the machine
+// can reach -- that is what the check is for -- so a line built from its request
+// line or its URL is a line any local process, or a page that reached the port
+// through a name of its own, can write into this daemon's log at whatever length
+// it likes: one request of half a megabyte, repeated, is the daemon's log filled
+// by a stranger. The reason is fixed, so the line is too, and this holds it to
+// that.
+func TestAPreTokenRefusalLogsNoneOfTheCallersText(t *testing.T) {
+	f := newFixture(t)
+	// The caller's text and the length a caller can choose. Half a megabyte is
+	// what the finding measured rather than a limit of anything: the URL has no
+	// cap here, which is exactly why the log must not carry it.
+	long := strings.Repeat("a", 500_000)
+
+	host := f.do(http.MethodGet, "/"+long, "", "evil.example", f.bearer())
+	if host.Code != http.StatusForbidden {
+		t.Fatalf("a rebinding Host on a long path: %d, want %d", host.Code, http.StatusForbidden)
+	}
+	query := f.do(http.MethodGet, "/"+long, "token="+long, f.srv.Addr(), f.bearer())
+	if query.Code != http.StatusBadRequest {
+		t.Fatalf("a long query string: %d, want %d", query.Code, http.StatusBadRequest)
+	}
+
+	written := f.log.String()
+	lines := strings.Split(strings.TrimSpace(written), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("two refusals wrote %d log lines", len(lines))
+	}
+	// Nothing here prints the line it refused: a failure message that quoted one
+	// would put the caller's half megabyte into a CI log, which is the defect
+	// this case is about, one layer up.
+	for _, line := range lines {
+		// The reason is a sentence; a line anywhere near the request's own size
+		// is the request's own text, whatever it says.
+		if len(line) > refusalLogLimit {
+			t.Errorf("a refusal wrote %d bytes into the log, and the fixed reason is under %d: the line is the caller's text", len(line), refusalLogLimit)
+		}
+		if strings.Contains(line, long) {
+			t.Errorf("a refusal wrote the caller's own text into a %d-byte log line", len(line))
+		}
+	}
+	if !strings.Contains(written, "query string") || !strings.Contains(written, "Host") {
+		t.Errorf("the log does not say what was refused: %d bytes over %d lines", len(written), len(lines))
+	}
+}
+
+// refusalLogLimit is what a refusal's line may be: generously more than the
+// fixed reason it carries, and far less than any length a caller can send.
+const refusalLogLimit = 256
+
+// TestGeneralOptionsIsRefusedLikeAnyOtherRequest sends `OPTIONS *` over a real
+// socket, because that is the only way to reach the question it asks: the
+// standard library answers `OPTIONS *` itself, in front of the handler, with a
+// 200 and no body, so the request never meets the Host check or the read-only
+// rule and a page could read a successful answer from a port whose Host it had
+// no business reaching. It is sent by hand because `*` is not a URL a client
+// will build.
+func TestGeneralOptionsIsRefusedLikeAnyOtherRequest(t *testing.T) {
+	f := newFixture(t)
+	literal := f.srv.Addr()
+
+	code, body := f.raw("OPTIONS * HTTP/1.1", map[string]string{
+		"Host":              "evil.example",
+		authorizationHeader: "Bearer " + f.srv.Token(),
+	})
+	if code != http.StatusForbidden {
+		t.Errorf("OPTIONS * with a Host that is not the literal: %d (%s), want %d: the standard library's own 200 is served before the Host is ever looked at", code, body, http.StatusForbidden)
+	}
+	code, body = f.raw("OPTIONS * HTTP/1.1", map[string]string{
+		"Host":              literal,
+		authorizationHeader: "Bearer " + f.srv.Token(),
+	})
+	if code != http.StatusMethodNotAllowed {
+		t.Errorf("OPTIONS * with the endpoint's own Host: %d (%s), want %d", code, body, http.StatusMethodNotAllowed)
+	}
+	// No token either, and still no 200: the general handler is off for every
+	// caller rather than for the ones a case happened to send.
+	code, body = f.raw("OPTIONS * HTTP/1.1", map[string]string{"Host": literal})
+	if code != http.StatusMethodNotAllowed {
+		t.Errorf("OPTIONS * with no token: %d (%s), want %d", code, body, http.StatusMethodNotAllowed)
+	}
+	// And the endpoint is still an endpoint: turning the general handler off must
+	// not have turned the routes off with it.
+	if got := f.do(http.MethodGet, routeState, "", literal, f.bearer()); got.Code != http.StatusOK {
+		t.Errorf("GET %s after the OPTIONS cases: %d, want %d", routeState, got.Code, http.StatusOK)
 	}
 }
 
