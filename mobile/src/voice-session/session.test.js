@@ -3,12 +3,19 @@
 // The session controller's rules (voice-session plan, Task VS1.1; D206, D217,
 // F3, F4, F24, D201).
 //
-// The plan's verification is six sentences, and the first six tests below are
-// those six, in its order: *start drives both in the right order; a state change
-// pushes exactly one `updateStatus` and a mute change pushes exactly one more; a
-// render with no change pushes none; `interruptDecision` sees the pipeline's
-// live `speaking`/`turn`; a paused session issues no mailbox call and reads no
-// credential; the machine's `ended` releases the lease exactly once.*
+// The plan's Tests line is six sentences, and five of the tests below carry them,
+// in its order: *start drives both in the right order* -- "start drives the port
+// and then the screen..."; *a state change pushes exactly one `updateStatus` and
+// a mute change pushes exactly one more* and *a render with no change pushes
+// none* -- "a state change pushes one updateStatus, a mute change one more, and a
+// render none", which asserts both; *`interruptDecision` sees the pipeline's live
+// `speaking`/`turn`* -- "the interrupt decision is handed the pipeline's live
+// pair..."; *a paused session issues no mailbox call and reads no credential* --
+// "a paused session makes no mailbox call and reads no credential (F24)"; *the
+// machine's `ended` releases the lease exactly once* -- "the machine's `ended`
+// gives the lease back, exactly once". The rest of the file is this module's own
+// -- the snapshot's shape, which the plan does not name, and the port's latency
+// with the races and failures it opens.
 //
 // **What is real here.** VS0.2's machine, P3.4's pipeline over its three fakes,
 // and P3.5's screen: the session is the only new object, and it is driven
@@ -21,9 +28,9 @@
 //
 // **The port's latency is a state of its own.** `native.start()` and
 // `native.setMuted()` answer when they answer, and an event can arrive before
-// they do. The tests after the plan's six hold one of those calls open and move
-// the session under it, because that is the only way a verdict reduced before a
-// call, or a screen started after one, is seen to be wrong.
+// they do. The race tests below hold one of those calls open and move the session
+// under it, because that is the only way a verdict reduced before a call, or a
+// screen started after one, is seen to be wrong.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -183,12 +190,16 @@ function lockedClient() {
  *
  * @param {number} [options.holdScreenStartAfter] how many of the screen's starts
  *   to let through before `holdScreenStart` holds them (0: every one)
+ * @param {number} [options.refuseScreenStartAfter] how many of the screen's
+ *   starts to let through before `refuseScreenStart` throws (0: every one), so
+ *   that a *later* start -- a resume's -- is the one that fails
  */
 function harness({
   refuseStart = false,
   refuseEnd = false,
   refuseStatus = false,
   refuseScreenStart = false,
+  refuseScreenStartAfter = 0,
   refuseScreenStop = false,
   holdStart = null,
   holdFirstStart = null,
@@ -235,7 +246,7 @@ function harness({
     start: async () => {
       screenStarts += 1;
       if (holdScreenStart !== null && screenStarts > holdScreenStartAfter) await holdScreenStart.promise;
-      if (refuseScreenStart) throw new Error('the capture path would not start');
+      if (refuseScreenStart && screenStarts > refuseScreenStartAfter) throw new Error('the capture path would not start');
       return built.start();
     },
     // ...and the teardown closes it behind this, which is how a microphone that
@@ -813,6 +824,84 @@ test('a start abandoned with the microphone opening closes it for the session th
   opening.open();
   assert.deepEqual(await abandoned, { ok: false, code: SESSION_CODES.START_FAILED, field: null });
   assert.equal(h.audioIn.running(), false, 'the microphone the abandoned start opened is closed again');
+});
+
+test('a start abandoned while the session is starting is not left holding a microphone on it', async () => {
+  // The window the per-session fence exists for, and the one thing the fence
+  // cannot do on its own. The abandoned call opens the microphone as it gives up,
+  // and the session it opened it for has not reached its own screen call yet -- it
+  // is still `starting` -- so no path of that session's own closes it. A session
+  // that then ends before its port answers has no teardown of its own either
+  // (`begun` is false), which is how a session ends with the microphone running.
+  const first = gate();
+  const second = gate();
+  const opening = gate();
+  const h = harness({ holdFirstStart: first, holdStart: second, holdScreenStart: opening });
+
+  const abandoned = h.session.start();
+  await settle();
+  first.open();
+  await settle();
+  assert.equal(h.session.state().state, 'starting');
+
+  await h.session.hangUp();
+  assert.equal(h.session.state().state, 'ended');
+
+  // §8's "Tap to resume" begins the next session, whose own port call is still
+  // unanswered: it is `starting`, and has not reached its own screen start.
+  const replaced = h.session.start();
+  await settle();
+  assert.equal(h.session.state().state, 'starting');
+
+  opening.open();
+  assert.deepEqual(await abandoned, { ok: false, code: SESSION_CODES.START_FAILED, field: null });
+  assert.equal(h.session.state().state, 'starting', 'the abandoned start does not drive the session that replaced it');
+  assert.equal(h.audioIn.running(), true, 'and the microphone it opened is open all the same');
+
+  // ...and that session ends before its port answers, so the microphone the
+  // abandoned call opened is this module's to close.
+  await h.session.dispatch({ type: 'serviceStopped', reason: SERVICE_STOP_REASONS.SYSTEM });
+  assert.equal(h.session.state().state, 'ended');
+  assert.equal(h.audioIn.running(), false, 'the microphone the abandoned start opened is closed');
+  assert.deepEqual(
+    callsNamed(h.native, 'end').map((call) => call.args[0]),
+    ['hangup'],
+    'and the session that never began is not asked to end',
+  );
+  // `replaced` is deliberately never answered: the reproduction is a session that
+  // ends before its own port call does.
+});
+
+test('a pause whose screen will not stop records pause-failed, and stays paused', async () => {
+  const h = harness({ refuseScreenStop: true });
+  await h.session.start();
+  await h.session.dispatch({ type: 'interruptionBegan', source: INTERRUPTION_SOURCES.CALL });
+
+  assert.equal(h.session.state().state, 'paused_interruption');
+  // A capture path that throws is a microphone that may still be open, which is
+  // why the pause records it instead of the session reading as one that closed
+  // it: the session is paused and the failure is on the snapshot.
+  assert.equal(h.audioIn.running(), true, 'the stop that threw stopped nothing');
+  assert.deepEqual(h.session.state().failure, {
+    code: SESSION_CODES.PAUSE_FAILED,
+    message: 'the microphone could not be closed for the pause',
+  });
+});
+
+test('a resume whose screen will not start records resume-failed, and stays listening', async () => {
+  const h = harness({ refuseScreenStart: true, refuseScreenStartAfter: 1 });
+  await h.session.start();
+  await h.session.dispatch({ type: 'routeChanged', route: 'speaker', unsafe: true });
+  assert.equal(h.session.state().state, 'paused_route');
+
+  await h.session.resume();
+
+  assert.equal(h.session.state().state, 'listening');
+  assert.equal(h.audioIn.running(), false, 'the microphone the resume could not open is closed');
+  assert.deepEqual(h.session.state().failure, {
+    code: SESSION_CODES.RESUME_FAILED,
+    message: 'the microphone could not be opened on resume',
+  });
 });
 
 test('a teardown that fails is on the snapshot whichever way the session ended', async () => {
