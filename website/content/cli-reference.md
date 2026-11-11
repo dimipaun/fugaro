@@ -149,7 +149,9 @@ Flags:
 Subcommands:
 
 - `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
+- `fugaro accounts allow` -- Add repositories to a named Claude account's allow-list (claude_accounts.NAME.allow_data_to)
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
+- `fugaro accounts deny` -- Remove repositories from a named Claude account's allow-list
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
 - `fugaro accounts pool` -- List, declare and remove the named pools a craft's access may name
 - `fugaro accounts rm` -- Remove a named Claude account, its secret and the job that served it
@@ -226,6 +228,47 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro accounts allow`
+
+Add repositories to a named Claude account's allow-list (claude_accounts.NAME.allow_data_to)
+
+Add each REPO to claude_accounts.NAME.allow_data_to, the list of
+repositories the account's token may be used by, and nothing else.
+
+A NAME the config does not declare yet is declared here with the repositories
+this run names: allow is the first form of the pair, so an account whose
+token may be spent from one repository needs no second command. A NAME it does
+declare keeps the repositories its list already holds — the edit appends the
+ones named, so a run that repeats an entry writes nothing.
+
+The list is the per-repository decision the published policy's accounts block
+is derived from: a profile serves the account to its jobs, and this list is
+what bounds the token of each of them. Adding a repository is therefore a
+widening of where the token may be spent, and it is read back by the owner's
+own publish rather than by this command — nothing here reaches the cloud.
+
+The repositories are written as owner/name, the shape the loader holds this
+list to. A repository the file already names is left where it is, and the
+sentence above the diff prints the list the file ends up with, not the one the
+command line named.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's accounts block is derived from this list, so the change
+reaches the project's runs in that run and not before it.
+
+Usage: `fugaro accounts allow NAME REPO...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for allow |
+| `--yes` | bool | `false` | no | confirm the change without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro accounts clear`
 
 Clear one account's broken or exhausted credential mark, after replacing its token
@@ -285,6 +328,41 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--yes` | bool | `false` | no | skip the typed confirmation (read what it does first) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts deny`
+
+Remove repositories from a named Claude account's allow-list
+
+Remove each REPO from claude_accounts.NAME.allow_data_to, so the
+account's token may no longer be used by it.
+
+A repository the list does not name is not an error and not a write: the
+command says there is no change, because the state it was asked for is the
+state the file is in.
+
+An account a profile lists must cover every repository that profile admits —
+the profile's repositories are the intersection of the two lists — so a
+removal that would leave the profile admitting a repository the account no
+longer covers is refused, naming the repository and the profile, with nothing
+written. The remedy is to narrow the profile's own allow_repos, or to leave
+the entry where it is.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's accounts block is derived from this list, so the change
+reaches the project's runs in that run and not before it.
+
+Usage: `fugaro accounts deny NAME REPO...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for deny |
+| `--yes` | bool | `false` | no | confirm the change without a prompt |
 
 Subcommands:
 
@@ -5610,9 +5688,93 @@ Flags:
 
 Subcommands:
 
+- `fugaro secrets allow` -- Add repositories to a project secret's allow-list (project_secrets.NAME.allow_data_to)
+- `fugaro secrets deny` -- Remove repositories from a project secret's allow-list
 - `fugaro secrets ls` -- List the project's (or, with --repo, a repository's) secrets: names, scope and versions, never values
 - `fugaro secrets rm` -- Withdraw a project secret: delete its Secret Manager container and its config entry
 - `fugaro secrets set` -- Store a secret's value, read from stdin or a hidden prompt, as a new version
+
+## `fugaro secrets allow`
+
+Add repositories to a project secret's allow-list (project_secrets.NAME.allow_data_to)
+
+Add each PATTERN to project_secrets.NAME.allow_data_to — or to
+workflow_secrets.NAME.allow_data_to for a name your local config holds there —
+the list of repositories the value is stored for and mounted in.
+
+A PATTERN is a repository as owner/name, and may use * inside a segment, never
+across /: myworkspace/* is a whole workspace and myworkspace/api-* a family,
+while the owner segment is literal (one project secret is one owner's
+credential). A pattern means every repository it matches, now and later, so
+adding one is a widening: it is one more repository the value is mounted in.
+
+With --proxy, and no PATTERN, this writes project_secrets.NAME.proxy on its
+own: the Bitbucket token's switch for the credentials service, which is also a
+widening, because it hands the token to the service rather than to the job.
+--proxy=false takes the switch away again and is the one form here that is not
+a widening. --proxy is refused for a workflow secret, whose entry holds no such
+member (D493, D1275).
+
+Adding a repository or turning the switch on is the owner's own step: it asks
+nothing at your own terminal, and a coding agent's session is refused it, with
+the command to run yourself (D1552). This whole family is refused in a session,
+so --yes does not lift it. Nothing here reads or prints a value.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's entry is derived from this list, so the change reaches the
+project's runs in that run and not before it.
+
+Usage: `fugaro secrets allow NAME PATTERN...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for allow |
+| `--proxy` | bool | `false` | no | set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off) |
+| `--yes` | bool | `false` | no | confirm the policy write without a prompt (outside a coding agent's session) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets deny`
+
+Remove repositories from a project secret's allow-list
+
+Remove each PATTERN from project_secrets.NAME.allow_data_to — or from
+workflow_secrets.NAME.allow_data_to for a name your local config holds there —
+so the value is no longer stored for it and no longer mounted in it.
+
+This is the one edit of this family that narrows: the repositories that remain
+are the ones the value still reaches. A pattern the entry does not name is not
+an error and not a write — the command says there is no change, because the
+state it was asked for is the state the file is in.
+
+A removal that leaves the list empty is allowed and is not a removal of the
+entry: the value is then stored for no repository, and the entry stays for the
+day a pattern is added back.
+
+This whole family is refused in a coding agent's session, --yes included (spec
+§5): what a secret reaches is a decision no plan shows. Nothing here reads or
+prints a value.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's entry is derived from this list, so the change reaches the
+project's runs in that run and not before it.
+
+Usage: `fugaro secrets deny NAME PATTERN...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for deny |
+| `--yes` | bool | `false` | no | confirm the policy write without a prompt (outside a coding agent's session) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro secrets ls`
 

@@ -221,7 +221,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	gitID := ""
 	var secrets []config.Secret
 	if builds {
-		gitID, err = gitSecretID(ctx, lc, rs, "the catalog build of "+rs.Name)
+		gitID, err = gitSecretID(ctx, lc, rs, nodePolicy(ctx, &env.policy, lc), "the catalog build of "+rs.Name)
 		if err != nil {
 			return err
 		}
@@ -292,7 +292,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// is about is what needs one. The terminal fact is the command's own
 	// stdin, so the helper's coding-agent refusal asks the same question
 	// openBuildManaged asked above.
-	providerEnv, providerHint, err := catalogProviderEnv(ctx, cmd.ErrOrStderr(), lc, rs, entries, os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
+	providerEnv, providerHint, err := catalogProviderEnv(ctx, cmd.ErrOrStderr(), lc, rs, entries, os.Getenv, stdinIsTerminal(cmd.InOrStdin()), nodePolicy(ctx, &env.policy, lc))
 	if builds && err != nil {
 		return err
 	}
