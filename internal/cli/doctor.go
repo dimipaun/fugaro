@@ -342,7 +342,7 @@ Exit 1 when a check fails, with the one-line fix to run.`,
 	cmd.Flags().BoolVar(&offline, "offline", false, "check the update class's local checks and record a skip for each check that needs a credential or the network: no cloud call, no network call, no secret read (the session-start check the skills run)")
 	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
 	cmd.Flags().BoolVar(&checkBitbucketToken, "check-bitbucket-token", false, "also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
-	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned or foreign plugin (CI mode); an un-wired checkout is information, not a failure")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	cmd.Flags().BoolVar(&showAll, "all", false, "print every check, the informational and audit lines included")
 	cmd.Flags().BoolVar(&security, "security", false, "also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start)")
