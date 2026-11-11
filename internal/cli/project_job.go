@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
@@ -59,6 +60,13 @@ type launchProjectJob struct {
 	// launch on a long job gets a token that outlives it, and the same launch
 	// on a short one does not.
 	Timeout time.Duration
+	// Recorded is set when the name is the job a run this launch continues
+	// recorded (D907): a job the platform reported for an execution that
+	// already ran, which is launched exactly as it stands. It is the one
+	// thing that tells such a name from one this launch resolved itself,
+	// where the review-only variant still has to be derived from a coding
+	// job's name (review.go's reviewJobFor).
+	Recorded bool
 }
 
 // launchConfigWhereTheTreeGivesNone is the repository's own document for a
@@ -150,11 +158,99 @@ func (e *cloudEnv) launchConfigWhereTheTreeGivesNone(ctx context.Context, spec *
 	return e.repoConfigAtTheRef(ctx, spec)
 }
 
+// continuedJob is the job the run this launch continues recorded, when that
+// run recorded one (spec.md §2 source 2, §8; D907).
+//
+// The run a launch continues is the one its own task names: spec.PreviousRun,
+// which a --pr follow-up, a --continues chain and a --retry or a repeated
+// --run-id of a stored follow-up all carry — the retry of a follow-up
+// continues the same run its stored task does. A --retry of a task that names
+// no run is a replay of a run that never launched, which is the only run a
+// retry can reach this decision for: a run that launched is answered
+// "already launched" by the shared reader before the claim is taken
+// (run.go's existingLaunch), and a run that never launched recorded no job.
+//
+// ok is false when this launch continues no run, or when the run it continues
+// recorded nothing: the launch then decides from the document, exactly as a
+// first run does. A record that carries no job is a run that ran on the
+// per-repository job, and the job returned is nil with ok true — that is the
+// job to reuse, and it is reused without reading a document: the per-repository
+// job is the answer for a repository whose record says so, and no refusal of
+// the read applies to a job that was already decided.
+func (e *cloudEnv) continuedJob(ctx context.Context, slug string, spec *task.Spec) (*launchProjectJob, bool, error) {
+	if spec.PreviousRun == "" {
+		return nil, false, nil
+	}
+	// One read of the run's own record, through the reader the "already
+	// launched" check reads it with: nothing is written here, and the job a
+	// continuation reuses is the job that check reports.
+	l, _, err := recordedLaunch(ctx, runstore.Open(e.bucket.Bucket, slug, spec.PreviousRun))
+	if err != nil {
+		return nil, false, remote(fmt.Errorf("run %s continues %s/%s, and the job that run launched on cannot be read: %w", spec.RunID, slug, spec.PreviousRun, err))
+	}
+	if l == nil {
+		return nil, false, nil
+	}
+	if l.Job == "" {
+		return nil, true, nil
+	}
+	job, err := e.jobFromRecord(ctx, l.Job)
+	if err != nil {
+		return nil, false, err
+	}
+	return job, true, nil
+}
+
+// jobFromRecord is a job name read out of a run's record as a launch uses it:
+// the name exactly as it stands, and the two things a launch needs about it —
+// the profile it belongs to, for messages and for the review variant derived
+// from it later, and the window its own timeout gives the budget token.
+//
+// The profile is the published policy's answer (runner.ProjectJobOfPolicy, the
+// computation the runner matches CLOUD_RUN_JOB against), never a name parsed
+// back (R2-5), and the timeout is that profile's own — the same class the job
+// was deployed with (internal/infra's ProjectJobs). A name the published policy
+// does not compute keeps the name and nothing else: it is still the job the run
+// that recorded it ran on, and this launch runs on it too — refusing here would
+// refuse a continuation because the policy moved under it, and the runner's own
+// placement checks are what judge a job no profile of this policy describes
+// (spec.md §8, §12). Nothing on that path knows the job's own timeout, so the
+// token's window is the platform's default rather than a floor that is a guess
+// upward.
+func (e *cloudEnv) jobFromRecord(ctx context.Context, job string) (*launchProjectJob, error) {
+	p, found, err := e.policy.read(ctx, e.lc)
+	if err != nil {
+		return nil, policyReadErr(err)
+	}
+	if found && p != nil {
+		if profile, _, _, ok := runner.ProjectJobOfPolicy(p, job); ok {
+			timeout, _ := config.ParseDuration(p.Profiles[profile].TimeoutClass)
+			return &launchProjectJob{Name: job, Profile: profile, Timeout: timeout + backend.TaskTimeoutSlack, Recorded: true}, nil
+		}
+	}
+	return &launchProjectJob{Name: job, Timeout: backend.DefaultTaskTimeout, Recorded: true}, nil
+}
+
 // launchProjectJobFor resolves the project job spec runs on, and returns nil
 // for the per-repository path — the job of (slug, WorkflowVariant(workflow,
 // token)), which the backend resolves itself. It never writes and never
 // launches: it decides, and every refusal of the launch itself is elsewhere.
-func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*launchProjectJob, error) {
+//
+// slug is the repository's storage slug, which the launch already resolved
+// (runstore.Open's own): the record of a run this launch continues is stored
+// under it.
+func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *task.Spec) (*launchProjectJob, error) {
+	// A launch that continues a run reuses the job that run recorded (D907,
+	// spec.md §2 source 2, §8): a continuation stays on the job it continues,
+	// and never reads a document to decide a job a run of this repository
+	// already decided. It is asked first — ahead of the document and of the
+	// read that would otherwise refuse — because it is the one source that
+	// needs neither.
+	if job, ok, err := e.continuedJob(ctx, slug, spec); err != nil {
+		return nil, err
+	} else if ok {
+		return job, nil
+	}
 	// The workflow's own checkout: says whether this is a clone workflow, and
 	// which profile it selects. Both are read from the repository's own
 	// fugaro.yaml, and checkoutParse answers nil for two states that are not
