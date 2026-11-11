@@ -634,8 +634,9 @@ tasks on 2026-11-10** (the answer cells below).
 **F24. Exists. The registry O16 waited for is on `main`, and so is the review T4 waited for.** The catalogue is
 `ee/coordinator/mcpauth/tools.go:74-96`: `Register` refuses a name it does not map, and `Call` (`tools.go:303`) checks the token's scope
 before a handler runs. The read tools M8 built are registered by `RegisterReadTools` (`ee/coordinator/mcpauth/tool_status.go:112`), which
-**no binary calls** — `docs/mcp-server/README.md` says M8 is built "except the wiring that would serve its four read tools, which no binary
-has and no task of this plan carries". The threat-model amendment T4 named is `docs/mcp-server/reconciliation.md` §4a. *Consequence:* F9's
+**no binary called** until the owner assigned the wiring on 2026-11-11 and **M12** built it
+(`ee/coordinator/cli/coordinator_serve.go`, registering the four tools on the front door's own
+registry). The threat-model amendment T4 named is `docs/mcp-server/reconciliation.md` §4a. *Consequence:* F9's
 "no registry" is overtaken; O16's files can be named, and it lands the way M8 did, built and registered by a function nothing calls yet
 (the plan's O16a), with the serving half (O16b) waiting.
 
@@ -653,7 +654,7 @@ defensible reading — D1227's own reason, "a `tasks:write` token must not silen
 
 **F27. Gap. The front door cannot reach the `orchestrator/` node, by design.** Its account `mcp_server` holds two grants, the runs bucket's
 read and its own store, "and nothing else in this tree or the Firebase root grants it anything: no secret, no database, no actAs"
-(`deploy/terraform/gcp/modules/installation/coordinator.tf:300-322`, the account at `:324`); the owner's D935 answer keeps database admin off
+(`deploy/terraform/gcp/modules/installation/coordinator.tf:315-337`, the account at `:339`); the owner's D935 answer keeps database admin off
 the public service (`docs/mcp-server/README.md`, finding H3); the Realtime Database has no path-level IAM, so any database grant reaches every
 node (`docs/workspaces/implementation-plan.md` W7, citing `credentials.tf`); and O2's rules refuse every token writer, with the person's own
 credential writing the node (D1241). *Consequence:* the state group's handlers can be built and tested against a fake, but **serving them
