@@ -99,18 +99,22 @@ func dgaStatusLine(t *testing.T, f string) string {
 
 // TestDocsDiagnoseAgentStatusAndChecks: the folder states its own state in one
 // current line per document, and that line has to move with the tree. T-DG3's,
-// T-DG4's, T-DG5's, T-DG6's, T-DG7's and T-DG8's files landed while both said
-// nothing was implemented, so the current line names the tasks that are written and the
+// T-DG4's, T-DG5's, T-DG6's, T-DG7's, T-DG8's and T-DG10's files landed while
+// both said nothing was implemented, so the current line names the tasks that
+// are written and the
 // first-written line is kept below it, still reading as what was true then. The
 // clauses checked
 // here are the two a reader decides on: what is built, and that the rest of the
 // plan is not approved. Every task named in the list below has its files in the
 // tree, so a line that stops naming one reads as if that task were not built —
-// which is what happened to T-DG3 and T-DG4 when a later line dropped them.
+// which is what happened to T-DG3 and T-DG4 when a later line dropped them. T-DG9
+// is deliberately not in the list: the tests it would name are not in the tree,
+// and naming a task whose files are absent is the same error in the other
+// direction.
 func TestDocsDiagnoseAgentStatusAndChecks(t *testing.T) {
 	for _, f := range []string{"README.md", "implementation-plan.md"} {
 		line := dgaStatusLine(t, f)
-		for _, want := range []string{"T-DG3", "T-DG4", "T-DG5", "T-DG6", "T-DG7", "T-DG8", "no other task is approved"} {
+		for _, want := range []string{"T-DG3", "T-DG4", "T-DG5", "T-DG6", "T-DG7", "T-DG8", "T-DG10", "no other task is approved"} {
 			if !strings.Contains(line, want) {
 				t.Errorf("%s%s: the current status line does not say %q, so the folder reads as if that task's files were not in the tree, or as if the rest of the plan were approved: %s", dgaDir, f, want, line)
 			}
@@ -126,6 +130,52 @@ func TestDocsDiagnoseAgentStatusAndChecks(t *testing.T) {
 	for _, c := range []string{"Check 410", "Check 411", "Check 412"} {
 		if !strings.Contains(plan, c) {
 			t.Errorf("the plan no longer holds %s", c)
+		}
+	}
+}
+
+// TestDocsDiagnoseAgentChecksAreRegistered: the three checks the plan takes are
+// in the register a person running them reads, as the register's own convention
+// puts them — one summary row and one `## Check` section each — and each section
+// names the script, its sibling test and the task that wrote it, says it is
+// owner-run, and says it has NOT been run. A check number the plan holds and the
+// register does not is a check nobody can run; a section naming a script the
+// tree does not have is a reader's dead end; and a section that stopped saying
+// "not run" would read as a pass nobody earned. The census of the register's
+// highest written section is not read here: it stays 511, since 410 to 412 are
+// below it (docs_check340_test.go pins that number against the register).
+func TestDocsDiagnoseAgentChecksAreRegistered(t *testing.T) {
+	checklist := readDoc(t, "docs/gcp-live-checklist.md")
+	for _, n := range []string{"410", "411", "412"} {
+		if !strings.Contains(checklist, "\n| "+n+" | ") {
+			t.Errorf("docs/gcp-live-checklist.md has no summary row %s: the register's rows are where a person running the checks finds them", n)
+		}
+		head := "## Check " + n + ": "
+		i := strings.Index(checklist, head)
+		if i < 0 {
+			t.Errorf("docs/gcp-live-checklist.md has no `%s` section for Check %s, though %s names the task that writes one", strings.TrimSpace(head), n, dgaDir+"implementation-plan.md")
+			continue
+		}
+		rest := checklist[i:]
+		if j := strings.Index(rest, "\n## Check "); j > 0 {
+			rest = rest[:j]
+		}
+		for _, want := range []string{
+			"scripts/live-checks/check-" + n + ".sh",
+			"scripts/live-checks/check-" + n + "_test.sh",
+			"T-DG10",
+			"never `belong`",
+			"no agent runs any step of it",
+			"NOT RUN",
+		} {
+			if !strings.Contains(rest, want) {
+				t.Errorf("Check %s's section does not say %q: it is the whole of what a person reading the register takes that check to be", n, want)
+			}
+		}
+		for _, p := range []string{"scripts/live-checks/check-" + n + ".sh", "scripts/live-checks/check-" + n + "_test.sh"} {
+			if _, err := os.Stat("../../" + p); err != nil {
+				t.Errorf("Check %s's section names %s and there is no such file: %v", n, p, err)
+			}
 		}
 	}
 }
