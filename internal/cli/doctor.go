@@ -720,7 +720,7 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 // is made of: it never fails doctor, with or without --strict, and it is never
 // read as "checked and found fine".
 func doctorOfflineChecks(ctx context.Context, o cloudOptions, loc pluginwire.Location, inCheckout bool) []doctorCheck {
-	ask := "run `fugaro doctor` without `--offline`, which asks"
+	ask := "run `fugaro doctor` without `--offline` to ask it"
 	skip := func(id, problem string) doctorCheck {
 		return doctorCheck{ID: id, Skipped: true, Severity: "info", Problem: problem, Fix: ask}
 	}
