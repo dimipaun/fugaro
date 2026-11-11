@@ -745,6 +745,48 @@ func TestPruneDeletesAtMostOneHundredDanglingItems(t *testing.T) {
 	}
 }
 
+// TestARestoreDropsTheMarksTheBatchCouldNotReach: D2125's batch bounds what
+// one call deletes, and the ledger is not spendable that way. A republish that
+// puts back more tasks than the batch has room for restores every one of them,
+// and the marks of the assignments behind the batch go with the dangling they
+// were about: a pass that dropped marks only for the documents its batch had
+// room for would leave a date that is already spent on an assignment that has
+// been dangling since minutes, and the next orphaning would be deleted by it.
+func TestARestoreDropsTheMarksTheBatchCouldNotReach(t *testing.T) {
+	s, f := testStoreAndFake(t)
+	ctx := testCtx(t)
+	f.Set(PathRelease("console", "0.110"), Release{
+		Schema: RoadmapSchema, ID: "0.110", Stream: "console", Name: "console 0.110",
+		State: ReleaseOpen, Order: 1, By: "person-2@example.com", At: time.Now().UTC(),
+	})
+	old := time.Now().Add(-PruneAge - time.Hour)
+	restored := Plan{
+		Schema: RoadmapSchema, Plan: "plans/gone", Stream: "console",
+		Source: PlanSource{Repo: "acme/app", Path: "docs/plans/gone.graph.json", Commit: "0", GraphSchema: 3},
+	}
+	task := func(i int) string { return fmt.Sprintf("plans/gone/T%03d", i) }
+	for i := 0; i < PruneBatch+50; i++ {
+		restored.Tasks = append(restored.Tasks, Task{ID: fmt.Sprintf("T%03d", i), Title: "a task"})
+		f.Set(PathAssign(task(i)), Assignment{
+			Schema: RoadmapSchema, Task: task(i), Release: ReleaseID("console", "0.110"),
+			By: "person-2@example.com", At: old,
+		})
+		markDangling(t, f, AssignID(task(i)), old)
+	}
+
+	if err := s.PublishPlan(ctx, restored, "", false); err != nil {
+		t.Fatalf("publishing the plan that carries them all: %v", err)
+	}
+	if _, found := readDoc[Assignment](t, s, PathAssign(task(0))); !found {
+		t.Error("the publish deleted an assignment it had just put back into a plan")
+	}
+	for i := 0; i < PruneBatch+50; i++ {
+		if _, found := readDoc[danglingMark](t, s, PathDanglingMark(AssignID(task(i)))); found {
+			t.Fatalf("the mark for the restored %s survived the publish (batch %d): the next orphaning inherits a date that is already spent", task(i), PruneBatch)
+		}
+	}
+}
+
 // TestThePruneDatesFromTheOrphaningNotFromTheLastMove: D2115's 30 days are
 // counted from the day a document went dangling, and the document's own `at`
 // is not that day — it is when it was last moved, which for an assignment
@@ -853,6 +895,64 @@ func TestThePruneLeavesADocumentWhoseTaskCameBack(t *testing.T) {
 	}
 	if slicesContains(rm.Dangling, task) {
 		t.Errorf("the dangling ids = %v, want none: the task is in a plan again", rm.Dangling)
+	}
+}
+
+// TestARemovedEdgeDoesNotLeaveItsDateBehind: the ledger dates a spell of
+// dangling, and a mark that outlives its document hands the next document
+// under that key a keep that is already spent. An edge removed and added back
+// is byte for byte the document that was marked, so the prune asks the record
+// and not the document — a mark the record did not hold the document dangling
+// under across some write is dropped, and this edge's second orphaning gets
+// its own 30 days rather than the first one's date, minutes old.
+func TestARemovedEdgeDoesNotLeaveItsDateBehind(t *testing.T) {
+	s, f, fx := writeStore(t)
+	ctx := testCtx(t)
+	mobile := fx.Plans[1].Plan
+	task := mobile + "/" + fx.Plans[1].Tasks[0].ID
+	needs := fx.Plans[0].Plan + "/" + fx.Plans[0].Tasks[0].ID
+	key := EdgeID(task, needs)
+	if _, found := readDoc[Edge](t, s, PathEdge(task, needs)); !found {
+		t.Fatalf("the fixture holds no edge %s -> %s to remove", task, needs)
+	}
+
+	// The plan the edge's own end is in goes, so the edge dangles, and a prune
+	// that saw it dangling long ago left the mark that must not be reused.
+	if err := s.UnpublishPlan(ctx, mobile); err != nil {
+		t.Fatalf("unpublishing the plan the edge needs: %v", err)
+	}
+	markDangling(t, f, key, time.Now().Add(-PruneAge-time.Hour))
+
+	// Removed while dangling and put back as it was, with the edge out of the
+	// record in between: a reconcile that only looked at the documents the
+	// record holds dangling would never see the mark again.
+	if err := s.RemoveEdge(ctx, task, needs); err != nil {
+		t.Fatalf("removing the dangling edge: %v", err)
+	}
+	if err := s.PublishPlan(ctx, fx.Plans[1], "", false); err != nil {
+		t.Fatalf("republishing the plan: %v", err)
+	}
+	if err := s.AddEdge(ctx, "person-1@example.com", Edge{Task: task, Needs: needs, Reason: "the release note follows the desktop's"}); err != nil {
+		t.Fatalf("adding the edge back: %v", err)
+	}
+	if err := s.UnpublishPlan(ctx, mobile); err != nil {
+		t.Fatalf("unpublishing the plan again: %v", err)
+	}
+	// The prune that follows is the first to see the edge dangling since it was
+	// added back, and it keeps it: the date the ledger held was the spell
+	// before, which ended when the edge left the record.
+	if err := s.PublishPlan(ctx, planWithTasks("plans/other", 1, "a task"), "", false); err != nil {
+		t.Fatalf("publishing beside the dangling edge: %v", err)
+	}
+	if _, found := readDoc[Edge](t, s, PathEdge(task, needs)); !found {
+		t.Fatal("the prune deleted an edge that had just been orphaned: the mark it inherited dated the spell before the edge was removed")
+	}
+	mark, found := readDoc[danglingMark](t, s, PathDanglingMark(key))
+	if !found || mark.At.IsZero() {
+		t.Fatalf("the dangling edge carries no mark (found %v): nothing would date this orphaning", found)
+	}
+	if time.Since(mark.At) > time.Hour {
+		t.Errorf("the mark dates %v ago, want the publish that saw the edge dangling: the second orphaning inherits the first one's date", time.Since(mark.At))
 	}
 }
 

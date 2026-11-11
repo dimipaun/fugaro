@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -556,20 +557,22 @@ type danglingMark struct {
 // never earlier than D2115's keep, and later only by how long the record went
 // without a publish or an unpublish, which is the laziness D2125 chose.
 //
-// A mark whose document comes back — a republish puts its task in a plan again
-// — is dropped by the publish that put it back, and a mark is dropped before
-// the document it marks, so a mark never outlives its document and a key a
-// later move reuses cannot inherit an old date. What the write cannot date is
-// a document dangling because its release is gone: no mark is written for one
-// and none is ever deleted, so it stays with the record (no writer here can
-// make one — the move refuses a release the record does not hold and the
-// delete refuses one an assignment names).
+// A mark dates one spell of dangling and never an earlier one, which is what
+// reconcileDanglingMarks keeps true: a mark whose document the record did not
+// hold dangling across this write — an edge RemoveEdge took out of the record,
+// a task a batch spent elsewhere never saw come back — is dropped before
+// anything is decided, so the key a later add or move writes the document
+// under again starts its own 30 days. A document dangling because its release
+// is gone is the one the write cannot date: no mark is written for one and
+// none is ever deleted, so it stays with the record (no writer here can make
+// one — the move refuses a release the record does not hold and the delete
+// refuses one an assignment names).
 //
 // before is the record as the write that called this found it, and it is what
 // makes the prune safe to run beside a record other writers are changing. No
-// deletion rests on a single read: a document goes only when four observations
-// agree, and the put that takes it is made on the ETag its own document was
-// read on, so anything written to that document in between fails the put.
+// deletion rests on a single read: a document goes only when the reads agree,
+// and the put that takes it is made on the ETag its own document was read on,
+// so anything written to that document in between fails the put.
 //
 //   - The candidates come from before, so this write never stamps or deletes
 //     what it has itself just orphaned: a document that was not dangling before
@@ -588,30 +591,97 @@ type danglingMark struct {
 //     assigned and their marks dropped: before is stale in exactly that
 //     direction, and a prune that decided from it would delete the moves a
 //     republish has just put back.
-//   - The mark itself is a fourth: a document goes only when a mark for it is
+//   - The ledger is read against the same two records, and a mark is dropped
+//     rather than acted on when the record does not show its document dangling
+//     at both ends of the write.
+//   - The mark itself is the last: a document goes only when a mark for it is
 //     older than PruneAge, and a mark is written the first time a prune sees
 //     the document dangling.
 func (s *Store) pruneDangling(ctx context.Context, before Roadmap) error {
-	if len(before.Dangling) == 0 {
-		return nil
-	}
 	marks, err := s.danglingMarks(ctx)
 	if err != nil {
 		return err
+	}
+	// A record with nothing dangling and a ledger with nothing in it are the
+	// ordinary case of a publish: there is no date to keep and nothing to
+	// delete, and the record is not read a second time for either.
+	if len(marks) == 0 && len(before.Dangling) == 0 {
+		return nil
 	}
 	assigns, edges, err := s.danglingCandidates(ctx, before, marks)
 	if err != nil {
 		return err
 	}
-	if len(assigns)+len(edges) == 0 {
-		return nil
-	}
 	after, err := s.ReadRoadmap(ctx)
 	if err != nil {
 		return err
 	}
-	for _, v := range danglingVerdicts(after, append(assigns, edges...)) {
-		if err := s.applyDangling(ctx, v); err != nil {
+	if err := s.reconcileDanglingMarks(ctx, before, after, marks); err != nil {
+		return err
+	}
+	if len(assigns)+len(edges) == 0 {
+		return nil
+	}
+	for _, c := range stillDangling(after, append(assigns, edges...)) {
+		if err := s.applyDangling(ctx, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// danglingKeys is the keys of the documents one read of the record holds
+// dangling: the ledger's own key for each, which is what a mark is stored
+// under. Dangling is a fact about the record — no plan carries the task, or no
+// release the assignment names — so two reads of it can be compared without
+// reading a document, which is what makes the reconcile below cheap.
+func danglingKeys(r Roadmap) map[string]bool {
+	idx := indexRoadmap(r)
+	keys := make(map[string]bool, len(r.Dangling))
+	for _, a := range r.Assignments {
+		if idx.assignment(a) {
+			keys[AssignID(a.Task)] = true
+		}
+	}
+	for _, e := range r.Edges {
+		if idx.edge(e) {
+			keys[EdgeID(e.Task, e.Needs)] = true
+		}
+	}
+	return keys
+}
+
+// reconcileDanglingMarks drops every mark the two records do not agree the
+// document is dangling in: a mark may date the spell the record is in, and a
+// mark that survives the end of a spell hands the next document under that key
+// a keep that is already spent — an edge removed and added back is byte for
+// byte the document that was marked, and an assignment whose task a republish
+// put back and a later publish took away again is the move that was marked, so
+// nothing in either document tells one spell from the next.
+//
+// Both records are asked and not the mark's own document, because a spell ends
+// without the prune that would have seen it end: RemoveEdge takes an edge out
+// of the record and leaves its mark behind; a move writes the assignment into
+// a release the record holds, and the mark the old dangling was about is
+// about nothing; a republish's prune can spend its batch on the documents
+// before the one whose task came back, and the restore behind the batch is
+// never reached. Every one of those leaves the document dangling at neither
+// end of some later write, or at only one of them — and dangling only changes
+// inside the two writes that carry this prune, so no spell boundary escapes
+// the pass: a mark that is kept here is a mark about a document the record
+// held dangling when this write began and still holds dangling now.
+//
+// It is a delete per mark the record no longer shows and no document at all,
+// so it is the batch's bound on documents that is spent by the deletions
+// below, not this: clearing only the marks a later call happens to look at is
+// what leaves a spent date behind.
+func (s *Store) reconcileDanglingMarks(ctx context.Context, before, after Roadmap, marks map[string]danglingMark) error {
+	was, now := danglingKeys(before), danglingKeys(after)
+	for _, key := range slices.Sorted(maps.Keys(marks)) {
+		if was[key] && now[key] {
+			continue
+		}
+		if err := s.clearDanglingMark(ctx, key); err != nil {
 			return err
 		}
 	}
@@ -686,22 +756,15 @@ func (s *Store) danglingCandidates(ctx context.Context, before Roadmap, marks ma
 	return decide, stamp, nil
 }
 
-// danglingVerdict is one candidate as the record's second read answers for it:
-// the record still holds the document as it was read, still holds it dangling,
-// and it dangles because its task is what is missing — the only dangling this
-// writer can date.
-type danglingVerdict struct {
-	candidate pruneCandidate
-	dangling  bool
-	datable   bool
-}
-
-// danglingVerdicts asks the record's second read about each candidate. A
-// document that has changed since it was read, or that the read no longer
-// holds at all, is not a verdict: it belongs to a decision that never saw it.
-func danglingVerdicts(after Roadmap, cs []pruneCandidate) []danglingVerdict {
+// stillDangling is the candidates the record's second read still holds: the
+// document as it was read, still dangling, and dangling because its task is
+// what is missing — the only dangling this writer can date. A document that
+// has changed since it was read, or that the read no longer holds at all,
+// belongs to a decision that never saw it; one whose dangling has ended
+// belongs to the ledger pass, which has already dropped its mark.
+func stillDangling(after Roadmap, cs []pruneCandidate) []pruneCandidate {
 	idx := indexRoadmap(after)
-	out := make([]danglingVerdict, 0, len(cs))
+	out := make([]pruneCandidate, 0, len(cs))
 	for _, c := range cs {
 		if c.edge {
 			var doc Edge
@@ -710,12 +773,12 @@ func danglingVerdicts(after Roadmap, cs []pruneCandidate) []danglingVerdict {
 			}
 			doc = doc.sanitised()
 			stored, held := heldEdge(after, doc.Task, doc.Needs)
-			if !held || !reflect.DeepEqual(stored, doc) {
+			// An edge dangles only when a plan no longer carries one of its
+			// endpoints, so every edge the record holds dangling is datable.
+			if !held || !reflect.DeepEqual(stored, doc) || !idx.edge(stored) {
 				continue
 			}
-			// An edge dangles only when a plan no longer carries one of its
-			// endpoints, so every edge this writer can see dangling is datable.
-			out = append(out, danglingVerdict{candidate: c, dangling: idx.edge(stored), datable: true})
+			out = append(out, c)
 			continue
 		}
 		var doc Assignment
@@ -724,30 +787,21 @@ func danglingVerdicts(after Roadmap, cs []pruneCandidate) []danglingVerdict {
 		}
 		doc = doc.sanitised()
 		stored, held := heldAssignment(after, doc.Task)
-		if !held || !reflect.DeepEqual(stored, doc) {
+		if !held || !reflect.DeepEqual(stored, doc) || !idx.assignment(stored) || idx.carriesTask(stored.Task) {
 			continue
 		}
-		out = append(out, danglingVerdict{candidate: c, dangling: idx.assignment(stored), datable: !idx.carriesTask(stored.Task)})
+		out = append(out, c)
 	}
 	return out
 }
 
 // applyDangling is the ledger's one decision, taken for one candidate that the
-// record's second read still holds as it was read.
-func (s *Store) applyDangling(ctx context.Context, v danglingVerdict) error {
+// record's second read still holds dangling and unchanged.
+func (s *Store) applyDangling(ctx context.Context, c pruneCandidate) error {
 	switch {
-	case !v.dangling && v.candidate.mark.At.IsZero():
-		return nil
-	case !v.dangling:
-		// A republish put the task back while this prune was deciding: the mark
-		// goes with the dangling it was about, so a later orphaning of the same
-		// document starts its own 30 days rather than inheriting these.
-		return s.clearDanglingMark(ctx, v.candidate.key)
-	case !v.datable:
-		return nil
-	case v.candidate.mark.At.IsZero():
-		return s.putDanglingMark(ctx, v.candidate.key, time.Now().UTC())
-	case time.Since(v.candidate.mark.At) < PruneAge:
+	case c.mark.At.IsZero():
+		return s.putDanglingMark(ctx, c.key, time.Now().UTC())
+	case time.Since(c.mark.At) < PruneAge:
 		return nil
 	}
 	// The mark goes before the document it marks: a deletion that loses its
@@ -755,10 +809,10 @@ func (s *Store) applyDangling(ctx context.Context, v danglingVerdict) error {
 	// stamps again and keeps longer — the direction that loses nothing. The
 	// other order would leave a mark for a document that is gone, and the key a
 	// later move wrote the same task's assignment under would inherit it.
-	if err := s.clearDanglingMark(ctx, v.candidate.key); err != nil {
+	if err := s.clearDanglingMark(ctx, c.key); err != nil {
 		return err
 	}
-	return s.deletePruned(ctx, v.candidate)
+	return s.deletePruned(ctx, c)
 }
 
 // danglingMarks reads the ledger. A mark this build cannot read is one it does
