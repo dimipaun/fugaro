@@ -367,6 +367,12 @@ Subscriptions" path with the seats the form names, and the `organisation` claim 
 rather than a domain (S2.1's claim table). Nothing here is self-serve, and the per-tier limits and
 the audit line of §6 apply to these mints exactly as they do to an approval.
 
+They mint once by the render rather than by the order. An approval has a request id to be idempotent
+by (§4.5) and an Order Form is a document the service has never seen, so one submission of the form
+the owner is looking at is one key and the same order form and seat count are a licence the owner
+issues again by opening the page again — which a source built from the order form and the seats alone
+would refuse and then answer as a success (`TestAnOrderFormMintCanBeIssuedAgain`).
+
 ## 6. The admin page and the manual queue
 
 The page is a second authenticated surface that can mint **any** key for **any** tier (T13 item 8),
