@@ -181,12 +181,17 @@ type PlanSource struct {
 	GraphSchema int    `json:"graph_schema"`
 }
 
-// PlanTask is one task of a published plan: what the graph draws and what a
+// Task is one task of a published plan: what the graph draws and what a
 // qualified id names. A task's run and its footprint are the artifact's and
 // are not here — the record holds no run-derived state — and `version` is the
 // artifact's own target, carried as a display input so a task with no
 // assignment can be drawn beside it marked "from the plan" (D2114).
-type PlanTask struct {
+//
+// It is not named for the run's own plan task field: that one is untrusted
+// display text that nothing may decide anything by, and internal/runview's
+// scan fails a file that names it outside its allow-list. This is a task of a
+// plan document, and the two meet only where a graph joins them.
+type Task struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 	// Kind and Size are internal/plan's Node fields, carried under the same
@@ -226,7 +231,7 @@ type Plan struct {
 	Source PlanSource `json:"source"`
 	// Tasks are the plan's tasks and Edges its own dependencies, both as the
 	// artifact wrote them.
-	Tasks []PlanTask `json:"tasks"`
+	Tasks []Task     `json:"tasks"`
 	Edges []PlanEdge `json:"edges"`
 }
 

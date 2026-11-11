@@ -218,7 +218,7 @@ func TestRoadmapKeysAreDeterministic(t *testing.T) {
 	s, f := testStoreAndFake(t)
 	here := Plan{Schema: RoadmapSchema, Plan: "plans/x", Stream: "cli",
 		Source: PlanSource{Repo: "acme/one", Path: "docs/x.graph.json", Commit: "1111"},
-		Tasks:  []PlanTask{}, Edges: []PlanEdge{}}
+		Tasks:  []Task{}, Edges: []PlanEdge{}}
 	there := here
 	there.Source = PlanSource{Repo: "acme/two", Path: "docs/x.graph.json", Commit: "2222"}
 	if PathPlan(here.Plan) != PathPlan(there.Plan) {
@@ -302,7 +302,7 @@ func TestRoadmapStreamsAreReadFromTheReleases(t *testing.T) {
 func TestRoadmapSkipsANewerSchemaAndCountsIt(t *testing.T) {
 	s, f := testStoreAndFake(t)
 	f.Set(PathPlan("plans/now"), Plan{Schema: RoadmapSchema, Plan: "plans/now", Stream: "cli",
-		Tasks: []PlanTask{{ID: "N1", Title: "the shape this build writes", Version: roadmapPtr("0.10")}}, Edges: []PlanEdge{}})
+		Tasks: []Task{{ID: "N1", Title: "the shape this build writes", Version: roadmapPtr("0.10")}}, Edges: []PlanEdge{}})
 	f.Set(PathPlan("plans/later"), map[string]any{
 		"schema": RoadmapSchema + 1,
 		"plan":   "plans/later",
@@ -336,7 +336,7 @@ func TestRoadmapSkipsANewerSchemaAndCountsIt(t *testing.T) {
 func TestRoadmapUndecodableDocumentIsCountedNotFatal(t *testing.T) {
 	s, f := testStoreAndFake(t)
 	f.Set(PathPlan("plans/good"), Plan{Schema: RoadmapSchema, Plan: "plans/good", Stream: "cli",
-		Tasks: []PlanTask{{ID: "G1", Title: "a plan this build wrote", Version: roadmapPtr("0.10")}}, Edges: []PlanEdge{}})
+		Tasks: []Task{{ID: "G1", Title: "a plan this build wrote", Version: roadmapPtr("0.10")}}, Edges: []PlanEdge{}})
 	f.Set(PathPlan("plans/hand-written"), map[string]any{
 		"schema":    RoadmapSchema,
 		"plan":      "plans/hand-written",
@@ -386,7 +386,7 @@ func TestRoadmapUndecodableDocumentIsCountedNotFatal(t *testing.T) {
 func TestRoadmapDanglingEndpointIsNamed(t *testing.T) {
 	s, f := testStoreAndFake(t)
 	f.Set(PathPlan("plans/p1"), Plan{Schema: RoadmapSchema, Plan: "plans/p1", Stream: "cli",
-		Tasks: []PlanTask{{ID: "T1", Title: "one", Version: roadmapPtr("0.10")}}, Edges: []PlanEdge{}})
+		Tasks: []Task{{ID: "T1", Title: "one", Version: roadmapPtr("0.10")}}, Edges: []PlanEdge{}})
 	f.Set(PathRelease("cli", "0.10"), Release{Schema: RoadmapSchema, ID: "0.10", Stream: "cli", Name: "Badger",
 		State: ReleaseOpen, Order: 1, By: "person-1@example.com", At: roadmapFixtureAt})
 	f.Set(PathEdge("plans/p1/T1", "plans/gone/T9"), Edge{Schema: RoadmapSchema, Task: "plans/p1/T1", Needs: "plans/gone/T9",
@@ -468,7 +468,7 @@ func TestRoadmapTextIsSanitisedOnRead(t *testing.T) {
 		hostileWhy   = "reads\x1b[2Jthe document shape the console plan wrote"
 	)
 	f.Set(PathPlan("plans/p1"), Plan{Schema: RoadmapSchema, Plan: "plans/p1", Stream: "cli",
-		Tasks: []PlanTask{{ID: "T1", Title: hostileTitle, Version: roadmapPtr("0.10")}}, Edges: []PlanEdge{}})
+		Tasks: []Task{{ID: "T1", Title: hostileTitle, Version: roadmapPtr("0.10")}}, Edges: []PlanEdge{}})
 	f.Set(PathRelease("cli", "0.10"), Release{Schema: RoadmapSchema, ID: "0.10", Stream: "cli", Name: hostileName,
 		State: ReleaseOpen, Order: 1, By: hostileBy, At: roadmapFixtureAt})
 	f.Set(PathEdge("plans/p1/T1", "plans/p2/T2"), Edge{Schema: RoadmapSchema, Task: "plans/p1/T1", Needs: "plans/p2/T2",
