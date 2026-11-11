@@ -1087,6 +1087,18 @@ built**. That rewrite is task **T0.1**'s
 admitted collection call site are task **T3.1**'s, and the two clauses **this section's
 Verification names as D255's facts** (*there is no switch*, *uninstalling stops them*) are
 pinned **absent** in `mobile/src/telemetry/notice.test.js` until they are rewritten here.
+The statement **says what a report holds** as well as where it goes (the page's own
+sentence for it), because a statement that says only where reports go leaves a reader
+unable to judge what they are agreeing to; and the clauses it ships are held to **the live
+page** rather than retyped — `notice.test.js` reads `website/src/pages/privacy.astro` and
+refuses a clause the page has stopped carrying — so a rewrite of that paragraph (T3.1's,
+beside the Analytics package) fails in the app instead of leaving the app quoting a page
+that has moved. **One gate outside the app moved with it:** `website/test/privacy.mjs`'s
+host-naming rule (rule 5) refuses any production source that names the site's canonical
+host, and `notice.js` must name it, so the file is on that gate's allow-list beside the
+console's two — the reason the gate already records for those (a link a reader may follow
+is not the software's own traffic) covers an app whose link ships unopenable, and the
+gate's `REACH_CALLS` reading still applies to the entry in full.
 
 ### Task P7.3: The allow-list, the redaction rule, and the scan
 
