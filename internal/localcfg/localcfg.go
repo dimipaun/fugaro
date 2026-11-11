@@ -883,11 +883,10 @@ type ModelPrice struct {
 	CacheRead      *float64 `yaml:"cache_read,omitempty"`
 	WebSearchPer1k *float64 `yaml:"web_search_per_1k,omitempty"`
 	// ImageTokens is the per-image token ceiling an image block is reserved
-	// at, and it is what makes a model able to take an image at all: a model
-	// with no ceiling is refused an image call (D2000). Left out, the model
-	// keeps the ceiling it already had — the built-in Claude rows have one —
-	// and an explicit 0 takes the images away, which is what a model with no
-	// row of its own has.
+	// at, and it is the whole of what makes a model able to take an image
+	// (D2000): a model with no ceiling is refused the call. Left out, the
+	// model keeps the ceiling it already had — the built-in Claude rows have
+	// one — and an explicit 0 takes its images away.
 	ImageTokens *int64 `yaml:"image_tokens,omitempty"`
 	// LongContext is the price of a call whose input passes a threshold,
 	// for a model with a long-context tier; an override without it

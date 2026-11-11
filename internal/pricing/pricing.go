@@ -326,12 +326,12 @@ func MaxOf(a, b Rates) Rates {
 // with only its rates, so its images are refused and a PDF reserves the
 // default context window.
 //
-// The image ceiling is the one price a model carries beside its rates, and
-// it is the one the override sets only where it names it (Override.
-// ImageTokens): a row's own ceiling survives an override that leaves it out,
-// and an explicit 0 takes the images away. A model the table doesn't have
-// gets no ceiling from an override that leaves the member out, which is the
-// same "images refused" its added row already had.
+// The image ceiling is the one price a model carries beside its rates, and an
+// override sets it only where it writes the member: a row's own ceiling
+// survives an override that leaves it out, and an explicit 0 takes the images
+// away (Override.ImageTokens). A model the table doesn't have gets no ceiling
+// from an override that leaves the member out, which is the "images refused"
+// its added row already had.
 func (t *Table) With(o Overrides) (*Table, error) {
 	if err := o.validate(); err != nil {
 		return nil, err
