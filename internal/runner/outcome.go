@@ -422,12 +422,11 @@ func (r *run) levelTolerated(l policy.Level, rs runstore.ReviewSummary) bool {
 	if !ok {
 		return false
 	}
-	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), rs.Round, scoresOf(sr.Findings), r.stopAt)
 	// The level's own deferrals, which the round's recorded verdict word does
 	// not carry: a level-2 round a judge deferred whole left the pull request
 	// nothing to be a draft on, and level 3 shipping over it does not change
 	// that (F21).
-	pol.Deferred = sr.Deferred
+	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), rs.Round, scoresOf(sr.Findings), r.stopAt).withDeferred(sr.Deferred)
 	return pol.tolerates(&rs)
 }
 
@@ -552,10 +551,11 @@ type FindingsPolicy struct {
 	// opted in — which is what keeps such a run deciding by the recorded count
 	// exactly as it did before the stage existed (F32).
 	//
-	// The two sites that ask tolerates of a round readiness is decided on set
-	// it from the round the loop kept (findingsPolicy and levelTolerated);
-	// findingsPolicyOf leaves it empty, and the policy that only reads the
-	// record's tolerated block has no use for it.
+	// The two sites that ask tolerates of a round readiness is decided on fill
+	// it from the round the loop kept, through withDeferred, which is also where
+	// the one split it may not be added to is stated; findingsPolicyOf leaves it
+	// empty, and the policy that only reads the record's tolerated block has no
+	// use for it.
 	Deferred []rigor.Score
 	// Raised is the raise the run's mode took during the run, nil when it never
 	// rose (T3.5, D19). It is what makes a raised mode decide readiness and
@@ -675,6 +675,27 @@ func (pol FindingsPolicy) tolerates(last *runstore.ReviewSummary) bool {
 // it left none of them would report a review that found nothing (F21).
 func (pol FindingsPolicy) through() int { return len(pol.Tolerated) + len(pol.Deferred) }
 
+// withDeferred folds the round's deferrals into the policy at the one moment
+// they are the policy's to count, which is what keeps a finding from being
+// counted twice (T-TR7b). A deferral is a finding the mode's own table blocks
+// and a judge let through — the floor is what no verdict moves (F3, D1857) — so
+// it belongs in the tolerant half beside the mode's own tolerations, which are
+// the findings that rule does not block, and the two halves a round splits into
+// under the mode's own rule are disjoint.
+//
+// The stop's split is not that rule (AtStop, rigor.SplitAtStop): it accepts
+// every finding but the catastrophic ones, and a judge may only defer a finding
+// the floor does not name, so it already carries every deferral the round has.
+// Adding them there would count each of them twice and read a round the stop
+// blocks one finding of as a round the stop takes whole — a draft published
+// ready (F31's shape, on the stop's side).
+func (pol FindingsPolicy) withDeferred(deferred []rigor.Score) FindingsPolicy {
+	if pol.AtStop == "" {
+		pol.Deferred = deferred
+	}
+	return pol
+}
+
 // acceptsAtStop reports whether the stop is what makes this run ready: the
 // policy is the stop's own split of the deciding round (AtStop, and the split
 // taken from rigor.SplitAtStop), that round did not ship — a shipped round is
@@ -767,11 +788,10 @@ func findingsPolicyOf(cfg rigor.Config, mode rigor.Mode, round int, findings []r
 // it (noteRigorRaise, rigor.go), the outer level the deciding one held back,
 // if any, and the half of the stop rule the run's rounds ended on, if any.
 func (r *run) findingsPolicy() FindingsPolicy {
-	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), r.stopAt)
 	// The deciding round's deferrals, read from the round the loop kept and
 	// never from the recorded verdict word: a round a judge deferred whole
 	// records `changes` and is a round the mode does not block on (F21).
-	pol.Deferred = r.lastSenior.Deferred
+	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), r.stopAt).withDeferred(r.lastSenior.Deferred)
 	pol.Raised = r.rigorRaise
 	pol.HeldBack = r.heldBackLevel()
 	pol.StopBlocking = r.stopBlockingLevels()

@@ -267,8 +267,13 @@ func TestAllDeferredLevelTwoAdvancesToLevelThree(t *testing.T) {
 // effect when the run ended and not a log of every deferral a judge ever wrote
 // (D1850). Level 2 deferred the finding and ended its level on it; the
 // adversarial round found the same finding again — the key is what says it is
-// the same one — and blocked it, so it is this patch's work after all and no
-// follow-up is filed for it. The log keeps both rounds, and the block is empty.
+// the same one — and blocked it, so it is not a follow-up any more and the block
+// is empty, while the log keeps both rounds.
+//
+// Level 3's round is also the run's last and the run is out of rounds, so the
+// stop is what settles the finding that round blocked: a correctness finding is
+// not one the stop holds out for (D30), and the record's accepted block is where
+// it lands instead — once, and in no follow-up list.
 func TestAReversedDeferralIsNotFiled(t *testing.T) {
 	cfg := startupCfg(t, 1, "  levels: { l3: { model: senior-model } }\n  adversarial_rounds: 1\n")
 	h := newHarness(t, cfg, nil)
@@ -291,8 +296,11 @@ func TestAReversedDeferralIsNotFiled(t *testing.T) {
 	if rec.Deferred != nil {
 		t.Errorf("the record's deferred block = %+v, want none: the round that blocks a finding takes its deferral back", rec.Deferred)
 	}
-	if rec.Outcome != runstore.OutcomeDraft {
-		t.Errorf("rec = %+v, want a draft on the finding level 3 blocked", rec)
+	if rec.Outcome != runstore.OutcomeReady {
+		t.Errorf("rec = %+v, want ready: the finding level 3 blocked is one the stop takes", rec)
+	}
+	if ac := rec.Accepted; ac == nil || ac.Total != 1 || ac.At != runstore.StopRoundsSpent {
+		t.Errorf("the record's accepted block = %+v, want the round the stop took whole, with the finding in it", ac)
 	}
 }
 
@@ -455,6 +463,126 @@ func TestUnconfiguredRepositoryNeverDefers(t *testing.T) {
 	}
 	if rec.Triage != nil || rec.Deferred != nil {
 		t.Errorf("an unconfigured repository triaged or deferred something: %+v / %+v", rec.Triage, rec.Deferred)
+	}
+}
+
+// TestFirstLineAllDeferredRoundEndsTheCheapLoop: level 1's rounds are judged
+// like every other level's (D1847), and a round a judge deferred whole ends
+// *that* level: the cheap loop buys no fix, hands on to the senior review, and
+// the deferral is filed from the level that made it. The round the first line
+// left is kept on firstLineLast for the reason it always is — a run the stop
+// ends before level 2 starts has only that round for readiness and for the
+// held-back rule to read — and this case is the other half of that: the senior
+// round ships over it, and the cheap round neither holds the pull request a
+// draft nor leaves it unrun.
+func TestFirstLineAllDeferredRoundEndsTheCheapLoop(t *testing.T) {
+	h := newHarness(t, startupCfg(t, 2, "  first_line_review: on\n"), nil)
+	rec, err := h.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding()),
+		triageStep("defer"),
+		review("ship", 0),
+		triageStep("defer"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "triage", "review", "triage") {
+		t.Fatalf("stages = %v, want the cheap round's fix skipped and the senior review reached", got)
+	}
+	if rec.Outcome != runstore.OutcomeReady {
+		t.Errorf("rec = %+v, want ready: the senior round shipped over a cheap round nothing blocked in", rec)
+	}
+	if d := deferredOf(rec); len(d) != 1 {
+		t.Fatalf("the record's deferred block = %+v, want the cheap round's one deferral filed", rec.Deferred)
+	}
+	for _, f := range rec.Deferred.Findings {
+		if f.Source != runstore.TriageSourceAgent || f.Summary != "unbounded retry loop in the fetch path" {
+			t.Errorf("the deferral = %+v, want the finding the cheap round's judge deferred", f)
+		}
+	}
+}
+
+// TestFirstLineFixerSeesOnlyTheBlockers is acceptance 2 at level 1: the cheap
+// loop's own fix round gets the findings its judge blocked and nothing else, so
+// a deferred finding reaches no coder whichever level raised it. The first line
+// spends its one round here, so the fix is the last thing it does before the
+// senior review ships the patch.
+func TestFirstLineFixerSeesOnlyTheBlockers(t *testing.T) {
+	h := newHarness(t, startupCfg(t, 2, "  first_line_review: on\n  first_line_rounds: 1\n"), nil)
+	rec, err := h.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding(), trivialFinding()),
+		triageVerdicts("block", "defer"),
+		fixStep,
+		review("ship", 0),
+		triageStep("defer"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "triage", "fix", "review", "triage") {
+		t.Fatalf("stages = %v, want the cheap round's fix bought and the senior review reached", got)
+	}
+	fix := h.agent.calls[3]
+	if !strings.Contains(fix.Prompt, "- feature.txt: unbounded retry loop in the fetch path") {
+		t.Errorf("the fixer was not handed the finding the cheap round's judge blocked:\n%s", fix.Prompt)
+	}
+	if strings.Contains(fix.Prompt, trivialSummary) {
+		t.Errorf("the fixer was handed a finding the cheap round's judge deferred:\n%s", fix.Prompt)
+	}
+	if _, ok := deferredOf(rec)[findingKeyOf("feature.txt", trivialSummary)]; !ok {
+		t.Errorf("the record's deferred block = %+v, want the cheap round's deferred finding filed", rec.Deferred)
+	}
+}
+
+// TestTheStopsCheapRoundDeferralIsNotCountedTwice: the cheap loop's round is
+// kept on firstLineLast, and the time threshold can end the run before level 2
+// starts, so what readiness reads is that round through the level's own policy —
+// which at a stop is the stop's split and not the mode's own rule. The stop's
+// split already carries the round's deferral: a judge may only defer a finding
+// the floor does not name (F3, D1857) and the stop accepts every finding but the
+// catastrophic ones, so the deferred finding is the same one the stop accepts.
+// Counting it beside them a second time reads the round as one the stop accepts
+// nothing of, and the pull request is left a draft that the mode's own stop rule
+// says may merge (F31's shape, on the stop's side).
+func TestTheStopsCheapRoundDeferralIsNotCountedTwice(t *testing.T) {
+	// 0.05 of the fixture's 5m is 15s: the implement stage alone puts the run
+	// past the threshold, the first line still buys its one round (stopNow's
+	// guard, read over the run's rounds and not the level's) and the senior loop
+	// stops before it starts.
+	h := newHarness(t, startupCfg(t, 2, "  first_line_review: on\n  review_stop_fraction: 0.05\n"), nil)
+	clk := newClock()
+	h.deps.Now = clk.Now
+	rec, err := h.run(t,
+		afterStep(clk, implement("feature")),
+		afterStep(clk, reviewScored("changes", blockingFinding())),
+		afterStep(clk, triageStep("defer")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "triage") {
+		t.Fatalf("stages = %v, want the cheap round judged and no senior round after it", got)
+	}
+	if rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("outcome = %s (reason %q), want ready: the run stopped, and startup accepts the round it stopped at", rec.Outcome, rec.Reason)
+	}
+	if want := "review round 1 left 1 finding, accepted at startup (time threshold)"; rec.Reason != want {
+		t.Errorf("reason = %q, want %q", rec.Reason, want)
+	}
+	ac := rec.Accepted
+	if ac == nil || ac.Round != 1 || ac.At != runstore.StopTimeThreshold || ac.Total != 1 {
+		t.Fatalf("the record's accepted findings = %+v, want the round the time threshold cut", ac)
+	}
+	// The same finding is filed as a deferral as well, and that is what the two
+	// blocks say: the stop accepting it is why the pull request is not held for
+	// it, and the deferral is the follow-up it is (T-TR3's Record.Deferred,
+	// T-TR9's section). Readiness is where it must be counted once.
+	if d := deferredOf(rec); len(d) != 1 {
+		t.Errorf("the record's deferred block = %+v, want the cheap round's one deferral filed", rec.Deferred)
+	} else if _, ok := d[findingKeyOf("feature.txt", "unbounded retry loop in the fetch path")]; !ok {
+		t.Errorf("the record's deferred block = %+v, want the finding the cheap round's judge deferred", rec.Deferred)
 	}
 }
 

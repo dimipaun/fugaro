@@ -3587,9 +3587,13 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		// dispatched — there is nothing a coder could change — and no further
 		// round is bought, because the reviewer would be asked the same
 		// question about the same unchanged code. The decisions are recorded
-		// and the run ends waiting for them (ownerStop). What it names is what
-		// the round still blocks on, so a round that defers a finding beside a
-		// needs_owner one does not read as a round of the owner's alone.
+		// and the run ends waiting for them (ownerStop). What it reads is what
+		// the round still blocks on, and a deferred finding is not one of those:
+		// a round that defers a finding beside a needs_owner one is a round of
+		// the owner's alone by this rule, and the run stops here on it (T-TR7b,
+		// TestNeedsOwnerFindingStillStopsTheLoopWhenTriaged) — the fixer has
+		// nothing to change for either finding, and the deferred one is filed as
+		// the follow-up it is.
 		if v.Verdict != "ship" && allOwner(triaged.fixable(v)) {
 			r.ownerStop(ctx, triaged.fixable(v))
 			return false
@@ -4049,10 +4053,13 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			if triaged, ok = r.triageRound(ctx, round, policy.LevelL1, v); !ok {
 				return sessionID, false
 			}
-			// The cheap round's deferrals are kept wherever the round is kept,
-			// for the reason firstLineLast itself is: a run the stop ends before
-			// level 2 starts has only this round for readiness — and for the
-			// held-back rule — to read.
+			// The cheap round's deferrals are kept beside it wherever the round
+			// itself is kept, its findings' own record: a stop that cuts level 2
+			// off leaves this round for finalize to read (decidingRound), and the
+			// policy built for a round must be able to count what a judge took out
+			// of it. Where that policy is the stop's own split the deferrals are
+			// already in it and are not added again (withDeferred), so this is the
+			// round kept whole and not a second reading of it.
 			r.firstLineLast.Deferred = triaged.Deferred
 			if decides {
 				r.lastSenior.Deferred = triaged.Deferred
