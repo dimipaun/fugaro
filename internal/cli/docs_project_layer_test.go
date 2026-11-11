@@ -201,6 +201,51 @@ func TestDocsProjectLayerSaysRoutingIsApplied(t *testing.T) {
 	}
 }
 
+// TestDocsProjectLayerSaysTheSecurityListIsResolved: the page said, in bold,
+// that no run reads the two security halves, that the list in force is still
+// the engine's own floor of 43 rows and that doctor's finding about a written
+// row cannot fire — which the resolution made false (SC9, D1506, D1511). The
+// list a run matches a change against, the one `fugaro security paths` prints
+// and the one `fugaro doctor` counts are one resolution of the floor, the
+// project layer and the repository, so a reader who believed the page would
+// write a project-layer row expecting nothing to read it.
+//
+// The second half is which of those rows doctor measures: a project layer's row
+// is shared by every repository of the project, so the page may not claim the
+// finding covers it (the review finding on this change — a finding whose fix
+// the reader cannot apply is worse than none).
+//
+// Mutation (verified, run and restored): restore the paragraph's bold lead —
+// "**0.22.0 decodes and validates both halves; no run reads them yet.**" — and
+// the file where the layer is sketched, and this fails naming both.
+func TestDocsProjectLayerSaysTheSecurityListIsResolved(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	for _, want := range []string{
+		"the readers resolve them",
+		"what a run matches a change against, what `fugaro security paths` prints and what `fugaro doctor` counts are that one resolution",
+		"the floor's rows and the repository's as if the project had written none",
+		"the one row it reports is one **this repository's own file** wrote that matches no path in the base",
+		"it is counted like the floor's rows and never measured",
+		"`always_level_3` and the per-run request that belongs to it arrive with the forced level",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md lacks %q: the page is where a reader learns that both halves are read, and by whom", want)
+		}
+	}
+	for _, notWant := range []string{
+		"no run reads them yet",
+		"no run reads it yet",
+		"is still the engine's own floor of 43 rows",
+		"a written row are computed against that same floor",
+		"cannot be reported until a run resolves the list from the layers",
+		"arrive with the list's resolution (SC9) and the escalation (SC10)",
+	} {
+		if strings.Contains(doc, notWant) {
+			t.Errorf("docs/project-layer.md still says %q, which the resolution made false: the floor, the project's rows and the repository's are one list, and a run, `fugaro security paths` and `fugaro doctor` all read it", notWant)
+		}
+	}
+}
+
 // TestDocsProjectLayerShowsEveryFlagOfTheCommandsItShows is the other half of
 // TestDocsProjectLayerCommandsExist: that one checks the docs' flags are real,
 // and this one checks a real flag is in the docs. A flag an operator needs is
