@@ -207,6 +207,10 @@ func runReport(cmd *cobra.Command, o *reportOptions, d Deps) error {
 }
 
 func reportEmit(cmd *cobra.Command, o *reportOptions, rep report.Report, m report.Meta) error {
+	// Every grouping funnels through here, and every one of them counts shadow
+	// spend (D568), so the note is added once, here, rather than by each caller
+	// that could forget it.
+	m.Warnings = append(m.Warnings, reportShadowSpendNote)
 	out := cmd.OutOrStdout()
 	switch {
 	case o.json:
@@ -347,6 +351,13 @@ func reportLive(ctx context.Context, cloud *fcli.Cloud, days []int64, warn func(
 // the mode a run resolved is written in the run's own record and in no day
 // rollup, so this breakdown reads the runs bucket and never the spend history.
 const reportModeSourceNote = "these rows come from run records (the runs bucket), not the Firestore spend history: a run's rigor mode is written in its own record, and every run counts once, on its launch day"
+
+// reportShadowSpendNote is the line every spend grouping carries since model
+// A/B testing (D568): a challenger's spend is real money, so it is in the day
+// records, in these rows and in the daily cap, and the day records carry no arm
+// to take it back out by. `fugaro ab` is where the arms are told apart, which
+// is why the note points there rather than at a second grouping.
+const reportShadowSpendNote = "A/B shadow spend is included in these figures: a challenger run's money is spent like any run's, and the day records these rows come from carry no arm to exclude it by (`fugaro ab` is where the two arms are told apart)"
 
 // reportByMode is --by mode: what the project spent in each rigor mode its runs
 // resolved, from the run records. It needs neither Firestore nor the budget

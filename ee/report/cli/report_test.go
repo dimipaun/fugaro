@@ -1039,3 +1039,55 @@ func TestReportHistoryNamesComputeAsAnEstimate(t *testing.T) {
 		}
 	}
 }
+
+// TestSpendNoteSaysShadowIncluded is D568's note: a challenger's spend is real
+// money, so it is in the day records, in every spend grouping and in the daily
+// cap, and the day records carry no arm to take it back out by. A reader of a
+// spend figure has to be told that rather than left to read the sum as the
+// champion's alone — and told where the two arms are told apart.
+func TestSpendNoteSaysShadowIncluded(t *testing.T) {
+	f := newReportFixture(t)
+	f.doc("2026-10-15", repOpts{spent: 1_000_000, final: true})
+
+	o := f.json(t, "--since", "2026-10-01")
+	note := shadowNote(t, o.Warnings)
+	if !strings.Contains(note, "fugaro ab") {
+		t.Errorf("the shadow-spend note reads %q, want it to name `fugaro ab` as where the arms are told apart", note)
+	}
+	out, _, err := execute(t, "report", "--since", "2026-10-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, note) {
+		t.Errorf("the table does not carry the shadow-spend note %q:\n%s", note, out)
+	}
+
+	// The by-mode breakdown reads run records rather than day records, and a
+	// challenger is a run like any other there too, so its rows carry the same
+	// note.
+	o = f.json(t, "--by", "mode", "--since", "2026-10-01")
+	shadowNote(t, o.Warnings)
+
+	// A project with no spend history at all still reports run-record totals,
+	// and those hold shadow spend for the same reason.
+	bare := newReportFixtureOpt(t, false)
+	bare.doc("2026-10-15", repOpts{spent: 1_000_000, final: true})
+	o = bare.json(t, "--since", "2026-10-01")
+	if !o.Degraded {
+		t.Fatalf("the fixture without a history mark reported %+v, want the degraded path", o)
+	}
+	shadowNote(t, o.Warnings)
+}
+
+// shadowNote is the one warning a document carries about shadow spend; a
+// document with none fails here rather than passing a check that never ran.
+func shadowNote(t *testing.T, warnings []string) string {
+	t.Helper()
+	for _, w := range warnings {
+		if strings.Contains(w, "shadow spend") {
+			return w
+		}
+	}
+	t.Fatalf("the report carries no shadow-spend note (D568): %v", warnings)
+	return ""
+}
