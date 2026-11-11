@@ -4,13 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/issues"
 )
@@ -84,7 +89,10 @@ type ghSpy struct {
 	calls       [][]string
 	lookPathErr error
 	authErr     error
-	url         string
+	// createErr is a `gh issue create` that failed: a machine that has gh and
+	// an account on it, and no filing at the end of the call.
+	createErr error
+	url       string
 	// posts is what the spy was handed, read out of the file `--body-file`
 	// named while gh holds it: issues.GH removes that file before it returns,
 	// so this is the only moment the bytes of the post exist.
@@ -111,6 +119,9 @@ func (s *ghSpy) gh(t *testing.T) issues.GH {
 				return nil, s.authErr
 			case len(args) > 0 && args[0] == "issue":
 				s.posts = append(s.posts, readPost(t, args))
+				if s.createErr != nil {
+					return nil, s.createErr
+				}
 				return []byte(s.url + "\n"), nil
 			}
 			return nil, fmt.Errorf("gh %s: not a call this fake answers", strings.Join(args, " "))
@@ -671,5 +682,290 @@ func TestIssueSubmitAskRefusesWithoutATerminal(t *testing.T) {
 	}
 	if back.Status != issues.StatusPending || back.URL != "" {
 		t.Errorf("a refused submit left the issue %q with URL %q, want %q and none", back.Status, back.URL, issues.StatusPending)
+	}
+}
+
+// submitRigIssue is the state `submit --ask` starts from for an issue the store
+// already has a number for: one record in the shared store under the verified
+// reporter's name, and this machine's own copy of it, numbered by the upload the
+// way SyncPending numbers a file (F13). The copy names this project, because
+// this is the machine that uploaded it (F8b).
+func submitRigIssue(t *testing.T, rig *mineRig, signature string) issues.Issue {
+	t.Helper()
+	i := mineRec("48213", signature)
+	up := rig.upload(i, rig.caller)
+	local := i
+	local.Number, local.Uploaded = up.Number, true
+	if err := rig.store.Save(local); err != nil {
+		t.Fatalf("saving this machine's copy: %v", err)
+	}
+	return local
+}
+
+// sharedClaim is the claim a shared record is under, read out of the record's
+// own object: the claim lives inside the record it is about (F22), and the
+// store's exported reads answer with the record alone. A nil claim is an issue
+// nobody is filing.
+func sharedClaim(t *testing.T, b *blobx.Bucket, number int) *issues.Lease {
+	t.Helper()
+	var doc struct {
+		Claim *issues.Lease `json:"claim"`
+	}
+	if err := json.Unmarshal(sharedObject(t, b, number), &doc); err != nil {
+		t.Fatalf("decoding shared issue %d: %v", number, err)
+	}
+	return doc.Claim
+}
+
+// sharedObject is the store's own object for one issue, as it is on the bucket
+// (F24): the record's text and, while somebody is filing it, the claim.
+func sharedObject(t *testing.T, b *blobx.Bucket, number int) []byte {
+	t.Helper()
+	raw, _, err := b.Read(context.Background(), fmt.Sprintf("issues/records/%04d", number))
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", number, err)
+	}
+	return raw
+}
+
+// rewriteSharedSummary is another launcher's client editing one shared issue,
+// applied straight to the store's object (F24): the record's own text comes
+// back out of the object, the summary of it is the one thing changed, and the
+// object is written as it was otherwise — a valid record of the same issue with
+// other bytes.
+func rewriteSharedSummary(t *testing.T, b *blobx.Bucket, number int, summary string) {
+	t.Helper()
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(sharedObject(t, b, number), &doc); err != nil {
+		t.Fatalf("decoding the shared object of issue %d: %v", number, err)
+	}
+	var text string
+	if err := json.Unmarshal(doc["record"], &text); err != nil {
+		t.Fatalf("reading the record of shared issue %d: %v", number, err)
+	}
+	i, err := issues.Unmarshal([]byte(text))
+	if err != nil {
+		t.Fatalf("parsing the record of shared issue %d: %v", number, err)
+	}
+	i.Summary = summary
+	record, err := issues.Marshal(i)
+	if err != nil {
+		t.Fatalf("rewriting the record of shared issue %d: %v", number, err)
+	}
+	if doc["record"], err = json.Marshal(string(record)); err != nil {
+		t.Fatalf("encoding the record of shared issue %d: %v", number, err)
+	}
+	object, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("encoding the shared object of issue %d: %v", number, err)
+	}
+	if err := b.Put(context.Background(), fmt.Sprintf("issues/records/%04d", number), object, "application/json"); err != nil {
+		t.Fatalf("writing shared issue %d: %v", number, err)
+	}
+}
+
+// TestIssueSubmitRefusesWhenClaimedByAnother: two shells filing one issue file
+// it once (F22, check 451). The claim another submitter holds is refused before
+// anything is filed — with who holds it and until when — so the second one
+// never reaches `gh`, and the claim it did not take is left as it was.
+func TestIssueSubmitRefusesWhenClaimedByAnother(t *testing.T) {
+	rig := newMineRig(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+	local := submitRigIssue(t, rig, "sig-claimed")
+
+	other := "user:bo@example.test"
+	if _, err := issues.Claim(context.Background(), rig.bucket, local.Number, other, rig.now); err != nil {
+		t.Fatalf("another submitter's claim: %v", err)
+	}
+	held := sharedClaim(t, rig.bucket, local.Number)
+	if held == nil {
+		t.Fatal("the other submitter's claim is not in the record")
+	}
+
+	_, _, err := executeStdin(t, "y\n", "issue", "submit", strconv.Itoa(local.Number), "--ask")
+	if err == nil {
+		t.Fatal("submit filed an issue another submitter holds the claim on")
+	}
+	if !strings.Contains(err.Error(), other) {
+		t.Errorf("the refusal does not name who is filing it: %q", err.Error())
+	}
+	if want := held.ExpiresAt.UTC().Format(time.RFC3339); !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal does not say until when (%s): %q", want, err.Error())
+	}
+	if got := len(spy.creates()); got != 0 {
+		t.Errorf("a refused submit made %d filing call(s), want none", got)
+	}
+	if c := sharedClaim(t, rig.bucket, local.Number); c == nil || c.Holder != other || !c.ExpiresAt.Equal(held.ExpiresAt) {
+		t.Errorf("the refused submit left the claim as %+v, want the other submitter's %+v", c, held)
+	}
+	shared, err := issues.SharedIssue(context.Background(), rig.bucket, local.Number)
+	if err != nil {
+		t.Fatalf("reading the shared issue back: %v", err)
+	}
+	if shared.Status != issues.StatusPending || shared.URL != "" {
+		t.Errorf("a refused submit left the shared issue %q with URL %q, want it pending with none", shared.Status, shared.URL)
+	}
+}
+
+// TestIssueSubmitClaimsOnlyAfterYes: the claim is taken after the yes and never
+// before it (F28). A prompt answered "no" — or one left open — holds nothing,
+// so an issue nobody is filing is never made to wait for a lease, and the next
+// submitter takes it at once.
+func TestIssueSubmitClaimsOnlyAfterYes(t *testing.T) {
+	rig := newMineRig(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+	local := submitRigIssue(t, rig, "sig-no")
+
+	out, _, err := executeStdin(t, "n\n", "issue", "submit", strconv.Itoa(local.Number), "--ask")
+	if err != nil {
+		t.Fatalf("issue submit --ask: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Nothing was filed for") {
+		t.Errorf("a no does not say that nothing was filed:\n%s", out)
+	}
+	if c := sharedClaim(t, rig.bucket, local.Number); c != nil {
+		t.Errorf("a no took the claim %+v, want none: the claim is taken after the yes (F28)", c)
+	}
+	if got := len(spy.creates()); got != 0 {
+		t.Errorf("a no filed %d issue(s)", got)
+	}
+	shared, err := issues.SharedIssue(context.Background(), rig.bucket, local.Number)
+	if err != nil {
+		t.Fatalf("reading the shared issue back: %v", err)
+	}
+	if shared.Status != issues.StatusPending || shared.URL != "" {
+		t.Errorf("a no left the shared issue %q with URL %q, want it pending with none", shared.Status, shared.URL)
+	}
+}
+
+// TestIssueSubmitRecordsURLInSharedStore: the filing is recorded where the team
+// reads it (F22, spec 4). The store's own record of the issue carries the URL,
+// `submitted` and the instant it was filed, in the one write conditioned on
+// still holding the claim — and that write is the one that gives the claim back,
+// so the issue is nobody's to file from then on.
+func TestIssueSubmitRecordsURLInSharedStore(t *testing.T) {
+	rig := newMineRig(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+	local := submitRigIssue(t, rig, "sig-filed")
+
+	out, _, err := executeStdin(t, "y\n", "issue", "submit", strconv.Itoa(local.Number), "--ask")
+	if err != nil {
+		t.Fatalf("issue submit --ask: %v\n%s", err, out)
+	}
+	if got := len(spy.creates()); got != 1 {
+		t.Fatalf("submit filed %d issue(s), want one", got)
+	}
+	shared, err := issues.SharedIssue(context.Background(), rig.bucket, local.Number)
+	if err != nil {
+		t.Fatalf("reading the shared issue back: %v", err)
+	}
+	if shared.Status != issues.StatusSubmitted || shared.URL != filedIssueURL || !shared.Uploaded {
+		t.Errorf("the shared issue is %q with URL %q (uploaded %t), want %q with %q", shared.Status, shared.URL, shared.Uploaded, issues.StatusSubmitted, filedIssueURL)
+	}
+	if shared.SubmittedAt == nil || !shared.SubmittedAt.UTC().Equal(rig.now) {
+		t.Errorf("the shared issue was filed at %v, want the run's own clock %s", shared.SubmittedAt, rig.now)
+	}
+	if c := sharedClaim(t, rig.bucket, local.Number); c != nil {
+		t.Errorf("the filing left the claim %+v on the issue, want none", c)
+	}
+	back, err := rig.store.Get(strconv.Itoa(local.Number))
+	if err != nil {
+		t.Fatalf("reading this machine's copy back: %v", err)
+	}
+	if back.Status != issues.StatusSubmitted || back.URL != filedIssueURL {
+		t.Errorf("this machine's copy is %q with URL %q, want %q with %q", back.Status, back.URL, issues.StatusSubmitted, filedIssueURL)
+	}
+}
+
+// TestIssueSubmitReleasesClaimOnGhFailure: a post that failed gives the claim
+// back (F22). The record keeps no claim and no URL: nobody is made to wait a
+// lease for a filing that did not happen, and the next run claims it and tries
+// again.
+func TestIssueSubmitReleasesClaimOnGhFailure(t *testing.T) {
+	rig := newMineRig(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL, createErr: errors.New("gh: could not create the issue")}
+	installIssueGH(t, spy)
+	local := submitRigIssue(t, rig, "sig-failed")
+
+	_, _, err := executeStdin(t, "y\n", "issue", "submit", strconv.Itoa(local.Number), "--ask")
+	if err == nil {
+		t.Fatal("submit exited 0 after gh refused to file the issue")
+	}
+	if !strings.Contains(err.Error(), "was not filed") {
+		t.Errorf("a failed post is not reported as one: %q", err.Error())
+	}
+	if c := sharedClaim(t, rig.bucket, local.Number); c != nil {
+		t.Errorf("a failed post left the claim %+v on the issue, want it given back", c)
+	}
+	shared, err := issues.SharedIssue(context.Background(), rig.bucket, local.Number)
+	if err != nil {
+		t.Fatalf("reading the shared issue back: %v", err)
+	}
+	if shared.Status != issues.StatusPending || shared.URL != "" || shared.SubmittedAt != nil {
+		t.Errorf("a failed post left the shared issue %q with URL %q and filed at %v, want it pending with neither", shared.Status, shared.URL, shared.SubmittedAt)
+	}
+}
+
+// rewriteBeforeYes is a terminal that edits the shared issue and then answers
+// yes: another launcher's client rewriting the record between the preview and
+// the confirmation (F24), which is the window F19 is about.
+type rewriteBeforeYes struct {
+	t       *testing.T
+	bucket  *blobx.Bucket
+	number  int
+	summary string
+	done    bool
+}
+
+func (r *rewriteBeforeYes) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, io.EOF
+	}
+	r.done = true
+	rewriteSharedSummary(r.t, r.bucket, r.number, r.summary)
+	return copy(p, "y\n"), nil
+}
+
+// TestIssueSubmitRefusesChangedRecord: the bytes filed are the bytes previewed
+// (F19). A record another submitter changed between the preview and the yes is
+// refused rather than filed unseen under this person's account, nothing reaches
+// `gh`, and the claim the run took on its way to that comparison is given back.
+func TestIssueSubmitRefusesChangedRecord(t *testing.T) {
+	rig := newMineRig(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+	local := submitRigIssue(t, rig, "sig-changed")
+
+	stdin := &rewriteBeforeYes{t: t, bucket: rig.bucket, number: local.Number, summary: "a teammate rewrote this while you read"}
+	_, _, err := executeStdinReader(t, stdin, "issue", "submit", strconv.Itoa(local.Number), "--ask")
+	if err == nil {
+		t.Fatal("submit filed a record that changed after the preview")
+	}
+	if !strings.Contains(err.Error(), "changed") {
+		t.Errorf("the refusal does not say the record changed: %q", err.Error())
+	}
+	if got := len(spy.creates()); got != 0 {
+		t.Errorf("a refused submit made %d filing call(s), want none", got)
+	}
+	if c := sharedClaim(t, rig.bucket, local.Number); c != nil {
+		t.Errorf("the refusal left the claim %+v on the issue, want it given back", c)
+	}
+	shared, err := issues.SharedIssue(context.Background(), rig.bucket, local.Number)
+	if err != nil {
+		t.Fatalf("reading the shared issue back: %v", err)
+	}
+	if shared.Summary != stdin.summary {
+		t.Errorf("the shared issue reads %q, want the teammate's own text %q", shared.Summary, stdin.summary)
+	}
+	if shared.Status != issues.StatusPending || shared.URL != "" {
+		t.Errorf("a refused submit left the shared issue %q with URL %q, want it pending with none", shared.Status, shared.URL)
 	}
 }
