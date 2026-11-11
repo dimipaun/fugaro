@@ -937,6 +937,58 @@ func TestThePruneReadsThePlanBeforeItDeletes(t *testing.T) {
 	}
 }
 
+// TestThePruneReadsEveryEndpointPlanBeforeItDeletesAnEdge: an edge dangles
+// while any one of its endpoints is missing from the plans, so the check made
+// as the deletion is put is every endpoint's plan and not the first one's. The
+// same call keeps an edge whose endpoint a republish has just put back — read
+// across the hold that has the deletion in flight — and deletes one whose other
+// endpoint is still gone, which is what keeps the 30-day bound from becoming a
+// bound the prune never reaches.
+func TestThePruneReadsEveryEndpointPlanBeforeItDeletesAnEdge(t *testing.T) {
+	s, f, fx := writeStore(t)
+	ctx := testCtx(t)
+	mobile := fx.Plans[1]
+	task := mobile.Plan + "/" + mobile.Tasks[0].ID
+	needs := fx.Plans[0].Plan + "/" + fx.Plans[0].Tasks[0].ID
+	key := EdgeID(task, needs)
+	if _, found := readDoc[Edge](t, s, PathEdge(task, needs)); !found {
+		t.Fatalf("the fixture holds no edge %s -> %s to prune", task, needs)
+	}
+	if err := s.UnpublishPlan(ctx, mobile.Plan); err != nil {
+		t.Fatalf("unpublishing the plan the edge starts in: %v", err)
+	}
+	markDangling(t, f, key, time.Now().Add(-PruneAge-time.Hour))
+
+	stamped, openClear := f.HoldNext(PathDanglingMark(key))
+	done := make(chan error, 1)
+	go func() { done <- s.PublishPlan(ctx, planWithTasks("plans/other", 1, "a task"), "", false) }()
+	<-stamped
+	if err := s.PublishPlan(ctx, mobile, "", false); err != nil {
+		t.Fatalf("republishing the plan the edge starts in: %v", err)
+	}
+	openClear()
+	if err := <-done; err != nil {
+		t.Fatalf("publishing beside a republish: %v", err)
+	}
+	if _, found := readDoc[Edge](t, s, PathEdge(task, needs)); !found {
+		t.Fatal("the prune deleted an edge whose endpoint a republish had just put back")
+	}
+
+	// The other endpoint goes now, and the task's plan stays: the same check
+	// must read that plan too, or the bound would never be reached for an edge
+	// whose first endpoint is where it belongs.
+	if err := s.UnpublishPlan(ctx, fx.Plans[0].Plan); err != nil {
+		t.Fatalf("unpublishing the plan the edge needs: %v", err)
+	}
+	markDangling(t, f, key, time.Now().Add(-PruneAge-time.Hour))
+	if err := s.PublishPlan(ctx, planWithTasks("plans/second", 1, "a task"), "", false); err != nil {
+		t.Fatalf("publishing beside a dangling edge: %v", err)
+	}
+	if _, found := readDoc[Edge](t, s, PathEdge(task, needs)); found {
+		t.Fatal("the prune kept an edge marked dangling past the 30 days with an endpoint still gone")
+	}
+}
+
 // TestARemovedEdgeDoesNotLeaveItsDateBehind: the ledger dates a spell of
 // dangling, and a mark that outlives its document hands the next document
 // under that key a keep that is already spent. An edge removed and added back
