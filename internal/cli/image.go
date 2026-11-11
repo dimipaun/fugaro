@@ -70,6 +70,22 @@ type imageBuildOptions struct {
 	local, noSmoke, noWait, asJSON      bool
 }
 
+// repoImagesDisabledNotice is what every command that builds a repository's
+// own image answers under D1900 (the owner's ruling of 2026-11-09: repo-level
+// images are disabled and the code is kept). It is the whole answer -- the
+// command changes nothing and exits 0, so a script that runs one keeps
+// working -- and it says what runs instead, which is the half a person needs:
+// the job's image is the project's catalog image. `fugaro update` still
+// builds a derived image a converge needs (O4 b), and the commands are what
+// is disabled.
+const repoImagesDisabledNotice = "repo-level images are disabled; the project's catalog image is used"
+
+// repoImagesDisabled is that answer, printed.
+func repoImagesDisabled(w io.Writer) error {
+	fmt.Fprintln(w, repoImagesDisabledNotice)
+	return nil
+}
+
 func newImageBuildCmd() *cobra.Command {
 	var o imageBuildOptions
 	cmd := &cobra.Command{

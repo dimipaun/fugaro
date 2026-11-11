@@ -857,6 +857,68 @@ func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 	}
 }
 
+// TestRepoImageRefreshIsDisabled: D1900 (2026-11-09) disables repo-level
+// images and keeps the code, so every command that would build a
+// repository's own image answers the notice and exits 0 with nothing built.
+// The three of them are here together because they are one decision: the
+// derived build, the rebuild the repository's daily check job runs, and the
+// refresh's rebuild of a stale derived image -- which is the one that builds
+// today (the red step).
+//
+// What stays is named in the same breath: the refresh still pins the base
+// image and still moves a checkout: clone workflow's job, neither of which
+// builds anything, and the derived build a converge needs is the images
+// stage's own, inside fugaro update (O4 b: with no catalog default the
+// resolver keeps the per-repository image, so update converges).
+func TestRepoImageRefreshIsDisabled(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	noProjectLayerBucket(t)
+
+	t.Run("the derived build", func(t *testing.T) {
+		for _, args := range [][]string{
+			{"image", "build", "--workflow", "app"},
+			{"image", "build", "--local"},
+		} {
+			out, _, err := executeStdin(t, "", args...)
+			if err != nil {
+				t.Fatalf("%v: %v\n%s", args, err, out)
+			}
+			if !strings.Contains(out, repoImagesDisabledNotice) {
+				t.Errorf("%v answered %q, want the notice", args, out)
+			}
+		}
+	})
+
+	t.Run("the check job's rebuild", func(t *testing.T) {
+		out, _, err := executeStdin(t, "", "image", "check", "--job")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out, repoImagesDisabledNotice) {
+			t.Errorf("the repository's check job answered %q, want the notice", out)
+		}
+	})
+
+	t.Run("the refresh's builds step", func(t *testing.T) {
+		r := newAnchorModeRig(t, refreshYAML, true)
+		fb := useFakeBuilder(t)
+		e, tg := buildTarget(t, r)
+		putWorkflowRecordFrom("api", "0.4.0", managedRef("base", "0.4.0"))
+		p := &refreshPlan{workflows: []string{"api", "app"}}
+		out := atTerminal(t, e, "nope\n")
+		if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		if len(fb.specs) != 0 {
+			t.Fatalf("the refresh submitted a repository-level build: %+v", fb.specs)
+		}
+		if !strings.Contains(out.String(), repoImagesDisabledNotice) {
+			t.Errorf("the refresh's builds step answered:\n%s", out.String())
+		}
+	})
+}
+
 // 2026-10-08 decision: --yes runs the whole command end to end with no
 // terminal at all (a closed stdin, as executeStdin's strings.Reader always
 // is): the plan is printed first, the options every step gets carry yes, and

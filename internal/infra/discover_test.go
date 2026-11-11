@@ -1149,6 +1149,84 @@ func TestReadinessGatesCheckJob(t *testing.T) {
 	}
 }
 
+// TestNoRepoCheckJobEmitted: D1900 (2026-11-09) disables repo-level images
+// and keeps the code, so the per-repository daily image check job -- whose
+// whole work is rebuilding the repository's own image on a schedule -- is no
+// longer emitted. A repository that has none gets none: the readiness output
+// says deploy_job false, Addresses names none of the three resources
+// check.tf declares, and the plan of the repository root therefore creates no
+// job, no invoker grant and no Scheduler job.
+//
+// The other half is the one that keeps `fugaro update` converging (the HARD
+// RULE): a repository that already has one keeps it. check.tf's count reads
+// the same deploy_job, so a false one for a job the state holds would be a
+// destroy of a deletion-protected job, and an address the state holds that
+// the spec stops producing is a retirement -- D1194's second command, which
+// is not this task's (nothing is deleted).
+func TestNoRepoCheckJobEmitted(t *testing.T) {
+	ctx := context.Background()
+	spec := sandboxSpec(t)
+	if spec.Check == nil {
+		t.Fatal("the fixture must carry a check spec: this test is about the job it would emit")
+	}
+	creds := slices.Sorted(maps.Values(spec.Check.SecretEnv))
+	if len(creds) != 1 {
+		t.Fatalf("check secrets = %v, want the provider credential alone", creds)
+	}
+	// A fresh repository, with the credential the check job mounts stored:
+	// nothing but the emission rule below decides.
+	f := newCloud(t)
+	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	f.seedVersions(spec, creds[0])
+	_, ex, err := DiscoverRepo(ctx, f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.CheckJob {
+		t.Fatal("this fixture's cloud must hold no check job")
+	}
+	got, _, err := Readiness(ctx, f.c, spec, ex, false, "update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Check == nil {
+		t.Fatal("the check spec left the readiness output: discovery reads it to find a job an earlier release made")
+	}
+	if got.Check.DeployJob {
+		t.Error("a repository with no check job must emit none (D1900)")
+	}
+	for _, a := range got.Addresses() {
+		if strings.Contains(a, "check") {
+			t.Errorf("the spec still produces %s, which check.tf would deploy", a)
+		}
+	}
+
+	// A repository that already has one keeps it, and every address the state
+	// holds stays in the spec: this is what leaves the update planning no
+	// destroy and no retirement.
+	g := newCloud(t)
+	g.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	g.seedVersions(spec)
+	g.m5(t, spec)
+	_, ex, err = DiscoverRepo(ctx, g.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ex.CheckJob {
+		t.Fatal("the fixture's own apply must be found: it is the job this half keeps")
+	}
+	kept, _, err := Readiness(ctx, g.c, spec, ex, false, "update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !kept.Check.DeployJob {
+		t.Error("an existing check job must stay deployed: nothing here deletes one")
+	}
+	if !slices.Contains(kept.Addresses(), "module.repo.google_cloud_run_v2_job.check[0]") {
+		t.Errorf("the spec no longer produces the deployed check job: %v", kept.Addresses())
+	}
+}
+
 func TestScheduleOnlyWithRecord(t *testing.T) {
 	ctx := context.Background()
 	f := newCloud(t)
