@@ -76,8 +76,8 @@
 // **The by-person view is `runs stats --json`, and it is fail-private.** The
 // knob above turns on a *second read* beside the report (`peopleArguments` and
 // `readSpend`'s fourth parameter): `fugaro runs stats --json`, whose `view` is
-// the CLI's own ruling about what the caller may see -- an operator of the
-// installation gets every user's row, a plain launcher gets their own alone.
+// the CLI's own ruling about what the caller may see -- an admin of the
+// installation gets every user's row, a plain operator gets their own alone.
 // **What this screen adds is the drawing rule that ruling implies, and it draws
 // nothing it is not licensed to draw**: rows appear only when the document's own
 // `by` and `view` say who they are for, the private view draws the one row the
@@ -711,7 +711,7 @@ export type PeopleView = 'all' | 'own' | 'unknown'
  * **The view is the CLI's ruling, not this screen's request.** The console
  * cannot pass `--all-users` (design section 5.1 rule 6, its schema in
  * `src/main/ipc.ts`): the command decides for itself who the caller is, so an
- * operator of the installation sees every user's rows and a plain launcher sees
+ * admin of the installation sees every user's rows and a plain operator sees
  * their own row alone. What this screen adds is the drawing rule that ruling
  * implies, and it is **fail private**:
  *
@@ -744,12 +744,13 @@ export interface SpendPeople {
   readonly viewName: string
   /** the document's own word, kept for a test and never drawn */
   readonly viewSource: string | null
-  /** the document's `operator`: whether the installation's own lists place the
-   * caller as an operator. Drawn as its own fact and never inferred from
-   * `view` -- the CLI's contract is explicit that `--all-users` produces `all`
-   * with `operator: false`, and a screen that read `all` as "you are an
-   * operator" would say something the document did not. */
-  readonly operator: boolean
+  /** the document's `admin`: whether the installation's own lists place the
+   * caller as an admin -- the privileged role the wider view is resolved from,
+   * not the run-starters `operator` names. Drawn as its own fact and never
+   * inferred from `view` -- the CLI's contract is explicit that `--all-users`
+   * produces `all` with `admin: false`, and a screen that read `all` as "you are
+   * an admin" would say something the document did not. */
+  readonly admin: boolean
   /** the identity the view was resolved for. `''` is *unavailable* -- the CLI
    * could not tell who the caller is -- and never anonymous. */
   readonly you: string
@@ -1083,8 +1084,8 @@ const PEOPLE_OWN_TOTAL =
   'the total below is this read’s own sum of the rows it published, which for this view is your own runs alone: it is not the window’s total, and it says nothing about what anyone else spent'
 
 /** PEOPLE_ALL is the sentence for the view that shows everyone. It states the
- * ruling and not the reason for it: whether the caller is an operator is the
- * document’s own `operator`, drawn beside this line. */
+ * ruling and not the reason for it: whether the caller is an admin is the
+ * document’s own `admin`, drawn beside this line. */
 const PEOPLE_ALL =
   'the CLI resolved this read as the whole project, so every launcher that started a run in the window is listed — including the unattributed runs, under the key the CLI gives them'
 
@@ -1135,10 +1136,10 @@ const PEOPLE_ALL_UNIDENTIFIED =
  * anonymous, and an empty cell would say neither. */
 const PEOPLE_YOU_UNIDENTIFIED = 'the CLI could not say who this read was resolved for'
 
-/** PERSON_OPERATOR_WORDS is the console's two sentences for the document's
- * `operator`, keyed by the boolean. */
-const PERSON_OPERATOR_YES = 'the installation’s own lists place you as an operator'
-const PERSON_OPERATOR_NO = 'the installation’s own lists do not place you as an operator'
+/** PERSON_ADMIN_WORDS is the console's two sentences for the document's
+ * `admin`, keyed by the boolean. */
+const PERSON_ADMIN_YES = 'the installation’s own lists place you as an admin'
+const PERSON_ADMIN_NO = 'the installation’s own lists do not place you as an admin'
 
 /** peopleViewOf reads the document's `view` into the console's closed three. */
 function peopleViewOf(raw: string | null): { readonly view: PeopleView; readonly name: string } {
@@ -1198,7 +1199,7 @@ function peopleOf(raw: JSONDoc | null, reason: string | null): SpendPeople {
       view: 'unknown',
       viewName: UNKNOWN_PEOPLE_VIEW,
       viewSource: null,
-      operator: false,
+      admin: false,
       you: '',
       failPrivate: true,
       withheld: 0,
@@ -1279,7 +1280,7 @@ function peopleOf(raw: JSONDoc | null, reason: string | null): SpendPeople {
     view,
     viewName: name,
     viewSource,
-    operator: boolAt(document['operator']),
+    admin: boolAt(document['admin']),
     you,
     failPrivate: !licensed,
     // The rows the rule did not draw, and only those: it is a count of rows that
@@ -3180,7 +3181,7 @@ function peoplePanel(factory: ScreenFactory, people: SpendPeople): ScreenElement
   const element = make(factory, 'section', 'spend-people')
   element.setAttribute('data-available', people.available ? 'true' : 'false')
   element.setAttribute('data-view', people.view)
-  element.setAttribute('data-operator', people.operator ? 'true' : 'false')
+  element.setAttribute('data-admin', people.admin ? 'true' : 'false')
   element.setAttribute('data-truncated', people.truncated ? 'true' : 'false')
   literal(cell(element, factory, 'h2', 'spend-people-title'), 'by person')
   if (!people.available) {
@@ -3202,9 +3203,9 @@ function peoplePanel(factory: ScreenFactory, people: SpendPeople): ScreenElement
   const you = cell(element, factory, 'span', 'spend-people-you')
   if (people.you === '') literal(you, PEOPLE_YOU_UNIDENTIFIED)
   else putText(you, people.you, 'person', 'you')
-  const operator = cell(element, factory, 'span', 'spend-people-operator')
-  if (people.operator) literal(operator, PERSON_OPERATOR_YES)
-  else literal(operator, PERSON_OPERATOR_NO)
+  const admin = cell(element, factory, 'span', 'spend-people-admin')
+  if (people.admin) literal(admin, PERSON_ADMIN_YES)
+  else literal(admin, PERSON_ADMIN_NO)
   if (people.since !== null) {
     textCell(element, factory, 'span', people.since, 'label', 'since', 'spend-people-since')
   }

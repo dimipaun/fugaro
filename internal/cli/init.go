@@ -87,7 +87,7 @@ type initOptions struct {
 	imageSource                     string   // --image-source: a fork's own release registry/owner
 	expectDigests                   []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
 	replaceImages                   []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each an ordinary covered step (askCovered: D12's answer of 2026-10-20 covers it in both doors, and a person at a real terminal without --yes confirms it there, typing nothing); a base kind is refused there, since nothing is copied for it any more
-	launchers, operators            []string
+	operators, admins               []string
 	budget                          int64
 	budgetCurrency, billingAccount  string
 	alertEmail                      string
@@ -109,7 +109,7 @@ type initOptions struct {
 	coordinator                         bool   // --coordinator: opt the installation in to the coordinator's aggregation job (owner-run, at a terminal, never --yes)
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
 	allowDelete                         []string
-	launchersChanged, operatorsChanged  bool
+	operatorsChanged, adminsChanged     bool
 	alertEmailChanged, baseImageChanged bool
 
 	// --bake-repos answers the wizard's bake question without a terminal (IS7
@@ -380,7 +380,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f := cmd.Flags()
-			o.launchersChanged, o.operatorsChanged = f.Changed("launcher"), f.Changed("operator")
+			o.operatorsChanged, o.adminsChanged = f.Changed("operator"), f.Changed("admin")
 			o.alertEmailChanged, o.baseImageChanged = f.Changed("alert-email"), f.Changed("base-image")
 			o.budgetAdminsChanged = f.Changed("budget-admin")
 			o.bakeReposChanged = f.Changed("bake-repos")
@@ -475,8 +475,8 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// the run that creates the installation, which is the one whose answer is
 	// a project's own.
 	f.BoolVar(&o.bakeRepos, "bake-repos", false, "answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt")
-	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
-	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
+	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who may start and watch runs (the operator role; repeatable; default: the local config's, and for a new config you, the authenticated user)")
+	f.StringArrayVar(&o.admins, "admin", nil, "an IAM member who may onboard repositories, apply Terraform and submit builds (the admin role; repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, budgetFlagHelp(d))
 	f.StringVar(&o.budgetCurrency, "budget-currency", "", "the budget's currency, such as USD")
 	f.StringVar(&o.billingAccount, "billing-account", "", "the billing account the budget is on")
@@ -666,6 +666,57 @@ type initRun struct {
 	// (update_managed.go). A nil one is every run whose steps keep the
 	// confirmations they always had.
 	gate *initGate
+
+	// accessDerive is the roles step's derive, taken again by the installation
+	// root for itself just before its own tfvars are written (F29a): the step
+	// that runs before the loop reconciles the node and hands the run its two
+	// lists, and this is the same derive read as late as the run can read one —
+	// immediately before the terraform whose plan takes the state lock — so a
+	// grant or a revoke that landed in between is applied rather than
+	// overwritten from the list the earlier read held. The engine sets it
+	// (update_access.go, deriveAccessAgain); this struct cannot read the node
+	// itself, the database client being the engine's, and it is nil in every run
+	// whose roles step found no node.
+	accessDerive func(ctx context.Context) (operators, admins []string, ok bool, err error)
+
+	// accessHeld are the IAM members the installation's own outputs held AT THE
+	// ROLE THIS RUN'S OWN LISTS PLACE THEM AT, plus the ones this run named on
+	// its own flags: the people this terminal was told about, and the only ones
+	// the review screen announces and its one confirmation may cover. A member
+	// of the grants node that is not among them is a grant nobody here made
+	// (update_access.go's heldAccess) — either a member the outputs held at no
+	// role, or one they held at the other role, which the node raised. The cover
+	// the screen builds is members and cannot see a role, so a raised member
+	// announced under the role the outputs hold them at would carry the admin's
+	// roles inside one --yes. accessHeldRead says whether the outputs could be
+	// read at all — a run that could not read them filters nothing, says so, and
+	// covers the node's whole roster as it did before this read existed.
+	accessHeld     []string
+	accessHeldRead bool
+
+	// accessHeldOperators and accessHeldAdmins are what accessHeld is made of:
+	// the members the installation's own outputs hold at each of the two roles,
+	// this run's own flags included (update_access.go's heldAccess). They are
+	// kept because the announcement is taken twice — the installation root takes
+	// it again off the node its own apply carries, whose read is later than the
+	// roles step's (announceHeld, deriveAccessAgain) — and the second take is the
+	// same question asked of lists that have changed, not a second read of the
+	// outputs, which do not change while a run is in flight. A revoked member
+	// stays in them: their absence from the run's lists is what says the run
+	// applies a revocation, and nothing announces or admits a removal by it.
+	accessHeldOperators []string
+	accessHeldAdmins    []string
+
+	// landFlags writes the roles step's two nodes into the cloud — the
+	// migration's, and this run's own --operator/--admin folded into it — and it
+	// is what the installation root calls once the run is past its confirmation
+	// and about to apply (update_access.go, landFlagLists). The roles step does
+	// not write either: the write is worth nothing before the confirmation the
+	// user may still decline, and its own comment says why the node is written
+	// before the apply rather than after. It is nil in every run whose roles step
+	// found no node; it writes nothing in a run that named no list and migrated
+	// nothing.
+	landFlags func(ctx context.Context) error
 
 	// refresh is `fugaro image refresh`'s own read of the same marks
 	// (openRefreshManaged), set by runImageRefresh and nil in every other run.
@@ -1839,11 +1890,11 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 		RegistryCleanup: cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
 		NoLogIsolation:  o.noLogIsolation || lc.Terraform.NoLogIsolation,
 	}
-	if o.launchersChanged {
-		opts.Launchers = append([]string{}, o.launchers...)
-	}
 	if o.operatorsChanged {
-		opts.Operators = append([]string{}, o.operators...)
+		opts.Launchers = append([]string{}, o.operators...)
+	}
+	if o.adminsChanged {
+		opts.Operators = append([]string{}, o.admins...)
 	}
 	// The installation carries the history account (and, once it can, the
 	// sweeper's job) from the first --firebase-project on, and a plain fugaro update
@@ -2771,6 +2822,23 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if err != nil {
 		return outs, false, err
 	}
+	// The roles step's derive, taken again here and never earlier (F29a): the
+	// two lists this apply carries are read off the grants node at the last
+	// point the run can read one — immediately before the tfvars below, whose
+	// plan is the terraform that takes the state lock — so a grant or a revoke
+	// that landed since the step ran is what lands, rather than the list that
+	// read held. It is nil when the step found no node (no budget backend, a
+	// database this installation never adopted), and the lists are then the
+	// local config's, as they were before this release.
+	if r.accessDerive != nil {
+		operators, admins, ok, err := r.accessDerive(ctx)
+		if err != nil {
+			return outs, false, err
+		}
+		if ok {
+			spec.Launchers, spec.Operators = operators, admins
+		}
+	}
 	backend, err := prepare(wd, spec, im, verifiers, false)
 	if err != nil {
 		return outs, false, err
@@ -2874,8 +2942,16 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			fmt.Fprintln(r.w, "No changes: the installation matches the plan.")
 			if r.o.planOnly {
 				stop = true
+				return nil, nil
 			}
-			return nil, nil
+			// A plan with nothing in it is still a run the user confirmed (or one
+			// that found the installation already matching): the roles step's writes
+			// — the migration's node, and the flags' fold into it — are landed here
+			// for the same reason as before an apply, and they are the one change of
+			// a run whose apply has nothing to do. A pure rename is exactly this run:
+			// the module's variables are unchanged, so the plan is empty, and the
+			// node is the record the migration exists to leave.
+			return nil, r.landFlaggedLists(ctx)
 		}
 		plan, err := t.Show(ctx, infra.PlanFile)
 		if err != nil {
@@ -2918,9 +2994,19 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 				return plan, nil
 			}
 			// 6. Confirm, 7. apply the plan shown.
-			if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
+			if err := r.confirmPlanned("applies "+counts.String()+r.installLabel, "nothing was applied", plan, r.notCovered(plan, im.Keys())); err != nil {
 				return plan, err
 			}
+		}
+		// The roles step's two writes land here and nowhere earlier — the
+		// migration's node and the run's own --operator/--admin folded into it:
+		// the run is past the guard and past its confirmation (or past the gate
+		// that stands in for it) and is about to apply, so a change that was
+		// declined or refused has written nothing, and a write that fails stops
+		// the run before GCP holds a grant the node does not (update_access.go's
+		// landFlagLists).
+		if err := r.landFlaggedLists(ctx); err != nil {
+			return plan, err
 		}
 		if err := r.applyAndRecord(ctx, t); err != nil {
 			return plan, err
@@ -3217,11 +3303,11 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	next.SetupPending = ""
 	next.LogView = outs.LogView
 	next.Terraform.StateBucket = spec.StateBucket
-	if r.o.launchersChanged {
-		next.Terraform.Launchers = slices.Clone(spec.Launchers)
-	}
 	if r.o.operatorsChanged {
-		next.Terraform.Operators = slices.Clone(spec.Operators)
+		next.Terraform.Operators = slices.Clone(spec.Launchers)
+	}
+	if r.o.adminsChanged {
+		next.Terraform.Admins = slices.Clone(spec.Operators)
 	}
 	if r.o.alertEmailChanged {
 		next.Terraform.AlertEmail = r.o.alertEmail
@@ -3937,8 +4023,8 @@ func (o *initOptions) checkRepo() error {
 func (o *initOptions) installationFlags() []string {
 	installationOnly := map[string]bool{
 		"--config-only": o.configOnly, "--publish-config": o.publishConfig, "--anchor": o.anchor, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
-		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
-		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
+		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--operator": o.operatorsChanged,
+		"--admin": o.adminsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase-project": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
 		"--create-project": o.createProject, "--managed": o.managed, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
@@ -5043,7 +5129,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			if !first {
 				what += ", deploying the images just built"
 			}
-			if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
+			if err := r.confirmPlanned(what, "nothing was applied", plan, r.notCovered(plan, im.Keys())); err != nil {
 				return plan, err
 			}
 		}

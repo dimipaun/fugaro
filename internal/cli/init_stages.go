@@ -7,11 +7,13 @@ import (
 	"os"
 	"slices"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // The converge (internal/initflow) over the engines the converge already
@@ -74,6 +76,23 @@ type initEngine struct {
 	checkoutBehind bool
 
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
+
+	// accessDB is the grants node's database as the roles step found it
+	// (update_access.go): set when this run has a node to read at all, and nil
+	// when it has none — no budget backend, or a database this installation
+	// never adopted. The installation root re-reads the node through it for the
+	// lists its own apply carries (F29a, deriveAccessAgain), which is why the
+	// client outlives the step that made it.
+	accessDB *rtdb.Client
+
+	// accessSeed is the migration's node as the roles step computed it, waiting
+	// for the installation root to write it (update_access.go, landSeed): the
+	// step runs before the loop's first stage, the run's confirmation and the
+	// guard, so the write is the root's, past all three. It is nil when this run
+	// migrates nothing — the node is there, --plan-only, a first run with no
+	// list to hold, outputs that could not be read — and it is cleared by the
+	// write, so a root that runs twice lands it once.
+	accessSeed *accesslib.Node
 }
 
 // environment runs the environment check once (it prints the local
@@ -323,6 +342,16 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// for where nobody can answer them): it stops the run here, before the
 	// first stage, and it is never a fallback to the verdict.
 	if err := e.gateRun(ctx); err != nil {
+		return err
+	}
+	// The roles step, once for the whole run and before the first stage plans
+	// (update_access.go, RS3): the installation's member lists and the grants
+	// node are reconciled here, and the spec every stage below builds carries
+	// the lists the node says. It is before the loop rather than a stage of its
+	// own because it changes what the run's OWN applies carry — the
+	// installation stage is the first of them, and a step that ran beside it
+	// would leave that apply on the lists the file remembered.
+	if err := e.syncAccess(ctx); err != nil {
 		return err
 	}
 	// The door's one line about the runs that are running while it converges,

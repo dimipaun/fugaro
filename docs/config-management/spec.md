@@ -375,11 +375,11 @@ gives it a command — with the converge flag that changes it when the two doors
 | `runs_bucket` | `--runs-bucket` |
 | `scheduler_region` | `--scheduler-region` |
 | `setup_pending` | — |
+| `terraform.admins` | `--admin` |
 | `terraform.alert_email` | `--alert-email` |
 | `terraform.budget_admins` | `--budget-admin` |
 | `terraform.budget_backend` | `--firebase-project` |
 | `terraform.coordinator` | `--coordinator` |
-| `terraform.launchers` | `--launcher` |
 | `terraform.no_log_isolation` | `--no-log-isolation` |
 | `terraform.operators` | `--operator` |
 | `terraform.registry_cleanup` | `--registry-cleanup` |

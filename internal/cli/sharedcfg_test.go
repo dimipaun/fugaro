@@ -122,8 +122,8 @@ func TestInitPublishConfigAlone(t *testing.T) {
 	}
 }
 
-// A launcher's --publish-config is refused with the operator text and exit
-// 1, since 0.7.0 only operators may write fugaro/ (bucket-iam.md H8).
+// A launcher's --publish-config is refused with the admin text and exit
+// 1, since 0.7.0 only admins may write fugaro/ (bucket-iam.md H8).
 func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 	r := newInitRig(t)
 	old := sharedBucketOpener
@@ -133,7 +133,7 @@ func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 	t.Cleanup(func() { sharedBucketOpener = old })
 	r.gcs.DenyWrites(initRunsBucket, "fugaro/")
 	_, _, err := executeStdin(t, "", "setup", "--publish-config")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "admin role") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 }
@@ -154,8 +154,8 @@ func TestInitWarnsWhenSharedConfigPublishIsForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if !strings.Contains(out, "could not publish the shared config") || !strings.Contains(out, "operator role") {
-		t.Fatalf("no warning naming the operator role:\n%s", out)
+	if !strings.Contains(out, "could not publish the shared config") || !strings.Contains(out, "admin role") {
+		t.Fatalf("no warning naming the admin role:\n%s", out)
 	}
 }
 

@@ -322,9 +322,14 @@ func TestReviewSeamRefusesAnAgentMarkerBeforeItPrintsAnything(t *testing.T) {
 // places that do, and no other file may (the project's creation and billing,
 // the Firestore location, a Cloud Build, replacing a tag, an unlisted
 // repository, a secret and the plugin wiring each keep their own).
+//
+// confirmPlanned counts with them because it is this family's own call: it is
+// what the three plan-confirmation sites ask with, and it is confirmOrdinary
+// for every plan that grants no member the review did not announce
+// (init_review.go, grantsNotAnnounced).
 func TestRunConfirmationCallSites(t *testing.T) {
 	want := map[string]int{"init.go": 7, "init_firebase.go": 2, "init_images.go": 1, "init_rules_stage.go": 1}
-	re := regexp.MustCompile(`\br\.(confirmOrdinary|askOrdinary|runCovers)\(`)
+	re := regexp.MustCompile(`\br\.(confirmOrdinary|confirmPlanned|askOrdinary|runCovers)\(`)
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -565,7 +570,7 @@ func TestReviewScreenGolden(t *testing.T) {
 		Launchers: []string{"user:me@example.com"}, Operators: []string{"group:ops@example.com"}}, adminsRead: true, admins: []string{"user:owner@example.com"}}
 	r.o.budgetAdmins = []string{"user:ba@example.com"}
 	r.o.budgetAdminsChanged = true
-	r.o.launchersChanged = true
+	r.o.operatorsChanged = true
 	e.defaulted = "user:me@example.com"
 	e.previewed = []initflow.StageResult{
 		{Name: initflow.Preflight, State: initflow.Done},
@@ -792,9 +797,9 @@ func TestReviewScreenListsEffectiveAccess(t *testing.T) {
 		e.reviewScreen(t.Context(), "test")
 		return b.String()
 	}
-	out := screen(t, &initOptions{launchersChanged: true, operatorsChanged: true, alertEmail: "ops@example.com"}, &localcfg.Config{},
+	out := screen(t, &initOptions{operatorsChanged: true, adminsChanged: true, alertEmail: "ops@example.com"}, &localcfg.Config{},
 		infra.InstallationSpec{Launchers: []string{"user:a@example.com"}, Operators: []string{"user:b@example.com"}}, "")
-	for _, want := range []string{"launchers:      user:a@example.com (from a flag)", "operators:      user:b@example.com (from a flag)", "alert email:    ops@example.com (from a flag)"} {
+	for _, want := range []string{"operators:      user:a@example.com (from a flag)", "admins:         user:b@example.com (from a flag)", "alert email:    ops@example.com (from a flag)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("flags: lacks %q:\n%s", want, out)
 		}
@@ -802,17 +807,17 @@ func TestReviewScreenListsEffectiveAccess(t *testing.T) {
 	cfg := &localcfg.Config{}
 	cfg.Terraform.AlertEmail = "cfg@example.com"
 	out = screen(t, &initOptions{}, cfg, infra.InstallationSpec{Launchers: []string{"group:eng@example.com"}}, "")
-	for _, want := range []string{"launchers:      group:eng@example.com (from the local config)", "operators:      nobody (from the local config)", "alert email:    cfg@example.com (from the local config)"} {
+	for _, want := range []string{"operators:      group:eng@example.com (from the local config)", "admins:         nobody (from the local config)", "alert email:    cfg@example.com (from the local config)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("config: lacks %q:\n%s", want, out)
 		}
 	}
-	out = screen(t, &initOptions{launchersChanged: true, operatorsChanged: true}, &localcfg.Config{},
+	out = screen(t, &initOptions{operatorsChanged: true, adminsChanged: true}, &localcfg.Config{},
 		infra.InstallationSpec{Launchers: []string{"user:me@example.com"}, Operators: []string{"user:me@example.com"}}, "user:me@example.com")
-	if !strings.Contains(out, "launchers:      user:me@example.com (default: you)") || !strings.Contains(out, "alert email:    none (not set)") {
+	if !strings.Contains(out, "operators:      user:me@example.com (default: you)") || !strings.Contains(out, "alert email:    none (not set)") {
 		t.Errorf("default:\n%s", out)
 	}
-	if strings.Index(out, "launchers:") > strings.Index(out, "Every Terraform plan is shown as it runs") || !strings.Contains(out, "Fixed, announced and free") {
+	if strings.Index(out, "operators:") > strings.Index(out, "Every Terraform plan is shown as it runs") || !strings.Contains(out, "Fixed, announced and free") {
 		t.Errorf("order or wording:\n%s", out)
 	}
 }
@@ -877,7 +882,7 @@ func TestMarkedProjectUnlistedGrantAsksItsOwn(t *testing.T) {
 // project's registry, and the billing account is named.
 func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	var b strings.Builder
-	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{launchersChanged: true, alertEmail: "a\x1b[2Jb@example.com", billingAccount: "AAAA\x1b[31m-BBBB", imageSource: "ghcr.io/ev\x1bil"},
+	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{operatorsChanged: true, alertEmail: "a\x1b[2Jb@example.com", billingAccount: "AAAA\x1b[31m-BBBB", imageSource: "ghcr.io/ev\x1bil"},
 		w: &b, projectName: initProjectName, gcpProject: initProject}
 	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5", RegistryHost: "us-east5-docker.pkg.dev/" + initProject,
 		BaseImages: map[string]string{"other": "evil.example/\x1b[1mx:1", "base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"}}
@@ -890,7 +895,7 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	if strings.Contains(out, "\x1b") {
 		t.Fatalf("an escape sequence reached the screen:\n%q", out)
 	}
-	for _, want := range []string{"WARNING: launchers lists domain:example.com", "base image other: ", "OUTSIDE this project's registry", "billing account:", "image source: ghcr.io/ev"} {
+	for _, want := range []string{"WARNING: operators lists domain:example.com", "base image other: ", "OUTSIDE this project's registry", "billing account:", "image source: ghcr.io/ev"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("lacks %q:\n%s", want, out)
 		}

@@ -819,6 +819,19 @@ var inlineAgentSites = []inlineAgentSite{
 		}
 		return ok && err == nil
 	}},
+	// askPlanned is the question a plan that grants a member the review did not
+	// announce asks (init_review.go, grantsNotAnnounced), and it carries the
+	// marker check askBanner carries for its own reason: it is the one question
+	// of the run that --yes does not answer, so a session that must confirm
+	// nothing must not answer it either.
+	{"init_review.go askPlanned", "init_review.go askPlanned (the grant the review did not announce)", func(t *testing.T, r *initRun, e *initEngine, marker string) bool {
+		ok, err := r.askPlanned("an ordinary step", []string{"user:new@example.com"})
+		var ae *initflow.AgentError
+		if marker != "" && (!errors.As(err, &ae) || ae.Marker != marker) {
+			t.Errorf("askPlanned's refusal under %s is %v, want the agent refusal", marker, err)
+		}
+		return ok && err == nil
+	}},
 	{"init_project.go canType", "init_project.go canType", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		return (&projectStage{e: e}).canType()
 	}},
@@ -1031,10 +1044,10 @@ var initFlagCases = map[string]string{
 	// bake-repos (IS7) is one of them: it answers the wizard's own question and
 	// writes the switch, and it is asked — and taken — on a first run of setup
 	// only, so no confirmation is touched by it either way.
-	"alert-email": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
+	"admin": "value", "alert-email": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
-	"image-source": "value", "launcher": "value", "name": "value", "no-log-isolation": "value",
+	"image-source": "value", "name": "value", "no-log-isolation": "value",
 	"operator": "value", "parent": "value", "project": "value", "region": "value",
 	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value",
 	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
