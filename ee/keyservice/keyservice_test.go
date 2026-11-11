@@ -66,7 +66,10 @@ const (
 	ownerAccount       = "owner@fugaro.example"
 	enterprisePlanName = "enterprise"
 	adminSecret        = "fake-admin-secret-0123456789"
-	stepUpCode         = "step-up-code"
+	// otherAdminSecret is what a forgery is signed with: another secret of the
+	// same shape, so a token carrying it is refused by the signature alone.
+	otherAdminSecret = "not-this-deploys-secret-0123456789"
+	stepUpCode       = "step-up-code"
 )
 
 // buyerAddress is the address a merchant's payload carries for the buyer of a

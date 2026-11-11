@@ -12,6 +12,7 @@ package keyservice
 // and that the key never appears on the page at all.
 
 import (
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -121,19 +122,21 @@ func TestAdminRefusesACrossSiteRequest(t *testing.T) {
 		return f.adminPost(RouteAdminMint, form).Result()
 	}
 
-	// A token signed with a secret that is not this deploy's. It is built by a
-	// service that has the deploy's own shape and somebody else's secret, which
-	// is exactly what a forged one would be.
-	forged := &Service{cfg: Config{AdminSecret: []byte("another-secret-0123456789")}, now: f.clock}
-	foreign, err := forged.pageToken(ownerAccount, actionMint)
-	if err != nil {
-		t.Fatalf("building the forged token: %v", err)
-	}
-
 	// A token the page rendered one window ago: the page's own, kept from before
 	// the clock moved past the period it lives.
 	stale := f.pageToken(ownerAccount, actionMint)
 	f.advance(16 * time.Minute)
+
+	// A token signed with a secret that is not this deploy's. It is built by a
+	// service with the deploy's own shape — its plans, its account, the period
+	// its forms live, and the clock, so the token is **live** — and somebody
+	// else's secret, which is exactly what a forged one would be. Anything less
+	// than that whole shape would be refused by one of the other checks and the
+	// secret itself would go unread.
+	foreign, err := forgedToken(f.svc.cfg, f.clock)
+	if err != nil {
+		t.Fatalf("building the forged token: %v", err)
+	}
 
 	for _, tc := range []struct {
 		name  string
@@ -173,6 +176,17 @@ func TestAdminRefusesACrossSiteRequest(t *testing.T) {
 	if got := len(f.recording.keys); got != 1 {
 		t.Errorf("the page's own token minted %d key(s), want one", got)
 	}
+}
+
+// forgedToken is what a page token looks like when somebody who is not this
+// deploy signs one. It is built from the deploy's own configuration with
+// another secret in it, so the token is live, inside its period, bound to the
+// owner's account and to the minting action — and refused by the signature, and
+// by the signature alone.
+func forgedToken(cfg Config, now func() time.Time) (string, error) {
+	forged := &Service{cfg: cfg, now: now}
+	forged.cfg.AdminSecret = []byte(otherAdminSecret)
+	return forged.pageToken(ownerAccount, actionMint)
 }
 
 // TestQueueEscapesApplicantText: §6's escaping row and Check 173 step 4 — every
@@ -217,6 +231,64 @@ func TestQueueEscapesApplicantText(t *testing.T) {
 	}
 	if page.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("the page is cacheable (%q), and the queue is a list of people", page.Header().Get("Cache-Control"))
+	}
+}
+
+// TestAdminWithoutASecondFactorMintsNothing: §6's step-up row and **D455** — a
+// deployment that names no factor is one the page answers read-only, and every
+// minting action is refused rather than falling back on the session.
+//
+// The guard is worth a test of its own because the failure it prevents is
+// silent: a page that minted on the session alone would mint any key for any
+// tier from a stolen cookie, which is the whole of what the row is about. What
+// still works is the reading and the decline — a queue the owner cannot work
+// through is a queue that grows.
+func TestAdminWithoutASecondFactorMintsNothing(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) { f.deps.StepUp = nil })
+	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a multi-seat trial"}}))
+	open := f.open()
+	if len(open) != 1 {
+		t.Fatalf("the manual form left %d open request(s), want one", len(open))
+	}
+
+	page := f.adminGet()
+	if page.Code != http.StatusOK {
+		t.Fatalf("the page answered %d, want 200: %s", page.Code, page.Body.String())
+	}
+	body := page.Body.String()
+	if !strings.Contains(body, html.EscapeString(refuseNoFactor)) {
+		t.Errorf("the page does not say why it can mint nothing: %q", body)
+	}
+	if strings.Contains(body, `action="`+RouteAdminMint+`"`) {
+		t.Error("the page renders a mint form whose every submission it will refuse")
+	}
+
+	// The action is refused with the page's own live token and a code: the
+	// deployment has nothing to check the code against, so there is nothing a
+	// caller can send that makes it a mint.
+	if rec := f.adminPost(RouteAdminMint, f.mintForm(url.Values{
+		"application": {open[0].ID}, "plan": {paidPlanName}, "seats": {"2"},
+		"term_days": {"365"}, "organisation": {"acme.example"},
+	})); rec.Code != http.StatusForbidden {
+		t.Errorf("a mint from a page with no second factor answered %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.recording.keys); got != 0 {
+		t.Errorf("a page with no second factor minted %d key(s), want none (D455)", got)
+	}
+	if got := len(f.auditor.lines); got != 0 {
+		t.Errorf("a page with no second factor wrote %d audit line(s), want none: no key was returned", got)
+	}
+	if got := len(f.open()); got != 1 {
+		t.Errorf("a refused mint changed the queue: %+v", f.open())
+	}
+
+	// Declining is not a minting action, so it is not the factor's: §6's step-up
+	// is per mint, and the owner still has to be able to clear the queue.
+	if rec := f.adminPost(RouteAdminDecide, f.decideForm(open[0].ID)); rec.Code != http.StatusSeeOther {
+		t.Errorf("a decline from a page with no second factor answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.open()); got != 0 {
+		t.Errorf("the decline did not take the request out of the queue: %+v", f.open())
 	}
 }
 
@@ -300,6 +372,11 @@ func TestEveryMintIsAudited(t *testing.T) {
 // recommendation the design carries: it **queues** rather than mints, so an
 // honest burst is answered rather than turned away, and the request that was
 // over the cap is still there when the window moves.
+//
+// What the cap counts is the page's own mints and not every key of the tier: a
+// merchant's event mints a team key inside the same window here, and the owner's
+// first approval has to be answered anyway. A cap that read the whole record
+// would refuse a paying customer's trial because somebody bought something.
 func TestPerTierMintLimit(t *testing.T) {
 	f := newFixtureWith(t, Production, func(f *fixture) {
 		f.cfg.MintCaps = map[string]Limits{
@@ -308,6 +385,15 @@ func TestPerTierMintLimit(t *testing.T) {
 			licence.TierEnterprise: {Requests: 20, Window: time.Hour},
 		}
 	})
+
+	// The customer's key first, inside the window the cap counts over. What the
+	// cap counts is read as the keys minted since, because the fixture's minter
+	// records this one too.
+	if bought := f.purchase("evt-cap-0", "buyer.example", 3, 365); bought.Tier != licence.TierTeam {
+		t.Fatalf("the purchase minted a %q key, and this is a test about the %q tier's cap", bought.Tier, licence.TierTeam)
+	}
+	before := len(f.recording.keys)
+
 	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a trial"}}))
 	answerBody(t, f.post(RouteRequest, url.Values{"email": {"second@acme.example"}, "request": {"and another"}}))
 	open := f.open()
@@ -321,8 +407,14 @@ func TestPerTierMintLimit(t *testing.T) {
 		})
 	}
 
+	// The first approval is answered although the tier's cap is one and the
+	// customer's key is already in the window: the cap counts the page's own
+	// mints, and the customer's is not one of them.
 	if rec := f.adminPost(RouteAdminMint, form(open[0].ID)); rec.Code != http.StatusSeeOther {
-		t.Fatalf("the first mint answered %d, want 303: %s", rec.Code, rec.Body.String())
+		t.Fatalf("the first approval answered %d, want 303: %s, and the customer's key in the window is not a page mint", rec.Code, rec.Body.String())
+	}
+	if got := len(f.recording.keys) - before; got != 1 {
+		t.Fatalf("the first approval minted %d key(s), want one", got)
 	}
 
 	// The burst: the tier's one mint for the window is spent, so the second
@@ -331,7 +423,7 @@ func TestPerTierMintLimit(t *testing.T) {
 	if rec := f.adminPost(RouteAdminMint, form(open[1].ID)); rec.Code != http.StatusTooManyRequests {
 		t.Errorf("the second mint in one window answered %d, want 429: %s", rec.Code, rec.Body.String())
 	}
-	if got := len(f.recording.keys); got != 1 {
+	if got := len(f.recording.keys) - before; got != 1 {
 		t.Errorf("the burst minted %d key(s) in all, want the first one alone", got)
 	}
 	if got := len(f.auditor.lines); got != 1 {
@@ -346,16 +438,15 @@ func TestPerTierMintLimit(t *testing.T) {
 	if rec := f.adminPost(RouteAdminMint, form(open[1].ID)); rec.Code != http.StatusSeeOther {
 		t.Errorf("the same approval one window later answered %d, want 303: %s", rec.Code, rec.Body.String())
 	}
-	if got := len(f.recording.keys); got != 2 {
+	if got := len(f.recording.keys) - before; got != 2 {
 		t.Errorf("the approval after the window minted %d key(s) in all, want two", got)
 	}
 
-	// A cap is a limit on the page's own mints and not on the service's: the
-	// merchant's events and the followed links mint through their own paths, and
-	// a cap that counted those would refuse a paying customer because the owner
-	// had approved a trial (§5.1, §5.5).
-	if rec := f.purchase("evt-cap-1", "buyer.example", 3, 365); rec.Plan != paidPlanName {
-		t.Errorf("a purchase under a spent page cap minted %q, want the merchant's plan", rec.Plan)
+	// And the merchant's path is not the page's, either way round: a purchase
+	// mints under a page cap the window has spent, because §5.1's events and
+	// §5.5's page are two doors and the cap is one of them (§5.1, §5.5).
+	if bought := f.purchase("evt-cap-1", "buyer.example", 3, 365); bought.Plan != paidPlanName {
+		t.Errorf("a purchase under a spent page cap minted %q, want the merchant's plan", bought.Plan)
 	}
 }
 
