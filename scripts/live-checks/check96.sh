@@ -40,8 +40,9 @@
 #             `belong`: both the project the config in force describes and the
 #             repository's name are refused when they are anything else. It
 #             mints two Firebase Auth users (deleted again in the same run, and
-#             read back absent), two run identities and ONE real GitHub
-#             installation token, for the sandbox repository.
+#             the project's own user list read back — every page of it, on a
+#             200 — holding none of their uids), two run identities and ONE real
+#             GitHub installation token, for the sandbox repository.
 # Costs:      four POSTs to the service — three authenticated (the mint, the
 #             pairing case's and the outsider's) and one with no identity at all,
 #             which Cloud Run's own front end refuses before the container runs
@@ -52,10 +53,14 @@
 #             execution.
 # Runs:       by YOU. No agent runs any step of it.
 # Cleanup:    always, including on a Ctrl-C: the scratch directory is removed,
-#             and the two Firebase Auth users the run created are deleted in the
-#             last step and read back absent. A run interrupted before that
-#             step says in its `restore` line which uids are still there and the
-#             one call that deletes them, because they are this check's own.
+#             and the Firebase Auth users the run's exchanges may have created
+#             are deleted in the last step and the project's own user list read
+#             back — every page of it, on a 200 — holding none of their uids.
+#             A run interrupted before that step, or whose read-back did not
+#             answer, says in its `restore` line which uids it may have created
+#             and the one call that deletes each, because they are this check's
+#             own; and a uid goes down before its exchange is attempted, since
+#             the user is made by the exchange rather than by its answer.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 96 RESULT, to
 #             copy back to the coordinator. Exit 0 when every fact passed, 1
 #             when one FAILed, 2 when the run could not tell (a guard stopped it,
@@ -1255,9 +1260,9 @@ write_files() {
 It prints a fixed vocabulary and never a document -- `name=`, `project=`,
 `region=`, `repo=`, `slug=`, `service=`, `url=`, `job=`, `sa=`, `appid=`,
 `present`, `absent`, `yes`, `no`, `lines=3`, `next=<page token>` -- so what
-reaches the block is the
-check's own words about what it read. Two subcommands are exceptions, both of
-them deliberate and both of them never printed by the script:
+reaches the block is the check's own words about what it read. Two
+subcommands are exceptions, both of them deliberate and both of them never
+printed by the script:
 
   - `identity` prints the run's ID token on stdout, for a shell variable;
   - `mint` prints the answer's `token=` field, for a shell variable.
