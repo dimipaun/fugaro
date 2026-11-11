@@ -239,9 +239,9 @@ func TestEveryKindSwitchIsInventoried(t *testing.T) {
 		}
 		// ee/ is deleted before the core-without-ee job builds and tests the
 		// untagged core, so a row under a tree this checkout does not carry at
-		// all is skipped: the row is not stale, the directory is simply not
-		// here. A row whose own directory IS here and whose file is not is a
-		// stale row like any other.
+		// all is skipped: the row is not stale, the tree is simply not here.
+		// A row whose own package was deleted is a stale row like any other,
+		// and absentTree asks about the top-level tree for exactly that reason.
 		if absentTree(root, rel) {
 			continue
 		}
@@ -260,12 +260,56 @@ func TestEveryKindSwitchIsInventoried(t *testing.T) {
 	}
 }
 
-// absentTree reports whether a row points into a part of the tree this checkout
-// does not carry at all: the file is not there AND neither is its directory.
-// The whole-directory case is CI's core-without-ee job, which deletes ee/ and
-// then builds and tests the untagged core; the one-file case is a stale row.
+// TestAbsentTreeSkipsOnlyAWholeMissingTree pins the rule the stale-row half of
+// TestEveryKindSwitchIsInventoried rests on: a row is skipped only when the
+// whole top-level tree it points into is gone (CI's core-without-ee job deletes
+// ee/), and NOT when the package the row names was deleted — that is a stale
+// row and has to be reported, because a listed package that disappears takes
+// its switch with it and nothing else would notice.
+func TestAbsentTreeSkipsOnlyAWholeMissingTree(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"internal/runner", "deploy/terraform"} {
+		if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(dir)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		rel  string
+		want bool
+		why  string
+	}{
+		{"ee/ab/admit.go", true, "ee/ is not in this checkout at all: the core-without-ee job deletes it"},
+		{"internal/runner/runnertest/runnertest.go", false, "internal/ is here and this package is not: a deleted package is a stale row"},
+		{"internal/runner/runner.go", false, "the tree is here and so is the file"},
+		{"deploy/terraform/gcp/main.tf", false, "the tree is here and the file is not: a stale row"},
+		{"main.go", false, "a module-root row has no tree above it that can be missing"},
+	} {
+		if got := absentTree(root, tc.rel); got != tc.want {
+			t.Errorf("absentTree(%q) = %v, want %v: %s", tc.rel, got, tc.want, tc.why)
+		}
+	}
+}
+
+// absentTree reports whether a row points into a whole tree this checkout does
+// not carry: the row's TOP-LEVEL directory under the module root — ee/,
+// internal/, deploy/ — is not there at all. That is CI's core-without-ee job,
+// which deletes ee/ and then builds and tests the untagged core: the row is not
+// stale, the tree is simply not here.
+//
+// It asks about the top-level component and not the row's own directory on
+// purpose. A package deleted outright must be reported as the stale row it is,
+// and a rule that shrugged at any missing parent directory would wave exactly
+// that through: rm -rf internal/runner/runnertest would leave its row silently
+// unreported. See TestAbsentTreeSkipsOnlyAWholeMissingTree.
 func absentTree(root, rel string) bool {
-	_, err := os.Stat(filepath.Join(root, filepath.Dir(filepath.FromSlash(rel))))
+	top, _, nested := strings.Cut(rel, "/")
+	if !nested {
+		// A row naming a module-root file has no tree above it that can be
+		// missing: the module root is always here, so the file's absence is a
+		// stale row.
+		return false
+	}
+	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(top)))
 	return errors.Is(err, fs.ErrNotExist)
 }
 
