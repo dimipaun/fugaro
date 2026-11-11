@@ -76,11 +76,20 @@ const intakeServiceName = "fugaro-intake"
 // The bounds of one call: a body the service would not read and an answer this
 // client will not hold are both refused here, before anything is sent or
 // decoded. maxIntakeAnswerBytes is the larger of the intake's two documents (a
-// listing of one prefix) with room to spare, and maxIntakeBodyBytes is
-// Secret Manager's own 64 KiB payload, base64d, plus the JSON around it.
+// listing of one prefix) with room to spare.
+//
+// maxIntakeBodyBytes is the intake's own bound on a request's body
+// (internal/intake's maxBodyBytes), written as the same arithmetic rather than
+// as a round number: a value is Secret Manager's 64 KiB, base64d, inside the
+// envelope the request adds around it, and a bound of this CLI's own that
+// admitted a body the intake refuses would send a call only to have it
+// rejected there. The envelope is the intake's own 1 KiB — the scope, the
+// name at Secret Manager's longest, and the quoting around all three — and it
+// is spelled here because that constant is the intake's own file's.
 const (
 	maxIntakeAnswerBytes = 512 << 10
-	maxIntakeBodyBytes   = 128 << 10
+	intakeEnvelopeBytes  = 1 << 10
+	maxIntakeBodyBytes   = (maxSecretBytes+2)/3*4 + intakeEnvelopeBytes
 )
 
 // intakeTimeout bounds one call. The intake answers from Secret Manager and the
@@ -375,13 +384,10 @@ func secretsIntakeRm(cmd *cobra.Command, o secretsIntakeOptions, scope intake.Sc
 	if o.asJSON {
 		return printIntakeAnswer(cmd, answer)
 	}
-	if len(answer.Deleted) == 0 {
-		// The intake answers a delete that matched nothing as done — what it was
-		// asked for, that no such container is left, is true — so the line says
-		// which of the two happened rather than claiming a removal.
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s was not there; nothing was removed\n", pluginwire.Printable(name))
-		return err
-	}
+	// A named delete that matches nothing is not an empty answer: the intake
+	// refuses it by type (no_such_secret, a 404 this call turns into the user
+	// error), and the only delete answered as done with nothing removed is the
+	// admin's sweep by owner (DS2.4), which this verb does not make.
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "removed %s\n", strings.Join(printableAll(answer.Deleted), ", "))
 	return err
 }
@@ -465,6 +471,10 @@ var secretsIntakeIdentity = func(ctx context.Context, serviceURL, what string) (
 // body carries the credential, so no sentence here may quote what it sent, and
 // the answer never carries a value at all.
 func secretsIntakeOver(ctx context.Context, serviceURL string, c secretsIntakeCall) error {
+	// The route is appended to the address, and the check admits a trailing
+	// slash (a scheme and a host is what it asks for), so the slash comes off
+	// before it is: `https://host/` + `/v1/…` is a path the intake refuses.
+	serviceURL = strings.TrimSuffix(serviceURL, "/")
 	if err := checkIntakeServiceURL(serviceURL); err != nil {
 		return err
 	}
@@ -473,7 +483,9 @@ func secretsIntakeOver(ctx context.Context, serviceURL string, c secretsIntakeCa
 		return remote(errors.New("the request this call is made of could not be written"))
 	}
 	if len(payload) > maxIntakeBodyBytes {
-		return userErr("the value is larger than one call may carry; the intake takes values of Secret Manager's own 64 KiB")
+		// The name is what this can still be about: a value over Secret
+		// Manager's 64 KiB is refused before this, by the read that took it.
+		return userErr("this call's request is larger than the intake reads in one body: a value is Secret Manager's 64 KiB at most, and a name is at most 255 bytes")
 	}
 	identity, err := secretsIntakeIdentity(ctx, serviceURL, c.What)
 	if err != nil {
@@ -504,6 +516,12 @@ func secretsIntakeOver(ctx context.Context, serviceURL string, c secretsIntakeCa
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(c.Out); err != nil {
 		return remote(errors.New("the intake's answer is not the document this call reads"))
+	}
+	// One document and nothing after it: the intake's own reader refuses a body
+	// that carries more than one JSON value, and an answer carrying two would
+	// be one this call read the half of.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return remote(errors.New("the intake's answer carries more than one document"))
 	}
 	return nil
 }

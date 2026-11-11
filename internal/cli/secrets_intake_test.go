@@ -200,19 +200,28 @@ func TestLsPrintsNamesAndDates(t *testing.T) {
 // what the intake verifies, and an agent holds that person's credentials.
 func TestSetRefusedInAgentSession(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		env   string
-		args  []string
-		value string
+		name     string
+		env      string
+		envValue string
+		args     []string
+		value    string
 	}{
-		{"an agent's session stores", "CLAUDECODE", []string{"secrets", "user", "set", "github-token"}, intakeTestValue},
-		{"an agent's session lists", "CLAUDECODE", []string{"secrets", "user", "ls"}, ""},
-		{"a run's process stores", "FUGARO_RUN", []string{"secrets", "shared", "set", "npm-token"}, intakeTestValue},
-		{"a run's process removes", "CLOUD_RUN_JOB", []string{"secrets", "shared", "rm", "npm-token"}, ""},
+		{"an agent's session stores", "CLAUDECODE", "", []string{"secrets", "user", "set", "github-token"}, intakeTestValue},
+		{"an agent's session lists", "CLAUDECODE", "", []string{"secrets", "user", "ls"}, ""},
+		{"a run's process stores", "FUGARO_RUN", "", []string{"secrets", "shared", "set", "npm-token"}, intakeTestValue},
+		{"a run's process removes", "CLOUD_RUN_JOB", "", []string{"secrets", "shared", "rm", "npm-token"}, ""},
+		// The third refusal in the order: with http2debug on, Go prints the
+		// request — the caller's own token in its header — to stderr, so the
+		// command is refused before the token is minted at all.
+		{"Go would print the request", "GODEBUG", "http2debug=2", []string{"secrets", "user", "set", "github-token"}, intakeTestValue},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			intakeFixture(t)
-			t.Setenv(tc.env, "1")
+			envValue := tc.envValue
+			if envValue == "" {
+				envValue = "1"
+			}
+			t.Setenv(tc.env, envValue)
 			seen := fakeIntakeCalls(t, nil)
 
 			out, _, err := executeStdin(t, tc.value+"\n", tc.args...)
@@ -244,7 +253,11 @@ func TestValueNeverInArgsOrEnv(t *testing.T) {
 	seen := fakeIntakeCalls(t, nil)
 
 	// An argument is refused, and the value is in no sentence and no output.
-	out, errOut, err := execute(t, "secrets", "user", "set", "github-token", intakeTestValue)
+	// The value on stdin is what makes this a pin on the argument guard rather
+	// than on an empty read: with the guard gone the run would store what stdin
+	// carries, under the name the argument took, and the call below is what
+	// says it does not.
+	out, errOut, err := executeStdin(t, intakeTestValue+"\n", "secrets", "user", "set", "github-token", intakeTestValue)
 	if err == nil {
 		t.Fatal("a value passed as an argument was accepted: arguments land in shell history and process lists")
 	}
@@ -256,8 +269,30 @@ func TestValueNeverInArgsOrEnv(t *testing.T) {
 			t.Errorf("the value was echoed back: %q", s)
 		}
 	}
-	if !strings.Contains(err.Error(), "stdin") {
-		t.Errorf("the refusal does not say where the value comes from: %v", err)
+	if !strings.Contains(err.Error(), "never as an argument") {
+		t.Errorf("the refusal does not say what was wrong with the invocation: %v", err)
+	}
+
+	// A value-shaped flag: pflag quotes an unknown flag back, which is why the
+	// family sets its own flag error (creds_test.go holds fugaro creds to the
+	// same case). The value is in no sentence, and nothing is sent.
+	out, errOut, err = execute(t, "secrets", "user", "set", "github-token", "--"+intakeTestValue)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a value-shaped flag answered %v, want the family's own refusal", err)
+	}
+	for _, s := range []string{out, errOut, err.Error()} {
+		if strings.Contains(s, intakeTestValue) {
+			t.Errorf("the value-shaped flag was echoed back: %q", s)
+		}
+	}
+	// The family's own sentence and not the parent's: `secrets` answers an
+	// unknown flag with the flags its own verbs take (--repo, --project-wide,
+	// --allow-data-to …), which are not this family's.
+	if !strings.Contains(err.Error(), "unknown or malformed flag; secrets user commands take --json") {
+		t.Errorf("the flag error is not the family's own: %v", err)
+	}
+	if len(*seen) != 0 {
+		t.Errorf("a refused flag still reached the intake (%d calls)", len(*seen))
 	}
 
 	// The environment is not a source either: a value sitting in one is not
@@ -377,6 +412,19 @@ func TestTheIntakeCallIsTheRoutesOwnCall(t *testing.T) {
 		t.Errorf("the call read %+v, want the answer the service gave", got)
 	}
 
+	// An address with a trailing slash is the same address: the check admits
+	// one, and the route appended to it is the intake's own path rather than
+	// one with the slash doubled.
+	path = ""
+	if err := secretsIntakeOver(context.Background(), srv.URL+"/", secretsIntakeCall{
+		Path: intake.CreatePath, Body: req, Out: &got,
+	}); err != nil {
+		t.Errorf("the call to the same address with a trailing slash failed: %v", err)
+	}
+	if path != intake.CreatePath {
+		t.Errorf("the address with a trailing slash asked %q, want the intake's route (%q)", path, intake.CreatePath)
+	}
+
 	// The intake's own refusal is what the caller reads, and it is a user error.
 	status = http.StatusForbidden
 	err := secretsIntakeOver(context.Background(), srv.URL, secretsIntakeCall{Path: intake.ListPath, Body: intake.ListRequest{Scope: intake.ScopeShared}, Out: &intake.ListAnswer{}})
@@ -395,6 +443,103 @@ func TestTheIntakeCallIsTheRoutesOwnCall(t *testing.T) {
 		t.Errorf("a service that does not serve the intake's routes answered %v, want the refusal that names `fugaro update`", err)
 	}
 
+}
+
+// TestTheIntakeCallRefusesAnAnswerItDoesNotReadWhole: the answer is read
+// strictly in both directions Convention 6 names — a field this release does not
+// know, and a second document after the first — as the intake's own reader
+// refuses them on the request side. An answer is the service's text and this
+// call is the only reader of it, so what it will not read it must not half-read.
+func TestTheIntakeCallRefusesAnAnswerItDoesNotReadWhole(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	prevIdentity := secretsIntakeIdentity
+	secretsIntakeIdentity = func(context.Context, string, string) (string, error) { return fakeLauncherToken, nil }
+	t.Cleanup(func() { secretsIntakeIdentity = prevIdentity })
+	call := secretsIntakeCall{
+		Path: intake.CreatePath,
+		Body: intake.CreateRequest{Scope: intake.ScopeUser, Name: "github-token", Value: base64.StdEncoding.EncodeToString([]byte(intakeTestValue))},
+	}
+
+	const one = `{"id":"fugaro_u_1234_github-token","version":"3","created":true}`
+	body = one
+	call.Out = &intake.SecretAnswer{}
+	if err := secretsIntakeOver(context.Background(), srv.URL, call); err != nil {
+		t.Errorf("the intake's own answer was refused: %v", err)
+	}
+
+	body = one + ` ` + one
+	call.Out = &intake.SecretAnswer{}
+	err := secretsIntakeOver(context.Background(), srv.URL, call)
+	if err == nil || !strings.Contains(err.Error(), "more than one document") {
+		t.Errorf("an answer carrying two documents was read as %v, want the refusal of a second one", err)
+	}
+
+	body = `{"id":"fugaro_u_1234_github-token","version":"3","created":true,"unknown":1}`
+	call.Out = &intake.SecretAnswer{}
+	err = secretsIntakeOver(context.Background(), srv.URL, call)
+	if err == nil || !strings.Contains(err.Error(), "not the document this call reads") {
+		t.Errorf("an answer carrying a field this release does not know was read as %v, want the refusal of the shape", err)
+	}
+}
+
+// TestTheIntakeCallReadsABoundedAnswer: the answer is another writer's and it is
+// rendered into this process's memory, so its size is judged before its shape —
+// a service that answers without end cannot make this CLI hold it
+// (run_slip_test.go's grant test is the same one for the launcher's own call).
+// The document is grown in a field the strict decode reads, so the size alone
+// is what refuses the second answer and not an unknown one.
+func TestTheIntakeCallReadsABoundedAnswer(t *testing.T) {
+	const id = "fugaro_u_1234_github-token"
+	base, err := json.Marshal(intake.SecretAnswer{ID: id, Version: "3", Created: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := func(extra int) string {
+		pad := maxIntakeAnswerBytes - len(base) + extra
+		if pad < 0 {
+			t.Fatalf("the answer's own shape is %d bytes, larger than the bound (%d)", len(base), maxIntakeAnswerBytes)
+		}
+		doc, err := json.Marshal(intake.SecretAnswer{ID: id + strings.Repeat("a", pad), Version: "3", Created: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(doc)
+	}
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	prevIdentity := secretsIntakeIdentity
+	secretsIntakeIdentity = func(context.Context, string, string) (string, error) { return fakeLauncherToken, nil }
+	t.Cleanup(func() { secretsIntakeIdentity = prevIdentity })
+	call := secretsIntakeCall{
+		Path: intake.CreatePath,
+		Body: intake.CreateRequest{Scope: intake.ScopeUser, Name: "github-token", Value: base64.StdEncoding.EncodeToString([]byte(intakeTestValue))},
+	}
+
+	body = answer(0)
+	if len(body) != maxIntakeAnswerBytes {
+		t.Fatalf("the fixture is %d bytes, want exactly the bound (%d)", len(body), maxIntakeAnswerBytes)
+	}
+	var got intake.SecretAnswer
+	call.Out = &got
+	if err := secretsIntakeOver(context.Background(), srv.URL, call); err != nil || !strings.HasPrefix(got.ID, id) {
+		t.Errorf("an answer of exactly %d bytes was read as %+v, %v, want the document it carries: %d is the bound, not one past it", len(body), got, err, maxIntakeAnswerBytes)
+	}
+
+	body = answer(1)
+	call.Out = &intake.SecretAnswer{}
+	err = secretsIntakeOver(context.Background(), srv.URL, call)
+	if err == nil || !strings.Contains(err.Error(), "larger than this call's") {
+		t.Errorf("an answer of %d bytes was read as %v, want the refusal of an answer larger than this call's (%d bytes)", len(body), err, maxIntakeAnswerBytes)
+	}
 }
 
 // TestTheIntakeCallDoesNotFollowARedirect: a 3xx is not an answer, and the
