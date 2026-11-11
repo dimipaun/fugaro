@@ -252,4 +252,9 @@ test('a breadcrumb is a constant from the module’s list, or it is redacted', (
   // constant nor text is a refusal, not a value that quietly passes through.
   assert.throws(() => breadcrumb(MESSAGE, [TOKEN]));
   assert.throws(() => breadcrumb(uttered, 'not-a-list'));
+  // An empty list refuses too, and that control is the one that matters: the
+  // redactor's own forms of nothing are nothing, so the text would have gone
+  // out whole -- the one failure §7.3's rule exists to make impossible.
+  assert.throws(() => breadcrumb(uttered, []));
+  assert.equal(breadcrumb('screen_mailbox', []), 'screen_mailbox');
 });

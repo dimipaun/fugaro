@@ -23,9 +23,21 @@
 //      would be a name this scan cannot read, and a rule it could only take on
 //      trust. A helper that sends an event of its own is refused by the same
 //      reader, because its argument is that helper's own object and not one of
-//      the seven literals. The telemetry module is where those seven call sites
-//      live, one per event, which is what makes the allow-list non-vacuous
-//      rather than a promise.
+//      the seven literals. **The parameters are read under the name**, because
+//      §7.1's ban list is "no free text at all" and a name alone is only half
+//      the claim: the second argument must be a single object literal carrying
+//      exactly the keys that event's entry declares, each value a boolean or a
+//      member of the closed set the entry names -- so
+//      `logEvent('screen_shown', { screen: message.text })` is refused for its
+//      value, `{ text: … }` for its key, and `{ screen }` for a shape the scan
+//      cannot read. A second argument that is not an object literal is refused
+//      with them, because `logEvent('screen_shown', message)` hands the SDK an
+//      object holding the message's own fields all the same. The telemetry
+//      module is where those seven call sites live, one per event, which is
+//      what makes the allow-list non-vacuous rather than a promise -- and it is
+//      the one file this rule allows, because the parameters that reach its
+//      port are the ones `telemetryEvent` has already shaped and refused;
+//      `events.test.js` is where that door is held instead.
 //   2. `setUserId(`, `setUserProperty(`/`setUserProperties(`,
 //      `setAttribute(`/`setAttributes(` and `setDefaultEventParameters(` --
 //      refused at any call site, whatever they are passed. D256's answer
@@ -77,7 +89,7 @@ import { dirname, join, relative, sep } from 'node:path';
 import test from 'node:test';
 
 import { BREADCRUMBS } from './breadcrumbs.js';
-import { EVENT_NAMES } from './events.js';
+import { EVENT_NAMES, EVENT_PARAMETERS } from './events.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const SELF = relative(ROOT, import.meta.filename).split(sep).join('/');
@@ -112,37 +124,57 @@ function code(text) {
  * only when it is the **whole** argument, so `'a' + b` and `f(x).trim()` are
  * read as the shapes they are rather than as the literal or the call they open
  * with. Everything else -- a template literal, a member expression, a
- * concatenation, no argument at all -- is a shape every rule refuses.
+ * concatenation, no argument at all -- is a shape every rule refuses. `end` is
+ * the index of the `,` or `)` that ends the argument, which is where a rule
+ * that has to read the argument after it starts from.
  */
 function firstArgument(body, at) {
-  let i = at;
-  while (i < body.length && /\s/.test(body[i])) i += 1;
-  if (i >= body.length || body[i] === ')') return { kind: 'none' };
+  const i = afterSpace(body, at);
+  if (i >= body.length || body[i] === ')') return { kind: 'none', end: i };
   const quote = body[i];
   if (quote === "'" || quote === '"') {
-    const end = body.indexOf(quote, i + 1);
-    if (end !== -1 && endsArgument(body, end + 1)) return { kind: 'literal', value: body.slice(i + 1, end) };
-    return { kind: 'other' };
+    const close = body.indexOf(quote, i + 1);
+    const end = close === -1 ? -1 : argumentEnd(body, close + 1);
+    if (end !== -1) return { kind: 'literal', value: body.slice(i + 1, close), end };
+    return { kind: 'other', end: -1 };
   }
   const call = /^([A-Za-z_$][\w$]*)\s*\(/.exec(body.slice(i));
   if (call !== null) {
-    const close = callEnd(body, i + call[0].length - 1);
-    if (close !== -1 && endsArgument(body, close + 1)) return { kind: 'call', callee: call[1] };
+    const close = closeIndex(body, i + call[0].length - 1);
+    const end = close === -1 ? -1 : argumentEnd(body, close + 1);
+    if (end !== -1) return { kind: 'call', callee: call[1], end };
   }
-  return { kind: 'other' };
+  return { kind: 'other', end: -1 };
+}
+
+/** The index of the first character at or after `at` that is not a space. */
+function afterSpace(body, at) {
+  let i = at;
+  while (i < body.length && /\s/.test(body[i])) i += 1;
+  return i;
+}
+
+/** The index of the `,` or `)` that ends the argument starting at `at`, or -1
+ * when the text continues the argument instead. */
+function argumentEnd(body, at) {
+  const i = afterSpace(body, at);
+  return body[i] === ',' || body[i] === ')' ? i : -1;
 }
 
 /** Whether what follows `at` ends the argument rather than continuing it. */
 function endsArgument(body, at) {
-  let i = at;
-  while (i < body.length && /\s/.test(body[i])) i += 1;
-  return body[i] === ',' || body[i] === ')';
+  return argumentEnd(body, at) !== -1;
 }
 
-/** The index of the `)` that closes the `(` at `open`, or -1 when the text
- * holds none -- which is a shape the scan refuses rather than one it guesses at.
+/**
+ * The index of the character that closes the `(` or `{` at `open`, or -1 when
+ * the text holds none -- which is a shape the scan refuses rather than one it
+ * guesses at. A quoted string is skipped whole, so a brace inside one is not
+ * counted and a string that is never closed is a refusal too.
  */
-function callEnd(body, open) {
+function closeIndex(body, open) {
+  const opener = body[open];
+  const closer = opener === '{' ? '}' : ')';
   let depth = 0;
   for (let i = open; i < body.length; i += 1) {
     const character = body[i];
@@ -152,13 +184,76 @@ function callEnd(body, open) {
       i = end;
       continue;
     }
-    if (character === '(') depth += 1;
-    if (character === ')') {
+    if (character === opener) depth += 1;
+    if (character === closer) {
       depth -= 1;
       if (depth === 0) return i;
     }
   }
   return -1;
+}
+
+/**
+ * What the call site passes as the event's parameters: the second argument when
+ * it is a single object literal of `name: value` entries, and the shape it is
+ * otherwise. A parameter list this cannot read -- a shorthand property, a
+ * spread, a nested object, a computed key, a call -- is `other`, which the rule
+ * refuses: a value the scan cannot see is a value nobody reviewed.
+ */
+function parametersOf(body, at) {
+  if (body[at] !== ',') return { kind: 'none' };
+  const i = afterSpace(body, at + 1);
+  if (body[i] !== '{') return { kind: 'other' };
+  const close = closeIndex(body, i);
+  if (close === -1 || argumentEnd(body, close + 1) === -1) return { kind: 'other' };
+  const entries = literalEntries(body.slice(i + 1, close));
+  return entries === null ? { kind: 'other' } : { kind: 'object', entries };
+}
+
+/**
+ * An object literal's entries, each a plain `name: value` whose value is a
+ * quoted string or a boolean -- or null when any entry is some other shape,
+ * which is the refusal above. The name has to be the event's own key spelled
+ * out: a value built at run time is exactly what §7.1's ban list is about.
+ */
+function literalEntries(text) {
+  const entries = [];
+  let i = 0;
+  while (i < text.length) {
+    while (i < text.length && /[\s,]/.test(text[i])) i += 1;
+    if (i >= text.length) break;
+    const name = /^([A-Za-z_$][\w$]*)\s*:\s*/.exec(text.slice(i));
+    if (name === null) return null;
+    i += name[0].length;
+    const value = /^'(?:[^'\\]|\\.)*'|^"(?:[^"\\]|\\.)*"|^(?:true|false)\b/.exec(text.slice(i));
+    if (value === null) return null;
+    i += value[0].length;
+    entries.push([name[1], value[0].replace(/^['"]|['"]$/g, '').replace(/\\(.)/g, '$1')]);
+    const separator = /^\s*(?:,|$)/.exec(text.slice(i));
+    if (separator === null) return null;
+    i += separator[0].length;
+  }
+  return entries;
+}
+
+/**
+ * Whether a call's parameters are the ones the event's own entry declares:
+ * exactly its keys -- none missing, none besides -- and every value a boolean
+ * or a member of that parameter's closed set. This is §7.1's "**no free text at
+ * all**" held where it can be read: `logEvent('screen_shown', { screen:
+ * message.text })` carries a message's text inside an allowed name, and it is
+ * the parameters, not the name, that would send it.
+ */
+function declaredParameters(name, read) {
+  const declared = EVENT_PARAMETERS[name];
+  const keys = Object.keys(declared);
+  if (read.kind === 'none') return keys.length === 0;
+  if (read.kind !== 'object' || read.entries.length !== keys.length) return false;
+  return read.entries.every(([key, value]) => {
+    if (!Object.hasOwn(declared, key)) return false;
+    const set = declared[key];
+    return set === 'boolean' ? value === 'true' || value === 'false' : set.includes(value);
+  });
 }
 
 /** The telemetry module a breadcrumb call has to come from. */
@@ -204,6 +299,12 @@ const BREADCRUMB_DECLARATIONS = [
   /\b(?:const|let|var)\s*\[[^\]]*\bbreadcrumb\b/,
   /\(\s*breadcrumb\s*[,)=]/,
   /,\s*breadcrumb\s*[,)=]/,
+  // A name taken out of a parameter, which is a binding and not a value: `{
+  // breadcrumb, other }` and `{ breadcrumb = fallback }` bind, while
+  // `{ breadcrumb: 1 }` is only a property of an object somebody passes. The
+  // whole-import clause is not this shape -- its `{` follows the word `import`,
+  // not a `(` or a `,` -- so the legitimate binding is not what is refused.
+  /[,(]\s*\{[^}]*\bbreadcrumb\b\s*[,}=]/,
   /\bbreadcrumb\s*=>/,
 ];
 
@@ -243,12 +344,20 @@ function importsBreadcrumb(body, file) {
  */
 const RULES = [
   {
-    name: 'every event sent is one the allow-list names',
+    name: 'every event sent names the allow-list and carries the parameters its own entry declares',
     // Every helper that sends an event, not only the one the module calls: the
     // SDK's `logScreenView` and friends send an event of their own, and the
     // reader below refuses them for what they are passed.
     pattern: /\blog[A-Z]\w*\s*\(/g,
-    argument: (read) => read.kind === 'literal' && EVENT_NAMES.includes(read.value),
+    // The module that holds the list is the one file whose parameters are not
+    // read here: they are `telemetryEvent`'s own output, already refused for a
+    // name, a key or a value the closed sets do not carry, which is the test
+    // this exemption hands the claim to.
+    allow: ['src/telemetry/events.js'],
+    argument: (read, body, _file, at) =>
+      read.kind === 'literal' &&
+      EVENT_NAMES.includes(read.value) &&
+      declaredParameters(read.value, parametersOf(body, at)),
     controls: [
       "analytics().logEvent('account_exported', { size: 1 });",
       "analytics().logEvent(name, parameters);",
@@ -256,11 +365,33 @@ const RULES = [
       'analytics().logEvent();',
       'analytics().logScreenView({ screen_name: message.text });',
       'analytics().logSearch({ search_term: message.text });',
+      // The name is on the list and the value is not: the message's own text,
+      // sent inside an event nobody would look at twice.
+      "analytics().logEvent('screen_shown', { screen: message.text });",
+      // The same, through the identifier a screen would hold.
+      "analytics().logEvent('screen_shown', { screen });",
+      // A key the event does not declare.
+      "analytics().logEvent('account_added', { kind: 'manual', project: account.fugaroProject });",
+      // A value outside the parameter's closed set, a screen the app does not
+      // have, and a boolean parameter given a string.
+      "analytics().logEvent('command_refused', { reason: 'because' });",
+      "analytics().logEvent('screen_shown', { screen: 'settings' });",
+      "analytics().logEvent('app_launch', { first: 'yes' });",
+      // Nothing at all where the event declares a parameter.
+      "analytics().logEvent('screen_shown');",
+      // The whole message as the parameters: the SDK would carry its fields.
+      "analytics().logEvent('screen_shown', message);",
+      // Shapes the reader cannot see into: a spread, and a nested object.
+      "analytics().logEvent('app_launch', { ...parameters });",
+      "analytics().logEvent('app_launch', { first: { ok: true } });",
     ],
     accepted: [
       { file: 'src/telemetry/allowed.js', source: "analytics().logEvent('app_launch', { first: true });" },
+      { file: 'src/app/allowed.js', source: "analytics().logEvent('screen_shown', { screen: 'mailbox' });" },
+      // The two events that carry nothing are sent with nothing.
+      { file: 'src/app/allowed.js', source: "analytics().logEvent('account_switched');" },
     ],
-    why: 'D256: §7.2 is a closed allow-list of seven names, and a name the app invents — or a helper that sends an event of its own — is one nobody reviewed',
+    why: 'D256: §7.2 is a closed allow-list of seven names with the parameters each declares, and a name the app invents — or a value nobody reviewed — is a leak D256 refused',
   },
   {
     name: 'no identifier or free-text key is set, and no parameter is set as a default',
@@ -350,6 +481,17 @@ const RULES = [
           '  return crashlytics().log(breadcrumb(message.text));\n' +
           '}',
       },
+      // ... and as a name taken out of a parameter, which binds it just as a
+      // declaration does -- and which the parameter list's own `(` hides from
+      // the spellings above.
+      {
+        file: 'src/app/offender.js',
+        source:
+          "import { breadcrumb } from '../telemetry/breadcrumbs.js';\n" +
+          'export function f({ breadcrumb }, crashlytics, message) {\n' +
+          '  return crashlytics().log(breadcrumb(message.text));\n' +
+          '}',
+      },
       // ... and as a block's own declaration.
       {
         file: 'src/app/offender.js',
@@ -420,7 +562,8 @@ function offences(rule, files) {
       continue;
     }
     for (const match of body.matchAll(rule.pattern)) {
-      if (!rule.argument(firstArgument(body, match.index + match[0].length), body, file)) {
+      const read = firstArgument(body, match.index + match[0].length);
+      if (!rule.argument(read, body, file, read.end)) {
         found.push(file);
         break;
       }
@@ -501,6 +644,15 @@ test('the allow-list is not vacuous: every event it names has exactly one call s
   const body = code(readFileSync(join(ROOT, 'src/telemetry/events.js'), 'utf8'));
   const sent = [...body.matchAll(/logEvent\s*\(\s*'([^']+)'/g)].map((match) => match[1]);
   assert.deepEqual([...sent].sort(), [...EVENT_NAMES].sort());
+});
+
+test('the allow-list’s own file is exempt because it really does call the port', () => {
+  // Rule 1 allows `events.js` because the parameters that reach its port have
+  // been through `telemetryEvent`. That is an exemption about a file that
+  // really does call the port, and the exemption is what stands between the
+  // module and a refusal: take it away and the module is the offence.
+  const [EVENTS_RULE] = RULES;
+  assert.deepEqual(offences({ ...EVENTS_RULE, allow: [] }, tree()), ['src/telemetry/events.js']);
 });
 
 test('the breadcrumb list is not vacuous: every screen the app has is a breadcrumb', () => {

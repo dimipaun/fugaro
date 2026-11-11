@@ -28,6 +28,7 @@
 // argument is neither a literal from `BREADCRUMBS` nor a call to `breadcrumb`
 // is refused there.
 
+import { DigestError, ERROR } from '../../../shared/digest/errors.js';
 import { redact } from '../../../shared/digest/redact.js';
 
 import { SCREENS } from './events.js';
@@ -46,17 +47,26 @@ export const BREADCRUMBS = Object.freeze([
 ]);
 
 /**
- * `text` as a breadcrumb: the constant itself when the list names it, and
- * otherwise the same text with every form of every secret in `secrets`
- * replaced.
+ * `text` as a breadcrumb: the constant itself when the list names it -- a
+ * constant the list reviewed is not text the app built, so it is returned
+ * without redacting and needs no secrets -- and otherwise the same text with
+ * every form of every secret in `secrets` replaced.
  *
  * @param {unknown} text a constant from `BREADCRUMBS`, or text built at run time
  * @param {unknown} secrets the strings that must not leave the device (D118's list)
  * @returns {string}
- * @throws {Error} P1.3's own error for text that is not text, and for a secret
- *   list that is not a list of strings: a redactor that silently did nothing
- *   would be worse than one that refused
+ * @throws {Error} P1.3's own error for text that is not text, for a secret list
+ *   that is not a list of strings, and for an **empty** one: a redactor that
+ *   silently did nothing would be worse than one that refused
  */
 export function breadcrumb(text, secrets) {
-  return BREADCRUMBS.includes(text) ? text : redact(text, secrets);
+  if (BREADCRUMBS.includes(text)) return text;
+  // An empty list is not a redaction. `redactForms([])` holds no form, so the
+  // text would go out whole -- and a caller that reached this line with no
+  // secrets is a caller that cannot redact what it is about to say, which is
+  // the one thing this module exists to refuse.
+  if (Array.isArray(secrets) && secrets.length === 0) {
+    throw new DigestError(ERROR.SECRETS_NOT_A_LIST, 'the secrets');
+  }
+  return redact(text, secrets);
 }
