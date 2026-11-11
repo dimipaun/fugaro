@@ -27,8 +27,12 @@
 //      these are the SDK's doors for a value the app chose.
 //   3. `crashlytics().log(` -- the crash path's breadcrumb. §7.3 makes a
 //      breadcrumb a constant from the module's own list, or a value that has
-//      been through `shared/digest`'s redactor first, so a call site may pass a
-//      literal named in `BREADCRUMBS` and nothing else.
+//      been through `shared/digest`'s redactor first, so a call site may pass
+//      exactly two things: a literal named in `BREADCRUMBS`, and a call to the
+//      module's own `breadcrumb(`. Those two are what the rule accepts, which
+//      is also what keeps §7.3's redaction reachable: a fence that refused every
+//      argument but a constant would leave `breadcrumb` a function nothing may
+//      pass to the only door a breadcrumb has.
 //   4. `setAnalyticsCollectionEnabled(` and `setCrashlyticsCollectionEnabled(`
 //      -- refused at any call site. D255's answer is always-on: a call that sets
 //      collection state IS the switch the plan says the app does not have,
@@ -84,32 +88,36 @@ function code(text) {
 
 /**
  * The first argument a call site passes, as the scan can read it: a quoted
- * literal is returned whole, and anything else -- an identifier, a template
- * literal, a concatenation, no argument at all -- is reported as unreadable,
- * which every rule that asks treats as an offence.
+ * literal, or the name of the function the argument is a call to. Everything
+ * else -- a template literal, a member expression, a concatenation, no argument
+ * at all -- is a shape every rule refuses.
  */
 function firstArgument(body, at) {
   let i = at;
   while (i < body.length && /\s/.test(body[i])) i += 1;
-  if (i >= body.length || body[i] === ')') return null;
+  if (i >= body.length || body[i] === ')') return { kind: 'none' };
   const quote = body[i];
-  if (quote !== "'" && quote !== '"' && quote !== '`') return { readable: false };
-  const end = body.indexOf(quote, i + 1);
-  if (end === -1 || quote === '`') return { readable: false };
-  return { readable: true, value: body.slice(i + 1, end) };
+  if (quote === "'" || quote === '"') {
+    const end = body.indexOf(quote, i + 1);
+    if (end !== -1) return { kind: 'literal', value: body.slice(i + 1, end) };
+  }
+  const call = /^([A-Za-z_$][\w$]*)\s*\(/.exec(body.slice(i));
+  if (call !== null) return { kind: 'call', callee: call[1] };
+  return { kind: 'other' };
 }
 
 /**
  * The rules. `allow` lists the production files a token may appear in; test
  * files are always allowed (a fake must be able to call the method it stands in
  * for) and so is this file. `argument` marks the rules that read the first
- * argument of each call site instead of only finding the token.
+ * argument of each call site instead of only finding the token; it is given what
+ * `firstArgument` read and answers whether that shape is allowed.
  */
 const RULES = [
   {
     name: 'every event sent is one the allow-list names',
     pattern: /logEvent\s*\(/g,
-    argument: (literal) => EVENT_NAMES.includes(literal),
+    argument: (read) => read.kind === 'literal' && EVENT_NAMES.includes(read.value),
     controls: [
       "analytics().logEvent('account_exported', { size: 1 });",
       "analytics().logEvent(name, parameters);",
@@ -132,16 +140,25 @@ const RULES = [
     why: 'D256: a free value beside a report is a third channel off the device, and the app has no use for one',
   },
   {
-    name: 'a crash log names a breadcrumb from the module’s list',
+    name: 'a crash log names a breadcrumb from the module’s list, or comes from the redactor',
     pattern: /crashlytics\s*\(\s*\)\s*\.\s*log\s*\(/g,
-    argument: (literal) => BREADCRUMBS.includes(literal),
+    argument: (read) =>
+      (read.kind === 'literal' && BREADCRUMBS.includes(read.value)) ||
+      (read.kind === 'call' && read.callee === 'breadcrumb'),
     controls: [
       "crashlytics().log(`opened ${message.text}`);",
       "crashlytics().log(text);",
       "crashlytics().log('opened the mailbox');",
+      // A call, but not the module's own redactor: a screen's own wrapper is
+      // not the app's one redaction rule, and §7.3 says there is exactly one.
+      "crashlytics().log(buildBreadcrumb(message.text));",
+      "crashlytics().log();",
     ],
-    accepted: ["crashlytics().log('screen_mailbox');"],
-    why: 'D256, §7.3: a breadcrumb is a constant from the module’s list, or it is redacted before it is a breadcrumb at all',
+    accepted: [
+      "crashlytics().log('screen_mailbox');",
+      "crashlytics().log(breadcrumb(message.text, secrets));",
+    ],
+    why: 'D256, §7.3: a breadcrumb is a constant from the module’s list, or the module’s own redactor, and nothing else',
   },
   {
     name: 'nothing in the app switches collection on or off',
@@ -170,8 +187,7 @@ function offences(rule, files) {
       continue;
     }
     for (const match of body.matchAll(rule.pattern)) {
-      const read = firstArgument(body, match.index + match[0].length);
-      if (read === null || !read.readable || !rule.argument(read.value)) {
+      if (!rule.argument(firstArgument(body, match.index + match[0].length))) {
         found.push(file);
         break;
       }

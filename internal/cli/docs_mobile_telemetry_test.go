@@ -30,10 +30,12 @@ import (
 // document other than the plan and its two registrations wrote - which is the
 // reading the plan itself performed, and the reason its block moved.
 //
-// What this pin deliberately does not assert: anything about an app. No task of
-// Phase 7 is built, so there is no behaviour to hold. The claims here are about
-// documents, about two files that must not be in the tree, and about the app's
-// dependency list still not naming the SDKs.
+// What this pin deliberately does not assert: how the app behaves on a device.
+// Nothing here reads the app at run time, and no check in the register can be
+// answered without one. The claims below are about documents, about the two
+// native config files that are never committed, about the files Phase 7 has
+// written into the tree, and about the app's dependency list naming the SDKs
+// the plan's flags are read by.
 const (
 	telemetryPlan         = "docs/plans/2026-10-19-mobile-telemetry.md"
 	telemetryMobileReadme = "docs/mobile/README.md"
