@@ -178,20 +178,8 @@ type StageReport struct {
 	// the spelling the service sent. A tier-A call is Notional and is in no
 	// key here, and a call that did not go through the service is in none
 	// either: it is real money but no tier.
-	ByTier  map[string]pricing.Micros
-	ByModel map[string]pricing.Micros // by serving model
-	// ByModelTokens is the stage's token counts by the model the gateway
-	// priced each call under: the model the request named, which the gateway
-	// admitted as one of the stage's pins and charged the table's rates for
-	// (G1.2). It is deliberately not keyed by the serving model ByModel uses:
-	// that one is the model the upstream's own response named, which is a
-	// claim -- a snapshot suffix, or another model entirely -- and the counts
-	// a repricing of this run reads back have to be the run's own. A call
-	// whose usage the gateway could not read is in no key: its worst case was
-	// charged and no count was reported (UsageUnparsed). Only the token kinds
-	// a repricing reads are here; web searches are priced apart and are not
-	// among them (runstore.ModelTokenCounts).
-	ByModelTokens map[string]pricing.Usage
+	ByTier        map[string]pricing.Micros
+	ByModel       map[string]pricing.Micros // by serving model
 	ByRoute       map[string]pricing.Micros // by provider route (Claude calls have none)
 	Reported      pricing.Micros            // what providers said their calls cost: for comparison, and the floor under an unpriced tier's charge
 	Unreconciled  pricing.Micros            // charged from reservations, not from reported usage
@@ -251,6 +239,16 @@ type Ledger struct {
 	// figure.
 	CacheReadTokens  int64
 	CacheWriteTokens int64
+	// ModelTokens is the same calls' token counts by the model the gateway
+	// priced each of them under: the model the request named, which the
+	// gateway admitted as a pin and charged the table's rates for (G1.2,
+	// F8). It is deliberately not keyed by the serving model a response
+	// named, which is what ByModel's dollars follow: that name is the
+	// upstream's claim -- a snapshot suffix, or another model entirely --
+	// and the counts a repricing of the run reads back have to be the run's
+	// own. A call whose usage the gateway could not read is in no key, as it
+	// is in no total above. Empty for a run that read no usage at all.
+	ModelTokens map[string]pricing.Usage
 }
 
 // Server is a running gateway.
@@ -308,8 +306,17 @@ type Server struct {
 	// ones included, since a cascade run's cache behaviour is as much its
 	// own as its money is. They reach the run's record through the Ledger
 	// (P12).
-	cacheRead   int64
-	cacheWrite  int64
+	cacheRead  int64
+	cacheWrite int64
+	// modelTokens is the run's token counts by the model the gateway priced
+	// each call under (G1.2, F8): the run's own counts, which reach its
+	// record through the Ledger the way the cache totals beside them do.
+	// They are summed here rather than in a stage's report for the same
+	// reason the totals are -- a call that settles after its stage's report
+	// was taken is in the run's figures and in no stage's -- and the gate is
+	// the same `usageRead`, so the per-model sums and the cache totals are
+	// the same tokens counted two ways, exactly.
+	modelTokens map[string]pricing.Usage
 	halt        *Halt
 	haltMsg     string
 	wouldHalted bool           // observe: enforce would have halted by now
@@ -362,7 +369,8 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 		ln:     ln,
 		haltCh: make(chan Halt, 1),
 
-		countSlots: make(chan struct{}, maxCountsInFlight),
+		modelTokens: map[string]pricing.Usage{},
+		countSlots:  make(chan struct{}, maxCountsInFlight),
 	}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -541,16 +549,28 @@ func (s *Server) Ledger() Ledger {
 }
 
 func (s *Server) ledgerLocked() Ledger {
+	l := Ledger{Granted: pricing.Micros(math.MaxInt64), Used: s.used, Notional: s.notional, Reserved: s.reserved,
+		CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite, ModelTokens: copyUsage(s.modelTokens)}
 	if s.o.Lease != nil {
-		return Ledger{Granted: s.granted, Used: s.used, Notional: s.notional, Reserved: s.reserved,
-			CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite}
+		l.Granted = s.granted
+	} else if s.o.Mode == Enforce {
+		l.Granted = s.o.Cap
 	}
-	g := pricing.Micros(math.MaxInt64)
-	if s.o.Mode == Enforce {
-		g = s.o.Cap
+	return l
+}
+
+// copyUsage is the run's per-model counts as a reader takes them: a copy, so
+// that a Ledger is a snapshot and a call settling after it cannot change what
+// its holder read.
+func copyUsage(by map[string]pricing.Usage) map[string]pricing.Usage {
+	if len(by) == 0 {
+		return nil
 	}
-	return Ledger{Granted: g, Used: s.used, Notional: s.notional, Reserved: s.reserved,
-		CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite}
+	out := make(map[string]pricing.Usage, len(by))
+	for m, u := range by {
+		out[m] = u
+	}
+	return out
 }
 
 // BeginStage starts allowing st's models. A stage still running is ended
@@ -559,10 +579,9 @@ func (s *Server) BeginStage(st Stage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stage = &stageState{st: st, agents: map[string]struct{}{}, rep: StageReport{
-		ByTier:        map[string]pricing.Micros{},
-		ByModel:       map[string]pricing.Micros{},
-		ByModelTokens: map[string]pricing.Usage{},
-		ByRoute:       map[string]pricing.Micros{},
+		ByTier:  map[string]pricing.Micros{},
+		ByModel: map[string]pricing.Micros{},
+		ByRoute: map[string]pricing.Micros{},
 	}}
 }
 
@@ -575,8 +594,7 @@ func (s *Server) EndStage() StageReport {
 	s.stage = nil
 	s.mu.Unlock()
 	if st == nil {
-		return StageReport{ByTier: map[string]pricing.Micros{}, ByModel: map[string]pricing.Micros{},
-			ByModelTokens: map[string]pricing.Usage{}, ByRoute: map[string]pricing.Micros{}}
+		return StageReport{ByTier: map[string]pricing.Micros{}, ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}
 	}
 	done := make(chan struct{})
 	go func() { st.calls.Wait(); close(done) }()
@@ -607,10 +625,6 @@ func (s *Server) stageReport(st *stageState) StageReport {
 	rep.ByModel = make(map[string]pricing.Micros, len(st.rep.ByModel))
 	for k, v := range st.rep.ByModel {
 		rep.ByModel[k] = v
-	}
-	rep.ByModelTokens = make(map[string]pricing.Usage, len(st.rep.ByModelTokens))
-	for k, v := range st.rep.ByModelTokens {
-		rep.ByModelTokens[k] = v
 	}
 	rep.ByRoute = make(map[string]pricing.Micros, len(st.rep.ByRoute))
 	for k, v := range st.rep.ByRoute {

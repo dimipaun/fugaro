@@ -190,13 +190,15 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 		// would read as a cache that did nothing (P12, F24).
 		s.cacheRead = int64(satAdd(pricing.Micros(s.cacheRead), pricing.Micros(c.usage.CacheRead)))
 		s.cacheWrite = int64(satAdd(pricing.Micros(s.cacheWrite), pricing.Micros(c.usage.CacheWrite5m+c.usage.CacheWrite1h)))
-		// The stage's token counts by the model the gateway priced this call
-		// under, so the run's record can carry what `fugaro estimate`
-		// reprices (G1.2, F8). The same gate and the same caveat as the
-		// totals above, and deliberately the same calls: with a gateway the
-		// per-model sums and the run's cache totals are the same tokens
-		// counted two ways, which is what a reader of either adds up.
-		st.rep.ByModelTokens[c.pricedModel] = addUsage(st.rep.ByModelTokens[c.pricedModel], c.usage)
+		// The run's token counts by the model the gateway priced this call
+		// under, which its record carries so `fugaro estimate` can price the
+		// run's usage again on another model (G1.2, F8). The same gate, the
+		// same calls and the same place as the totals above, and deliberately
+		// so: summed here rather than into a stage's report, a call that
+		// settles after its stage's report was taken is in the run's figures
+		// either way, and the per-model sums and the cache totals stay the
+		// same tokens counted two ways.
+		s.modelTokens[c.pricedModel] = addUsage(s.modelTokens[c.pricedModel], c.usage)
 	} else {
 		s.lastCacheRead, s.lastCacheKnown = 0, false
 	}

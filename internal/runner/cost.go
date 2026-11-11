@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -228,8 +229,8 @@ func (r *run) recordAccountStageCost(stage string, claudeUSD float64) {
 // or Vertex run whose budget mode is off send every call straight to the
 // model, so the agent's own result event is the only account of them (F8).
 //
-// A run whose gateway is on takes its counts from the gateway's per-call sums
-// (endGatewayStage) and never from here: the record's contract is that such a
+// A run whose gateway is on takes its counts from the gateway's ledger, in
+// closeGateway, and never from here: the record's contract is that such a
 // run's counts are what its cache totals are summed from, and the calls of a
 // stage the run's stage-scoped Claude OAuth account served are in no such
 // total, so adding this stage's report beside the ledger's would break that
@@ -254,19 +255,56 @@ func (r *run) recordAgentModelTokens(res agent.Result) {
 	}
 }
 
-// addModelTokens adds one call's or one stage's counts to the run's per-model
-// map, kind by kind. The caller holds r.mu.
+// addModelTokens adds one stage's counts to the run's per-model map, kind by
+// kind. The caller holds r.mu.
 func (r *run) addModelTokens(model string, add runstore.ModelTokenCounts) {
 	if r.modelTokens == nil {
 		r.modelTokens = map[string]runstore.ModelTokenCounts{}
 	}
 	c := r.modelTokens[model]
-	c.Input += add.Input
-	c.Output += add.Output
-	c.CacheRead += add.CacheRead
-	c.CacheWrite5m += add.CacheWrite5m
-	c.CacheWrite1h += add.CacheWrite1h
+	c.Input = satTokens(c.Input, add.Input)
+	c.Output = satTokens(c.Output, add.Output)
+	c.CacheRead = satTokens(c.CacheRead, add.CacheRead)
+	c.CacheWrite5m = satTokens(c.CacheWrite5m, add.CacheWrite5m)
+	c.CacheWrite1h = satTokens(c.CacheWrite1h, add.CacheWrite1h)
 	r.modelTokens[model] = c
+}
+
+// modelTokenCounts is the gateway's per-model usage as the record carries it:
+// the kinds a repricing reads, with the web searches the gateway also prices
+// left out -- they are charged apart and no token figure carries them
+// (runstore.ModelTokenCounts). nil for a ledger that recorded none, so the
+// record omits the key rather than writing an empty map.
+func modelTokenCounts(by map[string]pricing.Usage) map[string]runstore.ModelTokenCounts {
+	if len(by) == 0 {
+		return nil
+	}
+	out := make(map[string]runstore.ModelTokenCounts, len(by))
+	for m, u := range by {
+		out[m] = runstore.ModelTokenCounts{
+			Input:        u.Input,
+			Output:       u.Output,
+			CacheRead:    u.CacheRead,
+			CacheWrite5m: u.CacheWrite5m,
+			CacheWrite1h: u.CacheWrite1h,
+		}
+	}
+	return out
+}
+
+// satTokens adds two token counts, saturating at the largest int64 and
+// clamping a negative to zero, the way every other sum of these figures does
+// (pricing's satAdd, the gateway's, the budget's). A count that arrives
+// absurd -- a provider reporting near MaxInt64, a result event spelling one
+// negative -- must leave the run's entry bounded and non-negative: the
+// record's schema refuses a negative count, and a result.json a reader
+// refuses is worse than a figure pinned at the ceiling.
+func satTokens(a, b int64) int64 {
+	a, b = max(a, 0), max(b, 0)
+	if a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
 }
 
 // copyModelTokens is the run's per-model counts as the record carries them,

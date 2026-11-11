@@ -253,7 +253,6 @@ func (r *run) startGateway(ctx context.Context) error {
 	r.gwAgent = &agent.Gateway{BaseURL: gw.URL(), Token: gw.Token()}
 	r.modelBy = map[string]pricing.Micros{}
 	r.routeBy = map[string]pricing.Micros{}
-	r.modelTokens = map[string]runstore.ModelTokenCounts{}
 	r.stageExtra = r.endGatewayStage
 	r.mu.Unlock()
 	return nil
@@ -572,19 +571,6 @@ func (r *run) endGatewayStage(stage string) ([]string, int64) {
 	for m, v := range rep.ByRoute {
 		r.routeBy[m] += v
 	}
-	// The stage's token counts by model, keyed by the model the gateway
-	// priced each of its calls for, never by the serving model a response
-	// named (G1.2, F8). The record's counts carry no web searches, so a
-	// call's search fee stays priced in model_by and in no token figure.
-	for m, u := range rep.ByModelTokens {
-		r.addModelTokens(m, runstore.ModelTokenCounts{
-			Input:        u.Input,
-			Output:       u.Output,
-			CacheRead:    u.CacheRead,
-			CacheWrite5m: u.CacheWrite5m,
-			CacheWrite1h: u.CacheWrite1h,
-		})
-	}
 	r.reported += rep.Reported
 	r.unreconciled += rep.Unreconciled
 	r.unparsed += rep.UsageUnparsed
@@ -748,6 +734,11 @@ func (r *run) closeGateway() {
 	// what the splits (model_by, route_by) are built from.
 	r.gwUsed, r.gwNotional = led.Used, led.Notional
 	r.gwCacheRead, r.gwCacheWrite = led.CacheReadTokens, led.CacheWriteTokens
+	// The run's token counts by model are the ledger's, like the totals
+	// beside them and for the same reason: a call that settled after its
+	// stage's wait ran out is in them (G1.2, F8). The two are the same calls'
+	// tokens, so a reader that sums these entries gets exactly those totals.
+	r.modelTokens = modelTokenCounts(led.ModelTokens)
 	// The run's own model figure is the ledger's totals plus the stages the
 	// ledger never saw, an account stage's own among them (P11, P12): the
 	// ledger's figure alone would drop them from the record here, at the last

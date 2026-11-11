@@ -1,7 +1,10 @@
 package runner_test
 
 import (
+	"context"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,6 +159,70 @@ func TestRunFillsModelTokensSubscription(t *testing.T) {
 	if rec.Cost.CacheReadTokens != 0 || rec.Cost.CacheWriteTokens != 0 {
 		t.Errorf("cache totals = %d/%d: a run with no gateway records none, because they are the gateway's",
 			rec.Cost.CacheReadTokens, rec.Cost.CacheWriteTokens)
+	}
+}
+
+// TestRunFillsModelTokensLateCallIsInTheLedger (G1.2, F8): a call that
+// settles after its stage's wait ran out is in the run's per-model counts,
+// because they are the ledger's own sums and not a stage report's -- the same
+// place, and the same `usageRead` gate, the run's cache totals are summed in.
+// Were they taken from the stage's report instead, the record would claim a
+// set of entries that its own cache totals are not the sum of, which is the
+// relation the record's field states and a reader relies on.
+//
+// The ordering is the fake's, never a sleep lining up with a stream: the late
+// call is held inside the scripted upstream until the second stage releases
+// it, and that stage waits for the gateway's own settle log line before
+// returning, so the call is in flight for the whole of its stage's report and
+// provably settled before the run closes the gateway.
+func TestRunFillsModelTokensLateCallIsInTheLedger(t *testing.T) {
+	slow := anthropicfake.MessageOK(sonnet, coderUsage)
+	slow.Events = anthropicfake.StreamOK(sonnet, coderUsage).Events
+	slow.Body = ""
+	g := newGW(t, gwConfig(t, ""), "observe", "")
+	g.deps.GatewayStageWait = 20 * time.Millisecond
+	release, upstream := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	g.fake.Func = func(*http.Request, []byte) anthropicfake.Reply {
+		once.Do(func() { close(upstream) })
+		<-release
+		return slow
+	}
+	fireAndForget := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		go post(t, req, sonnet, 4000) // outlives its stage's wait
+		<-upstream                    // it reached the fake, so it is in flight
+		return implement("feature")(t, ctx, req)
+	}
+	waits := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		close(release) // the call settles now, after its stage's report
+		waitUntil(t, "the late call to settle", func() bool {
+			s := g.logs.String()
+			return strings.Contains(s, "stage=implement") && strings.Contains(s, "settled=usage")
+		})
+		return review("ship", 0)(t, ctx, req)
+	}
+	rec, err := g.run(t, fireAndForget, waits)
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Cost == nil {
+		t.Fatal("the run recorded no cost")
+	}
+	got := rec.Cost.ModelTokens
+	if len(got) != 1 {
+		t.Fatalf("model_tokens = %+v, want the one model the late call was priced under", got)
+	}
+	var read, write int64
+	for _, c := range got {
+		read += c.CacheRead
+		write += c.CacheWrite5m + c.CacheWrite1h
+	}
+	if read == 0 || write == 0 {
+		t.Fatalf("the late call's cache tokens are missing: model_tokens = %+v", got)
+	}
+	if read != rec.Cost.CacheReadTokens || write != rec.Cost.CacheWriteTokens {
+		t.Fatalf("the per-model sums %d/%d are not the run's cache totals %d/%d, which count the late call",
+			read, write, rec.Cost.CacheReadTokens, rec.Cost.CacheWriteTokens)
 	}
 }
 

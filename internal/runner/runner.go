@@ -366,9 +366,12 @@ type run struct {
 	routeBy      map[string]pricing.Micros
 	// modelTokens is the run's token counts by model, from whichever path
 	// filled them: the gateway's per-call usage under the model it priced
-	// each call for, or, with no gateway, the agent's own per-model usage
-	// (G1.2, F8). The record carries them so `fugaro estimate` can price the
-	// run's own usage again on another model.
+	// each call for, taken from its ledger when it closes, or, with no
+	// gateway, the agent's own per-model usage, taken stage by stage (G1.2,
+	// F8). The record carries them so `fugaro estimate` can price the run's
+	// own usage again on another model. Empty until one of the two fills it,
+	// which for a gateway run is its last step, as the cache totals beside
+	// them are.
 	modelTokens  map[string]runstore.ModelTokenCounts
 	routed       bool // the gateway has provider routes, so route_by exists
 	reported     pricing.Micros
