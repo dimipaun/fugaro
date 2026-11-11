@@ -199,11 +199,20 @@ func runEstimate(cmd *cobra.Command, o *estimateOptions) error {
 		Catalog: estimateCatalogOf(table, model, now),
 	}
 	var total pricing.Micros
+	// The row's flat rates. A long-context tier is decided per call, and a
+	// run's summed input passes almost any threshold a tier is set above, so
+	// pricing the whole run against the row as it stands would charge every
+	// token the tier's rate (an owner's model_prices may set one:
+	// pricing.Rates.LongContext). This command prices what a run would have
+	// cost at one model's rates, and says the tiers are what it cannot
+	// reproduce (F9), so the tier is dropped rather than applied to the sum.
+	rates := model.Rates
+	rates.LongContext = nil
 	for _, id := range slices.Sorted(maps.Keys(rec.Cost.ModelTokens)) {
 		c := rec.Cost.ModelTokens[id]
 		// The run's own model ID is never looked up: what is repriced is the
 		// usage the run recorded, at the model the reader named (F8).
-		usd := model.Rates.Cost(pricing.Usage{
+		usd := rates.Cost(pricing.Usage{
 			Input: c.Input, Output: c.Output, CacheRead: c.CacheRead,
 			CacheWrite5m: c.CacheWrite5m, CacheWrite1h: c.CacheWrite1h,
 		})

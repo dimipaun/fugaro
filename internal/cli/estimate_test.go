@@ -183,6 +183,40 @@ func TestEstimateReprices(t *testing.T) {
 	}
 }
 
+// TestEstimateIgnoresLongContextTiers: a tier is decided per call, and a run's
+// summed input passes almost any threshold one is set above, so pricing the
+// whole run against the row as it stands would charge the tier's rate to every
+// token — which is the figure the command's own note says it does not compute
+// (F9). The row here is an owner's model_prices override with a tier above 200k
+// at twice the flat rate, and the run's million input tokens are priced flat.
+func TestEstimateIgnoresLongContextTiers(t *testing.T) {
+	f := newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	f.appendConfig(t, "model_prices:\n"+
+		"  claude-opus-5-5:\n"+
+		"    input_per_m: 3\n"+
+		"    output_per_m: 15\n"+
+		"    long_context: { above_input_tokens: 200000, input_per_m: 6, output_per_m: 22.5 }\n")
+	id := recentRunID(t, time.Hour, "abcd")
+	seedEstimateRun(t, f, id, estimateSeed{tokens: map[string]runstore.ModelTokenCounts{
+		"claude-sonnet-5": {Input: 1_000_000, Output: 100_000},
+	}})
+	doc := estimateUSD(t, "--run", appSlug+"/"+id, "--model", "claude-opus-5-5")
+	// The override's flat rates: 1M in at $3/M and 100k out at $15/M. The
+	// tier's $6/M and $22.5/M would give $8.25, and the embedded row the
+	// override replaced would give $6.
+	if math.Abs(doc.USD-4.5) > 1e-9 {
+		t.Errorf("estimate = $%v, want the override's flat $4.50 and not the long-context tier's $8.25\n%+v", doc.USD, doc)
+	}
+	human, _, err := execute(t, "estimate", "--run", appSlug+"/"+id, "--model", "claude-opus-5-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human, "$4.50") {
+		t.Errorf("the human figure is not the flat one:\n%s", human)
+	}
+}
+
 // TestEstimateRefusesRunWithoutTokens: a run this build cannot reprice is
 // refused by name, not estimated from nothing. A run whose record predates
 // per-model tokens and one that never wrote a record are the two shapes.
