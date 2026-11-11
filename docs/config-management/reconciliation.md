@@ -62,9 +62,13 @@ what the guard at the end of this section re-runs.
   registry is one row wider still and the rows without a generic writer are one more for it. The
   account aliases (docs/account-aliases, AL0) moved both once more, and by one row the list does not
   reach: `claude_account_aliases` is the block the choice keys above may name in place of an account,
-  local-only for `claude_account_auto`'s reason (D2090), and its owner is the `accounts` family
-  because the write that repoints one converges the node and the job set with it (D2096) — so the
-  registry is one row wider and the rows without a generic writer are one more again. A key
+  local-only for `claude_account_auto`'s reason (D2090). Its row is one of the two nudge thresholds'
+  shape rather than a family's: D2096 gives the write that repoints one to `fugaro accounts alias
+  set/rm`, which converges the node and the job set with it, and no such command exists while the
+  block is landed — so the row's owner is `config local`, the token for a key stated in the machine's
+  own config that no command edits key by key, and it moves to the `accounts` family with the command
+  (D2096 leaves no second door: the generic path refuses the key, so the edit is the file's until
+  then) — the registry is one row wider and the rows without a generic writer are one more again. A key
   the registry carries and this list does not is
   refused by `settings set` whatever it is, and a row claiming a family is pointed at that command
   before this list is asked, so the figures are the allowlist's own and move only when it moves.
