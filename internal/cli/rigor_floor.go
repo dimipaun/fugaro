@@ -370,11 +370,14 @@ func rigorLevelList() string {
 // and its place in the file survive a change to another one.
 //
 // The empty result is the caller's no-op: an unset of a mode the file does not
-// carry, and a set naming the levels the mode already holds in the vocabulary's
-// own order, both return the input unchanged, and the write path writes nothing
-// for them. A set naming the same levels in another order is neither a no-op nor
-// a change of the floor: the entry is written in that order, which is the one
-// thing a set may write for a floor it does not change.
+// carry, and a set naming the levels the mode already holds in the order the
+// file holds them, both return the input unchanged, and the write path writes
+// nothing for them. The comparison is between the argument's levels — which
+// rigorFloorLevels has already put in the vocabulary's order, so how they were
+// typed does not matter — and the file's own entry, which carries whatever order
+// it was written in. An entry written in the other order is therefore rewritten
+// into the vocabulary's, which is the one thing a set writes for a floor it does
+// not change.
 //
 // The editor's refusals are returned as they come — the caller says them in the
 // owner's words (rigorFloorError) — because one of them is a document this
