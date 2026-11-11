@@ -33,7 +33,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | diagnose-agent | 5/10 | T-DG7 (draft #2138, a follow-up in a run), T-DG6, T-DG8 to T-DG10 |
 | periodic-reviews | 7/14 | R7 to R12; owner Checks 136 and 340 |
 | config-management | 5/14 | G3 to G7, G9 rest, G10, G12, G13 |
-| cli-output-console-graph | 19/30 | CL6, CL9 to CL11, CG4 to CG6, CG13 |
+| cli-output-console-graph | 19/32 | CL6, CL9 to CL11, CG5, CG6, CG13a to CG13c (CG13 split into three on 2026-11-11, so the total moved 30 to 32; CG4 merged 2026-11-10) |
 | issues-resolved-on-update | 3/8 | T-RU4 to T-RU8 |
 | catalog-build-context | 2/5 | CB2, CB4, CB5 |
 | post-review-triage | 6/14 | TR3, TR6 (in a run), TR7 to TR10, TR12; TR5 merged, BF1m (#1999) merged |

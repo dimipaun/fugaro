@@ -9,7 +9,7 @@ The owner's spec, "Fugaro: CLI Output Cleanup and Console Dependency Graph", is 
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, **verbatim**, committed alone in its own first commit. |
-| [reconciliation.md](reconciliation.md) | Findings **F1-F30** (Wrong / Exists / Gap / Rule / Open), the headline table, decisions **D1350-D1362** with the owner's answers of 2026-11-06, the tensions **T1-T6** (T4, T5 open), the smallest slices, the checks, UNVERIFIED. **Where it disagrees with `spec.md`, it wins.** |
+| [reconciliation.md](reconciliation.md) | Findings **F1-F30** (Wrong / Exists / Gap / Rule / Open), the headline table, decisions **D1350-D1362** with the owner's answers of 2026-11-06, the tensions **T1-T6** (all ruled on 2026-11-06; **T5 amended 2026-11-11**, T4 open), the smallest slices, the checks, UNVERIFIED. **Where it disagrees with `spec.md`, it wins.** |
 | [implementation-plan-output.md](implementation-plan-output.md) | Part A: the reporter, the log sink, the flag, the converge family and the other commands. Tasks **CL1-CL12**, levels L0-L5, critical path, shared-files table. Nothing in it is approved. |
 | [implementation-plan-graph.md](implementation-plan-graph.md) | Part B: `fugaro graph`, the snapshot stream, the console's scope dropdown; the orchestrator slice (B4: CG4 merged on 2026-11-10, CG5 and CG6 schedulable) and the endpoint slice (B5: **CG13a, CG13b and CG13c, approved 2026-11-11**). Tasks **CG1-CG13c**, levels L0-L5 plus B4 and B5, critical path, shared-files table. Nothing else in it is approved. |
 
