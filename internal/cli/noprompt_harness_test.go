@@ -328,6 +328,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 // that would do more. `fugaro review` and `fugaro pair` refuse from inside
 // their bodies, in sentences of their own, which the run's own error carries.
 var closedStdinNoFixture = map[string]string{
+	"fugaro ab":                "refuses: the edition is not in this build",
 	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
 	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
