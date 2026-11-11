@@ -80,10 +80,11 @@ type cloudEnv struct {
 	// decision reads it again on the path where the local budget mode is off.
 	// One launch must not be admitted against two different policies.
 	policy policyReadOnce
-	// stageAccountNote is whether this invocation has printed the note that a cascade
-	// run skips the project's stage accounts: claudeAccountFor is called once
-	// per stage the launch resolves (and twice more for the mix and the review
-	// spec), and the operator needs the line once, not once per call.
+	// stageAccountNote is whether this invocation has printed the note that a
+	// cascade run skips the project's stage accounts: claudeAccountFor is
+	// called once per stage the launch resolves (and twice more for the mix
+	// and the review spec), and the operator needs the line once, not once per
+	// call.
 	stageAccountNote bool
 }
 
