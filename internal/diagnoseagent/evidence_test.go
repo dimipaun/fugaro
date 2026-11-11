@@ -400,6 +400,62 @@ func TestEvidenceCollectKeepsTheEndOfALogManyTimesTheCap(t *testing.T) {
 	}
 }
 
+// TestEvidenceCollectRedactsTheValueTheCapWouldSplit: the tail is cut at a byte
+// offset, so a credential standing where the cut falls would reach the file as
+// two halves — the bytes before the cut dropped, the rest kept — and neither
+// pass knows half of a value, so the half that is kept would be kept as it
+// stands. The window (logRedactOverlap) is what keeps that from happening: the
+// passes see the value whole, and what stands at the cut is [REDACTED]. The
+// secret here straddles the cut by construction, three bytes of it before it
+// and the rest after, and the log is longer than the window, so the cut is
+// inside the log rather than at its start.
+func TestEvidenceCollectRedactsTheValueTheCapWouldSplit(t *testing.T) {
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	end := "the installation stopped after the account was read\n"
+	wasMax, wasOverlap := maxLogBytes, logRedactOverlap
+	t.Cleanup(func() { maxLogBytes, logRedactOverlap = wasMax, wasOverlap })
+
+	// Both passes are read the same way, because a fragment is a fragment
+	// whichever of them would have replaced the value whole.
+	for _, tc := range []struct{ what, value string }{
+		{"the value the caller named", evidenceValue(t, "at-the-cut")},
+		{"a credential-shaped value nobody named", evidenceShape()},
+	} {
+		// The kept tail is the log's last maxLogBytes bytes, so the cap is set
+		// to put the value's fourth byte at that offset: three bytes of it are
+		// left out, and the rest is what a cut without the window would keep.
+		// The newline after the value is what keeps a shape's own match from
+		// running into the line below it: a token shape is greedy over the
+		// characters that spell one, and `the` is spelled with them.
+		maxLogBytes = int64(len(tc.value) + 1 + len(end) - 3)
+		logRedactOverlap = 512
+		logText := strings.Repeat("a line of installation output\n", 1<<9) + tc.value + "\n" + end
+
+		ev, err := Collect(context.Background(), id, Options{
+			Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+			Open:    func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+			Secrets: []string{evidenceValue(t, "at-the-cut")},
+		})
+		if err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		got := evidenceRead(t, ev.EvidenceDir)[id.String()+".log"]
+		if strings.Contains(got, tc.value) {
+			t.Errorf("the log file carries %s the cut ran through", tc.what)
+		}
+		if kept := tc.value[3:]; strings.Contains(got, kept) {
+			t.Errorf("the log file carries %q, the part of %s past the cut: the passes saw half a value and neither knows one", kept, tc.what)
+		}
+		if !strings.Contains(got, "[REDACTED]") {
+			t.Errorf("the log file holds no [REDACTED] where the cut fell: %s reached it in one piece nobody replaced", tc.what)
+		}
+		if !strings.Contains(got, end) {
+			t.Errorf("the log file does not hold the log's own last line: %q", got)
+		}
+	}
+}
+
 // TestEvidenceCollectReplacesAnEarlierCollection: the folder belongs to the run
 // ID (one diagnosis per failed command), so a second collection writes over the
 // first's files. A file the first left and the second does not write would be

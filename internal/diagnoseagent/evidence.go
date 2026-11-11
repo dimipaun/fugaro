@@ -49,10 +49,9 @@ const (
 	evidenceFileMode fs.FileMode = 0o600
 )
 
-// The two bounds of a collection, as variables because a test drives them
-// directly and nothing else does: neither is a setting, and neither is worth a
-// field in Options for a caller that cannot answer the question better than
-// these do.
+// The bounds of a collection, as variables because a test drives them directly
+// and nothing else does: none of them is a setting, and none is worth a field
+// in Options for a caller that cannot answer the question better than these do.
 var (
 	// doctorTimeout bounds `fugaro doctor` (F23). Doctor makes cloud calls and
 	// may hang exactly when the cloud is broken, which is the one state this
@@ -67,6 +66,14 @@ var (
 	// is kept is the end of it (see logText), because that is where a command
 	// that failed says why.
 	maxLogBytes int64 = 32 << 20
+	// logRedactOverlap is how much of the log before the kept tail is read as
+	// well, so that redaction meets whole a value the cut would otherwise run
+	// through (logText): a pass substitutes values, and neither half of one is
+	// a value. It is 1 MiB because the widest credential that could stand in a
+	// log — a PEM private-key block, or a certificate chain — is kilobytes, and
+	// three orders of magnitude of room costs 3% of maxLogBytes. What it cannot
+	// reach is written down in logText.
+	logRedactOverlap int64 = 1 << 20
 )
 
 // evidenceParts are the two components the evidence folder sits under inside
@@ -156,7 +163,10 @@ func Collect(ctx context.Context, id cmdlog.ID, o Options) (Evidence, error) {
 		return Evidence{}, err
 	}
 	files := []evidenceFile{
-		{name: id.String() + logSuffix, text: logText},
+		// The log is the one file that arrives redacted: its own text is cut to
+		// the cap, and the cut has to fall after the passes have seen the text
+		// around it (logText).
+		{name: id.String() + logSuffix, text: logText, redacted: true},
 		{name: doctorFileName, text: o.doctorText(ctx)},
 		{name: versionFileName, text: o.versionText()},
 		{name: configFileName, text: o.configText(ctx)},
@@ -173,48 +183,79 @@ func Collect(ctx context.Context, id cmdlog.ID, o Options) (Evidence, error) {
 type evidenceFile struct {
 	name string
 	text string
+	// redacted marks text as having passed both passes where it was built, so
+	// writeFiles does not run them over it again. The log is the only file that
+	// arrives this way, because it is the only one cut to a cap (logText), and
+	// a second pattern pass over the 32 MiB it can keep would be a second
+	// minute of a diagnosis that exists to explain one failure — the pass is
+	// what costs, and the cap is what bounds it. Every other file is redacted
+	// by writeFiles, which is also where a reader checks that nothing is
+	// written raw.
+	redacted bool
 }
 
 // logText reads the log the run ID names and returns what goes into the
-// evidence file. The redaction is not here: writeFiles does it, once, over
-// every file (the note this one builds included), so a caller of logText holds
-// the log's own text and not something safe to publish.
+// evidence file.
 //
 // It is read through maxLogBytes, and a log past the cap is kept by its end:
 // the file holds the last maxLogBytes of the log, under a first line that says
 // how much was left out, because a failed command's reason is the last thing it
-// wrote. A log that fits is written as it stands, and the two are told apart by
-// the note rather than by a marker in the text.
+// wrote. A log that fits is written whole, and the two are told apart by the
+// note rather than by a marker in the text.
 //
-// One thing the cap costs, and it is not paid back anywhere: a value that
-// straddles the byte the cap cuts at is split, and neither pass knows half of
-// one — only the part after the cut is redacted. Removing that would mean
-// redacting the whole log before the cut, which is the memory this cap exists
-// to bound, or a streaming redactor internal/redact does not have (T-DG2).
-// What it can cost is bounded by the note above: the file says it is the end of
-// a longer log, so a fragment at its very first byte is a fragment the agent
-// knows was cut, and the rest of maxLogBytes — the failure itself — is whole.
+// A log past the cap is redacted here, over a window logRedactOverlap bytes
+// wider than what is kept, and cut only after that. Both passes substitute
+// whole values and know no half of one, so a credential the cut ran through
+// would otherwise reach the file as a fragment nobody can replace — the bytes
+// before the cut are gone and what is left does not read as the value it is the
+// end of. With the window the value is whole when the passes see it, and what
+// stands at the cut is [REDACTED]. This is also where the log is redacted at
+// all: the file arrives marked as through the passes (evidenceFile.redacted) so
+// that writeFiles, which redacts every other file, does not run a second
+// pattern pass over the mebibytes it keeps — the pass is what costs, and over a
+// log at the cap a second one is most of a minute of a diagnosis. The line the
+// cap writes is redacted here too, so the whole file went through the passes.
+//
+// What the window does not reach: a value longer than logRedactOverlap whose
+// beginning is before the window's, whose tail the cut can still keep. Nothing
+// read here can replace bytes it never sees, and a window over the whole log is
+// the memory the cap exists to bound — a 1 GiB log redacted to find its last
+// 32 MiB is the cost this avoids (tailOf). The bound is kilobyte credentials
+// against a mebibyte of context, and the note above is what covers it: the file
+// says it is the end of a longer log, so a fragment at its first byte is one a
+// reader knows was cut.
 func (o Options) logText(id cmdlog.ID) (string, error) {
 	r, err := o.Open(id)
 	if err != nil {
 		return "", fmt.Errorf("the log of %s cannot be read, so there is nothing for a diagnosis to explain: %w", id, err)
 	}
 	defer r.Close()
-	data, total, err := tailOf(r, maxLogBytes)
+	window := maxLogBytes
+	if window > 0 {
+		window += logRedactOverlap
+	}
+	data, total, err := tailOf(r, window)
 	if err != nil {
 		return "", fmt.Errorf("reading the log of %s: %w", id, err)
 	}
-	var b strings.Builder
+	if maxLogBytes > 0 {
+		data = []byte(redact.Text(string(data), o.Secrets))
+		if cut := int64(len(data)) - maxLogBytes; cut > 0 {
+			data = data[cut:]
+		}
+	}
+	var note, b strings.Builder
 	switch {
 	case maxLogBytes <= 0:
 		// No cap at all is nothing read rather than everything: a caller that
 		// asks for an empty read gets an empty file that says so, which is the
 		// difference between "the log said nothing" and "the log was not read".
-		fmt.Fprintf(&b, "The log of %s was not read: this diagnosis reads a log through a %d-byte cap.\n", id, maxLogBytes)
+		fmt.Fprintf(&note, "The log of %s was not read: this diagnosis reads a log through a %d-byte cap.\n", id, maxLogBytes)
 	case total > int64(len(data)):
-		fmt.Fprintf(&b, "The log of %s is %d bytes; only its last %d bytes are below, because a log is read through a %d-byte cap. The beginning was left out: a command that failed says why at its end.\n\n",
+		fmt.Fprintf(&note, "The log of %s is %d bytes; only its last %d bytes are below, because a log is read through a %d-byte cap. The beginning was left out: a command that failed says why at its end.\n\n",
 			id, total, len(data), maxLogBytes)
 	}
+	b.WriteString(redact.Text(note.String(), o.Secrets))
 	b.Write(data)
 	return b.String(), nil
 }
@@ -390,11 +431,11 @@ func (o Options) configText(ctx context.Context) string {
 // writeFiles creates the folder and writes every file into it, redacted, and
 // returns the state directory and the folder's name inside it.
 //
-// The redaction is here and nowhere else, so that "every file this collector
-// writes passed both passes" is one line a reader can check rather than a rule
-// each text builder has to remember. redact.Text is the exact pass and the
-// pattern pass together: the values the caller named, and the shapes nobody
-// named (F4).
+// The redaction is here for every file that was not already through it (see
+// evidenceFile.redacted), so that "every file this collector writes passed
+// both passes" is one line a reader can check rather than a rule each text
+// builder has to remember. redact.Text is the exact pass and the pattern pass
+// together: the values the caller named, and the shapes nobody named (F4).
 func (o Options) writeFiles(id cmdlog.ID, files []evidenceFile) (base, dir string, err error) {
 	base, err = localcfg.UserDir(o.Getenv, o.GOOS, localcfg.DirState)
 	if err != nil {
@@ -418,7 +459,11 @@ func (o Options) writeFiles(id cmdlog.ID, files []evidenceFile) (base, dir strin
 		return "", "", err
 	}
 	for _, f := range files {
-		if err := writeEvidence(root, dir, f.name, redact.Text(f.text, o.Secrets)); err != nil {
+		text := f.text
+		if !f.redacted {
+			text = redact.Text(text, o.Secrets)
+		}
+		if err := writeEvidence(root, dir, f.name, text); err != nil {
 			return "", "", err
 		}
 	}
