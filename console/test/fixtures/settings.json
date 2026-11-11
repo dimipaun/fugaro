@@ -28,7 +28,7 @@
       "default": { "unset": "unset = the run's rigor mode decides (rigor.DefaultRounds)" },
       "state": "stale 3h",
       "writable": true,
-      "owner": "",
+      "owner": "fugaro settings set",
       "target_layer": "repo",
       "levels": [{ "layer": "project", "value": "2", "outcome": "wins" }]
     },
@@ -40,7 +40,7 @@
       "default": { "unset": "unset = false: nothing chooses an account for the owner" },
       "state": "ok",
       "writable": true,
-      "owner": "",
+      "owner": "fugaro settings set",
       "target_layer": "local",
       "levels": [{ "layer": "local", "value": "false", "outcome": "wins" }]
     },
@@ -70,7 +70,7 @@
       "state": "ok",
       "sensitive": true,
       "writable": false,
-      "owner": "",
+      "owner": "fugaro setup, which writes the installation's own budget backend",
       "target_layer": "local"
     }
   ]

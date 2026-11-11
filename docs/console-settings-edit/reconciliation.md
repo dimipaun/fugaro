@@ -188,7 +188,7 @@ prerequisite **P2**.
 
 **F11: Missing on `d1585a6f` — P3 has since landed. `settings set|unset` had no machine-readable
 output, no dry run, and no classification.** The flags were `--layer`, `--repo`, `--yes`, `--add` and
-`--remove` and nothing else (`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:367`;
+`--remove` and nothing else (`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:373`;
 `newSettingsUnsetCmd`, `:430`). Widening is decided inside `settingsTypedWrite` (**S5 #1525**
 `internal/cli/settings_set.go:1703`) — via `settingsCeilingKey` (`internal/cli/settings_set.go:1420`),
 `settingsLoosens` (`:1409`) and `settingsListSubset` (`:1457`) — and is **never printed as a field**;
@@ -345,7 +345,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   is the one rule 11 already gives for `--title=` and `--plan-task=`: **a value that follows `=` is
   part of the flag's own word, and nothing that follows can be read as a flag** — but `VALUE` is a
   **positional** argument here (`Use: "set KEY VALUE"`, **S5 #1525**
-  `internal/cli/settings_set.go:370`), so there is no `=` to hide behind and the terminator is the
+  `internal/cli/settings_set.go:376`), so there is no `=` to hide behind and the terminator is the
   equivalent. `settings set commit_name --layer local --yes -- -draft` sets the name `-draft`;
   without the `--`, pflag reads `-draft` as an unknown shorthand and the edit fails — or worse, a
   value spelled `--layer` silently retargets the write. **(b)** is the form this row must never

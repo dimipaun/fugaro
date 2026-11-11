@@ -989,6 +989,20 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedTriage = old.Triage
 	}
 	triage := lc.TriageEffective(publishedTriage)
+	// The pools' subscription switch is kept by the triage switch's rule (F22,
+	// D1636), and the cost of the other reading is that switch's: the member is
+	// what makes a pool of two or more subscriptions serve anything at all
+	// (D1622), so a publish that dropped it — from a machine whose config says
+	// nothing, which is every machine but the owner's — would take the owner's
+	// pools away from every run of the project, a run in flight while `fugaro
+	// update` republishes this node included. A written false is his own "no"
+	// and replaces what the node holds; a config and a node that both say
+	// nothing publish no member at all.
+	var publishedSpread *bool
+	if old != nil {
+		publishedSpread = old.SubscriptionSpread
+	}
+	spread := lc.SubscriptionSpreadEffective(publishedSpread)
 	// The orchestrator block is kept by the same rule (D1239, D1234), with the
 	// catalog's two spellings collapsed into one: a config that states a block
 	// replaces what the node holds — the daemon's guardrails are the owner's own
@@ -1058,6 +1072,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		BakeRepos:            bakeRepos,
 		Triage:               triage,
 		Orchestrator:         orchestrator,
+		SubscriptionSpread:   spread,
 	}
 	switch {
 	case !silent:

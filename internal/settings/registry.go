@@ -83,7 +83,7 @@ type Row struct {
 	Merge     Merge
 	Default   Default
 	Sensitive bool   // the value is never printed (spec §2.3)
-	Owner     string // the command family that writes it
+	Owner     string // the token for what writes it: a command, or the file a key no command edits is stated in
 	Doc       string // the document that must state it
 	// TypedWhy is the sentence saying why turning this key ON is the widening
 	// direction rather than the ordinary write: the write prints it and the dry
@@ -145,10 +145,19 @@ func value(v, constant string) Default { return Default{Value: v, Const: constan
 // TestRegistryFugaroYAMLKeysMatchConfigScopes fails on a key that is in one and
 // not the other.
 var yamlMeta = map[string]Row{
-	"version":     {Default: unset("the file is refused (version: 1 is required)")},
-	"project":     {Default: unset("the file is refused (project: is required)")},
-	"gcp_project": {Default: unset("the installation's GCP project")},
-	"profile":     {Default: unset("the project layer's default_profile")},
+	// The four keys a checkout's `fugaro.yaml` is opened with. The command
+	// that writes them is `fugaro config init`, which writes exactly these
+	// lines and nothing else (minimalFugaroYAML, docs/project-layer.md §3);
+	// the generic path refuses all four, because its allowlist is the keys a
+	// repository is *edited* into and the file's header is written once, when
+	// the checkout has none. The default owner would say `settings set`
+	// writes four keys its own allowlist refuses — F13's shape, where D1178's
+	// rule is that a non-writable key names a command that exists and writes
+	// it.
+	"version":     {Owner: "config init", Default: unset("the file is refused (version: 1 is required)")},
+	"project":     {Owner: "config init", Default: unset("the file is refused (project: is required)")},
+	"gcp_project": {Owner: "config init", Default: unset("the installation's GCP project")},
+	"profile":     {Owner: "config init", Default: unset("the project layer's default_profile")},
 
 	"git.provider":    {Default: unset("the local config's repos.<owner/name>.provider")},
 	"git.base_branch": {Default: value(config.DefaultBaseBranch, "config.DefaultBaseBranch")},
@@ -323,8 +332,14 @@ var yamlMeta = map[string]Row{
 
 	// The planning pass's switch (docs/contract-first-decoupling, D1813). It
 	// is a preference rather than a bound, so the ordinary rule decides it:
-	// the narrowest layer that sets it wins.
-	"planning.decoupling": {Default: value("true", "config.DefaultPlanningDecoupling")},
+	// the narrowest layer that sets it wins. Owner `config` for
+	// security.patterns' reason (D1515): the key is stated in a file — a
+	// repository's `fugaro.yaml`, and the layer's `defaults:` — and the
+	// layer's half is what `fugaro config publish` carries. Its second half is
+	// `layer.defaults.planning.decoupling`, which the generic path does write,
+	// so a project sets the key through that row; the repository's own half is
+	// the file's, and the allowlist does not carry the bare spelling.
+	"planning.decoupling": {Owner: "config", Default: value("true", "config.DefaultPlanningDecoupling")},
 }
 
 // buildRows is the table, assembled from the three documents' own sources: the
@@ -527,9 +542,16 @@ func locLocal(key, def, owner, doc string) Row {
 // layer's `profiles.<n>` is a workflow profile and the local config's is a job
 // profile, and one key may not mean two things.
 var layerRows = []Row{
-	layerRow("version", "the file is refused (version: is required)", "settings set", docLayer),
-	layerRow("project", "the file is refused (project: is required)", "settings set", docLayer),
-	layerRow("gcp_project", "the installation's GCP project", "settings set", docLayer),
+	// The layer file's own header. Owner `config` for security.patterns'
+	// reason (D1515): the file is the editor and `fugaro config publish`
+	// carries it, while the generic path refuses all three — its allowlist
+	// carries the keys a person edits a published layer through, and a header
+	// is what a file is opened with rather than a key an edit lands on.
+	// `default_profile` beside them is the generic path's, which is the
+	// difference the owner column is for.
+	layerRow("version", "the file is refused (version: is required)", "config", docLayer),
+	layerRow("project", "the file is refused (project: is required)", "config", docLayer),
+	layerRow("gcp_project", "the installation's GCP project", "config", docLayer),
 	layerRow("default_profile", "the layer's own profile block is refused without one", "settings set", docLayer),
 	layerRow("claude_models", "every Claude model the project's accounts may serve", "models", docModels),
 
@@ -715,20 +737,27 @@ var localRows = []Row{
 	loc("log_view", "the project's default logs", "setup", docSetup),
 	loc("scheduler_region", "the region the jobs run in", "setup", docSetup),
 	loc("user", "none", "setup", docSetup),
-	loc("commit_name", "Fugaro", "setup", docSetup),
-	loc("commit_email", "Fugaro's own address", "setup", docSetup),
+	// The keys of the installation a repository's own settings file also holds
+	// say `settings set` where the allowlist carries them (D1178): commit_name,
+	// commit_email, max_parallel, base_branch, update_check, the two budget keys
+	// and watch.burn_alert_usd_per_hour are the generic path's, and a row naming
+	// any other owner is a key `settings set` refuses while writing it (F13).
+	// Everything else in these blocks is the converge's, and the read names
+	// `fugaro setup` or `fugaro update` for it.
+	loc("commit_name", "Fugaro", "settings set", docSetup),
+	loc("commit_email", "Fugaro's own address", "settings set", docSetup),
 	// max_parallel and build.machine_type are the local loader's own values:
 	// Parse fills both for a file that sets them nowhere, so a run gets them
 	// whatever the file says, and their rows carry a value rather than an
 	// "unset means" sentence (from defaultValues below, as update_check's
 	// does).
-	{Key: "max_parallel", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "config", Doc: docSetup},
-	loc("base_branch", "none: each repository's own branch", "config", docSetup),
+	{Key: "max_parallel", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "settings set", Doc: docSetup},
+	loc("base_branch", "none: each repository's own branch", "settings set", docSetup),
 	// update_check is the one key a process environment sets as well as a
 	// file (spec §2.2: env overrides local), so its row carries the env level
 	// the read prints for FUGARO_NO_UPDATE_CHECK. Its default is a value and
 	// comes from defaultValues below.
-	{Key: "update_check", Layers: []string{LayerLocal, LayerShared, LayerEnv}, Merge: Replace, Owner: "setup", Doc: docSetup},
+	{Key: "update_check", Layers: []string{LayerLocal, LayerShared, LayerEnv}, Merge: Replace, Owner: "settings set", Doc: docSetup},
 	loc("secret_rotation_days", "0: no rotation period is recorded", "secrets", docSetup),
 	loc("secret_expires", "none: no expiry date is recorded", "secrets", docSetup),
 	loc("bitbucket_api_roots", "the provider's public API", "secrets", docSetup),
@@ -761,11 +790,11 @@ var localRows = []Row{
 	loc("compute_prices.*.gib_second_usd", "the built-in list price", "setup", docSetup),
 
 	loc("budget.firebase_api_key", "none: the Realtime Database API key", "budget", docSetup),
-	loc("budget.max_run_tokens", "the deployed ceiling's", "budget", docSetup),
+	loc("budget.max_run_tokens", "the deployed ceiling's", "settings set", docSetup),
 	loc("budget.rtdb_url", "none: no Realtime Database budget backend", "budget", docSetup),
 	loc("budget.firebase_project", "the installation's GCP project", "budget", docSetup),
 	loc("budget.token_signer", "none", "budget", docSetup),
-	loc("budget.unreachable_grace", "Fugaro's own grace period", "budget", docSetup),
+	loc("budget.unreachable_grace", "Fugaro's own grace period", "settings set", docSetup),
 
 	loc("model_prices.*.input_per_m", "the built-in price", "models", docModels),
 	loc("model_prices.*.output_per_m", "the built-in price", "models", docModels),
@@ -816,6 +845,27 @@ var localRows = []Row{
 	locLocal("pools.*.name", "required: the name a craft's access speaks", "accounts", docCrafts),
 	locLocal("pools.*.strategy", config.PoolStrategyFailover, "accounts", docCrafts),
 	locLocal("pools.*.members", "required: a pool with no members serves nothing", "accounts", docCrafts),
+	// The pools' subscription switch (F22, D1622, D1636): whether a run may
+	// spread a project across two or more Claude OAuth subscriptions at all.
+	// With it off a pool of two or more subscriptions serves nothing and a
+	// subscription inside a mixed pool is stepped over, which is the state
+	// every installation is in until the owner says otherwise.
+	//
+	// It is the successor of claude_account_auto — the key the account walk's
+	// own switch is written under — and it keeps that switch's refusals: the
+	// local config alone, and the typed form when it is turned on, since
+	// spreading a project over subscriptions is a decision about the terms the
+	// subscriptions are held under. It is a literal rather than a locLocal call
+	// because it carries TypedWhy, which no helper sets.
+	{
+		Key:      "subscription_spread",
+		Layers:   []string{LayerLocal},
+		Merge:    Replace,
+		Default:  unset("false: a run spreads across one subscription at a time"),
+		Owner:    "settings set",
+		Doc:      docCrafts,
+		TypedWhy: "this lets a run spread a project across two or more Claude OAuth subscriptions, which is the owner's own decision about the terms the subscriptions are held under",
+	},
 	locLocal("crafts.coder.model", "required: the coder implements, so a run needs its model", "models", docCrafts),
 	locLocal("crafts.coder.access", "required: the coder's calls go out on a credential or a pool", "accounts", docCrafts),
 	locLocal("crafts.review.model", "the coder's model", "models", docCrafts),
@@ -839,7 +889,7 @@ var localRows = []Row{
 	loc("job_profiles.*.allow_repos", "every repository of the project", "project", docSetup),
 	loc("job_profiles.*.claude_accounts", "every account of the project", "project", docSetup),
 
-	loc("watch.burn_alert_usd_per_hour", "Fugaro's own alert threshold", "budget", docSetup),
+	loc("watch.burn_alert_usd_per_hour", "Fugaro's own alert threshold", "settings set", docSetup),
 	loc("mailbox.keychain_item", "the keychain item the subscription design names", "secrets", docSetup),
 	loc("credentials_service.url", "none: the credentials service is not deployed", "setup", docSetup),
 
@@ -945,17 +995,30 @@ var localRows = []Row{
 	// named by the constant that holds it — the effective cap is the person's
 	// own max_parallel, which is why the sentence names that key rather than a
 	// number.
-	locTighten("orchestrator.max_running", "the person's max_parallel", "config", docOrchestrator),
-	locTighten("orchestrator.batch_size", "10 (policy.DefaultBatchSize)", "config", docOrchestrator),
-	locTighten("orchestrator.spawn_per_minute", "2 (policy.DefaultSpawnPerMinute)", "config", docOrchestrator),
-	locTighten("orchestrator.spawn_per_hour", "12 (policy.DefaultSpawnPerHour)", "config", docOrchestrator),
-	locTighten("orchestrator.spawn_per_day", "60 (policy.DefaultSpawnPerDay)", "config", docOrchestrator),
+	//
+	// Owner `project policy`, not `project`: the block is stated in the local
+	// config and `fugaro project policy publish` is what carries it to the node
+	// every run of the project is held to (buildProjectPolicy copies
+	// lc.Orchestrator into the node, and policyCeilingValues spells these six
+	// members back out of it), which is triage's fact above. The token is this
+	// block's own because `project` is one of settingsFamilyCommands: a row
+	// naming it is refused by name of `fugaro project` — a wording of the
+	// write's that this task does not touch — and the read prints that bare
+	// command, which D1178 asks a sentence in place of for a key no subcommand
+	// edits. It was `config` until G12, whose read printed that token's
+	// sentence — the layer file `fugaro config publish` carries — beside a row
+	// whose own target_layer is `local`, a file the publish never reads.
+	locTighten("orchestrator.max_running", "the person's max_parallel", "project policy", docOrchestrator),
+	locTighten("orchestrator.batch_size", "10 (policy.DefaultBatchSize)", "project policy", docOrchestrator),
+	locTighten("orchestrator.spawn_per_minute", "2 (policy.DefaultSpawnPerMinute)", "project policy", docOrchestrator),
+	locTighten("orchestrator.spawn_per_hour", "12 (policy.DefaultSpawnPerHour)", "project policy", docOrchestrator),
+	locTighten("orchestrator.spawn_per_day", "60 (policy.DefaultSpawnPerDay)", "project policy", docOrchestrator),
 	// The one key of the block that is not a count: a class the map does not
 	// carry is at its floor, which is the bottom of the order for a routine
 	// decision and the top for a security-sensitive one (policy.ValidOrchestrator
 	// refuses a name outside the order and a model under the class's floor, so
 	// the classes' two ends are the two answers an absent key can take).
-	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "config", docOrchestrator),
+	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "project policy", docOrchestrator),
 
 	// The four members of a repository's entry a PERSON writes are the generic
 	// writer's (D1173, docs/config-management/spec.md §3.4): they are a map of
@@ -1014,8 +1077,15 @@ var localRows = []Row{
 	// layer would name a store the key cannot have. Their defaults are values
 	// the loader leaves in place, so they come from defaultValues below, as
 	// update_check's does, rather than from an "unset means" sentence.
-	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
-	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
+	//
+	// Owner `config local` (G12): the machine's own config is their only store,
+	// and no command edits them key by key — so the row names the file and the
+	// command that writes it, the way `config` names the layer file and
+	// `fugaro config publish`. It was `config` until G12, whose read printed
+	// that token's sentence — a file these two are not stated in — beside a row
+	// whose own target_layer is `local`.
+	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config local", Doc: docTroubleshoot},
+	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config local", Doc: docTroubleshoot},
 }
 
 // cloudRows are the Realtime Database's own keys (spec §2.1, §2.2): the mode a
