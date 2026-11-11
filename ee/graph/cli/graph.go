@@ -284,7 +284,7 @@ func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, d
 			// scope and got a document without it could not tell that from an
 			// empty one (§6.22).
 			if scope.Kind == graph.ScopeAll && errors.Is(err, graph.ErrNoOrchestrator) {
-				_, _ = fmt.Fprintf(warned, "the orchestrator %s is left out of this graph: %s\n", safetext.OneLine(src.Scope().String()), safetext.OneLine(err.Error()))
+				_, _ = fmt.Fprintf(warned, "one orchestrator scope is left out of this graph: %s\n", safetext.OneLine(err.Error()))
 				continue
 			}
 			return graph.Document{}, fcli.UserErr("%v", err)
