@@ -243,6 +243,53 @@ func TestImagesSkillNoBuildArgSecrets(t *testing.T) {
 	}
 }
 
+// TestImagesSkillMountsOnlyDeclaredSecrets: a catalog build mounts the secrets
+// the entry's own repository declares in its workflows, one mount per
+// declaration and under that declaration's `env`
+// (catalogBuildSecrets, internal/cli/image_build_catalog.go; the request's
+// AvailableSecrets, internal/backend/gcp/catalog.go). A stored secret no
+// workflow declares is never mounted, and a step that reads the file only when
+// it is there skips it without an error — so the skill has to say both halves
+// or an agent writes a mount that is never satisfied and reads the 401 as a
+// wrong token.
+func TestImagesSkillMountsOnlyDeclaredSecrets(t *testing.T) {
+	skill := imagesSkillFile(t)
+	for _, want := range []string{"workflows.<w>.secrets", "declaration's `env`", "401"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("the skill never says %q, so an agent cannot tell that a catalog build mounts the entry's repository's own declarations, under the variable each one names", want)
+		}
+	}
+	// The two halves of the claim are the tree's, so they are read from it: the
+	// mounts come from the checkout's workflow declarations keyed by their env,
+	// and the stored secret each one resolves is the declaration's `name`.
+	build := readRepoFile(t, "internal/cli/image_build_catalog.go")
+	if !strings.Contains(build, "cfg.Workflows[name].Secrets") || !strings.Contains(build, "at[ws.Env]") {
+		t.Error("catalogBuildSecrets no longer reads the checkout's workflows' secrets keyed by their env, which is the mount the skill describes")
+	}
+	request := readRepoFile(t, "internal/backend/gcp/catalog.go")
+	if !strings.Contains(request, "Env: ws.Env") || !strings.Contains(request, "SecretID(s.Slug, ws.Name)") {
+		t.Error("the catalog build request no longer mounts each declared secret under its env from the secret the declaration names")
+	}
+}
+
+// TestImagesSkillDockerfileEntryBuildsFromItsOwnCheckout: an entry whose source
+// is a repository's Dockerfile is built as that repository's build account, with
+// its credential and its secrets, so the build runs from that repository's
+// checkout and is refused from any other one (catalogBuildWrongRepo,
+// internal/cli/image_build_catalog.go). A skill that let the user submit it from
+// wherever they stand would send them into a refusal they were never told about.
+func TestImagesSkillDockerfileEntryBuildsFromItsOwnCheckout(t *testing.T) {
+	skill := imagesSkillFile(t)
+	for _, want := range []string{"own** checkout", "refused by name"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("the skill never says %q, so the build of a repository-Dockerfile entry is not tied to the repository whose account and secrets it runs with", want)
+		}
+	}
+	if !strings.Contains(readRepoFile(t, "internal/cli/image_build_catalog.go"), "func catalogBuildWrongRepo(") {
+		t.Error("the tree no longer refuses a catalog build submitted from another repository's checkout, which is the refusal the skill names")
+	}
+}
+
 // TestImagesSkillRerunProposesDiffOnly: a rerun compares what it found with the
 // project's own setup — the catalog, the map and the bake switch, all three in
 // the survey's `setup` member — and proposes only what differs, never reshuffling
@@ -277,6 +324,22 @@ func TestImagesSkillRerunProposesDiffOnly(t *testing.T) {
 	lowered := strings.ToLower(section)
 	if strings.Contains(lowered, "propose the images again") || strings.Contains(lowered, "start over") {
 		t.Errorf("the rerun section re-proposes a project's images rather than its differences:\n%s", section)
+	}
+	// The one way a rerun's write replaces a working setup: a machine whose
+	// project config names no catalog states the whole catalog when it is
+	// written, and the update publishes it over the project's, leaving every
+	// `image_map` value that named another entry pointing at nothing — which
+	// refuses those repositories' next update and every run of them
+	// (internal/cli/image_catalog.go's whole-catalog note). The skill has to
+	// send the agent to that note and stop it, and the note's own words are read
+	// from the command that prints it.
+	for _, want := range []string{"whole catalog", "setup.catalog", "image_map", "stop"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the rerun section never says %q, so a rerun on a machine whose config holds no catalog replaces the project's and is not stopped:\n%s", want, section)
+		}
+	}
+	if !strings.Contains(readRepoFile(t, "internal/cli/image_catalog.go"), "written as the project's whole catalog") {
+		t.Error("`fugaro image add` no longer prints the note the rerun section tells the agent to stop on, so the sentence the user is asked to recognise is gone")
 	}
 }
 
