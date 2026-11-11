@@ -3348,6 +3348,17 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 		// A shared selection has no file; never write to an empty path.
 		return userErr("there is no local config file to write (a shared config has none): run fugaro setup to create your own local config")
 	}
+	// Every write of the local config converges the craft keys first, so
+	// `fugaro update` is the whole migration and no other command is one: it
+	// adds the credentials and crafts the older account keys name
+	// (init_craft_migrate.go). It runs on the config about to be written —
+	// after the rest of this run's own changes — and adds nothing to a config
+	// that already holds them, so nothing is written twice. What it could not
+	// convert is printed where this run reports on the file — with the write,
+	// or under the line saying the file is already current — and never before
+	// the confirmation: the notes describe the file as it now is, and a config
+	// the migration converted whole has none.
+	migrationNotes := migrateCraftKeys(next)
 	data, err := next.Marshal()
 	if err != nil {
 		return err
@@ -3358,6 +3369,13 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	r.res.Config = path
 	if old != nil && bytes.Equal(old, data) {
 		fmt.Fprintf(r.w, "The local config %s is up to date.\n", path)
+		// The keys the migration cannot convert are named here too: the file is
+		// current and still holds them, so they are a state of the file and not
+		// a change this run would make. A converged config has no note at all
+		// (migrateCraftKeys), so this says nothing about one.
+		for _, note := range migrationNotes {
+			fmt.Fprintf(r.w, "note: %s\n", note)
+		}
 		return nil
 	}
 	fmt.Fprintf(r.w, "The local config %s changes:\n%s", path, lineDiff(string(old), string(data)))
@@ -3381,6 +3399,9 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 		return userErr("writing the local config: %v", err)
 	}
 	fmt.Fprintf(r.w, "wrote %s\n", path)
+	for _, note := range migrationNotes {
+		fmt.Fprintf(r.w, "note: %s\n", note)
+	}
 	if old == nil {
 		r.noteSecondProject()
 	}

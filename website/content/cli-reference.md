@@ -378,7 +378,7 @@ This command has no subcommands.
 Remove a pool from this project's config
 
 Remove pools.<NAME> from this project's config: the pool goes, and a craft whose
-access names it is refused rather than left pointing at nothing.
+access names it is cleared with it rather than left pointing at nothing.
 
 It removes the pool from the installation's config only. A repository that
 selected the pool keeps its own file untouched, and this release's fugaro update
