@@ -1,6 +1,7 @@
 package decide_test
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -96,6 +97,41 @@ func TestALongBriefStillClosesItsFence(t *testing.T) {
 	open, close := strings.Index(got, fenceOpen), strings.Index(got, fenceClose)
 	body := got[open+len(fenceOpen) : close]
 	if n := utf8.RuneCountInString(body); n > decide.MaxBriefRunes {
+		t.Errorf("the block carries %d runes, over the cap of %d", n, decide.MaxBriefRunes)
+	}
+}
+
+func TestTheExcerptSurvivesAStateAtItsOwnCaps(t *testing.T) {
+	// Every field at the cap the state itself allows: a goal, a title, a
+	// brief, a note and ten facts are together longer than one brief carries,
+	// so an excerpt rendered into whatever they left over would be gone — and
+	// the excerpt is what a decision is usually asked about.
+	state := theState(t, func(s *orchestrator.State) {
+		s.Goal = strings.Repeat("g", orchestrator.MaxGoalRunes)
+		s.WorkItems[0].Title = strings.Repeat("t", orchestrator.MaxTitleRunes)
+		s.WorkItems[0].Brief = strings.Repeat("b", orchestrator.MaxBriefRunes)
+		s.WorkItems[0].Note = strings.Repeat("n", orchestrator.MaxNoteRunes)
+		for i := range 10 {
+			s.Facts[fmt.Sprintf("fact-%02d", i)] = orchestrator.Fact{
+				Value: strings.Repeat("f", orchestrator.MaxFactValueRunes), By: orchestrator.Daemon,
+			}
+		}
+	})
+	const excerpt = "the review round failed: the CI job timed out after 20 minutes"
+	brief, err := decide.NewBrief(state, "wi-1", excerpt)
+	if err != nil {
+		t.Fatalf("the brief ended as %v", err)
+	}
+	got := brief.Render()
+
+	if !strings.Contains(collapse(got), collapse(excerpt)) {
+		t.Errorf("the brief does not carry the excerpt the decision is about: %q", tail(got))
+	}
+	if !strings.Contains(got, decide.Cut) {
+		t.Error("a brief that was cut does not say so, so the model answers as if it had seen the whole state")
+	}
+	open, close := strings.Index(got, fenceOpen), strings.Index(got, fenceClose)
+	if n := utf8.RuneCountInString(got[open+len(fenceOpen) : close]); n > decide.MaxBriefRunes {
 		t.Errorf("the block carries %d runes, over the cap of %d", n, decide.MaxBriefRunes)
 	}
 }

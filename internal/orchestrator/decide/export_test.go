@@ -6,3 +6,7 @@ package decide
 // delimiter renamed in one of the two and not the other is a fence the model
 // was never told about.
 var Prompt = systemPrompt
+
+// Cut is what a brief says where its body was cut, so a test can hold a brief
+// over its cap to the promise that the loss is not silent.
+var Cut = briefCut

@@ -374,6 +374,51 @@ func TestTheDecisionAndItsReasoningAreWrittenToTheAuditLog(t *testing.T) {
 	}
 }
 
+func TestEveryOpThePromptShowsIsOneThisReleaseReads(t *testing.T) {
+	// The prompt is the only place a model can read an op's shape: the output
+	// schema asks for opaque objects, ParseAnswer decodes strictly, and a
+	// payload key the model guessed refuses the whole answer. So the examples
+	// it is given are held against the code that reads them, one by one.
+	examples := jsonExamples(decide.Prompt)
+	if len(examples) == 0 {
+		t.Fatal("the prompt shows no op, so this test proves nothing")
+	}
+	seen := map[orchestrator.OpKind]bool{}
+	for _, example := range examples {
+		answer, err := decide.ParseAnswer(json.RawMessage(
+			`{"reasoning":"the prompt's own example","ops":[` + example + `]}`))
+		if err != nil {
+			t.Errorf("the prompt shows %s, which this release refuses: %v", example, err)
+			continue
+		}
+		if err := orchestrator.ValidatePatch(answer.Patch(1)); err != nil {
+			t.Errorf("the prompt shows %s, which is not a patch this release takes: %v", example, err)
+			continue
+		}
+		seen[answer.Ops[0].Op] = true
+	}
+	for _, kind := range []orchestrator.OpKind{
+		orchestrator.OpFactSet, orchestrator.OpFactDelete,
+		orchestrator.OpDecisionAdd, orchestrator.OpWorkItemUpsert,
+	} {
+		if !seen[kind] {
+			t.Errorf("the prompt offers no example of %q, so its shape is nowhere the model can read", kind)
+		}
+	}
+}
+
+// jsonExamples are the JSON objects the prompt shows between backticks: what a
+// model copies out of the prompt is what has to parse.
+func jsonExamples(prompt string) []string {
+	var out []string
+	for _, span := range strings.Split(prompt, "`") {
+		if s := strings.TrimSpace(span); strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func TestOutputSchemaMatchesTheSchemaFile(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "schemas", "orchestrator-decision.schema.json"))
 	if err != nil {

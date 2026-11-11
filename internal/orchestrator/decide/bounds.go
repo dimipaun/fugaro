@@ -79,6 +79,14 @@ func (b Bounds) WithDefaults() Bounds {
 // read from the document's counters field, which is the same number as of the
 // last write: a decision an hour old is still in the day's count and no
 // longer in the hour's, and only the derivation knows that.
+//
+// What the count is a count of is the document's decisions, so a call is
+// bounded once — and only once — something records it as one. This runner
+// writes no state of its own: the patch it applies is the model's answer,
+// under the DecisionAgent class, and a class that may open a question is not
+// one that may close it (applyDecisionResolve). A record of the call is
+// therefore the caller's to make, and a caller that makes none spends calls
+// these caps cannot see.
 func (b Bounds) Allow(s orchestrator.State, now time.Time) error {
 	b = b.WithDefaults()
 	c := orchestrator.DecisionCalls(s, now)
