@@ -3002,7 +3002,7 @@ Two honest limits of this diff, both deliberate:
 
 ## `ci.yml`
 
-**Status: staged and pending (2026-11-08, the workspaces work's task W3).** The staged file is the real
+**Status: applied 2026-11-11 (staged copy removed; the loop now names `workspace` and the `test` job runs `-timeout 40m` with `timeout-minutes: 60`).** Below is what was staged on 2026-11-08 (the workspaces work's task W3). The staged file is the real
 `.github/workflows/ci.yml` plus one word, so the copy-in diff is that one line and nothing else.
 `.github/workflows/ci.yml`'s `terraform` job loops over `installation firebase repo compute`, and `deploy/terraform/gcp/roots/workspace` — the workspace's own project, added by the workspaces work's task **W3** (`docs/workspaces/implementation-plan.md`) — is not in that loop: `init -backend=false`, `validate` and `terraform test` reach it only where a person runs them, so the next edit to that root's account, its two-permission database role or the one grant that is the whole of the workspace service's reach lands unvalidated and surfaces as a failed `fugaro update` on a user's machine. The staged copy adds the word `workspace` to the loop and changes nothing else.
 
