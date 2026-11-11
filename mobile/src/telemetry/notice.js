@@ -61,18 +61,27 @@
 import { DEFAULT_HOST_ALLOW_LIST, validateExternalUrl } from '../../../shared/url/index.js';
 
 /**
- * The statement the app shows, in the privacy page's own words: the builds that
- * carry the reports send them to the Fugaro project and not to the reader's
- * own, and three things never leave the device.
+ * The statement the app shows, in the privacy page's own sentences: the builds
+ * that carry a crash report send it to the Fugaro project and not to the
+ * reader's own, what a report holds, and the three things that never leave the
+ * device.
+ *
+ * "What a report holds" is not decoration: a statement that says only where
+ * reports go leaves a reader unable to judge what they are agreeing to, which
+ * is the whole reason a reader is shown a sentence instead of a switch. The
+ * four sentences are the page's own, and `notice.test.js` holds each of them to
+ * that page, so a rewrite there fails here rather than leaving the app quoting
+ * a page that no longer says this.
  *
  * A constant and not a parameter: it is the app's answer to what it reports,
  * and a caller that composed its own sentence would be a second statement
  * nobody checked against the page.
  */
-export const STATEMENT = 'The app versions that carry these reports send them to a Firebase '
-  + 'project the Fugaro project operates, and not to your own. Never sent: the contents of any '
-  + 'message, anything from your installation or its mailbox, your credentials and your keys. '
-  + 'The app carries no advertising identifier.';
+export const STATEMENT = 'The app versions that carry crash reports send them to a Firebase '
+  + 'project the Fugaro project operates, and not to your own. A crash report holds the crash\'s '
+  + 'logs, diagnostics and app performance data. Never sent: the contents of any message, '
+  + 'anything from your installation or its mailbox, your credentials and your keys. The app '
+  + 'carries no advertising identifier.';
 
 /** The privacy page, as the one URL this app may hand to a browser. */
 export const PRIVACY_URL = 'https://fugaro.dev/privacy/';

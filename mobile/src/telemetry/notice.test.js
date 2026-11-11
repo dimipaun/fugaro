@@ -48,18 +48,56 @@ import { PRIVACY_URL, STATEMENT, notice, privacyLink } from './notice.js';
 
 const SOURCE = readFileSync(join(import.meta.dirname, 'notice.js'), 'utf8');
 
+/**
+ * The page the statement quotes, read from the tree rather than retyped: the
+ * app says what the page says, so the assertion that says so has to read the
+ * page. It is a text file here and not a build artifact, because what this file
+ * checks is wording, and `website/`'s own gate (`website/test/privacy.mjs`)
+ * checks the wording the same way.
+ */
+const PAGE_SOURCE = readFileSync(
+  join(import.meta.dirname, '..', '..', '..', 'website', 'src', 'pages', 'privacy.astro'),
+  'utf8',
+);
+
 /** The host entry D124's answer is owed, written as the validator's own rule
  * states it: one exact host, no suffix and no wildcard. */
 const OWN_HOST = Object.freeze(['fugaro.dev']);
 
-/** The page's sentences this statement is made of, as the live page states
- * them: `website/src/pages/privacy.astro`, whose own gate
- * (`website/test/privacy.mjs`) holds every one of them to the tree. */
+/**
+ * The page's clauses this statement is made of -- each one a fragment of
+ * `website/src/pages/privacy.astro`, and each one asserted against both the
+ * page and the statement below. A clause is a fragment rather than a whole
+ * sentence because the page and the app address different numbers of versions
+ * (the page says "sends two things", the app names the crash report), and the
+ * point of the list is that neither side can be edited into disagreeing with
+ * the other.
+ *
+ * The second clause is the one a statement needs before it is a statement: one
+ * that says only where reports go leaves a reader unable to judge what a report
+ * is, which is the whole reason a reader is shown words instead of a switch.
+ *
+ * When `website/src/pages/privacy.astro` is rewritten (task T3.1 moves its app
+ * paragraph with the Analytics package), a clause that moves with it fails here
+ * on purpose: the app's statement has to move in the same change.
+ */
 const PAGE_CLAUSES = [
-  'send them to a Firebase project the Fugaro project operates, and not to your own',
+  'to a Firebase project the Fugaro project operates, and not to your own',
+  'A crash report holds the crash\'s logs, diagnostics and app performance data',
   'Never sent: the contents of any message, anything from your installation or its mailbox, your credentials and your keys',
   'The app carries no advertising identifier',
 ];
+
+/** Whitespace is the page's line wrapping, not its wording. */
+function flattened(text) {
+  return text.replace(/\s+/g, ' ');
+}
+
+/** Whether the live page carries a clause, by the same reading this file uses
+ * for the statement: one whitespace-insensitive substring. */
+function pageCarries(clause) {
+  return flattened(PAGE_SOURCE).includes(clause);
+}
 
 /** The clauses D255's answer put in the statement and the owner's ruling of
  * 2026-10-30 removes: the app is opt-out now, so neither is the app's to say. */
@@ -77,7 +115,24 @@ function switchesIn(text) {
 }
 
 test('the statement is the page\'s own facts, and the ruling\'s superseded clauses are gone', () => {
+  // The control first, so that a green run below is the page agreeing with the
+  // statement rather than the page failing to be read: a clause this file made
+  // up is refused by the same reading that accepts the four real ones.
+  assert.equal(
+    pageCarries('the app never sends anything to anyone'),
+    false,
+    'the page reading must be able to refuse a clause the page does not carry',
+  );
+
   for (const clause of PAGE_CLAUSES) {
+    // Both halves: the statement carries the clause, and the page does too --
+    // the app quotes a page that still says it. A sentence typed here and
+    // nowhere else would pass the first assertion alone.
+    assert.equal(
+      pageCarries(clause),
+      true,
+      `website/src/pages/privacy.astro no longer carries ${JSON.stringify(clause)}, so the app's statement quotes a page that has moved: change both in the same task`,
+    );
     assert.ok(STATEMENT.includes(clause), `the statement does not carry ${JSON.stringify(clause)}`);
   }
   // The supersession, asserted rather than described. D731 orders the statement
