@@ -3,8 +3,18 @@ package diagnoseagent
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
+
+// TestUncheckedFlagIsTheGuidesOwnWords: the flag is the sentence the guide
+// tells the agent a refused command is marked with, and the two drifting apart
+// would leave the answer carrying words the guide never promised.
+func TestUncheckedFlagIsTheGuidesOwnWords(t *testing.T) {
+	if !strings.Contains(Guide(), UncheckedFlag) {
+		t.Errorf("the guide does not carry %q, which is what a refused command is marked with", UncheckedFlag)
+	}
+}
 
 // fakeTree is a checker with one command: `fugaro doctor --json` exists and
 // nothing else does. It stands in for internal/cli's walk of the real tree,

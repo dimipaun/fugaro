@@ -154,8 +154,11 @@ reach, it prints the evidence where it is and exits non-zero instead.`,
 		},
 	}
 	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print machine-readable output")
-	cmd.Flags().IntVar(&o.maxTurns, "max-turns", 0, "bound the diagnosis to this many agent turns (default 30)")
-	cmd.Flags().Float64Var(&o.maxBudgetUSD, "max-budget-usd", 0, "bound the diagnosis to this many US dollars (default 1)")
+	// The defaults are D1613's own, written out rather than left at zero: a
+	// zero field takes the same value (Cap.withDefaults), and a reference page
+	// that printed 0 would read as "no bound" to the person the cap protects.
+	cmd.Flags().IntVar(&o.maxTurns, "max-turns", diagnoseagent.DefaultCap.Turns, "bound the diagnosis to this many agent turns")
+	cmd.Flags().Float64Var(&o.maxBudgetUSD, "max-budget-usd", diagnoseagent.DefaultCap.USD, "bound the diagnosis to this many US dollars")
 	return cmd
 }
 
