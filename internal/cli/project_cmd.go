@@ -68,7 +68,8 @@ func newProjectCmd() *cobra.Command {
 		Short: "The project's policy, its allow-list and the repositories enrolled",
 		Args:  cobra.NoArgs,
 	}
-	cmd.AddCommand(newProjectPolicyCmd(), newProjectShowCmd(), newProjectReposCmd(), newProjectSyncCmd(), newProjectCloneURLCmd())
+	cmd.AddCommand(newProjectPolicyCmd(), newProjectShowCmd(), newProjectReposCmd(), newProjectSyncCmd(), newProjectCloneURLCmd(),
+		newProjectProfileCmd(), newProjectRoutingCmd())
 	return cmd
 }
 
@@ -1139,10 +1140,23 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 // nothing, and the cascade decides which credential carries a call and never
 // where the call goes (nodeTurnsTheCascadeOn, below).
 func nodeRoutesClaude(p *projectpolicy.Policy) bool {
-	if p == nil || p.Routing == nil || p.Routing.Claude == nil {
+	if p == nil {
 		return false
 	}
-	switch p.Routing.Claude.ViaValue() {
+	return routingRoutesClaude(p.Routing)
+}
+
+// routingRoutesClaude is the switch that rule is about, stated for a routing
+// block rather than for the node that carries one: `fugaro project routing set`
+// writes the same block into the operator's config, and it asks the same two
+// questions of what it read (projectRoutingRefuseSilence) that this publish asks
+// of the node — one rule, asked twice, rather than a second copy of it in the
+// command that writes the block.
+func routingRoutesClaude(r *projectpolicy.Routing) bool {
+	if r == nil || r.Claude == nil {
+		return false
+	}
+	switch r.Claude.ViaValue() {
 	case projectpolicy.RouteOpenRouter, projectpolicy.RouteAuto:
 		return true
 	default:
@@ -1174,8 +1188,15 @@ func nodeRoutesClaude(p *projectpolicy.Policy) bool {
 // means (via: direct turns the cascade off and is an inert block, so it is kept
 // and costs nothing), or --remove-routing to drop the block itself on purpose.
 func nodeTurnsTheCascadeOn(p *projectpolicy.Policy) bool {
-	return p != nil && p.Routing != nil && p.Routing.Claude != nil &&
-		p.Routing.Claude.ViaValue() == projectpolicy.RouteCascade
+	return p != nil && routingTurnsTheCascadeOn(p.Routing)
+}
+
+// routingTurnsTheCascadeOn is that switch for a routing block rather than for
+// the node that carries one, so `fugaro project routing unset` refuses the same
+// shape this publish refuses (projectRoutingRefuseSilence): the two ask one
+// question, and neither can drift from the other about what the cascade is.
+func routingTurnsTheCascadeOn(r *projectpolicy.Routing) bool {
+	return r != nil && r.Claude != nil && r.Claude.ViaValue() == projectpolicy.RouteCascade
 }
 
 // policyProviders is the policy's providers block, built from the operator's
