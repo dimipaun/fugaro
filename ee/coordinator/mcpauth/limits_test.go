@@ -331,12 +331,12 @@ func TestNarrowRefusesAProjectWindowItCannotRead(t *testing.T) {
 	}
 }
 
-// TestUnknownScopeIsRefusedNotIgnored pins D927: the v1 vocabulary is
-// tasks:read and tasks:write, and a value outside it is refused where the
-// token is written rather than dropped, because a scope a server silently
-// ignored would be a token whose holder believes it holds a permission it
-// does not — and because a scope, once minted, is a wire contract that cannot
-// be withdrawn without breaking tokens.
+// TestUnknownScopeIsRefusedNotIgnored pins D927 as D1227 amended it: a value
+// outside the closed vocabulary is refused where the token is written rather
+// than dropped, because a scope a server silently ignored would be a token
+// whose holder believes it holds a permission it does not — and because a
+// scope, once minted, is a wire contract that cannot be withdrawn without
+// breaking tokens.
 func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
 	// roadmap:write is the scope the console's blocked write would want
 	// (D927): it is a real name the design deliberately leaves out of v1, so
@@ -408,15 +408,36 @@ func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
 	if !strings.Contains(err.Error(), "the project grants none of the token's scopes") {
 		t.Errorf("Narrow() = %q; want it to name the project's grant as the cause", err)
 	}
+}
 
-	// The vocabulary itself is exactly the two names D927 mints, so a later
-	// change that widened it is a decision and not an edit.
-	if !slices.Equal(mcpauth.ScopeVocabulary, []string{"tasks:read", "tasks:write"}) {
-		t.Errorf("ScopeVocabulary = %v; want tasks:read and tasks:write", mcpauth.ScopeVocabulary)
+// TestScopeVocabularyNamesTheStateScopes is the vocabulary itself, pinned to
+// the four names the two decisions mint: D927's task pair and D1227's state
+// pair, which is the amendment the stateless orchestrator's O16a lands. A
+// later change that widened it is a decision and not an edit, which is why the
+// list is written out here rather than compared with itself.
+//
+// The default is pinned beside it and against it, because the two are one
+// question (R1): `requestedScopes` answers an authorization that names no
+// scope out of DefaultScopes, so a default that grew with the vocabulary would
+// hand every sign-in the state scope the vocabulary exists to keep away from
+// it — and a name in the default that the vocabulary does not mint would be a
+// token a build could not read back at all.
+func TestScopeVocabularyNamesTheStateScopes(t *testing.T) {
+	want := []string{"tasks:read", "tasks:write", "state:read", "state:write"}
+	if !slices.Equal(mcpauth.ScopeVocabulary, want) {
+		t.Errorf("ScopeVocabulary = %v; want %v: D1227 adds the state pair to D927's two, and a name outside it is refused at the mint and at the door", mcpauth.ScopeVocabulary, want)
 	}
 	for _, s := range mcpauth.ScopeVocabulary {
 		if !mcpauth.KnownScope(s) {
 			t.Errorf("KnownScope(%q) is false", s)
+		}
+	}
+	if !slices.Equal(mcpauth.DefaultScopes, []string{"tasks:read", "tasks:write"}) {
+		t.Errorf("DefaultScopes = %v; want tasks:read and tasks:write: an authorization that names no scope must not be handed a state scope (R1)", mcpauth.DefaultScopes)
+	}
+	for _, s := range mcpauth.DefaultScopes {
+		if !mcpauth.KnownScope(s) {
+			t.Errorf("DefaultScopes names %q, which the vocabulary does not mint: the default is read back by the same build that wrote it", s)
 		}
 	}
 }
