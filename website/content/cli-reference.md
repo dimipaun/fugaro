@@ -4584,11 +4584,13 @@ nothing. `hotfix` is refused in either form, naming `fugaro run --mode hotfix`.
 The command prints the review floor beside the write, and it cannot lower it:
 `fugaro rigor floor` is where a floor is changed.
 
-It writes one file — this machine's own project layer file, whose path is
-derived from the selected project's name — and only a file that is already
-there: with no local layer file it refuses and names `fugaro update`, whose Layer
-stage seeds the file from the published layer where the project has published
-one. This command creates no file.
+It writes one file: this machine's own project layer file, whose path is
+derived from the selected project's name. A project that has published no layer
+and has no local file of its own gets one — a project layer document carrying
+this installation's anchors and the change that was asked for — so a fresh
+installation can set a mode. A project that HAS published a layer is not written
+over: with no local file there the command refuses and names `fugaro update`,
+whose Layer stage seeds the file from that layer.
 
 Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]]`
 

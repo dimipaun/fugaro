@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
@@ -30,11 +32,14 @@ import (
 //   - D838: `--area` addresses a rule by its glob, so a layer that carries one
 //     glob twice is refused and a pair is never created — the loader's own
 //     repeat rule (internal/config's validateRigor, F14) is the check;
-//   - §3 step 4's second absence: a file that does not exist is refused, naming
-//     `fugaro update`, rather than replaced. The design's first absence — no
-//     file and no published layer — is the creation half, which is not built;
-//     the test below says what it pins and why the second half is the one the
-//     write path can carry.
+//   - §3 step 4's two absences, which are not the same absence: a file that does
+//     not exist while the project HAS a published layer is refused, naming
+//     `fugaro update`, rather than replaced, and a file that does not exist
+//     while the project has published NO layer is created as a project layer
+//     document carrying the local config's anchors and the edit — so the state a
+//     fresh `fugaro setup` leaves is one this command can reach. Which of the
+//     two it is, is the published-layer read's answer and nothing else, so the
+//     tests below give that read both answers.
 //
 // The world is the settings family's own: settingsWriteHome's hermetic
 // installation (project aurora, gcp_project aurora-gcp) and a layer file written
@@ -270,21 +275,35 @@ func TestRigorSetRefusesAVocabularyNearMiss(t *testing.T) {
 	}
 }
 
-// A file that does not exist is refused, and no byte is created where it would
-// be. The refusal this pins is the one write path's own sentence, and the
-// absence it is written for is §3 step 4's second: a file absent while the
-// project HAS a published layer, where publishing a fresh, nearly empty one over
-// the project's real layer is the mistake this command must not make, and the
-// remedy is `fugaro update`, whose Layer stage seeds the file from that layer
-// (D831, merged). The design's first absence — no file and no published layer,
-// where there is nothing to seed from — is the creation half, and it is not
-// built: the one write path compares and swaps against a file it re-reads and
-// backs that file up, so it cannot create one, and the plan that owns that path
-// (settings S5, re-entered by G7 and S7) forbids a second copy of its refusal
-// and its write in this file. G6's pull request reports the gap rather than
-// choosing where the creation belongs.
-func TestRigorSetRefusesWithNoLocalLayerFile(t *testing.T) {
+// rigorPublishedLayer is the published-layer read, answered by the test: exists
+// says whether this project has published a layer, which is the one fact §3
+// step 4's two absences are told apart by. The returned flag reports whether the
+// command made the read at all, so a test can say the creation was decided on
+// that answer rather than on the file's absence alone.
+func rigorPublishedLayer(t *testing.T, exists bool) *bool {
+	t.Helper()
+	var read bool
+	old := layerPublishedRead
+	t.Cleanup(func() { layerPublishedRead = old })
+	layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
+		read = true
+		if !exists {
+			return nil, 0, false, nil
+		}
+		return []byte(rigorAnchors + "defaults:\n  rigor:\n    default: pro\n"), 7, true, nil
+	}
+	return &read
+}
+
+// §3 step 4's second absence: a file absent while the project HAS a published
+// layer is refused, and no byte is created where it would be. The refusal this
+// pins is the one write path's own sentence, and the absence it is written for is
+// the one where publishing a fresh, nearly empty layer over the project's real
+// one is the mistake this command must not make: the remedy is `fugaro update`,
+// whose Layer stage seeds the file from that layer (D831, merged).
+func TestRigorSetRefusesWithNoLocalFileWhileALayerIsPublished(t *testing.T) {
 	settingsWriteHome(t)
+	read := rigorPublishedLayer(t, true)
 	path := localLayerPath(t)
 	noAgentSession(t)
 	noTerminal(t)
@@ -293,11 +312,107 @@ func TestRigorSetRefusesWithNoLocalLayerFile(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a write with no layer file to edit succeeded:\n%s", out)
 	}
+	if !*read {
+		t.Error("the refusal was made without asking whether the project has published a layer")
+	}
 	if !strings.Contains(err.Error(), "fugaro update") || !strings.Contains(err.Error(), path) {
 		t.Errorf("the refusal does not name the file and the remedy: %v", err)
 	}
 	if _, statErr := os.Stat(path); statErr == nil {
 		t.Error("the refusal created the file it refused to edit")
+	}
+}
+
+// §3 step 4's first absence, and the state a fresh `fugaro setup` leaves: no
+// local layer file and no published layer. The file is created as a project
+// layer document — the local config's three anchor values and nothing else of
+// that file, which the layer parser would refuse — and the change that was asked
+// for is written into it by the one write path, so what is left is not three
+// bare keys and not a second command's work. Both forms create it: the layer's
+// default here, and a rule below.
+func TestRigorSetCreatesTheFileWhenNoLayerIsPublished(t *testing.T) {
+	settingsWriteHome(t)
+	read := rigorPublishedLayer(t, false)
+	path := localLayerPath(t)
+	noAgentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "rigor", "set", "critical")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !*read {
+		t.Error("the command created the file without asking whether the project has published a layer")
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("no layer file was created at %s: %v", path, statErr)
+	}
+	got := readFileString(t, path)
+	if !strings.HasPrefix(got, rigorAnchors) {
+		t.Errorf("the created file does not carry the installation's own anchors:\n%s", got)
+	}
+	if !strings.Contains(got, "default: critical") {
+		t.Errorf("the created file does not carry the mode that was asked for:\n%s", got)
+	}
+	rigorReadsBack(t, got)
+	if lines := strings.Split(strings.TrimRight(out, "\n"), "\n"); lines[len(lines)-1] != "next: fugaro update" {
+		t.Errorf("the last line is %q, want the one hand-off line", lines[len(lines)-1])
+	}
+
+	// The area form, on its own fresh installation: what the created document
+	// carries is the rule, and the anchors are still the local config's.
+	settingsWriteHome(t)
+	rigorPublishedLayer(t, false)
+	path = localLayerPath(t)
+	out, _, err = execute(t, "rigor", "set", "critical", "--area", "docs/**", "--name", "docs")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got = readFileString(t, path)
+	if !strings.HasPrefix(got, rigorAnchors) {
+		t.Errorf("the created file does not carry the installation's own anchors:\n%s", got)
+	}
+	for _, want := range []string{"match: docs/**", "name: docs", "mode: critical"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the created file does not carry %q:\n%s", want, got)
+		}
+	}
+	rigorReadsBack(t, got)
+}
+
+// Nothing a refusal leaves behind includes the file the creation wrote: the
+// session fence refuses the write the creation was made for, and a rule that
+// cannot be built refuses it too, and both leave the machine without the file —
+// which is what makes the sentences' "nothing was written" true of the file and
+// not only of its bytes.
+func TestRigorSetCreatesNothingWhenItRefuses(t *testing.T) {
+	settingsWriteHome(t)
+	rigorPublishedLayer(t, false)
+	path := localLayerPath(t)
+	agentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "rigor", "set", "critical")
+	if err == nil {
+		t.Fatalf("a coding agent's session created the project layer file:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "coding agent's session") {
+		t.Errorf("the refusal does not name the session: %v", err)
+	}
+	if !strings.Contains(out, "default: critical") {
+		t.Errorf("the refused write printed no diff of what it would have created:\n%s", out)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Error("the refused write left the file it had created behind")
+	}
+
+	noAgentSession(t)
+	_, _, err = execute(t, "rigor", "set", "critical", "--area", "docs/**")
+	if err == nil || !strings.Contains(err.Error(), "--name") {
+		t.Fatalf("a rule with no name was written: %v", err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Error("the refused rule left the file the creation had written behind")
 	}
 }
 

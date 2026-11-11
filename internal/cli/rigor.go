@@ -1,7 +1,13 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -28,22 +34,19 @@ import (
 //     seeds and publishes (D830, D831). This file resolves it through
 //     settingsResolveTarget's `--layer project` branch, so the path, the anchor
 //     the document is read against and the "no local project layer file"
-//     refusal are the ones every other project-layer write already makes.
-//     **That refusal is one branch for both of §3 step 4's absences, and only
-//     its second half is what the design asks for there.** The design splits
-//     them: a file absent while the project HAS a published layer is refused,
-//     with `fugaro update` named as the remedy (R1's seed, merged — the case the
-//     writer's sentence is written for), and a file absent while the project has
-//     published NO layer is CREATED, as a project layer document carrying the
-//     three anchor values of the local project config and the `defaults:` block
-//     the edit writes. The creation half is not built here: the one write path
-//     compares and swaps against the file it re-reads, and backs that file up,
-//     so it refuses the file that is not there — and its own plan (S5's,
-//     re-entered by G7 and S7) forbids a second copy of the refusal and the
-//     write in this file, which is why G6's pull request reports the gap rather
-//     than answering where the creation belongs. A project that has published no
-//     layer therefore meets this refusal, and `fugaro update`'s Layer stage
-//     reports that it has nothing to seed a file from.
+//     refusal are the ones every other project-layer write already makes. §3
+//     step 4's two absences are split before that branch is reached
+//     (rigorCreateLayerFile), because the branch makes one refusal of both: a
+//     file absent while the project HAS a published layer keeps the shared
+//     refusal, with `fugaro update` named as the remedy (R1's seed, merged — the
+//     case the writer's sentence is written for), and a file absent while the
+//     project has published NO layer is CREATED, as a project layer document
+//     carrying the three anchor values of the local project config. The edit
+//     itself still goes through the one write path, so the file the command
+//     leaves behind carries the change that was asked for and not an empty
+//     shell — and a refusal between the creation and that write takes the
+//     created file away again, which is what keeps every "nothing was written"
+//     below true of the file as well as of its bytes.
 //   - §3 step 1 is the vocabulary, step 2 D834's `hotfix` refusal, §5's glob
 //     and name rules are rigor.Area.Validate's own, and §5's duplicate-glob
 //     refusal is the loader's (internal/config's validateRigor, F14) — every one
@@ -143,11 +146,13 @@ nothing. ` + "`hotfix`" + ` is refused in either form, naming ` + "`fugaro run -
 The command prints the review floor beside the write, and it cannot lower it:
 ` + "`fugaro rigor floor`" + ` is where a floor is changed.
 
-It writes one file — this machine's own project layer file, whose path is
-derived from the selected project's name — and only a file that is already
-there: with no local layer file it refuses and names ` + "`fugaro update`" + `, whose Layer
-stage seeds the file from the published layer where the project has published
-one. This command creates no file.`,
+It writes one file: this machine's own project layer file, whose path is
+derived from the selected project's name. A project that has published no layer
+and has no local file of its own gets one — a project layer document carrying
+this installation's anchors and the change that was asked for — so a fresh
+installation can set a mode. A project that HAS published a layer is not written
+over: with no local file there the command refuses and names ` + "`fugaro update`" + `,
+whose Layer stage seeds the file from that layer.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRigorSet(cmd, args[0], o)
@@ -215,6 +220,21 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	if err != nil {
 		return err
 	}
+	// §3 step 4's first absence is this command's to answer: with no local layer
+	// file and no published layer there is nothing to seed the file from and the
+	// shared resolver's refusal names a remedy that cannot run, so the file is
+	// created here and the edit is written into it by the one write path below.
+	// The creation is taken back on every path that does not write over it, so
+	// what a refusal leaves is the machine it found.
+	createdPath, createdShell, err := rigorCreateLayerFile(cmd.Context(), lc)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if createdShell != nil {
+			rigorDiscardCreatedLayer(createdPath, createdShell)
+		}
+	}()
 	target, err := settingsResolveTarget(cmd.Context(), row, settingsWriteOptions{layer: settingsLayerProject, project: o.project, config: o.config}, lc, sel)
 	if err != nil {
 		return err
@@ -339,6 +359,72 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	return nil
+}
+
+// rigorCreateLayerFile creates this machine's own project layer file when §3
+// step 4's first absence is the state: the file is not there, and the project
+// has published no layer. It returns the bytes it wrote — nil when it wrote
+// none, because the file is there, or because the project HAS a published layer,
+// where the shared resolver's own refusal is what the caller then makes.
+//
+// A published layer is not created over, and a bucket that cannot be read is the
+// same answer for the same reason: publishing a fresh, nearly empty layer over
+// the project's real one is the one mistake §3 step 4 names, so an answer of
+// "this project has published no layer" is the only one this command creates on.
+// Both of those cases fall through to settingsResolveTarget, whose sentence
+// names `fugaro update` — the Layer stage that seeds the file from the published
+// layer.
+//
+// The document it writes carries the three anchor keys, whose values are the
+// installation's own (`localcfg.Config`'s Version, Name and GCPProject) and
+// nothing else of that file: the rest of it (`region`, `runs_bucket`,
+// `base_images`, `image_source`, `backend`) are keys the layer does not have,
+// and the layer parser refuses any top-level key outside its own set. The
+// `defaults:` block the command is there to write follows through the one write
+// path, so what the command leaves is the change that was asked for and not
+// three bare keys — and the shell exists at all only because that path compares
+// and swaps against a file it re-reads, which is why the caller takes it away
+// again wherever the write does not land.
+func rigorCreateLayerFile(ctx context.Context, lc *localcfg.Config) (string, []byte, error) {
+	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
+	if err != nil {
+		// A path that cannot be derived is settingsResolveTarget's own refusal.
+		return "", nil, nil
+	}
+	switch _, err := os.Stat(path); {
+	case err == nil:
+		return path, nil, nil
+	case !errors.Is(err, fs.ErrNotExist):
+		// A path that cannot be read is not an absent one, and it is refused
+		// where every other project-layer write refuses it.
+		return path, nil, nil
+	}
+	if _, _, exists, err := layerPublishedRead(ctx, lc, recordReadURL(lc)); err != nil || exists {
+		return path, nil, nil
+	}
+	shell := []byte(fmt.Sprintf("version: %d\nproject: %s\ngcp_project: %s\n", lc.Version, lc.Name, lc.GCPProject))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", nil, userErr("creating %s: %v", path, err)
+	}
+	if err := writeFileAtomic(path, shell); err != nil {
+		return "", nil, userErr("creating %s: %v", path, err)
+	}
+	return path, shell, nil
+}
+
+// rigorDiscardCreatedLayer removes the file rigorCreateLayerFile wrote, while it
+// still holds exactly the bytes that helper wrote: a refusal between the
+// creation and the write, and the write path's own refusal of the write, both
+// leave the file gone rather than a document nobody asked for, and a write that
+// did land is never undone. The read is the one every reader of a layer file
+// makes (config.ReadRegular), so a file swapped for a symlink or a FIFO in the
+// meantime is left alone rather than removed through.
+func rigorDiscardCreatedLayer(path string, shell []byte) {
+	cur, err := config.ReadRegular(path, config.LayerMaxBytes)
+	if err != nil || !bytes.Equal(cur, shell) {
+		return
+	}
+	os.Remove(path)
 }
 
 // rigorEdit builds the edited document: the layer's own default as a scalar
