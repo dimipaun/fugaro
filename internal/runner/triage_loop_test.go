@@ -381,6 +381,52 @@ func TestARepeatedDeferralIsFiledOnce(t *testing.T) {
 	}
 }
 
+// TestADeferralIsTakenBackWhenTheRaisedModeStopsTriaging: the ledger holds what
+// took effect when the run ended, so a round no judge weighed takes a finding
+// back just as a round the judge blocked does. The mode that rose past the
+// switch hands the fixer the whole round — `fixable` answers the round's own
+// findings where no judge was asked, which is F4's other bound and F32's rule —
+// so the fix the run makes is the pull request's own work, and a deferral the
+// same finding earned before the raise would plan a follow-up for code the pull
+// request carries (fugaro followups, T-TR10). The file the task touches is an
+// area set to Critical, so the fix after level 2's first round resolves the mode
+// again (D22's second moment); the level's rounds from then on are rounds
+// Critical does not judge (D1851), and the one below raises the trivial finding
+// level 2's judge deferred — a finding the fixer is handed, and one the record
+// must not still be calling a follow-up.
+func TestADeferralIsTakenBackWhenTheRaisedModeStopsTriaging(t *testing.T) {
+	block := "rigor:\n  default: startup\n  areas:\n    - { name: app, match: feature.txt, mode: critical }\n"
+	h := newHarness(t, triageCfg(t, block, 3, ""), nil)
+	rec, err := h.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding(), trivialFinding()),
+		triageVerdicts("block", "defer"),
+		fixStep,
+		reviewScored("changes", trivialFinding()),
+		fixStep,
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review", "triage", "fix", "review", "fix", "review") {
+		t.Fatalf("stages = %v (outcome %s, reason %q, triage %+v, deferred %+v), want the raised mode's round unfixed by a judge and its finding fixed by the run",
+			got, rec.Outcome, rec.Reason, rec.Triage, rec.Deferred)
+	}
+	if rec.Rigor == nil || rec.Rigor.Mode != rigor.Critical {
+		t.Fatalf("the run ended at %+v, want the area's Critical", rec.Rigor)
+	}
+	if tr := rec.Triage; tr == nil || len(tr.Rounds) != 1 {
+		t.Fatalf("the record's triage block = %+v, want only the round the switch was on for", rec.Triage)
+	}
+	if brief := h.agent.calls[5].Prompt; !strings.Contains(brief, trivialSummary) {
+		t.Errorf("the fixer's brief does not carry the finding the raised mode blocks on:\n%s", brief)
+	}
+	if rec.Deferred != nil {
+		t.Errorf("the record's deferred block = %+v, want none: the round the raised mode did not judge takes the finding back", rec.Deferred)
+	}
+}
+
 // TestHeldBackLevelReadsTheDeferredSet: the held-back rule reads the deferred
 // set and not the recorded verdict word (F21). A level 2 round whose findings
 // the judge deferred whole does not hold the pull request a draft after level 3

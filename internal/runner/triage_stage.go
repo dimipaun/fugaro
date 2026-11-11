@@ -186,6 +186,7 @@ func triageOutcomeOf(v Verdict, out triage.Outcome) triageOutcome {
 // says beside each.
 func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v Verdict) (triageOutcome, bool) {
 	if !r.triageOn() {
+		r.forgetRoundDeferred(ctx, v)
 		return triageOutcome{}, true
 	}
 	mode := r.reachedRigor()
@@ -310,7 +311,9 @@ func (r *run) recordTriage(ctx context.Context, round int, level policy.Level, v
 // replaces the first's text rather than filing it twice, and a round that
 // blocked it takes it back out — the finding is this round's work again, and a
 // follow-up saying it was filed would send a reader after code the pull request
-// carries. The order is the order the findings were first deferred in.
+// carries. The order is the order the findings were first deferred in. A round
+// no judge weighed takes its findings back the same way, which is
+// forgetRoundDeferred's half of the same rule.
 //
 // The text comes from the finding and from the placement, redacted like every
 // other model-written string the record keeps (agent.Redact): a reviewer's
@@ -333,6 +336,38 @@ func (r *run) noteDeferred(v Verdict, out triage.Outcome) {
 			Source:  runstore.TriageSource(p.Source),
 		})
 	}
+}
+
+// forgetRoundDeferred takes a round no judge weighed out of the ledger, which is
+// noteDeferred's other half: with no judge asked, the mode's own table decides
+// that round whole and the loop hands the fixer every finding the round names
+// (`fixable` answers the round's own where nobody was asked, F4's other bound and
+// F32's rule), so a finding the round raised again is this round's work and a
+// deferral it earned in an earlier round is not a follow-up any more.
+//
+// It is what keeps the ledger what took effect wherever the switch or the mode
+// turns the judge away mid-run (D1851, D1854): a run that rose to Critical over
+// an area (D22's second moment) has its later rounds judged by nobody, and
+// without this the record would keep calling a finding the run is fixing a
+// follow-up — which is the task `fugaro followups` would open for code the pull
+// request already carries (T-TR10).
+//
+// A round that shipped takes nothing back: with no judge to weigh them, the
+// mode's rule for that round is the verdict word it recorded, and the round the
+// run shipped over leaves the deferral the follow-up it is.
+func (r *run) forgetRoundDeferred(ctx context.Context, v Verdict) {
+	if v.Verdict == "ship" || len(r.deferred) == 0 || len(v.Findings) == 0 {
+		return
+	}
+	before := len(r.deferred)
+	for _, f := range v.Findings {
+		r.forgetDeferred(findingKey(f))
+	}
+	if len(r.deferred) == before {
+		return
+	}
+	r.rec.Deferred = runstore.NewDeferred(r.deferred)
+	r.save(ctx)
 }
 
 // rememberDeferred files one deferral, replacing the entry the same finding

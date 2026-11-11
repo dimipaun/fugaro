@@ -505,9 +505,11 @@ type run struct {
 	triageRounds []runstore.TriageRound
 	// deferred is the deferrals that took effect, in the order the findings were
 	// first deferred in, across every round and level (T-TR7b, D1850). It is the
-	// raw list the record's block is rebuilt from on each round, for the reason
-	// triageRounds is: NewDeferred is what bounds and clips it, and a second
-	// append would build on the bounded list.
+	// raw list the record's block is rebuilt from wherever it changes — a judged
+	// round's placements, and the round no judge weighed that takes a finding
+	// back (forgetRoundDeferred) — for the reason triageRounds is: NewDeferred is
+	// what bounds and clips it, and a second append would build on the bounded
+	// list.
 	deferred []runstore.DeferredFinding
 	// rigorRaise is the last raise the run's mode took during the run, set by
 	// the moment that took it (noteRigorRaise, rigor.go) and nil while the mode
