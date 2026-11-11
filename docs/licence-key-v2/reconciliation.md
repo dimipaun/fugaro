@@ -150,7 +150,7 @@ a viewer **can** copy the key; with the required `workspace_id` (D2134 as amende
 | D2132 | Seat enforcement, overturning D439 (F13) | Enforce in `ee` surfaces only; the MIT CLI unaffected (alternatives: advisory; core check, which D524 forbids) | **2026-11-11: the recommendation**, subject to TN1 (the owner's enforcement go) |
 | D2133 | Grace | `grace_days` carried by the key, server default **30** (B17, T26) (alternatives: 14; fixed 30 outside the key) | **2026-11-11: the recommendation.** The spec's 14 becomes 30 |
 | D2134 | What `workspace_id` names | Recommended: a checked installation id | **2026-11-11: NOT the recommendation.** Keep `organisation`, add an optional `workspace_id`. **Amended by the owner the same day (TN2): `workspace_id` is REQUIRED on every key and is checked offline against the Firebase project id of the workspace** (a project outside a workspace: its own Firebase project id) |
-| D2135 | Renewal authentication (F7) | A per-key renewal secret, hash in the key, secret sent over TLS and held in the installation's Secret Manager (alternatives: the scheduler SA's identity; none) | **2026-11-11: the recommendation.** **Amended after review:** the call sends the secret and the server compares its hash, with no HMAC (a hash in the key is readable by every bucket reader). Owner to confirm. |
+| D2135 | Renewal authentication (F7) | A per-key renewal secret, hash in the key, secret sent over TLS and held in the installation's Secret Manager (alternatives: the scheduler SA's identity; none) | **2026-11-11: the recommendation.** **Amended after review:** the call sends the secret and the server compares its hash, with no HMAC (a hash in the key is readable by every bucket reader). **Confirmed by the owner 2026-11-11.** |
 | D2136 | Trials | Add the 14-day Team trial beside D440's plans (alternatives: replace D440; none) | **2026-11-11: the recommendation.** One per installation |
 | D2137 | Where the key lives per project (F9) | The runs bucket beside the published policy (alternatives: Secret Manager; per machine) | **2026-11-11: the recommendation.** |
 | D2138 | Grace of trial and air-gapped keys | Trial 0, air-gapped 30 | **2026-11-11: the recommendation.** |
@@ -174,7 +174,7 @@ a viewer **can** copy the key; with the required `workspace_id` (D2134 as amende
 - **TN2: answered 2026-11-11, amends D2134.** `workspace_id` is required on every key and names the Firebase project id of the workspace; the verifier compares it with the project's own Firebase project id, read from the same place as the key. Consequences the plan carries: a free-seat or open-source key's web form asks for the project's Firebase project id; a key is tied to one workspace (moving it is a reissue); `community` keys are bound too. Nothing else about the binding changes (`organisation` stays, unchecked).
 - **TN3: answered 2026-11-11.** Firebase Auth in the owner's own project, `fugaro-prod`; a customer's workspace Firebase token is not trusted by the server.
 - **TN5: answered 2026-11-11 (the recommendation).** An installation without a coordinator renews by hand (`licence refresh`) and gets no automatic revocation check.
-- **TN4: D2135 was amended after review** (see its cell); the owner confirms the amended text.
+- **TN4: answered 2026-11-11 (the recommendation).** The owner confirmed D2135's amendment.
 - **Pending the owner's go:** no task is approved. K0.1 (counsel: the Terms' refund and the privacy text
   for the renewal contact) and K0.2 (production signing keys, S3.8) are owner-run.
 
