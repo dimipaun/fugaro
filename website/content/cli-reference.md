@@ -5885,6 +5885,7 @@ Subcommands:
 
 - `fugaro runs digest` -- Write a closed period's report of this repository into its own docs tree
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
+- `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
 - `fugaro runs summary` -- Count the window's runs and their spend, without reading a run object
 
@@ -6053,6 +6054,50 @@ Flags:
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 | `--state` | string | "" | no | only runs in this state (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs show`
+
+Show a run's chain and what is left of its limits
+
+Show the chain RUN (a run ID, <repo-slug>/<run-id>, or the last four or
+more characters of a run ID) belongs to: the run that began it, each
+dimension's limit, what the chain has used of it and what is left, the layer
+each limit's source names, and whether the chain is ENFORCED or UNENFORCED.
+When the run is halted, the halt is printed too.
+
+A chain is the unit of work whose runs share one limit (D1045): the limit is the
+figure the run that began the chain was launched with, and what has been used is
+read off the chain's runs — the dollars and tokens from the budget database's
+per-run ledgers, the wall time and review rounds from the run records. With the
+budget off there is no ledger, the records are the figures, the chain is marked
+UNENFORCED, and the token dimension is reported unmeasured rather than
+approximated.
+
+The wall-time and review-round limits are advisory: no rule enforces them.
+
+--json prints {version, repo, run, chain, run_count, enforced, limits[], halt},
+each limit a {dimension, limit, used, remaining, source} whose amounts are in
+the dimension's own unit: micro-dollars for the money — the unit the budget
+database and the rest of the CLI's documents count it in — whole tokens,
+seconds and a count.
+
+Usage: `fugaro runs show RUN`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID) |
 
 Subcommands:
 

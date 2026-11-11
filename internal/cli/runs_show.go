@@ -116,7 +116,9 @@ func newRunsShowCmd() *cobra.Command {
 			"The wall-time and review-round limits are advisory: no rule enforces them.\n\n" +
 			"--json prints {version, repo, run, chain, run_count, enforced, limits[], halt},\n" +
 			"each limit a {dimension, limit, used, remaining, source} whose amounts are in\n" +
-			"the dimension's own unit (dollars, tokens, seconds, rounds).",
+			"the dimension's own unit: micro-dollars for the money — the unit the budget\n" +
+			"database and the rest of the CLI's documents count it in — whole tokens,\n" +
+			"seconds and a count.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runRunsShow(cmd, &o, args[0]) },
 	}

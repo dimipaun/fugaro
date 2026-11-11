@@ -71,8 +71,8 @@ type Diagnosis struct {
 	// lost execution, or an `error` for a run it could not follow — where the
 	// row's own account of it is `derived`, or that sentence
 	// (runview.Row.FailureClass).
-	FailureClass failure.Class    `json:"failure_class,omitempty"`
-	Halt         *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
+	FailureClass failure.Class  `json:"failure_class,omitempty"`
+	Halt         *runstore.Halt `json:"halt,omitempty"` // why a halted run was halted
 	// ChainLimits is the chain the run belongs to and what is left of its
 	// limits (D1055), filled in for a halted run: a halt's first question is
 	// how much is left, which is what this block answers. Embedded, so the
