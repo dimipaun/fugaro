@@ -26,7 +26,7 @@ How to read a row:
 
 | ID | Kind | Reader | What it reads | How | Decision | Exit slice |
 | --- | --- | --- | --- | --- | --- | --- |
-| E1 | runtime | Per-repository job accounts, one per repository, workflow and Claude account variant | The git credential (`bitbucket-token` or `github-app-key`), the model credentials (`claude-oauth-token*`, `anthropic-api-key`, provider keys) unless the installation opted into the service, and the workflow's own `secrets:`; the git credential leaves at S1 (on a proxied repository a proxied job reads no token at all from this tree, and the mount the row itself lists leaves when the flip lands — see the note below), the model credentials at S2, the workflow's `secrets:` at S3 | Cloud Run `secret_key_ref` env mounts, resolved by the platform as the job account at execution start; the grant is `modules/workflow/sa.tf` `google_secret_manager_secret_iam_member.job`, the mounts are `modules/workflow/job.tf` and `internal/infra/spec.go` `SecretMounts` | D145, D491, D506 | S1 |
+| E1 | runtime | Per-repository job accounts, one per repository, workflow and Claude account variant | The git credential (`bitbucket-token` or `github-app-key`), the model credentials (`claude-oauth-token*`, `anthropic-api-key`, provider keys) unless the installation opted into the service, and the workflow's own `secrets:`; the git credential leaves at S1 — a proxied repository's job reads no token (B1.7) and, since the flip, neither mounts nor may read one — the model credentials at S2, the workflow's `secrets:` at S3 | Cloud Run `secret_key_ref` env mounts, resolved by the platform as the job account at execution start; the grant is `modules/workflow/sa.tf` `google_secret_manager_secret_iam_member.job`, the mounts are `modules/workflow/job.tf` and `internal/infra/spec.go` `SecretMounts` | D145, D491, D506 | S1 |
 | E2 | runtime | Shared project job accounts, one per profile, provider and Claude account | The GitHub App key, the profile's provider keys and its Claude account token; all three leave when shared project jobs move to the service | The same `secret_key_ref` mounts, `modules/project/job.tf`, with the grant in `modules/project/sa.tf` `google_secret_manager_secret_iam_member.job` | D145, D505 | S5 |
 | E3 | runtime | The repository's build account, and the daily image-check job, which runs as it | The git credential and the workflows' build secrets, during Cloud Build | Cloud Build `availableSecrets` and BuildKit `--secret id=git-credentials` (`modules/repo/build.tf`, `images/derived/cloudbuild.yaml`); the image-check job's own `secret_key_ref` (`modules/repo/check.tf`); `internal/cli/gitcred.go` (`fugaro image git-credential`) and `internal/cli/imagecheck.go` are how the build reads them | D491 | S4 |
 | E4 | runtime | The coordinator job's account | The GitHub App key, from which the coordinator mints its own read-only installation token; no slice of this plan ends it, because the read belongs to the coordinator plan and the App key's move off jobs belongs to the credentials-service plan | `secret_key_ref` (`modules/installation/coordinator.tf` `google_secret_manager_secret_iam_member.coordinator_app_key`) | D499 | never |
@@ -49,17 +49,19 @@ How to read a row:
 | E21 | operator | `internal/managed/stateaccounts.go` | Nothing: the API host appears in the mapping of Terraform resource types to the managed state accounts | No call: the host as a resource-type prefix in that mapping | D499 | never |
 | E22 | runtime | The intake service's account (`internal/intake/gcp.go`, DS2.1) | Nothing: it creates a container, adds a version to one, lists names and dates, and deletes a container; no version's payload | The Secret Manager API, as the intake's own account. That account's grants are not fenced yet: create and list unconditionally, version-add and delete under the `fugaro_u_`/`fugaro_p_` prefix condition, and **no `secretAccessor` and no `secrets.get`** are DS2.2's (F30), so on this tree no Terraform creates that account or binds a role on it | D1940, R12 | never |
 
-**The Bitbucket rows' state (B1.10).** The git proxy shipped (B1.5, B1.6, B1.7): on a repository
-the published node admits with `proxy: true`, **a proxied job reads no token at all** — the runner
-opens its provider tokenless, the forwarder holds no credential, and the service puts the
-Bitbucket token on the wire (`internal/runner`'s `startProxiedGit`, `internal/gitproxy`). What has
-**not** moved is the mount and the accessor: the flip list, `config.ProxiedGitSecretNames`, **is
-empty** on this tree (B1.13 part two, after Check 191 and the owner's go), so E1 still lists the
-token and the job **still mounts it** — an agent can still read that mounted copy through the
-runner's `/proc`, exactly where SECURITY.md's "The Bitbucket git proxy" says it is. E3, the
-**build account keeps its own copy until S4**, so a build's Dockerfile can still reach the token
-and a rotation writes both. Every Bitbucket repository the node does not proxy keeps everything,
-before and after the flip (G9).
+**The Bitbucket rows' state (B1.10, B1.13 part two).** The git proxy shipped (B1.5, B1.6, B1.7): on a
+repository the published node admits with `proxy: true`, **a proxied job reads no token at all** — the
+runner opens its provider tokenless, the forwarder holds no credential, and the service puts the
+Bitbucket token on the wire (`internal/runner`'s `startProxiedGit`, `internal/gitproxy`). The flip
+has landed with it: `config.ProxiedGitSecretNames` names `bitbucket-token`, so E1's token row is
+the mount and the accessor **given up** for that repository's job — the account keeps no
+`secretAccessor` on the token and the container mounts none of it, which is what makes the
+credential the service's for that repository and nothing else. Every Bitbucket repository the node
+does not proxy keeps everything (G9), whichever installation it belongs to. E3, the **build
+account keeps its own copy until S4**, so a build's Dockerfile can still reach the token and a
+rotation writes both. The flip is per installation and per secret class (D500), and it ships in the
+release after the proxy chain's — 0.23.0, where the chain's own is 0.22.0, the owner's ruling of
+2026-11-09 — behind the owner's live Check 191, which has not run yet.
 
 An **Editor is deliberately not a row**, though this audit named it as one until 2026-10-29:
 `roles/editor` carries `secretmanager.secrets.getIamPolicy` and delete but not

@@ -586,7 +586,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 						o.Checks = append(o.Checks, *c)
 					}
 					o.Checks = append(o.Checks, doctorSecretScopeChecks(facts, o.Secrets, projSecrets, projOK)...)
-					o.Checks = append(o.Checks, doctorBitbucketDirect(ctx, lc, repo, rf.Cfg.Git.Provider, facts)...)
+					o.Checks = append(o.Checks, doctorBitbucketDirect(ctx, lc, repo, rf.Cfg.Git.Provider, authOf(rf), facts)...)
 				}
 			}
 			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(rf)); c != nil {

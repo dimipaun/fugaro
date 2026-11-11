@@ -3334,16 +3334,15 @@ func missingFrom(want, got []string) []string {
 // capture's own assertions spell it.
 const bitbucketTokenEnv = "FUGARO_BITBUCKET_TOKEN"
 
-// proxiedGitListFilled is the flip's own state (B1.13 part two) in one line:
-// config.ProxiedGitSecretNames names the Bitbucket token, and every drop
-// written for it turns on at once — readiness.go's mount drop, Addresses()'s
-// mirror, and modules/workflow/sa.tf's accessor and mount rules, which hold
-// their literals to that list. It is a package var, so a test can put the tree
-// in the state that release will, and put it back.
-func proxiedGitListFilled(t *testing.T) {
+// proxiedGitList puts config.ProxiedGitSecretNames in the state one test reads
+// — the flip's own state is the constant itself (B1.13 part two fills it with
+// the Bitbucket token), and a test that wants the list EMPTY again says so and
+// puts it back. It is a package var, so that is a mutation a test can make.
+func proxiedGitList(t *testing.T, names ...string) {
 	t.Helper()
-	config.ProxiedGitSecretNames = []string{config.BitbucketSecret}
-	t.Cleanup(func() { config.ProxiedGitSecretNames = []string{} })
+	old := config.ProxiedGitSecretNames
+	config.ProxiedGitSecretNames = names
+	t.Cleanup(func() { config.ProxiedGitSecretNames = old })
 }
 
 // proxiedLocalEntry is the operator's half of the flip in their own config:
@@ -3603,15 +3602,15 @@ func TestLocalProxyForAnotherRepositoryWithEmptyNode(t *testing.T) {
 	}
 }
 
-// TestEmptyProxiedListChangesNothing is this branch's state, and the state the
-// whole flip is inert in: config.ProxiedGitSecretNames is empty, so a proxied
-// repository's job keeps the accessor on and the mount of its Bitbucket token
-// — and the fact itself is already in the tfvars, which is what B1.13 part two
-// fills the list against.
-func TestEmptyProxiedListChangesNothing(t *testing.T) {
-	if len(config.ProxiedGitSecretNames) != 0 {
-		t.Fatalf("config.ProxiedGitSecretNames = %v: this test pins the inert state the flip ships in until B1.13 part two", config.ProxiedGitSecretNames)
-	}
+// TestEmptyProxiedListKeepsTheMountAndAccessor is the counterfactual the flip
+// is read against: with config.ProxiedGitSecretNames put back to empty, a
+// proxied repository's job keeps the accessor on and the mount of its
+// Bitbucket token — and the fact itself is already in the tfvars, so the list
+// is what drops it and the fact alone drops nothing. The tree's own list names
+// the token since B1.13 part two, and a test that read only the real list
+// could not tell the two halves apart.
+func TestEmptyProxiedListKeepsTheMountAndAccessor(t *testing.T) {
+	proxiedGitList(t)
 	spec, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
 	if err != nil {
 		t.Fatal(err)
@@ -3641,16 +3640,19 @@ func TestEmptyProxiedListChangesNothing(t *testing.T) {
 	}
 }
 
-// TestFilledProxiedListDropsMountAndAccessor is B1.13 part two's red step, run
-// against the state that release puts the tree in rather than against this
-// branch's: with config.ProxiedGitSecretNames naming the Bitbucket token, a
-// proxied repository's job gives up the mount, the secret id and the redaction
-// entry, and the plan gives up the account's accessor on it — together, always,
-// because a container that still mounted a secret its account cannot resolve is
-// a job Cloud Run refuses to create. The check job keeps its own: it runs as
-// the build account, which clones with the token until S4 (D148, F3).
+// TestFilledProxiedListDropsMountAndAccessor is what the flip buys, read off
+// config.ProxiedGitSecretNames as the tree spells it: a proxied repository's
+// job gives up the mount, the secret id and the redaction entry, and the plan
+// gives up the account's accessor on it — together, always, because a container
+// that still mounted a secret its account cannot resolve is a job Cloud Run
+// refuses to create. The check job keeps its own: it runs as the build account,
+// which clones with the token until S4 (D148, F3). The guard below is the
+// list's own half: with it emptied again the mount and the accessor come back,
+// which TestEmptyProxiedListKeepsTheMountAndAccessor reads.
 func TestFilledProxiedListDropsMountAndAccessor(t *testing.T) {
-	proxiedGitListFilled(t)
+	if !slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret) {
+		t.Fatalf("config.ProxiedGitSecretNames = %v does not name %s: the flip is B1.13 part two, and until it fills the list a proxied repository's job keeps the mount and the accessor this test is written to see go", config.ProxiedGitSecretNames, config.BitbucketSecret)
+	}
 	spec, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
 	if err != nil {
 		t.Fatal(err)
@@ -3658,7 +3660,6 @@ func TestFilledProxiedListDropsMountAndAccessor(t *testing.T) {
 	if !spec.BitbucketProxied {
 		t.Fatal("BitbucketProxied = false for a repository the node admits with proxy: true: the assertions below would pass vacuously")
 	}
-	// The fixture's own premise: before Readiness the job mounts the token.
 	if got := spec.Workflows["web"].SecretEnv[bitbucketTokenEnv]; got != config.BitbucketSecret {
 		t.Fatalf("the spec's web job mounts %s -> %q, want %s: the fixture must carry the mount the drop takes away", bitbucketTokenEnv, got, config.BitbucketSecret)
 	}
@@ -3677,8 +3678,6 @@ func TestFilledProxiedListDropsMountAndAccessor(t *testing.T) {
 	if slices.Contains(ready.Addresses(), bitbucketTokenAccessor) {
 		t.Errorf("the plan still produces %s, want it gone: the job's account reads no token, so it needs no accessor on one (D500, G1)", bitbucketTokenAccessor)
 	}
-	// The container and the build account's own read stay: only the job's
-	// mount and accessor go.
 	if ready.Secrets[config.BitbucketSecret] == "" {
 		t.Error("the token's container left rs.Secrets: the build account clones with it and its versions are the operator's to store (D148, F3)")
 	}
@@ -3690,12 +3689,15 @@ func TestFilledProxiedListDropsMountAndAccessor(t *testing.T) {
 	}
 }
 
-// TestFilledProxiedListKeepsNonProxiedRepositories: with the list filled, a
-// Bitbucket repository the node does not admit — and every repository of an
-// installation that did not opt in — keeps its accessor and its mount (G9).
-// The list alone is not the flip: the per-repository fact is the other half.
+// TestFilledProxiedListKeepsNonProxiedRepositories: with the list naming the
+// token, a Bitbucket repository the node does not admit — and every repository
+// of an installation that did not opt in — keeps its accessor and its mount
+// (G9). The list alone is not the flip: the per-repository fact is the other
+// half, and this is the test that says so on the real list.
 func TestFilledProxiedListKeepsNonProxiedRepositories(t *testing.T) {
-	proxiedGitListFilled(t)
+	if !slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret) {
+		t.Fatalf("config.ProxiedGitSecretNames = %v does not name %s: with the list empty every repository below keeps its token anyway, and the assertions would pass without reading the fact", config.ProxiedGitSecretNames, config.BitbucketSecret)
+	}
 	for name, in := range map[string]Inputs{
 		"a repository the node does not admit": proxiedSandboxInputs(t, "", publishedNode(t, true, "workspace-b/other")),
 		"an installation that did not opt in": func() Inputs {
@@ -3728,6 +3730,83 @@ func TestFilledProxiedListKeepsNonProxiedRepositories(t *testing.T) {
 		if !slices.Contains(ready.Addresses(), bitbucketTokenAccessor) {
 			t.Errorf("%s: the resolved plan produces no %s, want it kept", name, bitbucketTokenAccessor)
 		}
+	}
+}
+
+// TestTheFlipConvergesThroughTheUpdatesOwnRetirement is the HARD RULE's test
+// for the flip (CLAUDE.md: `fugaro update` is the whole upgrade). A repository
+// root applied by the release before the flip holds the job's accessor on the
+// Bitbucket token — the state that release wrote, and what its state file
+// still says. This tree's plan no longer produces that address, so the two
+// converge through the update's own retirement flow: the address is a row of
+// the state-vs-spec set difference, it is a type a managed project's plain
+// update retires by itself (tf.RetirableTypes), and the guard's allow-list for
+// the plan that carries its delete is the retirement's own — so no
+// `--allow-delete` and no second command is owed, and the update applies the
+// flip in one run.
+//
+// What it does NOT prove is the token itself, and the pull request has to say
+// so rather than this test: the credential a proxied run's git traffic is
+// served with is the bundle's, whose only writer is `fugaro creds set
+// bitbucket-token`, and nothing in the update's plan reads the bundle — so the
+// Terraform converges whether or not the installation's bundle holds one, and
+// a proxied repository whose bundle holds none has nothing to be served with.
+// The bundle-first order the plan's B1.13 asks for is therefore not built;
+// `fugaro doctor` is what names it today.
+func TestTheFlipConvergesThroughTheUpdatesOwnRetirement(t *testing.T) {
+	if !slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret) {
+		t.Fatalf("config.ProxiedGitSecretNames = %v does not name %s: with the list empty the address below is produced by both sides and the retirement this test is about is empty", config.ProxiedGitSecretNames, config.BitbucketSecret)
+	}
+	// The state the release before this one wrote: the same repository, the
+	// same installation and the same node, read with the flip list empty. The
+	// list is a package var, so that is a state a test can read. Addresses is
+	// read while the list is still empty: it answers from the list at the
+	// moment it is called, not at the moment the spec was built.
+	beforeAddrs := func() []string {
+		old := config.ProxiedGitSecretNames
+		config.ProxiedGitSecretNames = nil
+		defer func() { config.ProxiedGitSecretNames = old }()
+		before, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready, _, _ := readinessOf(t, newCloud(t), before)
+		return ready.Addresses()
+	}()
+	if !slices.Contains(beforeAddrs, bitbucketTokenAccessor) {
+		t.Fatalf("the state the release before the flip wrote holds no %s: the retirement assertion below would pass vacuously", bitbucketTokenAccessor)
+	}
+
+	spec, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _, _ := readinessOf(t, newCloud(t), spec)
+	if slices.Contains(after.Addresses(), bitbucketTokenAccessor) {
+		t.Fatalf("this tree's plan still produces %s: the flip has not landed, and nothing below is a convergence", bitbucketTokenAccessor)
+	}
+
+	// The update's read of the two: the state's addresses minus the spec's.
+	rets := Retirements(beforeAddrs, after)
+	var row *Retirement
+	for i := range rets {
+		if rets[i].Address == bitbucketTokenAccessor {
+			row = &rets[i]
+		}
+	}
+	if row == nil {
+		t.Fatalf("the update reads no retirement for %s, so nothing takes it out of the state: the flip would leave the plan carrying a delete of an address the configuration no longer declares.\nretirement set: %v", bitbucketTokenAccessor, rets)
+	}
+	if row.Kept != "" {
+		t.Errorf("the accessor's retirement carries the promise %q: it is a binding, it holds no value, and the promise is the secret container's and the registry's alone", row.Kept)
+	}
+	for _, stop := range RetireStops(rets) {
+		if stop.Address == bitbucketTokenAccessor {
+			t.Errorf("a managed project's plain `fugaro update` does not retire %s by itself (%s): the flip would need a flag or a second run, and the one command is the whole upgrade", bitbucketTokenAccessor, stop.Why)
+		}
+	}
+	if got := RetireAllowDelete(planDeleting(bitbucketTokenAccessor), rets); !slices.Contains(got, bitbucketTokenAccessor) {
+		t.Errorf("the guard's allow-list for the flip's plan = %v, want %s among them: the retirement's own addresses are what the update may delete in the run that retires them (D502, the HARD RULE)", got, bitbucketTokenAccessor)
 	}
 }
 

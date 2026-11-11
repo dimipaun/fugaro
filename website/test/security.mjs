@@ -190,6 +190,11 @@ const REPORTING_ID = 'reporting-a-vulnerability'
  * from 244 words to 303. The ceiling is the section's own count with a few words of room, and
  * the section still renders as seven bullets, which is what the brief's "at most about 8 short
  * bullets" is about.
+ *
+ * Re-re-derived 2026-11-10: B1.13 part two landed the flip, so that bullet's last clause says
+ * the flip has taken the token's mount and the accessor away rather than that the job still
+ * mounts the token until the flip — two words more, and it stays inside the ceiling,
+ * which is a few words of room rather than the section's exact count.
  */
 const MAX_SUMMARY_WORDS = 310
 
