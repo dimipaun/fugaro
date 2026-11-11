@@ -2,8 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -26,9 +28,8 @@ import (
 // project config under `review_floor`, and `fugaro project policy publish`
 // copies it into the policy node the runner fails closed on — so a change here
 // is a whole project reviewing more or less, and it is why every write ends
-// with `next: fugaro update`. `set` and `unset` are the write half; the read is
-// `fugaro settings get review_floor` and the floor line `fugaro rigor set`
-// prints, which is the design's own separation of the two nouns.
+// with `next: fugaro update`. `set` and `unset` are the write half; `show` is
+// the read, beside the floor line `fugaro rigor set` prints.
 //
 // A removal and a lowering are the step D1170 calls this plan's SEC one: taking
 // a level away — by lowering a mode's floor or by removing the mode's entry — is
@@ -67,20 +68,20 @@ import (
 // of the document.
 //
 // The edit is the shared editor's, never a splice (D847): a mode's entry is
-// `yamledit`'s AddListItem and RemoveKey, and the removal of a mode's floor is
-// RemoveKeyWithOptions. The diff, the backup, the compare-and-swap and the
-// atomic write are applySettingsEdit's, called here and not repeated.
+// `yamledit`'s AddListItem and RemoveKey, the removal of a mode's floor is
+// RemoveKey, and the empty mapping a last removal leaves is SetEmptyMapping —
+// with ExpandEmptyMapping when a `set` writes the first entry back into one.
+// The two empty-mapping operations are S7's, the section the owner closed into
+// this task on 2026-11-10, and the plan's file table gives this task the
+// `internal/yamledit` operation it needs when one is missing. The diff, the
+// backup, the compare-and-swap and the atomic write are applySettingsEdit's,
+// called here and not repeated.
 //
-// Two things SD10's design carries that this task does not, listed rather than
-// dropped (S7's own note, for the owner to decide): the read in `show`'s own
-// shape, and the two editor operations a written empty mapping (`review_floor:
-// {}`) needs. Without the second, `unset` of a mode's LAST entry leaves the key
-// gone rather than written empty, and the two spellings mean different things
-// at publish — an absent key keeps the node's floor, a written `{}` takes it
-// away (localcfg's own comment on the field, and buildProjectPolicy). This file
-// reports that rather than inventing the operation: the command prints the one
-// sentence naming it (rigorFloorLeavesNone) instead of leaving the person to
-// find out that the floor is still there.
+// The read is `show`, and it tells apart the two ways a file can name no floor,
+// because the two mean different things at publish: an absent key keeps the
+// node's floor (buildProjectPolicy), and a written `review_floor: {}` takes it
+// away — which is why the last removal writes the empty mapping rather than
+// deleting the key (localcfg's own comment on the field).
 
 // rigorFloorKey is the key this command writes, by the spelling the registry
 // and the settings write path look a row up by. The registry already carries it
@@ -99,6 +100,7 @@ type rigorFloorOptions struct {
 	project string
 	config  string
 	yes     bool
+	json    bool
 }
 
 // newRigorFloorCmd is `fugaro rigor floor`: the review floor, and the command
@@ -113,6 +115,7 @@ machine's project config (` + "`review_floor`" + `) and ` + "`fugaro project pol
 copies it into the policy node the runner fails closed on, so a change here
 reaches runs at the next ` + "`fugaro update`" + `.
 
+` + "`fugaro rigor floor show`" + ` prints the floor this machine's config sets,
 ` + "`fugaro rigor floor set MODE LEVELS`" + ` writes one mode's floor and
 ` + "`fugaro rigor floor unset MODE`" + ` removes it. A removal and a lowering are the
 owner's own step — a floor is a minimum, so taking a level away is a whole
@@ -125,9 +128,132 @@ A coding agent's session is refused both directions outright, whatever the
 flags say, and is shown neither the diff nor the sentence: the command it
 should run at the owner's own terminal is what the refusal prints.`,
 	}
+	cmd.AddCommand(newRigorFloorShowCmd())
 	cmd.AddCommand(newRigorFloorSetCmd())
 	cmd.AddCommand(newRigorFloorUnsetCmd())
 	return cmd
+}
+
+func newRigorFloorShowCmd() *cobra.Command {
+	var o rigorFloorOptions
+	cmd := &cobra.Command{
+		Use:   "show",
+		Short: "Show the review floor this machine's project config sets",
+		Long: `Show the review floor, one line per rigor mode and the levels that mode's runs
+must run.
+
+The read tells apart the two ways a file can name no floor, because they mean
+different things at publish: a file that says nothing about ` + "`review_floor`" + ` leaves
+the published floor standing — a publish keeps the node's floor when the config
+is silent about one — while a written ` + "`review_floor: {}`" + ` is a floor of nothing,
+which is what takes the published floor away.
+
+` + "`--json`" + ` prints the same answer as a document.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRigorFloorShow(cmd, o)
+		},
+	}
+	f := cmd.Flags()
+	settingsAimFlags(cmd, &o.project, &o.config)
+	f.BoolVar(&o.json, "json", false, "print machine-readable output")
+	return cmd
+}
+
+// rigorFloorDoc is the `--json` document: which of the three spellings the key
+// has, and the floor itself. `review_floor` is null when the file says nothing
+// about the key, `{}` when it writes the empty mapping, and the modes with their
+// levels otherwise — the distinction the text read makes in words and this one
+// makes in the value.
+type rigorFloorDoc struct {
+	Version     int                 `json:"version"`
+	Project     string              `json:"project"`
+	Path        string              `json:"path"`
+	State       string              `json:"state"`
+	ReviewFloor map[string][]string `json:"review_floor"`
+}
+
+// The STATE vocabulary of this read's document (D851's rule: a consumer branches
+// on the column). The three words are this key's own three spellings, and the
+// empty one is spelled apart from the absent one on purpose: at publish they are
+// two different instructions.
+const (
+	rigorFloorStateWritten = "written"
+	rigorFloorStateEmpty   = "empty"
+	rigorFloorStateAbsent  = "absent"
+)
+
+func runRigorFloorShow(cmd *cobra.Command, o rigorFloorOptions) error {
+	row, ok := settings.Lookup(rigorFloorKey)
+	if !ok {
+		return fmt.Errorf("internal: the settings registry holds no %s row", rigorFloorKey)
+	}
+	sel, lc, err := settingsAimedSelection(settingsWriteOptions{project: o.project, config: o.config})
+	if err != nil {
+		return err
+	}
+	target, err := settingsResolveTarget(cmd.Context(), row, settingsWriteOptions{layer: settingsLayerLocal, project: o.project, config: o.config}, lc, sel)
+	if err != nil {
+		return err
+	}
+	old, err := settingsReadDocument(target)
+	if err != nil {
+		return err
+	}
+	prev, err := localcfg.Parse(old)
+	if err != nil {
+		return userErr("%s: %v", target.path, err)
+	}
+	state := rigorFloorStateAbsent
+	switch {
+	case prev.ReviewFloor != nil && len(prev.ReviewFloor) == 0:
+		state = rigorFloorStateEmpty
+	case len(prev.ReviewFloor) > 0:
+		state = rigorFloorStateWritten
+	}
+	if o.json {
+		doc := rigorFloorDoc{Version: 1, Project: lc.Name, Path: target.path, State: state, ReviewFloor: prev.ReviewFloor}
+		return writeJSON(cmd.OutOrStdout(), doc)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s (%s, %s)\n", rigorFloorKey, lc.Name, target.path)
+	switch state {
+	case rigorFloorStateAbsent:
+		fmt.Fprintf(cmd.OutOrStdout(), "%s says nothing about it, so the published floor stands: a publish keeps the node's floor when the config is silent about one\n", target.path)
+	case rigorFloorStateEmpty:
+		fmt.Fprintf(cmd.OutOrStdout(), "a floor of nothing: the file writes `%s: {}`, so the published floor is taken away and no level is required of any mode\n", rigorFloorKey)
+	default:
+		writeRigorFloorRows(cmd.OutOrStdout(), prev.ReviewFloor)
+	}
+	return nil
+}
+
+// writeRigorFloorRows prints one line per mode, in the vocabulary's order rather
+// than the file's, so two files naming the same floor read the same way.
+func writeRigorFloorRows(w io.Writer, floor map[string][]string) {
+	modes := make([]string, 0, len(floor))
+	for mode := range floor {
+		modes = append(modes, mode)
+	}
+	sort.Slice(modes, func(i, j int) bool { return rigorModeIndex(modes[i]) < rigorModeIndex(modes[j]) })
+	width := 0
+	for _, mode := range modes {
+		width = max(width, len(mode))
+	}
+	for _, mode := range modes {
+		held := rigorFloorHeld(floor[mode])
+		fmt.Fprintf(w, "%-*s  %s\n", width, mode, rigorLevelsText(held))
+	}
+}
+
+// rigorModeIndex is a mode's place in the vocabulary, so the read's rows come
+// out in the order `fugaro rigor floor`'s own help names the modes in. A mode
+// outside it sorts last rather than dropping out: the loader refuses one, so a
+// name here came from somewhere else and the read says so by printing it.
+func rigorModeIndex(mode string) int {
+	if i := slices.Index(rigor.Modes, rigor.Mode(mode)); i >= 0 {
+		return i
+	}
+	return len(rigor.Modes)
 }
 
 func newRigorFloorSetCmd() *cobra.Command {
@@ -176,13 +302,12 @@ mode's runs are held to what their rigor mode and the repository ask for, and
 to nothing the owner requires.
 
 That is what the removal of one of several modes does. Removing the file's LAST
-entry leaves the file naming no floor at all, and a publish keeps the node's
-floor when the config is silent about one — the floor is the member a publish
-must not lower by accident — so that removal takes the file's floor and not the
-published one, and the command says so after the write. ` + "`review_floor: {}`" + `
-written into the document by hand is what takes the published floor away; this
-command cannot write it, because an empty flow mapping is a shape the editor
-refuses to splice into.
+entry leaves the file carrying no mode, and the key stays where it was written
+as the empty mapping — ` + "`review_floor: {}`" + ` — rather than going with it, because
+the two spellings mean different things at publish: a file that says nothing
+about the key keeps the node's floor (the floor is the member a publish must not
+lower by accident), while the empty mapping is a floor of nothing, and that is
+what takes the published floor away.
 
 A removal is the owner's own step — what it deletes is a floor, and taking it
 away is a whole project reviewing less — and it asks nothing: ` + "`--yes`" + ` does
@@ -286,9 +411,6 @@ func runRigorFloor(cmd *cobra.Command, o rigorFloorOptions, modeArg, levelsArg s
 	if err := applySettingsEdit(cmd, lc, edit); err != nil {
 		return err
 	}
-	if rigorFloorLeavesNone(prev.ReviewFloor, mode, remove) {
-		fmt.Fprintln(cmd.OutOrStdout(), "note: this file now names no floor at all, and a publish keeps the node's floor when the config is silent about one, so what this write removed is the file's floor and not the published one: `review_floor: {}` written by hand is what takes the published floor away")
-	}
 	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	return nil
 }
@@ -304,24 +426,6 @@ func rigorFloorError(target settingsTarget, mode rigor.Mode, err error) error {
 		return refusal
 	}
 	return userErr("%s.%s in %s: %v", rigorFloorKey, mode, target.path, err)
-}
-
-// rigorFloorLeavesNone reports whether this edit leaves the config naming no
-// floor at all: the removal of a mode's floor that was the file's only entry.
-// It is the one write here whose effect a person could read wrong, and the
-// sentence the caller prints for it is why this is a function rather than a
-// condition inline.
-//
-// The distinction it turns on is the loader's (localcfg.Config.ReviewFloor): a
-// config silent about the floor keeps the one the node carries — the floor is
-// the member a publish must not lower by accident — and a written empty object
-// is the removal. The editor cannot write `review_floor: {}` — an empty flow
-// mapping is one of the shapes it refuses (`yamledit`'s #What it refuses) — so
-// a removal of the last entry leaves the key absent and the node's floor in
-// place, and the command says so rather than letting its own hand-off line
-// promise a lowering that has not happened.
-func rigorFloorLeavesNone(floor map[string][]string, mode rigor.Mode, remove bool) bool {
-	return remove && len(floor) == 1 && len(floor[string(mode)]) > 0
 }
 
 // rigorFloorLevels is the LEVELS argument as the policy package's vocabulary:
@@ -399,10 +503,21 @@ func rigorFloorEdit(old []byte, floor map[string][]string, mode rigor.Mode, leve
 		if len(held) == 0 {
 			return old, false, nil
 		}
-		// DropEmptyParents: a mode that was the file's last floor takes the
-		// `review_floor` key with it, so what is left is a document with no
-		// floor rather than a key written with no value.
-		next, err := yamledit.RemoveKeyWithOptions(old, path, yamledit.RemoveOptions{DropEmptyParents: true})
+		if len(floor) == 1 {
+			// The file's last floor, and the one removal whose spelling decides
+			// what a publish does: an absent key hands the decision to the layer
+			// below, a written `{}` states a floor of nothing, and the publisher
+			// keeps the node's floor when the config is silent about one
+			// (buildProjectPolicy). So the key stays where it was written, as
+			// the empty mapping — deleting it is the other meaning, and `unset`
+			// did not ask for it.
+			next, err := yamledit.SetEmptyMapping(old, []string{rigorFloorKey})
+			if err != nil {
+				return nil, false, err
+			}
+			return next, true, nil
+		}
+		next, err := yamledit.RemoveKey(old, path)
 		if err != nil {
 			return nil, false, err
 		}
@@ -425,17 +540,30 @@ func rigorFloorEdit(old []byte, floor map[string][]string, mode rigor.Mode, leve
 	// Writing the entry whole also makes it canonical: the levels in the
 	// vocabulary's order, however they were typed.
 	//
-	// A document whose WHOLE `review_floor` mapping is flow (`review_floor: {pro:
-	// [l2, l3]}`) is outside the editor both ways: the operations below refuse to
-	// walk into a flow collection, so no write here can change that document, and
-	// what the person reads is the editor's own reason in the owner's words
-	// (rigorFloorError, modelsSpliceRefusal) — which names the shape and the way
-	// out. That is reported and not patched over: splicing the bytes by hand is
-	// what D847 forbids.
+	// A document whose WHOLE `review_floor` mapping is flow and non-empty
+	// (`review_floor: {pro: [l2, l3]}`) is outside the editor both ways: the
+	// operations below refuse to walk into a flow collection, so no write here
+	// can change that document, and what the person reads is the editor's own
+	// reason in the owner's words (rigorFloorError, modelsSpliceRefusal) — which
+	// names the shape and the way out. That is reported and not patched over:
+	// splicing the bytes by hand is what D847 forbids. The EMPTY one is the
+	// exception and the operation above is why: `{}` is the floor of nothing
+	// this command's own `unset` writes, so a `set` after it has to be able to
+	// write the first entry back.
 	next := old
 	if len(held) > 0 {
 		var err error
 		if next, err = yamledit.RemoveKey(next, path); err != nil {
+			return nil, false, err
+		}
+	} else if floor != nil {
+		// The file writes `review_floor: {}` — a floor of nothing — and the
+		// first entry written back into it needs the block spelling: no member
+		// can be spliced into the empty flow mapping, so the key is opened
+		// first. A file that says nothing about the key has nothing to open,
+		// and the add below writes the key itself.
+		var err error
+		if next, err = yamledit.ExpandEmptyMapping(next, []string{rigorFloorKey}); err != nil {
 			return nil, false, err
 		}
 	}

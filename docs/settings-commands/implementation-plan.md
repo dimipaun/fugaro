@@ -361,12 +361,11 @@ today the only writer is the Firebase console.
 as the same command over the same local-config key (`review_floor`, SD10), and the owner ruled on
 2026-11-10 that config-management builds it: **G7** carries the typed project name for a lowering and
 its removal, the agent-session refusal and the write through the shared path — the write half of what
-this section designs. **Nothing here was built** — `internal/cli/rigor.go` and `fugaro rigor floor` are not
-on `main` — and **the number S7 is spent and is never reused**. What G7 does not carry is listed, not
-dropped: the read in `show`'s own shape (every mode with its levels, `{}` shown as a floor of nothing
-rather than as absent) and the two editor operations an empty mapping needs (the `{}` bullet below),
-all of it under *behaviour not covered by the winners* in the pull request that carries this ruling,
-for the owner to decide.
+this section designs. **Nothing here was built** and **the number S7 is spent and is never reused**.
+The two things this section listed as not carried by G7 were taken over with the rest of its design:
+the read in `show`'s own shape (every mode with its levels, `{}` shown as a floor of nothing rather
+than as absent) and the two editor operations an empty mapping needs (the `{}` bullet below) both
+landed with G7, which is where they are tested.
 
 A floor, and its semantics are subtle: an absent key and a written `{}` mean different things at
 publish.

@@ -407,6 +407,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro recipes ls":             "prints the no-project-config refusal",
 	"fugaro report":                 "refuses: the edition is not in this build",
 	"fugaro review":                 "refuses from inside its body: --pr is required, and a bare run names it rather than launching a review",
+	"fugaro rigor floor show":       "reads the selected project's own config and prints the floor it carries, which is the whole of what a bare run does",
 	"fugaro runs digest":            "prints the no-project-config refusal",
 	"fugaro runs ls":                "prints the no-project-config refusal",
 	"fugaro runs stats":             "prints the no-project-config refusal",

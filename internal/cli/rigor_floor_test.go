@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -135,6 +136,13 @@ func TestRigorFloorRefusesAnAgentSession(t *testing.T) {
 // own asymmetry). The run asks nothing, the entry lands beside the ones already
 // there, and the file reads back — through localcfg's own loader, which runs
 // policy.ParseFloor over the key.
+//
+// The classification is asserted and not assumed: an edit that takes a level
+// away is Typed, and the write path prints the sentence saying what it widens
+// for a Typed one and the sentence naming the edit for every other (the
+// `else if e.Typed` branch of applySettingsEdit). So the widening sentence's
+// ABSENCE is what pins an addition out of that class — a run that read it here
+// would be a run that classed an addition as a step the owner has to take.
 func TestRigorFloorAddsAnEntryAskingNothing(t *testing.T) {
 	path := rigorFloorHome(t, "review_floor:\n  pro: [l2]\n")
 	noAgentSession(t)
@@ -146,6 +154,12 @@ func TestRigorFloorAddsAnEntryAskingNothing(t *testing.T) {
 		t.Fatalf("adding a floor entry was refused: %v\n%s", err, out)
 	}
 	assertNoPrompt(t, out)
+	if !strings.Contains(out, "set review_floor.critical from none to l2, l3 in") {
+		t.Errorf("the addition does not name itself as the ordinary write it is:\n%s", out)
+	}
+	if strings.Contains(out, "whole project reviewing less") {
+		t.Errorf("an addition was classed as the owner's own step, which is the class a lowering and a removal are in:\n%s", out)
+	}
 	got := readFileString(t, path)
 	for _, want := range []string{"critical:", "- l2", "- l3", "pro:", "- l2"} {
 		if !strings.Contains(got, want) {
@@ -299,17 +313,20 @@ func TestRigorFloorRefusesAFloorWrittenAsOneFlowMapping(t *testing.T) {
 	}
 }
 
-// The one removal whose effect a person could read wrong, and the sentence that
-// keeps the command honest about it. A config silent about the floor keeps the
-// published one — the floor is the member a publish must not lower by accident
-// (localcfg's own comment on the field, and buildProjectPolicy) — and the
-// editor cannot write the `review_floor: {}` that would take it away, so a
-// removal of the file's LAST entry lowers the file and nothing else. The
-// command says which of the two it just did, and it says it only where it is
-// true: a removal that leaves another mode's floor behind reaches the node at
-// the next publish, and warns about nothing.
-func TestRigorFloorUnsetOfTheLastEntrySaysWhatItLeaves(t *testing.T) {
-	t.Run("the last entry", func(t *testing.T) {
+// The one removal whose spelling decides what a publish does. A file that says
+// nothing about `review_floor` keeps the node's floor — the floor is the member
+// a publish must not lower by accident (localcfg's own comment on the field, and
+// buildProjectPolicy) — so deleting the key would make this command's own name
+// false: `unset MODE` would leave the published floor standing. The removal of
+// the file's LAST mode therefore writes `review_floor: {}`, the floor of
+// nothing, which is the one spelling that takes it away
+// (docs/settings-commands/spec.md: the empty mapping is what a removal leaves).
+//
+// The file reads back through localcfg's loader with a NON-NIL and empty floor,
+// which is the value that distinction is made of; a removal that leaves another
+// mode's floor behind still writes that mode out and leaves the key a mapping.
+func TestRigorFloorUnsetOfTheLastModeKeepsTheEmptyFloor(t *testing.T) {
+	t.Run("the last mode", func(t *testing.T) {
 		path := rigorFloorHome(t, "review_floor:\n  pro: [l2]\n")
 		noAgentSession(t)
 		fakeTerminal(t)
@@ -318,14 +335,22 @@ func TestRigorFloorUnsetOfTheLastEntrySaysWhatItLeaves(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the removal was refused: %v\n%s", err, out)
 		}
-		if !strings.Contains(out, "names no floor at all") || !strings.Contains(out, "review_floor: {}") {
-			t.Errorf("the removal of the file's only floor says nothing about the published one:\n%s", out)
-		}
 		if lines := strings.Split(strings.TrimRight(out, "\n"), "\n"); lines[len(lines)-1] != "next: fugaro update" {
 			t.Errorf("the last line is %q, want the one hand-off line", lines[len(lines)-1])
 		}
-		if got := readFileString(t, path); strings.Contains(got, "review_floor") {
-			t.Errorf("the removal left the key behind:\n%s", got)
+		got := readFileString(t, path)
+		if !strings.Contains(got, "review_floor: {}") {
+			t.Errorf("the removal of the file's last mode did not leave the empty mapping:\n%s", got)
+		}
+		cfg, err := localcfg.Parse([]byte(got))
+		if err != nil {
+			t.Fatalf("the written file is not a local project config: %v\n%s", err, got)
+		}
+		if cfg.ReviewFloor == nil {
+			t.Errorf("the key went with the removal, and an absent key is the spelling that KEEPS the published floor:\n%s", got)
+		}
+		if len(cfg.ReviewFloor) != 0 {
+			t.Errorf("the removal left %v, want the floor of nothing", cfg.ReviewFloor)
 		}
 	})
 
@@ -338,12 +363,142 @@ func TestRigorFloorUnsetOfTheLastEntrySaysWhatItLeaves(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the removal was refused: %v\n%s", err, out)
 		}
-		if strings.Contains(out, "names no floor at all") {
-			t.Errorf("a removal that leaves another mode's floor behind warns about a floor that is gone:\n%s", out)
-		}
 		got := readFileString(t, path)
+		if strings.Contains(got, "pro:") {
+			t.Errorf("the removed mode's entry stayed behind:\n%s", got)
+		}
 		if !strings.Contains(got, "critical:") {
 			t.Errorf("the other mode's floor went with the removal:\n%s", got)
+		}
+		cfg, err := localcfg.Parse([]byte(got))
+		if err != nil {
+			t.Fatalf("the written file is not a local project config: %v\n%s", err, got)
+		}
+		if floor := cfg.ReviewFloor["critical"]; !slices.Equal(floor, []string{"l3"}) {
+			t.Errorf("critical's floor reads back as %v, want l3", floor)
+		}
+	})
+}
+
+// The write that has to be able to follow that removal: the empty mapping is
+// the one flow collection this command opens, and the first entry written back
+// into it is why the editor carries the operation. No member can be spliced
+// into `{}`, so a set that met it without opening the key first would leave the
+// file unchangeable from then on — the round trip `unset` then `set` is the
+// only way back to a floor once a file has one.
+func TestRigorFloorSetAfterTheEmptyFloorWritesTheFirstEntryBack(t *testing.T) {
+	path := rigorFloorHome(t, "review_floor: {}\n")
+	noAgentSession(t)
+	fakeTerminal(t)
+
+	out, _, err := executeStdin(t, "", "rigor", "floor", "set", "pro", "l2,l3")
+	if err != nil {
+		t.Fatalf("a set after the empty floor was refused: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	got := readFileString(t, path)
+	cfg, err := localcfg.Parse([]byte(got))
+	if err != nil {
+		t.Fatalf("the written file is not a local project config: %v\n%s", err, got)
+	}
+	if floor := cfg.ReviewFloor["pro"]; !slices.Equal(floor, []string{"l2", "l3"}) {
+		t.Errorf("the first entry written back reads as %v, want l2, l3:\n%s", floor, got)
+	}
+}
+
+// The read, and the two ways a file can name no floor, which are the whole
+// reason it exists: an absent key keeps the published floor and a written `{}`
+// takes it away, so a read that showed both as "no floor" would leave the
+// person guessing what their next publish does. The text read says which of the
+// three spellings the file has; `--json` says it in the value, where the absent
+// one is null and the empty one is an empty mapping.
+func TestRigorFloorShowPrintsTheFloorPerMode(t *testing.T) {
+	t.Run("the file writes a floor", func(t *testing.T) {
+		rigorFloorHome(t, "review_floor:\n  critical: [l3]\n  pro: [l2, l3]\n")
+		noAgentSession(t)
+		noTerminal(t)
+
+		out, _, err := execute(t, "rigor", "floor", "show")
+		if err != nil {
+			t.Fatalf("the read was refused: %v\n%s", err, out)
+		}
+		// The rows come out in the vocabulary's order and not the file's.
+		pro, critical := strings.Index(out, "pro "), strings.Index(out, "critical ")
+		if pro < 0 || critical < 0 || pro > critical {
+			t.Errorf("the rows are not the vocabulary's own order:\n%s", out)
+		}
+		if !strings.Contains(out, "l2, l3") {
+			t.Errorf("the read does not print the levels:\n%s", out)
+		}
+
+		out, _, err = execute(t, "rigor", "floor", "show", "--json")
+		if err != nil {
+			t.Fatalf("the read was refused: %v\n%s", err, out)
+		}
+		var doc rigorFloorDoc
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("--json is not a document: %v\n%s", err, out)
+		}
+		if doc.State != rigorFloorStateWritten || doc.Project != "aurora" {
+			t.Errorf("--json says state %q for project %q, want the written floor of aurora", doc.State, doc.Project)
+		}
+		if !slices.Equal(doc.ReviewFloor["pro"], []string{"l2", "l3"}) {
+			t.Errorf("--json carries %v, want the file's own floor", doc.ReviewFloor)
+		}
+	})
+
+	t.Run("the file writes the empty mapping", func(t *testing.T) {
+		rigorFloorHome(t, "review_floor: {}\n")
+		noAgentSession(t)
+		noTerminal(t)
+
+		out, _, err := execute(t, "rigor", "floor", "show")
+		if err != nil {
+			t.Fatalf("the read was refused: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "the published floor is taken away") {
+			t.Errorf("the read does not say what a written `{}` does at publish:\n%s", out)
+		}
+
+		out, _, err = execute(t, "rigor", "floor", "show", "--json")
+		if err != nil {
+			t.Fatalf("the read was refused: %v\n%s", err, out)
+		}
+		var doc rigorFloorDoc
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("--json is not a document: %v\n%s", err, out)
+		}
+		if doc.State != rigorFloorStateEmpty {
+			t.Errorf("--json says state %q, want the empty spelling told apart from the absent one", doc.State)
+		}
+		if doc.ReviewFloor == nil || len(doc.ReviewFloor) != 0 {
+			t.Errorf("--json carries %v, want the empty mapping", doc.ReviewFloor)
+		}
+	})
+
+	t.Run("the file says nothing about the key", func(t *testing.T) {
+		rigorFloorHome(t, "commit_name: Fugaro\n")
+		noAgentSession(t)
+		noTerminal(t)
+
+		out, _, err := execute(t, "rigor", "floor", "show")
+		if err != nil {
+			t.Fatalf("the read was refused: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "the published floor stands") {
+			t.Errorf("the read does not say that an absent key keeps the published floor:\n%s", out)
+		}
+
+		out, _, err = execute(t, "rigor", "floor", "show", "--json")
+		if err != nil {
+			t.Fatalf("the read was refused: %v\n%s", err, out)
+		}
+		var doc rigorFloorDoc
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("--json is not a document: %v\n%s", err, out)
+		}
+		if doc.State != rigorFloorStateAbsent || doc.ReviewFloor != nil {
+			t.Errorf("--json says state %q with %v, want the absent spelling and a null floor", doc.State, doc.ReviewFloor)
 		}
 	})
 }

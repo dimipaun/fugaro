@@ -4664,6 +4664,7 @@ machine's project config (`review_floor`) and `fugaro project policy publish`
 copies it into the policy node the runner fails closed on, so a change here
 reaches runs at the next `fugaro update`.
 
+`fugaro rigor floor show` prints the floor this machine's config sets,
 `fugaro rigor floor set MODE LEVELS` writes one mode's floor and
 `fugaro rigor floor unset MODE` removes it. A removal and a lowering are the
 owner's own step — a floor is a minimum, so taking a level away is a whole
@@ -4687,6 +4688,7 @@ Flags:
 Subcommands:
 
 - `fugaro rigor floor set` -- Write one rigor mode's review floor
+- `fugaro rigor floor show` -- Show the review floor this machine's project config sets
 - `fugaro rigor floor unset` -- Remove one rigor mode's review floor
 
 ## `fugaro rigor floor set`
@@ -4729,6 +4731,36 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro rigor floor show`
+
+Show the review floor this machine's project config sets
+
+Show the review floor, one line per rigor mode and the levels that mode's runs
+must run.
+
+The read tells apart the two ways a file can name no floor, because they mean
+different things at publish: a file that says nothing about `review_floor` leaves
+the published floor standing — a publish keeps the node's floor when the config
+is silent about one — while a written `review_floor: {}` is a floor of nothing,
+which is what takes the published floor away.
+
+`--json` prints the same answer as a document.
+
+Usage: `fugaro rigor floor show`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro rigor floor unset`
 
 Remove one rigor mode's review floor
@@ -4738,13 +4770,12 @@ mode's runs are held to what their rigor mode and the repository ask for, and
 to nothing the owner requires.
 
 That is what the removal of one of several modes does. Removing the file's LAST
-entry leaves the file naming no floor at all, and a publish keeps the node's
-floor when the config is silent about one — the floor is the member a publish
-must not lower by accident — so that removal takes the file's floor and not the
-published one, and the command says so after the write. `review_floor: {}`
-written into the document by hand is what takes the published floor away; this
-command cannot write it, because an empty flow mapping is a shape the editor
-refuses to splice into.
+entry leaves the file carrying no mode, and the key stays where it was written
+as the empty mapping — `review_floor: {}` — rather than going with it, because
+the two spellings mean different things at publish: a file that says nothing
+about the key keeps the node's floor (the floor is the member a publish must not
+lower by accident), while the empty mapping is a floor of nothing, and that is
+what takes the published floor away.
 
 A removal is the owner's own step — what it deletes is a floor, and taking it
 away is a whole project reviewing less — and it asks nothing: `--yes` does
