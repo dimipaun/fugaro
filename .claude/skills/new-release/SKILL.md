@@ -54,9 +54,11 @@ Procedure for one Fugaro release. Detail lives in `docs/release.md` (read it fir
 
 Then `git ls-remote https://github.com/dimipaun/fugaro 'refs/tags/vX.Y.Z^{}' 'refs/tags/vX.Y.Z'` must print the released commit.
 
+**A hotfix — a patch of a line that has shipped — is the same command with `--hotfix`**: `scripts/release.sh X.Y.Z --hotfix --fix <sha>` cuts `release/X.Y` from the line's last tag, cherry-picks the fix and the plugin bump `main` already carries with `-x`, and refuses until the branch carries `docs/releases/vX.Y.Z.md`, its line in `website/data/release-summaries.yaml` and the CLI stream's `current`. It writes none of that text (it names what is missing and stops), it never moves your checkout — the branch is built in a scratch worktree — and it runs `gh workflow run ci --ref release/X.Y` itself, so there is no dispatch of yours. Two things have to be true before it runs: every `--fix` commit is on `main`, and `main`'s `plugin/.claude-plugin/plugin.json` already says `X.Y.Z` or newer, which means the bump PR merged to `main` first. The owner's ruleset step (restricting `release/[0-9]*` to the owner) is the owner's, not yours.
+
 ## 5. Verify
 
-Watch both workflows: `gh run list --limit 6` and `gh run watch <id>` for `release` and `images`. Then check, with commands, not by assumption:
+Watch every workflow the tag starts: `gh run list --limit 6` and `gh run watch <id>` for `release`, `images` and `console-windows` (the console's Windows pack, which runs at release time only). The release is not done until every workflow on the tag is green, and `scripts/release.sh` ends by running `scripts/verify-release.sh vX.Y.Z` for exactly that: every run the tag push started has to conclude successfully, and the images the release published have to be pullable without a login. So the run's own output already carries that answer; when a workflow was red and its job has been re-run, `scripts/verify-release.sh vX.Y.Z` is the one command that reads it again. Then check, with commands, not by assumption:
 
 - `gh release view vX.Y.Z --json isDraft,isPrerelease,assets,body`: not a draft; `isPrerelease` is false for 0.4.0 and later; assets are 4 archives (darwin/linux, amd64/arm64), an SBOM per archive, `checksums.txt` and `checksums.txt.sigstore.json`.
 - The body: install header, then `## Highlights` (your file), then `## Changelog` (no SHAs), then the base-images footer.

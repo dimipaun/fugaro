@@ -23,8 +23,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // BriefCacheVersion is the version of the cached brief's own format, written
@@ -52,11 +50,11 @@ func BriefCachePath(getenv func(string) string, goos, id string) (string, error)
 	if err := checkAgentID(id); err != nil {
 		return "", err
 	}
-	dir, err := localcfg.UserDir(getenv, goos, localcfg.DirCache)
+	dir, err := CacheDir(getenv, goos)
 	if err != nil {
 		return "", fmt.Errorf("the daemon's cached brief cannot be placed: %w", err)
 	}
-	return filepath.Join(dir, "fugaro", "orchestrator", id+".json"), nil
+	return filepath.Join(dir, id+".json"), nil
 }
 
 // BriefCacheWriter writes one orchestrator id's cache. It is a value rather

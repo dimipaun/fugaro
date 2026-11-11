@@ -697,6 +697,13 @@ func exhaustedAnswer(e serviceRefusal) (Exhausted, error) {
 // credentials, and the agent has no business seeing the set of them (D143).
 func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier bool) (status int, done bool, tier string, probed []string) {
 	if resp.StatusCode/100 == 2 {
+		// The room the workspace's service has left arrives on the answer
+		// itself, so it is read here, before any of it reaches the agent
+		// (O1). It is advisory and the gateway decides nothing with it: the
+		// service refuses the call at the ceiling whatever this gateway
+		// believes, and a call the service did not pay for carries no
+		// number and changes nothing.
+		s.noteWorkspaceHeadroom(resp.Header)
 		if !needTier {
 			return resp.StatusCode, false, "", nil
 		}

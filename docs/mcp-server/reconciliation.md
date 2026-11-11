@@ -8,12 +8,14 @@ the endpoint's half: the authorize POST takes the device's act as a shape of its
 is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's
 first requirement is not met — the endpoint cannot tell a paired device from any other holder of
 one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of
-the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no
-task of this plan; M7 is built except the reading of the installation's published state its lists
-come from, which no task of this plan carries; M8 is built except the wiring that would serve its
-four read tools, which no binary has and no task of this plan carries; M9 is not started, and the
-launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of
-2026-11-09); this folder approves no task.**
+the flow's binding rendered and no launcher reading the page, is built nowhere and carried by M12b,
+which M12 waits on; M12 is built — the front door mounted on the service, the reading of the
+installation's published state its lists come from, M8's four read tools served from a binary and the
+two bounds the open registration endpoint is accepted under are all its — and the door stays dormant
+until an installation turns it on, which no release writes the flag for yet (D934), because a build
+without M12b's delivery refuses to enable it (D2126); M9 is not started, and the launch-override
+fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09);
+this folder approves no task.**
 
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
@@ -51,11 +53,11 @@ safe to build.
 | --- | --- |
 | F1 | **The front door's home is decided**: the coordinator has **its own resident service** — D196 in [../coordinator/reconciliation.md](../coordinator/reconciliation.md) (the row headed D196 says the owner ruled against the recommendation), and [../coordinator/README.md](../coordinator/README.md):26 says P7 and P8 "do not start yet: they wait on the front-door design review". **Exists**, as a decision; **not built** (F24). |
 | F2 | **A Cloud Run *service* is already admissible in the installer's Terraform cover**: `internal/infra/tf/cover.go:33-34` admits `google_cloud_run_v2_service` and `google_cloud_run_v2_service_iam_member`, added for the credentials service. **Exists** — the new resource type needs no cover change. |
-| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:71` (its service account), `:92` with `role = "roles/storage.objectViewer"` at `:96` (the runs bucket — read only), `:113` (the app key secret), `:129` (`google_cloud_run_v2_job`), `:275` (the sweep schedule). There is no Cloud Run *launch* grant and no write grant on the runs bucket. **The lines moved and one claim stopped being true after this folder was written**: the M4 task of [implementation-plan.md](implementation-plan.md) landed its first half as #1716, which added `google_service_account.mcp_server` (`:324`) and the `google_cloud_run_v2_service` front door that runs as it, so "there is **no** `google_cloud_run_v2_service` for the coordinator" is no longer a fact about this tree — the service is the front door's and not the sweep's, and the sweep above is unchanged. |
+| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:86` (its service account), `:107` with `role = "roles/storage.objectViewer"` at `:111` (the runs bucket — read only), `:128` (the app key secret), `:144` (`google_cloud_run_v2_job`), `:290` (the sweep schedule). There is no Cloud Run *launch* grant and no write grant on the runs bucket. **The lines moved and one claim stopped being true after this folder was written**: the M4 task of [implementation-plan.md](implementation-plan.md) landed its first half as #1716, which added `google_service_account.mcp_server` (`:339`) and the `google_cloud_run_v2_service` front door that runs as it, so "there is **no** `google_cloud_run_v2_service` for the coordinator" is no longer a fact about this tree — the service is the front door's and not the sweep's, and the sweep above is unchanged. |
 | F4 | **The coordinator's writer holds the project's database admin**: `deploy/terraform/gcp/modules/firebase/iam.tf:138` grants `roles/firebasedatabase.admin` to the coordinator's writer account. |
 | F5 | **Firebase ID-token verification exists, and it is exact**: `internal/credsvc/auth.go:1086` compares the audience to the **bare project id**, `:1059-1060` (`firebaseIssuer`) builds the issuer as `https://securetoken.google.com/<projectId>` and `:1089` holds the token's `iss` to it, and `:1390` (`GoogleKeysURL`) is the public signing-key endpoint the owner's spec names. Its refusals name the failed check and never the value; `internal/credsvc/audit.go` writes one structured line per act and per refusal. **Exists** — the design's §4 adds no verification of its own. |
 | F6 | **Identity Platform is initialized with no sign-in providers, and a public sign-up path is refused**: `internal/cli/init_firebase.go:582` records "initialized Identity Platform (no sign-in providers)", `:686` calls `refusePublicSignUp` (`:709`) on a project whose config enables any public sign-up path, and `internal/infra/identityplatform.go:32` is the step's own name. **Exists** — and it is what F26 collides with. |
-| F7 | **The database rules already fence a coordinator subtree**: `internal/budget/rules/rules.json.tmpl:10-13` — `"coordinator": { ".read": "USER", ".write": false }`, with `USER` defined at `internal/budget/rules/rules.go:517` as a signed-in, device-allow-listed person. |
+| F7 | **The database rules already fence a coordinator subtree**: `internal/budget/rules/rules.json.tmpl:10-13` — `"coordinator": { ".read": "USER", ".write": false }`, with `USER` defined at `internal/budget/rules/rules.go:529` as a signed-in, device-allow-listed person. |
 | F8 | **The project's people lists exist and are its only permission model**: `internal/cli/user.go:32-33` writes `terraform.launchers` / `terraform.operators` into the machine's own project config, named together at `:66`, applied by the next update — and **the door already admits one person at a time**: `internal/cli/user.go:266` refuses `domain:`, `group:`, `serviceAccount:`, `allUsers`, `allAuthenticatedUsers` and wildcards, and takes `user:<email>` only, for the reason the comment at `:254-257` gives (the launcher and operator roles carry the token signer's own role, so a `domain:` member would hand a whole domain that role). **Exists** — D923's `user:`-only rule is this rule read at the front door. |
 | F9 | **The rigor vocabulary, its order and its one off-axis member exist**: `internal/rigor/mode.go:36` (`var Modes = []Mode{POC, Startup, Pro, Critical, Hotfix}`, the members at `:21-30`) is the closed vocabulary, `:46` is `Default = Pro`, `:75` ranks the four on-axis modes and gives Hotfix **0**, and `internal/rigor/resolve.go:116` states why ("off the axis and ranks below every on-axis mode"). |
 | F10 | **The run's ceiling and the enforcer exist**: `internal/runner/spend.go:21-34` is the environment the run reads its ceiling from (`FUGARO_MAX_RUN_USD` at `:23`, `Spend` at `:34`), and `internal/runner/gateway.go:141` is "The real credential stays here" — the gateway holds the cap and the agent never sees the key. |
@@ -136,7 +138,7 @@ note under the table says what moved.
 | **D924** | **The recommendation** — the token's limit travels in **a variable of its own** on the execution override, and the run's ceiling is the tighter of it and the job's own — and **spend is counted across the whole token family**, so a rotated refresh token is the same budget and not a new one | The override mechanism already exists (F19) and the gateway is already the place the real stop lives (F10, F27); a variable of its own is what makes "only narrows" structural rather than a launcher's arithmetic, and a per-family counter is what stops rotation from being a way to ask for the limit twice. | **Amended 2026-11-04** (M-b) — see §4a — and **amended on 2026-11-09 and restored the same day**: the fence ruling moved the limit's channel to **the run's own task**, and **the owner's later ruling of the same day declined the fence and gave the front door the launcher's permissions, so the channel is the execution override again** (§4a, "The owner's ruling of 2026-11-09, later the same day") — and the rule, the tighter of the token's limit and the job's cap, is unchanged |
 | **D925** | **The recommendation** — Hotfix is a **separate flag, off by default**, beside the window | `Rank()` gives Hotfix **0** deliberately (F9, F28), so folding it into a `min`/`max` window admits Hotfix at every minimum — the opposite of "off by default". |
 | **D926** | **The recommendation** — an optional `min` and an optional `max`, unset meaning the project's policy alone; a window that admits nothing is refused **at mint** | A token that could never start a run should not be mintable: the failure has to surface at the person's keyboard rather than in an agent's retry loop. |
-| **D927** | **The recommendation** — `tasks:read` and `tasks:write` only; `roadmap:write` is **not** in v1 | A scope is a wire contract: it exists the moment a token can hold it, and the console's own roadmap-write design — which does not exist yet — is what should decide its name and its permission (F30). |
+| **D927** | **The recommendation** — `tasks:read` and `tasks:write` only; `roadmap:write` is **not** in v1 | A scope is a wire contract: it exists the moment a token can hold it, and the console's own roadmap-write design — which does not exist yet — is what should decide its name and its permission (F30). **Amended by the stateless orchestrator's D1227 (answered 2026-11-04, recorded here 2026-11-10): `state:read` and `state:write` join the vocabulary — §4a, "D927 — amended by D1227".** |
 | **D928** | **The recommendation**, tightened by the owner: the redirect-URI allowlist is the **project's own configuration**, with loopback always allowed and validated at registration and at authorize, exact match — and **registration refuses a non-loopback URI that is not on the allowlist**, **the consent page shows the redirect host**, and **the flow is CSRF-bound** | A vendor's callback URL baked into a self-hosted product goes stale in somebody else's release cycle and refuses every client the owner has not heard of. The three tightenings are the owner's: refusing at registration is the earlier door, a person consents to a host they were shown rather than to a client id, and a flow with no CSRF binding lets an attacker's client finish a sign-in the person started for another. |
 | **D929** | **The recommendation** — a pre-registered confidential client using the client credentials grant, with **mandatory** limits | The owner's option B would make every stored API key an OAuth client by another name, and revocation would stop being one act — against the owner's own non-goal that the keys are not replaced. | **Amended 2026-11-04** (M-f) — see §4a |
 | **D930** | **The recommendation** — **short-lived access tokens and refresh tokens that rotate on every use**, with reuse detection, a replayed token revoking the family, and revocation as one delete | Rotation is what makes a theft detectable rather than merely survivable: a long-lived token that is stolen lives its whole life and nothing distinguishes theft from use. | **Amended 2026-11-04** (M-d) — see §4a |
@@ -225,15 +227,18 @@ the device's act as a shape of its own, the ID token is spent once and a family 
 proved by the ID token and by no device key, so M-a's first requirement is not met — the endpoint
 cannot tell a paired device from any other holder of one, which is H1's accepted residual risk — and
 the delivery of a flow to that device, with no QR of the flow's binding rendered and no launcher
-reading the page, is built nowhere and carried by no task of this plan; M7 is built except the
-reading of the installation's published state its lists come from, which no task of this plan
-carries; M8 is built except the wiring that would serve its four read tools, which no binary has and
-no task of this plan carries; M9 is not started, and the launch-override fence it was to wait on is
-declined for v1 and left unbuilt (the owner's ruling of 2026-11-09)" — **the clauses moving as each
-task lands** (§4a), each exception added with its own landing because the task builds the seam and
-not the half behind it, and removed the same way once the half behind it is there: M7's reading of
-the published state and M8's four read tools registered on no binary, which the wiring task would
-serve, are open still, and **M10's exception is the one that has closed** — the store's own bucket
+reading the page, is built nowhere and carried by M12b, which M12 waits on; M12 is built — the front
+door mounted on the service, the reading of the installation's published state its lists come from,
+M8's four read tools served from a binary and the two bounds the open registration endpoint is
+accepted under are all its — and the door stays dormant until an installation turns it on, which no
+release writes the flag for yet (D934), because a build without M12b's delivery refuses to enable it
+(D2126); M9 is not started, and the launch-override fence it was to wait on is declined for v1 and
+left unbuilt (the owner's ruling of 2026-11-09)" — **the clauses moving as each task lands** (§4a),
+each exception added with its own landing because the task builds the seam and not the half behind
+it, and removed the same way once the half behind it is there: **M12 closed three of them at once**
+— M7's reading of the published state, M8's four read tools served from no binary and the two bounds
+the open registration endpoint is accepted under — because it is the wiring task those three were
+owed to, and **M10's exception is the one that had closed before it** — the store's own bucket
 and its one grant are M4's store half, merged since, and M4's own clause is the newest: the front
 door is built whole and stays OFF until a release writes the flag that turns it on.
 
@@ -422,6 +427,12 @@ several accounts, and a public service holding `firebasedatabase.admin` would ho
 The original answer's **`.read: false` / `.write: false`** rule is kept and is now the *first* of five
 independent barriers rather than one of two. §6 and §8 state all of this.
 
+**Considered and declined, 2026-11-11.** For the coordinator's roadmap writes, the owner considered
+giving the front door's account a database-wide write role (the coordinator plan's D2118 (B)) and
+**declined it after seeing its blast radius**: the roadmap's writes are queued by the front door and
+applied by a non-public job running as the coordinator's account. This answer, and the five barriers
+above, stand unchanged.
+
 ### D923 — amended (findings H1 and M-a)
 
 **Amended 2026-11-04, and this is the one amendment that is NOT the recommendation.** Finding
@@ -433,7 +444,7 @@ node) — and **every launcher and operator holds `signJwt` on the project's sig
 an operator's device** at the authorize endpoint's approve step (`POST /oauth/authorize`, M-a's
 single-use POST). The repository's own rules comment says the same thing from the other side: the
 `mu` claim "binds nothing against a minter"
-(`internal/budget/rules/rules.go:482-487`). The review's recommendation was a **device-held signing
+(`internal/budget/rules/rules.go:505-506`). The review's recommendation was a **device-held signing
 key registered at pairing**; **the owner accepted the residual risk and asked for it documented
 instead** — not built, not in any task. It stands in §3 and §8 as an **ACCEPTED residual risk with
 its consequences**:
@@ -583,7 +594,8 @@ the installation's own published state, reachable through the coordinator's acco
 anything a caller or a run can reach, which [spec.md](spec.md) §4 states. **M7 builds the seam that
 reading goes through and not the reading**: `ee/coordinator/mcpauth/identity.go` holds the `Roster`
 interface the door resolves an identity through, **no implementation of it over the published state
-is in the tree, and no task of this plan carries one** (spec.md §11). The rest of
+was in the tree, and no task of this plan carried one** — the owner wrote one on 2026-11-11 and it is
+built: **M12** (spec.md §11). The rest of
 the answer is unchanged: exact `user:` entries only, and `group:`, `domain:` and `serviceAccount:`
 refused.
 
@@ -647,7 +659,7 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
 - **What has happened since, as of the commit this file is read at.** **M1 (#1713), M2 (#1767), M3
   (#1715), M6 (#1714) and M4 are merged on `main`** — M4's first half (#1716) being the
   account, the front door service and its public invoker binding
-  (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`, `:388`, `:536`), and its store half
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:339`, `:403`, `:581`), and its store half
   being the bucket the records live in and the one binding that names the front door's account
   (`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **because the
   owner approved them one at a time, which is what "may continue" turned into.** **M5 is built** —
@@ -658,13 +670,13 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   first requirement is not met (the status line above) — **M7 is built** (the resource server and the tool
   registry, dormant with the rest of the door) **except the reading of the installation's published
   state its lists come from**: `identity.go` holds the `Roster` seam D933's answer goes through and
-  **nothing in the tree implements it over that state, because no task of the plan carries the
-  reading** — **M10 is built whole**: the audit line, the bounded per-identity record it comes to
+  **nothing in the tree implemented it over that state, because no task of the plan carried the
+  reading — the owner wrote one on 2026-11-11 and it is built: M12 below (`roster.go`)** — **M10 is built whole**: the audit line, the bounded per-identity record it comes to
   and revocation from a person's own surface, and **the store its records are at rest in**, whose
   bucket and one grant M4's store half added — **M8 is built** (the
   four read tools, over the project's own runs and redacted through `internal/safetext`) **except the
-  wiring that would serve them**: no binary registers them, which is the wiring no task of this plan
-  carries — **and the rest is not**: M9; **M3's node is in with its parity test while the comment D935 asks
+  wiring that would serve them**: no binary registered them, which was the wiring no task of this plan
+  carried — **M12 is that wiring, and it is built** (`ee/coordinator/cli/coordinator_serve.go`) — **and the rest is not**: M9; **M3's node is in with its parity test while the comment D935 asks
   for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
   POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, was
   built after M6 rather than with it. **And one row of an already-merged task
@@ -675,7 +687,7 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   by a mark. That barrier is M2's own row, it is on `main` already and not in this branch, and it is
   raised as a finding rather than closed by an edit here.
 
-### The two bounds no task carries (raised 2026-11-07)
+### The two bounds, and the task that carries them (raised 2026-11-07)
 
 **spec.md §3 and §8 bound the open registration endpoint by two things that are built nowhere**, and
 M5's endpoint and the record it writes say so in their own words: **a per-source rate limit** and
@@ -696,11 +708,82 @@ behaviour**: `TestNoBinaryLinksTheFrontDoorYet` fails if any file a binary build
 so the task that wires the front door is the task that carries the two bounds and deletes the guard,
 and no release mounts an open registration endpoint because a wiring arrived unnoticed. **M5b was the
 other thing that task was to carry** (the owner's ruling of 2026-11-07) **and is built on the
-server's side only**, except the half that delivers a flow to the paired device, which nothing builds
-and no task of this plan carries — and except the device binding itself, which the endpoint cannot
-perform: **M-a's first requirement is not met**, so the task that relaxes the guard carries the two
-bounds **and the delivery** with them, and must not read the built half as that requirement met.
-**Until it does, the guard is what holds the door** (spec.md §11).
+server's side only**, except the half that delivers a flow to the paired device, which **the owner
+made a task of its own on 2026-11-11 (M12b)** — and except the device binding itself, which the
+endpoint cannot perform: **M-a's first requirement is not met**, so the task that relaxes the guard
+carries the two bounds **and the delivery** with them, and must not read the built half as that
+requirement met. **Until it did, the guard was what held the door** (spec.md §11).
+
+**The owner answered it on 2026-11-11 — the task that carries both bounds is M12, and it is built.**
+He wrote it as a task of the MCP plan ([implementation-plan.md](implementation-plan.md) §3, D2119)
+rather than placing the bounds inside M10's entry, and what it built is what this section said was
+owed: the endpoint refuses a source past its own window (`ee/coordinator/mcpauth/register.go`,
+`TestRegistrationIsRateLimitedPerSource`), and the registrations, the pending authorize requests and
+the codes the unauthenticated shapes leave behind are removed once their own lifetime has passed
+(`SweepExpired`, `RegistrationTTL`, the sweep the two open writes trigger,
+`TestRegistrationsExpireAndAreSwept` — the red step named above as
+`TestARegisteredClientIsExpiredAndSwept`, which is that test under the name M12 gave it). **A spent
+code is the one record the sweep keeps past its own moment, on purpose**: its marker is what a later
+presentation of that code is answered with — already redeemed, naming the family the first exchange
+minted, which is the revocation OAuth 2.1 §4.1.3 asks for — and the review of this branch found the
+marker going at the code's own moment, one `CodeTTL` after the exchange, which ended both. It is now
+kept while the family it names is in the store and inside both of that family's bounds (`FamilyTTL`,
+`FamilyIdleTTL`), so what bounds a marker is the chain it stands for rather than forever, and
+`TestRegistrationsExpireAndAreSwept` plants both directions. **The review of this branch found the
+other two holes either bound had**, and both were the same shape — a bound that its own subject
+decides. The sweep ran inside the request that triggered it and on that request's own context, so a
+trigger that disconnected cancelled the sweep *and* spent the interval, and the cheapest trigger of
+all was the unauthenticated GET, which had no rate limit of its own: a caller polling it could have
+kept the sweep from ever running. It now runs on the trigger's values without its cancellation and
+under a bound of its own (`maybeSweep`; `TestTheSweepOutlivesTheCallerThatTriggeredIt`). And a source was the
+address itself, which one caller holding a `/64` may take any of for free: ten registrations a
+minute per address is a map reached in seconds, and a limiter whose map is full refuses the source
+that is not in it — the global denial of service the per-source shape exists to avoid, offered by the
+bound that was supposed to prevent it. A source is now the allocation the address is in, an IPv6
+caller counting as its `/64` and an IPv4 address as itself, with a v4-mapped address unmapped before
+anything is counted (`sourceKey`; `TestAnIPv6SourceIsCountedByItsPrefix` asserts a rotating `/64` is
+one source, that the `/64` next door is not, and that no two IPv4 clients share a window). **The
+guard is gone with them**: `TestNoBinaryLinksTheFrontDoorYet` is deleted, and what stands where it stood is
+`TestTheFrontDoorIsServedOnlyWhenEnabled`, so what holds the door now is the switch rather than a
+test — the door mounts nothing without the entry the module writes under `var.mcp_server`, no release
+writes that entry (D934), and a build without M12b's device delivery refuses to enable a door at all
+(D2126, spec.md §11). **M12 carried the two things this section's M7 and M8 clauses left open beside
+the bounds**: the reading of the installation's published state (`ee/coordinator/mcpauth/roster.go`,
+`TestTheRosterIsReadFromThePublishedState`, `TestOnlyExactUserEntriesAdmit`) and the wiring that
+serves M8's four read tools (`TestReadToolsServeOnlyTheProjectsRepositories`).
+
+**The later review of this branch found the pair's own two holes, and neither was a bound's subject
+deciding it — both were a bound missing where the writes were.** **The authorize GET is the second
+unauthenticated write of the flow and had no window of its own**: it records one pending request per
+call, one registered client is enough to loop it, and the only thing between that loop and the store
+was the sweep, which runs at most once an interval, stops after `sweepTimeout`, and read and deleted
+one object at a time — so a flood wrote tens of thousands of records where one run removed a few
+hundred, and once the prefix had grown past what the run could list inside its own bound every run
+failed and removed nothing. Every claim this section and spec.md §11 make about the second bound was
+then a claim about a sweep that could not keep up with writes nothing bounded. **The GET now carries
+the same per-source window the registration endpoint does** (`authorizeWindow`,
+`authorizePerWindow`; `ee/coordinator/mcpauth/authorize.go`;
+`TestAFloodOfRequestsFromOneSourceIsBoundedAndSwept`), and the window's figure and the sweep's page
+are one decision: what one source may write in one interval — every window of it, filled to its own
+bound — is what one sweep run removes (`sweepPage`). **And the sweep reads a prefix a page at a time
+rather than whole** (`objects.listUpTo`, `sweepPage`; `TestTheSweepReadsAPrefixAPageAtATime`), so a
+run's cost is its page's and not the prefix's, and resuming needs no cursor because the deletion is
+the cursor: what a run removed has left the list, and the next run's page is the records after it.
+**What the page is not is a bound on a flood spread over sources, and what it is not is complete in
+one run**: a page whose records are all live does not move until they are not, so a prefix growing
+faster than a page per interval outgrows the sweep however the page is chosen, and a source's window
+bounds one source and not many. What the sweep still reads whole is the family prefix, whose
+completeness two of its judgements need (a registration is kept while a family names it, and a spent
+code's marker while its family is revocable). **The other finding was
+the same pair seen from the platform**: each window is counted in the process's own memory — one
+instance's worth of counting, which `register.go` says and this section's "per-source bound" now
+says with it — and the front door's scaling block set no ceiling, so Cloud Run's own default of
+about a hundred instances, scaled by the caller's traffic, would have made each bound a hundred
+windows a minute. **The front door is now pinned to one instance**
+(`deploy/terraform/gcp/modules/installation/coordinator.tf`, the scaling block;
+`TestTheFrontDoorIsOneInstanceBecauseItsBoundsAreInMemory`), which costs this door nothing a second
+instance would serve, because the door holds no per-caller state a second instance would have to
+share: what one instance holds is the limiter's map and the sweep's clock.
 
 ### The owner's ruling of 2026-11-07: M5b, and the licence table
 
@@ -835,7 +918,7 @@ asks the owner to confirm the mechanism that replaces the override rather than t
 - **D931's grant, and M9's launch path.** D931's one new privilege is still asked for, and it is now
   built by a task of its own — **M11** in [implementation-plan.md](implementation-plan.md) §3, the
   split launcher role, which is where `coordinator.tf`'s deliberate absence of the grant
-  (`:383`) is filled in. **M9 waits on M11 being built**, and so does D931: **the gate is a task, not
+  (`:398`) is filled in. **M9 waits on M11 being built**, and so does D931: **the gate is a task, not
   an answer** — **and one question of that ruling came back the same day: D937**, its premise about the
 run's identity and the content the fence does not cover (§4a's "The premise the ruling got wrong",
 §4b). Everything else is closed (§6 check 0, spec.md §8 and §11).
@@ -917,6 +1000,26 @@ plan's open items carry a **revisit** entry and §6's owner-checks list carries 
 - **What stays the owner's, and it is now the whole of it**: the live IAM — that the front door's
   account holds **both** permissions in a real project — which is check 2's shape for a grant rather
   than a live step, and the **revisit** itself.
+
+
+### D927 — amended by D1227 (the stateless orchestrator's state scopes), recorded 2026-11-10
+
+**D927's answer** kept v1 to `tasks:read` and `tasks:write` and said, of the stateless orchestrator's state group, that "a tool the two do
+not cover brings the scope question back as D927's" ([implementation-plan.md](implementation-plan.md) §7, [spec.md](spec.md) §11). It came
+back and was answered on the other design's side: **D1227** of
+[`docs/stateless-orchestrator/reconciliation.md`](../stateless-orchestrator/reconciliation.md) §4 — **new scopes `state:read` and
+`state:write`, write gated by D1225**, the recommendation, answered by the owner on **2026-11-04** — with D1224 naming the tools
+`get_state`, `get_events` and `apply_patch`. **This note records that answer here; it is not a new decision and it changes nothing D927
+refused**: `roadmap:write` stays out of v1, an unknown scope is still refused and never ignored, and the vocabulary is still closed — it
+is four names instead of two. What follows from D1227's own reason, and is stated rather than asked
+([`docs/stateless-orchestrator/reconciliation.md`](../stateless-orchestrator/reconciliation.md) §8, R1 and R2): an authorization that
+names no scope keeps getting the task pair only (today `requestedScopes` answers the whole vocabulary,
+`ee/coordinator/mcpauth/authorize.go:504-507`), a task-scope token reaches no state tool and a state-scope token no task tool, and a
+state-group call acts as a session and never as a person. [spec.md](spec.md) §5 carries the three rows, §8 the threat-model paragraph
+("A state-group token") and §11 the answer. **Two questions on that design's side were answered as recommended on 2026-11-10**: D2020
+(this front door reads the database, which its account holds no grant on today, through a read-only role) and D2021 (`apply_patch` is not
+served); the code is that design's
+task O16a, which edits `limits.go`, `authorize.go` and `tools.go` in `ee/coordinator/mcpauth/` and adds `tool_state.go`.
 
 ## 4b. The decision the amendment added
 
@@ -1110,7 +1213,7 @@ owner's hands, before the first code task starts:
    refusal too** — the reading the correction of 2026-11-05 adds, and the one that proves the store's
    name is outside the deployer's conditioned prefix rather than merely written to be; **read one
    record as the front door's own account `mcp_server` — the store's single member, the account M4
-   creates (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`), never the sweep's — and
+   creates (`deploy/terraform/gcp/modules/installation/coordinator.tf:339`), never the sweep's — and
    see it work**; **read the same record as a basic project Viewer and see a refusal**, which is the
    second correction of 2026-11-05: a new bucket carries GCS's convenience bindings for
    `projectViewer:` unless something takes them off, so the check reads the created policy rather
@@ -1190,11 +1293,11 @@ discover:
    (`internal/cli/pair.go`) walks an operator through one pairing: a one-shot token, the QR's
    payload, the phone's key, the typed eight-character code, and the device node it writes —
    `internal/budget/token/device.go:176` (`MintDevice`) mints the device's custom token, and
-   the pairing session's own claim is `PAIRING` (`internal/budget/rules/rules.go:540`, read at
-   `:561`) over the device allowlist `PathDevices` (`:458`) that the `USER` claim already requires
-   (`:517`). **This is why D923's answer can name a signer that is not the coordinator:** the
+   the pairing session's own claim is `PAIRING` (`internal/budget/rules/rules.go:552`, read at
+   `:573`) over the device allowlist `PathDevices` (`:470`) that the `USER` claim already requires
+   (`:529`). **This is why D923's answer can name a signer that is not the coordinator:** the
    repository already has a flow where a person approves something from a device that is paired to
    the installation, and the principal that mints a custom token is deliberately **not** a resident
-   service — `internal/budget/rules/rules.go:482-487` records that whoever can sign for the project chooses the uid and
+   service — `internal/budget/rules/rules.go:494-499` records that whoever can sign for the project chooses the uid and
    every claim in it, and that such a principal is a launcher or a service-account key holder. The
    coordinator holds neither.

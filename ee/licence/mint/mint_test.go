@@ -599,6 +599,14 @@ func TestRunRefusesWhatItCannotMint(t *testing.T) {
 		// signer to fall back to and gcloud refuses the run: the flag is
 		// required rather than defaulted.
 		{"no key version", func(f *fakeSigner) []string { return runArgs(f, "-version", "") }, nil, true},
+		// -seats is the one claim-set flag whose default is a value the design
+		// never admits, so a mint that left it out claims it in silence: seats
+		// are what the organisation bought (licensing/licence-key.md, the claim
+		// set's row) and an individual is an organisation of one (T15), so no
+		// key anyone means to mint says zero -- and the console draws the number
+		// it reads (LICENCE_SEATS_TERM), so a zero is drawn rather than caught.
+		{"a key that claims no seats", func(f *fakeSigner) []string { return runArgs(f, "-seats", "0") }, nil, true},
+		{"a key with a negative seat count", func(f *fakeSigner) []string { return runArgs(f, "-seats", "-1") }, nil, true},
 		{"a term of no days", func(f *fakeSigner) []string { return runArgs(f, "-days", "0") }, nil, true},
 		{"a term that wraps to a negative one", func(f *fakeSigner) []string { return runArgs(f, "-days", "200000") }, nil, true},
 		// Wrapping round is not the same as wrapping negative: 213504 days land

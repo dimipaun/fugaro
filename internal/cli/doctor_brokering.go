@@ -98,6 +98,44 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 	return refuseKeyReadInAgent(getenv, checkBitbucketTokenFlag, "the credentials service's bundle, which holds the Bitbucket token")
 }
 
+// credentialsServiceDeploys is the set of workflow variants repo's own root
+// deploys a job for — the variants a job account, and so a roles/run.invoker
+// grant, can exist for — or nil where the local config does not carry enough
+// to say which those are.
+//
+// A repository whose entry records the switch ON is one whose own apply ran
+// with agent.auth: cascade: infra.CredentialsServiceServes is what wrote that
+// record, and its third condition is exactly that auth, so the record being
+// true is the auth the apply saw. The list is then infra.WorkflowAccounts',
+// the function RepoSpec deploys the jobs from, asked with that same auth
+// rather than with a rule restated here — under cascade it is the default
+// variant of each workflow and no other, so the table's named variants are
+// variants this repository has no job, and no job account, for.
+//
+// Every other repository — record false, or no record at all, which the
+// switch's readers treat alike — may be running under any agent.auth, and the
+// local config is the INSTALLATION's side, which never holds a repository's
+// fugaro.yaml: the auth is not knowable here, so the answer is nil and the row
+// keeps the service's whole table for that repository, which is what it
+// compared before. That is not a guess about the repository: the sentence the
+// row prints says in its own words that the switch follows the repository's
+// own agent.auth, and a repository the service is held off for is named there
+// so an operator can see which one the fix has to be run for.
+func credentialsServiceDeploys(lc *localcfg.Config, repo string) map[string]bool {
+	r, ok := lc.Repos[repo]
+	if !ok || !r.CredentialsServiceOn() {
+		return nil
+	}
+	cfg := &config.Config{Agent: config.Agent{Auth: config.AuthCascade}}
+	out := map[string]bool{}
+	for _, w := range r.Workflows {
+		for _, acct := range infra.WorkflowAccounts(cfg, lc, repo) {
+			out[gcp.WorkflowVariant(w, acct)] = true
+		}
+	}
+	return out
+}
+
 // doctorCredentialsServiceDeployed is doctor's "credentials-service-deployed"
 // check: what the installation's credentials service is, said in one line —
 // converged on or not, deployed or not, and, when it is deployed and every job
@@ -155,6 +193,16 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 // an installation mid-opt-in (the block written, the apply that creates the
 // service still to come) is a legitimate state, and --strict is where that is
 // a failure.
+//
+// The table it compares is the service's own (infra.CredentialsJobAccounts),
+// which is deliberately every account a repository MIGHT run under: the
+// service is the fail-closed side, and a row for an account no job exists for
+// costs it nothing, while a missing row refuses a real caller. The grants are
+// not that table: they are one per job a repository's root deploys
+// (modules/workflow/sa.tf), so a row whose repository deploys no such job can
+// never hold one and is not a missing grant. credentialsServiceDeploys is
+// where the two are told apart, and it is what keeps the line from naming a
+// switched repository for a variant its cascade root does not deploy.
 func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) []doctorCheck {
 	const id = "credentials-service-deployed"
 	if lc.CredentialsService == nil {
@@ -194,7 +242,14 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 		missing []string
 		unread  []string
 	)
+	deployed := map[string]map[string]bool{}
 	for _, j := range jobs {
+		if _, cached := deployed[j.Repo]; !cached {
+			deployed[j.Repo] = credentialsServiceDeploys(lc, j.Repo)
+		}
+		if set := deployed[j.Repo]; set != nil && !set[j.Workflow] {
+			continue
+		}
 		slug, err := task.Slug(j.Provider, j.Repo)
 		if err != nil {
 			// A repository whose provider the local config does not name: the
@@ -220,11 +275,20 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 			Problem: fmt.Sprintf("the credentials service %s is deployed, and whether %s may invoke it could not be checked: a custom role on its or the project's policy could not be read", infra.CredentialsServiceName, strings.Join(unread, ", ")),
 			Fix:     "rerun doctor with the IAM API available, or read the policy yourself: gcloud run services get-iam-policy " + infra.CredentialsServiceName}}
 	}
+	// The fix names the other half of the grant as well, because an operator
+	// who reads the command alone would run it at a repository the switch is
+	// held off for and get no grant: the grant is written by a repository's own
+	// root and only where CredentialsServiceServes says the switch is on, so a
+	// repository whose agent.auth is not cascade has to be set to it first.
+	// That state is worth saying in the problem too, and it is the one where
+	// the published policy's proxy: true reads as a promise the installation
+	// keeps: nothing about such a repository is brokered, and its runs hold the
+	// Bitbucket token on their own job.
 	return []doctorCheck{{ID: id, Severity: "warning",
-		Problem: fmt.Sprintf("the credentials service %s is deployed and grants no %s to %s: a run of %s would fail to fetch a model credential%s",
+		Problem: fmt.Sprintf("the credentials service %s is deployed and grants no %s to %s: a run of %s that is on the switch would fail to fetch a model credential%s. The grant follows the switch, and the switch follows the repository's own agent.auth, so a repository of that list that does not run with agent.auth: cascade has the service held off for it: the published policy's proxy: true is inert there — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one",
 			infra.CredentialsServiceName, runInvokeRoles[0], strings.Join(missing, ", "), strings.Join(missing, ", "),
 			noteIfAny("; not read: "+strings.Join(unread, ", "), len(unread) > 0)),
-		Fix: selfCommand() + " update --repo <each repository named above> (grants each of its job accounts " + runInvokeRoles[0] + " on the service)"}}
+		Fix: selfCommand() + " update --repo <each repository named above> (grants each of its job accounts " + runInvokeRoles[0] + " on the service). For one of them that runs with an agent.auth other than cascade, set agent.auth: cascade for it first (with a model credential in the service's bundle, " + selfCommand() + " creds set) and run it again: until then the switch is off for that repository, proxy: true is inert, and its runs hold their own Bitbucket token"}}
 }
 
 // doctorCredentialsServiceServing is the rest of

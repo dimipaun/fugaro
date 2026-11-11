@@ -151,6 +151,14 @@ func RecipeGateProblems(rcp *recipe.Recipe, wf config.Workflow) []GateProblem {
 	for _, msg := range gateCommandProblems(checkGateSteps(rcp), wf.Commands) {
 		out = append(out, GateProblem{Field: GateCommands, Message: msg})
 	}
+	// The rebase step re-runs the workflow's tests itself, with no check step
+	// to name them (recipe.Parse keeps the step alone in its recipe): a
+	// repository with no commands.test is one the step cannot judge, and a
+	// launch that reached it would run an empty command and call the result
+	// passing.
+	if recipe.UsesRebase(rcp) && strings.TrimSpace(wf.Commands.Test) == "" {
+		out = append(out, GateProblem{Field: GateCommands, Message: "rebase step needs commands.test"})
+	}
 	if rcp.Mode != recipe.ModeArtifact {
 		return out
 	}

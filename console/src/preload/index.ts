@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the thirty-seven names
+ * is not a name and a method is still a compile error, and the thirty-eight names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -299,6 +299,18 @@ export const BRIDGE_VERSION = 1
  * table, and a value that can name no word cannot widen a command line). Its
  * `visible` argument is what the Graph tab says when it goes away (H6): `false`
  * stops the child, and there is no value of it that starts one.
+ *
+ * **The subscriptions plan's S4.2 added the thirty-eighth** (`seats.read` /
+ * `readSeats`, the Project tab's advisory seat estimate) and left the other
+ * thirty-seven exactly where they were. It sits directly under `licence.save`,
+ * the section it is drawn beside, and it **takes no argument at all**: the
+ * command has no positional word and no flag a screen sets, so the row here
+ * declares none. It is a read of core data and nothing else -- `fugaro seats
+ * --json` reads this machine's own launcher and operator lists and the
+ * requesters of the last 90 days of runs, stores nothing, sends nothing and
+ * consults no key, licence or server -- and what comes back is a count of
+ * people: no string of it is a credential, and the two tables it carries are
+ * drawn through the classes `src/shared/sanitize.ts` declares.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -467,11 +479,21 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // is exactly when the operator has to reach the box that takes a renewal.
   ['licence.read', 'readLicence'],
   ['licence.save', 'saveLicence'],
+  // The seats section's read (subscriptions plan S4.2, D439): `fugaro seats
+  // --json`, the advisory estimate of who launches jobs on this installation
+  // and the identities the estimate cannot count. One row, like every other,
+  // and here the reason is at its plainest: the operation has no argument, so
+  // this method takes none -- the window is the ruling's own 90 days and no
+  // control moves it. **What comes back is a count of people and the identities
+  // a count cannot include**: the screen draws it beside the licence key's own
+  // seat count, warns when it is above it, and blocks nothing on either number
+  // (D439 -- seats are compared, never enforced).
+  ['seats.read', 'readSeats'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * thirty-seven string literals, not `string`. It is the type of the `operations` list
+ * thirty-eight string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -591,9 +613,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- thirty-seven *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- thirty-eight *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those thirty-seven properties as properties rather than as an index
+ * object literal those thirty-eight properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -622,7 +644,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * thirty-seven methods.
+ * thirty-eight methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,
