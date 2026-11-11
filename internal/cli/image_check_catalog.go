@@ -211,9 +211,13 @@ type catalogEvaluation struct {
 	// read back from the one object the build itself reads.
 	definitionSHA256     string
 	definitionGeneration int64
-	// contextSHA256 is the digest of the build context the entry names, as the
-	// copy staged it beside the Dockerfile; "" for an entry that names none.
+	// contextSHA256 and contextCommit are the digest of the build context the
+	// entry names and the commit the copy staged it from, as the copy staged
+	// both beside the Dockerfile; "" for an entry that names no context. The
+	// rebuild is pinned to them rather than to the record's, which holds what
+	// the last build already built.
 	contextSHA256 string
+	contextCommit string
 	// inputs are what imagecheck.CheckCatalog decides the entry from: this
 	// run's read of everything a decision needs, which the pass below hands
 	// the library rather than deciding the entry itself.
@@ -298,7 +302,23 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 		case err != nil:
 			return ev, fmt.Errorf("reading %s: %w", hashKey, err)
 		}
-		ev.contextSHA256 = string(staged)
+		// The commit that digest was taken at, staged by the same copy. The
+		// record's own commit is the one the last build already built, so a
+		// rebuild pinned to it would build the same tree and record the same
+		// digest: the staged one is what makes the rebuild converge.
+		commitKey, err := config.CatalogContextCommitKey(e.Name)
+		if err != nil {
+			return ev, err
+		}
+		stagedCommit, _, err := t.bucket.Read(ctx, commitKey)
+		switch {
+		case errors.Is(err, blobx.ErrNotExist):
+			return ev, fmt.Errorf("the catalog entry %s names the build context %s but has no staged context commit at %s, which is the commit its rebuild pins: fugaro image build %s from %s's checkout stages it and builds it once, and this job rebuilds it from then on",
+				pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Context), commitKey, pluginwire.Printable(e.Name), pluginwire.Printable(r.Repo))
+		case err != nil:
+			return ev, fmt.Errorf("reading %s: %w", commitKey, err)
+		}
+		ev.contextSHA256, ev.contextCommit = string(staged), string(stagedCommit)
 	}
 
 	checkKey := imagecheck.CatalogCheckKey(slug, e.Name)
@@ -348,7 +368,9 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 
 // submit submits entry e's rebuild as repository r's build account: the request
 // fugaro image build <entry> sends, with the definition this run read and the
-// commit the entry's record names. The account is r's, and
+// commit the entry's record names — or, for an entry that names a build
+// context, the commit and digest the copy staged with it, which is what its
+// rebuild is pinned to. The account is r's, and
 // CatalogBuildSpec.check refuses any other, so the job's own account is never
 // the one a build runs as.
 func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catalogCheckRepo, slug string, ev catalogEvaluation) (id, status string, err error) {
@@ -366,20 +388,32 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 	if err != nil {
 		return "", "", err
 	}
-	selftest, err := catalogSmokeSpec(r, rec.SourceCommit)
-	if err != nil {
-		return "", "", err
-	}
-	res, err := t.builder.SubmitCatalog(ctx, gcp.CatalogBuildSpec{
+	// An entry that names a context is built at the commit the copy staged it
+	// from — the definition is read there too, since the copy wrote both from
+	// that one commit — and carries the staged context with it. An entry that
+	// names none is built at the commit its record holds, unchanged.
+	commit := rec.SourceCommit
+	spec := gcp.CatalogBuildSpec{
 		Entry: e.Name, Slug: slug,
 		GitProvider: r.Provider, RepoURL: r.RepoURL, BaseBranch: r.BaseBranch,
 		GitSecretID: r.GitSecretID, GitUser: r.GitUser, GitHubAppID: r.GitHubAppID,
 		Base: t.base, Image: imageRef,
-		Definition:     gcp.CatalogDefinition{SourceCommit: rec.SourceCommit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
+		Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
 		ServiceAccount: r.BuildServiceAccount, MachineType: t.spec.MachineType,
 		WorkflowSecrets: r.WorkflowSecrets,
-		Bucket:          "gs://" + t.bucket.GCSName, Selftest: selftest,
-	})
+		Bucket:          "gs://" + t.bucket.GCSName,
+	}
+	if e.Source.Context != "" {
+		commit = ev.contextCommit
+		spec.Definition.SourceCommit = commit
+		spec.Context, spec.ContextCommit, spec.ContextSHA256 = e.Source.Context, ev.contextCommit, ev.contextSHA256
+	}
+	selftest, err := catalogSmokeSpec(r, commit)
+	if err != nil {
+		return "", "", err
+	}
+	spec.Selftest = selftest
+	res, err := t.builder.SubmitCatalog(ctx, spec)
 	if err != nil {
 		return "", "", err
 	}

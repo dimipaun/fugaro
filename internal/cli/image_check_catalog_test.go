@@ -451,6 +451,61 @@ func TestCatalogCheckJobBuildsNothingWithoutACopiedDefinition(t *testing.T) {
 	}
 }
 
+// TestCatalogCheckJobBuildsNothingWithoutAStagedContext: an entry that names a
+// build context is pinned to the digest and the commit the copy staged with it,
+// so a copy that staged neither — or the digest but not the commit — is an
+// error for that entry, not a rebuild, and the message names the command that
+// stages them. A copy that never staged the context is not "nothing changed".
+func TestCatalogCheckJobBuildsNothingWithoutAStagedContext(t *testing.T) {
+	cat := &config.Catalog{Entries: []config.Entry{
+		{Name: "tools", Tags: []string{"node"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: ".fugaro/tools.Dockerfile", Context: "ci"}},
+	}}
+	for _, tc := range []struct {
+		name         string
+		hash, commit bool
+		want         string
+	}{
+		{"no digest", false, false, "has no staged context digest"},
+		{"no commit", true, false, "has no staged context commit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, cat, 5))
+			gen, sum := f.seed(t, "tools", "acme/app", catalogCheckAppDef, checkBaseDigest)
+			f.putRecord(t, "tools", "acme/app", gen, sum, checkBaseDigest)
+			for _, obj := range []struct {
+				put  bool
+				key  func(string) (string, error)
+				data string
+			}{
+				{tc.hash, config.CatalogContextHashKey, strings.Repeat("7", 64)},
+				{tc.commit, config.CatalogContextCommitKey, catalogCheckCommit},
+			} {
+				if !obj.put {
+					continue
+				}
+				key, err := obj.key("tools")
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.put(t, key, []byte(obj.data))
+			}
+
+			lines, err := runCatalogCheck(t)
+			if err == nil {
+				t.Fatal("the catalog check reported no failure for a context entry with no staged context")
+			}
+			if got := buildPosts(f.fb); got != 0 {
+				t.Fatalf("builds submitted = %d, want 0", got)
+			}
+			l := lineFor(t, lines, "tools")
+			if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" ||
+				!strings.Contains(l.Error, tc.want) || !strings.Contains(l.Error, "fugaro image build tools") {
+				t.Fatalf("tools line = %+v", l)
+			}
+		})
+	}
+}
+
 // TestCatalogCheckJobDryRunSubmitsAndRecordsNothing: --dry-run decides the
 // whole catalog and writes nothing at all — no build, and no check.json, so a
 // dry run cannot become the back-off the next real run reads.
@@ -737,8 +792,9 @@ func TestCatalogCheckJobRefusesAnEntryAssignedTwice(t *testing.T) {
 // never from the repository. An entry whose staged digest is not the one its
 // record names is a rebuild with the catalog-context reason, one whose staged
 // digest is the record's is a skip, and the fingerprint the entry's check.json
-// keeps carries the staged value — all three of which the bucket read is the
-// only source of. Nothing on this path opens a git provider, and the opener
+// keeps carries the staged value, and the rebuild it submits is the entry's own
+// build, pinned to the staged commit and digest — all four of which the bucket
+// read is the only source of. Nothing on this path opens a git provider, and the opener
 // below fails the test if one is ever reached: the digest is read from the
 // bucket precisely so this job keeps the credential-less shape the comment on
 // its Lockfiles: false states (D1401, reconciliation §4.6).
@@ -756,11 +812,14 @@ func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
 	}}
 	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, cat, 5))
 	staged, same := strings.Repeat("7", 64), strings.Repeat("8", 64)
+	stagedCommit := strings.Repeat("c1", 20)
+	gens, sums := map[string]int64{}, map[string]string{}
 	for _, tc := range []struct{ entry, recorded, staged string }{
 		{"tools", strings.Repeat("9", 64), staged},
 		{"extra", same, same},
 	} {
 		gen, sum := f.seed(t, tc.entry, "acme/app", catalogCheckAppDef, checkBaseDigest)
+		gens[tc.entry], sums[tc.entry] = gen, sum
 		recKey, err := gcp.CatalogRecordKey(f.slugs["acme/app"], tc.entry)
 		if err != nil {
 			t.Fatal(err)
@@ -780,6 +839,11 @@ func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.put(t, hashKey, []byte(tc.staged))
+		commitKey, err := config.CatalogContextCommitKey(tc.entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.put(t, commitKey, []byte(stagedCommit))
 	}
 
 	lines, err := runCatalogCheck(t)
@@ -795,6 +859,44 @@ func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
 	st := f.state(t, "tools", "acme/app")
 	if st == nil || st.BuildInputs == nil || st.BuildInputs.ContextSHA256 != staged {
 		t.Fatalf("tools check.json = %+v, want the staged context digest %s on its inputs", st, staged)
+	}
+
+	// The rebuild the trigger fires is the entry's own build: the staged commit
+	// and digest go with it, so the build runs the entry's context rather than
+	// the template's one-file directory and records the digest it built — a
+	// rebuild that states no context would record context_sha256: "" and fire
+	// again the next night.
+	if got := buildPosts(f.fb); got != 1 {
+		t.Fatalf("builds submitted = %d, want 1", got)
+	}
+	slug := f.slugs["acme/app"]
+	want, err := gcp.CatalogBuildRequest("proj-1234", gcp.CatalogBuildSpec{
+		Entry: "tools", Slug: slug,
+		GitProvider: "bitbucket", RepoURL: "https://bitbucket.org/acme/app.git", BaseBranch: "main",
+		GitSecretID: gcp.SecretID(slug, "bitbucket-token"), GitUser: bitbucket.GitUsername,
+		Base: checkBase, Image: catalogBuildImage(t, "tools"),
+		Definition:     gcp.CatalogDefinition{SourceCommit: stagedCommit, Generation: gens["tools"], SHA256: sums["tools"]},
+		Context:        ".",
+		ContextCommit:  stagedCommit,
+		ContextSHA256:  staged,
+		ServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		MachineType:    "E2_HIGHCPU_8",
+		Bucket:         "gs://" + catalogBuildBucket,
+		Selftest:       catalogCheckSelftest(t, "acme/app", stagedCommit),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wantMap map[string]any
+	if err := json.Unmarshal(data, &wantMap); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.fb.Last(); !reflect.DeepEqual(got, wantMap) {
+		t.Fatalf("request =\n%v\nwant\n%v", got, wantMap)
 	}
 }
 
