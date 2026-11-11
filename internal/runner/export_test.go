@@ -113,6 +113,19 @@ func OnRun(t *testing.T, f func(*RunHandle)) {
 	t.Cleanup(func() { onNewRun = prev })
 }
 
+// SetDeferred plants the record's deferred block — the findings whose
+// deferral took effect, which the pull request's status section and the report
+// list. T-TR7b (a round's verdicts) and T-TR8 (the cap's leftovers) are the
+// writers of that field in a run, and both land after T-TR9, so a test of what
+// those two renderers say about a deferral puts one on the run's own record
+// here. It is written on r.rec and not on a copy, so finalize renders the
+// record the run has been carrying.
+func (h *RunHandle) SetDeferred(df *runstore.DeferredFindings) {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	h.r.rec.Deferred = df
+}
+
 // SetHaltGrace shortens how long a halted stage's agent gets to exit by itself.
 func SetHaltGrace(t *testing.T, d time.Duration) {
 	prev := haltGrace
