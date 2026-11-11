@@ -169,7 +169,6 @@ func outputHygieneLefts(t *testing.T) []printedLeft {
 	// the pin covers the quoting either way.
 	add("secrets/odd-repo", (&secretsStage{e: e, tg: &secretTarget{repo: "ac me/ap'p", wanted: []string{"claude-oauth-token"}}}).Left())
 	add("plugin/update", (&pluginStage{e: e}).Left())
-	add("plugin/fork", forkLeft())
 	add("repository", newRepositoryStage(e).Left())
 	add("repository/onboard", onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"}, "setup"))
 	add("repository/onboard-odd", onboardLeft(originInfo{Repo: "acme/app;rm -rf", Host: "github.com"}, "setup"))

@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -629,10 +630,16 @@ func TestPerSecretValueClassifiesEveryAnswer(t *testing.T) {
 		wantErr: ErrPerSecretUnreadable,
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
+			// The handler runs on the server's goroutine and a dropped connection
+			// lets the client return before the handler does, so what it records
+			// is read under the same lock.
+			var mu sync.Mutex
 			var method, path string
 			reads := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
 				method, path, reads = r.Method, r.URL.Path, reads+1
+				mu.Unlock()
 				tc.serve(w, r)
 			}))
 			t.Cleanup(srv.Close)
@@ -644,6 +651,8 @@ func TestPerSecretValueClassifiesEveryAnswer(t *testing.T) {
 
 			got, found, err := SecretManagerPerSecrets{Project: project, Service: svc}.Value(context.Background(), name)
 
+			mu.Lock()
+			defer mu.Unlock()
 			if reads != 1 {
 				t.Fatalf("the container was asked for %d times, want once", reads)
 			}

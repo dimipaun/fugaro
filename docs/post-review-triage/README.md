@@ -1,6 +1,6 @@
 # Post-review triage
 
-**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.**
+**Status as of 2026-11-10: in progress, 7/14 merged; see [docs/status.md](../status.md) for the current table.**
 
 **Spec owner:** Dimi Paun
 **Written:** 2026-11-08

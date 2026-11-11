@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "rev": 12,
   "agent_id": "orchestrator-a",
   "role": "orchestrator",
@@ -22,7 +22,26 @@
         "attempts": 2
       },
       "attempts": 1,
-      "note": "the run is in its review round"
+      "note": "the run is in its review round",
+      "escalation": {
+        "rung": "R2",
+        "entered_at": "2026-11-07T07:45:00Z",
+        "outer_attempts": 2,
+        "transitions": [
+          {
+            "to": "R0",
+            "reason": "rebase",
+            "at": "2026-11-07T07:00:00Z",
+            "head_sha": "9f2c1ab4d5e60718293a4b5c6d7e8f9012345678"
+          },
+          {
+            "from": "R0",
+            "to": "R2",
+            "reason": "attempts",
+            "at": "2026-11-07T07:45:00Z"
+          }
+        ]
+      }
     },
     {
       "id": "wi-2",

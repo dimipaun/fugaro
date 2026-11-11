@@ -701,7 +701,12 @@ func TestT7sStagesAskNothingTyped(t *testing.T) {
 // drives. Each is asserted to be found, so the lint says out loud that it is
 // allowing a read rather than having lost one.
 var sanctionedSites = map[string]string{
-	"managed_ask.go:askConfirm":    "the --ask helper, the owner's single sanctioned exemption (D1544, T1)",
+	// The read is askAtTerminal's and not askConfirm's, because `fugaro issue
+	// submit --ask` refuses in a sentence of its own (F24) and the two helpers
+	// therefore share the body rather than the sentence (T1: extended, not
+	// duplicated). Both are the flag's own read, so the exemption is still one
+	// site: the owner's single sanctioned confirmation (D1544, T1, D1720).
+	"managed_ask.go:askAtTerminal": "the --ask helper, the owner's single sanctioned exemption (D1544, T1), read for the managed confirmations and for `fugaro issue submit --ask` (D1720, F24)",
 	"valueentry.go:readValueIn":    "the value-entry helper: a value is not a confirmation and cannot be defaulted (D1540)",
 	"restore.go:readConfirmLine":   "the line read both sanctioned helpers read through: a value's line is read here, and T6 deletes restore's confirmations, not this",
 	"secrets.go:readHiddenLine":    "the hidden read of the value entry's hidden path, readValue to readHidden to here (D1540; T7 changes its door, not its hiding)",

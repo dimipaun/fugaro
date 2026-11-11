@@ -479,6 +479,56 @@ export interface ConsoleOperation {
    * because the bound every other read is held to is a fact about those reads.
    */
   readonly payloadWidth?: number
+  /**
+   * `refusedAfterLapse` is the field that makes an operation part of the
+   * **refused class** of the design's lapse state (subscriptions plan S6.2;
+   * `docs/design/lapse-read-only.md` §3.2, D436, T12): after the key's grace
+   * period this console does not launch a run and does not change a setting, and
+   * `lapseHandlers` (`src/main/licence-state.ts`) refuses exactly the rows that
+   * carry this field, before the handler -- and so before any child -- is
+   * reached.
+   *
+   * **It is a field of the row and never a list of names beside the table.** The
+   * design states the rule and its reason: a later cancel is admitted to the kept
+   * set by its own row differing from the launch's in this one field, so a gate
+   * that classified by name would refuse a cancel the day it was added. Two rows
+   * carry it today -- `run.launch` and `settings.edit`, the whole of what T12
+   * takes away -- and `assertReachableSurface` refuses the column on a row that
+   * spawns no command, because the rows that spawn nothing are the console's own
+   * answers (the design's kept set, and the key screen §5.6 keeps ungated as the
+   * way out).
+   *
+   * Every other operation is the design's kept set: every read, including the
+   * paid views, and the kill switch's state.
+   */
+  readonly refusedAfterLapse?: true
+  /**
+   * `installationArgument` names the payload argument that carries the
+   * installation this row acts on, for a row whose target is not the console's
+   * own active binding. `run.launch` is the one row with it today: its payload
+   * names the installation to launch, and `src/main/launch.ts` resolves that name
+   * against this console's records and spawns **that** installation -- handing its
+   * child that installation's key, not the binding's.
+   *
+   * **It is a column for `refusedAfterLapse`'s reason, and it is what keeps the
+   * lapse gate honest about which installation it is asking about.** The gate
+   * (`src/main/licence-state.ts`) reads the licence state of the installation an
+   * operation acts on, and the row -- not the entry point -- says where that
+   * installation is spelled: a gate that read the active binding for every row
+   * would admit a launch of a lapsed installation while the console was driving a
+   * valid one, spawn it, and hand it the lapsed installation's key. A row that
+   * acts on the active installation carries no such column, because its payload
+   * names no installation at all (`settings.edit` writes the settings document of
+   * the installation the console is driving), and `undefined` is then the honest
+   * answer to "which installation is this for".
+   *
+   * `assertReachableSurface` holds the column to a **required `installationName`
+   * argument of the row itself**, so the one failure that would be silent --
+   * pointing it at a free-text field, whose value no installation answers for,
+   * which would read as the no-key state and admit the operation -- fails closed
+   * at registration instead.
+   */
+  readonly installationArgument?: string
 }
 
 /**
@@ -508,7 +558,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Thirty-seven operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Thirty-eight operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -913,7 +963,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'source',
         kind: 'graphSource',
         required: false,
-        why: '`newGraphCmd` has this flag and its set is closed: `all` (the command’s own default, the union of the scopes that exist), `coordinator` (the stored view), and `orchestrator:<id>` / `local:<id>` for the scopes a later release adds -- both of which today answer "no orchestrator is installed in this build", which is a refusal and not an empty graph. The pattern is the CLI’s own (`graph.ParseScope`), so a value this surface admits is a value that command reads. It is optional because the command has a default of its own (`all`), so a caller that names no scope is answered rather than refused.',
+        why: '`newGraphCmd` has this flag and its set is closed: `all` (the command’s own default, the union of the scopes that exist), `coordinator` (the stored view), and `orchestrator:<id>` / `local:<id>`, which read one orchestrator’s own state node (CG4 and CG5). An id no scope of that name exists for is a refusal and not an empty graph: the database holds no node for it, and for `local:` this machine holds no cached brief either. The pattern is the CLI’s own (`graph.ParseScope`), so a value this surface admits is a value that command reads. It is optional because the command has a default of its own (`all`), so a caller that names no scope is answered rather than refused.',
       },
     ],
   },
@@ -944,7 +994,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'source',
         kind: 'graphSource',
         required: false,
-        why: 'the scope the stream is about, on `graph.read`’s own terms: `all` (the command’s default, the union of the scopes that exist), `coordinator`, or `orchestrator:<id>` / `local:<id>` for the scopes a later release adds. It is the same closed grammar the read above is held to (`GRAPH_SCOPE_RE`) and, at the source, the same membership rule: a scope no previous document of this installation listed is refused before a child exists (F21), so a renderer cannot hold a stream open on a scope that exists nowhere. It is optional because the command has a default of its own, exactly as the read’s is.',
+        why: 'the scope the stream is about, on `graph.read`’s own terms: `all` (the command’s default, the union of the scopes that exist), `coordinator`, or `orchestrator:<id>` / `local:<id>`, which read one orchestrator’s own state node (CG4 and CG5). It is the same closed grammar the read above is held to (`GRAPH_SCOPE_RE`) and, at the source, the same membership rule: a scope no previous document of this installation listed is refused before a child exists (F21), so a renderer cannot hold a stream open on a scope that exists nowhere. It is optional because the command has a default of its own, exactly as the read’s is.',
       },
       {
         key: 'visible',
@@ -1011,6 +1061,18 @@ export const CONSOLE_OPERATIONS = [
     command: 'run --task-file -',
     flags: ['--json'],
     summary: 'the console’s one write: one launch of `fugaro run` for a named installation',
+    // The lapse takes this row away and keeps every read (design §3.2 rule 1,
+    // T12): a lapsed installation is read-only, and the launch is half of what
+    // read-only means.
+    refusedAfterLapse: true,
+    // **And the installation the lapse is about is this payload's own.** The
+    // launcher resolves the name below against this console's records and spawns
+    // *that* installation (`launch.ts`), handing its child that installation's
+    // key -- so the gate has to ask about the name the renderer sent, not about
+    // the binding the console happens to be driving. `settings.edit`, the lapse's
+    // other row, carries no such column: its flow reads and writes the active
+    // installation's own settings document.
+    installationArgument: 'installation',
     // The five fields, and nothing else: no `--pr`, no `--retry`, no `--recipe`,
     // no mode, no path, no ref, no workflow, no budget escape. Every one of them
     // is on `NEVER_REACHABLE`'s argv rows below, because a closed schema is not
@@ -1205,6 +1267,11 @@ export const CONSOLE_OPERATIONS = [
     command: 'settings',
     flags: [],
     summary: 'the second write: one setting set or unset, at the layer the read named, after the operator confirms it',
+    // The lapse's other row: T12 takes the launch and the configuration change
+    // away (design §3.2 rule 1). `settings.read` -- the same command, as a read
+    // -- is not this row and keeps answering, which is the design's line between
+    // reading a setting and writing one.
+    refusedAfterLapse: true,
     args: [
       {
         key: 'op',
@@ -1651,6 +1718,36 @@ export const CONSOLE_OPERATIONS = [
         why: 'the pasted key — the one argument on this surface whose value is a credential, and the only one the console never answers back. It is bounded before anything decodes it and passed nowhere but the verifier; what it can reach is the child’s environment and never an argv.',
       },
     ],
+  },
+  // The Project tab's seat estimate (subscriptions plan S4.2; the read behind
+  // it is `fugaro seats --json`, S4.1, and the rulings are D439, D433 and
+  // T14). It is the console's **thirty-eighth** operation, and it is a read of
+  // core data and nothing else: the command reads this machine's own launcher
+  // and operator lists and the requesters of the last 90 days of runs, sends
+  // nothing, stores nothing and consults no key, licence or server.
+  //
+  // **It is not on a reduced view.** The reduced mode withholds the screens
+  // that read money an operator's runs spent (`REDUCED_VIEW_OPERATIONS`), and
+  // this document carries no money at all: a seat is a contract pricing rule of
+  // the Subscription Terms and not a figure of this installation's spend, and
+  // the estimate the CLI publishes is a count of people. It is not gated by a
+  // lapse either, and for the same reason a read is never gated: only the two
+  // writes that walk an installation out of a lapse carry
+  // `refusedAfterLapse` (`docs/design/lapse-read-only.md`).
+  //
+  // **No argument at all**, the strongest form of this rule's closed schema:
+  // the command takes no positional word, `--json` is a fixed word of the spawn
+  // row and the cloud group's `--project`/`--config` are the installation's --
+  // so there is no field a renderer could fill. The window is the ruling's own
+  // 90 days and no flag moves it: an estimate over a window the caller chose
+  // would be a different count wearing the same name.
+  {
+    name: 'seats.read',
+    method: 'readSeats',
+    command: 'seats',
+    flags: ['--json'],
+    summary: 'the advisory estimate of who launches jobs on this installation, and the identities the estimate cannot count',
+    args: [],
   },
 ] as const satisfies readonly ConsoleOperation[]
 
@@ -3567,7 +3664,9 @@ function boundReason(message: string): string {
 /**
  * assertReachableSurface throws unless every entry of a table is one the console
  * may drive: its command and its flags are clear of `NEVER_REACHABLE`, the flags
- * it fixes are the surface's own two, and no two entries share a name.
+ * it fixes are the surface's own two, the lapse's refused class holds only rows
+ * that spawn a command and names its target installation only in a required
+ * `installationName` argument of its own, and no two entries share a name.
  *
  * It takes the table as an argument so that the guard is a pure function of one
  * and the test can hand it the mutation directly -- a table with `budget kill`
@@ -3587,6 +3686,35 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
     for (const flag of operation.flags) {
       if (!ALLOWED_OPERATION_FLAGS.includes(flag)) {
         throw new Error(`${operation.name} fixes ${flag}, which is not a flag the surface may fix`)
+      }
+    }
+    // The lapse's refused class is the two writes, and the design's kept set
+    // includes every answer the console gives out of its own process: a row with
+    // no command spawns nothing, so refusing it would take away a read, the key
+    // screen (the way out, §5.6), or the console's own surface -- and never a
+    // capability the licence granted. A later task that wants to refuse one of
+    // these has to come back here and say why, which is the point.
+    if (operation.refusedAfterLapse === true && operation.command === null) {
+      throw new Error(
+        `${operation.name} is refused after a lapse and spawns no command: the operations the lapse takes away are the ones that spawn a command, and the console's own answers stay`,
+      )
+    }
+    // The lapse gate asks about the installation a row's own payload names
+    // (`installationArgument`), so the column has to name an argument of this
+    // same row that really is one. Anything else fails here rather than at the
+    // gate: a column pointing at a free-text field would ask the licence store
+    // about a string no installation answers for -- the no-key state, which
+    // refuses nothing, so the operation would be admitted while the installation
+    // it acts on had lapsed -- and a column naming no argument of the row at all
+    // would hand the gate `undefined` and silently ask about the active binding
+    // instead. A later row that wants to point this at something else has to
+    // come back here and say why, which is the point.
+    if (operation.installationArgument !== undefined) {
+      const named = operation.args.find((argument) => argument.key === operation.installationArgument)
+      if (named === undefined || named.required !== true || named.kind !== 'installationName') {
+        throw new Error(
+          `${operation.name} names the installation it acts on in ${JSON.stringify(operation.installationArgument)}, which is not a required \`installationName\` argument of this row: the lapse gate reads the target installation out of the row's own payload, and an argument that is not one would have it ask about the wrong installation`,
+        )
       }
     }
     if (names.has(operation.name)) {

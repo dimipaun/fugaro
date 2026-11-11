@@ -615,3 +615,27 @@ func TestGraphStubRefusesWhateverTheFlags(t *testing.T) {
 	assertStubSaysWhy(t, "graph", "graph", "--watch", "--json")
 	assertStubSaysWhy(t, "graph", "graph", "--help")
 }
+
+// TestABUntaggedStubExitsWithCapabilityLine: `fugaro ab` is ee/'s command
+// (D570, T1), so a core build carries no ab command at all — and the name is
+// still an answer the CLI gives, the stub D522 fixes, rather than cobra's
+// "unknown command". A build without the A/B code must say it does not include
+// the command rather than claim the name never existed, which is what a source
+// builder and the console read (G3). The other half is ee/register's
+// TestABCommandRegistered: the tree that carries the code answers with the
+// command itself.
+func TestABUntaggedStubExitsWithCapabilityLine(t *testing.T) {
+	extendState(t)
+	if slices.Contains(coreRootPaths(), "fugaro ab") {
+		t.Fatal("the released tree holds an ab command: the stub is not installed for a name a core command owns")
+	}
+	if got := commandPaths(NewRootCmd()); !slices.Contains(got, "fugaro ab") {
+		t.Fatalf("a build without the ee tag answers no ab command:\n%v", got)
+	}
+	assertStubSaysWhy(t, "ab", "ab")
+	// The stub parses nothing, so the flags the command has reach the same
+	// message rather than cobra's "unknown flag", which would be a lie about a
+	// command the released binary carries.
+	assertStubSaysWhy(t, "ab", "ab", "--json")
+	assertStubSaysWhy(t, "ab", "ab", "--since", "7d", "--repo", "acme/app")
+}

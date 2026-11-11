@@ -634,6 +634,100 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 	}
 }
 
+// The outer-loop-escalation plan (2026-11-10) amends this folder rather than
+// replacing it: its ladder's per-mode table replaces D1244's single age key,
+// which was never built; D2036 amends D1246's first reaction; D2041 amends
+// D1245's readiness condition (a draft the daemon may ready); and D2042 amends
+// D1226 (an item's approval covers the ladder's runs). Each row has to stay
+// readable as an amendment — the ruling it amends is kept, and the pointer
+// names who changed it — and the README must stop naming the retired key as
+// the threshold a run fires on.
+func TestDocsStatelessOrchestratorLadderAmendmentsAreRecorded(t *testing.T) {
+	rec := soRead(t, soReconciled)
+	plan := soRead(t, soPlan)
+	readme := soRead(t, soReadme)
+	// The amendments are that plan's answers of 2026-11-10, not settled
+	// rulings: E0 of that plan was gated on the owner confirming its open items
+	// T1, T3 and T4, and this task may only record what the plan states. So each
+	// row says which confirmation it carries, and the switch's default is
+	// marked as the owner's to rule rather than as a decided default.
+	for _, tc := range []struct{ id, want string }{
+		{"D1244", "replaced by D2032 of `docs/outer-loop-escalation`"},
+		{"D1244", "`orchestrator.triage_after` was never built"},
+		{"D1244", "that plan's own open item **T1**"},
+		{"D1245", "D2041 of `docs/outer-loop-escalation`"},
+		{"D1245", "`escalation.ready_drafts`"},
+		{"D1245", "The switch's default is not yet ruled"},
+		{"D1245", "`D2046`"},
+		{"D1246", "D2036 of `docs/outer-loop-escalation`"},
+		{"D1246", "the same **T1** confirmation"},
+		{"D1226", "D2042 of `docs/outer-loop-escalation`"},
+		{"D1226", "that plan's own open item **T4**"},
+	} {
+		row := soRow(rec, tc.id)
+		if row == "" {
+			t.Fatalf("%s: %s has no decision row", soReconciled, tc.id)
+		}
+		if !strings.Contains(row, tc.want) {
+			t.Errorf("%s: the %s row does not record the amendment %q", soReconciled, tc.id, tc.want)
+		}
+	}
+	if !strings.Contains(plan, "Amended by `docs/outer-loop-escalation`") {
+		t.Errorf("%s: O14 is not re-scoped to read the ladder", soPlan)
+	}
+	// The re-scope has to reach the merge call as well as the threshold: that
+	// plan's E8 owns MarkReady, Merge and Checks, so an O14 that still adds its
+	// own Merge reads as a second merge path with none of E8's guards (the
+	// expected head SHA, no bypass flag, E16's mint).
+	for _, want := range []string{
+		"**Nor does this task own the merge call:**",
+		"this task's, per the note above**)",
+		"**that plan's E8 adds the call**",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s: O14 is not reconciled with E8 owning the merge call (%q)", soPlan, want)
+		}
+	}
+	// The non-goal this task deletes from docs/design/v1.md was quoted verbatim
+	// as the tree's current rule in four pages outside this folder, none of them
+	// in E0's file list: the quote is historical now, so each site carries the
+	// amendment beside it rather than reading as the live rule.
+	for _, f := range []string{
+		"docs/central-orchestrator/reconciliation.md",
+		"docs/central-orchestrator/implementation-plan.md",
+		"docs/central-orchestrator/README.md",
+		"docs/forge-authorship-images/reconciliation.md",
+	} {
+		if !strings.Contains(soRead(t, f), "No merge outside the orchestrator's gated rule") {
+			t.Errorf("%s: still quotes the deleted non-goal as the tree's rule, with no amendment", f)
+		}
+	}
+	// The amendment is restated in three places that sit far from the row it
+	// changes — the plan's decisions-summary row and its section 6 owner-answers
+	// summary, and the reconciliation's "BF2's long-run triage rule" paragraph —
+	// and each restatement needs its own pointer: a reader who lands on one of
+	// them instead of the row otherwise takes the retired key for the live
+	// threshold. The O14 note's scope ends with the task's own bullets, so it
+	// cannot cover the two plan summaries above and below it.
+	if !strings.Contains(plan, "**replaced by D2032 of `docs/outer-loop-escalation`, and the key was never built: O14's note below says how**") {
+		t.Errorf("%s: the D1244-D1247 decisions-summary row still presents the retired key as the threshold", soPlan)
+	}
+	if !strings.Contains(plan, "and the key was never built: O14's note above says how**") {
+		t.Errorf("%s: the BF2 owner-answers summary still presents the retired key as the threshold", soPlan)
+	}
+	if !strings.Contains(rec, "`docs/outer-loop-escalation` (D2032), and `orchestrator.triage_after` was never built") {
+		t.Errorf("%s: the BF2 summary paragraph still presents the retired key as the threshold", soReconciled)
+	}
+	// The shared-files row is the fourth restatement: it says what O14 adds to
+	// the file it owns, and the retired key is no longer that.
+	if !strings.Contains(plan, "O14 adds the **local-only** `orchestrator.triage_after` (**replaced by D2032 of `docs/outer-loop-escalation`, and never built**)") {
+		t.Errorf("%s: the shared-files table still records the retired key as what O14 adds", soPlan)
+	}
+	if strings.Contains(readme, "triage_after") {
+		t.Errorf("%s: the README still names the retired key as the threshold a run fires on", soReadme)
+	}
+}
+
 // T1 was ruled: the scripts are kept 14 days and the rollback is manual, with
 // no command built for it.
 func TestDocsStatelessOrchestratorRollbackIsManual(t *testing.T) {

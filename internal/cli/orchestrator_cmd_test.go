@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -346,12 +347,17 @@ func TestStateBriefFencesAndCleansStoredText(t *testing.T) {
 
 // TestStateBriefOfflineReadsOnlyTheCache: D1243's print reads the file the
 // daemon writes and reaches no node at all — proved by a database client whose
-// every call fails, which the run never makes.
+// every call fails, which the run never makes. The file is placed through the
+// writer's own path, so a reader that drifted from the daemon's cache directory
+// would look for the brief somewhere the daemon never writes it.
 func TestStateBriefOfflineReadsOnlyTheCache(t *testing.T) {
 	f := newOrchestratorFixture(t)
 	seedOrchestratorState(t, f, workItemUpsert("web-fix", "fix the flaky test"))
-	cache := filepath.Join(t.TempDir(), "fugaro", "orchestrator", orchestratorTestID+".json")
-	t.Setenv("XDG_CACHE_HOME", filepath.Dir(filepath.Dir(filepath.Dir(cache))))
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	cache, err := orchestrator.BriefCachePath(os.Getenv, runtime.GOOS, orchestratorTestID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Dir(cache), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -491,8 +497,8 @@ func TestEventsJSONMatchesTheSchema(t *testing.T) {
 }
 
 // TestCommandIsRegisteredOnce: the tree holds one orchestrator command, with
-// the three subcommands D1223 names and O8's daemon beside them, and nothing
-// else that answers to those names.
+// the three subcommands D1223 names, O8's daemon and CG4's listing beside
+// them, and nothing else that answers to those names.
 func TestCommandIsRegisteredOnce(t *testing.T) {
 	root := NewRootCmd()
 	var found []*cobra.Command
@@ -509,10 +515,11 @@ func TestCommandIsRegisteredOnce(t *testing.T) {
 		names = append(names, sub.Name())
 	}
 	slices.Sort(names)
-	// O5's three readers, O8's daemon, and O9's unit: install, uninstall and
-	// status are that command family's own three, and nothing else joins it.
-	if want := []string{"events", "install", "patch", "run", "state", "status", "uninstall"}; !slices.Equal(names, want) {
-		t.Errorf("orchestrator's subcommands are %v, and O5's three readers with O8's daemon and O9's unit are %v", names, want)
+	// O5's three readers, O8's daemon, CG4's listing and O9's unit: install,
+	// uninstall and status are that command family's own three, and nothing
+	// else joins it.
+	if want := []string{"events", "install", "ls", "patch", "run", "state", "status", "uninstall"}; !slices.Equal(names, want) {
+		t.Errorf("orchestrator's subcommands are %v, and O5's three readers, O8's daemon, CG4's listing and O9's unit are %v", names, want)
 	}
 	for _, sub := range found[0].Commands() {
 		for _, banned := range []string{"spawn", "retry"} {

@@ -103,6 +103,52 @@ func TestRunEscalatesToLevelThreeOnAMatchingDiff(t *testing.T) {
 	}
 }
 
+// TestRunEscalatesOnTheRepositorysOwnRow: the runner reads the one resolution
+// (SC9, D1506, D1511), so a row the repository's own file wrote escalates the
+// run exactly as a floor row does. ownPath is on no floor row, so the only
+// list that can match it is the one the repository's block is part of.
+func TestRunEscalatesOnTheRepositorysOwnRow(t *testing.T) {
+	const ownPath = "internal/payments/charge.go"
+	r, repo := securityRun(t, rigor.Pro)
+	r.cfg.Security = &config.Security{Patterns: []sensitivity.Pattern{
+		{Name: "payments", Match: "internal/payments/**", Category: sensitivity.Credentials},
+	}}
+	change(t, repo, map[string]string{ownPath: "package payments\n"}, "work on the payments tree")
+
+	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
+
+	if r.rec.Security == nil || r.rec.Security.Refused {
+		t.Fatalf("a diff that touches the repository's own row (%s) recorded no escalation: %+v", ownPath, r.rec.Security)
+	}
+	if r.rec.Security.Pattern != "payments" {
+		t.Errorf("the record names %q, want the repository's own row", r.rec.Security.Pattern)
+	}
+	if !levelOn(r.levels, policy.LevelL3) {
+		t.Fatalf("level 3 is off after a diff that touches the repository's own row %s: %+v", ownPath, r.levels)
+	}
+}
+
+// TestRunEscalatesOnTheProjectLayersRow: the same, for the layer's half of the
+// resolution (D1501). A path no floor row matches escalates when the project
+// layer the run's task carried writes a row for it.
+func TestRunEscalatesOnTheProjectLayersRow(t *testing.T) {
+	const layerPath = "internal/settlements/batch.go"
+	r, repo := securityRun(t, rigor.Pro)
+	r.cfg.Layer = &config.ProjectLayer{Security: &config.LayerSecurity{Patterns: []sensitivity.Pattern{
+		{Name: "settlements", Match: "internal/settlements/**", Category: sensitivity.Credentials},
+	}}}
+	change(t, repo, map[string]string{layerPath: "package settlements\n"}, "work on the settlements tree")
+
+	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
+
+	if r.rec.Security == nil || r.rec.Security.Refused {
+		t.Fatalf("a diff that touches the project layer's own row (%s) recorded no escalation: %+v", layerPath, r.rec.Security)
+	}
+	if r.rec.Security.Pattern != "settlements" {
+		t.Errorf("the record names %q, want the project layer's row", r.rec.Security.Pattern)
+	}
+}
+
 // TestRunEscalationLeavesTheRigorModeAlone: the escalation is a level, not a
 // mode (D1508). A mode raise would rewrite the round counts and the findings
 // policy for a change whose only new fact is its paths.

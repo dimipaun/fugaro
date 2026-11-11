@@ -120,7 +120,7 @@ func newOrchestratorCmd() *cobra.Command {
 			"root — the unit is one file under your own home and the service manager\n" +
 			"is asked at your own login level.",
 	}
-	cmd.AddCommand(newOrchestratorStateCmd(), newOrchestratorEventsCmd(), newOrchestratorPatchCmd(),
+	cmd.AddCommand(newOrchestratorLsCmd(), newOrchestratorStateCmd(), newOrchestratorEventsCmd(), newOrchestratorPatchCmd(),
 		newOrchestratorRunCmd(), newOrchestratorInstallCmd(), newOrchestratorUninstallCmd(), newOrchestratorStatusCmd())
 	return cmd
 }

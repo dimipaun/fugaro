@@ -2825,3 +2825,79 @@ func TestRulesStageNotCoveredNoteWithoutTheFlag(t *testing.T) {
 		t.Errorf("a verified Firebase project is not covered by the run: %q", got)
 	}
 }
+
+// The installation's own `fugaro update`/`setup` binds the workspace's read of
+// this project's database to the account the LOCAL config's pin names (W7,
+// docs/workspaces/spec.md §5), and to nothing else: the member writes down
+// which account may read its ledger, and the Firebase root's tfvars carry it
+// so the module's binding is the member's own statement rather than an
+// inference about another project's installation. A config that pins no
+// workspace passes no account, and the module then creates neither the role
+// nor the binding — the state of every installation that belongs to none.
+func TestSetupBindsTheWorkspaceReadToThePinnedAccount(t *testing.T) {
+	r := newFBRig(t)
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// wsPin is the member's own half as update_workspace_test.go writes it
+	// (W1): the membership key and the pin beside it, this machine's config
+	// naming the workspace and the account it trusts to read its ledger.
+	if err := os.WriteFile(r.cfg, append(b, "\n"+wsPin...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got, want := r.fbVars(t)["workspace_service_account"], "marker-workspace@project-ws.iam.gserviceaccount.com"; got != want {
+		t.Errorf("the Firebase root's workspace_service_account = %v, want the pin's %q: the account the member wrote down is the one the module binds", got, want)
+	}
+	// And the pin survives the apply: the installation's own config is not
+	// rewritten to drop what names the workspace.
+	if got := r.localConfig(t).WorkspacePin.ServiceAccount; got != "marker-workspace@project-ws.iam.gserviceaccount.com" {
+		t.Errorf("after setup the pin's account = %q, want it kept", got)
+	}
+
+	// A member of no workspace passes "" — and the module's count then creates
+	// nothing, so the key is present and empty rather than absent.
+	plain := newFBRig(t)
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := plain.fbVars(t)["workspace_service_account"]; got != "" {
+		t.Errorf("an installation in no workspace passes %v for workspace_service_account, want \"\"", got)
+	}
+}
+
+// And the printed variables carry it too: --print-vars is what a person reads
+// to see what their installation holds, so a member whose config names a
+// workspace must see the account the Firebase root binds. The pin is in the
+// local config, so printing it costs no cloud call — the same carry the
+// credentials service's own entry gets, for the same reason.
+func TestTheFirebasePrintVarsCarryTheWorkspacePin(t *testing.T) {
+	r := newFBRig(t)
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, append(b, "\n"+wsPin...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--print-vars")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var both struct {
+		Firebase map[string]any `json:"firebase"`
+	}
+	if err := json.Unmarshal([]byte(out), &both); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got, want := both.Firebase["workspace_service_account"], "marker-workspace@project-ws.iam.gserviceaccount.com"; got != want {
+		t.Errorf("--print-vars printed workspace_service_account = %v, want the pin's %q: a document that dropped it disagrees with the apply", got, want)
+	}
+	if len(r.calls(t)) != 0 {
+		t.Errorf("--print-vars made calls: terraform %q", r.calls(t))
+	}
+}

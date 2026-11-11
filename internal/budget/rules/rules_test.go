@@ -1690,12 +1690,17 @@ func TestByTierCountersAreValidatedLikeSpent(t *testing.T) {
 // naming it in the template (or the reverse: removing a child the struct still
 // writes).
 func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
-	// Every field set, so an omitempty one is marshalled too.
+	// Every field set, so an omitempty one is marshalled too -- the two rigor
+	// children of the rigor-modes plan's T1.7 among them, which is the only
+	// reason this test sees them: leave them empty and omitempty drops them
+	// from the map, so the template could lose its "mode" or "from" child and
+	// only TestRulesGolden would notice.
 	entry := budget.AgentEntry{
 		Repo: "aurora/web", Workflow: "implement", Title: "t", Stage: "code", Round: 1, Verify: "go",
 		Coder: "m", Reviewer: "m", Recipe: "r", Auth: "cascade", PRURL: "https://example.invalid/1",
 		Action: "tool Bash", Tokens: 1, StartedAt: 1, StageStartedAt: 1, StageDeadline: 1, UpdatedAt: 1,
 		Spent: 1, Halted: "budget", Credential: "a1", WaitingUntil: 2, RequestedBy: "alice@example.invalid",
+		Mode: "critical", From: "area",
 	}
 	b, err := json.Marshal(entry)
 	if err != nil {
@@ -1997,8 +2002,14 @@ func isNewCredsPath(p string) bool {
 			return true
 		}
 	}
+	// `mode` and `from` are the same shape of addition one generation later
+	// (rigor-modes plan T1.7, F40 of its reconciliation): the mode a live run
+	// resolved and the layer that decided it, which the runner writes into its
+	// own registry entry from its record so `fugaro watch` can show them. Both
+	// are equalities, for the reason above.
 	entry := "agents/" + slugForPath + "/$run/"
-	return p == entry+"credential" || p == entry+"waiting_until"
+	return p == entry+"credential" || p == entry+"waiting_until" ||
+		p == entry+"mode" || p == entry+"from"
 }
 
 // TestRulesVersionUnchanged: the generations an installation compares, asserted

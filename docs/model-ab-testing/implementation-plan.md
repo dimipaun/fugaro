@@ -47,7 +47,7 @@ blind judge run. No code ever changes a default.
 | A failed, refused or skipped challenger never fails or delays the champion | A3.3 `TestChallengerFailureNeverFailsChampion`; A3.0 `TestPairPrecheckRefusedLaunchesChampionAloneUnmarked`, `TestPlannerErrorNeverFailsLaunch` |
 | No sample without a pre-check, a dollar cap and D573's margin | A3.3 `TestNoPrecheckNoSample`, `TestUncappedNoSample`, `TestMarginRequired`; A3.0 `TestMarginNeedsFiveCaps` |
 | No challenger reaches a provider the repository could not already use, at launch or from a replayed task | A3.2 `TestAdmitRefusesUnroutedChallenger`, `TestAdmitRefusesUnpricedChallenger`; A2.1 `TestShadowChallengerPolicyRechecked` |
-| Both arms differ only in the coder model (D555) and start at one commit (D571) | A2.1 `TestShadowChallengerCoderOnly`; A3.3 `TestBothArmsSameCommit`; A4.1 `TestPairInvalidWhenStartSHADiffers` |
+| Both arms differ only in the coder model (D555) and start at one commit (D571) — **a coder pair, that is: D555 is amended for reviewer slots by [../review-levels-ab-jobmax/reconciliation.md](../review-levels-ab-jobmax/reconciliation.md) D728 (2026-10-30), and a pair whose `ab.slot` is empty or `coder` still holds every reviewer, recipe, mode, tier and cap fixed.** A reviewer-slot pair (B1.1, built there) changes the reviewed model and nothing else, and replays the champion's recorded patch (B1.2) rather than running the task again | A2.1 `TestShadowChallengerCoderOnly`; A3.3 `TestBothArmsSameCommit`; A4.1 `TestPairInvalidWhenStartSHADiffers` |
 | A retried arm never duplicates a pair, and a chosen `--run-id` is never sampled | A3.0 `TestRetryRefusesABTask`; A3.1 `TestEligibleExcludesChosenRunID` |
 | An untagged build that sees `ab:` keys writes only the D522 capability line, from the runner | A2.1 `TestUntaggedRunnerABKeysCapabilityLine` |
 | No figure from fewer than 20 decisive pairs; same records give the same report | A4.2 `TestBelowMinimumNoConclusion`, `TestReportDeterministic` |
@@ -77,7 +77,12 @@ injection from a challenger's diff.
   Challenger (model ID), ChallengerSource ("owner")}` on `task.Spec.AB` and the same block on
   `runstore.Record.AB` plus `PatchObject` and `PatchTruncated`. `Validate` refuses `arm: challenger`
   without `publish: none` or without `challenger`, `publish: none` on a champion, and an `ab` block
-  together with `overrides.model` (the challenger never travels as an override, D555).
+  together with `overrides.model` (the challenger never travels as an override, D555). Two more keys
+  join the block before A3.3, in [../review-levels-ab-jobmax/implementation-plan.md](../review-levels-ab-jobmax/implementation-plan.md)
+  **B1.1** (D728): `Slot` ∈ {`coder`, `l1`, `l2`, `l3`}, empty meaning `coder` so a record this task
+  writes still reads, and `ChampionRun`, the champion's run ID, required on a reviewer-slot challenger
+  and refused anywhere else. A coder pair holds every reviewer fixed (D555 as amended); a pair at a
+  review slot holds the coder model fixed and differs in the reviewed one.
 - **Schema change:** additive optional `ab` objects with `additionalProperties: false`.
 - **Tests:** `TestABRoundTrip`, `TestABChallengerRequiresPublishNone`, `TestABChallengerRequiresModel`,
   `TestABChampionRefusesPublishNone`, `TestABRefusesOverrideModel`, `TestRecordABRoundTrip`,
@@ -209,13 +214,28 @@ injection from a challenger's diff.
 ### A3.2 Challenger admission
 
 - **Files:** `ee/ab/admit.go` (new), `ee/ab/admit_test.go` (new).
-- **Interfaces:** `Admit(cfg config.Config, layer config.AB, repo string, providers, prices) (model string, ok bool, why string)`:
-  the first challenger of `ab.challengers` that differs from the champion's coder and passes
-  `config.CheckProviderPolicy`, the allow-list and the price table for this repository; `why` is a
-  closed reason the skip line prints (a repository's tightened `allowed_models` shows as one).
-- **Tests:** `TestAdmitRefusesUnroutedChallenger` (outside `allow_data_to`), `TestAdmitRefusesUnpricedChallenger`,
-  `TestAdmitRefusesDisallowedModel`, `TestAdmitSkipsChampionModel`, `TestAdmitNeedsEnforceForProvider`,
-  `TestAdmitSkipsBitbucket`.
+- **Interfaces:** `Admit(cfg config.Config, layer config.AB, repo string, eff policy.Effective,
+  providers map[string]config.ModelProvider, prices *pricing.Table, serviceHeldKey bool) (model string, ok bool, why string)`:
+  the first challenger of `ab.challengers` that differs from the champion's coder and passes, for this
+  repository, every check a run's own model passes at bootstrap: the run's allow-list (`eff.Allows`, the
+  merge of every layer that writes one, so a repository can only tighten the project's), a route that
+  claims it and whose `allow_data_to` names the repository (`config.CheckProviderPolicy`, the plain ID
+  and the price row included), the pin rule a run under a budget applies to its coder (an explicit
+  model ID, never an alias), the credential that may carry a provider's key (`config.CheckProviderAuth`:
+  only `api-key`) and the gateway a provider's call needs (`config.CheckProviderGateway` under
+  `eff.Mode`, which must be `enforce`). Two facts about the repository refuse every challenger at once,
+  whatever it names: a Bitbucket repository, and a GitHub one whose App key the credentials service
+  holds, since neither can mint the read-only installation token a challenger's clone needs (A2.1).
+  `eff` and `serviceHeldKey` are not in `cfg` because a repository's file is one layer of the run's
+  merge and the service-held key is the launch's own fact. `why` is a closed reason the skip line prints
+  — `no-challenger`, `bitbucket`, `service-held-key`, `champion-model`, `not-allowed`, `unrouted`,
+  `variant`, `unpriced`, `needs-api-key`, `needs-enforce` — and it is the first refusal of the list, the
+  candidate the owner reads first (a repository's tightened `allowed_models` shows as one).
+- **Tests:** `TestAdmitTakesTheFirstChallengerThatPasses`, `TestAdmitReadsTheRunsMergedPolicy`,
+  `TestAdmitRefusesAlias`, `TestAdmitRefusesUnroutedChallenger` (outside `allow_data_to`),
+  `TestAdmitRefusesUnpricedChallenger`, `TestAdmitRefusesDisallowedModel`, `TestAdmitSkipsChampionModel`,
+  `TestAdmitNeedsEnforceForProvider`, `TestAdmitNeedsAPIKeyForProvider`, `TestAdmitSkipsBitbucket`,
+  `TestAdmitSkipsServiceHeldKey`, `TestAdmitNeedsAChallenger`, `TestAdmitAgreesWithTheProviderPolicy`.
 - **Command:** `go test ./ee/ab/ -run TestAdmit -count=1`
 - **Depends on:** A1.2.
 - **Commit:** `ee/ab: a challenger passes the same egress checks as any run`
@@ -226,8 +246,9 @@ injection from a challenger's diff.
 
 - **Files:** `ee/ab/launch.go` (new), `ee/ab/launch_test.go` (new), `ee/register/ab_launch.go` (new; one
   `RegisterLaunchPlanner` call).
-- **Interfaces:** consumes A3.0, A3.1, A3.2, A1.1. As the planner: when sampled, eligible, admitted,
-  under the daily count, the run has a dollar cap and the launch runs its pre-check, it returns the
+- **Interfaces:** consumes A3.0, A3.1, A3.2, A1.1. As the planner: when sampled, eligible, admitted
+  (A3.2's `Admit`, handed the run's own merged policy and whether the credentials service holds this
+  installation's GitHub App key), under the daily count, the run has a dollar cap and the launch runs its pre-check, it returns the
   pair (A3.0 then applies `PrecheckPair` with D573's margin): the challenger is same task, workflow, recipe, mode,
   tier and `--path` set, at the commit the champion is launched at (U5), `ab` blocks on both, one batch
   label `ab-<pair id>`. Otherwise no pair and one skip line with a closed reason (stderr and `--json`). A job image older than the
@@ -238,7 +259,11 @@ injection from a challenger's diff.
   `TestDailyCountStopsSampling`.
 - **Command:** `go test ./ee/ab/ -run 'TestSampledLaunch|TestSkipReason|TestNoPrecheck|TestUncapped|TestMargin|TestChallengerFailure|TestOldImage|TestBothArms|TestDailyCount' -count=1`
 - **Depends on:** A1.1, A2.1 (no launcher sends a challenger before the runner honours it), A3.0,
-  A3.1, A3.2, ee-reorg E1.5 (`ee/register`).
+  A3.1, A3.2, ee-reorg E1.5 (`ee/register`), and — for a pair that names an `ab.slot` —
+  [../review-levels-ab-jobmax/implementation-plan.md](../review-levels-ab-jobmax/implementation-plan.md)
+  **B1.1** (the two keys, `slotSince`) with **B1.2** (the reviewer replay the slot means: D728 has a
+  review-slot pair review the champion's recorded patch, so this launcher may not start one before the
+  runner replays it). A coder pair is unaffected and still depends only on what is listed first.
 - **Commit:** `ee/ab: a sampled launch starts a shadow challenger`
 - **Red step:** `TestSampledLaunchStartsTwoRuns` sees one launch.
 - **Reviewer tier:** opus + mandatory independent review (money path and egress). **OWNER-RUN:** no.
@@ -432,6 +457,11 @@ in the digest) is unaffected. Reopen only on a new owner ruling.
 A5.2; A2.1 → A3.3, A5.1; A3.0 → A3.3, A5.2; A3.1, A3.2 → A3.3; A3.2 → A5.2; A3.3 → A2.2, A6.1, A6.2;
 A4.1, A4.2 → A4.3; A4.1 → A5.2, A5.4; A4.3 → A5.4, A6.1; A5.1 → A5.2; A5.2 → A5.3, A5.4, A6.1;
 A2.2 → A5.3; A5.3 → A6.2. External (ee-reorg): E1.1 → A3.0; E1.5 → A3.3, A5.2; E2.2 → A4.3; E1.7 → A6.1.
+External ([../review-levels-ab-jobmax/implementation-plan.md](../review-levels-ab-jobmax/implementation-plan.md),
+D728), for a pair that names a slot — a coder pair keeps only the edges above: **B1.1 → A3.3** (the
+pair's `slot` and `champion_run`, and the `slotSince` gate), **B1.2 → A3.3** (the reviewer replay a
+slot means), and **A3.3, B1.1 → B1.4** (a reviewer arm launches once the champion's patch exists,
+never at the champion's own moment).
 
 | Level | Tasks (run concurrently) |
 | --- | --- |
