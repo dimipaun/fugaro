@@ -30,24 +30,41 @@ import (
 // `fugaro settings get review_floor` and the floor line `fugaro rigor set`
 // prints, which is the design's own separation of the two nouns.
 //
-// The confirmation is the whole of what this file is written around, and it is
-// the one place in this plan where `--yes` is refused by design (D846, D1170):
-// taking a level away — by lowering a mode's floor or by removing the mode's
-// entry — is a run reviewing less, so it goes through `confirmTypedStrict`,
-// where nothing stands in for the project's name typed at a terminal. A floor's
-// removal is not a plan a document can show — what it deletes is a floor — and
-// the flag a person types in advance, in a script, possibly from an agent, is
-// exactly what the refusal exists for. Adding a mode the file does not carry,
-// or a level a mode's floor does not carry, asks nothing: it can only require
-// more review, never less.
+// A removal and a lowering are the step D1170 calls this plan's SEC one: taking
+// a level away — by lowering a mode's floor or by removing the mode's entry — is
+// a whole project reviewing less, so the edit is Typed, and `applySettingsEdit`
+// refuses a Typed edit in a coding agent's session whatever `--yes` says
+// (D1552, D1555; D1026: a Typed edit is never gate-admitted). Adding a mode the
+// file does not carry, or a level a mode's floor does not carry, is the ordinary
+// write: it can only require more review, never less.
 //
-// The agent-session fence comes FIRST, before the document is read and before
-// the confirmation (D1026): a coding agent's session is refused both
-// directions outright, whatever `--yes` says, so the typed name is never asked
-// of a session that cannot answer it, and a managed project's gate never sees
-// the step at all. That is why this command reads no gate (the plan's §5:
-// G7 needs neither M0 nor M6) — the refusal is this file's own, and it is
-// stronger than any admission.
+// The typed project name D1170 recommends is NOT built, and this paragraph is
+// the reconciliation the two designs needed (the plan's G7 against the owner's
+// no-prompt policy). The plan's section and D1170's recommendation put a removal
+// and a lowering through `confirmTypedStrict`, with no flag standing in for the
+// name; the owner's policy answers the other way — docs/no-prompt-policy, rule 1:
+// "no command may wait for interactive input: no y/n questions, no typing the
+// project name", and "any confirmation prompt in Fugaro is a bug" — and the tree
+// already implements that answer for every other Typed settings write: the
+// `else if e.Typed` branch of `applySettingsEdit` prints what a widening widens
+// and what it writes and asks nothing, and settingsEdit.Yes, the hand-off
+// update_workspace.go gives a staged write and the fence budget.go puts where
+// the confirmation used to be all say in their own words that the typed name is
+// gone with D1540. A question a session can answer is not a fence, and the
+// harness that runs every leaf of this tree with its stdin closed
+// (noprompt_harness_test.go) is the policy's own check. What D1170's step keeps
+// here is its whole security half: the Typed class, the refusal in a session,
+// and the command that refusal prints for the person to run themselves.
+//
+// The agent-session fence comes FIRST, before the document is read (D1026): a
+// coding agent's session is refused both directions outright, whatever `--yes`
+// says, and it is shown neither the file's diff nor the edit's sentence — the
+// command to run at the owner's own terminal is the whole of what it gets. That
+// is why this command reads no gate (the plan's §5: G7 needs neither M0 nor M6):
+// the refusal is this file's own, and it is stronger than any admission. It is
+// the same fence `applySettingsEdit` would make (the write is Typed either way),
+// and it is made here because the ORDER is the point — a session reads nothing
+// of the document.
 //
 // The edit is the shared editor's, never a splice (D847): a mode's entry is
 // `yamledit`'s AddListItem and RemoveKey, and the removal of a mode's floor is
@@ -73,10 +90,11 @@ const rigorFloorKey = "review_floor"
 
 // rigorFloorOptions are the two subcommands' flags. There is no --layer: the
 // floor is the owner's own key and lives in the local project config and
-// nowhere else, so there is nothing to choose. --yes is registered and stands
-// in for nothing: the flag is what D1170 refuses, and a command that did not
-// take it would refuse the run at the parser with a sentence about flags rather
-// than with the typed confirmation the step is.
+// nowhere else, so there is nothing to choose. --yes is registered and stands in
+// for nothing: no confirmation answers a removal or a lowering (D1540), and a
+// command that did not take the flag would refuse the run at the parser with a
+// sentence about flags instead of with the fence the step has. The flag itself
+// is the no-prompt plan's T11 to remove, as it is on every settings write.
 type rigorFloorOptions struct {
 	project string
 	config  string
@@ -96,14 +114,16 @@ copies it into the policy node the runner fails closed on, so a change here
 reaches runs at the next ` + "`fugaro update`" + `.
 
 ` + "`fugaro rigor floor set MODE LEVELS`" + ` writes one mode's floor and
-` + "`fugaro rigor floor unset MODE`" + ` removes it. A removal and a lowering take the
-project's name typed at a terminal — a floor is a minimum, so taking a level
-away is a whole project reviewing less, and no flag stands in for the name.
-Adding a mode the file does not carry, or a level a mode's floor does not
-carry, asks nothing: it can only require more review.
+` + "`fugaro rigor floor unset MODE`" + ` removes it. A removal and a lowering are the
+owner's own step — a floor is a minimum, so taking a level away is a whole
+project reviewing less — and they ask nothing: the write prints what it widens
+and what it writes, and no flag stands in for the owner's own session. Adding a
+mode the file does not carry, or a level a mode's floor does not carry, asks
+nothing either: it can only require more review.
 
 A coding agent's session is refused both directions outright, whatever the
-flags say.`,
+flags say, and is shown neither the diff nor the sentence: the command it
+should run at the owner's own terminal is what the refusal prints.`,
 	}
 	cmd.AddCommand(newRigorFloorSetCmd())
 	cmd.AddCommand(newRigorFloorUnsetCmd())
@@ -123,13 +143,14 @@ docs/review-levels names — and the floor is the whole list: a level it drops
 stops being required of every run of that mode.
 
 Adding a mode the file does not carry, or a level the mode's floor does not
-carry, is the ordinary write and asks nothing. Dropping a level is a lowering,
-and it takes the project's name typed at a terminal: ` + "`--yes`" + ` does not confirm
-it, and neither does anything else. The command refuses an empty list — a floor
-with no level in it says nothing, and removing the mode's entry is what
-` + "`fugaro rigor floor unset`" + ` is for.
+carry, is the ordinary write and asks nothing. Dropping a level is a lowering —
+a whole project reviewing less — and it asks nothing either: ` + "`--yes`" + ` does
+not stand in for the owner's own session, and neither does anything else. The
+command refuses an empty LEVELS: a floor with no level in it says nothing, and
+removing the mode's entry is what ` + "`fugaro rigor floor unset`" + ` is for.
 
-A coding agent's session is refused the write outright, whatever the flags say.
+A coding agent's session is refused the write outright, whatever the flags say,
+and is shown neither the diff nor the sentence.
 
 It writes one file: this machine's own project config. The change reaches the
 policy node the runner reads at the next ` + "`fugaro update`" + `, whose policy stage
@@ -141,7 +162,7 @@ publishes it.`,
 	}
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
-	f.BoolVar(&o.yes, "yes", false, "accepted and refused: a lowering takes the project's name typed at a terminal, and no flag stands in for it")
+	f.BoolVar(&o.yes, "yes", false, "accepted and of no effect: a lowering asks nothing, and no flag stands in for the owner's own session")
 	return cmd
 }
 
@@ -154,10 +175,11 @@ func newRigorFloorUnsetCmd() *cobra.Command {
 mode's runs are held to what their rigor mode and the repository ask for, and
 to nothing the owner requires.
 
-A removal takes the project's name typed at a terminal: ` + "`--yes`" + ` does not
-confirm it, and neither does anything else — what it deletes is a floor, which
-no diff of a plan can show. A coding agent's session is refused the removal
-outright, whatever the flags say.
+A removal is the owner's own step — what it deletes is a floor, and taking it
+away is a whole project reviewing less — and it asks nothing: ` + "`--yes`" + ` does
+not stand in for the owner's own session, and neither does anything else. A
+coding agent's session is refused the removal outright, whatever the flags say,
+and is shown neither the diff nor the sentence.
 
 It writes one file: this machine's own project config, and the change reaches
 the policy node at the next ` + "`fugaro update`" + `.`,
@@ -168,23 +190,23 @@ the policy node at the next ` + "`fugaro update`" + `.`,
 	}
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
-	f.BoolVar(&o.yes, "yes", false, "accepted and refused: a removal takes the project's name typed at a terminal, and no flag stands in for it")
+	f.BoolVar(&o.yes, "yes", false, "accepted and of no effect: a removal asks nothing, and no flag stands in for the owner's own session")
 	return cmd
 }
 
-// runRigorFloor is both subcommands' body, in the order the refusal D1170 asks
+// runRigorFloor is both subcommands' body, in the order the step D1170 asks
 // for: the session fence, the vocabulary, the document, the edit, the loader's
-// read of it, the typed confirmation where the edit takes something away, and
-// then the one write path.
+// read of it, and then the one write path.
 func runRigorFloor(cmd *cobra.Command, o rigorFloorOptions, modeArg, levelsArg string, remove bool) error {
-	// The fence, before anything is read and before any question is printed: a
-	// coding agent's session gets no answer at all, not even the diff. It is
-	// this command's own and not the write path's, because the ORDER is the
-	// point — the write path's fence would refuse the same run after the typed
-	// name had been asked for, which is a session reading a question it cannot
-	// answer (D1026).
+	// The fence, before anything is read: a coding agent's session gets no
+	// answer at all, not even the document's diff. It is this command's own and
+	// not the write path's, because the ORDER is the point — the write path's
+	// fence (applySettingsEdit, which refuses a Typed edit in a session either
+	// way) would refuse the same run with the document printed beside it
+	// (D1026).
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was written: the review floor is the owner's own minimum — the levels every run of a mode must run — and lowering or removing one is a whole project reviewing less, so it is changed by a person: %s", initflow.AgentRefusal(m))
+		return userErr("%s is the owner's own minimum — the review levels every run of a mode must run — and taking one away is a whole project reviewing less: %s; nothing was written. Run this yourself at your own terminal: %s",
+			rigorFloorKey, initflow.AgentRefusal(m), rigorFloorCommand(o, modeArg, levelsArg, remove))
 	}
 	mode := rigor.Mode(modeArg)
 	if !rigor.Known(mode) {
@@ -227,7 +249,7 @@ func runRigorFloor(cmd *cobra.Command, o rigorFloorOptions, modeArg, levelsArg s
 	}
 	next, taking, err := rigorFloorEdit(old, prev.ReviewFloor, mode, levels, remove)
 	if err != nil {
-		return err
+		return rigorFloorError(target, mode, err)
 	}
 	if !yamledit.Changed(old, next) {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", target.path, rigorFloorNoChange(mode, remove))
@@ -236,24 +258,20 @@ func runRigorFloor(cmd *cobra.Command, o rigorFloorOptions, modeArg, levelsArg s
 	if err := settingsReparse(target, next); err != nil {
 		return err
 	}
-	why := rigorFloorWhy(mode, remove)
-	if taking {
-		// D1170's step: no flag stands in for the project's name, and the
-		// refusal names none, because a refusal that named one would be read by
-		// whoever it refuses as the thing to pass next.
-		if err := confirmTypedStrict(cmd, lc, why, rigorFloorWhat(target, prev.ReviewFloor, mode, levels, remove)); err != nil {
-			return err
-		}
-	}
+	// The Typed edit is the whole of D1170's step here: it is what the write path
+	// refuses a coding agent's session, and what makes the owner's own terminal
+	// read the sentence saying what this write widens and the sentence saying
+	// what it writes. No question is asked at either place (D1540, D1552,
+	// D1555), which is the reconciliation this file's header records.
 	edit := settingsEdit{
 		Path:     target.path,
 		Old:      old,
 		New:      next,
 		What:     rigorFloorWhat(target, prev.ReviewFloor, mode, levels, remove),
 		Typed:    taking,
-		TypedWhy: why,
+		TypedWhy: rigorFloorWhy(mode, remove),
 		Kind:     target.kind,
-		Command:  rigorFloorCommand(mode, levels, remove, o),
+		Command:  rigorFloorCommand(o, modeArg, levelsArg, remove),
 		Yes:      o.yes,
 	}
 	if err := applySettingsEdit(cmd, lc, edit); err != nil {
@@ -264,6 +282,19 @@ func runRigorFloor(cmd *cobra.Command, o rigorFloorOptions, modeArg, levelsArg s
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	return nil
+}
+
+// rigorFloorError is the editor's refusal of this edit in the owner's words: the
+// shared helper's sentence where the editor refused to splice the document at
+// all — a floor a person wrote as one flow mapping (`review_floor: {pro: [l2,
+// l3]}`) is the shape that meets it — and the key's own name otherwise, because
+// a refusal that named nothing would leave the person reading the file to find
+// out what the editor would not touch.
+func rigorFloorError(target settingsTarget, mode rigor.Mode, err error) error {
+	if refusal, ok := modelsSpliceRefusal(target.path, err); ok {
+		return refusal
+	}
+	return userErr("%s.%s in %s: %v", rigorFloorKey, mode, target.path, err)
 }
 
 // rigorFloorLeavesNone reports whether this edit leaves the config naming no
@@ -290,6 +321,12 @@ func rigorFloorLeavesNone(floor map[string][]string, mode rigor.Mode, remove boo
 // because a floor is a set and a person naming one should not have to spell the
 // levels in the file's order.
 func rigorFloorLevels(arg string, mode rigor.Mode) ([]policy.Level, error) {
+	// The empty argument is the one way to name no level at all, and it is
+	// refused here rather than left to the loop below: the loop refuses a name
+	// that is not a level, and what this person asked for is the other command.
+	if strings.TrimSpace(arg) == "" {
+		return nil, userErr("no review level was named: a floor with no level in it says nothing, and `fugaro rigor floor unset %s` is what removes a mode's floor; name the levels that must run (%s)", mode, rigorLevelList())
+	}
 	seen := map[policy.Level]bool{}
 	levels := make([]policy.Level, 0, len(policy.Levels))
 	for _, name := range strings.Split(arg, ",") {
@@ -303,9 +340,6 @@ func rigorFloorLevels(arg string, mode rigor.Mode) ([]policy.Level, error) {
 		}
 		seen[l] = true
 		levels = append(levels, l)
-	}
-	if len(levels) == 0 {
-		return nil, userErr("no review level was named: a floor with no level in it says nothing, and `fugaro rigor floor unset %s` is what removes a mode's floor; name the levels that must run (%s)", mode, rigorLevelList())
 	}
 	// The written order is the vocabulary's, so the same floor is the same
 	// bytes however it was typed.
@@ -327,7 +361,7 @@ func rigorLevelList() string {
 
 // rigorFloorEdit builds the edited document, and says whether the edit takes
 // something away — a level a mode's floor carried, or the mode's whole entry —
-// which is the direction D1170 puts behind the typed name.
+// which is the direction that makes the edit Typed.
 //
 // The operations are the shared editor's own, never a splice (D847), and each
 // is the smallest one the editor can make: a mode whose entry goes is
@@ -336,9 +370,16 @@ func rigorLevelList() string {
 // and its place in the file survive a change to another one.
 //
 // The empty result is the caller's no-op: an unset of a mode the file does not
-// carry, and a set that names exactly the levels the mode already holds (in any
-// order — a floor is a set), both return the input unchanged, and the write path
-// writes nothing for them.
+// carry, and a set naming the levels the mode already holds in the vocabulary's
+// own order, both return the input unchanged, and the write path writes nothing
+// for them. A set naming the same levels in another order is neither a no-op nor
+// a change of the floor: the entry is written in that order, which is the one
+// thing a set may write for a floor it does not change.
+//
+// The editor's refusals are returned as they come — the caller says them in the
+// owner's words (rigorFloorError) — because one of them is a document this
+// command cannot edit at all, and it is worth saying which: a floor whose whole
+// mapping is a flow collection.
 func rigorFloorEdit(old []byte, floor map[string][]string, mode rigor.Mode, levels []policy.Level, remove bool) ([]byte, bool, error) {
 	path := []string{rigorFloorKey, string(mode)}
 	held := rigorFloorHeld(floor[string(mode)])
@@ -351,7 +392,7 @@ func rigorFloorEdit(old []byte, floor map[string][]string, mode rigor.Mode, leve
 		// floor rather than a key written with no value.
 		next, err := yamledit.RemoveKeyWithOptions(old, path, yamledit.RemoveOptions{DropEmptyParents: true})
 		if err != nil {
-			return nil, false, userErr("%s.%s: %v", rigorFloorKey, mode, err)
+			return nil, false, err
 		}
 		return next, true, nil
 	}
@@ -365,23 +406,31 @@ func rigorFloorEdit(old []byte, floor map[string][]string, mode rigor.Mode, leve
 		return old, false, nil
 	}
 	// The mode's entry is written whole — the old one taken out, the new one
-	// added — and never spliced item by item. A floor a person wrote by hand is
-	// as likely to be a flow sequence (`pro: [l2, l3]`) as a block one, and the
-	// editor's list operations refuse to splice into a flow collection, so an
-	// item-by-item edit would leave the commonest hand-written shape
-	// unchangeable. Writing the entry whole also makes the file canonical: the
-	// levels in the vocabulary's order, however they were typed.
+	// added — and never spliced item by item. A floor a person wrote by hand
+	// carries its levels as a flow sequence (`pro: [l2, l3]`) as often as a block
+	// one, and the editor's list operations refuse to splice into a flow
+	// collection, so an item-by-item edit would leave that shape unchangeable.
+	// Writing the entry whole also makes it canonical: the levels in the
+	// vocabulary's order, however they were typed.
+	//
+	// A document whose WHOLE `review_floor` mapping is flow (`review_floor: {pro:
+	// [l2, l3]}`) is outside the editor both ways: the operations below refuse to
+	// walk into a flow collection, so no write here can change that document, and
+	// what the person reads is the editor's own reason in the owner's words
+	// (rigorFloorError, modelsSpliceRefusal) — which names the shape and the way
+	// out. That is reported and not patched over: splicing the bytes by hand is
+	// what D847 forbids.
 	next := old
 	if len(held) > 0 {
 		var err error
 		if next, err = yamledit.RemoveKey(next, path); err != nil {
-			return nil, false, userErr("%s.%s: %v", rigorFloorKey, mode, err)
+			return nil, false, err
 		}
 	}
 	for _, l := range levels {
 		var err error
 		if next, err = yamledit.AddListItem(next, path, string(l)); err != nil {
-			return nil, false, userErr("%s.%s: %v", rigorFloorKey, mode, err)
+			return nil, false, err
 		}
 	}
 	return next, taking, nil
@@ -412,9 +461,9 @@ func rigorFloorNoChange(mode rigor.Mode, remove bool) string {
 }
 
 // rigorFloorWhat is the sentence naming what changes, printed before the write
-// and read again in the typed confirmation's own banner (settingsEdit's What).
-// It shows the floor as it is and as it would be, because that is the whole of
-// what the person confirming is deciding.
+// and carried by the session refusal (settingsEdit's What). It shows the floor
+// as it is and as it would be, because that is the whole of what the person
+// deciding this step is deciding.
 func rigorFloorWhat(target settingsTarget, floor map[string][]string, mode rigor.Mode, levels []policy.Level, remove bool) string {
 	held := rigorFloorHeld(floor[string(mode)])
 	if remove {
@@ -441,28 +490,29 @@ func rigorLevelsText(levels []policy.Level) string {
 	return strings.Join(names, ", ")
 }
 
-// rigorFloorWhy is the sentence the typed confirmation carries as the reason
-// nothing else confirms this step: what the edit takes away, in the words the
-// person reading it acts on. It is also what a refusal in a coding agent's
-// session would print beside the command, and what a run with no terminal
-// reads after the reason it needs one.
+// rigorFloorWhy is the sentence saying what this write widens (settingsEdit's
+// TypedWhy): what the edit takes away, in the words the person reading it acts
+// on. The write path prints it before the write for a Typed edit, and it is the
+// reason the session fence carries beside the marker and the command.
 func rigorFloorWhy(mode rigor.Mode, remove bool) string {
 	if remove {
-		return fmt.Sprintf("removing %s's review floor is a whole project reviewing less, so it takes the project's name typed at a terminal, and no flag stands in for it", mode)
+		return fmt.Sprintf("removing %s's review floor is a whole project reviewing less, so it is the owner's own step and no flag stands in for it", mode)
 	}
-	return fmt.Sprintf("lowering %s's review floor is a whole project reviewing less, so it takes the project's name typed at a terminal, and no flag stands in for it", mode)
+	return fmt.Sprintf("lowering %s's review floor is a whole project reviewing less, so it is the owner's own step and no flag stands in for it", mode)
 }
 
 // rigorFloorCommand is this edit spelled for a person's own terminal, which is
-// what a refusal in a coding agent's session prints. The flags are the ones
-// that were given, so the command a person pastes is the edit that was refused
-// and nothing more.
-func rigorFloorCommand(mode rigor.Mode, levels []policy.Level, remove bool, o rigorFloorOptions) string {
+// what a refusal in a coding agent's session prints. It is built from the words
+// the run was given — the mode and the levels as they were typed — so the
+// command a person pastes is the edit that was refused and nothing more, and a
+// refusal that met an argument the vocabulary would refuse hands back the same
+// command that met it. The flags are the ones that were given.
+func rigorFloorCommand(o rigorFloorOptions, modeArg, levelsArg string, remove bool) string {
 	parts := []string{"fugaro", "rigor", "floor"}
 	if remove {
-		parts = append(parts, "unset", string(mode))
+		parts = append(parts, "unset", quoteWord(modeArg))
 	} else {
-		parts = append(parts, "set", string(mode), quoteWord(rigorLevelsText(levels)))
+		parts = append(parts, "set", quoteWord(modeArg), quoteWord(levelsArg))
 	}
 	if o.project != "" {
 		parts = append(parts, "--project", quoteWord(o.project))

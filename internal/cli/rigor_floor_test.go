@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,25 +13,26 @@ import (
 // command the settings design's SD10 designed and closed as this task's
 // duplicate on 2026-11-10.
 //
-// The one rule these tests hold is the confirmation D1170 asks for, and it is
-// the reason this command is the plan's SEC one: the floor is the levels every
-// run of a mode must run, so taking one away — by removing a mode's entry or by
-// lowering the levels it names — is a whole project reviewing less. That is the
-// step `confirmTypedStrict` is for: nothing stands in for the project's name
-// typed at a terminal, and the refusal names no flag, because a refusal that
-// named one would be read by whoever it refuses as the thing to pass next.
+// The step these tests hold is the owner's own: a removal and a lowering take a
+// level away from every run of a mode, so the edit is Typed — a coding agent's
+// session is refused it whatever `--yes` says, the write path prints what it
+// widens and what it writes, and no gate ever admits it (D1552, D1555, D1026).
+// The typed project name the plan's section puts in front of that step, and
+// D1170 recommends with it, is NOT built: docs/no-prompt-policy is the owner's
+// answer to it — rule 1, no command may wait for interactive input, "no y/n
+// questions, no typing the project name" — the write path this command goes
+// through asks nothing for a Typed edit, and the harness that runs every leaf of
+// this tree with its stdin closed (noprompt_harness_test.go) is the policy's own
+// check. The plan's two named tests for the typed form are reconciled here
+// (rigor_floor.go's header carries the reading); what is left to prove is that
+// the step asks nothing from either direction, that the fence still comes first,
+// and that adding an entry — the direction that can only require more review —
+// is the ordinary write it was designed to be.
 //
-// The agent-session fence comes before the confirmation and before the
-// document is read (D1026): a coding agent's session is refused the removal
-// outright, so the question is never printed to a session and a managed
-// project's gate never sees the step at all. Adding a mode the file does not
-// carry is the other direction and needs no confirmation: it can only require
-// more review, never less.
-//
-// The world is the settings family's own (settingsWriteHome): the local
-// project config the floor lives in, project aurora. The floor is written with
-// the editor's own list operations (internal/yamledit), so what the tests read
-// back is a document localcfg.Parse accepts — the same loader the write path
+// The world is the settings family's own (settingsWriteHome): the local project
+// config the floor lives in, project aurora. The floor is written with the
+// editor's own list operations (internal/yamledit), so what the tests read back
+// is a document localcfg.Parse accepts — the same loader the write path
 // re-reads with.
 
 // rigorFloorHome writes the local project config carrying the floor a test
@@ -41,73 +43,63 @@ func rigorFloorHome(t *testing.T, floor string) string {
 	return path
 }
 
-// The red step: a removal takes the project's name typed at a terminal, and
-// --yes does not stand in for it (D1170, D846). A removal is not a plan a
-// document can show — what it deletes is a floor — so the typed name is the
-// whole of the decision, and the flag a person types in advance, in a script,
-// possibly from an agent, is exactly what the refusal exists for.
+// The red step, reconciled. A removal and a lowering are the owner's own step,
+// and they ask nothing: not the project's name, not anything else (D1540,
+// D1552, D1555). What is asserted is what survives D1170's confirmation — the
+// floor moves, and the write says whose step it is — and that the run asks
+// nothing while its stdin is a terminal with nobody behind it: a question here
+// would read an empty line and refuse, and the harness fails the same banner
+// with stdin closed.
 //
-// The lowering direction is the same rule and is asked here too: taking a level
-// out of a mode's floor is a run of that mode reviewing less, and it is refused
-// the flag the same way. The other half of the test is the door the removal
-// does have: at the owner's own terminal, with the project's name typed, it
-// lands — and the file is read back by localcfg's own loader.
-func TestRigorFloorRemovalTakesTheProjectNameTyped(t *testing.T) {
-	path := rigorFloorHome(t, "review_floor:\n  pro: [l2, l3]\n")
-	before := readFileString(t, path)
-	noAgentSession(t)
-	fakeTerminal(t)
-
+// The plan named this test after the typed form
+// (TestRigorFloorRemovalTakesTheProjectNameTyped). The owner's policy removed
+// the form, so the name went with it; the subject — the floor a removal and a
+// lowering move, and the fence around them — is the test below.
+func TestRigorFloorRemovalAndLoweringAskNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
+		want []string
 	}{
-		{"a removal", []string{"rigor", "floor", "unset", "pro", "--yes"}},
-		{"a lowering", []string{"rigor", "floor", "set", "pro", "l2", "--yes"}},
+		{"a removal", []string{"rigor", "floor", "unset", "pro"}, nil},
+		{"a lowering", []string{"rigor", "floor", "set", "pro", "l2"}, []string{"l2"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// The answer on stdin is not the project's name, and --yes is set:
-			// a run that took the flag for an answer would write here.
-			out, _, err := executeStdin(t, "yes\n", tc.args...)
-			if err == nil {
-				t.Fatalf("--yes confirmed %s of a review floor:\n%s", tc.name, out)
+			path := rigorFloorHome(t, "review_floor:\n  pro: [l2, l3]\n")
+			noAgentSession(t)
+			fakeTerminal(t)
+
+			out, _, err := executeStdin(t, "", tc.args...)
+			if err != nil {
+				t.Fatalf("%s was refused: %v\n%s", tc.name, err, out)
 			}
-			if !strings.Contains(err.Error(), "not confirmed") {
-				t.Errorf("the refusal is not the typed confirmation's: %v", err)
+			assertNoPrompt(t, out)
+			if !strings.Contains(out, "the owner's own step") {
+				t.Errorf("%s printed no sentence saying whose step it is:\n%s", tc.name, out)
 			}
-			if !strings.Contains(out, "CONFIRM") {
-				t.Errorf("%s printed no confirmation to refuse:\n%s", tc.name, out)
+			got := readFileString(t, path)
+			cfg, err := localcfg.Parse([]byte(got))
+			if err != nil {
+				t.Fatalf("the written file is not a local project config: %v\n%s", err, got)
 			}
-			if got := readFileString(t, path); got != before {
-				t.Fatalf("%s wrote the floor anyway:\n%s", tc.name, got)
+			if floor := cfg.ReviewFloor["pro"]; !slices.Equal(floor, tc.want) {
+				t.Errorf("%s left pro's floor at %v, want %v", tc.name, floor, tc.want)
 			}
 		})
 	}
-
-	// The door the removal does have: the project's name typed at the owner's
-	// own terminal. Nothing else is asked, and the entry goes.
-	out, _, err := executeStdin(t, "aurora\n", "rigor", "floor", "unset", "pro")
-	if err != nil {
-		t.Fatalf("the owner's own terminal was refused a floor removal: %v\n%s", err, out)
-	}
-	got := readFileString(t, path)
-	if strings.Contains(got, "review_floor") {
-		t.Errorf("the removal left the mode's floor behind:\n%s", got)
-	}
-	if _, err := localcfg.Parse([]byte(got)); err != nil {
-		t.Errorf("the written file is not a local project config: %v\n%s", err, got)
-	}
 }
 
-// The fence, and it comes first: a coding agent's session is refused the
-// removal and the lowering before the document is read and before any question
-// is printed, so the typed name is never asked of a session that cannot answer
-// it, and a managed project's gate never sees the step at all (D1026, D1170).
-// --yes changes neither.
+// The fence, and it comes first: a coding agent's session is refused a removal
+// and a lowering before the document is read, so the session is shown neither
+// the file's diff nor the sentence the write would print, and a managed
+// project's gate never sees the step at all (D1026, D1552, D1555). --yes
+// changes neither. What the refusal hands back instead is the command the person
+// runs at their own terminal.
 //
-// The check that the confirmation was never printed is the ordering: a fence
-// moved after the question would refuse the same run with the same marker in
-// the message, and only the absence of the question says which came first.
+// The diff's absence is the ordering, and it is the whole of what this fence
+// adds to the write path's own refusal: applySettingsEdit refuses the same run
+// with the same marker in the message, and prints the document beside it, so
+// only the missing diff says which of the two refused.
 func TestRigorFloorRefusesAnAgentSession(t *testing.T) {
 	path := rigorFloorHome(t, "review_floor:\n  pro: [l2, l3]\n")
 	before := readFileString(t, path)
@@ -125,8 +117,12 @@ func TestRigorFloorRefusesAnAgentSession(t *testing.T) {
 		if !strings.Contains(err.Error(), "coding agent's session") {
 			t.Errorf("%v: the refusal does not name the session: %v", args, err)
 		}
-		if strings.Contains(out, "CONFIRM") || strings.Contains(out, "to confirm:") {
-			t.Errorf("%v: the session was asked for the typed name before the fence refused it:\n%s", args, out)
+		if !strings.Contains(err.Error(), "fugaro rigor floor") {
+			t.Errorf("%v: the refusal does not name the command the person runs instead: %v", args, err)
+		}
+		assertNoPrompt(t, out)
+		if strings.Contains(out, "  - ") || strings.Contains(out, "  + ") {
+			t.Errorf("%v: the session was shown the document's diff, so the fence did not come before the read:\n%s", args, out)
 		}
 		if got := readFileString(t, path); got != before {
 			t.Fatalf("%v: the refused write changed the floor:\n%s", args, got)
@@ -134,17 +130,17 @@ func TestRigorFloorRefusesAnAgentSession(t *testing.T) {
 	}
 }
 
-// The other direction needs no confirmation: a mode the file does not carry is
-// an entry ADDED to the floor, and adding a floor can only require more review,
-// never less (D1170's own asymmetry). The run asks nothing at a terminal, the
-// entry lands beside the ones already there, and the file reads back.
-func TestRigorFloorAddsAnEntryWithoutTheTypedForm(t *testing.T) {
+// The other direction: a mode the file does not carry is an entry ADDED to the
+// floor, and adding a floor can only require more review, never less (D1170's
+// own asymmetry). The run asks nothing, the entry lands beside the ones already
+// there, and the file reads back — through localcfg's own loader, which runs
+// policy.ParseFloor over the key.
+func TestRigorFloorAddsAnEntryAskingNothing(t *testing.T) {
 	path := rigorFloorHome(t, "review_floor:\n  pro: [l2]\n")
 	noAgentSession(t)
 	fakeTerminal(t)
 
-	// Empty stdin at a terminal: a run that asked for the project's name would
-	// read nothing and refuse.
+	// Empty stdin at a terminal: a run that asked anything would read nothing.
 	out, _, err := executeStdin(t, "", "rigor", "floor", "set", "critical", "l2,l3")
 	if err != nil {
 		t.Fatalf("adding a floor entry was refused: %v\n%s", err, out)
@@ -160,8 +156,104 @@ func TestRigorFloorAddsAnEntryWithoutTheTypedForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the written file is not a local project config: %v\n%s", err, got)
 	}
-	if got := cfg.ReviewFloor["critical"]; len(got) != 2 {
+	if floor := cfg.ReviewFloor["critical"]; len(floor) != 2 {
 		t.Errorf("the floor reads back as %v, want the two levels that were named", cfg.ReviewFloor)
+	}
+}
+
+// A set naming the floor that is already there, and the one case that is
+// written rather than reported. The levels a person types are put in the
+// vocabulary's own order before anything is compared, so how they typed them
+// does not matter; the order of the FILE's own entry is the comparison's other
+// half, and a hand-written one that names the levels the other way round is the
+// floor as much as a canonical one is — the entry comes back in the vocabulary's
+// order, which is the one thing a set may write for a floor it does not change.
+func TestRigorFloorSetOfTheFloorThatIsThere(t *testing.T) {
+	t.Run("the argument in another order", func(t *testing.T) {
+		path := rigorFloorHome(t, "review_floor:\n  pro: [l2, l3]\n")
+		before := readFileString(t, path)
+		noAgentSession(t)
+		fakeTerminal(t)
+
+		out, _, err := executeStdin(t, "", "rigor", "floor", "set", "pro", "l3,l2")
+		if err != nil {
+			t.Fatalf("a set naming the floor that is there was refused: %v\n%s", err, out)
+		}
+		assertNoPrompt(t, out)
+		if !strings.Contains(out, "already carries the floor that was asked for") {
+			t.Errorf("the no-op does not say the floor is already there:\n%s", out)
+		}
+		if got := readFileString(t, path); got != before {
+			t.Errorf("a set naming the floor that is there wrote the file:\n%s", got)
+		}
+	})
+
+	t.Run("the file's entry in another order", func(t *testing.T) {
+		path := rigorFloorHome(t, "review_floor:\n  pro: [l3, l2]\n")
+		noAgentSession(t)
+		fakeTerminal(t)
+
+		out, _, err := executeStdin(t, "", "rigor", "floor", "set", "pro", "l2,l3")
+		if err != nil {
+			t.Fatalf("the set was refused: %v\n%s", err, out)
+		}
+		got := readFileString(t, path)
+		cfg, err := localcfg.Parse([]byte(got))
+		if err != nil {
+			t.Fatalf("the written file is not a local project config: %v\n%s", err, got)
+		}
+		if floor := cfg.ReviewFloor["pro"]; !slices.Equal(floor, []string{"l2", "l3"}) {
+			t.Errorf("the entry reads back as %v, want the levels in the vocabulary's order:\n%s", floor, got)
+		}
+	})
+}
+
+// The empty argument is the one way to name no level at all, and it is refused
+// with the sentence pointing at the command that removes a floor: a person who
+// wants a mode to have no floor is not asking for this one.
+func TestRigorFloorRefusesAnEmptyLevelList(t *testing.T) {
+	path := rigorFloorHome(t, "review_floor:\n  pro: [l2]\n")
+	before := readFileString(t, path)
+	noAgentSession(t)
+	fakeTerminal(t)
+
+	out, _, err := executeStdin(t, "", "rigor", "floor", "set", "pro", "")
+	if err == nil {
+		t.Fatalf("an empty LEVELS was accepted:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "no review level was named") || !strings.Contains(err.Error(), "fugaro rigor floor unset") {
+		t.Errorf("the refusal names neither the mistake nor the command that removes a floor: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused run wrote the floor:\n%s", got)
+	}
+}
+
+// A floor a person wrote as one flow mapping cannot be edited at all, and the
+// refusal owes the person the two things this one carries: the shape the editor
+// will not touch and the way out of it (block style, one item per line). The
+// editor refuses to walk into a flow collection, so both directions meet it and
+// both write nothing.
+func TestRigorFloorRefusesAFloorWrittenAsOneFlowMapping(t *testing.T) {
+	path := rigorFloorHome(t, "review_floor: {pro: [l2, l3]}\n")
+	before := readFileString(t, path)
+	noAgentSession(t)
+	fakeTerminal(t)
+
+	for _, args := range [][]string{
+		{"rigor", "floor", "unset", "pro"},
+		{"rigor", "floor", "set", "pro", "l2"},
+	} {
+		out, _, err := executeStdin(t, "", args...)
+		if err == nil {
+			t.Fatalf("%v: a floor written as one flow mapping was edited:\n%s", args, out)
+		}
+		if !strings.Contains(err.Error(), "cannot be changed by one edit") || !strings.Contains(err.Error(), "block style") {
+			t.Errorf("%v: the refusal names neither the shape nor the way out: %v", args, err)
+		}
+		if got := readFileString(t, path); got != before {
+			t.Fatalf("%v: the refused edit wrote the document:\n%s", args, got)
+		}
 	}
 }
 
@@ -180,7 +272,7 @@ func TestRigorFloorUnsetOfTheLastEntrySaysWhatItLeaves(t *testing.T) {
 		noAgentSession(t)
 		fakeTerminal(t)
 
-		out, _, err := executeStdin(t, "aurora\n", "rigor", "floor", "unset", "pro")
+		out, _, err := executeStdin(t, "", "rigor", "floor", "unset", "pro")
 		if err != nil {
 			t.Fatalf("the removal was refused: %v\n%s", err, out)
 		}
@@ -200,7 +292,7 @@ func TestRigorFloorUnsetOfTheLastEntrySaysWhatItLeaves(t *testing.T) {
 		noAgentSession(t)
 		fakeTerminal(t)
 
-		out, _, err := executeStdin(t, "aurora\n", "rigor", "floor", "unset", "pro")
+		out, _, err := executeStdin(t, "", "rigor", "floor", "unset", "pro")
 		if err != nil {
 			t.Fatalf("the removal was refused: %v\n%s", err, out)
 		}

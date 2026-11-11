@@ -301,15 +301,14 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "set defaults.rigor.default to critical in",
 		seed:    closedStdinRigorLayerSeed,
 	},
-	// The floor's two leaves, driven to the directions a closed stdin can reach.
-	// The world's project config carries no review_floor at all, so the set is an
-	// entry ADDED — the direction D1170 leaves unconfirmed, and the reason this
-	// leaf is a run at all rather than a question — and the unset is a mode with
-	// no floor, which returns with the sentence saying so before anything is
-	// asked. Neither may print a question here: the typed confirmation is only
-	// ever the answer to an edit that takes a floor away.
-	"fugaro rigor floor set":      {args: []string{"critical", "l2"}, reaches: "set review_floor.critical from none to l2 in"},
-	"fugaro rigor floor unset":    {args: []string{"pro"}, reaches: "carries no floor, so there is nothing to remove"},
+	// The floor's two leaves, driven to the directions that take a level away — a
+	// removal and a lowering, which are the plan's SEC step and the direction a
+	// confirmation used to stand in front of — and the seed is what puts a floor
+	// in the world for them to take one out of. Neither may print a question
+	// here: no command waits on stdin any more (D1540, D1552, D1555), and the
+	// sentence naming the change is the proof this fixture reaches the write.
+	"fugaro rigor floor set":   {args: []string{"pro", "l2"}, reaches: "set review_floor.pro from l2, l3 to l2 in", seed: closedStdinRigorFloorSeed},
+	"fugaro rigor floor unset": {args: []string{"pro"}, reaches: "remove review_floor.pro (l2, l3) in", seed: closedStdinRigorFloorSeed},
 	"fugaro settings get":         {args: []string{"a.b"}},
 	"fugaro stats runs":           {args: []string{"--project", "proj-1234"}},
 	"fugaro user add":             {args: []string{"someone@example.com"}},
@@ -664,6 +663,17 @@ func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
 func closedStdinRigorLayerSeed(t *testing.T, _ *budgetFixture) {
 	t.Helper()
 	settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  rigor:\n    default: pro\n")
+}
+
+// closedStdinRigorFloorSeed gives the world's own project config the review
+// floor the two floor leaves take a level out of: the removal and the lowering
+// are the directions that used to ask for the project's name typed at a
+// terminal, and the seed is what puts them within the fixture's reach. Without
+// it both runs would report the floor that is not there, which is a no-op before
+// the write rather than the write this fixture is for.
+func closedStdinRigorFloorSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "review_floor:\n  pro: [l2, l3]\n")
 }
 
 // closedStdinWorkflowSeed makes the world's own directory a checkout of a
