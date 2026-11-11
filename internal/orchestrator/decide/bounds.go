@@ -3,9 +3,11 @@ package decide
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // ErrCallCap is a decision call the state's own counts refuse: the node has
@@ -80,13 +82,13 @@ func (b Bounds) WithDefaults() Bounds {
 // last write: a decision an hour old is still in the day's count and no
 // longer in the hour's, and only the derivation knows that.
 //
-// What the count is a count of is the document's decisions, so a call is
-// bounded once — and only once — something records it as one. This runner
-// writes no state of its own: the patch it applies is the model's answer,
-// under the DecisionAgent class, and a class that may open a question is not
-// one that may close it (applyDecisionResolve). A record of the call is
-// therefore the caller's to make, and a caller that makes none spends calls
-// these caps cannot see.
+// What the count is a count of is the calls themselves: this package writes
+// one record per call into the state before the child is started (recordCall),
+// and hands that state back as the decision's Next, so a caller that commits
+// what it is handed spends calls these caps see. The one thing the caps cannot
+// see is a caller that makes a call and then drops the state it came back
+// with: the count lives in the document, and only the document survives the
+// process.
 func (b Bounds) Allow(s orchestrator.State, now time.Time) error {
 	b = b.WithDefaults()
 	c := orchestrator.DecisionCalls(s, now)
@@ -97,4 +99,55 @@ func (b Bounds) Allow(s orchestrator.State, now time.Time) error {
 		return fmt.Errorf("%w: %d calls today, the cap is %d", ErrCallCap, c.DecisionsDay, b.CallsPerDay)
 	}
 	return nil
+}
+
+// callRecordPrefix names the record one call leaves in the state. It is a name
+// of its own rather than an id of the shape a person or a session writes, so a
+// reader — and the tests below — can tell the loop's own bookkeeping from a
+// question somebody asked.
+const callRecordPrefix = "decide-call-"
+
+// recordCall is s with the record of one call in it: the decision the loop asks
+// itself and closes in the same patch, which is what makes Allow count calls
+// rather than questions.
+//
+// It is a decision and not a counter of its own because the document has one
+// place for the loop's history, and it is closed as it is written — by the
+// class it waits on, the daemon's, since the daemon is what keeps the loop's
+// books — because only a resolved decision ages out: an open one is a question
+// somebody still owes an answer to and is never evicted (orchestrator.Retain),
+// so a record per call would fill the document and stop the daemon through
+// OverCap. Resolved, it is un-evictable only while the caps still count it
+// (countedDecision) and drops out of the document with the window.
+//
+// What it costs is bounded by the caps themselves: at most CallsPerDay records
+// a day can leave, and each is a name, one line and two stamps.
+func recordCall(s orchestrator.State, itemID string, at time.Time) (orchestrator.State, error) {
+	id := freeCallID(s)
+	p := orchestrator.Patch{BaseRev: s.Rev, Ops: []orchestrator.Op{
+		{Op: orchestrator.OpDecisionAdd, Decision: &orchestrator.DecisionOp{
+			ID:        id,
+			Question:  "the decision agent called about " + safetext.OneLine(itemID),
+			WaitingOn: orchestrator.OnDaemon,
+		}},
+		{Op: orchestrator.OpDecisionResolve, Resolve: &orchestrator.ResolveOp{
+			ID:     id,
+			Answer: "counted",
+		}},
+	}}
+	return orchestrator.Apply(s, p, orchestrator.Actor{Class: orchestrator.Daemon, Name: ActorName, Now: at})
+}
+
+// freeCallID is the first name of the record's own family this state does not
+// carry. The stamp is deliberately not part of it: two calls can land inside
+// one second — a test's clock does, and a machine's can — and Apply refuses a
+// decision whose id is already there, which would turn a second call into a
+// failure instead of a record.
+func freeCallID(s orchestrator.State) string {
+	for n := 1; ; n++ {
+		id := callRecordPrefix + strconv.Itoa(n)
+		if _, taken := s.Decision(id); !taken {
+			return id
+		}
+	}
 }

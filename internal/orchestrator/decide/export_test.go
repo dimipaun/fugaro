@@ -10,3 +10,8 @@ var Prompt = systemPrompt
 // Cut is what a brief says where its body was cut, so a test can hold a brief
 // over its cap to the promise that the loss is not silent.
 var Cut = briefCut
+
+// RecordCall is the record one call leaves in the state, which is what the
+// caps count. It is exported here so a test can hold the record itself — its
+// name, its resolution, its stamps — rather than only the count it moves.
+var RecordCall = recordCall

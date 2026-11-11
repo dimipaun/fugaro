@@ -11,9 +11,10 @@
 //
 // Everything that bounds one call lives here rather than in the caller: the
 // model comes from O1's class and O4's key and never from the answer, the
-// counts come from the state (six an hour, forty a day), the call is capped at
-// a few turns and a pinned output size, the child runs with the deny rules a
-// coding agent's session has, and a call that answered nothing is a cycle that
+// counts come from the state (six an hour, forty a day) and every call writes
+// its own record there before the child starts, the call is capped at a few
+// turns and a pinned output size, the child runs with the deny rules a coding
+// agent's session has, and a call that answered nothing is a cycle that
 // achieved nothing (G10). The reasoning is written to the audit log, so what
 // the model said is readable after the fact without asking it again.
 package decide
@@ -81,8 +82,10 @@ type Request struct {
 //
 // Next is the state to commit, not a state to write: the runner applied the
 // patch to the state it was given, and a caller commits Next under the same
-// compare-and-swap every other writer uses (G9). A refused decision carries no
-// Next at all.
+// compare-and-swap every other writer uses (G9). It carries the call's own
+// record whatever became of the answer — a patch refused, an empty answer, a
+// child that failed — because the call was made, and the money is spent
+// whatever the model answered.
 type Decision struct {
 	Class     sensitivity.Class
 	Model     string
@@ -157,8 +160,8 @@ type Runner struct {
 
 // Decide makes one decision. The order of the steps is the order of the
 // bounds: the model is settled first, then the caps — which cost nothing and
-// must refuse before a child is started — then the brief, and only then the
-// call.
+// must refuse before a child is started — then the brief, then the call's own
+// record, and only then the call.
 func (r *Runner) Decide(ctx context.Context, req Request) (Decision, error) {
 	if r.Agent == nil {
 		return Decision{}, ErrNoAgent
@@ -192,6 +195,17 @@ func (r *Runner) Decide(ctx context.Context, req Request) (Decision, error) {
 		d.Outcome = orchestrator.CycleEmpty
 		return d, err
 	}
+	// The call's own record, written before the child starts: the caps read the
+	// state's decisions, so a call that leaves none is a call the next one
+	// cannot see — an agent whose every answer is a fact would spend past every
+	// cap. It is written in this one place so that every outcome below carries
+	// it, and a return added later cannot forget it.
+	recorded, err := recordCall(req.State, req.ItemID, now)
+	if err != nil {
+		d.Outcome = orchestrator.CycleEmpty
+		return d, err
+	}
+	d.Next = recorded
 
 	reply, err := r.Agent.Run(ctx, call)
 	if err != nil {
@@ -222,8 +236,8 @@ func (r *Runner) Decide(ctx context.Context, req Request) (Decision, error) {
 		return d, err
 	}
 	d.Reasoning = parsed.Reasoning
-	d.Patch = parsed.Patch(req.State.Rev)
-	next, err := orchestrator.Apply(req.State, d.Patch, orchestrator.Actor{
+	d.Patch = parsed.Patch(recorded.Rev)
+	next, err := orchestrator.Apply(recorded, d.Patch, orchestrator.Actor{
 		Class: orchestrator.DecisionAgent, Name: ActorName, Now: now,
 	})
 	if err != nil {

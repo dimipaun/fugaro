@@ -117,6 +117,13 @@ func TestTheDecisionChildRunsWithNothingOfTheMachine(t *testing.T) {
 			t.Errorf("the child was launched with %s, which this call has no reason to carry", flag)
 		}
 	}
+	// A hook is a shell command Claude Code itself starts, with the daemon's
+	// environment, and no rule on the agent's own tools reaches it: the settings
+	// payload the child is launched with is where they are turned off, and the
+	// child may be sitting in a checkout the person did not vet for this.
+	if settings := settingsPayload(t, args); settings["disableAllHooks"] != true {
+		t.Errorf("the child was launched with --settings %s, which leaves its hooks on", flagValue(t, args, "--settings"))
+	}
 }
 
 func TestEmptyCycleCountsAsFailed(t *testing.T) {
@@ -133,8 +140,13 @@ func TestEmptyCycleCountsAsFailed(t *testing.T) {
 	if d.Outcome != orchestrator.CycleEmpty {
 		t.Errorf("an empty answer ended the cycle as %q, want %q", d.Outcome, orchestrator.CycleEmpty)
 	}
-	if len(d.Next.WorkItems) != 0 {
-		t.Error("an answer that landed nothing carries a state to commit")
+	// No op of the answer landed, and the call's own record is what the state
+	// the caller would commit carries: the call was made.
+	if len(d.Next.Facts) != 0 {
+		t.Errorf("an answer that landed nothing carries %d facts", len(d.Next.Facts))
+	}
+	if got := orchestrator.DecisionCalls(d.Next, mustNow(t)).DecisionsHour; got != 1 {
+		t.Errorf("an empty answer left %d call records, want 1", got)
 	}
 
 	// A call that failed: the child reported an error result.
@@ -146,6 +158,9 @@ func TestEmptyCycleCountsAsFailed(t *testing.T) {
 	}
 	if d2.Outcome != orchestrator.CycleFailed {
 		t.Errorf("a failed call ended the cycle as %q, want %q", d2.Outcome, orchestrator.CycleFailed)
+	}
+	if got := orchestrator.DecisionCalls(d2.Next, mustNow(t)).DecisionsHour; got != 1 {
+		t.Errorf("a failed call left %d call records, want 1: the money was spent", got)
 	}
 
 	// Both count toward O6's breaker, and the third in a row is the cycle
@@ -246,8 +261,13 @@ func TestDecisionCannotSpawnAnUnapprovedItem(t *testing.T) {
 			if d.Outcome != orchestrator.CycleFailed {
 				t.Errorf("the refused decision ended the cycle as %q, want %q", d.Outcome, orchestrator.CycleFailed)
 			}
-			if len(d.Next.WorkItems) != 0 {
-				t.Error("a refused decision carries a state to commit")
+			// The answer that was refused is not in it; the call's own record
+			// is, because the call was made and the caps count calls.
+			if !reflect.DeepEqual(d.Next.WorkItems, state.WorkItems) || d.Next.Goal != state.Goal {
+				t.Error("a refused decision carries the ops it was refused over")
+			}
+			if got := orchestrator.DecisionCalls(d.Next, mustNow(t)).DecisionsHour; got != 1 {
+				t.Errorf("a refused answer left %d call records, want 1", got)
 			}
 			if planned := orchestrator.Plan(state, orchestrator.RunView{}, launchCaps(), mustNow(t)); len(planned) != 0 {
 				t.Errorf("the state the refusal left behind plans %d launches, want none", len(planned))
@@ -301,6 +321,28 @@ func TestOutputTokenPinIsPassed(t *testing.T) {
 	}
 	if got := flagValue(t, call2.Args, "--max-turns"); got != strconv.Itoa(decide.DefaultMaxTurns) {
 		t.Errorf("an unbounded runner ran with --max-turns %q, want the default %d", got, decide.DefaultMaxTurns)
+	}
+
+	// A pin the caller's own environment already carries is replaced, not
+	// appended to: the child reads the first entry of a name, so the parent's
+	// larger value is the one that would win — which is the opposite of a pin
+	// and exactly the value the owner's lesson 21 says breaks every review.
+	inherited := testutil.FakeClaude(t, `{"calls":[{"structured":`+theAnswer+`}]}`)
+	r3 := &decide.Runner{
+		Agent:  decide.Claude{Bin: inherited},
+		Bounds: decide.Bounds{MaxOutputTokens: 4321},
+		Now:    testNow, Models: testModels(),
+		Env: []string{"PATH=" + os.Getenv("PATH"), "CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000"},
+	}
+	if _, err := r3.Decide(ctx, decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}}); err != nil {
+		t.Fatalf("the decision ended as %v", err)
+	}
+	env := testutil.FakeClaudeCalls(t, inherited)[0].Env
+	if got := envValue(env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS"); got != "4321" {
+		t.Errorf("the child ran with the inherited CLAUDE_CODE_MAX_OUTPUT_TOKENS=%q, want the pinned 4321", got)
+	}
+	if n := envCount(env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS"); n != 1 {
+		t.Errorf("the child's environment carries %d entries for the pin, want one", n)
 	}
 }
 
@@ -542,6 +584,19 @@ func mustNow(t *testing.T) time.Time {
 	return now
 }
 
+// envCount is how many entries of the child's environment carry name. The
+// child reads the first of them, so more than one is a value the pin does not
+// own.
+func envCount(env []string, name string) int {
+	n := 0
+	for _, e := range env {
+		if strings.HasPrefix(e, name+"=") {
+			n++
+		}
+	}
+	return n
+}
+
 // envValue is the value the child's environment carries for name.
 func envValue(env []string, name string) string {
 	for _, e := range env {
@@ -552,20 +607,38 @@ func envValue(env []string, name string) string {
 	return ""
 }
 
+// settingsPayload is the --settings payload the child was launched with.
+func settingsPayload(t *testing.T, args []string) map[string]any {
+	t.Helper()
+	payload := flagValue(t, args, "--settings")
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(payload), &settings); err != nil {
+		t.Fatalf("--settings %q is not the payload this test reads: %v", payload, err)
+	}
+	return settings
+}
+
 // denyRules is the permissions deny list of the --settings payload the child
 // was launched with.
 func denyRules(t *testing.T, args []string) []string {
 	t.Helper()
-	payload := flagValue(t, args, "--settings")
-	var settings struct {
-		Permissions struct {
-			Deny []string `json:"deny"`
-		} `json:"permissions"`
+	permissions, ok := settingsPayload(t, args)["permissions"].(map[string]any)
+	if !ok {
+		t.Fatalf("--settings %s carries no permissions", flagValue(t, args, "--settings"))
 	}
-	if err := json.Unmarshal([]byte(payload), &settings); err != nil {
-		t.Fatalf("--settings %q is not the payload this test reads: %v", payload, err)
+	deny, ok := permissions["deny"].([]any)
+	if !ok {
+		t.Fatalf("--settings %s denies nothing", flagValue(t, args, "--settings"))
 	}
-	return settings.Permissions.Deny
+	out := make([]string, 0, len(deny))
+	for _, rule := range deny {
+		s, ok := rule.(string)
+		if !ok {
+			t.Fatalf("--settings %s denies %v, which is not a rule", flagValue(t, args, "--settings"), rule)
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 func flagValue(t *testing.T, args []string, name string) string {

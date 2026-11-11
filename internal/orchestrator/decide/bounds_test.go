@@ -75,6 +75,105 @@ func TestHourlyAndDailyCapsStopCalls(t *testing.T) {
 	}
 }
 
+// callsScript is a fake claude paid for n calls, each answering with one
+// scripted result.
+func callsScript(n int, result string) string {
+	repeated := make([]string, n)
+	for i := range repeated {
+		repeated[i] = result
+	}
+	return `{"calls":[` + strings.Join(repeated, ",") + `]}`
+}
+
+func TestEveryCallCountsSoTheSeventhIsRefused(t *testing.T) {
+	// Six an hour is D1228's bound and the only dollar control on the person's
+	// own login, and it bounds nothing unless each call leaves a record the
+	// next one's cap reads. Every answer here is the package's own fact_set —
+	// an op that adds no decision of its own — so what the node counts below
+	// can only be the calls' own records.
+	ctx := context.Background()
+	state := theState(t, nil)
+	bin := testutil.FakeClaude(t, callsScript(6, `{"structured":`+theAnswer+`}`))
+	r := &decide.Runner{Agent: decide.Claude{Bin: bin}, Now: testNow, Models: testModels()}
+
+	for i := range 6 {
+		d, err := r.Decide(ctx, decide.Request{State: state, ItemID: "wi-1", Paths: []string{"docs/x.md"}})
+		if err != nil {
+			t.Fatalf("call %d of the six ended as %v", i+1, err)
+		}
+		if d.Outcome != orchestrator.CycleProgress {
+			t.Fatalf("call %d ended the cycle as %q, want %q", i+1, d.Outcome, orchestrator.CycleProgress)
+		}
+		// What a caller does with a decision: commit the state it came back
+		// with, which is where the call's record is.
+		state = d.Next
+		if got := orchestrator.DecisionCalls(state, mustNow(t)).DecisionsHour; got != i+1 {
+			t.Fatalf("after %d calls the node counts %d in the hour, want %d", i+1, got, i+1)
+		}
+	}
+
+	d, err := r.Decide(ctx, decide.Request{State: state, ItemID: "wi-1", Paths: []string{"docs/x.md"}})
+	if !errors.Is(err, decide.ErrCallCap) {
+		t.Fatalf("the seventh call ended as %v, not ErrCallCap", err)
+	}
+	if d.Outcome != orchestrator.CycleEmpty {
+		t.Errorf("the refused call ended the cycle as %q, want %q", d.Outcome, orchestrator.CycleEmpty)
+	}
+	if calls := testutil.FakeClaudeCalls(t, bin); len(calls) != 6 {
+		t.Errorf("the runner started %d calls, want 6: the seventh spends nothing", len(calls))
+	}
+}
+
+func TestACallThatFailedCountsToo(t *testing.T) {
+	// The money is spent whatever the child answers, so a call that failed
+	// leaves its record too: otherwise a model that keeps failing — or a
+	// `claude` that will not start — is a loop that spends past every cap,
+	// while every one of its cycles is a failure the breaker counts (G10).
+	ctx := context.Background()
+	state := theState(t, nil)
+	bin := testutil.FakeClaude(t, callsScript(6, `{"is_error":true,"subtype":"error_max_turns"}`))
+	r := &decide.Runner{Agent: decide.Claude{Bin: bin}, Now: testNow, Models: testModels()}
+
+	for i := range 6 {
+		d, err := r.Decide(ctx, decide.Request{State: state, ItemID: "wi-1", Paths: []string{"docs/x.md"}})
+		if !errors.Is(err, decide.ErrFailedCall) {
+			t.Fatalf("call %d ended as %v, not ErrFailedCall", i+1, err)
+		}
+		state = d.Next
+		if got := orchestrator.DecisionCalls(state, mustNow(t)).DecisionsHour; got != i+1 {
+			t.Fatalf("after %d failed calls the node counts %d, want %d", i+1, got, i+1)
+		}
+	}
+	if _, err := r.Decide(ctx, decide.Request{State: state, ItemID: "wi-1", Paths: []string{"docs/x.md"}}); !errors.Is(err, decide.ErrCallCap) {
+		t.Fatalf("the seventh call ended as %v, not ErrCallCap", err)
+	}
+}
+
+func TestTwoCallsInTheSameSecondAreTwoRecords(t *testing.T) {
+	// The server clock can give two calls one stamp — a test's clock does it
+	// every time — and a record keyed by the stamp would turn the second call
+	// into a refused patch, which the runner reports as a failure: the caps
+	// would stop counting exactly when a loop is calling fastest.
+	now := mustNow(t)
+	state := theState(t, nil)
+	for i := range 3 {
+		next, err := decide.RecordCall(state, "wi-1", now)
+		if err != nil {
+			t.Fatalf("call %d's record ended as %v", i+1, err)
+		}
+		state = next
+		if got := orchestrator.DecisionCalls(state, now).DecisionsHour; got != i+1 {
+			t.Fatalf("after %d calls the node counts %d, want %d", i+1, got, i+1)
+		}
+		// Closed as it is written: an open record is a question nobody owes an
+		// answer to and retention never drops it, so a record per call would
+		// fill the document until the daemon stopped on OverCap.
+		if record := state.Decisions[len(state.Decisions)-1]; !record.Resolved() {
+			t.Error("the call's record is an open question, which retention keeps for good")
+		}
+	}
+}
+
 func TestCountersSurviveARestart(t *testing.T) {
 	now, _ := testNow()
 	full := theState(t, func(s *orchestrator.State) { s.Decisions = decisionsAt(now, 6, 5*time.Minute) })
