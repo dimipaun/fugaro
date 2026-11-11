@@ -124,7 +124,7 @@ Then the image itself is validated, and the only build that counts is the cloud 
 fugaro image build backend
 ```
 
-Read what comes back with them: the build's own log for the failing step, the smoke's checks by name for the runtime contract (a check that fails names what the Dockerfile lost), and `fugaro image status --json` for the entry's build time, source commit and the last daily check's decision. Iterate on the Dockerfile with the user — one fix at a time, the whole file shown again — and treat three failed rounds on one failure as the point to stop and ask. `fugaro doctor --json` reports the catalog and each entry's state when a build's result is not obvious.
+Read what comes back with them: the build's own log for the failing step, the smoke's checks by name for the runtime contract (a check that fails names what the Dockerfile lost), and `fugaro image ls --json` for the `digest` the entry's last build recorded. A catalog entry's own record belongs to the daily check job, not to `fugaro image status --json` (which reads a per-repository derived image): `fugaro doctor --json` is what reports an entry no build has built, or one whose definition moved since it was. Iterate on the Dockerfile with the user — one fix at a time, the whole file shown again — and treat three failed rounds on one failure as the point to stop and ask.
 
 Nothing is live until the project's configuration is published: the catalog, the map and the bake switch reach the project when the user runs the update, in their own terminal, not through the agent:
 
