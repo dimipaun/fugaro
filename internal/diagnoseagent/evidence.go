@@ -203,6 +203,16 @@ type evidenceFile struct {
 // wrote. A log that fits is written whole, and the two are told apart by the
 // note rather than by a marker in the text.
 //
+// The note is written when the beginning was in fact left out, and it says
+// which of the two ways: the read kept less than the log holds, or the cut took
+// the front of what was kept. What it is not written for is redaction changing
+// the text's length on its own, which is every log that holds a value: a pass
+// puts a marker of its own length where a value stood, so a log that fits is
+// shorter or longer than the log afterwards, and neither is a byte left out.
+// Gating on the raw total against the redacted length instead said the
+// beginning of a whole log was left out, and said nothing at all of a log that
+// fits and grew past the cap.
+//
 // A log past the cap is redacted here, over a window logRedactOverlap bytes
 // wider than what is kept, and cut only after that. Both passes substitute
 // whole values and know no half of one, so a credential the cut ran through
@@ -238,10 +248,13 @@ func (o Options) logText(id cmdlog.ID) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("reading the log of %s: %w", id, err)
 	}
+	read := int64(len(data))
+	cut := int64(0)
 	if maxLogBytes > 0 {
 		data = []byte(redact.Text(string(data), o.Secrets))
-		if cut := int64(len(data)) - maxLogBytes; cut > 0 {
-			data = data[cut:]
+		if c := int64(len(data)) - maxLogBytes; c > 0 {
+			data = data[c:]
+			cut = c
 		}
 	}
 	var note, b strings.Builder
@@ -251,9 +264,21 @@ func (o Options) logText(id cmdlog.ID) (string, error) {
 		// asks for an empty read gets an empty file that says so, which is the
 		// difference between "the log said nothing" and "the log was not read".
 		fmt.Fprintf(&note, "The log of %s was not read: this diagnosis reads a log through a %d-byte cap.\n", id, maxLogBytes)
-	case total > int64(len(data)):
+	case total <= read && cut == 0:
+		// Nothing was left out: the read kept every byte of the log and the
+		// cut found nothing to take. Redaction changing the text's length is
+		// not a byte left out, and a note over a file that holds the log whole
+		// is the one thing this note exists not to say.
+	case total > maxLogBytes:
 		fmt.Fprintf(&note, "The log of %s is %d bytes; only its last %d bytes are below, because a log is read through a %d-byte cap. The beginning was left out: a command that failed says why at its end.\n\n",
 			id, total, len(data), maxLogBytes)
+	default:
+		// The log is inside the cap and its front went anyway, because
+		// redaction lengthened the text past the cap: a value stands as a
+		// marker longer than the value it replaces. Without this line the file
+		// would begin mid-log with nothing saying so.
+		fmt.Fprintf(&note, "The log of %s is %d bytes and fits in the %d-byte cap, but redaction made the text longer than the cap, so its beginning was left out. A command that failed says why at its end.\n\n",
+			id, total, maxLogBytes)
 	}
 	b.WriteString(redact.Text(note.String(), o.Secrets))
 	b.Write(data)

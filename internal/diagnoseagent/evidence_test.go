@@ -456,6 +456,84 @@ func TestEvidenceCollectRedactsTheValueTheCapWouldSplit(t *testing.T) {
 	}
 }
 
+// TestEvidenceCollectNotesALogTheRedactionCut: a log inside the cap can be
+// longer than the cap once redacted, because a pass puts a marker of its own
+// length where a value stood and a value shorter than that marker grows, and
+// the cut then takes the front of the text. The note is what says so: a file
+// that begins mid-log without it is a file a reader takes for the whole log.
+func TestEvidenceCollectNotesALogTheRedactionCut(t *testing.T) {
+	was := maxLogBytes
+	t.Cleanup(func() { maxLogBytes = was })
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	head := "the beginning of the log, which the cut takes\n"
+	tail := "Step failed: quota exceeded\n"
+	logText := head + evidenceFrag + "\n" + tail
+	// The cap is the log's own length, so the log fits it and the read keeps
+	// every byte of it: what can go is only what the cut takes, and the
+	// fragment stands as a marker longer than itself, which puts the redacted
+	// text past the cap. A cap even one byte under the log would not show it —
+	// the note that names the log's size against the cap is written there
+	// already — which is what makes this the case that went silent.
+	maxLogBytes = int64(len(logText))
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open:    func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+		Secrets: []string{evidenceFrag},
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := evidenceRead(t, ev.EvidenceDir)[id.String()+".log"]
+	if strings.Contains(got, head) {
+		t.Errorf("the log file holds the beginning of a log the cut went through: %q", got)
+	}
+	if !strings.Contains(got, tail) {
+		t.Errorf("the log file does not hold the end of the log: %q", got)
+	}
+	if !strings.Contains(got, "left out") {
+		t.Errorf("the log file does not say its beginning was left out: %q", got)
+	}
+	if strings.Contains(got, evidenceFrag) {
+		t.Errorf("the log file carries the value the caller named: %q", got)
+	}
+}
+
+// TestEvidenceCollectDoesNotNoteALogItKeptWhole: a log inside the cap that
+// redaction makes shorter is still the whole log, and the file must not carry
+// the note. The note is about bytes that were left out, and redaction changing
+// the text's length is not that: a file saying its beginning was left out while
+// holding the log's first line is the lie the note exists to prevent.
+func TestEvidenceCollectDoesNotNoteALogItKeptWhole(t *testing.T) {
+	was := maxLogBytes
+	t.Cleanup(func() { maxLogBytes = was })
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	head := "the beginning of the log, which the file holds\n"
+	tail := "Step failed: quota exceeded\n"
+	value := evidenceValue(t, "whole")
+	logText := head + value + "\n" + tail
+	maxLogBytes = int64(len(logText))
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open:    func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+		Secrets: []string{value},
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := evidenceRead(t, ev.EvidenceDir)[id.String()+".log"]
+	if !strings.Contains(got, head) {
+		t.Errorf("the log file does not hold the beginning of a log that fits the cap: %q", got)
+	}
+	if strings.Contains(got, "left out") {
+		t.Errorf("the log file says the beginning was left out of a log it holds whole: %q", got)
+	}
+	if strings.Contains(got, value) {
+		t.Errorf("the log file carries the value the caller named: %q", got)
+	}
+}
+
 // TestEvidenceCollectReplacesAnEarlierCollection: the folder belongs to the run
 // ID (one diagnosis per failed command), so a second collection writes over the
 // first's files. A file the first left and the second does not write would be
