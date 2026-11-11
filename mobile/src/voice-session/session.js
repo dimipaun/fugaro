@@ -60,9 +60,11 @@
 //     closes the microphone and ends the port. Its two halves are gated
 //     differently, because they answer different questions: `begun` keeps the
 //     port honest (a port that never answered `start()` is never asked to
-//     `end`), while the screen is stopped whenever this module may have opened a
-//     microphone -- `microphone` -- including the one a `start()` the caller
-//     abandoned opened for a session that never began at all.
+//     `end`, and a port that answers *after* the teardown has finished is ended
+//     by the call that answered it, since it is running by then), while the
+//     screen is stopped whenever this module may have opened a microphone --
+//     `microphone` -- including the one a `start()` the caller abandoned opened
+//     for a session that never began at all.
 //   * **The mute asks the machine first.** A mute with no session is refused
 //     rather than handed to a port that has none, and the audio is muted before
 //     the flag and the status that render it -- so a port that would not mute
@@ -82,12 +84,13 @@
 //     computed before them: a verdict reduced from a state the session has left,
 //     a screen started for a session that is already over, a microphone opened
 //     after the teardown that closed it or left open through a pause that
-//     arrived under the start, a new session begun under a teardown that is
-//     still running, and -- at the other end -- a call of a session that has
-//     been replaced driving the one that replaced it. Each is guarded where it
-//     would be applied (`start`, `setMuted`, `commit`) or, for the microphone,
-//     by the one queue every screen call a pause, a resume or a teardown makes
-//     goes through, and each guard is tested.
+//     arrived under the start, a screen started before the port has answered for
+//     a session that paused and resumed under it, a new session begun under a
+//     teardown that is still running, and -- at the other end -- a call of a
+//     session that has been replaced driving the one that replaced it. Each is
+//     guarded where it would be applied (`start`, `setMuted`, `commit`) or, for
+//     the microphone, by the one queue every screen call a pause, a resume or a
+//     teardown makes goes through, and each guard is tested.
 
 import { REMOTE_ACTIONS, SESSION_EVENTS } from './events.js';
 
@@ -262,6 +265,13 @@ export function createVoiceSession({
   let generation = 0;
   /** Whether the port answered `start()`: the gate on every push, and on `end`. */
   let begun = false;
+  /** Whether this module has asked the port to end, once.
+   *
+   * The teardown ends the port where `begun` already says yes; the other order --
+   * a port that answers `start()` for a session the teardown has already
+   * finished, so that the teardown's port half was skipped -- is ended by the
+   * call that answered it, and this is what keeps the two from ending it twice. */
+  let portEnded = false;
   /** Whether this module has opened the microphone and not seen it close.
    *
    * `begun` is the port's session; this is the device's, and the two come apart in
@@ -361,19 +371,33 @@ export function createVoiceSession({
     closing = true;
     teardown = (async () => {
       await closeTheMicrophone(SESSION_CODES.END_FAILED);
-      if (begun) {
-        try {
-          await native.end(reason);
-        } catch {
-          failure = failureFor(SESSION_CODES.END_FAILED);
-        }
-      }
+      await endThePort(reason);
       // Only a hang-up waits for this event; the paths that reach `ended` on
       // their own are already there, and the machine refuses an `end` they
       // never asked for.
       if (current.state === 'ending') apply({ type: 'end' });
     })();
     return teardown;
+  }
+
+  /**
+   * End the port, once, and only if it began.
+   *
+   * `begun` and not `microphone` is the gate: a port that never answered
+   * `start()` has no session to end, whatever the device is doing. It is the
+   * teardown's second half, and the one path that reaches it after the teardown
+   * has finished is a port that answers `start()` for a session that is already
+   * over -- a foreground service and a Live Activity running with nothing else
+   * left that would stop them.
+   */
+  async function endThePort(reason) {
+    if (!begun || portEnded) return;
+    portEnded = true;
+    try {
+      await native.end(reason);
+    } catch {
+      failure = failureFor(SESSION_CODES.END_FAILED);
+    }
   }
 
   /**
@@ -448,10 +472,17 @@ export function createVoiceSession({
    * Only the crossings between the pair above are acted on, so a mute, a second
    * interruption and a `tick` inside a pause -- none of which changes the state
    * -- reach neither the screen nor the microphone.
+   *
+   * One crossing is not acted on here: a session paused and resumed while
+   * `native.start()` is still answering is not opened by the resume, because the
+   * port has not answered and the session the screen would capture for is one it
+   * does not have yet -- `start()` asks the port first, and this would be the
+   * screen first. That session is opened by `start()` itself, once, when the
+   * port answers (see the live-state branch there).
    */
   function followThePause(before, after) {
     if (LIVE.includes(before) && PAUSED.includes(after)) closeTheMicrophone(SESSION_CODES.PAUSE_FAILED);
-    else if (PAUSED.includes(before) && LIVE.includes(after)) openTheMicrophone();
+    else if (begun && PAUSED.includes(before) && LIVE.includes(after)) openTheMicrophone();
   }
 
   /** Adopt a state the machine answered with: the lease, the push, the pause,
@@ -476,6 +507,20 @@ export function createVoiceSession({
     return verdict;
   }
 
+  /**
+   * The machine's own success shape, for a session that is already up.
+   *
+   * `start()` asks the machine for `started` at the end, and the machine refuses
+   * it once an event has carried the session past `starting` -- a pause that
+   * arrived under the port call, or a pause and the resume that ended it, both of
+   * which leave it listening. The caller asked whether the session started, and a
+   * session that is listening is that answer; the refusal would say it did not
+   * start, of a session that is capturing.
+   */
+  function alreadyLive() {
+    return Object.freeze({ ok: true, state: current });
+  }
+
   /** Wait for the work a transition asked for, so that a caller's `await` is the
    * whole transition: `ended` means the port was ended, and a paused session
    * means the microphone is closed. */
@@ -492,6 +537,7 @@ export function createVoiceSession({
   function reset() {
     generation += 1;
     begun = false;
+    portEnded = false;
     closing = false;
     teardown = null;
     screenWork = null;
@@ -556,7 +602,14 @@ export function createVoiceSession({
       // caller's question -- did the session start -- is answered with no; the
       // state says why.
       if (OVER.includes(current.state)) {
-        startTeardown(current.endReason);
+        await startTeardown(current.endReason);
+        // The teardown that ran in that window skipped its port half, `begun`
+        // being false then: the session is over and the port that has just
+        // answered is one this module asked for -- a foreground service and a
+        // Live Activity -- with nothing else left that would end it. `closing`
+        // is not the question here; the teardown is finished, and what is left
+        // to end is the port it could not.
+        await endThePort(current.endReason);
         await settle();
         return refuse(SESSION_CODES.START_FAILED);
       }
@@ -617,6 +670,14 @@ export function createVoiceSession({
       // machine is driven for the session this call still holds, and for no
       // other.
       if (generation !== mine) return refuse(SESSION_CODES.START_FAILED);
+      // The screen start above is the last thing this call waits on, and the
+      // session can be listening by the time it answers: a pause under the port
+      // call, and the resume that ended it, both took it there, and the resume
+      // deliberately left the screen to this call (see `followThePause`). The
+      // `started` below is then one the machine refuses, the session not being
+      // `starting` any more -- and the caller's question is answered with the
+      // session that is running rather than with that refusal.
+      if (LIVE.includes(current.state)) return alreadyLive();
       return apply({ type: 'started' });
     },
 

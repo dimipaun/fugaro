@@ -715,6 +715,56 @@ test('a session paused while the port is answering never opens the microphone', 
   assert.equal(h.audioIn.running(), true, 'and the resume opens the microphone it never opened before');
 });
 
+test('an interruption that ends under a port call does not open the microphone before the port answered', async () => {
+  // The window inside that one: the pause and the resume that ends it both
+  // arrive while `native.start()` is still answering, so the session is back to
+  // `listening` with no port under it. The resume's crossing is not the screen's
+  // to act on there -- the session it would capture for is one the port does not
+  // have yet -- and `start()` opens the microphone when the port answers, which
+  // is the order every other path keeps.
+  const starting = gate();
+  const h = harness({ holdStart: starting });
+  const begun = h.session.start();
+  await settle();
+
+  await h.session.dispatch({ type: 'interruptionBegan', source: INTERRUPTION_SOURCES.CALL });
+  await h.session.dispatch({ type: 'interruptionEnded', shouldResume: true });
+  assert.equal(h.session.state().state, 'listening');
+  assert.equal(h.audioIn.calls().starts, 0, 'the port has not answered, so nothing is capturing');
+
+  starting.open();
+  const verdict = await begun;
+  assert.equal(verdict.ok, true, 'the session is listening, so it is not reported as one that failed to start');
+  assert.equal(h.audioIn.calls().starts, 1, 'and the screen is started once, after the port');
+  assert.equal(h.audioIn.running(), true);
+});
+
+test('a route pause and its resume under a port call are not started twice', async () => {
+  // The same window with §6.3's pause, which resumes on an explicit action: the
+  // screen is started for neither half of it before the port answers, so the
+  // port's own answer starts it once rather than once per crossing -- and the
+  // session it finds is already listening -- which is what the caller is told: a
+  // `started` driven on that session is refused with `no-transition`, and that
+  // refusal is not the answer to "did the session start".
+  const starting = gate();
+  const h = harness({ holdStart: starting });
+  const begun = h.session.start();
+  await settle();
+
+  await h.session.dispatch({ type: 'routeChanged', route: 'speaker', unsafe: true });
+  assert.equal(h.session.state().state, 'paused_route');
+  await h.session.resume();
+  assert.equal(h.session.state().state, 'listening');
+  assert.equal(h.audioIn.calls().starts, 0, 'the resume opens nothing before the port has answered');
+
+  starting.open();
+  const verdict = await begun;
+  assert.equal(verdict.ok, true, 'the session is running, so `start` does not answer that it did not start');
+  assert.equal(h.session.state().state, 'listening');
+  assert.equal(h.audioIn.calls().starts, 1);
+  assert.equal(h.audioIn.running(), true);
+});
+
 test('a new session waits for the last one’s teardown before it begins', async () => {
   // §8's "Tap to resume" is a `start()` on a session that ended on its own, and
   // that session's teardown may still be running: the transition that ends a
@@ -870,6 +920,51 @@ test('a start abandoned while the session is starting is not left holding a micr
   );
   // `replaced` is deliberately never answered: the reproduction is a session that
   // ends before its own port call does.
+});
+
+test('a port that answers after the teardown has finished is ended all the same', async () => {
+  // The other half of the test above, and the one it stops short of. That session
+  // ended before its port answered, so the teardown had no port half to run -- and
+  // the answer that arrives afterwards is a session this module asked for: a
+  // foreground service and a Live Activity that nothing else would stop, on a
+  // session the caller reads as over.
+  const first = gate();
+  const second = gate();
+  const opening = gate();
+  const h = harness({ holdFirstStart: first, holdStart: second, holdScreenStart: opening });
+
+  const abandoned = h.session.start();
+  await settle();
+  first.open();
+  await settle();
+
+  await h.session.hangUp();
+  assert.equal(h.session.state().state, 'ended');
+
+  const replaced = h.session.start();
+  await settle();
+  opening.open();
+  await settle();
+  await h.session.dispatch({ type: 'serviceStopped', reason: SERVICE_STOP_REASONS.SYSTEM });
+  assert.equal(h.session.state().state, 'ended');
+  assert.equal(h.audioIn.running(), false, 'the microphone the abandoned start opened is closed');
+  assert.deepEqual(
+    callsNamed(h.native, 'end').map((call) => call.args[0]),
+    ['hangup'],
+    'nothing was asked of a port that had not begun',
+  );
+
+  // The port answers at last, and the session it begins is one that is already
+  // over: the teardown that ended it is finished and cannot end it now.
+  second.open();
+  assert.deepEqual(await abandoned, { ok: false, code: SESSION_CODES.START_FAILED, field: null });
+  assert.deepEqual(await replaced, { ok: false, code: SESSION_CODES.START_FAILED, field: null });
+  assert.deepEqual(
+    callsNamed(h.native, 'end').map((call) => call.args[0]),
+    ['hangup', 'service_stopped'],
+    'the port that began after the teardown is ended by the call that heard it begin',
+  );
+  assert.equal(h.session.state().state, 'ended');
 });
 
 test('a pause whose screen will not stop records pause-failed, and stays paused', async () => {
