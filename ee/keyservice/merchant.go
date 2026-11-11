@@ -321,14 +321,22 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 		// subscription has since become — a cancellation that landed on the
 		// purchase's own instant is undone by the very write that repairs the
 		// term, and the renewal then mints a paid key for a customer who has left
-		// (§5.2, §5.3). Only the fields the record is the source of move.
+		// (§5.2, §5.3). Only the fields the record is the source of move, and the
+		// term moves only forward: a renewal runs inside the term the purchase
+		// paid for and ends later than it, so a redelivery of the purchase after
+		// one would otherwise put the subscription back on the term the renewal
+		// replaced — a store that says the term has ended while the customer holds
+		// a key for the year after it, and a seat change in that window minting a
+		// key that covers the wrong term.
 		sub.ID = e.Subscription
 		sub.Organisation = record.Organisation
 		sub.Seats = record.Seats
 		sub.TermDays = daysBetween(record.Issued, record.Expires)
 		sub.Email = to
 		sub.At = e.OccurredAt
-		sub.Expires = record.Expires
+		if record.Expires.After(sub.Expires) {
+			sub.Expires = record.Expires
+		}
 		return s.store.SaveSubscription(ctx, sub)
 	case EventSeatChange:
 		if !held || sub.Cancelled || sub.Seats == record.Seats {
@@ -438,6 +446,16 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // and a subscription still ending where it did — and every later trigger finds
 // the source recorded and would stop there. The recorded source carries the end
 // of the term it covers, so what is left is read off the record and written.
+//
+// The subscription's `At` is left alone, and that is the whole of what keeps a
+// cancellation: it is the instant of the last merchant event the store applied,
+// and §5.2's ordering compares an event's own instant with it. The service's
+// clock is not on that timeline, so a renewal that stamped it would make every
+// event the merchant sent before the renewal look older than the state — and a
+// cancellation that happened before the renewal ran, delivered after it by
+// ordinary webhook latency or a merchant retry, would be dropped for good: the
+// subscription would never cancel, and every later renewal would mint another
+// key for a customer who has left (§5.2, §5.3).
 func (s *Service) Renew(ctx context.Context, subscriptionID string) (Minted, bool, error) {
 	sub, held, err := s.store.Subscription(ctx, subscriptionID)
 	if err != nil {
@@ -477,7 +495,6 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (Minted, boo
 		return Minted{}, false, err
 	}
 	sub.Expires = next
-	sub.At = now
 	if err := s.store.SaveSubscription(ctx, sub); err != nil {
 		return Minted{}, false, err
 	}
@@ -485,17 +502,20 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (Minted, boo
 }
 
 // renewed finishes a renewal whose key is already minted and whose term the
-// store did not take: the record names the end of the term it covers and the
-// instant it was issued, so the state the customer paid for is written from it.
+// store did not take: the record names the end of the term it covers, so the
+// state the customer paid for is written from it.
 // The subscription's own end is the test — it is what the window and the source
 // are both computed from — and a state the term has already moved past is left
 // alone, so a stale source cannot pull it back.
+//
+// `At` is left alone here for the reason Renew leaves it alone: it is the
+// merchant's timeline and not the service's, and the repair's own instant is not
+// an event on it.
 func (s *Service) renewed(ctx context.Context, sub Subscription, record Record) error {
 	if !sub.Expires.Before(record.Expires) {
 		return nil
 	}
 	sub.Expires = record.Expires
-	sub.At = record.Issued
 	return s.store.SaveSubscription(ctx, sub)
 }
 

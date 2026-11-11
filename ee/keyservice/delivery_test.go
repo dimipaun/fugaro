@@ -272,6 +272,81 @@ func TestASeatChangeWhoseSubscriptionWriteFailedIsCompleted(t *testing.T) {
 	}
 }
 
+// failingVerifications is the store as a deployment that cannot write a
+// verification's dropped state: §7.3's drop is a bookkeeping write that
+// `dropPersonal` logs and does not answer with a failure, so the write is one a
+// store can lose while the request that made it still succeeds — and what is
+// left behind is a record that still carries the applicant's address.
+type failingVerifications struct {
+	*Memory
+	refused int
+}
+
+func (f *failingVerifications) SaveVerification(ctx context.Context, v Verification) error {
+	if v.Email == "" && v.Domain == "" && v.Organisation == "" && len(v.Repositories) == 0 {
+		f.refused++
+		return errors.New("the store refused the write")
+	}
+	return f.Memory.SaveVerification(ctx, v)
+}
+
+// newUndroppableStore is the fixture whose store refuses exactly the writes that
+// drop a verification's personal data, so that a test can hold what is left when
+// the drop does not land.
+func newUndroppableStore(t *testing.T) (*fixture, *failingVerifications) {
+	t.Helper()
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.store = &Memory{}
+		f.deps.Store = &failingVerifications{Memory: f.store}
+	})
+	return f, f.deps.Store.(*failingVerifications)
+}
+
+// TestASpentTokenIsSpentEvenWhenTheDropsWriteFails: the token's own flag is the
+// single-use rule (§7.2), and it is the *only* thing holding it when the drop
+// does not land: with the address, the domain and the organisation still on the
+// record, the mint that follows a second follow would go through — the minter
+// has nothing to refuse, and a record the store already holds is not a second
+// mint but a second *mail*, because `mint` mails before it records. So a leaked
+// link would put a second key in the applicant's mailbox with nothing to show
+// for it. Two follows, one key signed, one key mailed.
+func TestASpentTokenIsSpentEvenWhenTheDropsWriteFails(t *testing.T) {
+	f, store := newUndroppableStore(t)
+	f.applyOpenSource(applicantAddress, repositoryURL)
+	token := f.mailedToken()
+
+	f.verify(token)
+	if got := f.signer.calls; got != 1 {
+		t.Fatalf("the first follow signed %d key(s), want one", got)
+	}
+	if store.refused == 0 {
+		t.Fatal("the store took the drop, want the write this test is about refused")
+	}
+	for _, v := range f.verifications() {
+		if v.ID != digest(token) {
+			continue
+		}
+		if v.Email == "" || v.Organisation == "" {
+			t.Fatal("the record lost the applicant's fields, want them still on it: the flag is the only guard left")
+		}
+		if !v.Used {
+			t.Fatal("the record is not spent, want the spend to be the write that landed")
+		}
+	}
+	mailed, signed := len(f.mail.sent), f.signer.calls
+
+	f.verify(token)
+	if got := f.signer.calls; got != signed {
+		t.Errorf("the second follow of one token signed %d key(s) in all, want the first follow's one: a token is spent by the request that carries it (§7.2)", got)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("the second follow of one token mailed %d message(s) in all, want the key the first one sent", got)
+	}
+	if got := len(f.records()); got != 1 {
+		t.Errorf("the record holds %d key(s), want one", got)
+	}
+}
+
 // TestAPurchaseWithNoDeliverableAddressIsRefused: the paid path mails the key to
 // the buyer's address the merchant's payload carries, so an event that carries
 // none is an event the service cannot finish. It is refused, and refused before

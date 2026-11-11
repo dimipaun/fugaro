@@ -496,6 +496,7 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 func TestTheRenewalWhoseTermWasNotSavedIsFinished(t *testing.T) {
 	f, store := newFailingStore(t)
 	first := f.purchase("evt-1", "acme.example", 5, 365)
+	bought := f.now
 
 	f.advance(365*day - 30*day)
 	store.refuse = 1
@@ -523,8 +524,8 @@ func TestTheRenewalWhoseTermWasNotSavedIsFinished(t *testing.T) {
 	if !sub.Expires.Equal(record.Expires) {
 		t.Errorf("the retry left the term ending %s, want the end of the term the renewal key covers (%s): the subscription would otherwise never renew again", sub.Expires, record.Expires)
 	}
-	if !sub.At.Equal(record.Issued) {
-		t.Errorf("the retry left the subscription's instant at %s, want the renewal's own (%s)", sub.At, record.Issued)
+	if !sub.At.Equal(bought) {
+		t.Errorf("the retry left the subscription's instant at %s, want the purchase's %s: the renewal is not an event on the merchant's timeline, and a state stamped with the service's clock drops every event sent before it (§5.2)", sub.At, bought)
 	}
 	if got := len(f.mail.sent); got != 2 {
 		t.Errorf("the retry mailed %d message(s) in all, want the renewal's one alone: the key is delivered once", got)
@@ -539,6 +540,115 @@ func TestTheRenewalWhoseTermWasNotSavedIsFinished(t *testing.T) {
 	f.advance(365 * day)
 	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || !renewed {
 		t.Errorf("the next term's renewal answered (renewed=%v, err=%v), want the key after the repaired one", renewed, err)
+	}
+}
+
+// TestACancellationDeliveredAfterTheRenewalStillCancels: §5.2's ordering
+// compares an event's own instant with the subscription's, and the renewal is
+// not an event on that timeline — it is the service acting on a customer's
+// behalf, and its instant is the service's clock. A renewal that stamped the
+// subscription with it would make every event the merchant sent *before* the
+// renewal look older than the state: a cancellation that happened before the
+// renewal ran and arrived after it — ordinary webhook latency, or the merchant's
+// retry after an intake outage — would be answered 200 and dropped for good, the
+// subscription would never cancel, and every later renewal would mint another
+// paid key for a customer who has left (§5.2, §5.3).
+func TestACancellationDeliveredAfterTheRenewalStillCancels(t *testing.T) {
+	f := newFixture(t)
+	f.purchase("evt-1", "acme.example", 5, 365)
+	bought := f.now
+
+	f.advance(365*day - 30*day)
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || !renewed {
+		t.Fatalf("the renewal answered (renewed=%v, err=%v), want the term's key", renewed, err)
+	}
+	sub, _, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil {
+		t.Fatalf("reading the subscription: %v", err)
+	}
+	if !sub.At.Equal(bought) {
+		t.Fatalf("the renewal moved the subscription's instant to %s, want the merchant's own %s: the ordering rule compares the two timelines", sub.At, bought)
+	}
+	minted, mailed := f.signer.calls, len(f.mail.sent)
+
+	// The customer cancelled the day before the renewal ran, and the delivery is
+	// late: it arrives now, after the renewal.
+	cancelled := f.now.Add(-day)
+	if rec := f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example", OccurredAt: cancelled}); rec.Code != http.StatusOK {
+		t.Fatalf("the late cancellation was answered %d, want 200", rec.Code)
+	}
+	sub, _, err = f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil {
+		t.Fatalf("reading the subscription: %v", err)
+	}
+	if !sub.Cancelled {
+		t.Error("a cancellation delivered after a renewal it predates was dropped, want the subscription cancelled: the customer who has left is the customer §5.3 is about")
+	}
+	if !sub.At.Equal(cancelled) {
+		t.Errorf("the subscription's instant is %s, want the cancellation's %s", sub.At, cancelled)
+	}
+
+	// And the next term's renewal, a year on: nothing is minted for a customer who
+	// has left, which is the harm the drop did — the cancellation was the only
+	// thing that ever stopped it.
+	f.advance(365 * day)
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || renewed {
+		t.Errorf("the next term's renewal answered (renewed=%v, err=%v), want nothing: a cancellation stops the reissue", renewed, err)
+	}
+	if got := f.signer.calls; got != minted {
+		t.Errorf("the year after the cancellation signed %d key(s), want the purchase's and the renewal's alone", got)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("the year after the cancellation mailed %d message(s), want the two the customer was sent", got)
+	}
+	if got := len(f.records()); got != 2 {
+		t.Errorf("the record holds %d key(s), want the purchase's and the renewal's", got)
+	}
+}
+
+// TestARedeliveredPurchaseDoesNotUndoARenewal: completed's repair finishes a
+// write that did not take, from the record the mint left — and a term the store
+// has already moved past is not one a redelivery of the purchase may pull back.
+// The renewal runs inside the term the purchase paid for, so the store's end is
+// later than the record's, and writing the record's end over it would leave the
+// store saying the term has ended while the customer holds a key for the year
+// after it — and a seat change in that window would mint a key covering the
+// wrong term. Nothing is minted twice either: the redelivery is not a purchase.
+func TestARedeliveredPurchaseDoesNotUndoARenewal(t *testing.T) {
+	f := newFixture(t)
+	f.purchase("evt-1", "acme.example", 5, 365)
+	bought := f.now
+
+	f.advance(365*day - 30*day)
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || !renewed {
+		t.Fatalf("the renewal answered (renewed=%v, err=%v), want the term's key", renewed, err)
+	}
+	renewed, _, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil {
+		t.Fatalf("reading the subscription: %v", err)
+	}
+	minted, mailed := f.signer.calls, len(f.mail.sent)
+
+	f.event(Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", Seats: 5, TermDays: 365, OccurredAt: bought})
+
+	sub, _, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil {
+		t.Fatalf("reading the subscription: %v", err)
+	}
+	if !sub.Expires.Equal(renewed.Expires) {
+		t.Errorf("the redelivered purchase left the term ending %s, want the renewal's %s: a repair does not move the term backwards", sub.Expires, renewed.Expires)
+	}
+	if sub.Cancelled {
+		t.Error("the redelivery cancelled the subscription")
+	}
+	if got := f.signer.calls; got != minted {
+		t.Errorf("the redelivered purchase signed %d key(s), want none: it is an event the service has already minted for", got-minted)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("the redelivered purchase mailed %d message(s), want none", got-mailed)
+	}
+	if got := len(f.records()); got != 2 {
+		t.Errorf("the record holds %d key(s), want the purchase's and the renewal's", got)
 	}
 }
 
