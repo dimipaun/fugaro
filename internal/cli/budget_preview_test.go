@@ -1301,15 +1301,30 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 		layer      string
 		repoRigor  string
 		noCheckout bool
-		mode       string
-		first      int
-		rounds     int
-		stages     int
+		// request is --mode, for the cases that ask for a mode over the one
+		// the layers give; note is what stderr has to say about it, if
+		// anything, so a request the resolver refuses to act on is pinned
+		// where it is refused as well as where it takes.
+		request string
+		note    string
+		mode    string
+		first   int
+		rounds  int
+		stages  int
 	}{
 		{name: "no layer and no repository value: pro", mode: "pro", first: 3, rounds: 3, stages: 31},
 		{name: "the repository's own rigor default", repoRigor: "rigor: { default: poc }\n", mode: "poc", first: 1, rounds: 1, stages: 7},
 		{name: "the project layer's default", layer: "critical", mode: "critical", first: 3, rounds: 5, stages: 47},
 		{name: "no checkout: the project layer's default", layer: "startup", noCheckout: true, mode: "startup", first: 2, rounds: 2, stages: 17},
+		// --mode is resolved over the layers a preview without a checkout has
+		// (the project layer alone), and it is resolved the same way there as
+		// it is over a checkout: raised, never lowered. Both rows are the
+		// no-checkout branch of previewKnobsOf, which reads the layer itself.
+		{name: "no checkout: a mode asked over the project layer's", layer: "startup", noCheckout: true,
+			request: "critical", mode: "critical", first: 3, rounds: 5, stages: 47},
+		{name: "no checkout: a request below the project layer's", layer: "startup", noCheckout: true,
+			request: "poc", mode: "startup", first: 2, rounds: 2, stages: 17,
+			note: "--mode poc has no effect: this repository resolves to startup"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newBudgetFixture(t, "")
@@ -1339,13 +1354,19 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 					testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": previewCheckoutYAML(agent)})
 				}
 			}
-			out, _, err := execute(t, args...)
+			if tc.request != "" {
+				args = append(args, "--mode", tc.request)
+			}
+			out, errOut, err := execute(t, args...)
 			if err != nil {
 				t.Fatal(err)
 			}
 			want := fmt.Sprintf(standard, tc.stages, tc.mode, tc.first, tc.rounds)
 			if !strings.Contains(out, want) {
 				t.Fatalf("preview never says %q:\n%s", want, out)
+			}
+			if tc.note != "" && !strings.Contains(errOut, tc.note) {
+				t.Fatalf("preview never says %q:\n%s", tc.note, errOut)
 			}
 		})
 	}

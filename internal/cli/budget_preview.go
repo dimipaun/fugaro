@@ -371,8 +371,9 @@ type previewHeadroom struct {
 // figure that moved beside the number the configuration holds. The database's
 // caps are not scaled: they are the rules' own numbers, and a mode's fraction
 // is the default a run gets from the deployed ceiling, never a multiplier over
-// a cap the owner wrote (internal/runner/policy.go's spendFromPolicy reads
-// them the same way).
+// a cap another layer wrote (internal/runner/policy.go scales that one cap in
+// envCeiling, and resolvePolicy's SourceCeiling branch takes every other
+// layer's as it is).
 func previewPerRun(lc *localcfg.Config, caps budget.Caps, mode rigor.Mode) (best budget.Micros, srcs []string, origin string, ok bool, err error) {
 	take := func(m budget.Micros, what, short string) {
 		srcs = append(srcs, what+" "+usdFixed(m.USD()))
