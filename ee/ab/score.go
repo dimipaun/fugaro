@@ -36,6 +36,31 @@ const (
 // dispatches it; it is one of D561's iterations.
 const fixStage = "fix"
 
+// ImplementStage is the stage the coder runs, as the runner dispatches it: the
+// stage whose pinned model says which coder model an arm actually ran.
+const ImplementStage = "implement"
+
+// ArmModel is the coder model one arm ran: the model its implement stage was
+// pinned to. An arm that reached no implement stage — its job died before the
+// first one — falls back to the model its own task named, which only a
+// challenger's task carries (AB.Challenger); a champion's task names none, so a
+// champion that never implemented answers "" rather than a guess.
+//
+// It is exported because two readers need it and must agree: the report groups
+// a pair by the models its arms ran (A4.3), and the judge's bundle redacts the
+// arm's own model from its diff (A5.1), which is the model this answers.
+func ArmModel(rec runstore.Record) string {
+	for _, s := range rec.Stages {
+		if s.Name == ImplementStage && s.Model != "" {
+			return s.Model
+		}
+	}
+	if rec.AB != nil {
+		return rec.AB.Challenger
+	}
+	return ""
+}
+
 // Winner is which arm of a pair took it. A tie is a pair that decided
 // nothing, never half a win for either arm: the report counts the three apart
 // and A4.2's sign test reads only the decisive ones.

@@ -106,7 +106,7 @@ func armRecord(pairID, runID string, armTask task.ABArm, mode rigor.Mode, tr tie
 		Recipe:        &runstore.RecipeRecord{Name: abRecipe, Source: "catalog", SHA256: abRecipeSHA},
 		Verify:        []verify.Record{{Kind: verify.KindTest, HeadSHA: abHeadSHA, CleanTree: true, Passed: !a.failing}},
 		Reviews:       []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierSenior, Verdict: "ship", Findings: a.findings}},
-		Stages:        []runstore.StageTiming{{Name: implementStage, Model: a.model}},
+		Stages:        []runstore.StageTiming{{Name: ab.ImplementStage, Model: a.model}},
 	}
 	if armTask == task.ABArmChampion {
 		rec.Branch = "fugaro/marker-branch"
