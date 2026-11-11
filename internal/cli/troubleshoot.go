@@ -286,6 +286,11 @@ func troubleshootID(getenv func(string) string, ref string) (cmdlog.ID, error) {
 // contradicts what Fugaro expects is a large share of what this command
 // exists to explain (F23), and the agent can say so from the log alone.
 type troubleshootResolution struct {
+	// lc is the selected project config, the same read the credential step
+	// uses: the account names and the layer file are both in it, and reading
+	// it twice would let two steps of one diagnosis disagree about which
+	// project it is about.
+	lc    *localcfg.Config
 	cfg   *config.Config
 	layer *config.ProjectLayer
 	notes []string
@@ -342,6 +347,7 @@ func (r troubleshootResolution) text() ([]byte, error) {
 func readTroubleshootResolution(ctx context.Context) troubleshootResolution {
 	var r troubleshootResolution
 	lc := selectedProjectConfigReadOnly(ctx)
+	r.lc = lc
 	// The checkout is resolved without recording it: this command explains a
 	// failure and changes nothing on the machine, and remembering a checkout
 	// is a write.
@@ -414,14 +420,12 @@ func problemText(p config.Problem) string {
 // person's own gcloud login, in memory and behind its allow_data_to.
 func troubleshootCredential(ctx context.Context, res troubleshootResolution) (diagnoseagent.Handle, error) {
 	accounts := diagnoseagent.Accounts{Repo: troubleshootRepo(ctx)}
-	if lc := selectedProjectConfigReadOnly(ctx); lc != nil {
+	var read diagnoseagent.SecretReader
+	if lc := res.lc; lc != nil {
 		accounts.Block = lc.ClaudeAccounts
 		accounts.Default = lc.DefaultClaudeAccount
 		// The stages are left out: a local diagnosis stands for no stage of a
 		// run, so every per-stage choice is about some other command's work.
-	}
-	var read diagnoseagent.SecretReader
-	if lc := selectedProjectConfigReadOnly(ctx); lc != nil {
 		read = func(name string) (string, error) {
 			b, err := readSecretValue(ctx, lc, name)
 			return string(b), err
@@ -562,7 +566,7 @@ func troubleshootEvidenceFile(ev diagnoseagent.Evidence, name string) string {
 // machine whose command just failed: that is not a failure to run doctor, so
 // the text is kept and the exit is swallowed. Nothing printed at all is the one
 // case with nothing to keep, and the collector writes that down as such.
-func troubleshootDoctor(ctx context.Context) ([]byte, error) {
+var troubleshootDoctor = func(ctx context.Context) ([]byte, error) {
 	cmd := newDoctorCmd()
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -654,13 +658,18 @@ func commandByName(cmd *cobra.Command, name string) *cobra.Command {
 // commandFlag is the flag of cmd (or of a command above it) that name or its
 // one-letter shorthand stands for, nil when the command has none.
 func commandFlag(cmd *cobra.Command, name string) *pflag.Flag {
-	for _, set := range []*pflag.FlagSet{cmd.Flags(), cmd.InheritedFlags()} {
-		if f := set.Lookup(name); f != nil {
-			return f
-		}
-		if f := set.ShorthandLookup(name); f != nil {
-			return f
-		}
+	// InheritedFlags merges the persistent flags of every command above this
+	// one into Flags, so the one set below holds everything it accepts.
+	cmd.InheritedFlags()
+	set := cmd.Flags()
+	if f := set.Lookup(name); f != nil {
+		return f
+	}
+	// A shorthand is one letter by definition, and pflag panics rather than
+	// answering nil for anything longer: a flag a model printed as --nope is
+	// an unknown flag, not a reason to take the command down.
+	if len(name) == 1 {
+		return set.ShorthandLookup(name)
 	}
 	return nil
 }
