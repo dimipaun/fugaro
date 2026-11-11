@@ -36,6 +36,7 @@ import type { Reading } from '../../shared/availability'
 import { wireTextClass } from '../../shared/schema'
 import { MIN_ENDING } from '../../shared/shortid'
 import type {
+  GraphReleaseBox,
   GraphView,
   PlanNodeView,
   PlanReleaseView,
@@ -667,6 +668,43 @@ export const GRAPH_SCOPE_NO_RELEASE = 'no release'
  * they have to notice (H10). */
 export const GRAPH_SCOPE_KEPT = 'last read'
 
+/** GRAPH_SCOPE_UNASSIGNED is the console's own word for the group a record task
+ * nobody has placed in a release is drawn in (D2114). It is what makes an
+ * unassigned task visible as unassigned rather than as a task in the wrong box,
+ * and it is the console's word because the record has no word for it: nothing is
+ * written for a task with no assignment. */
+export const GRAPH_SCOPE_UNASSIGNED = 'unassigned'
+
+/** GRAPH_SCOPE_NO_STREAM is the console's own word for the lane of a record node
+ * that names no stream -- a dangling id whose plan no document carries, so
+ * neither its plan's stream nor a release's is known (D2115). It is the same
+ * shape of word `GRAPH_SCOPE_NO_RELEASE` is. */
+export const GRAPH_SCOPE_NO_STREAM = 'no stream'
+
+/** GRAPH_SCOPE_FROM_PLAN is the mark drawn beside a task's version (D2114): the
+ * version is the **plan's own target** and not a release the record holds it in,
+ * and a reader who saw the number alone would take it for one. It is the
+ * console's word, in the same two-channel shape every state here has (H10). */
+export const GRAPH_SCOPE_FROM_PLAN = 'from the plan'
+
+/** GRAPH_SCOPE_DANGLING is the mark on a node the record holds an assignment or
+ * an edge for and no plan document carries (D2115), and on one whose assignment
+ * names a release the record does not hold. It is the record's own housekeeping
+ * rather than a state of the work, which is why it is drawn as a word beside the
+ * task and not as its state. */
+export const GRAPH_SCOPE_DANGLING = 'dangling'
+
+/** GRAPH_SCOPE_NEEDS is the word a dependency marker begins with: the tasks this
+ * one needs, each spelled as the stream and the box it is in (GV4.1). It is the
+ * console's word -- the document's `kind` is `depends_on` and is a relation's
+ * name, not a sentence. */
+export const GRAPH_SCOPE_NEEDS = 'needs'
+
+/** GRAPH_SCOPE_SEPARATOR joins the two halves of a dependency marker: the stream
+ * and the release box the needed task is in. It is one constant so the label and
+ * a test spell it the same way. */
+export const GRAPH_SCOPE_SEPARATOR = ' · '
+
 /** SOURCE_UP is the one source state that means "the figures beside it are this
  * document's own". Every other word -- `down`, `stale`, `unreadable`, and any
  * word this build has no vocabulary for -- is a source that is not answering
@@ -741,6 +779,66 @@ export interface ScopeNode {
    * have to decide on its own that a kept row is a row a reader must be told
    * about (H10's rule that no state is a tone alone). */
   readonly kept: Sanitized | null
+  /** `plan`, `stream` and `release` are the record's own words about a task
+   * (GV4.1) and are **raw**, because this module joins on them: a lane is keyed
+   * by the stream, the box a task is drawn in is found by its `release` and the
+   * plan is what marks a node as the record's. `plan` is `''` for a node of any
+   * other source, which is what keeps a document from a CLI before this member
+   * existed drawing exactly the picture it always drew. */
+  readonly plan: string
+  readonly stream: string
+  /** `version` is the plan's own target, drawn beside the task marked
+   * `GRAPH_SCOPE_FROM_PLAN` (D2114), and `null` where the artifact named none. */
+  readonly version: Sanitized | null
+  /** `dangling` is `GRAPH_SCOPE_DANGLING` where the record holds an assignment
+   * or an edge this task is an endpoint of and no plan document carries it
+   * (D2115), and `null` for a task the record's own housekeeping is happy with. */
+  readonly dangling: Sanitized | null
+  /** `needs` is what this task depends on, each one a marker naming the stream
+   * and the box the needed task is in (GV4.1). It is empty for a node that is
+   * not the record's and for a task nothing depends on, and the marker is what
+   * carries a cross-stream or cross-release dependency into a drawing that shows
+   * one stream at a time. */
+  readonly needs: readonly ScopeNeed[]
+}
+
+/** ScopeNeed is one dependency of a record task: the key of the task it needs,
+ * which is what the drawing highlights a marker by when either end is selected,
+ * whether the two are in different streams, and the sentence the marker spells.
+ *
+ * The sentence carries the other task's stream and the **name** of its box
+ * whatever the two have in common, because the tab a reader is looking at may be
+ * the one stream the other task is not in -- a marker that said nothing would be
+ * a dependency drawn as nothing at all -- and `cross` is what a rule keys on to
+ * set a marker apart, since it is the case a lane drawing cannot show by itself. */
+export interface ScopeNeed {
+  readonly key: string
+  readonly cross: boolean
+  readonly label: Sanitized
+}
+
+/** ScopeBox is one release box of the project's roadmap record (D2113): the
+ * record's own key for it -- the value a task's `release` is -- the name its
+ * heading is drawn with, the state the record calls it as a word, and the tasks
+ * that have been placed in it, in document order. */
+export interface ScopeBox {
+  readonly key: string
+  readonly heading: Sanitized
+  readonly state: Sanitized
+  readonly nodes: readonly ScopeNode[]
+}
+
+/** ScopeLane is one stream of the record: the boxes in it, in the record's own
+ * order (`order`, then the id), and the tasks nobody has placed beside them
+ * (D2114). A stream is not a document of its own -- the record's streams are the
+ * `stream` members its releases carry -- so a lane exists exactly when a box or
+ * a record task names it. */
+export interface ScopeLane {
+  readonly stream: string
+  readonly heading: Sanitized
+  readonly boxes: readonly ScopeBox[]
+  readonly unassignedHeading: Sanitized
+  readonly unassigned: readonly ScopeNode[]
 }
 
 /** ScopeRelease is one release's group of nodes: the version as the document
@@ -753,10 +851,28 @@ export interface ScopeRelease {
 }
 
 /** ScopeModel is a coordinator read as plain data: the sources and their states,
- * the nodes grouped by release, and the read's own warnings. */
+ * the nodes grouped by release, and the read's own warnings.
+ *
+ * `lanes` is the project's roadmap record (GV4.1) and `releases` is everything
+ * else the scope drew. The two are kept apart because they are grouped by two
+ * different things: a lane is a stream with release boxes in it -- the record's
+ * own documents -- while `releases` groups the stored view's pull requests and
+ * runs by the release string their repository wrote, which is a version and not
+ * a box key. A document that carries neither is a project whose coordinator has
+ * written no record and whose repositories name no release, and it draws the
+ * sources with nothing under them.
+ *
+ * `tabs` and `tab` are the stream filter (GV4.1), built from the record's own
+ * streams: `tab` is `null` for every lane at once, and both are empty when the
+ * document names no stream -- a filter with nothing to filter is a control that
+ * cannot change the drawing, which is why this scope drew none before the record
+ * existed. */
 export interface ScopeModel {
   readonly sources: readonly ScopeSource[]
   readonly releases: readonly ScopeRelease[]
+  readonly lanes: readonly ScopeLane[]
+  readonly tabs: readonly GraphTabOption[]
+  readonly tab: GraphTab
   readonly warnings: readonly Sanitized[]
   readonly notShown: number
 }
@@ -771,17 +887,24 @@ function scopeText(value: string, key: string, field: string): Sanitized {
 /**
  * buildScopeModel turns one `fugaro graph --json` view into the drawing's data.
  *
- * **The nodes are grouped by release, in document order, and the group a node
- * that names no release falls into is the last one.** The document lists nodes in
- * the order its sources answered, and a map keyed by the version keeps exactly
- * that order for the groups while holding each node beside its own release: a
- * sort by version would be the console's guess at a version scheme it does not
- * have, and the coordinator's nodes carry versions from several repositories.
+ * **The nodes are grouped twice, by what each one is.** The stored view's own
+ * records -- the coordinator's pull requests and runs -- are grouped by the
+ * release string their repository wrote, in the order the document listed them,
+ * and the group a node that names no release falls into is the last one: the
+ * document lists nodes in the order its sources answered, a map keyed by the
+ * version keeps exactly that order, and a sort by version would be the console's
+ * guess at a version scheme it does not have, with the coordinator's nodes
+ * carrying versions from several repositories anyway. The **record's** tasks are
+ * drawn in `lanes` instead: a stream, the release boxes in it, and the tasks
+ * nobody has placed (GV4.1). The two groupings share nothing -- a lane is keyed
+ * by a stream and a box by the record's own key for it, while a group is keyed by
+ * a version -- and a node's own `plan` is what decides which of the two draws it.
  *
- * **The edges are deliberately not read.** The coordinator's stored view holds
- * none today (F17), and a picture needs an engine to place it: this scope is
- * drawn as the reading it is, grouped and listed, and it asks the layout worker
- * nothing.
+ * **The record's edges are read as markers rather than as lines.** The
+ * coordinator's stored view holds none (F17) and needs an engine to place what it
+ * had; the record's own edges are between its tasks and are drawn as the word
+ * each needing task carries, which is what a picture showing one stream at a time
+ * can still say. So this scope asks the layout worker nothing, edges or no edges.
  *
  * **A source that is not up keeps the last figures.** The feed is a stream of
  * whole snapshots, and the commonest thing a later one says about a source is
@@ -809,7 +932,7 @@ function scopeText(value: string, key: string, field: string): Sanitized {
  * not the document: they are drawn after the document's own rows and dropped and
  * counted like them when the bound is already full (`GRAPH_MAX_SCOPE_NODES`).
  */
-export function buildScopeModel(view: GraphView, previous: ScopeModel | null = null): ScopeModel {
+export function buildScopeModel(view: GraphView, previous: ScopeModel | null = null, tab: GraphTab = null): ScopeModel {
   const sources = view.sources.map((source, at) => ({
     source: scopeText(source.source, 'source', `sources[${String(at)}].source`),
     state: scopeText(source.state, 'state', `sources[${String(at)}].state`),
@@ -817,62 +940,218 @@ export function buildScopeModel(view: GraphView, previous: ScopeModel | null = n
     asOf: asOfText(source.asOf),
   }))
 
-  const groups = new Map<string, ScopeNode[]>()
+  const drawn: ScopeNode[] = []
   let notShown = 0
   for (const [at, node] of view.nodes.entries()) {
     if (at >= GRAPH_MAX_SCOPE_NODES) {
       notShown += 1
       continue
     }
-    const where = `nodes[${String(at)}]`
-    const drawn: ScopeNode = {
-      key: node.key,
-      source: scopeText(node.source, 'source', `${where}.source`),
-      kind: scopeText(node.kind, 'kind', `${where}.kind`),
-      title: scopeText(node.title, 'title', `${where}.title`),
-      repo: scopeText(node.repo, 'repo', `${where}.repo`),
-      state: scopeText(node.state, 'state', `${where}.state`),
-      release: node.release,
-      // Only a pull request has one: a run's id is a run id and a task's is a
-      // task id, and neither is a number a reader opens.
-      pullRequest: node.kind === 'pull_request' ? scopeText(node.id, 'id', `${where}.id`) : null,
-      origin: node.source,
-      kept: null,
-    }
-    const held = groups.get(node.release)
-    if (held === undefined) groups.set(node.release, [drawn])
-    else held.push(drawn)
+    drawn.push(scopeNodeOf(node, `nodes[${String(at)}]`))
   }
 
-  const listed = new Set([...groups.values()].flat().map((node) => node.key))
+  const listed = new Set(drawn.map((node) => node.key))
   // The kept figures are drawn inside the same bound as the document's own: the
   // room left is what the document did not use, and a figure with no room is
   // dropped and counted exactly as a node past the bound is. Without this the
   // drawing would grow past GRAPH_MAX_SCOPE_NODES by one row per key a silent
   // source holds while `notShown` still read 0.
-  const room = GRAPH_MAX_SCOPE_NODES - [...groups.values()].reduce((total, group) => total + group.length, 0)
+  const room = GRAPH_MAX_SCOPE_NODES - drawn.length
   for (const [at, node] of keptFigures(view, previous, listed).entries()) {
     if (at >= room) {
       notShown += 1
       continue
     }
-    const held = groups.get(node.release)
-    if (held === undefined) groups.set(node.release, [node])
-    else held.push(node)
+    drawn.push(node)
   }
 
-  const releases = [...groups].map(([release, nodes]) => ({
+  // The boxes are in hand before the markers are, because a marker names the
+  // **box** the needed task is in and the document's own key for a box is a
+  // hash rather than a name a reader could read (D2113).
+  const boxes = new Map(view.releases.map((box) => [box.key, box]))
+
+  // The dependencies are attached once every node is in hand, because a marker
+  // names the task at the other end of the edge and that task may be drawn after
+  // the one that needs it.
+  const held = new Map(drawn.map((node) => [node.key, node]))
+  const needs = needsOf(view.edges, held, boxes)
+  const nodes = drawn.map((node) => {
+    const found = needs.get(node.key)
+    return found === undefined ? node : { ...node, needs: found }
+  })
+
+  const groups = new Map<string, ScopeNode[]>()
+  const lanes = new Map<string, { box: GraphReleaseBox | null; nodes: ScopeNode[] }[]>()
+  for (const node of nodes) {
+    // A node that names a plan is the record's (GV4.1): it is drawn in its
+    // stream's lane, in its release's box or in the lane's unassigned group. Every
+    // other node is the stored view's and is read exactly as it was before the
+    // record existed, grouped by the release its repository wrote.
+    if (node.plan === '') {
+      const group = groups.get(node.release)
+      if (group === undefined) groups.set(node.release, [node])
+      else group.push(node)
+      continue
+    }
+    laneOf(lanes, boxes, node)
+  }
+
+  const drawnLanes: ScopeLane[] = [...lanes].map(([stream, held]) => {
+    const heldBoxes: ScopeBox[] = []
+    const unassigned: ScopeNode[] = []
+    for (const each of held) {
+      if (each.box === null) {
+        unassigned.push(...each.nodes)
+        continue
+      }
+      heldBoxes.push({
+        key: each.box.key,
+        heading: scopeText(each.box.name, 'name', 'releases[].name'),
+        state: scopeText(each.box.state, 'state', 'releases[].state'),
+        nodes: each.nodes,
+      })
+    }
+    return { stream, heading: streamText(stream), boxes: heldBoxes, unassignedHeading: own(GRAPH_SCOPE_UNASSIGNED), unassigned }
+  })
+
+  const tabs: GraphTabOption[] =
+    drawnLanes.length === 0
+      ? []
+      : [...drawnLanes.map((lane) => ({ tab: lane.stream, label: lane.heading })), { tab: null, label: own('All') }]
+  // A tab the document does carry narrows the drawing to its lane; a tab it does
+  // not carry -- a stream the record dropped between two reads -- reads as All,
+  // for `buildGraphModel`'s reason: an empty picture would say "nothing here"
+  // about a project whose record is full.
+  const chosen = tabs.some((option) => option.tab === tab) ? tab : null
+
+  const releases = [...groups].map(([release, held]) => ({
     release,
     heading: release === '' ? own(GRAPH_SCOPE_NO_RELEASE) : scopeText(release, 'release', 'nodes[].release'),
-    nodes,
+    nodes: held,
   }))
 
   return {
     sources,
     releases,
+    lanes: chosen === null ? drawnLanes : drawnLanes.filter((lane) => lane.stream === chosen),
+    tabs,
+    tab: chosen,
     warnings: view.warnings.map((warning, at) => scopeText(warning, 'warnings', `warnings[${String(at)}]`)),
     notShown,
   }
+}
+
+/** scopeNodeOf is one document node as the drawing's own: every string through
+ * the class its wire key declares, the identity read as a key, and the record's
+ * members (GV4.1) carried as the words the drawing joins on. */
+function scopeNodeOf(node: GraphView['nodes'][number], where: string): ScopeNode {
+  return {
+    key: node.key,
+    source: scopeText(node.source, 'source', `${where}.source`),
+    kind: scopeText(node.kind, 'kind', `${where}.kind`),
+    title: scopeText(node.title, 'title', `${where}.title`),
+    repo: scopeText(node.repo, 'repo', `${where}.repo`),
+    state: scopeText(node.state, 'state', `${where}.state`),
+    release: node.release,
+    // Only a pull request has one: a run's id is a run id and a task's is a
+    // task id, and neither is a number a reader opens.
+    pullRequest: node.kind === 'pull_request' ? scopeText(node.id, 'id', `${where}.id`) : null,
+    origin: node.source,
+    kept: null,
+    plan: node.plan,
+    stream: node.stream,
+    version: node.version === '' ? null : scopeText(node.version, 'version', `${where}.version`),
+    dangling: node.dangling ? own(GRAPH_SCOPE_DANGLING) : null,
+    needs: [],
+  }
+}
+
+/** streamText is one lane's own name as the drawing spells it: the record's own
+ * stream through the `stream` class, or the console's word for a node that names
+ * none. */
+function streamText(stream: string): Sanitized {
+  if (stream === '') return own(GRAPH_SCOPE_NO_STREAM)
+  return scopeText(stream, 'stream', 'nodes[].stream')
+}
+
+/** laneOf files one record task in its lane: the box its `release` names, or the
+ * lane's unassigned group. A `release` that names no box the document carries is
+ * unassigned rather than dropped -- a task whose box is gone is a task a reader
+ * must still see, and the record marks it dangling (D2115). */
+function laneOf(
+  lanes: Map<string, { box: GraphReleaseBox | null; nodes: ScopeNode[] }[]>,
+  boxes: Map<string, GraphReleaseBox>,
+  node: ScopeNode,
+): void {
+  let lane = lanes.get(node.stream)
+  if (lane === undefined) {
+    lane = []
+    lanes.set(node.stream, lane)
+  }
+  const box = node.release === '' ? undefined : boxes.get(node.release)
+  if (box === undefined) {
+    const unassigned = lane.find((each) => each.box === null)
+    if (unassigned === undefined) lane.push({ box: null, nodes: [node] })
+    else unassigned.nodes.push(node)
+    return
+  }
+  const found = lane.find((each) => each.box?.key === box.key)
+  if (found === undefined) lane.push({ box, nodes: [node] })
+  else found.nodes.push(node)
+}
+
+/** needsOf is every record edge as the marker its task's row carries: the edge's
+ * two endpoints are the document's own keys, the task is `from` and what it
+ * needs is `to` -- the direction the CLI's own edges already carry (§6.22).
+ *
+ * `boxes` is the document's own release boxes, which is what a marker's second
+ * half is read off: a task's `release` is the box's key and the key is a hash, so
+ * the name a reader sees comes from the box and never from the task.
+ *
+ * An edge whose either end is not a record node of this document draws nothing,
+ * which is the same rule the graph's own edges follow: the record's dependencies
+ * are between its own tasks, and a key a source this document no longer lists is
+ * not a marker a reader could act on. */
+function needsOf(
+  edges: readonly GraphView['edges'][number][],
+  nodes: Map<string, ScopeNode>,
+  boxes: ReadonlyMap<string, GraphReleaseBox>,
+): Map<string, ScopeNeed[]> {
+  const out = new Map<string, ScopeNeed[]>()
+  for (const edge of edges) {
+    const from = nodes.get(edge.from)
+    const to = nodes.get(edge.to)
+    if (from === undefined || to === undefined) continue
+    if (from.plan === '' || to.plan === '') continue
+    const need: ScopeNeed = {
+      key: to.key,
+      cross: from.stream !== to.stream || from.release !== to.release,
+      label: needLabel(to, boxes),
+    }
+    const list = out.get(from.key)
+    if (list === undefined) out.set(from.key, [need])
+    else list.push(need)
+  }
+  return out
+}
+
+/** needLabel is one dependency as the sentence a marker spells -- "needs CLI ·
+ * Camel" (spec §3 addendum) -- with the stream the needed task is in and the
+ * **name** of the box it is in, or the console's own word for a task nobody has
+ * placed (D2114).
+ *
+ * The two halves are sanitized one by one and only then joined, so no document
+ * string is ever concatenated into a sentence unsanitized; a half that sanitising
+ * refused refuses the whole marker, which the drawing shows as the refusal it is
+ * rather than as a sentence with a gap in it. */
+function needLabel(to: ScopeNode, boxes: ReadonlyMap<string, GraphReleaseBox>): Sanitized {
+  const stream = streamText(to.stream)
+  const box = to.release === '' ? undefined : boxes.get(to.release)
+  const named = box === undefined ? own(GRAPH_SCOPE_UNASSIGNED) : scopeText(box.name, 'name', 'releases[].name')
+  if (!stream.ok || !named.ok) {
+    return { ok: false, reason: 'a dependency marker names a release this console will not draw' }
+  }
+  return own(`${GRAPH_SCOPE_NEEDS} ${stream.text}${GRAPH_SCOPE_SEPARATOR}${named.text}`)
 }
 
 /**
@@ -898,10 +1177,19 @@ function keptFigures(view: GraphView, previous: ScopeModel | null, listed: Reado
   }
   if (quiet.size === 0) return []
   const nodes: ScopeNode[] = []
-  for (const release of previous.releases) {
-    for (const node of release.nodes) {
-      if (quiet.has(node.origin) && !listed.has(node.key)) nodes.push({ ...node, kept: own(GRAPH_SCOPE_KEPT) })
-    }
+  // Both groupings, because a figure this scope drew may be a record task in a
+  // lane or a stored-view record in a release group (GV4.1), and the rule is
+  // about the source that stopped answering rather than about which of the two
+  // drew the row.
+  const drawn = [
+    ...previous.releases.flatMap((release) => release.nodes),
+    ...previous.lanes.flatMap((lane) => [
+      ...lane.boxes.flatMap((box) => box.nodes),
+      ...lane.unassigned,
+    ]),
+  ]
+  for (const node of drawn) {
+    if (quiet.has(node.origin) && !listed.has(node.key)) nodes.push({ ...node, kept: own(GRAPH_SCOPE_KEPT) })
   }
   return nodes
 }
