@@ -299,7 +299,7 @@ type Roadmap struct {
 	// They are skipped rather than read as empty, and counted rather than
 	// failing the read, because a screen has to tell "the record holds
 	// nothing" from "the record holds something this build cannot read" (the
-	// graph's `unreadable` source state, console/docs/json-contract.md §6.22).
+	// graph document's `unreadable` source state, json-contract.md §6.22).
 	Unreadable int `json:"unreadable"`
 	// Dangling names the qualified task ids that are dangling (D2115): an
 	// assignment or an edge whose endpoint no plan document carries, or an
