@@ -592,11 +592,14 @@ describe('the graph model', () => {
  *
  * **The record's own nodes are the ones that name a plan**, and the document
  * says so the way the CLI does: `plan` is the plan document the task belongs to,
- * `stream` is the lane it is drawn in, `version` is the plan's own target, and
- * `release` is the **key** of one of the boxes above -- which is what makes the
- * join from a task to its box a join on a key and not on a name. The pull request
- * is the stored view's and names no plan, so it is grouped by the release string
- * its repository wrote, exactly as it was before the record existed.
+ * `stream` is the lane it is drawn in, `version` is the plan's own target --
+ * carried for a task the record draws in no box and `''` for one inside a box,
+ * because a box is drawn by its name and the number beside a task in it would
+ * read as the box's own (D2114) -- and `release` is the **key** of one of the
+ * boxes above, which is what makes the join from a task to its box a join on a
+ * key and not on a name. The pull request is the stored view's and names no
+ * plan, so it is grouped by the release string its repository wrote, exactly as
+ * it was before the record existed.
  *
  * The three edges are the record's own cross-plan ones: `place` waits on a task
  * of the **style** stream in a **finished** box (cross-stream *and*
@@ -605,9 +608,9 @@ describe('the graph model', () => {
  * is the edge that must draw nothing rather than a marker with no end.
  */
 const RECORD_NODES: readonly Record<string, unknown>[] = [
-  recordNode('plans/style/paint', 'style', 'release-style-mango', '1.4.0', 'done', 'paint the banner'),
-  recordNode('plans/cli/place', 'cli', 'release-cli-camel', '1.6.0', 'waiting', 'place the loader'),
-  recordNode('plans/cli/ship', 'cli', 'release-cli-camel', '1.6.0', 'waiting', 'ship the loader'),
+  recordNode('plans/style/paint', 'style', 'release-style-mango', '', 'done', 'paint the banner'),
+  recordNode('plans/cli/place', 'cli', 'release-cli-camel', '', 'waiting', 'place the loader'),
+  recordNode('plans/cli/ship', 'cli', 'release-cli-camel', '', 'waiting', 'ship the loader'),
   recordNode('plans/cli/free', 'cli', '', '1.6.0', 'waiting', 'free the loader'),
   { ...recordNode('plans/gone/left', 'cli', 'release-cli-camel', '', '', 'the id the record left behind'), dangling: true },
   {
@@ -648,7 +651,9 @@ const RECORD_RAW: Readonly<Record<string, unknown>> = {
 
 /** recordNode is one task of the record's own shape: a qualified id, the plan it
  * belongs to, the stream it is in, the box it is in (the key above, or `''` for
- * a task nobody has placed), the plan's version and the state the plan wrote. */
+ * a task nobody has placed), the plan's version -- `''` wherever the record
+ * draws the task in a box, which is where the CLI writes no number -- and the
+ * state the plan wrote. */
 function recordNode(
   id: string,
   stream: string,
@@ -751,9 +756,11 @@ describe('the coordinator scope over the roadmap record (GV4.1)', () => {
     // never matched -- and the mark is what says whose number it is.
     const free = cli.unassigned[0]
     expect(text(free?.version)).toBe('1.6.0')
-    // A task that **is** placed carries the plan's version too: it is the
-    // artifact's, whichever box the record put the task in.
-    expect(text(scopeNodeIn(scope, 'coordinator:plans/cli/place').version)).toBe('1.6.0')
+    // A task the record **is** drawn in a box carries no version at all: the box
+    // answers for it with a name and a state, and the plan's target beside it
+    // would read as the box's own -- the match D2114 refuses, and why the CLI
+    // writes the number only for a task in no box.
+    expect(scopeNodeIn(scope, 'coordinator:plans/cli/place').version).toBeNull()
     // And a task the plan gave no version says nothing rather than `undefined`.
     expect(scopeNodeIn(scope, 'coordinator:plans/gone/left').version).toBeNull()
   })

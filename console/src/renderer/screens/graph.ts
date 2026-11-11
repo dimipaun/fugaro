@@ -2333,9 +2333,10 @@ function scopeNode(factory: ScreenFactory, picture: ScopePicture, node: ScopeNod
   if (node.kept !== null) drawn(row, factory, 'span', node.kept, 'graph-scope-kept')
   if (node.dangling !== null) drawn(row, factory, 'span', node.dangling, 'graph-scope-dangling')
   // The plan's own target, and the mark that says **whose** it is (D2114): the
-  // record draws no version of its own on a release, so a number beside an
-  // unplaced task is the artifact's and a reader is told so rather than left to
-  // match it against a box.
+  // record draws no version of its own on a release, so a number beside a task
+  // the record places in no box is the artifact's, and a reader is told so
+  // rather than left to match it against a box. The wire carries it for no task
+  // inside a box, which is why this mark is drawn where no box answers.
   if (node.version !== null) {
     drawn(row, factory, 'span', node.version, 'graph-scope-version')
     literal(cell(row, factory, 'span', 'graph-scope-version-mark'), GRAPH_SCOPE_FROM_PLAN)

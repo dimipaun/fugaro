@@ -110,14 +110,19 @@ type Node struct {
 	// a node as the record's. Stream is the lane the task is drawn in: the
 	// stream of the release it has been assigned to, or the plan's own for a
 	// task nobody has placed (D2114). Version is the plan's own target, carried
-	// as a display input for exactly that task — a release the record holds
-	// carries a name and no version, so the two are never matched (D2114).
+	// as a display input for a task the record draws in no box — nobody has
+	// placed it (D2114), or its assignment names a release the record no longer
+	// holds (D2115) — and never beside a task in a box, where a number would
+	// read as the box's own: a release the record holds carries a name and no
+	// version, so the two are never matched (D2114).
 	Plan    string `json:"plan"`
 	Stream  string `json:"stream"`
 	Version string `json:"version"`
-	// Dangling is D2115's mark: the record holds an assignment or an edge whose
-	// task no plan document carries, and this node is that id. It is a state of
-	// the record's own housekeeping rather than of the work.
+	// Dangling is D2115's mark, and it covers both shapes the record's own reader
+	// names: an assignment or an edge whose task no plan document carries, and an
+	// assignment naming a release the record no longer holds. It is a state of
+	// the record's own housekeeping rather than of the work, so a marked node may
+	// be a published task or an id nobody published.
 	Dangling bool `json:"dangling,omitempty"`
 }
 

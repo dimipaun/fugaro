@@ -3324,11 +3324,13 @@ export interface GraphNode {
    * stored view draws nodes of the same source and names no plan. `stream` is
    * the lane the task is drawn in -- the stream of the release it has been
    * assigned to, or its own plan's for a task nobody has placed -- and `version`
-   * is the plan's own target, which is a display input for an unplaced task and
-   * never a release it is matched to (the record's releases carry a name, D2114).
-   * `dangling` is the record's own housekeeping: an assignment or an edge whose
-   * endpoint no plan document carries, kept and marked rather than dropped
-   * (D2115). */
+   * is the plan's own target, which is a display input for a task the record
+   * draws in no box and never a release it is matched to (the record's releases
+   * carry a name, D2114).
+   * `dangling` is the record's own housekeeping, in both the shapes its reader
+   * names: a task whose plan documents have dropped it and a task whose
+   * assignment names a release the record no longer holds, each kept and marked
+   * rather than dropped (D2115). */
   readonly plan: string
   readonly stream: string
   readonly version: string

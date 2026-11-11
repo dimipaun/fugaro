@@ -1848,9 +1848,9 @@ const RECORD_RAW: Readonly<Record<string, unknown>> = {
     { key: 'release-cli-camel', stream: 'cli', id: 'v1.5.0', name: 'Camel', state: 'open', order: 2 },
   ],
   nodes: [
-    recordNode('plans/style/paint', 'style', 'release-style-mango', '1.4.0', 'done', 'paint the banner'),
-    recordNode('plans/cli/place', 'cli', 'release-cli-camel', '1.6.0', 'waiting', 'place the loader'),
-    recordNode('plans/cli/ship', 'cli', 'release-cli-camel', '1.6.0', 'waiting', 'ship the loader'),
+    recordNode('plans/style/paint', 'style', 'release-style-mango', '', 'done', 'paint the banner'),
+    recordNode('plans/cli/place', 'cli', 'release-cli-camel', '', 'waiting', 'place the loader'),
+    recordNode('plans/cli/ship', 'cli', 'release-cli-camel', '', 'waiting', 'ship the loader'),
     recordNode('plans/cli/free', 'cli', '', '1.6.0', 'waiting', 'free the loader'),
     { ...recordNode('plans/gone/left', 'cli', 'release-cli-camel', '', '', 'the id the record left behind'), dangling: true },
     {
@@ -1875,7 +1875,8 @@ const RECORD_RAW: Readonly<Record<string, unknown>> = {
 /** recordNode is one task as the record's own documents make it: the qualified
  * id (`<plan>/<task>`, project-wide, D2111), the plan it belongs to, the stream
  * it is drawn in, the key of the box it is in (`''` for a task nobody has
- * placed) and the plan's own version. */
+ * placed) and the plan's own version -- `''` wherever a box holds the task,
+ * which is where the CLI writes no number (D2114). */
 function recordNode(
   id: string,
   stream: string,

@@ -247,19 +247,21 @@ type Record struct {
 // `plan` field that marks a node as the record's, since the coordinator's
 // stored view draws nodes of the same source. Its stream is the release's, or
 // the plan's own for a task nobody has placed (D2114), and its version is the
-// plan's own target, carried for exactly that unplaced task. A release box is
-// the record's `releases[]`: the stream, the record's key for it, its name, the
-// state the record calls it and its position in its stream (D2113). An edge is
-// one of the record's own cross-plan dependencies (D2112), from the task to
-// what it needs, which is the direction the orchestrator scopes' edges already
-// carry.
+// plan's own target, carried for the tasks drawn in no box and for no task
+// inside one (recordNode). A release box is the record's `releases[]`: the
+// stream, the record's key for it, its name, the state the record calls it and
+// its position in its stream (D2113). An edge is one of the record's own
+// cross-plan dependencies (D2112), from the task to what it needs, which is the
+// direction the orchestrator scopes' edges already carry.
 //
 // **A dangling id is drawn rather than dropped** (D2115): a task an assignment
 // or an edge names and no plan document carries is a node of its own, marked
 // `dangling`, so a screen can show the record's own housekeeping instead of a
-// dependency pointing at nothing. Its lane is the plan's name the qualified id
-// carries, and a task whose id does not split into plan and task has no lane at
-// all.
+// dependency pointing at nothing; so is a published task whose assignment names
+// a release the record no longer holds, which is the record's reader's own
+// answer and not this build's guess. Its lane is the plan's name the qualified
+// id carries, and a task whose id does not split into plan and task has no lane
+// at all.
 //
 // It refuses an identity that sanitising would rewrite — a task id carrying a
 // control character or a bidi override — rather than printing a document whose
@@ -345,8 +347,8 @@ func (s CoordinatorRecordSource) Draw() (Record, error) {
 }
 
 // recordNode is one of the record's tasks as a node: its qualified id, the
-// plan's own title for it, the stream it is drawn in and the plan's version
-// where the artifact named one.
+// plan's own title for it, the stream it is drawn in and, where the task is in
+// no box, the plan's version the artifact named.
 //
 // The stream is the release's when the task is in a box the record holds, and
 // the plan's own otherwise — which is both a task nobody has placed (D2114) and
@@ -354,6 +356,14 @@ func (s CoordinatorRecordSource) Draw() (Record, error) {
 // dangling (D2115). The latter is drawn in the plan's lane beside its own
 // version rather than in a box that does not exist, and its `dangling` mark is
 // what says the record's assignment went somewhere.
+//
+// **The plan's own version is carried for the tasks in no box and for them
+// only.** A box is drawn by its name and the state the record calls it, and a
+// plan's target sitting beside a task inside one reads as the box's own
+// version — the match D2114 refuses, because a stored release carries a name
+// and no version and the two are different kinds of value. A task in no box has
+// the number as the one thing the record can say about when it is due, which is
+// what D2114 carries it for.
 func recordNode(
 	source string,
 	plan coordinator.Plan,
@@ -370,14 +380,14 @@ func recordNode(
 		Plan:   plan.Plan,
 		Stream: plan.Stream,
 	}
-	if task.Version != nil {
-		n.Version = *task.Version
-	}
 	if a, ok := placed[qualified]; ok {
 		if rel, held := boxes[a.Release]; held {
 			n.Release = a.Release
 			n.Stream = rel.Stream
 		}
+	}
+	if n.Release == "" && task.Version != nil {
+		n.Version = *task.Version
 	}
 	n.Key = NodeKey(n.Source, n.ID)
 	return n

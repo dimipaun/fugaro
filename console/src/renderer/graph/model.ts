@@ -669,10 +669,11 @@ export const GRAPH_SCOPE_NO_RELEASE = 'no release'
 export const GRAPH_SCOPE_KEPT = 'last read'
 
 /** GRAPH_SCOPE_UNASSIGNED is the console's own word for the group a record task
- * nobody has placed in a release is drawn in (D2114). It is what makes an
- * unassigned task visible as unassigned rather than as a task in the wrong box,
- * and it is the console's word because the record has no word for it: nothing is
- * written for a task with no assignment. */
+ * the record draws in no box is put in (D2114) -- a task nobody has placed, and
+ * one whose assignment names a release the record no longer holds (D2115). It is
+ * what makes such a task visible as unassigned rather than as a task in the
+ * wrong box, and it is the console's word because the record has no word for it:
+ * nothing is written for a task with no assignment. */
 export const GRAPH_SCOPE_UNASSIGNED = 'unassigned'
 
 /** GRAPH_SCOPE_NO_STREAM is the console's own word for the lane of a record node
@@ -683,8 +684,11 @@ export const GRAPH_SCOPE_NO_STREAM = 'no stream'
 
 /** GRAPH_SCOPE_FROM_PLAN is the mark drawn beside a task's version (D2114): the
  * version is the **plan's own target** and not a release the record holds it in,
- * and a reader who saw the number alone would take it for one. It is the
- * console's word, in the same two-channel shape every state here has (H10). */
+ * and a reader who saw the number alone would take it for one. The document
+ * carries the number only for a task the record draws in no box, which is the
+ * only place this mark can appear: beside a task inside a box the number would
+ * read as the box's own. It is the console's word, in the same two-channel shape
+ * every state here has (H10). */
 export const GRAPH_SCOPE_FROM_PLAN = 'from the plan'
 
 /** GRAPH_SCOPE_DANGLING is the mark on a node the record holds an assignment or
@@ -788,11 +792,14 @@ export interface ScopeNode {
   readonly plan: string
   readonly stream: string
   /** `version` is the plan's own target, drawn beside the task marked
-   * `GRAPH_SCOPE_FROM_PLAN` (D2114), and `null` where the artifact named none. */
+   * `GRAPH_SCOPE_FROM_PLAN` (D2114), and `null` where the artifact named none --
+   * or where the record draws the task in a box, since the document carries the
+   * number only for a task in no box. */
   readonly version: Sanitized | null
-  /** `dangling` is `GRAPH_SCOPE_DANGLING` where the record holds an assignment
-   * or an edge this task is an endpoint of and no plan document carries it
-   * (D2115), and `null` for a task the record's own housekeeping is happy with. */
+  /** `dangling` is `GRAPH_SCOPE_DANGLING` where the record's own reader calls
+   * this task's housekeeping dangling: an assignment or an edge names it and no
+   * plan document carries it, or its assignment names a release the record no
+   * longer holds (D2115). It is `null` for a task the record is happy with. */
   readonly dangling: Sanitized | null
   /** `needs` is what this task depends on, each one a marker naming the stream
    * and the box the needed task is in (GV4.1). It is empty for a node that is

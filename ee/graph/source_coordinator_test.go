@@ -343,7 +343,7 @@ func recordFixture() coordinator.Roadmap {
 				Tasks: []coordinator.Task{
 					{ID: "place", Title: "the box a task is placed in", Version: &target},
 					{ID: "free", Title: "a task nobody has placed", Version: &target},
-					{ID: "orphan", Title: "a task in a release the record has lost"},
+					{ID: "orphan", Title: "a task in a release the record has lost", Version: &target},
 				},
 			},
 			{
@@ -416,6 +416,12 @@ func TestCoordinatorRecordDrawsTasksBoxesAndEdges(t *testing.T) {
 	if placed.Plan != "plans/cli" || placed.Stream != "cli" || placed.Release != first.Key {
 		t.Fatalf("placed = %+v, want the record's plan, stream and release key", placed)
 	}
+	// The plan's own target is not carried for a task in a box: the box is drawn
+	// by its name and the state the record calls it, and a version beside the
+	// task inside one would read as the box's own — the match D2114 refuses.
+	if placed.Version != "" {
+		t.Fatalf("a task in a box carries the plan's version: %+v", placed)
+	}
 	if placed.Dangling {
 		t.Fatalf("placed is dangling: %+v", placed)
 	}
@@ -487,6 +493,12 @@ func TestCoordinatorRecordDanglingIsDrawn(t *testing.T) {
 	}
 	if orphan.Stream != "cli" {
 		t.Fatalf("stream = %q, want the plan's own lane", orphan.Stream)
+	}
+	// It is in no box either, so it is one of the tasks the plan's own version
+	// is carried for: the number is the one thing the record can say about when
+	// a task no box answers for is due.
+	if orphan.Version != "1.6.0" {
+		t.Fatalf("version = %q, want the plan's own target for a task in no box", orphan.Version)
 	}
 }
 
