@@ -2652,3 +2652,54 @@ func TestUpdatePublishesTheCloneURLsTheConfigStates(t *testing.T) {
 		t.Errorf("the plan does not name the block it publishes:\n%s", out)
 	}
 }
+
+// TestUpdateTakesThePublishedBlockAwayWhenTheConfigWritesAnEmptyOne: the other
+// half of the keep rule (SD5, D842) — a written block with no entry is the
+// file's own statement that the project gives no repository a URL, and the
+// publish is what acts on it: the member the node carries is dropped and a run
+// clones from its provider's own URL again.
+//
+// It is pinned here because it is the door `project clone-url rm`'s refusal
+// points the operator at. That command cannot write the statement (the shared
+// editor writes no empty mapping yet), so the file is written by hand here,
+// exactly as the refusal tells them to; a refusal that named a door this
+// publish did not honour would be the same silent no-op the review found, one
+// step further on.
+func TestUpdateTakesThePublishedBlockAwayWhenTheConfigWritesAnEmptyOne(t *testing.T) {
+	f := newProjectFixture(t, "")
+	nodeWithCloneURLs(t, f)
+	setConfig(t, f, func(s string) string { return s + "clone_urls: {}\n" })
+	block := localCloneURLBlock(t, f)
+	if block == nil || len(block) != 0 {
+		t.Fatalf("the config states %v, want the written block with no entry", block)
+	}
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "clone_urls") {
+		t.Fatalf("the check says %s %q, want the block the config takes away", st.State, st.Detail)
+	}
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the publish was refused: %v\n%s", err, out)
+	}
+	node, ok := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	if !ok {
+		t.Fatalf("the node at %s is not an object", projectpolicy.PathShared())
+	}
+	if _, carried := node["clone_urls"]; carried {
+		t.Errorf("the published node still carries clone_urls %v, want the member gone: the file states there are none", node["clone_urls"])
+	}
+	if got := publishedPolicy(t, f).CloneURL("github/acme/app"); got != "" {
+		t.Errorf("CloneURL(github/acme/app) = %q, want none: the file states the project gives no repository a URL", got)
+	}
+	// The node is not the only side: the file the operator wrote stays exactly
+	// as they wrote it, empty block and all — the run publishes it, it does not
+	// rewrite it (D790, §9).
+	if block := localCloneURLBlock(t, f); block == nil || len(block) != 0 {
+		t.Errorf("the file reads back as %v, want the written block with no entry", block)
+	}
+}
