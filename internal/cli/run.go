@@ -1045,6 +1045,15 @@ func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string,
 		pairSkip(warn, why)
 		return nil, why
 	}
+	// The pair's own image gate, before anything of the pair is written: a
+	// runner older than the ab field refuses the whole task at bootstrap
+	// (task.Parse decodes with DisallowUnknownFields), so a pair written onto
+	// such an image would cost the champion the run it was launched for. A
+	// pair is dropped, the launch is not (D554, pairImageWhy).
+	if why := pairImageWhy(ctx, env, slug, run.Spec); why != "" {
+		pairSkip(warn, why)
+		return nil, why
+	}
 	// A launch that attaches files samples nothing. An --attach launch uploads
 	// them under its own run's prefix and a mode: artifact run downloads them
 	// from there (runstore.InputKey), so the challenger — a run id of its own —
@@ -1264,6 +1273,12 @@ func launchChallenger(ctx context.Context, env *cloudEnv, slug string, champion 
 	}
 	return arm.RunID
 }
+
+// pairOldImage is the launcher's own closed reason for sampling nothing: the
+// job image this launch will run on is not one the pair may be written for
+// (pairImageWhy). Like the planner's reasons it is one word, because the skip
+// line prints it and `fugaro run --json` carries it.
+const pairOldImage = "old-image"
 
 // pairSkip is the one line a launch prints when it meant to sample a pair and
 // did not: what was wrong, and what happened instead. The champion always

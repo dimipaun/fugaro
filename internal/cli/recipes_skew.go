@@ -1222,6 +1222,51 @@ func baseBranchSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.
 	}
 }
 
+// abSince is the first fugaro release whose runner acts on a task's ab block:
+// the release the pair's wire and the runner's shadow behaviour both landed
+// in, where a challenger arm publishes nothing and pushes nothing (A1.1,
+// A2.1, D554). The release before it is worse than one that ignores the
+// block: task.Parse decodes with DisallowUnknownFields, so a runner older
+// than this one refuses the whole task — the champion's arm included, which
+// is the developer's own run.
+const abSince = "0.14.0"
+
+// pairImageWhy is why this launch samples no pair for the job image it will
+// run on (pairOldImage), or "" when the image is one a pair may be written
+// for. It is asked after the planner has answered a pair and before anything
+// of it is written: a pair is dropped here, and never the launch (D554).
+//
+// Every other image gate here judges a field the task carries, and each of
+// them refuses the launch or drops the field, which are the two directions
+// that leave the developer's run intact. This one is asked by the *pair* —
+// a second run this build adds on top of that run — so it answers one closed
+// reason and the champion goes on alone, unmarked: a pair dropped costs a
+// sample, while a pair written onto an image that cannot read the block costs
+// the champion its run.
+//
+// The image is judged by both judges baseBranchSkew asks where it read no
+// workflow (its own nil arm, whose reasoning this shares): a checkout: clone
+// job runs the installation's base image itself and a derived one runs the
+// binary of the base its build record was built FROM. This is asked before
+// the gates that resolve a workflow, so neither judge is known to be the
+// job's and both are asked — and, unlike there, an image neither judge can
+// show a release for drops the pair: no release to read is no proof the image
+// reads the block, which is what this gate needs.
+func pairImageWhy(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) string {
+	base, baseKnown := releaseOf(env.lc.BaseImage(config.BaseKind))
+	record, recordKnown := recordBaseRelease(ctx, env, slug, spec)
+	if !baseKnown && !recordKnown {
+		return pairOldImage
+	}
+	if baseKnown && imagePredates(base, abSince) {
+		return pairOldImage
+	}
+	if recordKnown && imagePredates(record, abSince) {
+		return pairOldImage
+	}
+	return ""
+}
+
 // recordBaseRelease is the release of the base image the build record of slug
 // workflow names, and whether a record said so at all.
 func recordBaseRelease(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (string, bool) {
