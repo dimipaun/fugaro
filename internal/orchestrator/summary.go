@@ -38,6 +38,22 @@ func neutralize(s string) string { return stateDelimiterRE.ReplaceAllString(s, d
 // delimiters taken out.
 func safe(s string) string { return neutralize(cleanText(s, MaxBriefRunes)) }
 
+// DecisionCallID is the prefix of the id of one decision-agent call's own
+// record: the entry the runner writes into the state so that the caps count the
+// calls themselves rather than the answers they came back with
+// (internal/orchestrator/decide's recordCall). It is a name of its own rather
+// than one a question would carry, and this is what reads it.
+//
+// The summary is what a person or a session reads, and a day of calls is the
+// loop's bookkeeping rather than anything somebody decided: one line per call
+// is a capped summary of nothing else — about forty of them fill it — and the
+// items, the questions and the facts would be what fell out of it. They stay
+// in the document and are counted there, which is where the caps read them.
+//
+// The name is defined beside the reader that filters it and the writer imports
+// it, so the filter and the record cannot drift apart.
+const DecisionCallID = "decide-call-"
+
 // Summarize is the state as a person or a session reads it: the goal, the work
 // items with their phases, the questions waiting on someone, and the facts the
 // loop has learned, generated on every read and capped, so a session that
@@ -91,14 +107,22 @@ func Summarize(s State) string {
 		}
 	}
 
+	// The loop's own call records are not decisions anybody made (DecisionCallID):
+	// they are what the caps count, and a summary that printed them would be a
+	// summary of them.
+	questions := make([]Decision, 0, len(s.Decisions))
 	openDecisions := 0
 	for _, d := range s.Decisions {
+		if strings.HasPrefix(d.ID, DecisionCallID) {
+			continue
+		}
+		questions = append(questions, d)
 		if !d.Resolved() {
 			openDecisions++
 		}
 	}
-	fmt.Fprintf(&b, "\ndecisions: %d, %d waiting\n", len(s.Decisions), openDecisions)
-	for _, d := range s.Decisions {
+	fmt.Fprintf(&b, "\ndecisions: %d, %d waiting\n", len(questions), openDecisions)
+	for _, d := range questions {
 		if !d.Resolved() {
 			fmt.Fprintf(&b, "  %s waits on a %s since %s: %s\n",
 				safe(d.ID), d.WaitingOn, d.At.Format(time.RFC3339), safe(d.Question))

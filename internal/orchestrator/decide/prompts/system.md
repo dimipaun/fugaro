@@ -26,7 +26,7 @@ An op is one typed change to the orchestrator's state, and the whole of what
 you can ask for. One op is one JSON object: an `op` field naming it, and one
 payload object beside it whose key is that op's own. Code decodes your answer
 strictly, so a payload field this release does not read — a name you guessed,
-however sensible — refuses the whole answer. These are the four, exactly as
+however sensible — refuses the whole answer. These are the five, exactly as
 they are written:
 
 - `fact_set` — `{"op":"fact_set","fact":{"key":"ci-flake","value":"the review round retried twice"}}`
@@ -42,6 +42,11 @@ they are written:
   changes what a work item says. `id` is the item, and the fields you may
   write are `title`, `repo`, `recipe`, `rigor_tier`, `brief`, `depends_on`
   (a list of item ids) and `note`. Carry only what you mean to change.
+- `work_item_archive` — `{"op":"work_item_archive","archive":{"id":"wi-2","outcome":"merged as #412"}}`
+  takes an item off the work list: `id` is the item and `outcome` is how it
+  ended. Only a finished item leaves — one that is still open, one an approval
+  stands on, one another item waits on, or one with an attempt in flight is
+  refused, and refusing one op refuses the whole answer.
 
 ## What you may not do
 

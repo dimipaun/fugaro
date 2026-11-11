@@ -471,6 +471,7 @@ func TestEveryOpThePromptShowsIsOneThisReleaseReads(t *testing.T) {
 	for _, kind := range []orchestrator.OpKind{
 		orchestrator.OpFactSet, orchestrator.OpFactDelete,
 		orchestrator.OpDecisionAdd, orchestrator.OpWorkItemUpsert,
+		orchestrator.OpWorkItemArchive,
 	} {
 		if !seen[kind] {
 			t.Errorf("the prompt offers no example of %q, so its shape is nowhere the model can read", kind)
@@ -485,7 +486,18 @@ func TestEveryOpThePromptOffersLandsForThisAgent(t *testing.T) {
 	// for real, one after another, as the class this runner applies under —
 	// which is the check that caught `decision_resolve`, an op no decision
 	// agent can land whatever it waits on.
-	state := theState(t, nil)
+	//
+	// The archive example is the one that needs the fixture to carry something
+	// it can land on: an item still open is refused whatever the class
+	// (archivable), so the state gets a finished one beside the queued one.
+	state := theState(t, func(s *orchestrator.State) {
+		s.WorkItems = append(s.WorkItems, orchestrator.WorkItem{
+			ID: "wi-2", Title: "land the state migration", Repo: "owner/repo",
+			Recipe: "standard", RigorTier: "medium",
+			Brief: "Move the sweep onto the daemon.",
+			DependsOn: []string{}, Phase: orchestrator.PhaseDone,
+		})
+	})
 	now := mustNow(t)
 	ops := 0
 	for _, example := range jsonExamples(decide.Prompt) {

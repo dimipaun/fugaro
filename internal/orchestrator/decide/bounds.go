@@ -101,10 +101,12 @@ func (b Bounds) Allow(s orchestrator.State, now time.Time) error {
 	return nil
 }
 
-// callRecordPrefix names the record one call leaves in the state. It is a name
-// of its own rather than one a question would carry, so a reader — and a test —
-// can tell the loop's own bookkeeping from a question somebody asked.
-const callRecordPrefix = "decide-call-"
+// callRecordPrefix names the record one call leaves in the state: the name
+// orchestrator.DecisionCallID defines beside the reader that filters it, so
+// that the record this package writes and the summary that hides it cannot
+// drift apart. The caps count the records all the same — they read the state,
+// not the summary.
+const callRecordPrefix = orchestrator.DecisionCallID
 
 // recordCall is s with the record of one call in it: the decision the loop asks
 // itself and closes in the same patch, which is what makes Allow count calls

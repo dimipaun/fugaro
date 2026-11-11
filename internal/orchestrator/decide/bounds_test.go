@@ -203,3 +203,49 @@ func TestCountersSurviveARestart(t *testing.T) {
 		t.Errorf("a node whose six calls have left the hour ended as %v, want the call allowed", err)
 	}
 }
+
+func TestTheCallRecordIsNotAQuestionInTheSummary(t *testing.T) {
+	// The caps need a record per call in the document, and the summary is what
+	// a person and a session read: one line per record would be a summary of
+	// nothing else — the cap's forty fill it — and the facts are what would
+	// fall out of it. The record carries a name of its own
+	// (orchestrator.DecisionCallID) and the summary is the reader that reads
+	// it, so this pins the two together: the records stay in the document,
+	// where the caps count them, and out of the text a person reads.
+	now := mustNow(t)
+	state := theState(t, func(s *orchestrator.State) {
+		s.Facts["ci-flake"] = orchestrator.Fact{Value: "the review round retried twice", By: orchestrator.Daemon}
+		s.Decisions = []orchestrator.Decision{{
+			ID: "ask-ci-flake", Question: "Which of the two should this wait for?",
+			WaitingOn: orchestrator.OnPerson, At: now,
+		}}
+	})
+	// The question above is in the hour's count too — every decision is, which
+	// is the count being a bound on the money rather than on the answers — so
+	// what the eight records have to add is eight.
+	before := orchestrator.DecisionCalls(state, now).DecisionsHour
+	for range 8 {
+		next, err := decide.RecordCall(state, "wi-1", now)
+		if err != nil {
+			t.Fatalf("a call's record ended as %v", err)
+		}
+		state = next
+	}
+	if got := orchestrator.DecisionCalls(state, now).DecisionsHour; got != before+8 {
+		t.Fatalf("the node counts %d calls after eight of them, want %d: the records are what the caps read", got, before+8)
+	}
+
+	summary := orchestrator.Summarize(state)
+	if strings.Contains(summary, "decide-call") {
+		t.Errorf("the summary prints the loop's own call records:\n%s", summary)
+	}
+	if !strings.Contains(summary, "decisions: 1, 1 waiting") {
+		t.Errorf("the summary does not count the one question and only it:\n%s", summary)
+	}
+	if !strings.Contains(summary, "Which of the two should this wait for?") {
+		t.Errorf("the summary dropped a question somebody asked:\n%s", summary)
+	}
+	if !strings.Contains(summary, "ci-flake") {
+		t.Errorf("the call records pushed the facts out of the summary:\n%s", summary)
+	}
+}
