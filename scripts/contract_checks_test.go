@@ -81,7 +81,7 @@ const (
 func TestCheck480MeasuresItsOwnFollowUp(t *testing.T) {
 	requireTools(t, "bash", "git", "jq")
 
-	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractAfter, contractBefore)
+	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractAfter, contractBefore, true)
 	out, code := runContractCheck(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
 
 	// The row the bug killed first: without it the block ends with the polling
@@ -118,7 +118,7 @@ func TestCheck480RefusesTheOwnersOwnInstallations(t *testing.T) {
 		"gh/github.com/acme/edgeserver.git",
 	} {
 		t.Run(origin, func(t *testing.T) {
-			f := buildCheck480Fixture(t, origin, contractAfter, contractBefore)
+			f := buildCheck480Fixture(t, origin, contractAfter, contractBefore, true)
 			out, code := runContractCheck(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
 			assertRefused(t, f, out, code, "names the owner's own installation")
 		})
@@ -131,7 +131,7 @@ func TestCheck480RefusesTheOwnersOwnInstallations(t *testing.T) {
 func TestCheck480RefusesATracedShell(t *testing.T) {
 	requireTools(t, "bash", "git", "jq")
 
-	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractAfter, contractBefore)
+	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractAfter, contractBefore, true)
 	out, code := runContractCheckTracing(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
 	assertRefused(t, f, out, code, "this shell is tracing (bash -x)")
 	if !strings.Contains(out, "FACT xtrace: FAIL") {
@@ -145,7 +145,7 @@ func TestCheck480RefusesATracedShell(t *testing.T) {
 func TestCheck480RefusesAForeignOrigin(t *testing.T) {
 	requireTools(t, "bash", "git", "jq")
 
-	f := buildCheck480Fixture(t, "not-a-forge/sandbox.git", contractAfter, contractBefore)
+	f := buildCheck480Fixture(t, "not-a-forge/sandbox.git", contractAfter, contractBefore, true)
 	out, code := runContractCheck(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
 	assertRefused(t, f, out, code, "names no github.com or bitbucket.org repository")
 }
@@ -157,7 +157,7 @@ func TestCheck480RefusesAForeignOrigin(t *testing.T) {
 func TestCheck480RefusesContractTextInTheInstructions(t *testing.T) {
 	requireTools(t, "bash", "git", "jq")
 
-	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractLeaking, contractBefore)
+	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractLeaking, contractBefore, true)
 	out, code := runContractCheck(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
 
 	if code != 2 {
@@ -174,6 +174,37 @@ func TestCheck480RefusesContractTextInTheInstructions(t *testing.T) {
 	// contract's own text.
 	if calls := f.calls(t); strings.Contains(calls, "run --pr 7") {
 		t.Errorf("check-480 launched the follow-up with the contract's own text in the instructions:\n%s", calls)
+	}
+}
+
+// TestCheck480RefusesABaseWithNothingAmended: the check's premise is the owner's
+// amendment — a launched dependent meeting one — so a base that still carries the
+// branch's own copy of the contract leaves it nothing to measure. The guard that
+// says so has to stop before the launch: this check spends exactly one run, and a
+// base-merged, conformed, own-code block read from a plan with nothing amended
+// would be three PASS rows about a question nobody asked.
+func TestCheck480RefusesABaseWithNothingAmended(t *testing.T) {
+	requireTools(t, "bash", "git", "jq")
+
+	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractBefore, contractBefore, false)
+	out, code := runContractCheck(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
+
+	if code != 2 {
+		t.Errorf("check-480 exited %d, want 2:\n%s", code, out)
+	}
+	if !strings.Contains(out, "FACT amendment: FAIL") {
+		t.Errorf("check-480 did not record the amendment row as FAIL:\n%s", out)
+	}
+	if !strings.Contains(out, "the contract is not amended on main") {
+		t.Errorf("check-480 stopped for some other reason:\n%s", out)
+	}
+	// A guard that came after the launch would still have spent the run, and the
+	// caller would read a row measured against a plan that amended nothing.
+	if !strings.Contains(out, "FACT run: FAIL — not reached") {
+		t.Errorf("check-480 measured the run row on a base with nothing amended:\n%s", out)
+	}
+	if calls := f.calls(t); strings.Contains(calls, "run --pr 7") {
+		t.Errorf("check-480 spent its run on a base with nothing amended:\n%s", calls)
 	}
 }
 
@@ -270,10 +301,12 @@ type check480Fixture struct {
 // buildCheck480Fixture builds the repository Check 480 measures. origin is the
 // bare repository's path under the temp directory, which is what decides whether
 // the check places it at all: one that does not name a forge, or that names the
-// owner's own installation, is refused. baseContract is the contract file as the
-// amendment leaves it on the base branch, branchContract as the dependent's
-// branch has it.
-func buildCheck480Fixture(t *testing.T, origin, baseContract, branchContract string) *check480Fixture {
+// owner's own installation, is refused. branchContract is the contract file as
+// the dependent's branch has it; amended says whether the owner's amendment is
+// on the base at all, and baseContract is that amendment — with amended false
+// the base still carries the branch's copy, which is the state the check has
+// nothing to measure in.
+func buildCheck480Fixture(t *testing.T, origin, baseContract, branchContract string, amended bool) *check480Fixture {
 	t.Helper()
 	// The check and the fake `fugaro` it runs inherit this test's environment,
 	// so the identity and the isolation have to be here rather than on this
@@ -317,12 +350,14 @@ func buildCheck480Fixture(t *testing.T, origin, baseContract, branchContract str
 	gitRun(t, f.sim, "push", "--quiet", "-u", "origin", "fugaro/r1")
 	f.depHead = gitRun(t, f.sim, "rev-parse", "HEAD")
 
-	// The amendment the owner made on the base: without it the check stops
-	// before it spends a run, which is a different test.
+	// The amendment the owner made on the base. With amended false the base keeps
+	// the branch's copy, which is the state the check refuses to spend a run in.
 	gitRun(t, f.sim, "checkout", "--quiet", "main")
-	writeFile(t, filepath.Join(f.sim, filepath.FromSlash(contractPath)), baseContract)
-	gitRun(t, f.sim, "commit", "--quiet", "-am", "amend the contract")
-	gitRun(t, f.sim, "push", "--quiet", "origin", "main")
+	if amended {
+		writeFile(t, filepath.Join(f.sim, filepath.FromSlash(contractPath)), baseContract)
+		gitRun(t, f.sim, "commit", "--quiet", "-am", "amend the contract")
+		gitRun(t, f.sim, "push", "--quiet", "origin", "main")
+	}
 
 	writeFile(t, f.graph, contractCheck480Graph)
 	writeExec(t, filepath.Join(f.bin, "fugaro"), fakeFugaro480(f))
