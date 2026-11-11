@@ -21,12 +21,26 @@ const checksPage = 100
 // is (a failure on page 3 is not a commit whose checks all passed).
 const checksMaxPages = 10
 
-// Checks implements gitprov.Provider: every check run GitHub reports at commit
-// sha, in the order it lists them. The caller decides the state with
-// ChecksState; this read reports what the host said and nothing more, and a
-// commit with no check runs at all comes back as an empty slice and no error
-// (F25: Fugaro's own repository reports nothing on a pull request, and reading
-// that as "nothing failed" is the mistake ChecksState exists to prevent).
+// The vocabulary the two reports share with ChecksState. A commit status
+// spells its states differently from a check run, and this adapter translates
+// rather than passes them through, so the green rule stays in one place.
+const (
+	checkCompleted = "completed"
+	checkSuccess   = "success"
+	checkFailure   = "failure"
+)
+
+// Checks implements gitprov.Provider: everything GitHub reports about commit
+// sha, its check runs first and its commit statuses after. The caller decides
+// the state with ChecksState; this read reports what the host said and nothing
+// more, and a commit nothing reports on comes back as an empty slice and no
+// error (F25: Fugaro's own repository reports nothing on a pull request, and
+// reading that as "nothing failed" is the mistake ChecksState exists to
+// prevent).
+//
+// Both reports are read because this host has two and either can fail a
+// commit (see commitStatuses): a commit whose Action passed and whose Codecov
+// status failed is not a commit that passed.
 //
 // The read needs no write credential and is made with the provider's own
 // installation token (E8): the checks are the host's own report about a
@@ -42,6 +56,23 @@ func (p *Provider) Checks(ctx context.Context, number int, sha string) ([]gitpro
 		// shape is checked before it is put in a path rather than after.
 		return nil, fmt.Errorf("reading the checks of pull request #%d: %q is not a commit", number, sha)
 	}
+	runs, err := p.checkRuns(ctx, number, sha)
+	if err != nil {
+		return nil, err
+	}
+	statuses, err := p.commitStatuses(ctx, number, sha)
+	if err != nil {
+		// Half a set is not a smaller set: a caller that took the check runs
+		// and dropped this error would read a commit whose commit statuses
+		// were never read as one whose checks all passed.
+		return nil, err
+	}
+	return append(runs, statuses...), nil
+}
+
+// checkRuns reads every check run GitHub reports at commit sha, following the
+// listing's own pages.
+func (p *Provider) checkRuns(ctx context.Context, number int, sha string) ([]gitprov.CheckRun, error) {
 	var runs []gitprov.CheckRun
 	path := p.repoPath("/commits/" + url.PathEscape(sha) + fmt.Sprintf("/check-runs?per_page=%d", checksPage))
 	for page := 0; ; page++ {
@@ -68,6 +99,52 @@ func (p *Provider) Checks(ctx context.Context, number int, sha string) ([]gitpro
 			return runs, nil
 		}
 		path = next
+	}
+}
+
+// commitStatuses reads the combined status at commit sha. GitHub reports CI
+// twice: check runs, which Actions and apps post, and commit statuses, which
+// everything else that reads a repository does — Codecov, Jenkins, Vercel, a
+// CI that was set up before Actions existed. They are separate endpoints, and
+// the branch-protection screen, which is the thing a person reads to answer
+// "is this commit green", shows both. A read of the check runs alone would
+// report a commit whose Action passed and whose Codecov status failed as
+// CIGreen, and the ladder's gate would merge red CI, so both are read.
+//
+// The combined status is the latest status of each context rather than every
+// status ever posted, so one request is the whole set and there is nothing to
+// follow. A repository that uses neither report answers an empty array.
+func (p *Provider) commitStatuses(ctx context.Context, number int, sha string) ([]gitprov.CheckRun, error) {
+	var out struct {
+		Statuses []struct {
+			State string `json:"state"`
+		} `json:"statuses"`
+	}
+	path := p.repoPath("/commits/" + url.PathEscape(sha) + "/status")
+	if err := p.api.Do(ctx, "GET", path, nil, &out); err != nil {
+		return nil, fmt.Errorf("reading the commit statuses of pull request #%d at %s: %w", number, sha, err)
+	}
+	runs := make([]gitprov.CheckRun, 0, len(out.Statuses))
+	for _, s := range out.Statuses {
+		runs = append(runs, statusRun(s.State))
+	}
+	return runs, nil
+}
+
+// statusRun maps one commit status onto the CheckRun shape ChecksState reads.
+// A status carries one word where a check run carries a status and a
+// conclusion, so each state is translated rather than passed through. A state
+// this code has not seen lands on a run that has not completed, which
+// ChecksState holds as CIUnknown: a host that invents a state has not told
+// this code that the commit passed.
+func statusRun(state string) gitprov.CheckRun {
+	switch state {
+	case checkSuccess:
+		return gitprov.CheckRun{Status: checkCompleted, Conclusion: checkSuccess}
+	case checkFailure, "error":
+		return gitprov.CheckRun{Status: checkCompleted, Conclusion: checkFailure}
+	default:
+		return gitprov.CheckRun{Status: state}
 	}
 }
 

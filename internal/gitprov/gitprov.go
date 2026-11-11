@@ -440,7 +440,9 @@ type Provider interface {
 	// with ErrHeadMoved when the pull request is not at that commit, and
 	// only then clears the draft state. The credential comes from the merge
 	// mint (UseMergeMint, E16/D2049); a provider without one refuses with
-	// ErrNoMergeMint rather than reaching for its own. It is not ApplyReady:
+	// ErrNoMergeMint rather than reaching for its own, and a host with no
+	// mint to gate says so with MintExempt and ErrMintNotApplicable rather
+	// than being taken for one that does. It is not ApplyReady:
 	// that one adds reviewers and labels to a pull request somebody else
 	// made ready, and this one is the daemon's own new authority to un-draft
 	// a pull request a run left as a draft.
@@ -450,17 +452,22 @@ type Provider interface {
 	// it has moved, sends the expected head to the host as the merge's own
 	// precondition, and never sends an admin or bypass flag. The credential
 	// is the merge mint's (UseMergeMint), so a merge is a merge the gate
-	// minted for; a provider without one refuses with ErrNoMergeMint. A
-	// provider whose merge API has no expected-head precondition refuses
-	// with ErrMergeNoHeadPrecondition (F24): an unbound merge is the one
-	// thing this call exists to make impossible.
+	// minted for; a provider without one refuses with ErrNoMergeMint, and a
+	// host with no mint to gate says so with MintExempt and
+	// ErrMintNotApplicable. A provider whose merge API has no expected-head
+	// precondition refuses with ErrMergeNoHeadPrecondition (F24): an unbound
+	// merge is the one thing this call exists to make impossible.
 	Merge(ctx context.Context, number int, expectedHeadSHA string) error
 	// Checks reads the checks reported at commit sha of pull request number
 	// (E8, F25). The state is ChecksState's to decide and the caller's to
 	// fail closed on: an empty slice is a commit whose checks report
 	// nothing, which is CIUnknown and never green, and an error is a read
 	// that did not happen rather than a commit that passed. A provider that
-	// cannot report checks at all refuses with ErrChecksUnsupported.
+	// cannot report checks at all refuses with ErrChecksUnsupported. A host
+	// with more than one way to report CI reports all of them: a commit is
+	// green only if every report on it passed, so a read that took one
+	// report and not the other would read a failing commit as a passing one
+	// (GitHub has two: check runs and commit statuses).
 	Checks(ctx context.Context, number int, sha string) ([]CheckRun, error)
 }
 

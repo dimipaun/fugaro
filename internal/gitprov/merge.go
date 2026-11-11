@@ -40,6 +40,16 @@ var (
 	// with no checks: the caller sees an error and never a state it could
 	// mistake for green.
 	ErrChecksUnsupported = errors.New("this provider cannot read a commit's checks")
+	// ErrMintNotApplicable is a provider's own answer to where its ready and
+	// merge calls take their credential from: the provider's own installation
+	// token, because its host has no merge mint to gate. The mint is the
+	// GitHub App's — it exists because an App can sit on a base's bypass list
+	// (F26), which "no admin flag" does not cover — so a host with no App has
+	// no actor for the mint to refuse, no bypass list to read and no audit
+	// line to write. It is NOT a fallback: a provider that needs the mint and
+	// has none refuses with ErrNoMergeMint, and MintExempt is how a gate tells
+	// the two apart.
+	ErrMintNotApplicable = errors.New("this provider's host has no merge mint to gate; its own credential carries the call")
 )
 
 // MergeMinter is where a ready or merge call's credential comes from: the
@@ -74,6 +84,28 @@ type MergeMinter interface {
 // more (ErrMergeNoHeadPrecondition).
 type MergeMintSetter interface {
 	UseMergeMint(MergeMinter)
+}
+
+// MintExempt is implemented by a provider that is exempt from the merge mint:
+// its ready and merge calls carry the credential the provider already holds,
+// because its host has no mint to gate (Bitbucket, ErrMintNotApplicable).
+//
+// The exemption is not a hole. What the mint gates is an App that can sit on
+// a base's bypass list (F26, G14); a host with no App has no actor for the
+// mint to refuse and no bypass list to read, and its merge refuses for G2's
+// own reason instead (ErrMergeNoHeadPrecondition). But the gate still has to
+// report where a merge's authority came from, so the exemption is said out
+// loud rather than left to be inferred from prose: implementing this
+// interface IS the exemption, and a provider that does not implement it needs
+// the mint — with none installed, its ready and merge calls refuse with
+// ErrNoMergeMint. Silence is not an exemption, and the default is the
+// refusal.
+type MintExempt interface {
+	// MergeMintExemption returns ErrMintNotApplicable, and that is the only
+	// value it returns: being asked at all means the provider is exempt. It
+	// answers with an error rather than a bool so the gate reports the
+	// sentinel's own sentence instead of inventing one for each host.
+	MergeMintExemption() error
 }
 
 // CheckExpectedHead compares a pull request's current head with the commit a

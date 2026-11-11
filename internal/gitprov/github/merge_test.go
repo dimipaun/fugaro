@@ -246,3 +246,19 @@ func TestGithubMarkReadyOnAReadyPRWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestGithubIsNotExemptFromTheMergeMint is the other half of Bitbucket's
+// exemption: this is the host whose App can sit on a base's bypass list (F26),
+// so its ready and merge calls take the mint and nothing else. It has to say
+// that by NOT claiming the exemption — a gate that found no answer either way
+// would have to guess, and the guess that lets a merge through is the one that
+// matters.
+func TestGithubIsNotExemptFromTheMergeMint(t *testing.T) {
+	var prov gitprov.Provider = fakeAPI(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	if exempt, ok := prov.(gitprov.MintExempt); ok {
+		t.Fatalf("the GitHub provider claims exemption from the merge mint: %v", exempt.MergeMintExemption())
+	}
+	if _, ok := prov.(gitprov.MergeMintSetter); !ok {
+		t.Fatal("the GitHub provider does not take a merge mint at all")
+	}
+}

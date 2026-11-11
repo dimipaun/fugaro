@@ -99,3 +99,25 @@ func TestBitbucketMarkReadyRefusesAClosedPR(t *testing.T) {
 		t.Fatalf("MarkReady on a merged pull request = %v, want ErrPRNotOpen", err)
 	}
 }
+
+// TestBitbucketSaysItIsExemptFromTheMergeMint is the exception made readable:
+// MarkReady here takes the provider's own credential rather than the gated
+// merge mint's, and the gate is told so instead of having to infer it from
+// prose. The exemption covers the credential only — the merge still refuses
+// below — so an exempt provider is not a provider that can merge unbound.
+func TestBitbucketSaysItIsExemptFromTheMergeMint(t *testing.T) {
+	var prov gitprov.Provider = openInline(t, nil)
+	exempt, ok := prov.(gitprov.MintExempt)
+	if !ok {
+		t.Fatal("the Bitbucket provider does not report itself exempt from the merge mint")
+	}
+	if err := exempt.MergeMintExemption(); !errors.Is(err, gitprov.ErrMintNotApplicable) {
+		t.Fatalf("MergeMintExemption = %v, want ErrMintNotApplicable", err)
+	}
+	if _, ok := prov.(gitprov.MergeMintSetter); ok {
+		t.Fatal("the Bitbucket provider offers to install a merge mint it has no use for")
+	}
+	if err := prov.Merge(ctx, 12, head); !errors.Is(err, gitprov.ErrMergeNoHeadPrecondition) {
+		t.Fatalf("Merge on an exempt provider = %v, want it still refused", err)
+	}
+}

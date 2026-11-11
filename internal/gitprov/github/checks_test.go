@@ -10,15 +10,50 @@ import (
 )
 
 // The checks read (E8, F25). It reports what the host said and nothing more:
-// the caller's ChecksState decides green, so the two things pinned here are
-// that every page is read (a failure left on page 3 must reach the caller) and
-// that a commit with no runs is an empty set rather than an error or a pass.
+// the caller's ChecksState decides green, so the things pinned here are that
+// every page is read (a failure left on page 3 must reach the caller), that a
+// commit with nothing reported is an empty set rather than an error or a
+// pass, and that BOTH of this host's reports are read — a commit whose Action
+// passed and whose commit status failed is not a commit that passed.
 
 const checksSHA = "1111111111111111111111111111111111111111"
 
+// statusPath is the combined status of checksSHA, the second endpoint every
+// Checks call has to reach.
+const statusPath = "/repos/acme/web/commits/" + checksSHA + "/status"
+
+// checksHandler answers both of the reads Checks makes: the check-runs
+// listing (through runs) and the combined status (through statuses). A nil
+// runs or statuses is an empty array, which is what this host answers for a
+// commit nothing reports on.
+func checksHandler(runs func(w http.ResponseWriter, r *http.Request) bool, statuses string) func(http.ResponseWriter, *http.Request) bool {
+	if statuses == "" {
+		// What GitHub answers for a commit whose contexts have posted
+		// nothing: a pending state over an empty array.
+		statuses = `{"state": "pending", "statuses": []}`
+	}
+	return func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.Method == "GET" && r.URL.Path == statusPath:
+			io.WriteString(w, statuses)
+			return true
+		case r.Method == "GET" && r.URL.Path == "/repos/acme/web/commits/"+checksSHA+"/check-runs":
+			if runs != nil && runs(w, r) {
+				return true
+			}
+			// A nil runs is a commit with no check runs, which is the shape a
+			// test that is about the other report wants.
+			io.WriteString(w, `{"total_count": 0, "check_runs": []}`)
+			return true
+		default:
+			return false
+		}
+	}
+}
+
 func TestGithubChecksReadsEveryPage(t *testing.T) {
 	var pages int
-	p := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+	p := fakeAPI(t, checksHandler(func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method != "GET" || r.URL.Path != "/repos/acme/web/commits/"+checksSHA+"/check-runs" {
 			return false
 		}
@@ -38,7 +73,7 @@ func TestGithubChecksReadsEveryPage(t *testing.T) {
 			t.Errorf("unexpected page %q", r.URL.Query().Get("page"))
 		}
 		return true
-	})
+	}, ""))
 	runs, err := p.Checks(ctx, 12, checksSHA)
 	if err != nil {
 		t.Fatal(err)
@@ -55,13 +90,13 @@ func TestGithubChecksReadsEveryPage(t *testing.T) {
 // reports nothing on a pull request, and that is an empty set with no error —
 // never a state the caller could read as green by accident.
 func TestGithubChecksNoRunsIsAnEmptySet(t *testing.T) {
-	p := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+	p := fakeAPI(t, checksHandler(func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method == "GET" && r.URL.Path == "/repos/acme/web/commits/"+checksSHA+"/check-runs" {
 			io.WriteString(w, `{"total_count": 0, "check_runs": []}`)
 			return true
 		}
 		return false
-	})
+	}, ""))
 	runs, err := p.Checks(ctx, 12, checksSHA)
 	if err != nil || len(runs) != 0 {
 		t.Fatalf("Checks = %+v, %v; want an empty set", runs, err)
@@ -75,13 +110,13 @@ func TestGithubChecksNoRunsIsAnEmptySet(t *testing.T) {
 // this adapter too: GitHub reports a queued run with a null conclusion, which
 // must arrive as a run that has not passed rather than as one that has.
 func TestGithubChecksPendingRunIsUnknown(t *testing.T) {
-	p := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+	p := fakeAPI(t, checksHandler(func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method == "GET" && r.URL.Path == "/repos/acme/web/commits/"+checksSHA+"/check-runs" {
 			io.WriteString(w, `{"total_count": 2, "check_runs": [{"status": "completed", "conclusion": "success"}, {"status": "in_progress", "conclusion": null}]}`)
 			return true
 		}
 		return false
-	})
+	}, ""))
 	runs, err := p.Checks(ctx, 12, checksSHA)
 	if err != nil || len(runs) != 2 {
 		t.Fatalf("Checks = %+v, %v", runs, err)
@@ -91,6 +126,83 @@ func TestGithubChecksPendingRunIsUnknown(t *testing.T) {
 	}
 	if got := gitprov.ChecksState(runs); got != gitprov.CIUnknown {
 		t.Fatalf("ChecksState = %v, want unknown", got)
+	}
+}
+
+// TestGithubChecksReadsCommitStatusesToo is the one that keeps a red commit
+// from reading green: this host reports CI through check runs AND through
+// commit statuses, and a repository whose Codecov, Jenkins or Vercel result is
+// a status rather than a check run has its real answer in the second read. A
+// passing check run with a failing status is a failed commit.
+func TestGithubChecksReadsCommitStatusesToo(t *testing.T) {
+	p := fakeAPI(t, checksHandler(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == "GET" && r.URL.Path == "/repos/acme/web/commits/"+checksSHA+"/check-runs" {
+			io.WriteString(w, `{"total_count": 1, "check_runs": [{"status": "completed", "conclusion": "success"}]}`)
+			return true
+		}
+		return false
+	}, `{"state": "failure", "statuses": [
+		{"state": "success", "context": "ci/build"},
+		{"state": "failure", "context": "codecov/project"}]}`))
+	runs, err := p.Checks(ctx, 12, checksSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("Checks = %+v; want the check run and both commit statuses", runs)
+	}
+	if got := gitprov.ChecksState(runs); got != gitprov.CIRed {
+		t.Fatalf("ChecksState = %v, want red: the commit status failed even though the check run passed", got)
+	}
+}
+
+// TestGithubChecksCommitStatusStates pins the translation of each state a
+// commit status can carry, and the fail-closed end of it: a state this code
+// has not seen is a commit that has not passed, never one that has.
+func TestGithubChecksCommitStatusStates(t *testing.T) {
+	p := fakeAPI(t, checksHandler(nil, `{"state": "success", "statuses": [{"state": "success", "context": "ci/build"}]}`))
+	runs, err := p.Checks(ctx, 12, checksSHA)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("Checks = %+v, %v", runs, err)
+	}
+	if got := gitprov.ChecksState(runs); got != gitprov.CIGreen {
+		t.Errorf("ChecksState = %v, want green: a status is a report, and this one passed", got)
+	}
+	for _, c := range []struct {
+		state string
+		want  gitprov.CIState
+	}{
+		{"failure", gitprov.CIRed},
+		{"error", gitprov.CIRed},
+		{"pending", gitprov.CIUnknown},
+		{"waiting", gitprov.CIUnknown},
+	} {
+		run := statusRun(c.state)
+		if got := gitprov.ChecksState([]gitprov.CheckRun{run}); got != c.want {
+			t.Errorf("a %q status maps to %+v, which ChecksState reads as %v, want %v", c.state, run, got, c.want)
+		}
+	}
+}
+
+// TestGithubChecksRefusesWhenTheStatusReadFails: a check-runs read that
+// succeeded is not half an answer. Dropping the second error would hand the
+// caller a set holding only the check runs, and a commit whose commit status
+// failed would read as one that passed — the mistake the second read is there
+// to close.
+func TestGithubChecksRefusesWhenTheStatusReadFails(t *testing.T) {
+	p := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/acme/web/commits/"+checksSHA+"/check-runs":
+			io.WriteString(w, `{"total_count": 1, "check_runs": [{"status": "completed", "conclusion": "success"}]}`)
+			return true
+		case r.Method == "GET" && r.URL.Path == statusPath:
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return true
+		}
+		return false
+	})
+	if _, err := p.Checks(ctx, 12, checksSHA); err == nil {
+		t.Fatal("Checks did not refuse when the commit-statuses read failed")
 	}
 }
 

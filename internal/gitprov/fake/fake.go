@@ -789,6 +789,13 @@ func (p *Provider) ApplyReady(_ context.Context, number int, reviewers, labels [
 	return perr
 }
 
+// MergeMintExemption implements gitprov.MintExempt. A double stands in for a
+// host, and it holds no credential for one: there is no mint for it to take a
+// token from and nothing for a merge token to be bound to, so it says it is
+// exempt rather than leaving the same question the Bitbucket adapter answers
+// open here. A test that needs the mint's refusal wires the real provider.
+func (p *Provider) MergeMintExemption() error { return gitprov.ErrMintNotApplicable }
+
 // MarkReady implements gitprov.Provider: it refuses a PR whose head is not
 // the commit the call named (TestFakeMarkReadyRefusesOnHeadChange), and only
 // then clears the draft state. A state that records no head is a PR no

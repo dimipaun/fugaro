@@ -7,20 +7,35 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 )
 
+var _ gitprov.MintExempt = (*Provider)(nil)
+
 // The ladder's write calls on Bitbucket (E8). MarkReady works here, because a
 // draft on this host is the title's own prefix and the adapter already knows
-// how to drop it; Merge and Checks refuse, and each refusal is the honest
-// answer to a question this host cannot be asked. The refusals are what the
-// ladder's gate reads: a rung that reaches either ends waiting_on: person
-// rather than merging or passing on a reading nobody made.
+// how to drop it, and it is the one call of the three that does not need the
+// gated merge mint — MergeMintExemption says why; Merge and Checks refuse, and
+// each refusal is the honest answer to a question this host cannot be asked.
+// The refusals are what the ladder's gate reads: a rung that reaches either
+// ends waiting_on: person rather than merging or passing on a reading nobody
+// made.
+
+// MergeMintExemption implements gitprov.MintExempt: this provider is exempt
+// from the gated merge mint, and says so rather than leaving the gate to
+// infer it. The mint is the GitHub App's (E16, D2049) and it exists to refuse
+// an App that sits on a base's bypass list (F26, G14); Bitbucket has no App
+// holding the ready and merge authority, so there is no actor for the mint to
+// refuse, no bypass list to read and no audit line to write. The exemption
+// buys nothing else: this provider's Merge still refuses for G2's own reason
+// (ErrMergeNoHeadPrecondition), so an exempt merge is not a merge that can
+// land unbound.
+func (p *Provider) MergeMintExemption() error { return gitprov.ErrMintNotApplicable }
 
 // MarkReady implements gitprov.Provider. Bitbucket has no draft flag on a
 // pull request — the adapter marks one by the title's prefix
 // (gitprov.DraftPrefix, the same fallback GitHub uses where drafts are
 // unsupported) — so readying it is an ordinary update through the same code
-// path UpdatePR uses, and it takes the provider's own credential: the gated
-// merge mint is GitHub's (E16's route is an App's, D2049), and this host has
-// no App to sit on a bypass list.
+// path UpdatePR uses, and it takes the provider's own credential:
+// MergeMintExemption above is why (no App, no bypass list, no mint), and the
+// difference from GitHub's adapter is deliberate rather than an oversight.
 //
 // The head is re-read and checked first, exactly as the GitHub adapter does
 // it (G2): the draft state is a write, and a write that lands on a head other
