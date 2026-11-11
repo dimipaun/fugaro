@@ -2103,7 +2103,7 @@ test('a wrapped bullet is one bullet to the page', (t) => {
   const summary = findAll(parse(html), (el) => el.attrs.has('data-security-summary'))[0]
   assert.ok(summary !== undefined, `the copy's page carries no "data-security-summary" region, so there is nothing to read the wrapped bullet out of`)
   const items = findAll(summary, 'li')
-  assert.equal(items.length, 6, `the page renders ${items.length} bullets where the document writes 6: a wrapped bullet is one bullet and its continuation is not a seventh`)
+  assert.equal(items.length, 7, `the page renders ${items.length} bullets where the document writes 7: a wrapped bullet is one bullet and its continuation is not a seventh`)
   assert.match(
     prose(text(items[items.length - 1])),
     /and this half of the same bullet/,
