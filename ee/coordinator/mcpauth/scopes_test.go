@@ -94,7 +94,11 @@ func TestTheCatalogueMapsEveryToolToAScopeV1Mints(t *testing.T) {
 			t.Errorf("ToolScope(%q) = %q, %v; want the catalogue's own %q", spec.name, scope, ok, spec.scope)
 		}
 	}
-	if _, ok := ToolScope("get_state"); ok {
+	// retry_task is D1224's own example of a name that is not a tool of this
+	// front door: the retry is a spawn_task carrying the same idempotency key
+	// family, so the name belongs to no catalogue entry and the mapping has to
+	// say so rather than answer with a scope for it.
+	if _, ok := ToolScope("retry_task"); ok {
 		t.Error("ToolScope maps a name the catalogue does not hold: a name outside the table has no scope and is not served")
 	}
 }
