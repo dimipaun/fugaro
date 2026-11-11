@@ -505,6 +505,135 @@ func TestRunContinuesARepeatIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestRunRefusesAStoredTaskAContinuesDoesNotResolve: a --continues task records
+// no link of its own — task.Validate holds branch, pr and previous_run
+// together, and a chain with no pull request carries none of them — so which
+// chain a stored task was written for is not in it, and "run ID X already holds
+// this launch" is decided from the text, the batch and the figures alone
+// (storedRepeat). For a launch that already ran, that is the whole answer: the
+// stored task is the run's own and the second call reports the existing run.
+// For a run ID that never launched it is not, because the stored task is what
+// the run would read: a task written by another launch shape (a first run, or a
+// --continues of another chain) carries figures this chain never resolved, and
+// starting it drops this chain's remaining in silence — the run is bounded by
+// the per-run caps alone, which is the hole D1045/D1052 close for every other
+// shape. Held to the chain the caller names, such a task is refused.
+func TestRunRefusesAStoredTaskAContinuesDoesNotResolve(t *testing.T) {
+	// The launch under test in every case: continue chainRun's chain, under the
+	// run ID chainFu, with the text the stored task carries.
+	args := []string{"run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "A task"}
+	// stored is a task chainFu already holds, written by a launch of some other
+	// shape: a first run's task, whose own launch carried no chain at all.
+	stored := func(o task.Overrides) *task.Spec {
+		spec := firstRunSpec(chainFu)
+		spec.Task = "A task"
+		spec.Overrides = o
+		return spec
+	}
+	t.Run("a stored first run's task", func(t *testing.T) {
+		f := chainRig(t)
+		usd := chainUSD
+		seedChainRun(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+		seedSpec(t, f, stored(task.Overrides{}), false)
+		_, _, err := execute(t, args...)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "already holds a task") {
+			t.Fatalf("err = %v, want a stored task this launch does not resolve to refused", err)
+		}
+		for _, want := range []string{"--continues " + task.ShortRun(chainRun), "--max-usd", "3 dollars"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want it to name %q", err, want)
+			}
+		}
+		if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD != nil {
+			t.Fatalf("overrides = %+v after the refusal, want the stored task untouched", o)
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Fatalf("%d executions, want the stored task not started", n)
+		}
+	})
+	t.Run("a stored task carrying the chain's limit and not its remaining", func(t *testing.T) {
+		f := chainRig(t)
+		usd := chainUSD
+		seedChainRun(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+		seedSpec(t, f, stored(task.Overrides{MaxUSD: &usd}), false)
+		_, _, err := execute(t, args...)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "5 where the chain leaves 3 dollars") {
+			t.Fatalf("err = %v, want the whole limit named against the remaining", err)
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Fatalf("%d executions, want the stored task not started", n)
+		}
+	})
+	t.Run("a stored task the chain has since spent past", func(t *testing.T) {
+		f := chainRig(t)
+		usd := chainUSD
+		seedChainRun(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+		rem := chainUSD - chainSpent
+		seedSpec(t, f, stored(task.Overrides{MaxUSD: &rem}), false)
+		// The chain spends 1.5 more: the task an earlier attempt of this same
+		// launch stored holds 3, and the chain leaves 1.5. Started as it stands
+		// the run would spend past the chain, so the repeat is refused and names
+		// the way to start that task deliberately (--retry, which takes no flag
+		// for the chain it is in and resolves the chain at its own launch).
+		seedChainSpend(t, f, chainRun, 3.5)
+		_, _, err := execute(t, args...)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "3 where the chain leaves 1.5 dollars") {
+			t.Fatalf("err = %v, want the stored remaining named against what the chain leaves", err)
+		}
+		if !strings.Contains(err.Error(), "--retry "+task.ShortRun(chainFu)) {
+			t.Fatalf("err = %v, want it to name --retry of the stored task", err)
+		}
+		if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD == nil || *o.MaxUSD != rem {
+			t.Fatalf("overrides = %+v after the refusal, want the stored task untouched", o)
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Fatalf("%d executions, want the stored task not started", n)
+		}
+	})
+	t.Run("a stored task tighter than the chain leaves", func(t *testing.T) {
+		f := chainRig(t)
+		usd := chainUSD
+		seedChainRun(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+		// The same shape one notch tighter — the launch that wrote it named
+		// --max-usd 2, which a launch continuing a chain may do (tighten-only,
+		// D1043) — and it is a bound this chain still pays for, so the repeat
+		// starts the task as it stands. The check is the bound, not equality: a
+		// figure below the remaining was asked for and must not be refused as one
+		// above it would be.
+		tight := 2.0
+		seedSpec(t, f, stored(task.Overrides{MaxUSD: &tight}), false)
+		if _, _, err := execute(t, args...); err != nil {
+			t.Fatal(err)
+		}
+		if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD == nil || *o.MaxUSD != tight {
+			t.Fatalf("overrides = %+v, want the stored 2 dollars kept", o)
+		}
+		if n := len(f.run.Executions()); n != 1 {
+			t.Fatalf("%d executions, want the stored task started once", n)
+		}
+	})
+	t.Run("the repeat of an attempt that never started", func(t *testing.T) {
+		f := chainRig(t)
+		usd := chainUSD
+		seedChainRun(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+		// A launch of this same command whose run never started — the task is
+		// stored, the record and launch.json are not — is the repeat the reuse
+		// exists for, and the figure it holds is one this chain still pays for:
+		// the run starts with exactly the task that attempt stored.
+		rem := chainUSD - chainSpent
+		seedSpec(t, f, stored(task.Overrides{MaxUSD: &rem}), false)
+		if _, _, err := execute(t, args...); err != nil {
+			t.Fatal(err)
+		}
+		if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD == nil || *o.MaxUSD != rem {
+			t.Fatalf("overrides = %+v, want the stored remaining %v kept", o, rem)
+		}
+		if n := len(f.run.Executions()); n != 1 {
+			t.Fatalf("%d executions, want the stored task started once", n)
+		}
+	})
+}
+
 // TestRunRefusesARepeatOfAUsedFigureOnAFollowUp: the same rule on the --pr
 // path, which is the other launch shape a repeat answers from the stored task
 // (storedFollowUp). The figure is not the task's to hold there either, so a

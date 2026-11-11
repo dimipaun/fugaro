@@ -864,6 +864,16 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			return launchResult{}, err
 		}
 	}
+	// The other half of that check, for the launch shape whose stored task
+	// carries no link to re-read: what a --continues task was written for is in
+	// no field of it, so the chain the caller names is held to the figures the
+	// stored task carries (recheckContinues). Also only for a run ID that never
+	// launched: one that did is the run the stored task already is.
+	if prior == nil && reused && o.continues != "" {
+		if err := recheckContinues(ctx, env, o, slug, spec); err != nil {
+			return launchResult{}, err
+		}
+	}
 	if o.retry == "" {
 		// Before the image gate below, not after: a run ID whose earlier
 		// attempt stored a task but never launched it (prior == nil, an

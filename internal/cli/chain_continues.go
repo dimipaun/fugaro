@@ -223,6 +223,65 @@ func chainInherit(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	return nil
 }
 
+// recheckContinues holds a stored task a --continues repeat would start to the
+// chain the caller names, the way recheckFollowUp holds a reused follow-up to
+// its pull request — the other half of the same check, for the one launch shape
+// whose stored task carries no link to re-read.
+//
+// A --continues task records no link of its own: task.Validate holds branch, pr
+// and previous_run together, and a chain with no pull request has none of them,
+// so what a stored task was written for is in no field of it, and "this run ID
+// already holds this launch" is decided from the text, the batch and the figures
+// alone (storedRepeat). For a run ID that has already launched that is the whole
+// answer: the stored task is the run's own, and the second call reports the
+// existing run (design §4). A run ID that never launched is where it is not: the
+// stored task is what the run would read, so a task written by another launch
+// shape — a first run's, or a --continues of another chain, neither of which the
+// task names — carries figures this chain never resolved, and starting it would
+// bound the run by them rather than by what the chain leaves, which is what
+// D1045 and D1052 exist to write.
+//
+// What is asked of the stored task is the bound it puts on the run: every
+// dimension the chain limits must carry a figure at or below the remaining, and
+// one above it — or none at all, which bounds nothing — is a run the chain does
+// not bound. The remaining is read by resolving a copy of the stored task whose
+// own figures are cleared first: the stored figures are the request the check
+// judges, and asking with them would have chainRemaining refuse a figure the
+// chain has since spent past with its advice to pass a smaller --max-*, which is
+// no advice for a call that typed no figure. A stored figure the chain can still
+// pay for is left alone — it was this launch's own --max-* when it was written,
+// tighten-only (D1043) — and the task in the bucket is never rewritten: a stored
+// task is written once (createTask).
+func recheckContinues(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec) error {
+	next := *spec
+	next.Overrides.MaxUSD, next.Overrides.MaxTokens = nil, nil
+	next.Overrides.MaxTime, next.Overrides.MaxReviewRounds = "", nil
+	if err := chainInherit(ctx, env, o, slug, &next, false, io.Discard); err != nil {
+		return err
+	}
+	var loose []string
+	for _, d := range chainDimensions() {
+		rem, limited := chainLimitAmount(next.Overrides, d)
+		if !limited {
+			continue
+		}
+		have, carried := chainLimitAmount(spec.Overrides, d)
+		switch {
+		case !carried:
+			loose = append(loose, fmt.Sprintf("it carries no --max-%s where the chain leaves %s",
+				chainDimensionFlag(d), chainAmountText(d, rem)))
+		case have > rem:
+			loose = append(loose, fmt.Sprintf("it carries --max-%s %s where the chain leaves %s",
+				chainDimensionFlag(d), chainFlagAmount(d, have), chainAmountText(d, rem)))
+		}
+	}
+	if len(loose) == 0 {
+		return nil
+	}
+	return userErr("run ID %s already holds a task that %s does not resolve to: %s. A stored task is what its run reads, so starting it would bound the run by figures the chain does not leave it. State this launch on a run ID that has not launched, or start the stored task as it stands with --retry %s",
+		spec.RunID, chainFromWord(o, spec), strings.Join(loose, "; "), task.ShortRun(spec.RunID))
+}
+
 // chainFrom is the run this launch's chain is read from (D1045): the run
 // --continues names, the previous run a --pr follow-up stores in its task, or
 // the newest pushed run of the single pull request a review job reviews
