@@ -356,7 +356,14 @@ resource "google_storage_bucket_iam_member" "runs_launcher" {
 # conditioned roles: an installation with no viewer applies exactly the plan it
 # applied before this role existed (roles.md §8 R1), and a custom role with no
 # binding grants nobody anything anyway.
-resource "google_project_iam_custom_role" "viewer" {
+#
+# The name is `fugaro_viewer` and not `viewer` on purpose: the secret-readers
+# guard (deploy/terraform/secret_readers_test.go) ties a grant to a custom role
+# by the last dotted token of the role string it grants, so a role named
+# `viewer` would be read as the reader behind every `roles/<something>.viewer`
+# grant in the tree — the Firebase module's database viewer among them, which
+# reads no secret at all.
+resource "google_project_iam_custom_role" "fugaro_viewer" {
   count = length(var.viewers) > 0 ? 1 : 0
 
   project = var.project
@@ -389,7 +396,7 @@ resource "google_project_iam_member" "viewer" {
   role    = "projects/${var.project}/roles/fugaroViewer"
   member  = each.value
 
-  depends_on = [google_project_iam_custom_role.viewer]
+  depends_on = [google_project_iam_custom_role.fugaro_viewer]
 }
 
 # The state bucket isn't managed here (fugaro setup creates it before any

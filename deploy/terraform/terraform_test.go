@@ -1033,12 +1033,13 @@ func TestLogSinkRoutesBothPlatforms(t *testing.T) {
 			t.Errorf("%s mixes AND with OR in one group: %s\nCloud Logging binds AND loosest, so this does not group the way it reads", c.what, c.filter)
 		}
 	}
-	// Both the sink and the exclusion carry both arms; the view's IAM
-	// member still names only the launchers and operators.
+	// Both the sink and the exclusion carry both arms; the view's IAM member
+	// names the launchers, the operators and the viewers — the viewer list is
+	// RS4's, and a viewer reads a run's own output (D684).
 	for _, want := range []string{
 		"filter                 = local.fugaro_logs",
 		"filter  = \"${local.fugaro_logs} AND NOT",
-		"for_each = var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([])",
+		"for_each = var.log_isolation ? toset(concat(var.launchers, var.operators, var.viewers)) : toset([])",
 		"role     = \"roles/logging.viewAccessor\"",
 	} {
 		if !strings.Contains(src, want) {
