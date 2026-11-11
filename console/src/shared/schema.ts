@@ -1055,8 +1055,8 @@ export const REPO_KEYS = [
  * runner writes into the run's own registry entry from its record -- the same
  * pair `runs ls --json`'s `rigor` block carries, and the pair the Live screen's
  * chip draws today by joining that list to a row by run id
- * (`shared/rigor.ts`'s `rigorIndex`, `live.test.ts`'s "the mode is not in the
- * live frame"). It is in the live frame now, so a later console task may read
+ * (`shared/rigor.ts`'s `rigorIndex`, `live.test.ts`'s "takes a run's rigor from
+ * the join by id"). It is in the live frame now, so a later console task may read
  * it here instead of joining; nothing draws it from this row yet, and both keys
  * are classified already -- `mode` is an enum of the CLI's own table
  * (`NON_TEXT_STRING_KEYS`) and `from` is the label the graph read's node keys

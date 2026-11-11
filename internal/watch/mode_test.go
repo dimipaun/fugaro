@@ -2,6 +2,7 @@ package watch
 
 import (
 	"testing"
+	"time"
 )
 
 // A live row carries the rigor mode the run resolved and the layer that won it
@@ -46,5 +47,45 @@ func TestWatchShowsALiveRunsMode(t *testing.T) {
 	}
 	if got["r2"].Mode != "-" || got["r2"].From != "-" {
 		t.Fatalf("r2 = %+v, want the - every other absent value shows", got["r2"])
+	}
+}
+
+// A queued run has no registry entry at all -- nothing has written it yet -- so
+// its mode is absent the way its stage and verify are: "-", in the row and in
+// --json. A queued row left at the zero value would write "mode":"" instead, a
+// value no mode or layer word is, and in the console's frame that is a value the
+// scrub refuses, so the recorded-fixture workflow would fail on any recording
+// that happened to catch a run still waiting.
+func TestWatchShowsAQueuedRunsModeAsAbsent(t *testing.T) {
+	v := MergeQueued(fixture(), Config{},
+		[]QueuedRun{{Run: "r-queued1", Slug: "acme__app", Workflow: "web", LaunchedAt: t0.Add(-2 * time.Minute)}}, "", t0)
+
+	var row RunRow
+	found := false
+	for _, b := range v.Repos {
+		for _, r := range b.Runs {
+			if r.Run == "r-queued1" {
+				row, found = r, true
+			}
+		}
+	}
+	if !found || !row.Queued {
+		t.Fatalf("queued row missing from %+v", v.Repos)
+	}
+	if row.Mode != "-" || row.From != "-" {
+		t.Fatalf("queued row = Mode:%q From:%q, want the - every other absent value shows", row.Mode, row.From)
+	}
+
+	jr, found := JSONRun{}, false
+	for _, r := range BuildJSON("aurora", v).Runs {
+		if r.Run == "r-queued1" {
+			jr, found = r, true
+		}
+	}
+	if !found {
+		t.Fatal("the queued run is not in the --json runs[]")
+	}
+	if jr.Mode != "-" || jr.From != "-" {
+		t.Fatalf("queued run in --json = Mode:%q From:%q, want the - every other absent value shows", jr.Mode, jr.From)
 	}
 }
