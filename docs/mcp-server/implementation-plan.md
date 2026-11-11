@@ -1324,9 +1324,11 @@ console and the mobile app as well as the Go server**, so it follows `.claude/ru
   test (it lists the pending flows, shows the client, the host and the binding, and posts M5b's
   single-use approval); in `console/`, the place the console's `fugaro coordinator login` child (P9f
   of the coordinator plan) shows the binding to the person, and its test.
-- **Interface:** the binding is **number matching** if the coordinator plan's open **D2127** is
-  answered as recommended (the page and the phone show the same short number and the person confirms
-  they agree), or a QR the phone scans if it is not; the approve POST is M5b's, unchanged.
+- **Interface:** the binding is **number matching** — the coordinator plan's **D2127**, answered by the
+  owner on 2026-11-11 as recommended: the launcher's page and the phone show the same short number,
+  derived from the flow's binding, and the person confirms on the phone that they agree before the
+  phone posts the approval. No QR is rendered or scanned, so neither side gains a dependency. The
+  approve POST is M5b's, unchanged.
 - **Red step:** `TestAPendingFlowIsListedOnlyToItsOwnIdentity` — a flow started by one identity is
   absent from another identity's list; it fails because there is no list.
 - **Tests:** `TestAPendingFlowIsListedOnlyToItsOwnIdentity`, `TestThePendingListMarksTheClientUnverified`,
@@ -1337,9 +1339,8 @@ console and the mobile app as well as the Go server**, so it follows `.claude/ru
 - **SEC:** **yes, mandatory** — it is the half of M-a the endpoint could not do alone. Reviewer:
   **opus + mandatory independent review, level 3 in the run.** **H1's residual risk is unchanged**:
   the approval is still proved by the ID token and no device key, as the owner accepted.
-- **Depends on:** M5b, M6 (built); the coordinator plan's open **D2127** (number matching or QR; a QR
-  adds a dependency on each side, which needs the owner's go); P9f of the coordinator plan for the
-  console's half only.
+- **Depends on:** M5b, M6 (built); the coordinator plan's **D2127** (answered 2026-11-11: number
+  matching); P9f of the coordinator plan for the console's half only.
 - **Commit:** `coordinator: the sign-in flow delivered to the paired phone (M12b)`
 
 ## 4. The shared-files table

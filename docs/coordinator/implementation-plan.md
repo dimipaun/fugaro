@@ -935,7 +935,7 @@ tasks consume them by name. Like P6–P8 since the re-plan of 2026-11-07, they l
 `main`, reached only through `ee/register` (D435). **None of them is approved**: §11's gate passed
 for P0–P6, and each of these needs the owner's explicit go, by name.
 
-**The decisions: D2110–D2126 answered by the owner on 2026-11-11; D2127 open.** They are taken
+**The decisions: D2110–D2127 answered by the owner on 2026-11-11.** They are taken
 from the block **D2110–D2129**, reserved by this work above **D2109**, the highest number written
 or reserved on `main` and in any open pull request on 2026-11-11 (`docs/account-aliases/README.md`
 reserves D2090–D2109); **D2128–D2129** stay reserved and unused. Each was written recommendation
@@ -981,11 +981,12 @@ door's own code as the only fence. The path-scoped alternative (a rules grant re
 front door mints) would have reversed D923 and been forgeable by any launcher. The owner declined
 both and kept the queue.
 
-**The new open decision these answers raise (D2127).**
+**The decision these answers raised (D2127), answered by the owner on 2026-11-11: number matching,
+the recommendation.**
 
-| Decision | The question | Recommendation | The alternative, and its cost | Blocks |
+| Decision | The question | Recommendation | Answer (owner, 2026-11-11), and the alternative as written | Blocks |
 | --- | --- | --- | --- | --- |
-| **D2127** | M12b delivers a sign-in flow to the paired phone, and finding M-a admits two ways to bind the approval to the sign-in in front of the person: a **QR** of the flow's binding on the launcher's page that the phone scans, or **number matching** (the page and the phone show the same short number and the person confirms they agree). Which does M12b build? | **(A) Number matching.** It needs no new dependency (a QR encoder for the page and a camera scanner in the app would be two, which the repository adds only with the owner's go), it works when the launcher's page is on another machine, and the phone already shows the client marked unverified and the redirect host (M-a). | **(B) QR**: proves the phone is in front of the page, which number matching proves only through the person; costs a Go QR encoder and a mobile scanner dependency, each to be approved. | M12b |
+| **D2127** | M12b delivers a sign-in flow to the paired phone, and finding M-a admits two ways to bind the approval to the sign-in in front of the person: a **QR** of the flow's binding on the launcher's page that the phone scans, or **number matching** (the page and the phone show the same short number and the person confirms they agree). Which does M12b build? | **(A) Number matching.** It needs no new dependency (a QR encoder for the page and a camera scanner in the app would be two, which the repository adds only with the owner's go), it works when the launcher's page is on another machine, and the phone already shows the client marked unverified and the redirect host (M-a). | **(A), the recommendation — number matching** (owner, 2026-11-11). The alternative as written: **(B) QR**: proves the phone is in front of the page, which number matching proves only through the person; costs a Go QR encoder and a mobile scanner dependency, each to be approved. | M12b |
 
 ---
 
@@ -1492,8 +1493,8 @@ P3, P4 (built) ── P9a ── P9b ── P9d ── P9f ── P9c
 **The critical path is M12 (MCP plan) → P9e**, because every write is served only through it, and
 M12 itself waits on M12b (D2126); inside this plan it is **P9a → P9b → P9d → P9f → P9c**, five parts, and the console's
 write is **… → P9f → GV3.1 → GV3.2**. GV4.1 can be built at R1 and shows real data once a plan has
-been published through a served door. The one open decision is D2127 (M12b's binding: number
-matching or QR).
+been published through a served door. No decision of these parts is open: D2127 (M12b's binding)
+was answered number matching on 2026-11-11.
 
 **Shared files** (every file more than one of these tasks writes):
 
@@ -1614,7 +1615,8 @@ Each check below is **owner-run, on a real project, by the owner** unless it is 
   to the push model, the other five as recommended; **D2118–D2123** are written there and **answered
   the same day** — D2118 first (B), then back to the recommendation (A) under D2124 — and
   **D2124–D2126** likewise, D2124 by returning to D2118's recommendation and D2125 and D2126 as
-  recommended; **D2127** is written there and **open**; **D2128–D2129** are reserved and unused.
+  recommended; **D2127** is written there and **answered** the same day (number matching, the
+  recommendation); **D2128–D2129** are reserved and unused.
 - **Check numbers: none claimed**, for the reason in §9. The part that ships a check takes the
   number free at its own merge, which is the register's rule and not this plan's.
 - **No Go code exists in this work yet.** The only Go it has added is the folder's own guard —

@@ -50,4 +50,5 @@ applied by a non-public job running as the coordinator's account (the front door
 write); plans are pushed from any checkout, with their repository as provenance only; releases are
 documents of the record, not read from `docs/release-streams.yaml`. So GV4.1 can be built now
 against fixtures, and **GV3.1 and GV3.2 move a real task only once the front door is served — which
-waits on the MCP plan's new tasks M12 and M12b**, and on that plan's one open decision, **D2127**.
+waits on the MCP plan's new tasks M12 and M12b**. The owner answered **D2127** (M12b binds the
+phone's approval by number matching) on 2026-11-11, so no decision of those parts is open.

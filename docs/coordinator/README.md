@@ -57,8 +57,8 @@ read (D2111, changed the same day), releases stored in the record (D2113, not th
 **the front door holding no database write: its requests are queued and applied by the apply job
 (D2118, first answered with a database-wide role and then, after its blast radius was read under
 D2124, back to the recommendation)**, the front door's wiring and the paired-phone delivery written by
-the MCP plan as its **M12** and **M12b** (D2119, D2126), the rest as recommended. **D2127** is open:
-number matching or a QR for M12b. **D2110–D2129** is the block reserved for them; D2128–D2129 are
+the MCP plan as its **M12** and **M12b** (D2119, D2126), the rest as recommended. **D2127** was answered
+the same day too: M12b binds the phone's approval by number matching, the recommendation. **D2110–D2129** is the block reserved for them; D2128–D2129 are
 unused. With them the plan has 16 parts.
 
 | File | What it is |
