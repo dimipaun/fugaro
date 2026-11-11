@@ -266,6 +266,13 @@ var chainDimensions = []runstore.Dimension{runstore.USD, runstore.Tokens, runsto
 // refusal at bootstrap and not a run that starts and halts at once (D1050
 // case 1): the halt is recorded and nothing has been spent, no ledger has
 // been leased and no agent has run.
+//
+// A read that stops at a link the bucket no longer holds is the one failure
+// this layer answers rather than refuses (ErrChainGap): the chain's limit and
+// its spend are both gone with the record, and the figures the task carries —
+// what the launcher resolved against the previous run's stored task, which is
+// what survives the gap — are the bound the run runs under, applied as the
+// first bound alone and refused over when they are spent (D1052).
 func (r *run) chainLayer(ctx context.Context, pre policy.Effective) (policy.Layer, error) {
 	var l policy.Layer
 	o := r.spec.Overrides
@@ -295,19 +302,28 @@ func (r *run) chainLayer(ctx context.Context, pre policy.Effective) (policy.Laye
 		from = r.spec.RunID
 	}
 	chain, err := runstore.ResolveChain(ctx, r.d.Store.Sibling(from), ledgers, runstore.PerRunCaps{}, r.d.Now())
+	gapped := false
 	switch {
 	case errors.Is(err, runstore.ErrChainGap):
 		// The bucket has aged a hop out from under the chain, so what it has
-		// spent cannot be read at all (D1052). The launcher already resolved
-		// this launch's figures against the previous run's stored task, which
-		// is the bound that survives that gap, and they stand as they are.
-		r.d.Log.Warn("the chain's records stop at a link the bucket no longer holds: this run carries the limits its task was launched with", "err", err)
-		return l, nil
+		// spent cannot be read at all (D1052). The figures this run's task
+		// carries are still a bound — the launcher resolved them against the
+		// previous run's stored task, which is what survives the gap — and
+		// with no chain read there is no second figure to hold them under, so
+		// they are applied as chainRemaining's first bound and nothing else.
+		// Dropping the layer instead would leave the run bounded by the
+		// per-run caps alone, which is the hole the launcher's own gap arm
+		// closes for every other launch shape.
+		r.d.Log.Warn("the chain's records stop at a link the bucket no longer holds: this run is held to the limit its task was launched with", "err", err)
+		chain, gapped = nil, true
 	case err != nil:
 		return l, fmt.Errorf("reading the chain this run continues: %w", err)
 	}
-	limit := r.spec.Overrides
-	if chain.Root != r.spec.RunID {
+	limit := task.Overrides{}
+	if !gapped {
+		limit = r.spec.Overrides
+	}
+	if chain != nil && chain.Root != r.spec.RunID {
 		// The chain's own limit is the root launch's number and nobody else's
 		// (D1046): it is read back from the stored task of the run that began
 		// the chain, which no later launch can raise (D1052). A task the
@@ -333,20 +349,28 @@ func (r *run) chainLayer(ctx context.Context, pre policy.Effective) (policy.Laye
 			setChainLayer(&l, d, rem)
 			continue
 		}
+		// What is spent out is named by the bound that is spent — see
+		// chainFromWord — and what a person can do about it is the bound's own:
+		// a chain's limit is raised in the run that began it, while a gap
+		// leaves the chain unreadable and the launch outside it the way out.
+		spent := fmt.Sprintf("%s has nothing left of its %s limit", chainFromWord(chain), chainDimensionWord(d))
+		advice := "raise the limit in the run that began the chain, or launch a run that is not part of it"
+		if gapped {
+			advice = "the chain behind it cannot be read (the bucket has aged its records out), so launch a run that is not part of this chain"
+		}
 		if !enforced {
 			// With the budget off the chain is UNENFORCED: a report and not a
 			// stop (D1046, T10), so a spent chain is said out loud and the run
 			// goes on to spend past it.
-			r.d.Log.Warn("this chain has nothing left of its limit, and the budget is off, so nothing stops this run from spending past it",
-				"chain", chain.Root, "dimension", chainDimensionWord(d))
+			r.d.Log.Warn(spent+", and the budget is off, so nothing stops this run from spending past it",
+				"dimension", chainDimensionWord(d))
 			continue
 		}
 		return l, &HaltError{Halt: runstore.Halt{
 			Reason: runstore.HaltRunCap,
 			Scope:  "run",
 			At:     r.d.Now().UTC(),
-			Detail: fmt.Sprintf("%s has nothing left of its %s limit, so this run would start with nothing to spend: raise the limit in the run that began the chain, or launch a run that is not part of it",
-				chainFromWord(chain), chainDimensionWord(d)),
+			Detail: spent + ", so this run would start with nothing to spend: " + advice,
 		}}
 	}
 	return l, nil
@@ -453,10 +477,17 @@ func (r *run) ownChainUse(ctx context.Context, ledgers runstore.LedgerReader) (m
 //     measured the dimension — money and tokens are measured only for a chain
 //     of this run alone, since this token reads its own ledger node and no
 //     sibling's (U4, D1049).
+//
+// A nil chain is a read that stopped at a link the bucket no longer holds: the
+// chain's limit and its spend are both unknown, so the first bound stands
+// alone (ErrChainGap, D1052).
 func chainRemaining(d runstore.Dimension, o task.Overrides, limit task.Overrides, chain *runstore.Chain, own map[runstore.Dimension]runstore.Amount) (runstore.Amount, bool) {
 	rem, limited := runstore.Amount(0), false
 	if lim, ok := chainLimitAmount(o, d); ok {
 		rem, limited = lim-own[d], true
+	}
+	if chain == nil {
+		return rem, limited
 	}
 	if lim, ok := chainLimitAmount(limit, d); ok {
 		if used := chain.Used(d); used.Measured {
@@ -542,9 +573,15 @@ func setChainLayer(l *policy.Layer, d runstore.Dimension, a runstore.Amount) {
 	}
 }
 
-// chainFromWord names the chain a refusal is about: the run that began it,
-// which is where its limit lives and where a person raises it (D1046, F22).
+// chainFromWord names the bound a refusal is about: the chain the figures were
+// read from — the run that began it, which is where its limit lives and where a
+// person raises it (D1046, F22) — or, for the nil chain a gap leaves, the
+// figures this run's task carries, which are then the only bound there is
+// (ErrChainGap, D1052).
 func chainFromWord(c *runstore.Chain) string {
+	if c == nil {
+		return "the limit this run's task carries"
+	}
 	if len(c.Runs) > 1 {
 		return fmt.Sprintf("the chain of run %s, %d runs long,", c.Root, len(c.Runs))
 	}
