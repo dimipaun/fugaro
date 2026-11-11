@@ -406,11 +406,16 @@ func TestFollowUpCountIsContextOnly(t *testing.T) {
 }
 
 // TestPairReadinessFollowsTheLevelThatDecided is D561's third signal read the
-// way the runner decides readiness: the last round of the highest level the
-// mode runs by default, whatever it answered (D723). Readiness is never read
-// backwards to a round that advises, and never to a level below the one that
-// decides, so an arm whose decider left no round — or left one that answered
-// nothing parseable — is not ready.
+// way the runner decides readiness: the last round of the level the run decided
+// on, whatever it answered (D723). Readiness is never read backwards to a round
+// that advises, and never to a level below the one that decides, so an arm
+// whose decider left no round — or left one that answered nothing parseable —
+// is not ready.
+//
+// The level is the highest of the three readings the record allows: the mode's
+// own defaults, the rounds the record shows (a round above the default is a
+// level a layer turned on, and the round it wrote is the round it decided on),
+// and level 3 where the security escalation is on the record (D1508).
 func TestPairReadinessFollowsTheLevelThatDecided(t *testing.T) {
 	firstLine := []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierFirst, Verdict: verdictShip}}
 
@@ -511,13 +516,84 @@ func TestPairReadinessFollowsTheLevelThatDecided(t *testing.T) {
 			t.Error("challenger ready = false, want true")
 		}
 	})
+
+	t.Run("the security escalation decides at level 3", func(t *testing.T) {
+		// The escalation turns level 3 on for the run and deliberately leaves the
+		// rigor mode where it was (D1508), so a Pro run whose diff matched a
+		// sensitivity row decided on its adversarial round: the arm whose senior
+		// level shipped and whose adversarial pass never ran is the draft the
+		// runner keeps, whatever the mode's own defaults say.
+		champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+		champion.Security = &runstore.SecurityEscalation{At: runstore.SecurityAtImplement, Pattern: "credential paths"}
+
+		challenger := pairArm("run-challenger", "pair-1", task.ABArmChallenger)
+		challenger.Security = champion.Security
+		challenger.Reviews = append(rounds(verdictShip), runstore.ReviewSummary{
+			Round: 2, Tier: runstore.TierAdversarial, Verdict: verdictShip,
+		})
+
+		res := onePair(t, rigor.Pro, champion, challenger)
+		if res.Champion.ReviewReady {
+			t.Error("champion ready = true, want false: its escalated level 3 left no round")
+		}
+		if !res.Challenger.ReviewReady {
+			t.Error("challenger ready = false, want true: its escalated level 3 shipped")
+		}
+		if res.Winner != WinChallenger {
+			t.Errorf("winner = %q, want %q", res.Winner, WinChallenger)
+		}
+	})
+
+	t.Run("a refused escalation is not a level anything was decided on", func(t *testing.T) {
+		// A refusal means the forced level was not taken and level 3 never ran
+		// (D1509): the levels stayed where they were, so the record reads as the
+		// run it is — level 2's round decides.
+		champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+		champion.Security = &runstore.SecurityEscalation{
+			At: runstore.SecurityAtFinalize, Pattern: "credential paths", Refused: true,
+		}
+
+		res := onePair(t, rigor.Pro, champion, pairArm("run-challenger", "pair-1", task.ABArmChallenger))
+		if !res.Champion.ReviewReady {
+			t.Error("champion ready = false, want true: a refused escalation left the levels where they were")
+		}
+		if res.Winner != WinTie {
+			t.Errorf("winner = %q, want %q", res.Winner, WinTie)
+		}
+	})
+
+	t.Run("a level a layer turned on decides on its own round", func(t *testing.T) {
+		// The record carries no resolved levels, so a level above the mode's own
+		// default is read from the round it wrote: a Pro run the owner's floor
+		// raised to level 3 decided there, and an arm whose adversarial round
+		// asked for changes is not ready beside one whose round shipped.
+		champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+		champion.Reviews = append(rounds(verdictShip), runstore.ReviewSummary{
+			Round: 2, Tier: runstore.TierAdversarial, Verdict: verdictChanges,
+		})
+
+		challenger := pairArm("run-challenger", "pair-1", task.ABArmChallenger)
+		challenger.Reviews = append(rounds(verdictShip), runstore.ReviewSummary{
+			Round: 2, Tier: runstore.TierAdversarial, Verdict: verdictShip,
+		})
+
+		res := onePair(t, rigor.Pro, champion, challenger)
+		if res.Champion.ReviewReady {
+			t.Error("champion ready = true, want false: its adversarial round asked for changes")
+		}
+		if res.Winner != WinChallenger {
+			t.Errorf("winner = %q, want %q: the level above the default is the one that decided", res.Winner, WinChallenger)
+		}
+	})
 }
 
 // TestPairVerifiedNeedsACleanTree is D561's second signal read the way the
-// runner reads a commit before publishing one: each kind's last run at the
-// final head passed, and a test ran on a clean tree. A test that passed on a
-// dirty tree, a head whose build failed last, and a head no test ran on are
-// each an arm without the signal.
+// runner reads a commit before publishing one: each kind's last run on a clean
+// tree at the final head passed, and a test is among them. A head whose only
+// test ran on a dirty tree, a head whose build failed last, and a head no test
+// ran on are each an arm without the signal — and a run on a dirty tree after a
+// clean one is skipped rather than taken as the last word, because a tree the
+// agent had left dirty says nothing about the commit.
 func TestPairVerifiedNeedsACleanTree(t *testing.T) {
 	at := func(kind verify.Kind, clean, passed bool) verify.Record {
 		return verify.Record{Kind: kind, HeadSHA: pairHeadSHA, CleanTree: clean, Passed: passed}
@@ -538,6 +614,15 @@ func TestPairVerifiedNeedsACleanTree(t *testing.T) {
 		}, false},
 		{"a test that failed and then passed", []verify.Record{
 			at(verify.KindTest, true, false), at(verify.KindTest, true, true),
+		}, true},
+		{"a test that passed and then failed on a clean tree", []verify.Record{
+			at(verify.KindTest, true, true), at(verify.KindTest, true, false),
+		}, false},
+		{"a dirty run after a clean one at the head", []verify.Record{
+			at(verify.KindTest, true, true), at(verify.KindBuild, true, true), at(verify.KindTest, false, true),
+		}, true},
+		{"a dirty run that failed after a clean pass", []verify.Record{
+			at(verify.KindTest, true, true), at(verify.KindTest, false, false),
 		}, true},
 		{"a test on a head the arm did not end at", []verify.Record{
 			{Kind: verify.KindTest, HeadSHA: strings.Repeat("2d", 20), CleanTree: true, Passed: true},

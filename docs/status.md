@@ -26,7 +26,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | stateless-orchestrator | 10/19 | O8 (draft #2064), O9 to O14, O16, O19; owner Checks 301 to 304 (300 PASSED 2026-11-10); 305 reserved |
 | api-key-review | 6/11 | AK6b (draft #2172), AK7, AK9, AK10; owner Check 330 |
 | secrets-brokering | 18/30 | B1.13 flip (draft #2166, held on Check 191), B1.15, B1.16, B2.1 to B5.1; owner Checks 191 and 192. Dynamic-delivery subfolder: DS0.1, DS1.3 and DS2.0 merged, DS2.1 in a run |
-| vision-model | plan only, 0/9 built (V0–V8); not started, nothing approved; owner Checks 520 and 521 not run |
+| vision-model | plan only, 0/9 built (V0–V8); not started, no task approved; D2000–D2016 answered 2026-11-10 as recommended (its reconciliation.md); owner Checks 520 and 521 not run |
 | subscriptions | about 17/51 | about 22 tasks; 10 owner-run |
 | workspaces | 6/10 | W3 and W6 (drafts), W7, W9 |
 | no-prompt-policy | 9/17 | T4 and T7 (drafts), T9 (draft #2232) to T13; owner T14; T15 merged, and `update` asks nothing (#2082) |

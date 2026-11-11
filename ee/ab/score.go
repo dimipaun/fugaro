@@ -261,8 +261,9 @@ type Signals struct {
 	FinalHead string
 	// Verified is build, test and lint passing at FinalHead, read the way the
 	// runner reads it before it publishes a commit (a repository's type check
-	// runs inside its build or lint command): of each kind's runs at that
-	// head, the last one passed, and a test ran on a clean tree.
+	// runs inside its build or lint command): of each kind's runs on a clean
+	// tree at that head, the last one passed, and a test is among them — a run
+	// whose tree was dirty is no evidence about the commit.
 	Verified bool
 	// ReviewReady is that round shipping (decidingRound). A record whose
 	// deciding level left no round, or whose last one answered nothing
@@ -343,7 +344,7 @@ func armSignals(rec runstore.Record, mode rigor.Mode) Signals {
 		FinalHead: rec.HeadSHA,
 	}
 	s.Verified = verifiedAtHead(rec.Verify, s.FinalHead)
-	if round := decidingRound(rec.Reviews, mode); round != nil {
+	if round := decidingRound(rec, mode); round != nil {
 		s.ReviewReady = round.Verdict == verdictShip
 		s.Untolerated = untoleratedFindings(rec, *round)
 	}
@@ -353,11 +354,15 @@ func armSignals(rec runstore.Record, mode rigor.Mode) Signals {
 
 // verifiedAtHead reports D561's second signal for one head.
 //
-// A kind is read by its last run at that head and not by all of them: a test
-// that failed and then passed on a `--rerun-failed` is the flaky case this
-// repository already reads that way — it is what the runner's own "verified"
-// line on a pushed commit asks — while a build that failed and was never run
-// again is the failure it is.
+// Only a run on a clean tree is evidence about the commit, and a kind is read
+// by its last such run at that head: that is the runner's own reading of a
+// commit before it publishes one (latestVerifiedTest, which takes the last test
+// on the head with a clean tree, and Decide, which requires it to have passed),
+// and a test that failed and then passed on a `--rerun-failed` is the flaky
+// case this repository already reads that way. A run whose tree was dirty says
+// nothing about the head — including one that failed — so it is skipped rather
+// than taken as the last word; while a build that failed on a clean tree and
+// was never run again is the failure it is.
 //
 // A head with no test on a clean tree is not verified, whatever its build and
 // lint runs say: the runner publishes a commit only with a verified test
@@ -370,12 +375,12 @@ func verifiedAtHead(records []verify.Record, head string) bool {
 	}
 	last := make(map[verify.Kind]verify.Record, len(records))
 	for _, r := range records {
-		if r.HeadSHA == head {
+		if r.HeadSHA == head && r.CleanTree {
 			last[r.Kind] = r
 		}
 	}
 	test, ok := last[verify.KindTest]
-	if !ok || !test.CleanTree || !test.Passed {
+	if !ok || !test.Passed {
 		return false
 	}
 	for _, r := range last {
@@ -387,64 +392,120 @@ func verifiedAtHead(records []verify.Record, head string) bool {
 }
 
 // decidingRound is the review round an arm's readiness is read from: the last
-// round of the highest review level the mode runs by default, whatever it
-// answered (the runner's own decidingReview, D723). Readiness is never read
-// backwards to a lower level: a round that advises never decides, and the level
-// above it leaving no round at all is a run whose decider never read it — the
-// case the runner keeps a draft for, so this reports the arm not ready rather
-// than reading the round below it.
+// round of the level the run decided on, whatever it answered. Readiness is
+// never read backwards to a lower level — the level above leaving no round at
+// all is a run whose decider never read it, which the runner keeps a draft for,
+// so the arm is reported not ready rather than stood on the round below it —
+// and a round that answered nothing parseable ("none", after the retry the loop
+// gives it) is a deciding round like any other, so readiness read backwards
+// from it to an earlier verdict about a commit the run did not ship would call
+// a draft ready.
 //
-// A round that answered nothing parseable — "none", after the retry the loop
-// gives it — is a deciding round like any other, and an arm whose last one is
-// that is not ready: readiness read backwards from it to an earlier verdict
-// about a commit the run did not ship would call a draft ready.
+// The level is what the runner decides on (decidingReview, D723) as far as the
+// record allows: decidingReview walks level 3, 2, 1 against the run's *resolved*
+// levels, and the record carries no resolved levels (the result schema has no
+// such property, and neither the policy record nor anything else on it holds
+// them), so deciderRank reads the highest of the three levels the record does
+// answer for. That is close and not equal, and the two differences are worth
+// naming rather than the parity being claimed:
 //
-// The record carries no resolved levels, so the mode's own defaults stand in
-// for them (rigor.DefaultLevels), and the record cannot say whether a stop cut
-// a level the mode enables: at the runner's own stop an enabled level that left
-// no round is one the stop cut rather than one the run failed to reach, and a
-// record holds nothing that tells the two apart (the Accepted block is written
-// only for a stop that let findings through). This reads the level as one the
-// run never held, the direction that never calls a draft ready.
-func decidingRound(records []runstore.ReviewSummary, mode rigor.Mode) *runstore.ReviewSummary {
-	decider := deciderTier(mode)
-	for i := len(records) - 1; i >= 0; i-- {
-		if reviewTier(records[i]) == decider {
-			return &records[i]
+//   - A level a layer turned on — the task's review_levels, a repository or
+//     project layer, the owner's floor (D722) — is read from the rounds the run
+//     wrote: a round is written by the level that ran it, so a round above the
+//     mode's own default is level that ran and decided. A level like that which
+//     left no round at all is invisible here, and an arm it would have refused
+//     is read at the level below it: this is the one direction that can call a
+//     draft ready.
+//   - A stop that cut an enabled level above the one that ran (D723's exception
+//     for a mode that accepts at its stop) is read as a level the run never
+//     held, and the arm is reported not ready where the runner published it. A
+//     record holds nothing that tells the two apart.
+//
+// Both need a field the record does not have. Until the format carries the
+// resolved levels, this is the reading a record can support, and it errs
+// towards the draft.
+func decidingRound(rec runstore.Record, mode rigor.Mode) *runstore.ReviewSummary {
+	decider := deciderRank(rec, mode)
+	for i := len(rec.Reviews) - 1; i >= 0; i-- {
+		if reviewRank(rec.Reviews[i].Tier) == decider {
+			return &rec.Reviews[i]
 		}
 	}
 	return nil
 }
 
-// reviewTier is the level a round ran at, in the record's own vocabulary: an
-// empty tier is the senior review of a run that had no first line.
-func reviewTier(rec runstore.ReviewSummary) string {
-	if rec.Tier == "" {
-		return runstore.TierSenior
+// The review levels as the record's rounds answer for them, low to high. Level
+// three's rank is also what a mode outside the vocabulary is read at.
+const (
+	rankFirstLine = 1
+	rankSenior    = 2
+	rankAdversary = 3
+)
+
+// reviewRank is the level a round ran at, in the record's own vocabulary: an
+// empty tier is the senior review of a run that had no first line. A tier no
+// level writes — the independent review's display-only round — is 0, which no
+// decider is, so it is never the round readiness is read from.
+func reviewRank(tier string) int {
+	switch tier {
+	case runstore.TierFirst:
+		return rankFirstLine
+	case "", runstore.TierSenior:
+		return rankSenior
+	case runstore.TierAdversarial:
+		return rankAdversary
 	}
-	return rec.Tier
+	return 0
 }
 
-// deciderTier is the tier of the level readiness is decided on: the highest
-// review level the mode's own defaults turn on (rigor.DefaultLevels). POC runs
+// deciderRank is the level an arm's readiness is decided on: the highest of the
+// mode's own default (deciderDefault), the highest level a round in the record
+// shows ran (a level above the mode's default is one a layer turned on, and the
+// round it wrote is the round it decided on), and level 3 where the security
+// escalation took effect.
+func deciderRank(rec runstore.Record, mode rigor.Mode) int {
+	decider := deciderDefault(mode)
+	for _, round := range rec.Reviews {
+		if rank := reviewRank(round.Tier); rank > decider {
+			decider = rank
+		}
+	}
+	if escalated(rec) {
+		decider = rankAdversary
+	}
+	return decider
+}
+
+// escalated reports whether the record shows the security escalation taking
+// effect: the run's diff matched the sensitivity list, so review level 3 was
+// turned on for the run while the rigor mode deliberately stayed where it was
+// (escalateSecurity, D1508/D1509). A refused escalation (Refused) changed
+// nothing — the levels stayed where they were and level 3 never ran — so it is
+// not an escalation anything is decided on.
+func escalated(rec runstore.Record) bool {
+	return rec.Security != nil && !rec.Security.Refused
+}
+
+// deciderDefault is the highest review level the mode's own defaults turn on
+// (rigor.DefaultLevels), before any layer or escalation moves it. POC runs
 // level 1 alone, so its first-line round decides; Startup, Pro and Hotfix run
 // level 2; Critical runs level 2 and level 3, so its adversarial round is the
 // one that decides and an arm holding none is not ready.
 //
 // A mode outside the vocabulary is read as the strictest set — level 3's —
 // which is the reading signalVector gives it too.
-func deciderTier(mode rigor.Mode) string {
+func deciderDefault(mode rigor.Mode) int {
 	levels, err := rigor.DefaultLevels(mode)
 	if err != nil {
-		return runstore.TierAdversarial
+		return rankAdversary
 	}
 	switch {
 	case levels.L3 == rigor.LevelOn:
-		return runstore.TierAdversarial
+		return rankAdversary
 	case levels.L2 == rigor.LevelOn:
-		return runstore.TierSenior
+		return rankSenior
 	default:
-		return runstore.TierFirst
+		return rankFirstLine
 	}
 }
 
