@@ -18,9 +18,10 @@ walk) and **P7.2–P7.5 are not**; the sentence above is the state of 2026-10-22
 written. **Amended 2026-11-11 (Task P7.2): P7.2 is built, and P7.3–P7.5 are not.** The
 statement the app shows and the `/privacy/` URL it carries are in
 `mobile/src/telemetry/notice.js`, put through `shared/url`'s validator rather than handed
-to a link opener, and `mobile/src/app/root.js` renders both as the shell's third child
-(`SHELL.NOTICE`) — the app has no settings screen, so the shell is the sentence's only
-surface. **The owner's ruling of 2026-10-30 (D731) landed between P7.1b and this task:
+to a link opener, and `mobile/src/app/root.js` renders both as the shell's **last child**
+(`SHELL.NOTICE`) — after the body, so the fourth element while the demo banner is on —
+because the app has no settings screen and the shell is the sentence's only surface.
+**The owner's ruling of 2026-10-30 (D731) landed between P7.1b and this task:
 it supersedes D255** — crash reports on by default and opt-out, Analytics dropped from
 the app — **and orders P7.2 and §7.4 amended before they are built.** That amendment is
 task **T0.1**'s (`docs/review-levels-ab-jobmax/implementation-plan.md`) and the build is
@@ -30,7 +31,14 @@ claim about how collection is turned off in either direction** — not D255's *"
 inside the app"*, which the ruling removes, and not an opt-out control, which the build
 does not have yet. The two D255 clauses are pinned **absent** in
 `mobile/src/telemetry/notice.test.js`, and the store labels and the website's paragraph
-(P7.4) are unbuilt with the switch. **This document replaces the earlier draft on `PR #693`** — a branch 151 commits behind
+(P7.4) are unbuilt with the switch. **Two things that half is, exactly.** It is **what
+the build sends, not what the plans intend**: the app still carries Analytics (T3.1 has
+not landed), so the statement names it, and `notice.test.js` reads
+`mobile/package.json` and holds the statement to the reporter packages it finds in both
+directions — T3.1's removal of the package therefore takes the clause with it, in that
+same change. And **it was built before T0.1 amended this section**, which D731's order
+asked for first: the sequencing is recorded rather than satisfied, in the P7.2 section
+below, so that the owner can see it and T0.1's rewrite still owes this task's text. **This document replaces the earlier draft on `PR #693`** — a branch 151 commits behind
 `main`, superseded rather than merged — which asked for **D193–D200** and **checks 111–113**,
 numbers the coordinator and the wizard-and-website work had already taken. **This plan takes
 D253–D260 and checks 120–122 instead**, and §2 shows the reading that chose them.
@@ -1099,6 +1107,19 @@ host, and `notice.js` must name it, so the file is on that gate's allow-list bes
 console's two — the reason the gate already records for those (a link a reader may follow
 is not the software's own traffic) covers an app whose link ships unopenable, and the
 gate's `REACH_CALLS` reading still applies to the entry in full.
+**And the sequencing, recorded rather than satisfied — the one thing here the owner may
+want to reverse.** D731 **orders this section and §7.4 amended before they are built**,
+and that amendment is T0.1's; T0.1 has not landed. P7.2 was nevertheless built, on the
+task brief that assigned it, so **this section has not been amended and the task was
+built against text the ruling calls superseded**: what the task shipped is the half of
+the statement **both** rulings leave standing, chose no reading of the switch question,
+and is held to the live page and to `mobile/package.json` — which is why the text above
+(its Files, its Verification's three facts, its *third child*) is the 2026-10-22
+description and not what landed: the shell draws the statement **after the body**, last,
+so it is the fourth child while the demo banner is on. **T0.1's rewrite is still owed
+this section**, including the statement's final text under D731, and nothing here
+pre-empts it: when it lands, the statement moves with it under the two scans
+`notice.test.js` already runs.
 
 ### Task P7.3: The allow-list, the redaction rule, and the scan
 

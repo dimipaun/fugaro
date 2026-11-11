@@ -411,10 +411,12 @@ func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 	// privacy URL it refuses -- with `shared/url`'s validator, whose host list
 	// is still the owner's D124 answer and ships empty -- live in
 	// `mobile/src/telemetry/notice.js`, and `mobile/src/app/root.js` renders
-	// them as the shell's third child. The statement is the half of it the
-	// owner's ruling of 2026-10-30 (D731, which supersedes D255 and orders the
-	// plan's section 6, section 7.4 and P7.2 amended) leaves standing, and the
-	// plan's own status lines and P7.2 section say so. What the plan's section
+	// them as the shell's last child, after the body. The statement is the half
+	// of it the owner's ruling of 2026-10-30 (D731, which supersedes D255 and
+	// orders the plan's section 6, section 7.4 and P7.2 amended) leaves standing,
+	// and the plan's own status lines and P7.2 section say so -- including that
+	// the task was built ahead of that amendment, and that the statement names
+	// the reporters the build still carries. What the plan's section
 	// 7.4 reads from this directory -- the event module and the scan that holds
 	// it, which admits exactly one collection call site -- is P7.3's and T3.1's
 	// and is not here yet.
