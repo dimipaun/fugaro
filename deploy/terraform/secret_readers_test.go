@@ -101,8 +101,9 @@ var secretReaderExceptions = []struct {
 	// The intake's adapter (DS2.1) holds the API the way every reader above
 	// does -- the guard keys on the import, so a writer is a hit like any
 	// other -- and it is the first row here that names a file no value can
-	// come out of: it has no method that reads a payload, and the account it
-	// runs as holds no secretAccessor and no secrets.get (DS2.2, F30).
+	// come out of: it has no method that reads a payload, and the account
+	// DS2.2 is to have it run as holds no secretAccessor and no secrets.get
+	// (F30; that account's grants are not fenced yet).
 	{id: "E22", keys: []string{"internal/intake/gcp.go"}},
 }
 
