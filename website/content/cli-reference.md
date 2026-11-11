@@ -70,7 +70,7 @@ Subcommands:
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
 - `fugaro update-skills` -- Install or update the Fugaro plugin in your own Claude Code
 - `fugaro upgrade` -- Bring checkouts up to this fugaro: install or update the plugin in Claude Code, refresh the repository's images
-- `fugaro user` -- List, add and remove the installation's launchers and operators
+- `fugaro user` -- List, add and remove the installation's operators and admins
 - `fugaro validate` -- Check a fugaro.yaml against the schema and the repository
 - `fugaro verify` -- Run and record this repository's build, test or lint command (inside a Fugaro run)
 - `fugaro version` -- Print the fugaro version
@@ -150,7 +150,9 @@ Flags:
 Subcommands:
 
 - `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
+- `fugaro accounts allow` -- Add repositories to a named Claude account's allow-list (claude_accounts.NAME.allow_data_to)
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
+- `fugaro accounts deny` -- Remove repositories from a named Claude account's allow-list
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
 - `fugaro accounts pool` -- List, declare and remove the named pools a craft's access may name
 - `fugaro accounts rm` -- Remove a named Claude account, its secret and the job that served it
@@ -227,6 +229,47 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro accounts allow`
+
+Add repositories to a named Claude account's allow-list (claude_accounts.NAME.allow_data_to)
+
+Add each REPO to claude_accounts.NAME.allow_data_to, the list of
+repositories the account's token may be used by, and nothing else.
+
+A NAME the config does not declare yet is declared here with the repositories
+this run names: allow is the first form of the pair, so an account whose
+token may be spent from one repository needs no second command. A NAME it does
+declare keeps the repositories its list already holds — the edit appends the
+ones named, so a run that repeats an entry writes nothing.
+
+The list is the per-repository decision the published policy's accounts block
+is derived from: a profile serves the account to its jobs, and this list is
+what bounds the token of each of them. Adding a repository is therefore a
+widening of where the token may be spent, and it is read back by the owner's
+own publish rather than by this command — nothing here reaches the cloud.
+
+The repositories are written as owner/name, the shape the loader holds this
+list to. A repository the file already names is left where it is, and the
+sentence above the diff prints the list the file ends up with, not the one the
+command line named.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's accounts block is derived from this list, so the change
+reaches the project's runs in that run and not before it.
+
+Usage: `fugaro accounts allow NAME REPO...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for allow |
+| `--yes` | bool | `false` | no | confirm the change without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro accounts clear`
 
 Clear one account's broken or exhausted credential mark, after replacing its token
@@ -286,6 +329,41 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--yes` | bool | `false` | no | skip the typed confirmation (read what it does first) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts deny`
+
+Remove repositories from a named Claude account's allow-list
+
+Remove each REPO from claude_accounts.NAME.allow_data_to, so the
+account's token may no longer be used by it.
+
+A repository the list does not name is not an error and not a write: the
+command says there is no change, because the state it was asked for is the
+state the file is in.
+
+An account a profile lists must cover every repository that profile admits —
+the profile's repositories are the intersection of the two lists — so a
+removal that would leave the profile admitting a repository the account no
+longer covers is refused, naming the repository and the profile, with nothing
+written. The remedy is to narrow the profile's own allow_repos, or to leave
+the entry where it is.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's accounts block is derived from this list, so the change
+reaches the project's runs in that run and not before it.
+
+Usage: `fugaro accounts deny NAME REPO...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for deny |
+| `--yes` | bool | `false` | no | confirm the change without a prompt |
 
 Subcommands:
 
@@ -3674,6 +3752,12 @@ land (approving a work item, setting the goal, closing a decision that
 waits on a person) are confirmed at a real terminal with the project's
 name typed, never by --yes: a session that has none writes nothing.
 
+run is the daemon itself, in the foreground. install, uninstall and
+status are the login unit that keeps it running: the three read no
+project and reach no network, and they write no system path and need no
+root — the unit is one file under your own home and the service manager
+is asked at your own login level.
+
 Usage: `fugaro orchestrator`
 
 Flags:
@@ -3685,10 +3769,13 @@ Flags:
 Subcommands:
 
 - `fugaro orchestrator events` -- Read the orchestrator's audit log
+- `fugaro orchestrator install` -- Install or re-render the login unit that runs the daemon
 - `fugaro orchestrator ls` -- List the installation's orchestrators
 - `fugaro orchestrator patch` -- Apply one typed patch document to the orchestrator's state
 - `fugaro orchestrator run` -- Run the project's orchestrator daemon in the foreground
 - `fugaro orchestrator state` -- Print the orchestrator's state: the generated summary of its live node
+- `fugaro orchestrator status` -- Report the login unit that runs the daemon
+- `fugaro orchestrator uninstall` -- Remove the login unit that runs the daemon
 
 ## `fugaro orchestrator events`
 
@@ -3712,6 +3799,45 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--since` | string | "" | no | only entries newer than this duration, such as 1h or 30m |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator install`
+
+Install or re-render the login unit that runs the daemon
+
+Write the per-user login unit that runs `fugaro orchestrator run` and load
+it, so the daemon starts at every login and is restarted when it stops.
+Nothing else is written: no system path is touched, no root is needed, and
+the service manager is asked at your own login level (launchd on macOS,
+systemd --user on Linux; Windows has neither, and answers so).
+
+The unit names the stable path of this fugaro — Homebrew's opt link and
+never a versioned Cellar path that an upgrade removes — twice: as the
+program to run, and as the `--binary` argument whose version the daemon
+compares with its own before it hands over to a new release.
+
+It is idempotent: a unit that is already there is re-rendered from this
+release's template and the service restarted, which is also what `fugaro
+update` does to an installed unit (and `fugaro update` never installs
+one). It writes no state and migrates none: the daemon's own start-up
+does that.
+
+A unit is code that runs at every login, so this command asks you to type
+the word install at a real terminal, has no flag that stands in for it,
+and refuses in a coding agent's session. Running it yourself, without the
+marker, is the way to do it: whoever can do that can write the file by
+hand anyway.
+
+Usage: `fugaro orchestrator install`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for install |
 
 Subcommands:
 
@@ -3851,6 +3977,55 @@ Flags:
 | `--offline` | bool | `false` | no | print the brief the daemon cached at session start, reaching no network (goes with --brief) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator status`
+
+Report the login unit that runs the daemon
+
+Report whether this machine has the login unit that runs the orchestrator
+daemon, where its file is, and whether it is what this release's template
+would write. It changes nothing and reads no project: the file is the
+whole of what it looks at, and `fugaro doctor` reports the same drift as
+an update being due.
+
+Usage: `fugaro orchestrator status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for status |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator uninstall`
+
+Remove the login unit that runs the daemon
+
+Unload the login unit and delete its file, so the daemon stops being
+started at login and stops being restarted. It asks nothing: removing the
+unit takes away code that runs at every login rather than adding it, and
+`fugaro orchestrator install` writes it back after its own typed
+confirmation.
+
+Nothing else is touched: the project's orchestrator state, its lease and
+its audit log are in the database and not in the unit, `fugaro orchestrator
+run` still runs in the foreground without a unit, and a machine with no
+unit installed is not an error — it says so and returns.
+
+Usage: `fugaro orchestrator uninstall`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for uninstall |
 
 Subcommands:
 
@@ -4129,10 +4304,120 @@ Flags:
 
 Subcommands:
 
+- `fugaro project clone-url` -- The clone URL each of the project's repositories clones from
 - `fugaro project policy` -- The project's published policy (config/policy/shared)
 - `fugaro project repos` -- The project's allow-list: which repositories may run
 - `fugaro project show` -- Show the effective project: caps, policy, allow-list, repositories running now
 - `fugaro project sync` -- Offer the GitHub App's installed repositories that the allow-list does not admit
+
+## `fugaro project clone-url`
+
+The clone URL each of the project's repositories clones from
+
+Usage: `fugaro project clone-url`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for clone-url |
+
+Subcommands:
+
+- `fugaro project clone-url ls` -- List the clone URL of every repository the project gives one
+- `fugaro project clone-url rm` -- Take a repository's clone URL away
+- `fugaro project clone-url set` -- Give a repository the URL its runs clone from
+
+## `fugaro project clone-url ls`
+
+List the clone URL of every repository the project gives one
+
+List the project's clone_urls block: one line per repository, under the
+canonical name (<provider>/<owner>/<name>) the runner looks it up by, with
+the URL that repository's runs clone from.
+
+The block is this machine's project config file. `fugaro update` publishes
+it into the project's policy node, which is what a run reads, so a line here
+that no publish has carried yet is a change the next update makes.
+
+A project that gives no repository a URL lists nothing rather than printing
+an empty table: the node may still carry a block this file says nothing
+about, and `fugaro project policy show` prints that one.
+
+Usage: `fugaro project clone-url ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project clone-url rm`
+
+Take a repository's clone URL away
+
+Remove one entry of the project's clone_urls block, in this machine's
+project config file. The other entries stand, and the change reaches a run
+through `fugaro update`.
+
+The last entry is not this command's to take away. An empty block is how a
+project states that it gives no repository a URL, and the one spelling of
+one — an empty mapping, `clone_urls: {}` — is not one this release's editor
+writes; a key left with no entry under it is read as a file that says
+nothing about the block, which keeps the published node's, so removing the
+last entry would change nothing at all. That removal is therefore refused,
+and the refusal names the one line that states it — put `clone_urls: {}` in
+the file by hand, and run `fugaro update`.
+
+Usage: `fugaro project clone-url rm <provider>/<owner>/<name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project clone-url set`
+
+Give a repository the URL its runs clone from
+
+Write one entry of the project's clone_urls block, in this machine's
+project config file.
+
+The repository is named canonically — <provider>/<owner>/<name>, the spelling
+the allow-list and the CLI use everywhere — and the URL must be an https URL
+without credentials that names exactly that repository on that provider's own
+host. A URL naming another repository, or another host, is refused before
+anything is written: the URL is where a run clones from, while its slug, its
+locks, its cache and its budget session all name the repository its own
+task.json does, and a run that cloned from elsewhere while doing this
+repository's work is the thing the node's own rule exists to refuse.
+
+The change reaches a run through `fugaro update`, which publishes the policy
+node the runner reads.
+
+Usage: `fugaro project clone-url set <provider>/<owner>/<name> <url>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro project policy`
 
@@ -4925,6 +5210,7 @@ Flags:
 | `--attempts` | int | `0` | no | launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe |
 | `--batch` | string | "" | no | batch label, to group runs in fugaro runs ls |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--continues` | string | "" | no | continue the chain of RUN (a run ID, or <repo-slug>/<run-id>): this launch inherits the chain's remaining limits, for a chain with no pull request — the run you name opened nothing to follow up. The chain's limit is read from the run that began it, and what it has spent from the chain's runs' budget ledgers; this launch's own --max-* may only tighten the remaining. Refused with --pr, --retry and --attempts, which name a chain's previous run themselves |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
 | `--json` | bool | `false` | no | print machine-readable output |
@@ -4952,6 +5238,10 @@ Flags:
 | `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given |
 | `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's) |
 | `--total-timeout` | string | "" | no | override the workflow's timeouts.total for this run, such as 45m |
+| `--used-review-rounds` | string | "" | no | state that the chain has already spent N review rounds, such as 2: tighten-only like --used-usd |
+| `--used-time` | string | "" | no | state that the chain has already used this much wall time, as a duration such as 45m: tighten-only like --used-usd |
+| `--used-tokens` | string | "" | no | state that the chain has already used N tokens, such as 400000: tighten-only like --used-usd, and the one figure a chain whose budget is off reads for the token dimension, which no run record carries |
+| `--used-usd` | string | "" | no | state that the chain has already used X dollars, such as 3 or 2.5: it may only raise what the engine read from the chain's runs (fugaro refuses a figure below it, naming both), which is how a caller accounts for spend the chain's own runs do not hold |
 | `--workflow` | string | "" | no | workflow to run (default: the repo's only workflow) |
 
 Subcommands:
@@ -5188,11 +5478,11 @@ $/RUN is COUNTED $ over COUNTED RUNS, the runs that settled a real-dollar cost;
 a notional run, a run with no readable record and a record from before the cost
 breakdown existed are none of them averaged in as a run that cost nothing.
 
-Who sees whom. An operator of the installation -- the identity the local config's
-user: (or git config user.email) names, listed in its terraform.operators, the
-list fugaro doctor's runs-bucket-iam check reads -- sees every user. Anyone else
-sees their own row alone, and --all-users asks for the whole table. An
-installation that names no operators (one from before the 0.7.0 hardening, say)
+Who sees whom. An admin of the installation -- the identity the local config's
+user: (or git config user.email) names, listed in its terraform.admins, one of
+the two lists fugaro doctor's runs-bucket-iam check reads -- sees every user.
+Anyone else sees their own row alone, and --all-users asks for the whole table.
+An installation that names no admins (one from before the 0.7.0 hardening, say)
 places nobody, and the view then stays private: the default is never the wider
 one. Whose numbers a table shows is printed above it.
 
@@ -5226,7 +5516,7 @@ record -- never launched, cancelled before launch, or a stale claim -- never
 started and is counted in no figure. The count of those is the window's, over
 everyone's runs, and is no more the caller's own than the truncation is.
 
---json prints {project, by, view, you, operator, since, until, max_runs,
+--json prints {version, project, by, view, you, admin, since, until, max_runs,
 truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,
 currency, runs, succeeded, failed, halted, infra_error, other, no_record,
 counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the counts add up:
@@ -5320,7 +5610,7 @@ Estimate how many people a subscription's seat rule would count
 
 Estimate how many people a subscription's seat rule would count on this
 installation, from the installation's own data alone: the people on this
-machine's launcher and operator lists, plus everyone who requested a run in the
+machine's operator and admin lists, plus everyone who requested a run in the
 last 90 days, each counted once.
 
 The estimate is ADVISORY. A seat is a contract pricing rule of the Subscription
@@ -5333,14 +5623,14 @@ and reads only core data.
 
 The three sources, and what each one is worth:
 
-  - terraform.launchers and terraform.operators in this machine's own project
+  - terraform.operators and terraform.admins in this machine's own project
     config: the two lists fugaro setup writes and fugaro update applies. They are
-    the operator's record of who may launch, and members the console or an agent
+    the admins' record of who holds a role, and members the console or an agent
     launch records elsewhere are not in them.
   - The requesters of the runs the last 90 days minted, read from each run's
-    task.json in every repository of the installation's bucket. Every launcher
-    counts, an agent launch is recorded under the configured person, and an agent
-    with no configured identity is invisible here.
+    task.json in every repository of the installation's bucket. Everyone who
+    launches counts, an agent launch is recorded under the configured person, and
+    an agent with no configured identity is invisible here.
 
 What the estimate cannot tell, it lists and does not guess:
 
@@ -5363,10 +5653,16 @@ what the launching CLI typed -- so the comparison folds case, and the row's key
 is the text printed: two texts that print alike are one person, and the
 estimate is the number of rows.
 
---json prints {project, days, since, until, people[], not_counted[],
+--json prints {version, project, days, since, until, people[], not_counted[],
 unreadable, notes}; people carry {person, sources[]} and not_counted {member,
-why, sources[]}, sources from launcher, operator and requester, and why is
+why, sources[]}, sources from run_operator, admin and requester, and why is
 unknown_size or account.
+
+Version 2 is this document. Version 1 named a row's sources with the words the
+roles carried before they were renamed -- "launcher" for the run-starters and
+"operator" for the admins -- and neither word is a value here any more: a
+consumer reading "operator" as the list version 1 named it would draw the
+admins.
 
 Usage: `fugaro seats`
 
@@ -5399,9 +5695,93 @@ Flags:
 
 Subcommands:
 
+- `fugaro secrets allow` -- Add repositories to a project secret's allow-list (project_secrets.NAME.allow_data_to)
+- `fugaro secrets deny` -- Remove repositories from a project secret's allow-list
 - `fugaro secrets ls` -- List the project's (or, with --repo, a repository's) secrets: names, scope and versions, never values
 - `fugaro secrets rm` -- Withdraw a project secret: delete its Secret Manager container and its config entry
 - `fugaro secrets set` -- Store a secret's value, read from stdin or a hidden prompt, as a new version
+
+## `fugaro secrets allow`
+
+Add repositories to a project secret's allow-list (project_secrets.NAME.allow_data_to)
+
+Add each PATTERN to project_secrets.NAME.allow_data_to — or to
+workflow_secrets.NAME.allow_data_to for a name your local config holds there —
+the list of repositories the value is stored for and mounted in.
+
+A PATTERN is a repository as owner/name, and may use * inside a segment, never
+across /: myworkspace/* is a whole workspace and myworkspace/api-* a family,
+while the owner segment is literal (one project secret is one owner's
+credential). A pattern means every repository it matches, now and later, so
+adding one is a widening: it is one more repository the value is mounted in.
+
+With --proxy, and no PATTERN, this writes project_secrets.NAME.proxy on its
+own: the Bitbucket token's switch for the credentials service, which is also a
+widening, because it hands the token to the service rather than to the job.
+--proxy=false takes the switch away again and is the one form here that is not
+a widening. --proxy is refused for a workflow secret, whose entry holds no such
+member (D493, D1275).
+
+Adding a repository or turning the switch on is the owner's own step: it asks
+nothing at your own terminal, and a coding agent's session is refused it, with
+the command to run yourself (D1552). This whole family is refused in a session,
+so --yes does not lift it. Nothing here reads or prints a value.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's entry is derived from this list, so the change reaches the
+project's runs in that run and not before it.
+
+Usage: `fugaro secrets allow NAME PATTERN...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for allow |
+| `--proxy` | bool | `false` | no | set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off) |
+| `--yes` | bool | `false` | no | confirm the policy write without a prompt (outside a coding agent's session) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets deny`
+
+Remove repositories from a project secret's allow-list
+
+Remove each PATTERN from project_secrets.NAME.allow_data_to — or from
+workflow_secrets.NAME.allow_data_to for a name your local config holds there —
+so the value is no longer stored for it and no longer mounted in it.
+
+This is the one edit of this family that narrows: the repositories that remain
+are the ones the value still reaches. A pattern the entry does not name is not
+an error and not a write — the command says there is no change, because the
+state it was asked for is the state the file is in.
+
+A removal that leaves the list empty is allowed and is not a removal of the
+entry: the value is then stored for no repository, and the entry stays for the
+day a pattern is added back.
+
+This whole family is refused in a coding agent's session, --yes included (spec
+§5): what a secret reaches is a decision no plan shows. Nothing here reads or
+prints a value.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's entry is derived from this list, so the change reaches the
+project's runs in that run and not before it.
+
+Usage: `fugaro secrets deny NAME PATTERN...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for deny |
+| `--yes` | bool | `false` | no | confirm the policy write without a prompt (outside a coding agent's session) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro secrets ls`
 
@@ -5934,9 +6314,9 @@ confirmation. --plan-only never takes --yes: what the plan needs made first
 and says so. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
 
-A new project config grants the launcher and operator roles to you, the
+A new project config grants the operator and admin roles to you, the
 authenticated user (user:<your email> from the Application Default
-Credentials), so that fugaro run works; --launcher or --operator replaces that,
+Credentials), so that fugaro run works; --operator or --admin replaces that,
 an existing config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
@@ -6204,6 +6584,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--admin` | stringArray | `[]` | no | an IAM member who may onboard repositories, apply Terraform and submit builds (the admin role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--alert-email` | string | "" | no | where failed image checks and rebuilds are reported (default: the local config's) |
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
@@ -6229,7 +6610,6 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for setup |
 | `--image-source` | string | "" | no | the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme) |
 | `--json` | bool | `false` | no | print the result as JSON on stdout (progress goes to stderr) |
-| `--launcher` | stringArray | `[]` | no | an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--link-billing` | string | "" | no | on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, at your own real terminal, where being at it is what confirms the step. This may incur charges on that account; never with --yes. It never changes a project's existing billing link |
 | `--managed` | bool | `false` | no | on a first run, which creates the project: record its monthly budget in the creation fact. Every project setup creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: creating the project still takes a person at a real terminal, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, and --managed never flags one: it records the budget of a project the run creates |
 | `--name` | string | "" | no | the project's name: for a project config setup creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; on a machine with no config for an installation that exists, it defaults to the installation's) |
@@ -6237,7 +6617,7 @@ Flags:
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
 | `--non-interactive` | bool | `false` | no | never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs a person at the terminal even then, so that plan exits 1); --yes never covers the steps that are the terminal's alone (see --yes). With --config-only it only stops them prompting: their confirmations then need --yes |
 | `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal) |
-| `--operator` | stringArray | `[]` | no | an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user) |
+| `--operator` | stringArray | `[]` | no | an IAM member who may start and watch runs (the operator role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--parent` | string | "" | no | on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed) |
 | `--plan-only` | bool | `false` | no | stop after showing the plan (never takes --yes: it creates nothing on a flag's word) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
@@ -6432,6 +6812,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--admin` | stringArray | `[]` | no | an IAM member who may onboard repositories, apply Terraform and submit builds (the admin role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--alert-email` | string | "" | no | where failed image checks and rebuilds are reported (default: the local config's) |
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
@@ -6457,13 +6838,12 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for update |
 | `--image-source` | string | "" | no | the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme) |
 | `--json` | bool | `false` | no | print the result as JSON on stdout (progress goes to stderr) |
-| `--launcher` | stringArray | `[]` | no | an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--name` | string | "" | no | the project's name: for a project config update creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; on a machine with no config for an installation that exists, it defaults to the installation's) |
 | `--no-build` | bool | `false` | no | with --repo: don't offer the first image builds |
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
 | `--non-interactive` | bool | `false` | no | never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs a person at the terminal even then, so that plan exits 1); --yes never covers the steps that are the terminal's alone (see --yes). With --forget and --config-only it only stops them prompting: their confirmations then need --yes |
 | `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal) |
-| `--operator` | stringArray | `[]` | no | an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user) |
+| `--operator` | stringArray | `[]` | no | an IAM member who may start and watch runs (the operator role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--plan-only` | bool | `false` | no | stop after showing the plan (never takes --yes: it creates nothing on a flag's word) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
@@ -6623,12 +7003,12 @@ This command has no subcommands.
 
 ## `fugaro user`
 
-List, add and remove the installation's launchers and operators
+List, add and remove the installation's operators and admins
 
-List the installation's launchers and operators, and add a person to one of
+List the installation's operators and admins, and add a person to one of
 the two lists or remove them from it.
 
-The two lists are terraform.launchers and terraform.operators in this machine's own project config. They are what the operator's next
+The two lists are terraform.operators and terraform.admins in this machine's own project config. They are what the admin's next
 fugaro update applies to the installation, so a change made here takes effect
 then, and nothing is applied by this command: no IAM grant is written, no
 repository is touched and no invitation is sent.
@@ -6636,15 +7016,19 @@ repository is touched and no invitation is sent.
 A member is one person, written as user:<email>. Only user: members are
 written here: domain:, group:, serviceAccount:, allUsers,
 allAuthenticatedUsers and wildcards are refused (reconciliation F42 — the
-launcher and operator roles carry the token signer's own role, so a domain:
-member would grant a whole domain the right to mint a launcher's identity).
-fugaro setup --launcher/--operator remains the door for a whole list, group
+operator and admin roles carry the token signer's own role, so a domain:
+member would grant a whole domain the right to mint an operator's identity).
+fugaro setup --operator/--admin remains the door for a whole list, group
 members included.
+
+Both keys are derived from the installation's grants node, and this command
+writes this machine's file alone: a member added here is dropped by that
+machine's next fugaro update, which says so.
 
 add and rm read the installation's own outputs first and refuse when they
 disagree with this machine's config: a list written here replaces the
 installation's on the next fugaro update, so a config that has not seen the
-members another operator added would drop them.
+members another admin added would drop them.
 
 Usage: `fugaro user`
 
@@ -6656,15 +7040,15 @@ Flags:
 
 Subcommands:
 
-- `fugaro user add` -- Add a person to the installation's launchers or operators
-- `fugaro user ls` -- List the installation's launchers and operators
-- `fugaro user rm` -- Remove a person from the installation's launchers or operators
+- `fugaro user add` -- Add a person to the installation's operators or admins
+- `fugaro user ls` -- List the installation's operators and admins
+- `fugaro user rm` -- Remove a person from the installation's operators or admins
 
 ## `fugaro user add`
 
-Add a person to the installation's launchers or operators
+Add a person to the installation's operators or admins
 
-Change one member of one of the installation's two IAM lists: terraform.launchers and terraform.operators in this machine's own project config.
+Change one member of one of the installation's two IAM lists: terraform.operators and terraform.admins in this machine's own project config.
 
 The member is added to, or removed from, the list --role names, and the other
 list is left exactly as it is. --role is required and has no default: adding
@@ -6674,7 +7058,7 @@ person typing.
 Both subcommands read the installation's own outputs before they write and
 refuse when they disagree with this machine's config, because this machine's
 lists are what the next fugaro update applies: a config that predates a member
-another operator added would revoke that member. The refusal names the list
+another admin added would revoke that member. The refusal names the list
 that differs and the command that settles it (fugaro update).
 
 It prints an invite naming the project, the install line and the fact that the
@@ -6695,7 +7079,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | which list to change: launcher or operator (required) |
+| `--role` | string | "" | no | which list to change: operator or admin (required) |
 
 Subcommands:
 
@@ -6703,13 +7087,13 @@ This command has no subcommands.
 
 ## `fugaro user ls`
 
-List the installation's launchers and operators
+List the installation's operators and admins
 
-List the members of terraform.launchers and terraform.operators in this machine's own project config, as they are written there now.
+List the members of terraform.operators and terraform.admins in this machine's own project config, as they are written there now.
 
 It is this machine's own copy of the two lists: no member is fetched from the
 cloud and none is granted, and no Terraform runs. What the installation itself
-holds can differ — a change another operator applied, or one made here and not
+holds can differ — a change another admin applied, or one made here and not
 yet applied by a fugaro update — and only the outputs would tell, which is the
 read add and rm make.
 
@@ -6737,9 +7121,9 @@ This command has no subcommands.
 
 ## `fugaro user rm`
 
-Remove a person from the installation's launchers or operators
+Remove a person from the installation's operators or admins
 
-Change one member of one of the installation's two IAM lists: terraform.launchers and terraform.operators in this machine's own project config.
+Change one member of one of the installation's two IAM lists: terraform.operators and terraform.admins in this machine's own project config.
 
 The member is added to, or removed from, the list --role names, and the other
 list is left exactly as it is. --role is required and has no default: adding
@@ -6749,7 +7133,7 @@ person typing.
 Both subcommands read the installation's own outputs before they write and
 refuse when they disagree with this machine's config, because this machine's
 lists are what the next fugaro update applies: a config that predates a member
-another operator added would revoke that member. The refusal names the list
+another admin added would revoke that member. The refusal names the list
 that differs and the command that settles it (fugaro update).
 
 Run it in your own terminal, with your own credentials. A coding agent's
@@ -6766,7 +7150,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for rm |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | which list to change: launcher or operator (required) |
+| `--role` | string | "" | no | which list to change: operator or admin (required) |
 
 Subcommands:
 

@@ -158,8 +158,17 @@ const (
 // diagnosis runs on and `defaults.agent.models.diagnose` is the layer's key
 // for it, and both are written by hand until `models use` takes the role, so
 // neither is in the allowlist.
+//
+// The settings design's S6 moved the registry's figure once more, by one row
+// and not the allowlist's: the clone URLs a run clones its repository from
+// (settings spec §5.6, SD5, D842) left the policy node for a block of the
+// owner's local config, and its row is one for the whole map whose owner is the
+// `project clone-url` family -- `settings set` can make no cross-key check
+// between an entry's canonical name and its URL, which is the node's own rule
+// (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
+// list does not.
 const (
-	cfmRegistryRows   = 409
+	cfmRegistryRows   = 410
 	cfmAllowlistNamed = 96
 )
 

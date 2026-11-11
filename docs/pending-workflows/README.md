@@ -1,11 +1,10 @@
 # Pending workflow changes
 
-**Two files are pending: `images.yml`** (the images workflow with
-the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745;
-see `## images.yml` — staged again below) **and `ci.yml`** (the Terraform job's
-root loop with the workspaces work's `workspace` root added, 2026-11-08 — the
-real workflow plus one word, so the root is validated and tested in CI rather
-than only where a person runs it; see `## ci.yml` below).
+**No files are pending.** `images.yml` (the images workflow with
+the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745)
+and `ci.yml` (the Terraform job's root loop with `workspace` added and the
+longer test timeout) were copied in on 2026-11-11 and their staged copies
+removed; see `## images.yml` and `## ci.yml` below.
 The console's Windows installer pack,
 `console-windows.yml`, was copied in on **2026-11-10** and its staged copy
 removed; it was a release-time job rather than a pull-request check (see

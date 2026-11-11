@@ -113,8 +113,14 @@ func newOrchestratorCmd() *cobra.Command {
 			"log. patch applies one document from -f, and the ops only a person may\n" +
 			"land (approving a work item, setting the goal, closing a decision that\n" +
 			"waits on a person) are confirmed at a real terminal with the project's\n" +
-			"name typed, never by --yes: a session that has none writes nothing.",
+			"name typed, never by --yes: a session that has none writes nothing.\n\n" +
+			"run is the daemon itself, in the foreground. install, uninstall and\n" +
+			"status are the login unit that keeps it running: the three read no\n" +
+			"project and reach no network, and they write no system path and need no\n" +
+			"root — the unit is one file under your own home and the service manager\n" +
+			"is asked at your own login level.",
 	}
-	cmd.AddCommand(newOrchestratorLsCmd(), newOrchestratorStateCmd(), newOrchestratorEventsCmd(), newOrchestratorPatchCmd(), newOrchestratorRunCmd())
+	cmd.AddCommand(newOrchestratorLsCmd(), newOrchestratorStateCmd(), newOrchestratorEventsCmd(), newOrchestratorPatchCmd(),
+		newOrchestratorRunCmd(), newOrchestratorInstallCmd(), newOrchestratorUninstallCmd(), newOrchestratorStatusCmd())
 	return cmd
 }

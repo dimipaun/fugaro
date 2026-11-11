@@ -606,7 +606,12 @@ func managedOrUnproven() []struct {
 //
 // The mutation caught: refreshManaged.asksNothing answering true whatever it is
 // handed — the unproven project then prints the gate's sentence where no gate
-// judged, and this test fails on its own control.
+// judged, and this test fails on its own control. And, on the managed side, the
+// step's note going back under the ⚠ CONFIRM banner: this is the one step of
+// the run that reaches ask through the gate's own arm (r.refresh, askBanner),
+// where nothing at all answers for the step, so the banner a question is shown
+// under and the note of a step nobody is asked about may not both be printed
+// (initRun.willDo, the owner's feedback of 2026-11-10).
 func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
 	useVersion(t, "0.5.1")
 	for _, tc := range managedOrUnproven() {
@@ -643,6 +648,16 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
 				if !strings.Contains(out.String(), want) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
+			}
+			// The note is the run's own words for a step nobody is asked about
+			// (willDo), and the banner is not there: it is what a question is
+			// shown under, and this step is asked about by nothing.
+			note := "will do (project " + r.tg.lc.Name + ", GCP project " + r.tg.lc.GCPProject + "): "
+			if !strings.Contains(out.String(), note) {
+				t.Errorf("the step's note is not printed under %q:\n%s", note, out)
+			}
+			if strings.Contains(out.String(), "⚠ CONFIRM") {
+				t.Errorf("a step nobody is asked about is shown the banner a question is shown under:\n%s", out)
 			}
 			if strings.Contains(out.String(), "[y/N]") {
 				t.Errorf("a managed project's own terminal was asked a question anyway:\n%s", out)
