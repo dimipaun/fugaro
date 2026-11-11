@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -539,6 +540,113 @@ func TestTheIntakeCallReadsABoundedAnswer(t *testing.T) {
 	err = secretsIntakeOver(context.Background(), srv.URL, call)
 	if err == nil || !strings.Contains(err.Error(), "larger than this call's") {
 		t.Errorf("an answer of %d bytes was read as %v, want the refusal of an answer larger than this call's (%d bytes)", len(body), err, maxIntakeAnswerBytes)
+	}
+}
+
+// TestTheIntakeCallSendsABoundedRequest: the request is a document the intake
+// reads under its own bound, so this side judges it by a bound of its own
+// before it sends anything. The case that decides that bound is the largest
+// request a person may legally make — a value at Secret Manager's 64 KiB under
+// a name at its own longest — because a bound the least bit tighter than the
+// intake's would refuse that person's secret here, before it is ever sent, and
+// answer them with a sentence about the name. The document is grown in the
+// name, which is the only part of it a person can make large: a value over
+// 64 KiB is refused before this, by the read that took it
+// (TestTheIntakeCallReadsABoundedAnswer is the same test for the answer).
+//
+// Mutation (verified, run and restored): relax the check by the one byte —
+// `len(payload) > maxIntakeBodyBytes+1` — and the last case is sent instead of
+// refused; write the duplicated envelope as 1<<8 and the first case is refused
+// here before anything is sent, which is a person's legal secret refused.
+func TestTheIntakeCallSendsABoundedRequest(t *testing.T) {
+	// A name at Secret Manager's longest, over a value at its own: what a
+	// person may store, and the request the bound must admit.
+	const longestName = 255
+	value := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("v"), maxSecretBytes))
+	request := func(name string) intake.CreateRequest {
+		return intake.CreateRequest{Scope: intake.ScopeUser, Name: name, Value: value}
+	}
+	// document grows the name until the document is exactly the bound plus
+	// extra: 'a' is one byte in JSON however many of them there are, so the
+	// document grows with the name one for one. The bound itself is not named
+	// here — a test that computed its own would agree with a wrong one.
+	document := func(extra int) intake.CreateRequest {
+		base, err := json.Marshal(request(strings.Repeat("a", longestName)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		grow := maxIntakeBodyBytes + extra - len(base)
+		if grow < 0 {
+			t.Fatalf("the largest secret a person may store is a %d-byte request, over this call's bound of %d: it would be refused here, before it was sent", len(base), maxIntakeBodyBytes)
+		}
+		return request(strings.Repeat("a", longestName+grow))
+	}
+
+	for _, tc := range []struct {
+		name string
+		req  intake.CreateRequest
+		// want is the refusal's own words for a request that must not be sent,
+		// and empty for one that must be.
+		want string
+	}{
+		{"a value at Secret Manager's longest under a name at its own", request(strings.Repeat("a", longestName)), ""},
+		{"a request exactly the bound's size", document(0), ""},
+		{"a request one byte past it", document(1), "larger than the intake reads"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				mints, reached int
+				sent           intake.CreateRequest
+			)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached++
+				raw, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(raw, &sent)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(intake.SecretAnswer{ID: "fugaro_u_1234_github-token", Version: "3", Created: true})
+			}))
+			t.Cleanup(srv.Close)
+			prevIdentity := secretsIntakeIdentity
+			secretsIntakeIdentity = func(context.Context, string, string) (string, error) {
+				mints++
+				return fakeLauncherToken, nil
+			}
+			t.Cleanup(func() { secretsIntakeIdentity = prevIdentity })
+
+			raw, err := json.Marshal(tc.req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got intake.SecretAnswer
+			err = secretsIntakeDo(context.Background(), srv.URL, secretsIntakeCall{
+				Path: intake.CreatePath, What: "a secret of yours is stored", Body: tc.req, Out: &got,
+			})
+
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("a request of %d bytes was refused, want it inside this call's bound of %d: %v", len(raw), maxIntakeBodyBytes, err)
+				}
+				if reached != 1 {
+					t.Errorf("a request of %d bytes reached the service %d times, want once: it is inside the bound of %d", len(raw), reached, maxIntakeBodyBytes)
+				}
+				if sent.Name != tc.req.Name || sent.Value != tc.req.Value {
+					t.Errorf("the service read a name of %d bytes and a value of %d, want the %d and %d the call was given", len(sent.Name), len(sent.Value), len(tc.req.Name), len(tc.req.Value))
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("a request of %d bytes was answered %v, want the refusal that names a body %q (the bound is %d)", len(raw), err, tc.want, maxIntakeBodyBytes)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("the refusal of an oversized request exits %d, want the user's own error", ExitCode(err))
+			}
+			if mints != 0 {
+				t.Errorf("the caller's own token was minted %d times for a request that was never sent, want none: the bound is judged before a credential is asked for", mints)
+			}
+			if reached != 0 {
+				t.Errorf("a request this call's bound refuses reached the service %d times, want none", reached)
+			}
+		})
 	}
 }
 
