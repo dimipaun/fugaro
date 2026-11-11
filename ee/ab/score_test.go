@@ -169,6 +169,54 @@ func TestProUsesUntoleratedFindings(t *testing.T) {
 		}
 	})
 
+	t.Run("a cheap loop the round followed counts as an iteration", func(t *testing.T) {
+		// Both arms ended on one finding and let it through, and their
+		// deciding round is the same either way: what tells them apart is the
+		// first-line round the champion's rejection bought (Bounce), which
+		// D561 counts beside the rounds and the fix stages.
+		bounced := pairArm("run-bounced", "pair-3", task.ABArmChampion)
+		bounced.Reviews = []runstore.ReviewSummary{
+			{Round: 1, Tier: runstore.TierSenior, Verdict: verdictChanges, Findings: 1},
+			{Round: 2, Tier: runstore.TierFirst, Verdict: verdictChanges, Findings: 1, Bounce: 1},
+		}
+		bounced.Tolerated = tolerated(1)
+
+		// The first line ran before the senior round here, which is a round no
+		// rejection bought: the same two rounds as the champion's, and one
+		// iteration fewer.
+		steady := pairArm("run-steady", "pair-3", task.ABArmChallenger)
+		steady.Reviews = []runstore.ReviewSummary{
+			{Round: 1, Tier: runstore.TierFirst, Verdict: verdictShip},
+			{Round: 2, Tier: runstore.TierSenior, Verdict: verdictChanges, Findings: 1},
+		}
+		steady.Tolerated = tolerated(1)
+
+		if got := onePair(t, rigor.Pro, bounced, steady).Winner; got != WinTie {
+			t.Errorf("Pro: winner = %q, want %q", got, WinTie)
+		}
+		if got := onePair(t, rigor.Critical, bounced, steady).Winner; got != WinChallenger {
+			t.Errorf("Critical: winner = %q, want %q", got, WinChallenger)
+		}
+	})
+
+	t.Run("an Accepted block that outruns Tolerated is not read", func(t *testing.T) {
+		// The runner writes the stop's let-through entries into both blocks
+		// (toleratedRecord, acceptedRecord), so Accepted never holds one
+		// Tolerated does not; a block that outruns it is read at Tolerated's
+		// smaller figure rather than making the round look cleaner.
+		champion := pairArm("run-champion", "pair-3", task.ABArmChampion)
+		champion.Reviews = rounds(verdictChanges, 3)
+		champion.Tolerated = tolerated(2)
+		champion.Accepted = &runstore.AcceptedFindings{
+			Findings: tolerated(3).Findings, Total: 3, Mode: rigor.Pro, Round: 1, At: runstore.StopRoundsSpent,
+		}
+
+		res := onePair(t, rigor.Pro, champion, pairArm("run-challenger", "pair-3", task.ABArmChallenger))
+		if res.Champion.Untolerated != 1 {
+			t.Errorf("untolerated = %d, want 1: Tolerated is the let-through count", res.Champion.Untolerated)
+		}
+	})
+
 	t.Run("Critical reads the iterations after them", func(t *testing.T) {
 		// Both arms ended on one finding and let it through, so Pro's list
 		// is exhausted; the run that spent three review rounds where the
@@ -289,6 +337,22 @@ func TestPairInvalidWhenModeDiffers(t *testing.T) {
 			t.Errorf("Pairs returned %d pairs, want none", len(got))
 		}
 	})
+
+	t.Run("two records of one arm", func(t *testing.T) {
+		// No launcher writes this, and scoring whichever record came first
+		// would make a figure depend on the order the records were read in.
+		challenger := pairArm("run-challenger", "pair-1", task.ABArmChallenger)
+		for name, extra := range map[string]runstore.Record{
+			"two champions":   pairArm("run-champion-2", "pair-1", task.ABArmChampion),
+			"two challengers": pairArm("run-challenger-2", "pair-1", task.ABArmChallenger),
+		} {
+			t.Run(name, func(t *testing.T) {
+				if got := Pairs([]runstore.Record{champion, challenger, extra}); len(got) != 0 {
+					t.Errorf("Pairs returned %d pairs, want none", len(got))
+				}
+			})
+		}
+	})
 }
 
 // TestFollowUpCountIsContextOnly is D562: only the arm that reaches the
@@ -324,5 +388,108 @@ func TestFollowUpCountIsContextOnly(t *testing.T) {
 	}
 	if got := Score(pairs[0], rigor.Critical).Winner; got != WinTie {
 		t.Errorf("winner = %q, want %q: the follow-up count is context", got, WinTie)
+	}
+}
+
+// TestPairReadinessFollowsTheLevelThatDecided is D561's third signal read the
+// way the runner decides readiness: the last round above the first line,
+// whatever it answered, and the first line only where the mode runs nothing
+// above it (POC, D723). An arm whose decider left no round — or left one that
+// answered nothing parseable — is not ready, and an arm whose only round is a
+// first-line one is not ready under a mode that has a level 2 either.
+func TestPairReadinessFollowsTheLevelThatDecided(t *testing.T) {
+	firstLine := []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierFirst, Verdict: verdictShip}}
+
+	t.Run("a deciding round that answered nothing ends the arm unreviewed", func(t *testing.T) {
+		champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+		champion.Reviews = []runstore.ReviewSummary{
+			{Round: 1, Tier: runstore.TierSenior, Verdict: verdictShip},
+			{Round: 2, Tier: runstore.TierSenior, Verdict: "none"},
+		}
+
+		res := onePair(t, rigor.Startup, champion, pairArm("run-challenger", "pair-1", task.ABArmChallenger))
+		if res.Champion.ReviewReady {
+			t.Error("champion ready = true, want false: its last deciding round answered nothing")
+		}
+		if res.Winner != WinChallenger {
+			t.Errorf("winner = %q, want %q", res.Winner, WinChallenger)
+		}
+	})
+
+	t.Run("a first-line round decides under POC", func(t *testing.T) {
+		champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+		champion.Reviews = firstLine
+
+		res := onePair(t, rigor.POC, champion, pairArm("run-challenger", "pair-1", task.ABArmChallenger))
+		if !res.Champion.ReviewReady {
+			t.Error("champion ready = false, want true: POC runs level 1 alone")
+		}
+		if res.Winner != WinTie {
+			t.Errorf("winner = %q, want %q: POC reads no verdict", res.Winner, WinTie)
+		}
+	})
+
+	t.Run("a first-line round does not decide where a level 2 runs", func(t *testing.T) {
+		champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+		champion.Reviews = firstLine
+
+		res := onePair(t, rigor.Startup, champion, pairArm("run-challenger", "pair-1", task.ABArmChallenger))
+		if res.Champion.ReviewReady {
+			t.Error("champion ready = true, want false: its level 2 left no round")
+		}
+		if res.Winner != WinChallenger {
+			t.Errorf("winner = %q, want %q", res.Winner, WinChallenger)
+		}
+	})
+}
+
+// TestPairVerifiedNeedsACleanTree is D561's second signal read the way the
+// runner reads a commit before publishing one: each kind's last run at the
+// final head passed, and a test ran on a clean tree. A test that passed on a
+// dirty tree, a head whose build failed last, and a head no test ran on are
+// each an arm without the signal.
+func TestPairVerifiedNeedsACleanTree(t *testing.T) {
+	at := func(kind verify.Kind, clean, passed bool) verify.Record {
+		return verify.Record{Kind: kind, HeadSHA: pairHeadSHA, CleanTree: clean, Passed: passed}
+	}
+
+	cases := []struct {
+		name   string
+		verify []verify.Record
+		want   bool
+	}{
+		{"a test that passed on a clean tree", []verify.Record{at(verify.KindTest, true, true)}, true},
+		{"a test that passed with the tree dirty", []verify.Record{at(verify.KindTest, false, true)}, false},
+		{"a build whose last run at the head failed", []verify.Record{
+			at(verify.KindBuild, true, true), at(verify.KindTest, true, true), at(verify.KindBuild, true, false),
+		}, false},
+		{"build and lint with no test at the head", []verify.Record{
+			at(verify.KindBuild, true, true), at(verify.KindLint, true, true),
+		}, false},
+		{"a test that failed and then passed", []verify.Record{
+			at(verify.KindTest, true, false), at(verify.KindTest, true, true),
+		}, true},
+		{"a test on a head the arm did not end at", []verify.Record{
+			{Kind: verify.KindTest, HeadSHA: strings.Repeat("2d", 20), CleanTree: true, Passed: true},
+		}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+			champion.Verify = tc.verify
+
+			res := onePair(t, rigor.POC, champion, pairArm("run-challenger", "pair-1", task.ABArmChallenger))
+			if res.Champion.Verified != tc.want {
+				t.Errorf("champion verified = %v, want %v", res.Champion.Verified, tc.want)
+			}
+			want := WinTie
+			if !tc.want {
+				want = WinChallenger
+			}
+			if res.Winner != want {
+				t.Errorf("winner = %q, want %q", res.Winner, want)
+			}
+		})
 	}
 }

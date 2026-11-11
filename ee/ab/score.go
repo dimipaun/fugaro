@@ -22,10 +22,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
-// The two words a review round answers with (the runner's verdict schema).
-// A round that answered something else — "none" for a review whose call died
-// or whose reply could not be read — is not a verdict about the change and is
-// skipped rather than read as a refusal.
+// The two words a review round answers with (the runner's verdict schema). Only
+// the first decides readiness here; the second is the vocabulary's other
+// answer, and a round that answered anything else — "none" for a review whose
+// call died or whose reply could not be read — is not a verdict about the
+// change at all.
 const (
 	verdictShip    = "ship"
 	verdictChanges = "changes"
@@ -263,9 +264,10 @@ type Signals struct {
 	// runs inside its build or lint command): of each kind's runs at that
 	// head, the last one passed, and a test ran on a clean tree.
 	Verified bool
-	// ReviewReady is the round readiness is decided on shipping. A record
-	// with no round that answered is not ready: a review nobody held is not
-	// an approval (D4's rule).
+	// ReviewReady is that round shipping (decidingRound). A record whose
+	// deciding level left no round, or whose last one answered nothing
+	// parseable, is not ready: a review nobody held, and a round nobody could
+	// read, are no approval (D4's rule).
 	ReviewReady bool
 	// Untolerated is the findings of that round the record does not account
 	// for as let through: the round's own count less the findings the mode
@@ -319,8 +321,8 @@ func Score(p Pair, mode rigor.Mode) Result {
 	res := Result{
 		PairID:     p.ID,
 		Mode:       mode,
-		Champion:   armSignals(p.Champion),
-		Challenger: armSignals(p.Challenger),
+		Champion:   armSignals(p.Champion, mode),
+		Challenger: armSignals(p.Challenger, mode),
 	}
 	switch compareVectors(signalVector(res.Champion, mode), signalVector(res.Challenger, mode)) {
 	case -1:
@@ -335,13 +337,13 @@ func Score(p Pair, mode rigor.Mode) Result {
 
 // armSignals reads one arm's record into D561's signals. Nothing is inferred
 // from the other arm, and no field of the record is asked twice.
-func armSignals(rec runstore.Record) Signals {
+func armSignals(rec runstore.Record, mode rigor.Mode) Signals {
 	s := Signals{
 		Halted:    rec.Halt != nil,
 		FinalHead: rec.HeadSHA,
 	}
 	s.Verified = verifiedAtHead(rec.Verify, s.FinalHead)
-	if round := decidingRound(rec.Reviews); round != nil {
+	if round := decidingRound(rec.Reviews, mode); round != nil {
 		s.ReviewReady = round.Verdict == verdictShip
 		s.Untolerated = untoleratedFindings(rec, *round)
 	}
@@ -385,47 +387,68 @@ func verifiedAtHead(records []verify.Record, head string) bool {
 }
 
 // decidingRound is the review round an arm's readiness is read from: the last
-// round that answered with a verdict and is not a first-line one, because a
-// first-line round advises the levels above it and never decides readiness on
-// its own (a cheap loop bought after a rejection is not what a shipped senior
-// round is held to). A run whose plan has no senior review step holds
-// first-line rounds alone, and its last one is then the only answer it has.
-func decidingRound(records []runstore.ReviewSummary) *runstore.ReviewSummary {
-	var decided, firstLine *runstore.ReviewSummary
-	for i := range records {
+// round above the first line, whatever it answered (the runner's own
+// seniorReview, decidingReview). A first-line round advises the levels above it
+// and never decides readiness on its own, and a deciding round that answered
+// nothing parseable — "none", after the retry the loop gives it — is a run the
+// runner ends unreviewed: readiness read backwards from it to an earlier
+// verdict about a commit the run did not ship would call a draft ready.
+//
+// A record holding no round above the first line is read on its last first-line
+// round only under a mode that runs no level-2 step at all (POC's default
+// levels, D723): there the first line is the level that decides. Every other
+// mode runs one, so a record of one of those holding no such round is a run
+// whose decider never read it — the case the runner keeps a draft for — and
+// this says the same rather than letting the round that advises take its place.
+//
+// The record carries no resolved levels, so the mode's own default stands in
+// for them: a repository that turns level 2 off under another mode leaves a
+// record this reads as not ready where the runner shipped it, which is the
+// direction that never calls a draft ready.
+func decidingRound(records []runstore.ReviewSummary, mode rigor.Mode) *runstore.ReviewSummary {
+	var firstLine *runstore.ReviewSummary
+	for i := len(records) - 1; i >= 0; i-- {
 		r := &records[i]
-		if r.Verdict != verdictShip && r.Verdict != verdictChanges {
-			continue
+		if r.Tier != runstore.TierFirst {
+			return r
 		}
-		if r.Tier == runstore.TierFirst {
+		if firstLine == nil {
 			firstLine = r
-			continue
 		}
-		decided = r
 	}
-	if decided != nil {
-		return decided
+	if firstLine != nil && firstLineDecides(mode) {
+		return firstLine
 	}
-	return firstLine
+	return nil
+}
+
+// firstLineDecides reports whether the mode's own review starts and ends at the
+// first line: POC runs level 1 alone (rigor.DefaultLevels), so its first-line
+// round is the round readiness is decided on. A mode outside the vocabulary
+// answers no, like the rest of the fail-closed readings here.
+func firstLineDecides(mode rigor.Mode) bool {
+	levels, err := rigor.DefaultLevels(mode)
+	return err == nil && levels.L2 != rigor.LevelOn
 }
 
 // untoleratedFindings is D561's fourth signal: what the deciding round left
 // that the record does not account for as let through.
 //
-// The record keeps the findings a mode let through in Tolerated, and a run
-// that stopped at its stop keeps the stop's own split there too, beside the
-// same entries in Accepted (which adds the round they were left by and the
-// half of the stop rule that ended the run). A run the stop made ready carries
-// both, so the larger of the two counts is the round's let-through figure and
-// never their sum: subtracting both would count one finding twice and report a
-// round as cleaner than it was.
+// Tolerated is the whole of that account. The runner writes the entries the
+// mode let through there, and a run that stopped at its stop writes the same
+// entries again into Accepted beside the round they were left by and the half
+// of the stop rule that ended the run (toleratedRecord, acceptedRecord, both
+// from the same policy and the same round): Accepted never holds a finding
+// Tolerated does not, so reading it as well could only count one twice. A
+// record carrying an Accepted block that outruns its Tolerated one — which
+// nothing here writes, and which the job's service account could — is read at
+// Tolerated's smaller figure, so it is reported worse than its own block
+// claims: a block like that cannot make a round look cleaner than the count the
+// mode kept.
 func untoleratedFindings(rec runstore.Record, round runstore.ReviewSummary) int {
 	let := 0
 	if rec.Tolerated != nil {
 		let = rec.Tolerated.Total
-	}
-	if rec.Accepted != nil && rec.Accepted.Total > let {
-		let = rec.Accepted.Total
 	}
 	return max(0, round.Findings-let)
 }
