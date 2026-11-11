@@ -37,10 +37,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -507,22 +508,26 @@ func (c *Client) RootKeys(ctx context.Context) ([]string, error) {
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, fmt.Errorf("rtdb: GET /: decoding the root's keys: %w", err)
 	}
-	return sortedKeys(m), nil
+	return slices.Sorted(maps.Keys(m)), nil
 }
 
 // Keys lists the keys at path without downloading their values (a shallow
 // read): the child names of one node, sorted. A node that is absent, or one
-// that holds a value rather than an object, has no keys.
+// below the root that holds a value rather than an object, has no keys.
 //
 // It is how a caller enumerates a subtree it means to read node by node — the
 // orchestrator subtree, whose every state and audit document is far larger than
-// the names of them — without paying for the values. Unlike RootKeys it
-// tolerates a node holding a value, which is a shape the tree really has below
-// the root (a scalar setting beside the objects), so a caller asking for one
+// the names of them — without paying for the values. Below the root a value
+// beside the objects is a shape the tree really has, so a caller asking for one
 // subtree's children is never refused over a value it did not mean to read.
+// The root is not that shape and not this function's to read leniently: asking
+// for it is RootKeys, which refuses a scalar root rather than call it empty.
 func (c *Client) Keys(ctx context.Context, path string) ([]string, error) {
 	if err := validPath(path); err != nil {
 		return nil, err
+	}
+	if path == "" {
+		return c.RootKeys(ctx)
 	}
 	body, err := c.shallow(ctx, path)
 	if err != nil {
@@ -542,7 +547,7 @@ func (c *Client) Keys(ctx context.Context, path string) ([]string, error) {
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, fmt.Errorf("rtdb: GET /%s: decoding the node's keys: %w", path, err)
 	}
-	return sortedKeys(m), nil
+	return slices.Sorted(maps.Keys(m)), nil
 }
 
 // shallow is the read RootKeys and Keys share: one node's child names, with no
@@ -553,16 +558,6 @@ func (c *Client) shallow(ctx context.Context, path string) ([]byte, error) {
 		return nil, err
 	}
 	return bytes.TrimSpace(res.body), nil
-}
-
-// sortedKeys is the child names of a node read shallowly, in order.
-func sortedKeys(m map[string]json.RawMessage) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // settingsRules is where a database's security rules live.

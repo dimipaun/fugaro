@@ -747,6 +747,14 @@ func TestRootKeysRefusesARootHoldingAValue(t *testing.T) {
 	if !strings.Contains(err.Error(), "decoding the root's keys") {
 		t.Errorf("the refusal does not name the root it could not read: %v", err)
 	}
+	// Asking for the root by its empty path is the same read: the tolerance
+	// Keys extends to a node holding a value is for a node below the root,
+	// where a scalar beside the objects is a shape the tree really has, and a
+	// caller that reached the root this way reads it as leniently as RootKeys
+	// does or the refusal above is one path away from being walked around.
+	if keys, err := c.Keys(ctx(t), ""); err == nil {
+		t.Errorf("Keys(ctx, \"\") listed %v for a root holding a value, and a root that is not an object is not an empty database", keys)
+	}
 }
 
 // TestKeysListsOneNodeShallowly: listing the children of one node is a shallow
@@ -782,5 +790,11 @@ func TestKeysListsOneNodeShallowly(t *testing.T) {
 	}
 	if _, err := c.Keys(ctx(t), "orchestrator/bad.key"); err == nil {
 		t.Error("an unescaped key was sent")
+	}
+
+	// The empty path is the root, and the root is RootKeys' read: the same
+	// children, in the same order.
+	if keys, err := c.Keys(ctx(t), ""); err != nil || len(keys) != 2 || keys[0] != "config" || keys[1] != "orchestrator" {
+		t.Errorf("the root by its empty path: %v, %v (the root's keys, sorted)", keys, err)
 	}
 }
