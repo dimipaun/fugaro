@@ -4651,7 +4651,111 @@ Flags:
 
 Subcommands:
 
+- `fugaro rigor floor` -- Set or remove the review floor a project's runs are held to
 - `fugaro rigor set` -- Write the project layer's rigor default, or one area rule
+
+## `fugaro rigor floor`
+
+Set or remove the review floor a project's runs are held to
+
+The review floor is the owner's own: per rigor mode, the review levels a run
+of that mode must run whatever a lower layer asks for. It lives in this
+machine's project config (`review_floor`) and `fugaro project policy publish`
+copies it into the policy node the runner fails closed on, so a change here
+reaches runs at the next `fugaro update`.
+
+`fugaro rigor floor set MODE LEVELS` writes one mode's floor and
+`fugaro rigor floor unset MODE` removes it. A removal and a lowering take the
+project's name typed at a terminal — a floor is a minimum, so taking a level
+away is a whole project reviewing less, and no flag stands in for the name.
+Adding a mode the file does not carry, or a level a mode's floor does not
+carry, asks nothing: it can only require more review.
+
+A coding agent's session is refused both directions outright, whatever the
+flags say.
+
+Usage: `fugaro rigor floor`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for floor |
+
+Subcommands:
+
+- `fugaro rigor floor set` -- Write one rigor mode's review floor
+- `fugaro rigor floor unset` -- Remove one rigor mode's review floor
+
+## `fugaro rigor floor set`
+
+Write one rigor mode's review floor
+
+Write the review levels a run of MODE must run, into this machine's project
+config.
+
+LEVELS is a comma-separated list of `l1`, `l2` and `l3` — the levels
+docs/review-levels names — and the floor is the whole list: a level it drops
+stops being required of every run of that mode.
+
+Adding a mode the file does not carry, or a level the mode's floor does not
+carry, is the ordinary write and asks nothing. Dropping a level is a lowering,
+and it takes the project's name typed at a terminal: `--yes` does not confirm
+it, and neither does anything else. The command refuses an empty list — a floor
+with no level in it says nothing, and removing the mode's entry is what
+`fugaro rigor floor unset` is for.
+
+A coding agent's session is refused the write outright, whatever the flags say.
+
+It writes one file: this machine's own project config. The change reaches the
+policy node the runner reads at the next `fugaro update`, whose policy stage
+publishes it.
+
+Usage: `fugaro rigor floor set MODE LEVELS`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--yes` | bool | `false` | no | accepted and refused: a lowering takes the project's name typed at a terminal, and no flag stands in for it |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro rigor floor unset`
+
+Remove one rigor mode's review floor
+
+Remove the review floor MODE carries: from the next `fugaro update` the
+mode's runs are held to what their rigor mode and the repository ask for, and
+to nothing the owner requires.
+
+A removal takes the project's name typed at a terminal: `--yes` does not
+confirm it, and neither does anything else — what it deletes is a floor, which
+no diff of a plan can show. A coding agent's session is refused the removal
+outright, whatever the flags say.
+
+It writes one file: this machine's own project config, and the change reaches
+the policy node at the next `fugaro update`.
+
+Usage: `fugaro rigor floor unset MODE`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for unset |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--yes` | bool | `false` | no | accepted and refused: a removal takes the project's name typed at a terminal, and no flag stands in for it |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro rigor set`
 

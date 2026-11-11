@@ -308,8 +308,8 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// no floor, which returns with the sentence saying so before anything is
 	// asked. Neither may print a question here: the typed confirmation is only
 	// ever the answer to an edit that takes a floor away.
-	"fugaro rigor floor set":   {args: []string{"critical", "l2"}, reaches: "set review_floor.critical from none to l2 in"},
-	"fugaro rigor floor unset": {args: []string{"pro"}, reaches: "carries no floor, so there is nothing to remove"},
+	"fugaro rigor floor set":      {args: []string{"critical", "l2"}, reaches: "set review_floor.critical from none to l2 in"},
+	"fugaro rigor floor unset":    {args: []string{"pro"}, reaches: "carries no floor, so there is nothing to remove"},
 	"fugaro settings get":         {args: []string{"a.b"}},
 	"fugaro stats runs":           {args: []string{"--project", "proj-1234"}},
 	"fugaro user add":             {args: []string{"someone@example.com"}},
