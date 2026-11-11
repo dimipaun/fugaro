@@ -196,7 +196,10 @@ just in the console (`:398`).
 What a read-only list would grant:
 
 - `roles/firebasedatabase.viewer` — read the database, as launchers and operators already do;
-- `roles/datastore.viewer` — read the spend history;
+- `roles/datastore.viewer` — read the spend history, and with it
+  `roles/serviceusage.serviceUsageConsumer`, the quota project a Firestore call from the CLI sends as
+  `X-Goog-User-Project`: the same pair the launchers and operators hold, and without it a
+  `datastore.viewer` is a read Firestore refuses;
 - a read-only job role: `run.jobs.get`, `run.jobs.list`, `run.executions.get`, `run.executions.list`,
   `run.operations.get` — the `fugaroLauncher` role **minus** `run.executions.cancel`;
 - `roles/logging.viewAccessor` on the isolated log view, if the owner wants a viewer to read logs;

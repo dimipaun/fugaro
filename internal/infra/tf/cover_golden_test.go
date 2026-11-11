@@ -782,7 +782,9 @@ func TestViewerGetsNoJobRunner(t *testing.T) {
 // project, the runs-bucket read (D683: objectViewer on the whole bucket, under
 // no condition, because listing needs storage.objects.list, which a condition
 // on an object's name cannot grant), the isolated log view (D684) and the
-// Firebase project's two reads. The two goldens whose fixtures name a viewer
+// Firebase project's reads: the database, the spend history, and the
+// serviceusage consumer that history's Firestore call needs. The two goldens
+// whose fixtures name a viewer
 // are the only plans that carry any of it — an installation with an empty
 // viewer list applies exactly today's plan (roles.md §8 R1) — and each plan's
 // set of changes naming a viewer member is exact, so a grant nobody wrote down
@@ -792,7 +794,7 @@ func TestViewerGetsNoJobRunner(t *testing.T) {
 //
 // The positive half is what the modules define: a viewer's read is the row
 // roles.md §4 names, on the resource the grant is the module's own (the
-// project role, the runs bucket, the log view, the two Firebase-project
+// project role, the runs bucket, the log view, the Firebase project's
 // reads).
 func TestGoldenViewerPlans(t *testing.T) {
 	named := viewerGrants
@@ -819,6 +821,11 @@ func TestGoldenViewerPlans(t *testing.T) {
 		{"firebase-viewers", "module.firebase", map[string]string{
 			"google_project_iam_member.viewer":           "roles/firebasedatabase.viewer",
 			"google_project_iam_member.datastore_viewer": "roles/datastore.viewer",
+			// The Firestore client's quota project, which the spend
+			// history's read needs: the same set as datastore.viewer, the
+			// viewer included, because a datastore.viewer without it is a
+			// read Firestore refuses.
+			"google_project_iam_member.usage_consumer": "roles/serviceusage.serviceUsageConsumer",
 		}},
 	} {
 		t.Run(c.golden, func(t *testing.T) {

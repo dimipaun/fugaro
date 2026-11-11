@@ -112,12 +112,14 @@ resource "google_project_iam_member" "history_firestore" {
 # credentials need a quota project, and a service account's own project does
 # not have the Firestore API enabled), which requires
 # serviceusage.services.use on it. serviceUsageConsumer is that one
-# permission set, held by the history account and by the people and admins who
-# get datastore.viewer above; no domain or wildcard member can get here (the
-# variables' validation). The viewer list is deliberately not here: roles.md
-# §4 names the viewer's grants, and this is not one of them.
+# permission set, held by the history account and by every principal
+# datastore_viewer above names, viewers included: the spend history is one of
+# the reads a viewer is for (roles.md §4), and a viewer without it is a
+# datastore.viewer every Firestore call refuses. The two sets are one set by
+# construction and the Firebase root test asserts they stay equal; no domain
+# or wildcard member can get here (the variables' validation).
 resource "google_project_iam_member" "usage_consumer" {
-  for_each = setunion(local.people, local.admins)
+  for_each = setunion(local.readers, local.admins)
 
   project = var.project
   role    = "roles/serviceusage.serviceUsageConsumer"
