@@ -59,7 +59,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | Spec | State |
 | --- | --- |
 | composite-commands | 1/10; depends on no-prompt-policy |
-| account-aliases | plan only, 0/5 (AL0–AL4); D2070–D2082 open; nothing approved; owner Check 550 not run |
+| account-aliases | plan only, 0/5 (AL0–AL4), all approved 2026-11-10 and sequenced after #2274, #2247 and #2252; D2090–D2102 answered as recommended; owner Check 550 not run |
 | mobile-auth | 2/7; parked |
 | repo-image-removal | **PARKED** (2/11; parked by image-setup, D1900) |
 | voice-module, collateral, backlog, plans | no plan or not a spec |

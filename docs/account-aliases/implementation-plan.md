@@ -1,10 +1,11 @@
 # Account aliases: implementation plan
 
-Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (F1–F16, D2070–D2082).
-**Status as of 2026-11-10: plan only, 0/5 merged; nothing is implemented; no task is approved; see
-[docs/status.md](../status.md) for the current table.** Every decision is **OPEN**: the plan is written
-to the recommendations, and a task that names a decision starts only after the owner answers it — and
-after the owner's separate, explicit go on that task. An answer is not a go.
+Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (F1–F16, D2090–D2102).
+**Status as of 2026-11-10: plan only, 0/5 merged; nothing is implemented; D2090–D2102 answered and AL0–AL4
+approved by the owner; see [docs/status.md](../status.md) for the current table.** The owner answered
+every decision as recommended on 2026-11-10 and, by a separate ruling the same day ("approve all
+tasks"), approved AL0–AL4. The approval does not lift the sequencing: each task still waits for the
+open pull requests its Depends on and Serialization lines name.
 
 ## Conventions
 
@@ -25,12 +26,12 @@ tasks (the launch's account choice, the runner's stage credential, the job set) 
 | An alias never reaches the node, the task or the record by its own name (F4) | AL1 `TestPublishWritesTheResolvedAccountNotTheAlias`, `TestLaunchTaskCarriesTheResolvedAccount` |
 | Resolution comes before the allow-list; an alias never admits an account the repository is not admitted to (F6) | AL1 `TestLaunchRefusesAnAliasWhoseTargetIsNotAdmitted` |
 | An alias is never in the shared file, the project layer or `fugaro.yaml` (F5, F7) | AL0 `TestSharedDropsAliases`, `TestSharedConfigRefusesAliases` |
-| One namespace: an alias never shares a name with an account, credential or pool (F8, D2072) | AL0 `TestAliasNameCollisionsRefused` |
-| No chains, no pool targets, no non-account targets (D2073) | AL0 `TestAliasTargetRules` |
-| A run in flight keeps the account its launch resolved (the ruling; F3, D2074) | AL2 `TestMixedRunKeepsItsLaunchAccountAfterARepoint` |
-| The mixed-stage fallback admits nothing the node does not (D2074) | AL2 `TestMixedRunRefusesALaunchAccountTheNodeDoesNotAdmit` |
-| A repoint never deletes a job variant (D2075) | AL1 `TestRepointKeepsTheOldTargetVariant` |
-| The repoint is refused in a coding agent's session (D2077) | AL3 `TestAccountsAliasSetRefusedInAgentSession` |
+| One namespace: an alias never shares a name with an account, credential or pool (F8, D2092) | AL0 `TestAliasNameCollisionsRefused` |
+| No chains, no pool targets, no non-account targets (D2093) | AL0 `TestAliasTargetRules` |
+| A run in flight keeps the account its launch resolved (the ruling; F3, D2094) | AL2 `TestMixedRunKeepsItsLaunchAccountAfterARepoint` |
+| The mixed-stage fallback admits nothing the node does not (D2094) | AL2 `TestMixedRunRefusesALaunchAccountTheNodeDoesNotAdmit` |
+| A repoint never deletes a job variant (D2095) | AL1 `TestRepointKeepsTheOldTargetVariant` |
+| The repoint is refused in a coding agent's session (D2097) | AL3 `TestAccountsAliasSetRefusedInAgentSession` |
 | `fugaro update` converges an installation with no alias block byte for byte (HARD RULE; F4) | AL0 `TestLocalConfigWithoutAliasesRoundTrips` |
 | `accounts ls --json` only gains a member (a field never changes meaning) | AL3 `TestAccountsLsJSONListsAliasesAdditively` |
 
@@ -59,7 +60,7 @@ tasks (the launch's account choice, the runner's stage credential, the job set) 
   `TestSharedDropsAliases`, `TestSharedConfigRefusesAliases`, `TestLocalConfigWithoutAliasesRoundTrips`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/config ./internal/localcfg -run 'Alias|ChoiceKeys|RoundTrips' -count=1 && GOFLAGS=-p=2 go test ./internal/cli -run 'SharedConfigRefusesAliases' -count=1`.
 - **Red step:** `TestChoiceKeysMayNameAnAlias` fails on `choiceRefProblem`'s "not defined here" sentence.
-- **Depends on:** D2070, D2072, D2073 answered; **#2274 (MC5) and #2247 merged** (both edit
+- **Depends on:** D2090, D2092, D2093 answered; **#2274 (MC5) and #2247 merged** (both edit
   `internal/localcfg/localcfg.go`), and #1994 if it is still open then (same file).
 - **Tier:** opus; level 3 (it decides what a credential-choosing key may hold).
 - **Commit:** `config: account aliases in the local config, their rules and the resolver (AL0)`.
@@ -77,14 +78,14 @@ tasks (the launch's account choice, the runner's stage credential, the job set) 
 - **Tests:** `TestLaunchResolvesAnAliasOnEveryRung`, `TestLaunchRefusesAnAliasWhoseTargetIsNotAdmitted`,
   `TestLaunchTaskCarriesTheResolvedAccount`, `TestPublishWritesTheResolvedAccountNotTheAlias`,
   `TestRepointIsAPublishWidening` (the existing `policyAccountWidening` line, F10),
-  `TestJobSetBuildsTheTargetVariant`, `TestRepointKeepsTheOldTargetVariant` (D2075: the old target's
+  `TestJobSetBuildsTheTargetVariant`, `TestRepointKeepsTheOldTargetVariant` (D2095: the old target's
   variant stays in `WorkflowAccounts` until a retirement — the mechanism is this task's, chosen after the
   red test settles the UNVERIFIED item), and, if #2252 has merged, `TestCraftMigrationResolvesAnAlias`
-  in `internal/cli/init_craft_migrate.go`'s test (D2082).
+  in `internal/cli/init_craft_migrate.go`'s test (D2102).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Alias|RepointIsAPublishWidening|CraftMigrationResolves' -count=1 && GOFLAGS=-p=2 go test ./internal/infra -run 'JobSetBuildsTheTargetVariant|RepointKeepsTheOldTargetVariant' -count=1`.
 - **Red step:** `TestLaunchResolvesAnAliasOnEveryRung` fails: `claudeAccountAllowed` refuses the alias
   as an undefined account.
-- **Depends on:** AL0; D2071, D2075, D2082 answered.
+- **Depends on:** AL0; D2091, D2095, D2102 answered.
 - **Serialization against open PRs:** `internal/cli/run.go` is edited by #2240, #2246, #2250, #2202 and
   #2170; `internal/infra/spec.go` by #2282, #2170, #2166 and #1994; `init_policy_publish.go` by #2274 and
   #2247. AL1 starts on whatever of those has merged and rebases on the rest; it shares no level with
@@ -104,7 +105,7 @@ tasks (the launch's account choice, the runner's stage credential, the job set) 
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'MixedRun' -count=1`.
 - **Red step:** `TestMixedRunKeepsItsLaunchAccountAfterARepoint` fails with `stageAgentEnv`'s refusal of
   a token the job does not hold.
-- **Depends on:** D2074 answered. Independent of AL0: it guards a hand edit of a stage key as well.
+- **Depends on:** D2094 answered. Independent of AL0: it guards a hand edit of a stage key as well.
   **Serialization:** #2256 edits `internal/runner/agentenv.go`; AL2 waits for it.
 - **Tier:** opus; level 3 (a stage's credential in the runner).
 - **Commit:** `runner: a mixed run keeps the account its launch resolved (AL2)`.
@@ -126,7 +127,7 @@ tasks (the launch's account choice, the runner's stage credential, the job set) 
   `TestAccountsLsJSONListsAliasesAdditively`, `TestSettingsRegistryHasTheAliasRow`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'AccountsAlias|AccountsRmRefusesAnAliasTarget|AccountsLsJSON|SettingsRegistryHasTheAliasRow' -count=1 && GOFLAGS=-p=2 go test ./internal/settings ./schemas -count=1`.
 - **Red step:** `TestAccountsAliasSetWritesAndConverges` fails: `accounts alias` is an unknown command.
-- **Depends on:** AL0, AL1; D2076, D2077, D2079, D2081 answered.
+- **Depends on:** AL0, AL1; D2096, D2097, D2099, D2101 answered.
 - **Serialization:** `internal/cli/accounts.go` (#2282), `internal/cli/accounts_rm.go` (#2252),
   `internal/settings/registry.go` and `schemas/settings.schema.json` (#2274, #2281, #2245, #2247, #2162,
   #1994).
@@ -186,6 +187,6 @@ usual "run `fugaro update`", which asks nothing new.
 
 ## Later (not tasks)
 
-- Craft access naming an alias, after model-crafts MC5 (D2080).
-- A follow-up that follows a repoint, if D2078 is answered (b).
-- An alias field in the run record, if D2079 is answered (b).
+- Craft access naming an alias, after model-crafts MC5 (D2100).
+- A follow-up that follows a repoint, if D2098 is answered (b).
+- An alias field in the run record, if D2099 is answered (b).
