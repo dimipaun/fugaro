@@ -51,7 +51,10 @@
 // facts of its own, and both travel beside the document rather than inside it:
 // the server time of the tick in `X-Fugaro-Tick`, and, for the handshake that
 // proves which process holds this port (CG13b), the id and the start-time nonce
-// in `X-Fugaro-Orchestrator` and `X-Fugaro-Nonce`.
+// in `X-Fugaro-Orchestrator` and `X-Fugaro-Nonce`. The handshake is answered to
+// a caller that proved the token and to no refusal at all
+// (TestTheRefusalCarriesNoIdentityHeaders): a local process with no credential
+// learns nothing about what holds the port.
 //
 // This package is core and stays core: the daemon is core and may not import
 // ee/, and nothing here needs to.
@@ -437,7 +440,8 @@ func writeEvent(w http.ResponseWriter, rc *http.ResponseController, at time.Time
 // the token receives, the 503 before the first tick included -- the handshake
 // asks whether this process is the one the registry file describes, which is a
 // question about the process and not about its state -- and on no refusal at
-// all, so a caller with no token learns nothing about what is behind the port.
+// all, so a caller with no token learns nothing about what is behind the port
+// (TestTheRefusalCarriesNoIdentityHeaders, which holds both halves).
 func (s *Server) identify(h http.Header) {
 	h.Set(headerOrchestrator, s.id)
 	h.Set(headerNonce, s.nonce)

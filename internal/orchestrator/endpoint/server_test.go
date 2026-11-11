@@ -170,8 +170,33 @@ func (f *endpointFixture) do(method, path, query, host string, headers map[strin
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
+	return f.serve(r)
+}
+
+// callerWait is how long a directly driven request has before its caller counts
+// as gone (see serve). It is a little longer than streamPoll, because a request
+// that reached the stream by mistake writes its first event at once and then has
+// to wait for a tick before it can notice, and far shorter than any timeout a
+// package would be given.
+const callerWait = 5 * time.Second
+
+// serve drives one request through the handler under the bounded context every
+// directly driven request gets, and hands back the recorder.
+//
+// The bound is what keeps a broken guard an assertion failure instead of a hang.
+// A case here asserts a refusal's status, so a regression that let the request
+// past its guard would drop it into the stream handler -- which writes to the
+// recorder happily and then waits for a reader that is not there, because a
+// recorder is not a socket and nothing will ever close it. The stream waits on
+// the request's own context as well as the server's, so a caller that goes away
+// after callerWait is one it notices: ServeHTTP returns and the case fails at
+// the status it was written for, rather than at the package's timeout.
+func (f *endpointFixture) serve(r *http.Request) *httptest.ResponseRecorder {
+	f.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), callerWait)
+	defer cancel()
 	rec := httptest.NewRecorder()
-	f.srv.ServeHTTP(rec, r)
+	f.srv.ServeHTTP(rec, r.WithContext(ctx))
 	return rec
 }
 
@@ -286,8 +311,7 @@ func TestTokenOnEveryRequestIncludingTheStream(t *testing.T) {
 	two := httptest.NewRequest(http.MethodGet, "http://"+f.srv.Addr()+routeState, nil)
 	two.Header.Add(authorizationHeader, "Bearer "+f.srv.Token())
 	two.Header.Add(authorizationHeader, "Bearer "+wrong)
-	rec := httptest.NewRecorder()
-	f.srv.ServeHTTP(rec, two)
+	rec := f.serve(two)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("two Authorization headers: %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
@@ -504,6 +528,65 @@ func TestTheRefusalNeverCarriesTheToken(t *testing.T) {
 	rec := f.do(http.MethodGet, "/state/other", "", f.srv.Addr(), f.bearer())
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("an unknown route: %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+// TestTheRefusalCarriesNoIdentityHeaders is identify's other half: the handshake
+// headers go to a caller that proved the token and to no refusal at all.
+//
+// What they would give away is the whole of what CG13b's handshake is worth. A
+// process with no credential that is handed the orchestrator's id and the nonce
+// this one was started with holds both halves of the answer a reader compares
+// its registry file against, and the file's mode 0600 and the token are then the
+// only things left between a local process and a claim on the port -- so a
+// refusal that carried them would be a refusal that answered the handshake it
+// was refusing.
+func TestTheRefusalCarriesNoIdentityHeaders(t *testing.T) {
+	f := newFixture(t)
+	wrong, err := mint()
+	if err != nil {
+		t.Fatalf("minting a second token: %v", err)
+	}
+	refusals := map[string]*httptest.ResponseRecorder{
+		"no token at all":                f.do(http.MethodGet, routeState, "", f.srv.Addr(), nil),
+		"a token that is not the one":    f.do(http.MethodGet, routeState, "", f.srv.Addr(), map[string]string{authorizationHeader: "Bearer " + wrong}),
+		"the stream with no token":       f.do(http.MethodGet, routeStream, "", f.srv.Addr(), nil),
+		"a Host that is not the literal": f.do(http.MethodGet, routeState, "", "localhost:1", f.bearer()),
+		"a method that is not GET":       f.do(http.MethodPost, routeState, "", f.srv.Addr(), f.bearer()),
+		"a query string":                 f.do(http.MethodGet, routeState, "token="+wrong, f.srv.Addr(), f.bearer()),
+		"an unknown route":               f.do(http.MethodGet, "/state/other", "", f.srv.Addr(), f.bearer()),
+	}
+	for name, rec := range refusals {
+		if rec.Code < 400 {
+			t.Errorf("%s: %d, want a refusal", name, rec.Code)
+		}
+		if got := rec.Header().Get(headerOrchestrator); got != "" {
+			t.Errorf("%s carries %s: %q", name, headerOrchestrator, got)
+		}
+		if got := rec.Header().Get(headerNonce); got != "" {
+			t.Errorf("%s carries the nonce the endpoint was started with", name)
+		}
+		// Nor a tick: a refusal is not a document, so there is no tick whose time
+		// it could be.
+		if got := rec.Header().Get(headerTick); got != "" {
+			t.Errorf("%s carries %s: %q", name, headerTick, got)
+		}
+	}
+
+	// The contrast, which is what makes it a rule rather than an accident of what
+	// refuse happens to write: a caller that proved the token is answered the
+	// handshake even when there is no state to serve yet, which is the case CG13b
+	// reads it in.
+	f.untick()
+	before := f.do(http.MethodGet, routeState, "", f.srv.Addr(), f.bearer())
+	if before.Code != http.StatusServiceUnavailable {
+		t.Fatalf("before the first tick: %d, want %d", before.Code, http.StatusServiceUnavailable)
+	}
+	if got := before.Header().Get(headerOrchestrator); got != endpointID {
+		t.Errorf("the 503 names the orchestrator as %q, want %q", got, endpointID)
+	}
+	if got := before.Header().Get(headerNonce); got != f.srv.Nonce() {
+		t.Errorf("the 503 does not carry the nonce the endpoint was started with")
 	}
 }
 
