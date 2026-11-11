@@ -22,6 +22,7 @@ nothing edited and the named design partners left out.
 | [spec.md](spec.md) | The engineering sections of the agenda, verbatim |
 | [reconciliation.md](reconciliation.md) | Findings F1-F22 against the code and the earlier rulings, decisions D400-D412 with the owner's answers, resolutions R1-R5, tensions T1-T2 (both closed), items O1-O2, UNVERIFIED U1, U3-U5 (U3 and U4 settled). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices G1 (`fugaro estimate`), G2 (four landing pages), G3 (SECURITY check), G5 (licensing note); levels, critical path, shared-files table. Nothing in it is approved |
+| [security-check.md](security-check.md) | G3.1's verification note: every secrets-flow claim `SECURITY.md` and the site's security page make, checked against the code at `c964639f6` with `file:line` evidence, a claim/holds/gap table, and the four gaps with wording for the owner to approve. `SECURITY.md` is untouched by it |
 
 ## The numbers this work holds
 
