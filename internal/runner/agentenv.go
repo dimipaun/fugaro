@@ -133,10 +133,11 @@ func (r *run) imageEnv(declared []string) map[string]string {
 //
 // A node that names another account than the one this run was launched with
 // does not move the stage (D2094): a repoint moves new launches only, so the
-// stage is served with the run's own account — held to the node's own admission
-// of it — and the difference is logged. That is the one window a repoint leaves
-// open (docs/account-aliases/reconciliation.md F3), and the same window a hand
-// edit of a stage key opens.
+// stage is served with the run's own account — held to the node's admission of
+// it where the node states one (admitStageAccount) — and the difference is
+// logged. That is the one window a repoint leaves open
+// (docs/account-aliases/reconciliation.md F3), and the same window a hand edit
+// of a stage key opens.
 func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error) {
 	if r.cfg == nil || r.cfg.Agent.Auth != "api-key" {
 		// The mix exists to give an api-key run a Claude review credential it
@@ -231,12 +232,22 @@ func (r *run) launchAccount() string {
 // the node's own admission (D2094): the account may keep serving the stage only
 // where the published policy's accounts.<name>.allow_repos admits this
 // repository — the same list the launch asks before it starts anything
-// (claudeAccountAllowed, internal/cli) — so a repoint can neither widen a
-// token's reach nor leave a stage on a token whose reach the node no longer
-// admits. A node that no longer describes the account is refused the same way:
-// its reach would then be bounded by nothing this run can read. stage and node
-// are the two names a refusal names, so an operator reading it sees which key
-// moved.
+// (claudeAccountAllowed, internal/cli) — so a repoint cannot widen a token's
+// reach past what the node now admits. stage and node are the two names a
+// refusal names, so an operator reading it sees which key moved.
+//
+// Where the node describes no list for the account there is nothing to hold the
+// stage to, and the stage keeps the launch's account on the admission the launch
+// itself made (claudeAccountMembership over claude_accounts.<name>.allow_data_to,
+// internal/cli). That is not a leniency: a node that says nothing about the
+// account is the ordinary shape of a mixed project, not an anomaly — the
+// accounts block is derived from the profiles that name an account
+// (projectpolicy.DeriveAccounts), while claude_account_stages is copied from the
+// owner's config whole, and the mix's account need be named by no profile at all
+// (its job is the repository's own variant, internal/infra's mixedStageAccounts).
+// Refusing an in-flight run there would be the cost ruling D2094 chose against —
+// a repoint that fails a launched, not-yet-bootstrapped run closed
+// (docs/account-aliases/reconciliation.md F3 and its alternative (c)).
 //
 // The repository the list is read about is named the way this run's own job
 // names it, which is the pair the rest of the run reads: a project job's
@@ -245,11 +256,11 @@ func (r *run) launchAccount() string {
 // slug it was launched with derives (providerForSlug). A run admitted to a
 // project job is therefore judged by its job's provider and not by its slug.
 func (r *run) admitStageAccount(p *projectpolicy.Policy, stage, own, node string) error {
-	intro := fmt.Sprintf("the %s stage is %q in the published policy and this run was launched with %q: a repoint moves new launches only (D2094), so this run keeps the account its launch resolved, and it may keep it only where the node still admits this repository to that account", stage, node, own)
 	acct, ok := p.Accounts[own]
 	if !ok {
-		return fmt.Errorf("%s, and accounts.%s is absent, so nothing bounds the repositories %q's token may be used by. The run stops rather than serving the stage with a token the node does not admit for this repository", intro, own, own)
+		return nil
 	}
+	intro := fmt.Sprintf("the %s stage is %q in the published policy and this run was launched with %q: a repoint moves new launches only (D2094), so this run keeps the account its launch resolved, and it may keep it only where the node still admits this repository to that account", stage, node, own)
 	kind := ""
 	if job, project := r.projectJob(); project {
 		kind = job.Provider
@@ -264,7 +275,7 @@ func (r *run) admitStageAccount(p *projectpolicy.Policy, stage, own, node string
 		}
 	}
 	if canonical == "" {
-		return fmt.Errorf("%s, and this run's repository (%s) cannot be named the way the published policy writes repositories, so accounts.%s.allow_repos cannot be read. The run stops rather than serving the stage with a token whose reach nothing bounds", intro, r.spec.Repo, own)
+		return fmt.Errorf("%s, and this run's repository (%s) cannot be named the way the published policy writes repositories, so the node's accounts.%s.allow_repos cannot be applied to it. The run stops here rather than keeping the stage on an account whose admission the node does state and this run cannot read — the halt checkProjectJobAccount makes when it cannot name a project job's repository either", intro, r.spec.Repo, own)
 	}
 	if projectpolicy.AdmitRepo(acct.AllowRepos, canonical) {
 		return nil
