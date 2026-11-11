@@ -595,7 +595,7 @@ func (t roadmapTools) expectDocument(ctx context.Context, path, expect string) e
 		return fmt.Errorf("%w: the roadmap record was not read", ErrStoreUnreadable)
 	}
 	if current != expect {
-		return fmt.Errorf("the record has moved since this request was built: it holds the version %q and the request expected %q; read the record again and send what it holds", current, expect)
+		return fmt.Errorf("the record has moved since this request was built: it holds the version %s and the request expected %s; read the record again and send what it holds", safetext.Field(current), safetext.Field(expect))
 	}
 	return nil
 }
