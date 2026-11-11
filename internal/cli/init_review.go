@@ -396,13 +396,16 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 // The role is half of it, and the other half is that this cover cannot say one:
 // a member the node raised from operator to admin is in the outputs' operator
 // list and in the run's admin list, so announcing them under the list they came
-// from would name a person whose plan grants them the ADMIN's roles — the member
-// is announced at the role the outputs hold them at and nowhere else, which for
-// a raised member is nowhere at all.
+// from would name a person whose plan grants them the ADMIN's roles — a member
+// is announced where the outputs and the list agree on their role, which for a
+// member the node raised is nowhere: the list they came from holds them at the
+// lower role, and the raised role is the one the plan grants.
 //
 // Such a member is a grant nobody at this terminal made, and the screen's own
-// sentence is that a plan granting anyone the screen did not list stops and
-// asks its own typed confirmation. Listing them would take that line back: the
+// sentence is that a plan granting anyone it did not list is not covered: the
+// step names the grant in its banner and applies it on the confirmation every
+// step takes, and a managed project's gate refuses it outright (askOrdinary,
+// confirmPlanned). Listing them would take that line back: the
 // screen would show the member under the local config's name, the cover would
 // accept the plan that grants them, and one `--yes` passed for something else
 // would be the whole of the agreement. Excluding them is what makes the gate

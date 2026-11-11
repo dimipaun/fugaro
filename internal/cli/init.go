@@ -684,6 +684,19 @@ type initRun struct {
 	accessHeld     []string
 	accessHeldRead bool
 
+	// accessHeldOperators and accessHeldAdmins are what accessHeld is made of:
+	// the members the installation's own outputs hold at each of the two roles,
+	// this run's own flags included (update_access.go's heldAccess). They are
+	// kept because the announcement is taken twice — the installation root takes
+	// it again off the node its own apply carries, whose read is later than the
+	// roles step's (announceHeld, deriveAccessAgain) — and the second take is the
+	// same question asked of lists that have changed, not a second read of the
+	// outputs, which do not change while a run is in flight. A revoked member
+	// stays in them: their absence from the run's lists is what says the run
+	// applies a revocation, and nothing announces or admits a removal by it.
+	accessHeldOperators []string
+	accessHeldAdmins    []string
+
 	// landFlags writes the roles step's two nodes into the cloud — the
 	// migration's, and this run's own --operator/--admin folded into it — and it
 	// is what the installation root calls once the run is past its confirmation

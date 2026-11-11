@@ -489,6 +489,12 @@ func TestPlanOnlyWritesNoNodeAndLandsNoList(t *testing.T) {
 		if got := members(v["operators"]); len(got) != 0 {
 			t.Errorf("the plan's operators are %v, want none: the run named only --operator\n%s", got, all)
 		}
+		// The member this run named is one this terminal was told about, and the
+		// outputs hold them at no role: what the read reports is what the NODE
+		// added, so the run's own flag is not one of its additions (heldAccess).
+		if strings.Contains(all, "the grants node holds user:new@example.com") {
+			t.Errorf("a member this run named on its own flag was reported as the grants node's own addition:\n%s", all)
+		}
 	})
 }
 
@@ -816,6 +822,12 @@ func TestAGrantTheInstallationNeverHeldNamesItself(t *testing.T) {
 // judges plans by refuses the plan that grants them, and the step that plans it names
 // the grant in its banner (heldAccess) — while the member the outputs hold at that same
 // role stays listed and silent, which is the control.
+//
+// The plan the fixture holds is the grant itself, one create: a real promotion's
+// plan also deletes the member's two `launchers_only` grants (iam.tf:274), and
+// tf.Guard asks about a delete on its own account — HardeningAllowDelete allows
+// the pair only in the other direction, a demotion. What is pinned here is the
+// cover and the banner, which is where the announcement is decided.
 func TestAPromotionInTheNodeNamesItself(t *testing.T) {
 	const ops = "user:ops@example.com"
 	// The node holds the member at the role the ticket is about, and the outputs do not.
@@ -848,6 +860,12 @@ func TestAPromotionInTheNodeNamesItself(t *testing.T) {
 		if err == nil || !strings.Contains(all, "real terminal") {
 			t.Fatalf("the role the node raised a member to was confirmed with no terminal and no --yes: %v\n%s", err, all)
 		}
+		// The sentence the refusal comes after is the step's own, naming the member
+		// and the role: without it the run would stop here for any step it cannot
+		// confirm, which is why the run stopping is not on its own this test.
+		if !strings.Contains(all, "granting "+ops+", which the review did not announce") {
+			t.Errorf("the run stopped without naming the grant the node raised the member to:\n%s", all)
+		}
 		if calls := subcommands(r.calls(t)); slices.Contains(calls, "apply") {
 			t.Errorf("a run whose raised role was not confirmed applied the installation: %q\n%s", calls, all)
 		}
@@ -864,8 +882,12 @@ func TestAPromotionInTheNodeNamesItself(t *testing.T) {
 		if err == nil {
 			t.Fatalf("a managed project's gate admitted the role the node raised a member to:\n%s", got)
 		}
-		if !strings.Contains(got, ops) {
-			t.Errorf("the gate's refusal does not name the member it refused:\n%s", got)
+		// The refusal's own rule, not just the member's name: the name is in the run
+		// either way — the roles step's warning says it — and what has to hold is
+		// that the gate refused the grant for the cover's reason, the member not
+		// being on the review screen at the role the plan grants them.
+		if !strings.Contains(got, "refused by cover: grants to "+ops+", who is not on the review screen") {
+			t.Errorf("the gate's refusal does not name the cover's own reason for refusing the member:\n%s", got)
 		}
 		if n := len(r.ran(t, "apply")); n != 0 {
 			t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
@@ -886,6 +908,66 @@ func TestAPromotionInTheNodeNamesItself(t *testing.T) {
 			t.Errorf("a member the installation's own outputs hold as an admin was treated as the node's own promotion:\n%s", all)
 		}
 	})
+}
+
+// TestAPromotionLandedAfterTheRolesStepNamesItself: the roles step reads the
+// grants node once, and the installation root reads it again for the lists its
+// own apply carries (F29a, deriveAccessAgain), so a promotion landing in between
+// is in that apply's lists. The announcement is taken again with them (F29a's
+// window one member further): the members the installation's own outputs hold at
+// each role do not change while a run is in flight, the run's own lists do, and
+// the member the node raised is announced nowhere — the step that plans them
+// names the grant in its banner, exactly as it does for the member the roles
+// step itself found, and a managed project's gate judges the plan by this same
+// cover (TestAPromotionInTheNodeNamesItself).
+//
+// The two reads are the fake database's, held apart so this test can land the
+// promotion in exactly that window: the first hold is released with the node as
+// it was — the member is an operator the installation already holds, so the
+// roles step announces them and nothing is said — and the raise lands while the
+// second read is in flight. A run that re-derived its lists there without
+// re-taking the announcement carries the admin's roles inside one --yes.
+func TestAPromotionLandedAfterTheRolesStepNamesItself(t *testing.T) {
+	const ops = "user:ops@example.com"
+	r, db := accessRig(t, nil, nil, []string{ops}, nil)
+	db.Set(accesslib.PathNode, accessNodeDoc(projectGrant(ops, accesslib.RoleOperator)))
+	updating(t, r)
+	r.setPlanAt(t, "installation", grantChange("runs_object_admin", ops, "roles/storage.objectAdmin", "create"))
+	fakeTerminal(t)
+	stampedStep, releaseStep := db.HoldNext(accesslib.PathNode)
+	stampedApply, releaseApply := db.HoldNext(accesslib.PathNode)
+	done := make(chan struct{})
+	var out, errOut string
+	var err error
+	go func() {
+		defer close(done)
+		out, errOut, err = executeStdin(t, "", "update", "--yes")
+	}()
+	<-stampedStep
+	releaseStep()
+	select {
+	case <-stampedApply:
+	case <-time.After(10 * time.Second):
+		releaseApply()
+		<-done
+		t.Fatalf("the apply never read the grants node again: the lists it carries are the roles step's read\n%s", out+errOut)
+	}
+	// The other machine's write lands now, while this run's apply is about to read
+	// the node for the lists it will carry: the operator the installation holds is
+	// raised to an admin.
+	db.Set(accesslib.PathNode, accessNodeDoc(projectGrant(ops, accesslib.RoleAdmin)))
+	releaseApply()
+	<-done
+	all := accessOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("fugaro update failed around the promotion: %v\n%s", err, all)
+	}
+	if got := members(r.tfvars(t)["operators"]); !slices.Equal(got, []string{ops}) {
+		t.Fatalf("the plan's admins are %v, want the member the node raised: the apply carries the node's latest lists\n%s", got, all)
+	}
+	if !strings.Contains(all, "granting "+ops+", which the review did not announce") {
+		t.Errorf("the admin's roles the node raised the member to are applied in silence: the announcement is the roles step's read, not the one the apply carries:\n%s", all)
+	}
 }
 
 // TestTheReviewAnnouncesTheInstallationsMembersNotTheNodesAdditions: the review

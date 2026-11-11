@@ -170,7 +170,9 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 // put that member into the review screen's lists, the screen's cover would
 // accept the plan that grants them, and one `--yes` an operator passed for
 // something else would be the whole of the agreement: the review's own sentence
-// is that a plan granting anyone the screen did not list stops and asks.
+// is that a plan granting anyone it did not list is shown, named in the step's
+// own banner, and applied rather than covered (init_review.go's askOrdinary),
+// and that the gate of a managed project refuses it outright.
 //
 // A ROLE is what the two lists are read apart for, and the write that makes it
 // matter needs no more than roles/firebasedatabase.admin: a member the outputs
@@ -179,15 +181,24 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 // the runs and state buckets, serviceAccountUser on the job accounts, the build
 // submitter. The cover (tf.Cover.Listed) is members and cannot see a role, so
 // naming that member under the role the outputs DO hold them at would put those
-// grants inside one --yes: a member is announced only at the role the outputs
-// hold them at, and one the node raised is announced nowhere.
+// grants inside one --yes: a member is announced where the outputs and the run's
+// own list agree on their role, and a member the node RAISED is announced
+// nowhere — the list they came from holds them at the lower role, and the raised
+// role is the one the plan grants.
 //
 // Read once per converge, before the loop's first stage, because the screen is
 // printed from the same lists the cover judges: a member the outputs hold and
 // the node does not is a revocation this run applies, which the screen says,
 // and a member the node holds and the outputs do not — at that role, or at all
-// — is the grant this is about. A first run has no outputs to read and nothing
-// to tell apart: its lists are the flags it was given, which are the run's own.
+// — is the grant this is about. What it reads is kept and taken again by the
+// root's own derive, off the node that apply carries (announceHeld).
+//
+// A first run reads no outputs: its lists are the flags it was given, which are
+// the run's own. A new machine is a first run with an installation already
+// there, and it tells nothing apart either — a reason of its own and not this
+// one's: it writes its own config and leaves, and every stage that would change
+// the cloud refuses while that is true (init_new_machine.go's newMachineGuard),
+// so the lists this read would filter are never a plan's.
 func (e *initEngine) heldAccess(ctx context.Context) {
 	if e.firstRun() {
 		return
@@ -226,17 +237,45 @@ func (e *initEngine) heldAccess(ctx context.Context) {
 		operators = append(operators, e.r.o.admins...)
 		admins = append(admins, e.r.o.admins...)
 	}
-	// The members the node holds that the outputs do not hold at the role this
-	// run's own list puts them at: the ones it added, and the ones it raised.
-	added := sortedMembers(slices.Concat(
-		addedTo(e.spec.Launchers, operators),
-		addedTo(e.spec.Operators, admins),
-	))
-	held := sortedMembers(slices.Concat(operators, admins))
-	e.r.accessHeld, e.r.accessHeldRead = withoutMembers(held, added), true
-	if len(added) > 0 {
+	// The two lists are kept, not just the announcement they make: the
+	// installation root derives again for its own apply, off a node it reads
+	// itself, and takes the announcement again with those lists (announceHeld).
+	e.r.accessHeldOperators, e.r.accessHeldAdmins = operators, admins
+	e.r.accessHeldRead = true
+	if added := e.announceHeld(); len(added) > 0 {
 		e.r.warn(fmt.Sprintf(accessAdded, safetext.FieldListLine(added)))
 	}
+}
+
+// announceHeld is the announcement the review screen and its cover are made of
+// — the members the installation's own outputs hold at the role the run's own
+// list places them at, plus the ones this run named on its flags — taken from
+// heldAccess's two per-role reads and the run's own lists AS THEY ARE NOW.
+//
+// It is taken twice, and the second time is F29a's own window one member
+// further: heldAccess takes it before the loop's first stage, and the
+// installation root takes it again when it derives its lists off a node it reads
+// for itself, immediately before the tfvars its plan is built from
+// (deriveAccessAgain). A member the node raised in between is held by the
+// outputs at the operators' role while that plan grants them the admin's, so an
+// announcement still made of the roles-step read would put the admin's roles
+// inside one --yes — the grant this whole read exists to keep out of it. What
+// the apply is judged by is this, and it is asked of the plan the apply carries,
+// because the cover is taken when a step is judged and not when it is planned.
+//
+// It returns the members the announcement dropped, which is what the accessAdded
+// sentence names. Only the first take warns: that sentence is about the screen,
+// whose lists are printed once, while the members the second take drops are named
+// by the step that plans them, before that step's confirmation
+// (grantsNotAnnounced).
+func (e *initEngine) announceHeld() []string {
+	added := sortedMembers(slices.Concat(
+		addedTo(e.spec.Launchers, e.r.accessHeldOperators),
+		addedTo(e.spec.Operators, e.r.accessHeldAdmins),
+	))
+	held := sortedMembers(slices.Concat(e.r.accessHeldOperators, e.r.accessHeldAdmins))
+	e.r.accessHeld = withoutMembers(held, added)
+	return added
 }
 
 // addedTo is the members of one of this run's derived lists the installation's
@@ -255,7 +294,12 @@ func addedTo(list, held []string) []string {
 	return sortedMembers(out)
 }
 
-// withoutMembers is members without the ones in drop.
+// withoutMembers is members without the ones in drop: the announcement is the
+// members held at either role (announceHeld) without the ones only the grants
+// node holds. The drop is read as names rather than per role, because a member
+// the node RAISED is dropped from the list they came from as well: it holds them
+// at the lower role, and an announcement that kept them there would be the cover
+// accepting the plan that grants the raised one.
 func withoutMembers(members, drop []string) []string {
 	return slices.DeleteFunc(members, func(m string) bool { return slices.Contains(drop, m) })
 }
@@ -789,6 +833,12 @@ func (e *initEngine) deriveAccessAgain(ctx context.Context) (operators, admins [
 		}
 	}
 	e.deriveAccess(node)
+	if e.r.accessHeldRead {
+		// The announcement is taken again with the lists (announceHeld): a member
+		// this read finds raised in the node is the same grant nobody here made,
+		// and the plan below is the one that would carry the raised role's IAM.
+		e.announceHeld()
+	}
 	return e.spec.Launchers, e.spec.Operators, true, nil
 }
 
