@@ -113,15 +113,31 @@ func runIssueSubmit(cmd *cobra.Command, ref string, ask bool) error {
 		return err
 	}
 	// The project this run files for, and its store: its names are what the post
-	// is scrubbed of (F4), and the digest of its runs bucket is the installation
+	// is scrubbed of (F4) and the digest of its runs bucket is the installation
 	// that says which of the records in this machine's one issues folder are
 	// this project's own (F8b). This is `list`, `show` and `mine`'s own
-	// resolution, so the records this command files are the project those
-	// commands answered for. A run with no project, or one that cannot reach the
-	// store, resolves neither and files what this machine has (issueFile).
+	// resolution — mineProject, the one openIssueShared reads too — so the
+	// records this command files are the project those commands answered for. A
+	// run with no project, or one that cannot reach the store, resolves neither
+	// and files what this machine has (issueFile).
+	//
+	// It is deliberately read here rather than taken from the store: a coding
+	// agent's session resolves no store at all (F10) and still has to scrub, and
+	// the names are the local config and the checkout — the same files a session
+	// is free to read — so a preview a session prints is the preview a person
+	// would have printed. Without this a session would also file nothing of this
+	// project's own: every stamped record would read as another project's
+	// (issueForeign).
+	lc, err := mineProject(ctx)
+	if err != nil {
+		lc = nil
+	}
+	installation := ""
+	if lc != nil {
+		installation = issues.Digest(lc.BucketURL())
+	}
 	sh := openIssueShared(ctx, agent)
 	defer sh.Close()
-	lc, installation := sh.lc, sh.installation
 	// A record this run writes is stamped with the project that wrote it, so an
 	// issue filed here is never carried by another project's commands and never
 	// filed a second time into another project's repository.

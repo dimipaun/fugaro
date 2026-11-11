@@ -640,6 +640,51 @@ func TestIssueSubmitRefusesInAgentSession(t *testing.T) {
 	}
 }
 
+// TestIssueSubmitAgentSessionStillPreviewsItsOwnProject: what a coding agent's
+// session is refused is the write, and not the read (F10). The session reaches
+// no store, but the names the post is scrubbed of are the local config and the
+// checkout, so a plain `submit` there previews what a person's would — the
+// project's own names taken out (F4) — and a record this project stamped is
+// still this project's own rather than another project's (F8b, issueForeign):
+// a session that resolved no project would refuse the user's own issue as
+// somebody else's.
+func TestIssueSubmitAgentSessionStillPreviewsItsOwnProject(t *testing.T) {
+	store := issueSubmitState(t)
+	withTerminal(t, true)
+	t.Setenv("CLAUDECODE", "1")
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+	i := savedIssue("48213", issues.StatusPending, false)
+	i.Summary = "the acme/widget upload fails"
+	i.Installation = issues.Digest(issueSubmitBucket)
+	if err := store.Save(i); err != nil {
+		t.Fatalf("saving: %v", err)
+	}
+
+	out, _, err := execute(t, "issue", "submit", i.LocalID)
+	if err != nil {
+		t.Fatalf("a coding agent's session previewing its own project's issue: %v\n%s", err, out)
+	}
+	if got := len(spy.creates()); got != 0 {
+		t.Errorf("a coding agent's session filed %d issue(s)", got)
+	}
+	if !strings.Contains(out, "the [REDACTED] upload fails") {
+		t.Errorf("a coding agent's session previewed the project's own names:\n%s", out)
+	}
+	for _, name := range []string{"acme", "widget", "aurora", "proj-1234"} {
+		if strings.Contains(out, name) {
+			t.Errorf("the preview carries %q, which the post is scrubbed of (F4):\n%s", name, out)
+		}
+	}
+	back, err := store.Get(i.LocalID)
+	if err != nil {
+		t.Fatalf("reading the issue back: %v", err)
+	}
+	if back.Status != issues.StatusPending || back.URL != "" || back.Installation != i.Installation {
+		t.Errorf("a preview left the issue %q with URL %q and installation %q, want it untouched", back.Status, back.URL, back.Installation)
+	}
+}
+
 // TestIssueSubmitAskRefusesWithoutATerminal: `--ask` at a pipe asks nothing and
 // files nothing — a confirmation nobody can answer is a refusal and never a
 // silent proceed — and the refusal is this command's own line rather than the

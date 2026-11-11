@@ -13,7 +13,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/issues"
-	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // issue_sync.go holds the shared half of the `issue` family: the command that
@@ -38,11 +37,6 @@ type issueShared struct {
 	// installation is the digest of the runs bucket URL: the name this
 	// machine's own records and snapshots are filed under (F8b).
 	installation string
-	// lc is the project config this store was resolved from, nil for a run that
-	// has no project. It is what the commands that call the project's own names
-	// scrub with (issueNames, F4), so the names and the store are one
-	// resolution rather than two that could disagree.
-	lc *localcfg.Config
 	// deps is what the identity lookup runs against. A coding agent's session
 	// sets NoLookup, so the credential is never asked (F10).
 	deps  issues.Deps
@@ -83,7 +77,6 @@ func openIssueShared(ctx context.Context, agent string) *issueShared {
 		return sh
 	}
 	sh.installation = issues.Digest(lc.BucketURL())
-	sh.lc = lc
 	b, err := mineOpen(ctx, lc)
 	if err != nil {
 		sh.notes = append(sh.notes, "note: the project's shared store could not be opened ("+oneLine(err.Error())+")")
