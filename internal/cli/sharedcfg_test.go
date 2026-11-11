@@ -739,12 +739,14 @@ func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
 			}
 		})
 	}
-	// The two keys this release added are in it: the map decides which image
-	// each repository's jobs execute (D1906) and the switch decides whether a
+	// The keys this release added are in it: the map decides which image each
+	// repository's jobs execute (D1906) and the switch decides whether a
 	// repository is baked at all (D1901), so a launcher who could write either
 	// into the shared file would be choosing what code every teammate's runs
-	// run -- the catalog's own reason, one step out.
-	for _, k := range []string{"image_map", "bake_repos"} {
+	// run -- the catalog's own reason, one step out -- and the triage switch
+	// decides which of a review round's findings hold a pull request back
+	// (D1854), which is the floor's reason one level down.
+	for _, k := range []string{"image_map", "bake_repos", "triage"} {
 		if !slices.Contains(sharedForbidden, k) {
 			t.Errorf("sharedForbidden does not name %s, so a published %s would be read", k, k)
 		}
@@ -762,6 +764,7 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 	for _, tc := range []struct{ name, yaml string }{
 		{"image_map", "image_map:\n    acme/app: tools\n"},
 		{"bake_repos", "bake_repos: false\n"},
+		{"triage", "triage: false\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := localcfg.Parse([]byte(validShared() + tc.yaml))

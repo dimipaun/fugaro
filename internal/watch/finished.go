@@ -14,7 +14,7 @@ import (
 // by the same scanner as queued runs (design generic-tool §10.1).
 type FinishedRun struct {
 	Run, Slug, Title, Workflow string
-	Status                     string // runstore status: succeeded, failed, halted, cancelled, infra_error
+	Status                     string // runstore status: succeeded, failed, unreviewed, halted, cancelled, infra_error
 	Outcome                    string // ready, draft, none, reviewed, artifacts
 	PRNumber                   int
 	PRURL                      string
@@ -38,8 +38,10 @@ func cleanURL(url string) string {
 
 // isFailure reports whether status, a FinishedRun's runstore status, is one
 // of the design's failure statuses (generic-tool §10.3, the retention rule
-// a later task uses): failed, halted or infra_error. succeeded and
-// cancelled are not failures: a cancelled run was withdrawn, not botched.
+// a later task uses): failed, halted or infra_error. succeeded, cancelled and
+// unreviewed are not failures: a cancelled run was withdrawn, not botched,
+// and an unreviewed run finished its loop and pushed what nobody read, so its
+// draft is a thing to look at rather than an outage (spec §8.4, D996).
 func isFailure(status string) bool {
 	switch status {
 	case string(runstore.StatusFailed), string(runstore.StatusHalted), string(runstore.StatusInfraError):

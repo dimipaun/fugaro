@@ -1,5 +1,5 @@
 == the region question: fugaro setup's own, asked once
-Region (the installation's jobs and the scheduler) [us-east5]:
-== the Firestore location: the database's own, permanent, typed
+the region the installation's jobs and the scheduler run in [us-east5]
+Type the region the installation's jobs and the scheduler run in:
+== the Firestore location: the database's own, permanent, and nothing is typed for it
 ⚠ CONFIRM (project aurora): the Firestore database is created in us-east5, and a database's location can NEVER be changed.
-Type us-east5 to create it there:

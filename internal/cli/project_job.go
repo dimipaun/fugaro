@@ -63,31 +63,88 @@ type launchProjectJob struct {
 func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*launchProjectJob, error) {
 	// The workflow's own checkout: says whether this is a clone workflow, and
 	// which profile it selects. Both are read from the repository's own
-	// fugaro.yaml, so a checkout that cannot be read — the working directory
-	// is not repo's (fugaro run --repo ... from a machine that does not hold
-	// it), or it is and the file is missing or does not resolve over the
-	// project layer — leaves no answer to either. checkoutParse says nil for
-	// both, and the refusal below names both.
+	// fugaro.yaml, and checkoutParse answers nil for two states that are not
+	// one case: the working directory is not repo's checkout at all (fugaro
+	// run --repo ... from a machine that does not hold it), or it is and the
+	// working tree cannot give the file. The branch below is the ordered
+	// decision that tells them apart — what the provider rules out, what the
+	// checkout's own objects can answer, and what is left to refuse.
+	//
+	// Where a checkout is here and its tree has no document, this launch has
+	// already resolved the ref for every reader of it (withLaunchDocument):
+	// checkoutParse answers that document, so the gates the launch passed and
+	// the job decided here are judged by one file. The read below is what a
+	// caller that resolved none (the daemon's own launches have no checkout, a
+	// test calls this directly) gets instead, and it is the same read.
 	co := checkoutConfig(ctx, spec.Repo)
 	if co == nil {
-		// For an installation that has published no profiles the per-repository
-		// job is not a guess: it is the only job there is, and every launch
-		// runs on it. With profiles the launch cannot tell a baked workflow's
-		// per-repository job from a clone workflow's shared one, and picking
-		// either silently would start the run on a job it may not belong to —
-		// so the ambiguity is refused, naming the way out.
+		// A launch with no config in hand is an ordered decision, and the
+		// provider is its first question (D908): no shared job serves Bitbucket
+		// (infra.SharedJobProvider — a Bitbucket credential cannot be scoped to
+		// one project's repositories, the owner's ruling of 2026-10-15), so for
+		// such a repository the per-repository job is not a guess about a
+		// document nobody read: it is the same answer the checkout path gives
+		// for the same repository, from the same fact. It is asked of the
+		// repository's own provider rather than of the profile's because there
+		// is no profile to read here, and it is asked through
+		// localRepoProvider, which needs no checkout (F3): the comparison below
+		// would dereference a nil co, and the local config's entry is the one
+		// source that answers without a document.
 		//
-		// The read is only the question "has this project published profiles
-		// at all", so a policy this CLI cannot read is not refused here: that
-		// is the launch gate's and the runner's refusal, in their own words,
-		// and it is not this decision's — a launcher that calls jobs.run
-		// itself must not be stopped by a job it resolves
-		// (TestPolicySinceGateIsNotOnTheRunnerPath).
+		// Only a provider this command knows and no shared job serves rules the
+		// shared job out. An unknown one does not: the local entry's provider is
+		// optional (localcfg), and the slug's own answer is the checkout's
+		// git.provider, which a launch with no checkout cannot read — so ruling
+		// the shared job out on the entry's silence would let a launch past the
+		// document below onto a job the policy did not choose (D905). It falls
+		// through instead, and the refusals below answer as for any other
+		// provider.
+		provider := e.localRepoProvider(spec.Repo)
+		if provider != "" && !infra.SharedJobProvider(provider) {
+			return nil, nil
+		}
+		// The read below is only the question "has this project published
+		// profiles at all", and it is asked before any document is looked for
+		// because it decides whether there is anything to decide: with no
+		// profile published the per-repository job is not a guess — it is the
+		// only job there is, and every launch runs on it — so a launch that
+		// cannot read a document is left on it rather than refused. A policy
+		// this CLI cannot read is not refused here either: that is the launch
+		// gate's and the runner's refusal, in their own words, and it is not
+		// this decision's — a launcher that calls jobs.run itself must not be
+		// stopped by a job it resolves (TestPolicySinceGateIsNotOnTheRunnerPath).
 		p, found, err := e.policy.read(ctx, e.lc)
 		if err != nil || !found || p == nil || len(p.Profiles) == 0 {
 			return nil, nil
 		}
-		return nil, userErr("fugaro run --repo %s cannot tell which Cloud Run job it targets: the working directory is not %s's checkout, or its fugaro.yaml could not be read (see fugaro validate). A workflow's checkout: kind and profile are read from that checkout's fugaro.yaml, and a clone workflow runs on a shared project job where a baked one runs on the repository's own. Run it from %s's checkout", spec.Repo, spec.Repo, spec.Repo)
+		// Then the document, where a checkout of the repository exists at all:
+		// checkoutParse answers nil both when this working directory holds no
+		// checkout and when it holds one whose fugaro.yaml the working tree
+		// cannot give (missing, or unparseable), and only the second of those
+		// has objects to read (D909). The ref's file is read out of them and
+		// resolved exactly as the working tree's would have been, so the rest
+		// of this decision, and every gate after it, is unchanged.
+		root := checkoutRoot(ctx, spec.Repo)
+		if root == "" {
+			return nil, outsideXCheckout(spec.Repo, spec.Ref)
+		}
+		d, resolved := launchDocumentOf(ctx)
+		if !resolved {
+			d = refDocumentOf(ctx, root, spec.Ref)
+		}
+		if d.err != nil {
+			return nil, cannotReadConfigAtRef(spec.Repo, spec.Ref, d.err)
+		}
+		if d.cfg == nil {
+			// The ref resolved and its commit carries no fugaro.yaml: a
+			// repository with no document anywhere selects no clone workflow
+			// and no profile, and the project layer is never resolved on its
+			// own, so the per-repository job is not a fallback but the answer —
+			// the same one the checkout path gives for a workflow the
+			// repository's own file does not define (spec.md §2, §7).
+			return nil, nil
+		}
+		co = d.cfg
 	}
 	w, ok := co.Workflows[spec.Workflow]
 	if !ok || w.Checkout != config.CheckoutClone {
@@ -241,11 +298,171 @@ func (i *projectJobIndex) ref(job string) watch.JobRef {
 // repoProvider is repo's git provider kind as repoSlug resolves it: the local
 // config's entry first, then the checkout's fugaro.yaml (repoSlug has already
 // refused the two disagreeing by the time a launch gets here).
+//
+// A nil co is not a panic but an empty answer: a caller with no checkout has
+// localRepoProvider and nothing else to read (F3), and a form that reached
+// here with one would be asking a document that does not exist.
 func (e *cloudEnv) repoProvider(repo string, co *config.Config) string {
-	if r, ok := e.localRepo(repo); ok && r.Provider != "" {
-		return r.Provider
+	if p := e.localRepoProvider(repo); p != "" {
+		return p
+	}
+	if co == nil {
+		return ""
 	}
 	return co.Git.Provider
+}
+
+// outsideXCheckout refuses a launch with no checkout of the repository
+// anywhere, on a project that has published at least one profile (D912).
+//
+// It is the one of the two no-checkout refusals whose way out is the
+// checkout: this working directory is not one, and the document the launch had
+// to read — the repository's fugaro.yaml at the ref the run checks out, which
+// is where a workflow's `checkout:` kind and its `job_profile` come from — is
+// in it. The ref is named with the repository because it is half of what the
+// read is, and an operator with two checkouts of the repository needs to know
+// which document decides the job.
+func outsideXCheckout(repo, ref string) error {
+	return userErr("fugaro run --repo %s cannot tell which Cloud Run job it targets: this working directory is not %s's checkout, so its fugaro.yaml at %s — the file a workflow's `checkout:` kind and its `job_profile` are read from — is not here to read. A clone workflow runs on a shared project job of the profile it selects, where every other workflow runs on the repository's own job, so without that file the launcher cannot tell the two apart and does not guess. Run it from %s's checkout", repo, repo, oneLineCLI(ref), repo)
+}
+
+// cannotReadConfigAtRef refuses a launch whose checkout is here but whose
+// document at the ref could not be read out of it (D912).
+//
+// It is the other no-checkout refusal, and its way out is not the checkout:
+// the operator is standing in it (F2 — the merged message sent them to the
+// directory they are already in). What failed is the read of the ref's
+// document: a ref this checkout does not hold, or a fugaro.yaml that does not
+// resolve over the project layer. Both are D905's "a read that fails is a
+// refusal": the job cannot be decided, and a run placed on a job the project's
+// policy did not choose is worse than a refusal. Nothing of the launch
+// happened, and the message says so, as every other gate of this decision does.
+func cannotReadConfigAtRef(repo, ref string, cause error) error {
+	return userErr("fugaro run --repo %s cannot tell which Cloud Run job it targets: %s's fugaro.yaml at %s could not be read out of this checkout (%s). A workflow's `checkout:` kind and its `job_profile` are read from that file at the ref the run checks out, which is the document the run itself resolves after cloning it — so a launch cannot decide the job from another ref, or from the working tree. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. A ref this checkout does not hold can be fetched or checked out; a document that does not resolve is what fugaro validate reports", repo, repo, oneLineCLI(ref), oneLineCLI(cause.Error()))
+}
+
+// launchDocumentKey is the context key withLaunchDocument installs.
+type launchDocumentKey struct{}
+
+// launchDocument is what a launch resolved about the repository's own
+// fugaro.yaml where the working tree could not give one, installed for the
+// whole launch so that every reader of it answers from one document
+// (withLaunchDocument, checkoutParse).
+//
+// One document and not two is the whole point of it. The gates of a launch
+// read the workflow's kind, its checkout mode and its recipe from this
+// document, and the job it runs on is decided from it too: a launch whose
+// gates judge a working tree with no fugaro.yaml — read as "no clone workflow"
+// — and whose job decision judges the ref's own file starts runs no gate
+// looked at, on the shared clone job, with cloneSince's base image, the seal,
+// the recipe, the levels and the governance gates all skipped.
+type launchDocument struct {
+	// root is the checkout this answer was read out of: it is given to a
+	// reader asking about that same checkout and to no other.
+	root string
+	// cfg is the fugaro.yaml at the ref the run checks out. It is nil when
+	// that ref's tree carries none — a repository with no document anywhere,
+	// which selects no clone workflow and no profile and keeps the
+	// per-repository job (spec.md §2, §7) — and it is nil, with root set, for
+	// a launch with no checkout of the repository at all, which answers
+	// nothing here and is the job decision's own refusal (outsideXCheckout).
+	cfg *config.Config
+	// problems are the working tree's own: a document at the ref answers for
+	// none of them, and the one refusal that reads them (refuseSharedCheckout)
+	// still has to fire on the file the operator wrote.
+	problems []config.Problem
+	// err is a read that failed — a ref this checkout does not hold, a
+	// fugaro.yaml its objects cannot produce, a document that does not resolve
+	// over the project layer. It is D905's refusal, and it is kept rather than
+	// raised here because the launch that needs the answer is the one that
+	// asks for it: an installation that published no profile decides nothing
+	// from a document, and is not refused for one it could not read.
+	err error
+}
+
+// withLaunchDocument resolves the repository's own document for this launch
+// where the working tree cannot give one, once, and installs it as the answer
+// every reader of that launch gets (checkoutParse).
+//
+// Read where the tree has none, and only there: the launcher holds the
+// operator's checkout, and a tree carrying a fugaro.yaml is what this launch
+// judges, as it always has. Where the tree cannot give one — no file, or one
+// that does not resolve — the answer is the document at the ref the run checks
+// out, out of the checkout's own object database, exactly as the run resolves
+// that file after cloning the ref (refConfigAtRef, D909). The alternative is
+// not "no answer": it is every gate that reads this document judging a
+// repository the run will not see.
+//
+// A launch with no checkout of the repository is left alone — the daemon's own
+// launches, or a run --repo from a machine that does not hold it: there is
+// nothing to read, the gates judge as they did, and the job decision refuses
+// for the reason it already has.
+func withLaunchDocument(ctx context.Context, repo, ref string) context.Context {
+	if _, ok := launchDocumentOf(ctx); ok {
+		return ctx
+	}
+	cfg, problems := checkoutParse(ctx, repo)
+	if cfg != nil {
+		return ctx
+	}
+	root := checkoutRoot(ctx, repo)
+	if root == "" {
+		return ctx
+	}
+	d := refDocumentOf(ctx, root, ref)
+	d.problems = problems
+	return context.WithValue(ctx, launchDocumentKey{}, d)
+}
+
+// launchDocumentOf is this launch's own answer about the repository's
+// document, where it resolved one.
+func launchDocumentOf(ctx context.Context) (launchDocument, bool) {
+	d, ok := ctx.Value(launchDocumentKey{}).(launchDocument)
+	return d, ok
+}
+
+// refDocumentOf is the document at the ref the run checks out, read out of the
+// checkout at root (refConfigAtRef) as a launch document: no cfg and no error
+// for a ref whose tree carries no fugaro.yaml, err for a read that failed.
+func refDocumentOf(ctx context.Context, root, ref string) launchDocument {
+	d := launchDocument{root: root}
+	d.cfg, d.err = refConfigAtRef(ctx, root, ref)
+	return d
+}
+
+// refConfigAtRef is the document a launch reads where the working tree could
+// not give it: spec's fugaro.yaml at the ref the run checks out, out of the
+// checkout's own object database (checkoutFugaroYAMLAtRef — a local git
+// cat-file, never the network and never the working tree), resolved over the
+// project layer the working tree's own resolution uses (checkoutParse:
+// selectedProjectConfig and a lenient resolution, so both documents are
+// composed the same way).
+//
+// It returns (nil, nil) for one definite answer — the ref resolved and its
+// tree carries no fugaro.yaml, which checkoutFugaroYAMLAtRef establishes from
+// the tree rather than from a read that failed — because that is a repository
+// with no document: it selects no clone workflow and no profile, so its launch
+// keeps the per-repository job (spec.md §2, §7). Every other failure is an
+// error for the caller to refuse with, cause and all: a ref the checkout does
+// not hold, a fugaro.yaml the tree names and this checkout cannot produce, a
+// project layer that cannot be read, and a document that does not resolve are
+// reads that failed, and D905 refuses rather than falling back.
+func refConfigAtRef(ctx context.Context, root, ref string) (*config.Config, error) {
+	data, err := checkoutFugaroYAMLAtRef(ctx, root, ref)
+	if err != nil {
+		if errors.Is(err, errNoConfigAtRef) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	rf, err := resolveFugaroYAML(ctx, data, selectedProjectConfig(ctx), layerOptions{Lenient: true})
+	if err != nil {
+		return nil, err
+	}
+	if rf.Cfg == nil {
+		return nil, errors.New(layerProblemsText(rf.Problems))
+	}
+	return rf.Cfg, nil
 }
 
 // projectJobAccountFor is the account axis of the job a launch on profile pr
@@ -683,6 +900,12 @@ var readFugaroYAMLAtRef = checkoutFugaroYAMLAtRef
 // turn. Nothing is fetched here — a fetch is a network write into a repository
 // this command does not own — so a ref this checkout does not hold is an
 // error rather than a guess at another document.
+//
+// The one error of its own that a caller may read as an answer is
+// errNoConfigAtRef, and it means exactly one state: the ref resolved and its
+// tree has no fugaro.yaml. Every other error — including a fugaro.yaml the
+// tree names but this checkout cannot produce — is a read that failed, and
+// callers refuse on it (D905).
 func checkoutFugaroYAMLAtRef(ctx context.Context, root, ref string) ([]byte, error) {
 	if ref == "" {
 		return nil, errors.New("the launch names no ref")
@@ -698,12 +921,48 @@ func checkoutFugaroYAMLAtRef(ctx context.Context, root, ref string) ([]byte, err
 	if at == "" {
 		return nil, fmt.Errorf("this checkout holds no %s ref (fetch it, or check it out)", ref)
 	}
-	data, err := gitCmd(ctx, root, "cat-file", "blob", at+":fugaro.yaml").Output()
+	// Whether the commit carries the file is asked of its tree, not of the
+	// read's exit status: cat-file fails both for a path the tree does not
+	// have and for a file it does have whose object this checkout cannot
+	// produce — one it never got (a promisor clone whose lazy fetch did not
+	// run), one pruned, one corrupt. Only the first is errNoConfigAtRef's
+	// definite answer, and D905 refuses the second rather than reading it as
+	// it: a launch that did would take the claim and mint the budget token on
+	// a job the project's policy did not choose, with nothing downstream to
+	// catch it (a per-repository job carries no profile).
+	listed, err := gitRead(ctx, root, "ls-tree", at, "--", "fugaro.yaml")
 	if err != nil {
-		return nil, fmt.Errorf("%s has no fugaro.yaml at it", at)
+		return nil, fmt.Errorf("%s's tree could not be read out of this checkout (%s)", at, oneLineCLI(err.Error()))
 	}
-	return data, nil
+	if listed == "" {
+		return nil, fmt.Errorf("%s has %w", at, errNoConfigAtRef)
+	}
+	out, err := gitCmd(ctx, root, "cat-file", "blob", at+":fugaro.yaml").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("%s names a fugaro.yaml this checkout could not read (%s)", at, oneLineCLI(gitFailure(err, out)))
+	}
+	return out, nil
 }
+
+// gitFailure is a failed git call's own words where it printed any: git puts
+// the reason a read failed on stderr — a missing object, a corrupt one — and
+// that is what tells a refusal's reader whether to fetch or to repair.
+func gitFailure(err error, out []byte) string {
+	if text := strings.TrimSpace(string(out)); text != "" {
+		return text
+	}
+	return err.Error()
+}
+
+// errNoConfigAtRef is checkoutFugaroYAMLAtRef's one definite answer: the ref
+// resolved, and the tree of the commit it names has no fugaro.yaml in it. It
+// is never a read that failed — checkoutFugaroYAMLAtRef establishes this
+// absence from the tree so that the two cannot be confused. A caller that can
+// tell it from a failure reads it as "this repository has no document" rather
+// than as a refusal: a repository with no document anywhere selects no clone
+// workflow and no profile, so its launch keeps the per-repository job
+// (refConfigAtRef; spec.md §2, §7).
+var errNoConfigAtRef = errors.New("no fugaro.yaml at it")
 
 // checkProjectJobAuthUnknown refuses a launch onto a shared project job whose
 // own Claude credential the launcher cannot resolve, with the same guarantee

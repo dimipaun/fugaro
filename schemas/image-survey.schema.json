@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/image-survey.schema.json",
+  "title": "Fugaro image survey",
+  "description": "The document `fugaro image survey --json` prints: one row per repository the project's configuration lists, with the image signals that repository carries (its lockfiles and version files, its Dockerfile and the base image it names, its CI file, and the services its compose or Testcontainers files name), and the catalog, repository-to-image map and bake switch the project has today. The read is read-only: each repository is read through the code host's own file API at a fixed list of paths, nothing is cloned and nothing is written, and every value here was bounded by the rule that took it out of a file before it reached this document. A row the survey got no answer from — a provider it could not open, or none of its fixed paths readable — carries unread and no signals; a row at least one of those paths answered carries its signals, empty when none of those files named one, and that is a different thing from the row that carries unread.",
+  "type": "object",
+  "required": [
+    "version",
+    "project",
+    "repos",
+    "setup"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "imageSurveyDocVersion in internal/cli/image_survey.go."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The selected project's name, which is the config the repository list is read from."
+    },
+    "repos": {
+      "type": "array",
+      "description": "One row per repository the project config lists, in name order.",
+      "items": {
+        "$ref": "#/$defs/repo"
+      }
+    },
+    "setup": {
+      "$ref": "#/$defs/setup",
+      "description": "What a rerun of the setup compares against: the catalog, the repository-to-image map and the bake switch the project has today."
+    }
+  },
+  "$defs": {
+    "repo": {
+      "type": "object",
+      "required": [
+        "repo",
+        "signals"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The repository's owner/name, as the project config records it."
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "github",
+            "bitbucket"
+          ],
+          "description": "The git provider the repository was resolved to and read on (gitprov's own kinds). Absent on a row this machine could not resolve a provider for, which is then unread."
+        },
+        "unread": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why this row has no signals: the name is not a repository of this project, no provider could be resolved, the provider cannot read a file out of a repository, opening it failed, or not one of the survey's fixed paths could be read from it. Absent on every row at least one of those paths answered, and a repository whose files were read and name none of the signals carries an empty signals list and no reason. The last reason is not a verdict about the repository: a contents read answers the same error for a file that is not there and for a read that was refused, so a repository that does not exist, a credential that reads nothing there, and a repository holding none of the survey's files — one whose files are all outside the fixed list, a Terraform-only or docs-only repository, say — are one answer here, and this document does not guess which."
+        },
+        "signals": {
+          "type": "array",
+          "description": "The signals the repository carries, in the survey's own fixed order. Empty on a row whose files were read and named none of them, and on a row whose every fixed path came back unreadable (which then carries unread).",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "lockfile",
+            "version",
+            "dockerfile",
+            "ci",
+            "compose",
+            "testcontainers"
+          ],
+          "description": "What the signal is (the Kind constants of internal/imagesurvey). A consumer branches on a kind only here, so a fifth kind is a new member of this enum and never a re-meant old one."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The fixed repository-relative path the signal was read from: the survey's own constant, never a path the repository named."
+        },
+        "value": {
+          "type": "string",
+          "description": "What the rule bounded out of that file: a manager's name, a version, a base image reference, or the services a compose or Testcontainers file names, comma-separated. A service name is one of the closed list a catalog entry's own services: key takes — postgres, redis, firebase — and never a tag: the Firebase emulator is `firebase` here, while `firebase-emulator` is a tag an entry may carry beside it. Absent when the signal is the file's own presence, which is the answer for a lockfile, a CI file, a Dockerfile whose FROM line is not a reference the survey carries, and a compose file naming no service Fugaro starts."
+        }
+      }
+    },
+    "setup": {
+      "type": "object",
+      "required": [
+        "catalog",
+        "image_map",
+        "bake_repos"
+      ],
+      "description": "What a rerun of the setup compares against: the catalog, the repository-to-image map and the bake switch the project has today (F16, D1901/D1906). Each is the effective one — this machine's own project config when it states it, the published policy node's otherwise (D1140) — because that is what a build and a run would use, and each is read through projectpolicy's own typed fields rather than as a document; unread is why they are then this machine's own rather than the project's.",
+      "properties": {
+        "catalog": {
+          "type": "array",
+          "description": "The project's catalog entries, in the order the catalog lists them: this machine's own when its config states one, the published node's otherwise (D1140).",
+          "items": {
+            "$ref": "#/$defs/catalogEntry"
+          }
+        },
+        "image_map": {
+          "type": "object",
+          "description": "The repository-to-image map the project has today, owner/name to the catalog entry that builds it: this machine's own when its config states one, the published node's otherwise. Empty on a project that maps nothing, which is a setting and not an unread one.",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "bake_repos": {
+          "type": "boolean",
+          "description": "Whether a build bakes the mapped repositories into the derived image (D1901). Absent in a config and in the node means true, so the default is reported here as a value rather than left out."
+        },
+        "unread": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why the three above are this machine's own rather than the project's: the published policy node could not be read. Absent when the project published nothing, which is not a failed read — a project that never published these keys has an empty map and bakes (D1901), and that is a fact about it."
+        }
+      }
+    },
+    "catalogEntry": {
+      "type": "object",
+      "required": [
+        "name",
+        "source"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tags": {
+          "type": "array",
+          "description": "The entry's tags, as written.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "default": {
+          "type": "boolean",
+          "description": "Whether this entry is the catalog's default (D1146). Absent on an entry that is not, which is every entry of a catalog that marks none."
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The entry's source as a person reads it: `dockerfile owner/name:path@branch`, `inline`, or `image <ref>` (image_catalog.go's catalogSourceLine)."
+        },
+        "description": {
+          "type": "string",
+          "description": "The entry's own description. Absent when it has none."
+        }
+      }
+    }
+  }
+}

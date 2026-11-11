@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,8 +23,7 @@ import (
 //
 // The question list itself is setup.go's `setupQuestions`, and
 // TestEveryWizardQuestionHasAFlag is the contract on it: every question has a
-// flag, so a scripted run never needs a terminal for anything but the typed
-// confirmations.
+// flag, so a scripted run never needs a terminal to answer one.
 
 // wizardRun is the wizard on the harness init_inputs_test.go already has: a
 // first run (no project config anywhere), a working directory outside any
@@ -52,6 +53,9 @@ var wizardAnswers = map[string]string{
 	"--gcp-project": "proj-1234\n",
 	"--region":      "\n",
 	"--name":        "\n",
+	// The bake question's suggestion is yes (IS7), and Enter is the answer
+	// every run of this harness that is about something else gives it.
+	"--bake-repos": "\n",
 }
 
 // stdinFor builds the stdin that answers every question but the one a test
@@ -76,6 +80,11 @@ func optionsFor(flag string) *initOptions {
 		o.cloud.region = defaultRegion
 	case "--name":
 		o.name = "aurora"
+	case "--bake-repos":
+		// The value the flag names, and the fact that it was passed: a run that
+		// answers the question with the flag is the run whose answer the local
+		// config keeps, either way (init.go's bakeReposChanged).
+		o.bakeRepos, o.bakeReposChanged = true, true
 	}
 	return o
 }
@@ -84,11 +93,12 @@ func optionsFor(flag string) *initOptions {
 // contract in one place: a question the wizard asks is a question a scripted
 // run can answer, and the flag that answers it is on `fugaro setup`.
 //
-// It is checked against the wizard rather than trusted. Every row's label is a
-// prompt the run actually prints, in the table's order, when nothing else
-// answers it; it disappears when the row's own flag answers the same question;
-// and its flag is one `fugaro setup` declares and shows. A question added
-// without a row — or a row for a question nobody asks any more — fails here.
+// It is checked against the wizard rather than trusted. Every row's question
+// (`what`, the name the run prints above its value entry) is printed in the
+// table's order when nothing else answers it; it disappears when the row's own
+// flag answers the same question; and its flag is one `fugaro setup` declares
+// and shows. A question added without a row — or a row for a question nobody
+// asks any more — fails here.
 //
 // The last column is the one --non-interactive prints, and it is read off the
 // product too: a run with no terminal names every question it cannot answer,
@@ -119,16 +129,21 @@ func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 		}
 	}
 
-	// Asked: the wizard prints the table's labels, and in its order.
+	// Asked: the wizard prints the table's questions, and in its order.
 	r, out := wizardRun(t, stdinFor(""), nil)
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	at := 0
 	for _, q := range setupQuestions {
-		i := strings.Index(out.String()[at:], q.label)
+		i := strings.Index(out.String()[at:], q.what)
+		if i < 0 && q.flag == "--bake-repos" {
+			// Asked under its label: its what is a clause and not a thing to
+			// type after "Type".
+			i = strings.Index(out.String()[at:], q.label)
+		}
 		if i < 0 {
-			t.Errorf("%s: the wizard did not ask %q, in the order the table lists it:\n%s", q.flag, q.label, out)
+			t.Errorf("%s: the wizard did not ask %q, in the order the table lists it:\n%s", q.flag, q.what, out)
 			continue
 		}
 		at += i
@@ -141,8 +156,8 @@ func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 			if err := r.gatherInputs(t.Context()); err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}
-			if strings.Contains(out.String(), q.label) {
-				t.Errorf("%s answered the question, and the wizard asked %q anyway:\n%s", q.flag, q.label, out)
+			if strings.Contains(out.String(), q.what) {
+				t.Errorf("%s answered the question, and the wizard asked %q anyway:\n%s", q.flag, q.what, out)
 			}
 		})
 	}
@@ -210,8 +225,8 @@ func TestSetupAsksNoCreateOrAdoptQuestion(t *testing.T) {
 // creation for a first run of `setup` and for nothing else — not `update`,
 // which creates nothing, not --config-only or --print-vars, which touch no
 // project, and not a run with a project config. A scripted first run is
-// creating too (its inputs are flags); what it cannot do is type the creation's
-// confirmation, which TestSetupCreatesOnlyWithTheTypedConfirmation pins.
+// creating too (its inputs are flags); what it cannot do is put a person at the
+// terminal, which TestSetupCreatesOnlyForAPersonAtTheTerminal pins.
 func TestFirstRunImpliesCreationOnlyWhereItCanAct(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -299,12 +314,15 @@ func TestCreationFlagsNeedACreation(t *testing.T) {
 	}
 }
 
-// TestSetupCreatesOnlyWithTheTypedConfirmation: the creation is not its own
-// confirmation. A first run's project is created only by the ID typed at a real
-// terminal, and --yes, --json, a pipe and --non-interactive each leave it for
-// you (D12: creating the project is `setup`'s, and `--yes` never covers it).
-// This is the row W0.1's matrix gains for the door that creates.
-func TestSetupCreatesOnlyWithTheTypedConfirmation(t *testing.T) {
+// TestSetupCreatesOnlyForAPersonAtTheTerminal: the creation is not its own
+// confirmation, and no flag takes a person's place. A first run's project is
+// created only where a person is at the terminal, with nothing typed for it
+// (T7, docs/no-prompt-policy); --yes is the one way a person there leaves the
+// step instead, because the creation is initflow.Typed and --yes never covers a
+// Typed step, and --json, a pipe and --non-interactive each leave it for you
+// (D12: creating the project is `setup`'s). This is the row W0.1's matrix gains
+// for the door that creates.
+func TestSetupCreatesOnlyForAPersonAtTheTerminal(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		terminal bool
@@ -312,12 +330,12 @@ func TestSetupCreatesOnlyWithTheTypedConfirmation(t *testing.T) {
 		args     []string
 		created  bool
 	}{
-		{"the ID typed at a terminal", true, newProj + "\n", nil, true},
+		{"a person at the terminal", true, newProj + "\n", nil, true},
 		{"--yes does not stand in for it", true, "yes\n", []string{"--yes"}, false},
-		{"--yes at a terminal, the ID typed", true, newProj + "\n", []string{"--yes"}, true},
-		{"a pipe cannot type it", false, newProj + "\n", nil, false},
-		{"--json cannot type it", true, newProj + "\n", []string{"--json"}, false},
-		{"--non-interactive cannot type it", true, newProj + "\n", []string{"--non-interactive", "--yes"}, false},
+		{"--yes at a terminal leaves it for a rerun", true, newProj + "\n", []string{"--yes"}, false},
+		{"a pipe cannot confirm it", false, newProj + "\n", nil, false},
+		{"--json cannot confirm it", true, newProj + "\n", []string{"--json"}, false},
+		{"--non-interactive cannot confirm it", true, newProj + "\n", []string{"--non-interactive", "--yes"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newProjectRig(t)
@@ -391,7 +409,7 @@ func TestSetupRefusesAnIDThatHoldsAnInstallation(t *testing.T) {
 					t.Errorf("the refusal lacks %q: %v", want, err)
 				}
 			}
-			if strings.Contains(out.String(), "Fugaro project name") {
+			if strings.Contains(out.String(), questionFor("--name").what) {
 				t.Errorf("the run asked for a name before refusing:\n%s", out)
 			}
 		})
@@ -406,7 +424,7 @@ func TestSetupRefusesAnIDThatHoldsAnInstallation(t *testing.T) {
 		if r.o.name != initProjectName || r.o.createProject {
 			t.Errorf("name %q, create %v: want the installation's own name and no creation", r.o.name, r.o.createProject)
 		}
-		if strings.Contains(out.String(), "Fugaro project name") {
+		if strings.Contains(out.String(), questionFor("--name").what) {
 			t.Errorf("the run asked for a name, and the installation has one:\n%s", out)
 		}
 	})
@@ -423,8 +441,8 @@ func TestSetupOutsideACheckoutSkipsTheRepositoryQuestion(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	for _, q := range setupQuestions {
-		if !strings.Contains(out.String(), q.label) {
-			t.Errorf("the wizard did not ask %q outside a checkout:\n%s", q.label, out)
+		if !strings.Contains(out.String(), q.what) && !strings.Contains(out.String(), q.label) {
+			t.Errorf("the wizard did not ask %q outside a checkout:\n%s", q.what, out)
 		}
 	}
 	for _, repo := range []string{"onboard", "repository", "GitHub App"} {
@@ -435,4 +453,244 @@ func TestSetupOutsideACheckoutSkipsTheRepositoryQuestion(t *testing.T) {
 	if r.o.githubAppID != "" || r.o.onboardRepo != "" {
 		t.Errorf("outside a checkout there is no repository to enrol: %q", r.o.onboardRepo)
 	}
+}
+
+// bakeQuestion is the wizard's row for the switch (IS7), read where the run
+// reads it: the sentence the plan pins, and the reason the run can take its
+// answer itself.
+var bakeQuestion = questionFor("--bake-repos")
+
+// TestSetupAsksBakeDefaultYes is IS7's own test (docs/image-setup-skill/
+// implementation-plan.md; D1901): a first run of `fugaro setup` asks whether a
+// repository the build can read is baked into the image its job runs, the
+// suggestion is yes, and the answer is the switch the run writes — which the
+// same run's policy stage publishes, so a job reads it.
+//
+// The question is asked where a person can answer it and nowhere else, which is
+// the owner's rule for a managed project and the reason the row's missing is
+// empty: a run that cannot ask (--yes, --json, a pipe, --non-interactive) is
+// already at this answer, because an absent key means yes — the suggestion the
+// prompt offers. --bake-repos is that answer without a terminal, and the run
+// that writes the switch says what it costs a reader: a rebuild.
+func TestSetupAsksBakeDefaultYes(t *testing.T) {
+	// The rig the last sub-test builds compiles the fake terraform with `go
+	// build`, and the wizard runs above it move this test's working directory
+	// out of the module: the one build every test of this package shares
+	// (fakeTerraform's sync.Once) happens here, while this is still the module.
+	fakeTerraform(t)
+	const sentence = "Bake your repos into the Docker images? This makes jobs start faster."
+	if bakeQuestion.label != sentence {
+		t.Errorf("the wizard's bake question is %q, want the sentence the plan pins (%q)", bakeQuestion.label, sentence)
+	}
+	if bakeQuestion.missing != "" {
+		t.Errorf("%s: the row names %q as a missing input, and this is the one question a run that cannot ask answers itself: an absent key means yes",
+			bakeQuestion.flag, bakeQuestion.missing)
+	}
+	f := newSetupCmd().Flags().Lookup(strings.TrimPrefix(bakeQuestion.flag, "--"))
+	if f == nil || f.Hidden {
+		t.Fatalf("fugaro setup does not declare a visible %s, so a scripted run cannot answer the question it asks", bakeQuestion.flag)
+	}
+
+	// Every other question is answered, so the bake question is this run's only
+	// one and every line read below belongs to it.
+	only := func() *initOptions {
+		return &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}}
+	}
+	ask := func(stdin string) (*initRun, *strings.Builder) {
+		t.Helper()
+		r, out := wizardRun(t, stdin, only())
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		return r, out
+	}
+
+	// Enter takes the suggestion: yes.
+	r, out := ask("\n")
+	if !r.o.bakeReposChanged || !r.o.bakeRepos {
+		t.Errorf("Enter at the bake question recorded (answer %v, answered %v), want the suggestion: yes", r.o.bakeRepos, r.o.bakeReposChanged)
+	}
+	if want := bakeQuestion.label + " [yes]\nType " + bakeQuestion.label + ": "; !strings.Contains(out.String(), want) {
+		t.Errorf("the prompt is not %q:\n%s", want, out)
+	}
+
+	// "no" is the answer a run has to write down: an absent key means yes, so a
+	// no is the one spelling only the file can carry (localcfg.BakeRepos).
+	r, _ = ask("no\n")
+	if !r.o.bakeReposChanged || r.o.bakeRepos {
+		t.Errorf("`no` at the bake question recorded (answer %v, answered %v), want no", r.o.bakeRepos, r.o.bakeReposChanged)
+	}
+
+	// An answer that is neither is asked again rather than taken for one.
+	r, out = ask("maybe\nn\n")
+	if !strings.Contains(out.String(), "answer yes or no") {
+		t.Errorf("an unusable answer was taken instead of being asked again:\n%s", out)
+	}
+	if !r.o.bakeReposChanged || r.o.bakeRepos {
+		t.Errorf("`maybe` then `n` recorded (answer %v, answered %v), want no", r.o.bakeRepos, r.o.bakeReposChanged)
+	}
+
+	// The input ending here stops the run at this question, exactly as it does
+	// at the three above it: the suggestion is what an absent key means for a
+	// run that cannot ask, and that is not the same thing as a person's input
+	// ending — nothing was typed, so there is no answer to record, and what the
+	// run says is which question it is waiting for. The row's empty missing is
+	// about a run with no terminal at all, not about this one.
+	r, out = wizardRun(t, "", only())
+	err := r.gatherInputs(t.Context())
+	if err == nil || !strings.Contains(err.Error(), bakeQuestion.label) || ExitCode(err) != ExitUserError {
+		t.Errorf("the input ended at the bake question and the run reported %v, want the question named as the one it is waiting for:\n%s", err, out)
+	}
+	if r.o.bakeReposChanged {
+		t.Errorf("the input ended at the bake question and the run recorded an answer (%v): nothing was typed", r.o.bakeRepos)
+	}
+
+	// Where nobody can be asked there is no question, and the answer the run
+	// already has is the one it acts on.
+	for _, tc := range []struct {
+		name  string
+		args  func(*initOptions)
+		plain bool
+	}{
+		{"--yes", func(o *initOptions) { o.yes = true }, false},
+		{"--json", func(o *initOptions) { o.asJSON = true }, false},
+		{"--non-interactive", func(o *initOptions) { o.nonInteractive = true }, false},
+		{"--print-vars", func(o *initOptions) { o.printVars = true }, false},
+		// The billing question refuses a pipe by naming its flag (T7), so the
+		// run carries the answer and the bake question is the one left to see.
+		{"a pipe", func(o *initOptions) { o.linkBilling = "0123AB-4567CD-89EF01" }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := only()
+			tc.args(o)
+			r, out := wizardRun(t, "", o)
+			if tc.plain {
+				// No terminal on stdin: the same state --yes is in, without a
+				// flag saying so.
+				noTerminal(t)
+			}
+			if err := r.gatherInputs(t.Context()); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if strings.Contains(out.String(), bakeQuestion.label) {
+				t.Errorf("%s: the run asked the bake question, and nobody can answer it there:\n%s", tc.name, out)
+			}
+			if r.o.bakeReposChanged {
+				t.Errorf("%s: the run recorded an answer nobody gave", tc.name)
+			}
+		})
+	}
+
+	// And the answer reaches the local config the run writes, with the rebuild
+	// it costs said out loud — that is what the switch is: the build's input,
+	// not something the images that exist can be given afterwards.
+	t.Run("the answer is what the run writes", func(t *testing.T) {
+		r := newInitRig(t)
+		out, _, err := executeStdin(t, "", "setup", "--yes", "--bake-repos=false")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		lc, err := localcfg.Load(r.cfg)
+		if err != nil {
+			t.Fatalf("the local config the run wrote does not load: %v", err)
+		}
+		if lc.BakeRepos == nil || *lc.BakeRepos {
+			t.Errorf("the local config carries bake_repos = %v after --bake-repos=false, want a written false", lc.BakeRepos)
+		}
+		if !strings.Contains(out, "fugaro settings set bake_repos") || !strings.Contains(out, "rebuilt") {
+			t.Errorf("the run changed the bake switch and does not say what that costs — the answer is the build's, so the images that exist keep what they were built with:\n%s", out)
+		}
+	})
+}
+
+// convergeLocalConfigPath is the local project config a run of the converge rig
+// reads and writes: the copy registerInstallation leaves in the projects
+// directory, which is the file the run's own writeConfig replaces (the rig
+// keeps FUGARO_CONFIG empty, so the run selects its installation by name).
+func convergeLocalConfigPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", initProjectName+".yaml")
+}
+
+// convergeLocalConfig is that file, read by the loader a run of the project
+// reads it with.
+func convergeLocalConfig(t *testing.T) *localcfg.Config {
+	t.Helper()
+	lc, err := localcfg.Load(convergeLocalConfigPath(t))
+	if err != nil {
+		t.Fatalf("the local config the run wrote does not load: %v", err)
+	}
+	return lc
+}
+
+// TestSetupUpdateConvergesBake is the second test IS7 names, and it is the HARD
+// RULE's (F15; CLAUDE.md): an installation from the release before this one —
+// whose local config and whose published node both say nothing about baking,
+// which is every installation there is, the key being new — reaches the switch
+// with `fugaro update` alone, and what it reaches is the answer the wizard's own
+// question suggests: yes (D1901).
+//
+// Two fixtures, one run each, because that is the whole journey of the key and
+// because one checkout takes one converge: the anchor writes the repository's
+// `gcp_project:` line into fugaro.yaml, so the next run in the same checkout
+// finds a working tree that is not the default branch's and stops at the
+// repository stage, as it should (init_repo_target.go).
+//
+//   - `fugaro update` on the installation that never answered the question:
+//     nothing is asked (the door has no terminal here, and a run whose project
+//     config exists — a managed project — is never asked), nothing is written,
+//     and both readers of the switch already answer yes: the file says nothing
+//     and the node says nothing, which is one statement with a written true to
+//     every reader (localcfg.BakeReposEffective, projectpolicy.Policy.BakesRepos).
+//     The upgrade owes no second command, which is the HARD RULE.
+//   - `fugaro setup --bake-repos=false` — the other door, which converges what
+//     exists rather than creating — writes the answer into the local config and
+//     publishes it to the node in the same run. It is the scripted run's answer
+//     to the question, and the only way a written false can exist: an absent key
+//     means yes, so only a value can say no.
+func TestSetupUpdateConvergesBake(t *testing.T) {
+	t.Run("an installation that never answered the question", func(t *testing.T) {
+		r := newConvergeRig(t, v4Node())
+		// The fixture is an installation of the release before this one: neither
+		// the file nor the node names the key, or none of this is about a switch
+		// that did not exist.
+		if strings.Contains(readFileString(t, convergeLocalConfigPath(t)), "bake_repos") {
+			t.Fatal("the fixture's local config already states bake_repos: it is not an installation from before the key")
+		}
+		if p := convergeNode(t, r); p.BakeRepos != nil {
+			t.Fatalf("the fixture's node already carries bake_repos = %v: it is not an installation from before the key", p.BakeRepos)
+		}
+
+		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		if strings.Contains(out, bakeQuestion.label) {
+			t.Errorf("the update door asked the bake question:\n%s", out)
+		}
+		if p := convergeNode(t, r); p.BakeRepos != nil || !p.BakesRepos() {
+			t.Errorf("after one fugaro update the node's bake_repos = %v: an installation that never answered the question has to read as the wizard's suggestion (yes), or the upgrade owes a second command", p.BakeRepos)
+		}
+		if lc := convergeLocalConfig(t); lc.BakeRepos != nil {
+			t.Errorf("the update wrote bake_repos = %v into a config that said nothing about it, want it left alone: a run that does not state the switch keeps the project's answer", *lc.BakeRepos)
+		}
+		if strings.Contains(out, "fugaro settings set bake_repos") {
+			t.Errorf("the run never changed the bake switch and told the reader about a rebuild anyway:\n%s", out)
+		}
+	})
+
+	t.Run("the answer a run gives the question", func(t *testing.T) {
+		r := newConvergeRig(t, v4Node())
+		out, errOut, err := executeStdin(t, "", "setup", "--yes", "--bake-repos=false")
+		if err != nil {
+			t.Fatalf("fugaro setup --bake-repos=false stopped at %s (exit %d): %v\n%s\n%s", stoppedStage(out), ExitCode(err), err, out, errOut)
+		}
+		lc := convergeLocalConfig(t)
+		if lc.BakeRepos == nil || *lc.BakeRepos {
+			t.Errorf("after the run, the local config's bake_repos = %v, want the written false the flag names: an absent key and a written true are one statement, so a no is the only value the file has to carry", lc.BakeRepos)
+		}
+		if p := convergeNode(t, r); p.BakeRepos == nil || *p.BakeRepos {
+			t.Errorf("after the run, the published node's bake_repos = %v, want the false the same run's local config states: the node is what a job reads", p.BakeRepos)
+		}
+		if !strings.Contains(out, "fugaro settings set bake_repos") {
+			t.Errorf("the run changed the bake switch and does not say what that costs (a rebuild) or where a later change is made:\n%s", out)
+		}
+	})
 }

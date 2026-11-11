@@ -44,6 +44,28 @@ type Entry struct {
 	Tags []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 	// Source is what the image is built from, one of three kinds.
 	Source Source `yaml:"source" json:"source"`
+	// Services are the backing services an image built from this entry
+	// provides, by the names `fugaro-services` starts them with (F12, D1904):
+	// the project-level declaration of what a job's tests need. The entry's
+	// own list is the only source — a repository's text never adds one — and
+	// it is what a run reads back to start the services before its tests.
+	//
+	// It is a closed allowlist (ServiceNames) and not free text, because the
+	// value reaches FUGARO_SERVICES, which the script refuses an unknown name
+	// for: a typo would otherwise fail every test of the image that declares
+	// it, at run time rather than where the operator wrote it.
+	//
+	// It is a key of the CONFIG and never of the node's image_catalog block,
+	// which is what `json:"-"` holds (F20): the block decodes strictly
+	// (projectpolicy's catalogEntryMembers, DisallowUnknownFields), so an
+	// entry member a release does not know makes that reader refuse the WHOLE
+	// policy — and a published node is re-read while runs are in flight (the
+	// credentials service reads it per model call), so publishing this member
+	// would stop runs `fugaro update` promised to leave alone. The published
+	// node carries the same fact as the top-level image_services key, which
+	// every older reader lists in UnknownKeys and tolerates (P8); the
+	// publisher derives it from these lists (projectpolicy.ImageServicesFromCatalog).
+	Services []string `yaml:"services,omitempty" json:"-"`
 	// Description is for a person reading `fugaro image ls`; optional, and
 	// nothing reads it to decide anything.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
@@ -229,6 +251,23 @@ var (
 	catalogImageMessage = "must be a container image reference such as ghcr.io/owner/image:1.2"
 )
 
+// ServiceNames are the services a catalog entry may declare, in the order a
+// refusal names them: postgres, redis and the Firebase emulator, the three
+// `images/common/fugaro-services` starts and the only names it accepts
+// (F12). The list is what an entry's `services:` is held to and what a run
+// hands the script, so the two cannot disagree about which names exist.
+var ServiceNames = []string{"postgres", "redis", "firebase"}
+
+// ValidServiceName reports whether name is a service a catalog entry may
+// declare.
+func ValidServiceName(name string) bool { return slices.Contains(ServiceNames, name) }
+
+// serviceNameMessage is the refusal of a name outside ServiceNames. It does
+// not repeat the name, for the reason catalogTagMessage does not: a refusal
+// that echoed one would put whatever it holds, an escape sequence among it,
+// into a log.
+var serviceNameMessage = "must be one of " + strings.Join(ServiceNames, ", ") + ": the services fugaro-services starts"
+
 // ValidateCatalog checks a project's image catalog (spec.md §Catalog entry).
 // p is the catalog's own path, such as "image_catalog": the rules are stated
 // once here because two files carry a catalog — the local configuration and
@@ -254,6 +293,7 @@ func ValidateCatalog(p string, c Catalog) []Problem {
 			}
 		}
 		validateCatalogTags(ep+".tags", e.Tags, add)
+		validateCatalogServices(ep+".services", e.Services, add)
 		validateCatalogSource(ep+".source", e.Source, add)
 		// A listing prints a description on one line, so it holds no tab and
 		// no newline either: badKeyRune is that rule, and it is the same one
@@ -299,6 +339,27 @@ func validateCatalogTags(path string, tags []string, add func(path, format strin
 			continue
 		}
 		seen[tag] = i
+	}
+}
+
+// validateCatalogServices checks one entry's services: every name is one the
+// script accepts, and no name is listed twice. The duplicate rule is the tag
+// list's, for the tag list's reason: the list is an environment value a run
+// builds the service set from, so a name written twice is a value a person
+// reads as two services and the script reads as one.
+func validateCatalogServices(path string, services []string, add func(path, format string, args ...any)) {
+	seen := make(map[string]int, len(services))
+	for i, s := range services {
+		sp := fmt.Sprintf("%s[%d]", path, i)
+		if !ValidServiceName(s) {
+			add(sp, "%s", serviceNameMessage)
+			continue
+		}
+		if j, dup := seen[s]; dup {
+			add(sp, "duplicates %s[%d]", path, j)
+			continue
+		}
+		seen[s] = i
 	}
 }
 

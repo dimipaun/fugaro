@@ -347,7 +347,7 @@ func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.P
 		return 0, userErr("nothing was published: this fugaro cannot compare executable key %s: upgrade it or file a bug", cerr)
 	}
 	if len(changes) > 0 {
-		fmt.Fprintln(w, "=== EXECUTABLE CHANGES: these run as shell in every repository that takes the profile ===")
+		fmt.Fprintln(w, executableChangesBanner)
 		for _, c := range changes {
 			fmt.Fprintln(w, "  "+pluginwire.Printable(c))
 		}
@@ -438,6 +438,13 @@ func layerDiffText(a, b string) string {
 	}
 	return printableLines(lineDiff(a, b))
 }
+
+// executableChangesBanner is the line above the executable changes of a project
+// layer, and it is one constant because two doors print it: `fugaro config
+// publish`, over the document it uploads, and `fugaro settings set|unset` on the
+// layer file, over the document it edits (layerExecutableGate, G4). A person who
+// reads one of them has read the other, which is what the flag on both asks.
+const executableChangesBanner = "=== EXECUTABLE CHANGES: these run as shell in every repository that takes the profile ==="
 
 // executableChanges lists, per profile, each executable key
 // (config.ExecutableKeys) whose stored value differs between prev (nil:

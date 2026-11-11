@@ -498,7 +498,9 @@ sub-tasks** (D1246). One input is external to this repository: BF1 is not on `ma
   plan only, D1-D26 open) or the coordinator's resident service (`ee/coordinator`, P7/P8 not started); the addendum treats them as one
   ("like the coordinator").
 - **U8.** Live behaviour: nothing in this reconciliation was run against a real installation (RTDB, Firestore or Cloud Run). No owner check
-  number is claimed.
+  number is claimed. **Check 300 has since run — PASSED 2026-11-10, installation `fugaro`** (the register's row and section): the
+  `orchestrator/` subtree, its marker and the person-write against the credential-less refusal are now read live, and the rest of the live
+  behaviour this list carries stays open.
 - **U9.** Which surface would deliver a push (Q3). Verified against `main`: the repository carries **no** push implementation. The phone's push is
   design-only (`docs/mobile/design/push-notifications.md`, Task P5.2, Phase 5 unscheduled; D121's "no push in v1", answered 2026-10-17), and the
   app depends only on Firebase analytics and crash reporting. The console's notification is a design gap (`docs/design/desktop-console-v2.md` F27)
