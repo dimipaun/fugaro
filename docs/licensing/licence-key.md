@@ -17,10 +17,11 @@ key's refusal, and where each product keeps the key.
 
 ## The key
 
-One **Ed25519** signature over a JSON claim set, base64url, checked **offline**: the check makes no
-network call and no lookup, and the only contact with the licence server anywhere in the design is the
-visible scheduled job of "Renewal, status and revocation" below. The key's text is the spec's `fgk_`
-form:
+One **Ed25519** signature over a JSON claim set, base64url, checked **offline**: verifying a key makes
+no network call and no lookup, and nothing about the check phones home. Contact with the licence server
+is only ever by an act the user can see — the scheduled job of "Renewal, status and revocation" below,
+or a command they run (`fugaro licence refresh`, `fugaro licence login`). The key's text is the spec's
+`fgk_` form:
 
 ```text
 fgk_<payload>.<signature>
@@ -123,8 +124,9 @@ core reaches the paid code only through `ee/register`: no core package imports `
 is one-directional — `ee/register` itself calls into the core (`internal/cli`), which is what makes the
 registration the only route in.
 
-The check is **offline** — no network call and no lookup — and the only contact with the licence server
-anywhere in the design is the visible job of the next section.
+The check is **offline** — no network call and no lookup — and it is the whole of what verifying a key
+does: the contact with the licence server is the visible job of the next section, or a command the user
+runs.
 
 Against `now`, an installed key is in one of three states:
 
@@ -169,11 +171,13 @@ from it — is gone: the lead and the grace are the key's own numbers now (`rene
 
 ## Renewal, status and revocation (D2131)
 
-The only contact with the licence server is a **visible Cloud Scheduler job in the customer's own
+The key's own contact with the licence server is a **visible Cloud Scheduler job in the customer's own
 project**, beside the image rebuild jobs: it is documented, it is the customer's to see and to delete,
-and nothing hidden phones home. `fugaro update` applies it (K4.2, the "`fugaro update` is the whole
-upgrade" rule), so the spec's "`set` and `login` create the job" becomes: they write the key, and the
-next `fugaro update` applies the job. An installation without the coordinator's job has none: it renews
+and nothing hidden phones home. The design's other contacts are commands a user runs: `fugaro
+licence refresh` (K3.2) asks the server once, and `fugaro licence login` (K3.3) is the browser sign-in,
+whose package is the one place under `ee/licence/` allowed a network. `fugaro update` applies the job
+(K4.2, the "`fugaro update` is the whole upgrade" rule), so the spec's "`set` and `login` create the
+job" becomes: they write the key, and the next `fugaro update` applies the job. An installation without the coordinator's job has none: it renews
 by hand (`fugaro licence refresh`) and gets no automatic revocation check (TN5).
 
 `check_interval` is separate from expiry. At that interval the job calls the server's `/status`
