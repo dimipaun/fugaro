@@ -1496,14 +1496,6 @@ export const COMPATIBILITY_GROUPS = [
   'identity-and-roles',
 ]
 
-/**
- * The groups whose spec table carried an Edition column, so whose rows carry an edition
- * (D1522). The page renders the column for every row of these five groups and for no row of
- * the others, which is why the two are held together here rather than in the page: a row
- * carrying an edition its group's table has no column for would be a value the page drops.
- */
-export const COMPATIBILITY_EDITION_GROUPS = ['local-environment', 'console', 'mobile', 'forges', 'identity-and-roles']
-
 /** The two statuses that claim something exists today, so the two that name an evidence path. */
 const COMPATIBILITY_PRESENT = ['supported', 'built-not-enabled']
 
@@ -1608,14 +1600,9 @@ export function loadCompatibility(): CompatibilityFacts {
     }
 
     const withEdition = rows.filter((row) => row.edition !== null).length
-    if (withEdition !== 0 && withEdition !== rows.length) {
+    if (withEdition !== rows.length) {
       throw new Error(
-        `${file}: ${what} (${JSON.stringify(id)}) writes an edition on ${withEdition} of its ${rows.length} rows, and the page renders the Edition column for the whole table: a group carries the column on every row or on none (the spec's Edition column is the group's, and D1522 gives it two values).`,
-      )
-    }
-    if (COMPATIBILITY_EDITION_GROUPS.includes(id) !== (withEdition === rows.length)) {
-      throw new Error(
-        `${file}: ${what} (${JSON.stringify(id)}) is one of the groups whose spec table has an Edition column: ${COMPATIBILITY_EDITION_GROUPS.join(', ')}. Every row of one of those carries an edition and no row of any other group does (D1522) — this group carries ${withEdition === rows.length ? 'them' : 'none'}.`,
+        `${file}: ${what} (${JSON.stringify(id)}) writes an edition on ${withEdition} of its ${rows.length} rows, and the page renders the Edition column for the whole table: every table carries the column on every row (D1522 gives it two values).`,
       )
     }
 
