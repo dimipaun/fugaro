@@ -95,7 +95,7 @@
 // owner's, it is supplied to `start` (the pairing screen's text field), and
 // this module only holds it to `account.js`'s own rule.
 
-import { isAccountId, secret as makeSecret } from '../accounts/index.js';
+import { STORE_CODES, isAccountId, secret as makeSecret } from '../accounts/index.js';
 
 import { encodeBase64url } from './base64url.js';
 import { readDelivery } from './delivery.js';
@@ -135,6 +135,11 @@ export const SESSION_CODES = Object.freeze({
   REQUEST_REFUSED: 'request-refused',
   WATCH_REFUSED: 'watch-refused',
   STORE_REFUSED: 'store-refused',
+  // The store's own two, given names here rather than passed through: they are
+  // refusals of the *owner's list* and not of the pairing, and the screen owes
+  // each of them a sentence (see `storeRefusal`).
+  DUPLICATE_ID: 'duplicate-id',
+  DUPLICATE_INSTALLATION: 'duplicate-installation',
   EXPIRED: 'expired',
 });
 
@@ -153,6 +158,28 @@ export function deliveryPath(uid) {
 
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, ...(field === undefined ? {} : { field }) });
+}
+
+/** The store's refusal in this module's vocabulary.
+ *
+ * `AccountStore.add` refuses a label it already holds and the same installation
+ * under a second label. Neither is a bad pairing: the QR was the CLI's own, the
+ * delivery opened, and the device token and MAC key are in hand -- what refused
+ * them is the *owner's list* (D114), which already has that name. They keep the
+ * store's own names so a refusal reads the same in both modules, and the screen
+ * has a sentence for each.
+ *
+ * Every other store refusal is the store failing rather than the list
+ * disagreeing, and it becomes `STORE_REFUSED`. That is the point of the
+ * translation: a raw `accounts/` or settings code reaching the screen would
+ * fall into the payload's "that pairing code was not one this app can use",
+ * which is a false explanation for a QR the CLI generated correctly. */
+function storeRefusal(answer) {
+  if (answer.code === STORE_CODES.DUPLICATE_ID) return refuse(SESSION_CODES.DUPLICATE_ID, answer.field);
+  if (answer.code === STORE_CODES.DUPLICATE_INSTALLATION) {
+    return refuse(SESSION_CODES.DUPLICATE_INSTALLATION, answer.field);
+  }
+  return refuse(SESSION_CODES.STORE_REFUSED, answer.field);
 }
 
 /** The instant in the one spelling the request node's rule takes: a
@@ -395,7 +422,7 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
       authUid: device.uid,
       fugaroProject: config.project,
     });
-    if (!added.ok) return refusedWith(added);
+    if (!added.ok) return refusedWith(storeRefusal(added));
     for (const [item, value] of [
       ['idToken', device.token],
       ['macKey', encodeBase64url(macKey)],
@@ -407,8 +434,14 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
         // The tuple exists and an item did not land. That is the state
         // `account.js` calls the safe one -- an account whose secret is missing
         // fails closed the moment it is used, unlike a credential with no owner
-        // -- so nothing is rolled back here: the refusal says which item, and
-        // re-pairing is the repair.
+        // -- so nothing is rolled back here, and the refusal says which item.
+        //
+        // What repairs it is *not* simply pairing again: this attempt's `add`
+        // landed, so a second one is refused for the label it holds
+        // (`duplicate-id`, above), and the entry has to leave the owner's list
+        // first. Nothing under `mobile/src/` calls `AccountStore.remove`, so
+        // that is a path this build does not have -- reported rather than
+        // invented here, because the list is the owner's (D114).
         return refusedWith(refuse(SESSION_CODES.STORE_REFUSED, item));
       }
     }

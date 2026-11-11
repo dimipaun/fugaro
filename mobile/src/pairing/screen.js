@@ -93,6 +93,13 @@ const REFUSAL_SENTENCES = Object.freeze({
   [SESSION_CODES.IDENTITY_MISMATCH]: 'The installation answered as something else. Start a new pairing on your computer.',
   [SESSION_CODES.WATCH_REFUSED]: 'The phone could not watch for the delivery. Check the connection and try again.',
   [SESSION_CODES.STORE_REFUSED]: 'The phone could not store the credential. Nothing was saved.',
+  // The two refusals that are the owner's list rather than the pairing. Without
+  // a sentence of their own they would fall into the payload's, which tells the
+  // owner a QR the CLI generated correctly is one this app cannot use -- and
+  // the pairing that failed was the *re*-pairing of a device they already have
+  // (`session.js`'s `storeRefusal`).
+  [SESSION_CODES.DUPLICATE_ID]: 'This phone already has an installation with that name. Start a new pairing and use a different name.',
+  [SESSION_CODES.DUPLICATE_INSTALLATION]: 'This installation is already paired on this phone, under another name.',
   [SESSION_CODES.PORT_FAILED]: 'Something on the phone failed. Nothing was saved.',
   [SESSION_CODES.ALREADY_STARTED]: 'A pairing is already in progress.',
 });

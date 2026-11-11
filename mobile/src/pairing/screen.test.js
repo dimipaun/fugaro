@@ -171,6 +171,14 @@ test('the screen says one sentence per state, and a refusal says which', () => {
   // ... and a refusal this screen does not know still says something.
   assert.equal(typeof refusalSentence('something-new'), 'string');
   assert.equal(refusalSentence('something-new') !== '', true);
+  // The two refusals that are the owner's list rather than the pairing have
+  // sentences of their own, and they are not the payload's: a QR the CLI
+  // generated correctly must not be reported as one this app cannot use.
+  for (const code of [SESSION_CODES.DUPLICATE_ID, SESSION_CODES.DUPLICATE_INSTALLATION]) {
+    assert.notEqual(refusalSentence(code), refusalSentence('bad-uid'), code);
+    assert.equal(stateSentence(snapshot({ state: SESSION_STATES.REFUSED, refusal: { ok: false, code } })), refusalSentence(code));
+  }
+  assert.notEqual(refusalSentence(SESSION_CODES.DUPLICATE_ID), refusalSentence(SESSION_CODES.DUPLICATE_INSTALLATION));
 });
 
 test('the callbacks are the caller’s, and a screen with none is still a tree', () => {

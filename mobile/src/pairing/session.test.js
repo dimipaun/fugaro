@@ -381,6 +381,87 @@ test('a delivery that disagrees with the scan is refused whole', async () => {
   assert.deepEqual([...(await stores.store.list()).accounts], [], 'and no account is added');
 });
 
+test('a delivery for a label the phone already holds is refused as the list, not the payload', async () => {
+  // Pairing a device again under the name it already has is an ordinary thing
+  // to want -- a revoked or missed phone -- and `AccountStore.add` refuses the
+  // held label (D114's list is the owner's). What the owner must not be told is
+  // that their own CLI's QR is "not one this app can use", and what must not
+  // happen is the account already in the list being overwritten or half-written
+  // by the delivery that lost.
+  const stores = makeStores();
+  const held = {
+    id: 'laptop',
+    firebaseProjectId: 'fp-0000',
+    authUid: 'm~' + 'B'.repeat(22),
+    fugaroProject: 'old-project',
+  };
+  assert.equal((await stores.store.add(held)).ok, true);
+  const { session, database } = makeSession({ stores, random: randomPort(0x13) });
+  await session.start(scanned(), { id: 'laptop' });
+  const phonePublic = nodeX25519.getPublicKey(new Uint8Array(32).fill(0x13));
+  const payload = payloadOf();
+  await database.push(
+    deliveryNode(seal({ phonePublic, uid: UID, payload, ephemeralSecret: new Uint8Array(32).fill(3) })),
+  );
+  const shown = session.snapshot();
+  assert.equal(shown.state, SESSION_STATES.REFUSED);
+  assert.equal(shown.refusal.code, SESSION_CODES.DUPLICATE_ID);
+  assert.equal(shown.refusal.field, 'id');
+  // Nothing of the delivery landed: not a byte of the token or the MAC key, and
+  // the held tuple is exactly as the owner left it.
+  assert.deepEqual(stores.secretPort.keys(), []);
+  assert.deepEqual({ ...(await stores.store.list()).accounts[0] }, held);
+  assert.equal((await stores.store.list()).accounts.length, 1);
+});
+
+test('a delivery for an installation already paired under another name is refused as that', async () => {
+  // The other half of the store's duplicate rule: the same triple under a
+  // second label. It cannot come out of two CLI pairings (each mints a fresh
+  // device uid), so it is pinned over a list a test writes.
+  const stores = makeStores();
+  const payload = payloadOf();
+  assert.equal(
+    (
+      await stores.store.add({
+        id: 'desk',
+        firebaseProjectId: 'fp-1234',
+        authUid: payload.device.uid,
+        fugaroProject: 'aurora',
+      })
+    ).ok,
+    true,
+  );
+  const { session, database } = makeSession({ stores, random: randomPort(0x14) });
+  await session.start(scanned(), { id: 'laptop' });
+  const phonePublic = nodeX25519.getPublicKey(new Uint8Array(32).fill(0x14));
+  await database.push(
+    deliveryNode(seal({ phonePublic, uid: UID, payload, ephemeralSecret: new Uint8Array(32).fill(2) })),
+  );
+  assert.equal(session.snapshot().refusal.code, SESSION_CODES.DUPLICATE_INSTALLATION);
+  assert.deepEqual(stores.secretPort.keys(), []);
+});
+
+test('a store that refuses for its own reasons is not reported as a bad payload', async () => {
+  // The screen has one sentence per session code and a payload sentence for
+  // anything else, so a raw store code passed through would tell the owner their
+  // own CLI's QR is one this app cannot use. Everything the store can refuse
+  // that is not the list disagreeing is `store-refused`.
+  const stores = makeStores();
+  const refusing = {
+    add: () => Promise.resolve({ ok: false, code: 'write-failed', field: 'account' }),
+    setSecret: (id, item, secret) => stores.store.setSecret(id, item, secret),
+    list: () => stores.store.list(),
+    secret: (id, item) => stores.store.secret(id, item),
+  };
+  const { session, database } = makeSession({ stores: { ...stores, store: refusing }, random: randomPort(0x15) });
+  await session.start(scanned(), { id: 'laptop' });
+  const phonePublic = nodeX25519.getPublicKey(new Uint8Array(32).fill(0x15));
+  await database.push(
+    deliveryNode(seal({ phonePublic, uid: UID, payload: payloadOf(), ephemeralSecret: new Uint8Array(32).fill(1) })),
+  );
+  assert.equal(session.snapshot().refusal.code, SESSION_CODES.STORE_REFUSED);
+});
+
 test('a null on the delivery child is passed over, and the deadline is what ends the wait', async () => {
   // The delivery child does not exist for the whole of the operator's typing,
   // and the subtree's deletion looks exactly the same from it: the rules give
