@@ -654,7 +654,7 @@ defensible reading — D1227's own reason, "a `tasks:write` token must not silen
 
 **F27. Gap. The front door cannot reach the `orchestrator/` node, by design.** Its account `mcp_server` holds two grants, the runs bucket's
 read and its own store, "and nothing else in this tree or the Firebase root grants it anything: no secret, no database, no actAs"
-(`deploy/terraform/gcp/modules/installation/coordinator.tf:300-322`, the account at `:324`); the owner's D935 answer keeps database admin off
+(`deploy/terraform/gcp/modules/installation/coordinator.tf:315-337`, the account at `:339`); the owner's D935 answer keeps database admin off
 the public service (`docs/mcp-server/README.md`, finding H3); the Realtime Database has no path-level IAM, so any database grant reaches every
 node (`docs/workspaces/implementation-plan.md` W7, citing `credentials.tf`); and O2's rules refuse every token writer, with the person's own
 credential writing the node (D1241). *Consequence:* the state group's handlers can be built and tested against a fake, but **serving them

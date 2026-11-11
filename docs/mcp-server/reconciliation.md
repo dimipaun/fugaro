@@ -53,7 +53,7 @@ safe to build.
 | --- | --- |
 | F1 | **The front door's home is decided**: the coordinator has **its own resident service** — D196 in [../coordinator/reconciliation.md](../coordinator/reconciliation.md) (the row headed D196 says the owner ruled against the recommendation), and [../coordinator/README.md](../coordinator/README.md):26 says P7 and P8 "do not start yet: they wait on the front-door design review". **Exists**, as a decision; **not built** (F24). |
 | F2 | **A Cloud Run *service* is already admissible in the installer's Terraform cover**: `internal/infra/tf/cover.go:33-34` admits `google_cloud_run_v2_service` and `google_cloud_run_v2_service_iam_member`, added for the credentials service. **Exists** — the new resource type needs no cover change. |
-| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:71` (its service account), `:92` with `role = "roles/storage.objectViewer"` at `:96` (the runs bucket — read only), `:113` (the app key secret), `:129` (`google_cloud_run_v2_job`), `:275` (the sweep schedule). There is no Cloud Run *launch* grant and no write grant on the runs bucket. **The lines moved and one claim stopped being true after this folder was written**: the M4 task of [implementation-plan.md](implementation-plan.md) landed its first half as #1716, which added `google_service_account.mcp_server` (`:324`) and the `google_cloud_run_v2_service` front door that runs as it, so "there is **no** `google_cloud_run_v2_service` for the coordinator" is no longer a fact about this tree — the service is the front door's and not the sweep's, and the sweep above is unchanged. |
+| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:86` (its service account), `:107` with `role = "roles/storage.objectViewer"` at `:111` (the runs bucket — read only), `:128` (the app key secret), `:144` (`google_cloud_run_v2_job`), `:290` (the sweep schedule). There is no Cloud Run *launch* grant and no write grant on the runs bucket. **The lines moved and one claim stopped being true after this folder was written**: the M4 task of [implementation-plan.md](implementation-plan.md) landed its first half as #1716, which added `google_service_account.mcp_server` (`:339`) and the `google_cloud_run_v2_service` front door that runs as it, so "there is **no** `google_cloud_run_v2_service` for the coordinator" is no longer a fact about this tree — the service is the front door's and not the sweep's, and the sweep above is unchanged. |
 | F4 | **The coordinator's writer holds the project's database admin**: `deploy/terraform/gcp/modules/firebase/iam.tf:138` grants `roles/firebasedatabase.admin` to the coordinator's writer account. |
 | F5 | **Firebase ID-token verification exists, and it is exact**: `internal/credsvc/auth.go:1086` compares the audience to the **bare project id**, `:1059-1060` (`firebaseIssuer`) builds the issuer as `https://securetoken.google.com/<projectId>` and `:1089` holds the token's `iss` to it, and `:1390` (`GoogleKeysURL`) is the public signing-key endpoint the owner's spec names. Its refusals name the failed check and never the value; `internal/credsvc/audit.go` writes one structured line per act and per refusal. **Exists** — the design's §4 adds no verification of its own. |
 | F6 | **Identity Platform is initialized with no sign-in providers, and a public sign-up path is refused**: `internal/cli/init_firebase.go:582` records "initialized Identity Platform (no sign-in providers)", `:686` calls `refusePublicSignUp` (`:709`) on a project whose config enables any public sign-up path, and `internal/infra/identityplatform.go:32` is the step's own name. **Exists** — and it is what F26 collides with. |
@@ -659,7 +659,7 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
 - **What has happened since, as of the commit this file is read at.** **M1 (#1713), M2 (#1767), M3
   (#1715), M6 (#1714) and M4 are merged on `main`** — M4's first half (#1716) being the
   account, the front door service and its public invoker binding
-  (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`, `:388`, `:536`), and its store half
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:339`, `:403`, `:581`), and its store half
   being the bucket the records live in and the one binding that names the front door's account
   (`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **because the
   owner approved them one at a time, which is what "may continue" turned into.** **M5 is built** —
@@ -865,7 +865,7 @@ asks the owner to confirm the mechanism that replaces the override rather than t
 - **D931's grant, and M9's launch path.** D931's one new privilege is still asked for, and it is now
   built by a task of its own — **M11** in [implementation-plan.md](implementation-plan.md) §3, the
   split launcher role, which is where `coordinator.tf`'s deliberate absence of the grant
-  (`:383`) is filled in. **M9 waits on M11 being built**, and so does D931: **the gate is a task, not
+  (`:398`) is filled in. **M9 waits on M11 being built**, and so does D931: **the gate is a task, not
   an answer** — **and one question of that ruling came back the same day: D937**, its premise about the
 run's identity and the content the fence does not cover (§4a's "The premise the ruling got wrong",
 §4b). Everything else is closed (§6 check 0, spec.md §8 and §11).
@@ -1160,7 +1160,7 @@ owner's hands, before the first code task starts:
    refusal too** — the reading the correction of 2026-11-05 adds, and the one that proves the store's
    name is outside the deployer's conditioned prefix rather than merely written to be; **read one
    record as the front door's own account `mcp_server` — the store's single member, the account M4
-   creates (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`), never the sweep's — and
+   creates (`deploy/terraform/gcp/modules/installation/coordinator.tf:339`), never the sweep's — and
    see it work**; **read the same record as a basic project Viewer and see a refusal**, which is the
    second correction of 2026-11-05: a new bucket carries GCS's convenience bindings for
    `projectViewer:` unless something takes them off, so the check reads the created policy rather

@@ -1132,7 +1132,7 @@ tools answer it fenced and cleaned and never above anything the coordinator says
 token reaches **nothing**, because `apply_patch` is catalogued and served by nothing (that design's D2021, answered (a) on 2026-11-10); if it is ever served it acts
 as a **session** and never as a person, so the worst it does is what a hostile session can already do through the CLI's `patch` — propose
 work items and decisions, which still need a person's approval before anything launches (that design's D1225, D1226). **The front door holds
-no database grant today** (`deploy/terraform/gcp/modules/installation/coordinator.tf:300-322`): serving the group needs one, and because the
+no database grant today** (`deploy/terraform/gcp/modules/installation/coordinator.tf:315-337`): serving the group needs one, and because the
 Realtime Database has no path-level IAM, **any grant reaches every node of the database** — `pairing/`, `mailbox/`, `config/` and the rest —
 not the `orchestrator/` subtree alone. That is the cost the stateless design's **D2020** put to the owner (a read-only role, a copy written by
 the coordinator's sweep, or no grant), answered (a), a read-only role, on 2026-11-10; until a task wires the front door the group is built
