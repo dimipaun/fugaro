@@ -83,10 +83,15 @@ func bearerToken(r *http.Request) (string, bool) {
 // The constant time is about the value's length and its prefix rather than its
 // entropy: 256 random bits are not guessable either way, but a comparison that
 // stopped at the first byte that differed would let a local process narrow the
-// token one byte at a time and read the answer off its own clock (F23). A test
-// cannot measure that, so what token_test.go holds is the other half -- that
-// the whole value is compared -- and this is the function whose body is the
-// claim.
+// token one byte at a time and read the answer off its own clock (F23).
+//
+// No run can measure that -- a wall clock in a test measures the machine -- so
+// token_test.go holds two things it can: that the whole value decides the answer
+// (TestConstantTimeTokenCompare's rows, and every position of a token), and that
+// this body is one call to crypto/subtle.ConstantTimeCompare over the two values
+// and nothing around it, read off this file's syntax tree. Replacing it with a
+// comparison that stops at the first byte that differs fails there, which is
+// what makes the claim this comment makes a fact a reader can check.
 func sameToken(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
