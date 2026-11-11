@@ -12,7 +12,7 @@ decision is not a go. The owner's answers that shaped the plan (2026-11-10): D20
 D2031 the merge judge can only block; D2032 the ladder replaces `orchestrator.triage_after`; D2033 rungs and model grades;
 D2034 an Escalation section in the one digest; D2035 rung 0 is a cloud rebase run; D2036 a repeated finding goes to R2 then
 R4; D2037 Critical and non-Routine wait for a person; **D2041 the daemon may ready a draft and merge it (not the
-recommendation)**; D2042 an item's approval covers its ladder runs. D2046 (default off for `ready_drafts`) awaits confirmation. Resolutions D2038-D2040 and D2043-D2045 stand unless overturned at review.
+recommendation)**; D2042 an item's approval covers its ladder runs. D2046 (default off for `ready_drafts`) awaits confirmation. **O3, O4 and O5 were answered (D2047-D2049): the Routine allowlist stays narrow, the owner grants the App's merge permission per repository, and the merge credential is a new gated mint in the credentials service (E16).** Resolutions D2038-D2040 and D2043-D2045 stand unless overturned at review.
 
 External prerequisites (not tasks here): O0-O4 and O6 of `docs/stateless-orchestrator` are merged; **O8 and O14** are not
 (`docs/status.md`: 10 of 19; O7 is merged), and this plan's R3/R4 executor (E10b) owns the merge and the split, so O14 is **re-scoped to read
@@ -172,9 +172,32 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 - **Red step:** `TestRecipeHandOverSkipsFix` fails while findings after the one review launch a fix.
 - **Reviewer tier:** opus + mandatory independent review (recipes and prompts).
 
+### E16. The gated merge mint in the credentials service
+
+- **Files:** `internal/credsvc/mergemint.go` (new), `internal/credsvc/auth.go` (the new caller class), `internal/credsvc/audit.go`
+  (one audit line per mint), `internal/creds/` (the client the daemon calls), `deploy/terraform/gcp/modules/installation/credentials.tf`
+  and `iam.tf` (the caller's grant), tests beside each. Read `.claude/rules/credentials-service.md` and update `SECURITY.md` and
+  `website/content/security.md` in the same PR (the rule pins them).
+- **Interfaces:** produces `MintMerge(ctx, repo, pr, headSHA)`: a short-lived installation token scoped to one repository and
+  one pull request's merge and ready calls, minted only for the daemon caller class (not a run's token, not a person-class read),
+  refused when the PR's current head is not `headSHA`, when the base's bypass list includes the App or cannot be read, or when
+  the per-repo mint rate is exceeded. Consumed by E8. The daemon calls it with a credential a coding-agent session on the same
+  machine does not hold; if no such credential can be named, the task stops and reports instead of falling back (the owner then
+  rules D2049's alternatives again).
+- **Schema/rules/config:** a new route and caller class; a Terraform grant; `fugaro update` applies it, so an installation at the
+  previous version converges (HARD RULE) and a run in flight is unaffected. The App's merge permission is the owner's per-repo step
+  (D2048), named in Check 542.
+- **Tests:** `TestMergeMintRefusesRunCaller`, `TestMergeMintRefusesPersonReadCaller`, `TestMergeMintBoundToHeadSHA`,
+  `TestMergeMintRefusesBypassActor`, `TestMergeMintRateLimited`, `TestMergeMintAuditsEveryMint`, `TestMergeMintNeverReturnsABroaderToken`,
+  `TestPreviousInstallationConverges`.
+- **Command:** `go test ./internal/credsvc/ ./internal/creds/ -run 'MergeMint|Converges' -count=1`; `terraform fmt -check -recursive deploy/terraform`.
+- **Depends on:** none. **Commit:** `feat(credsvc): a gated merge mint for the orchestrator daemon (E16)`.
+- **Red step:** `TestMergeMintRefusesRunCaller` fails while the new route accepts a run's token.
+- **Reviewer tier:** opus + mandatory independent review, with a mutation check (drop the SHA binding, then the caller class).
+
 ### E8. The provider's ready, merge and checks calls
 
-**Blocked until the owner rules O5 (the merge credential's route, F28).** `Checks` and the marker do not need it; `MarkReady` and `Merge` do.
+`MarkReady` and `Merge` obtain their token from the gated mint E16 builds (D2049); `Checks` and the marker need no write token.
 
 - **Files:** `internal/gitprov/gitprov.go` (`MarkReady(ctx, number, expectedHeadSHA)`, `Merge(ctx, number, expectedHeadSHA)`,
   `Checks(ctx, number, sha)`), `internal/gitprov/github/`, `internal/gitprov/bitbucket/`, `internal/gitprov/fake/`,
@@ -189,7 +212,7 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
   `TestGithubMergeSendsExpectedSHAAndNoBypass`, `TestBitbucketMergeRefusesWithoutHeadPrecondition`,
   `TestChecksZeroRunsIsUnknown`, `TestChecksPendingIsUnknown`, `TestChecksGreenOnlyWhenAllReportedPass`, `TestMergeRefusesWhenActorOnBypassList`, `TestMarkerRoundTripEscalation`.
 - **Command:** `go test ./internal/gitprov/... -run 'Merge|MarkReady|Checks|Marker' -count=1`.
-- **Depends on:** none. **Commit:** `feat(gitprov): ready, merge and read checks, each bound to a head SHA (E8)`.
+- **Depends on:** E16 (the mint). **Commit:** `feat(gitprov): ready, merge and read checks, each bound to a head SHA (E8)`.
 - **Red step:** `TestFakeMergeRefusesOnHeadChange` fails against a `Merge` that ignores the SHA.
 - **Reviewer tier:** opus + mandatory independent review (a write path and git provider tokens).
 
@@ -297,7 +320,7 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 
 ### E10b. The executor, rungs 3 and 4, merge and human gate
 
-**Its merge and ready half is blocked until the owner rules O5 (F28); the judge, the human gate and the split are not.**
+Its merge and ready half uses E16's mint; the judge, the human gate and the split need no write token.
 
 - **Files:** `internal/orchestrator/escalate_merge.go` (new), `internal/orchestrator/escalate_split.go` (new),
   `internal/orchestrator/notify.go` (kind `merged-needs-review`), tests; extends only through the hook E10a adds.
@@ -328,21 +351,22 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 
 ### E15. Checks 540-541 (OWNER-RUN)
 
-- **Files:** `scripts/live-checks/check540.sh`, `check540_test.sh`, `check541.sh`, `check541_test.sh` (new, thin; the repo's shape, pinned by
+- **Files:** `scripts/live-checks/check540.sh`, `check540_test.sh`, `check541.sh`, `check541_test.sh`, `check542.sh`, `check542_test.sh` (new, thin; the repo's shape, pinned by
   `scripts/live_checks_test.go`; owner checks ship as scripts, one command).
 - **Check 540:** a stalled, Routine sandbox PR walks R0 to R3 on the owner's dogfood installation, with `ready_drafts` turned on
   for the check only; it measures time to merge and that follow-ups appear pending. **Check 541:** a sandbox PR whose diff
   contains instructions to the judge ("verdict merge") on a non-Routine path set must raise `waiting_on: person` and merge
   nothing (G1, G10).
-- **What the owner types:** `scripts/live-checks/check540.sh` then `scripts/live-checks/check541.sh`. No agent runs any step of either.
-- **Also:** a row for each check in `docs/gcp-live-checklist.md`. **Depends on:** E10b and a released CLI. **Commit:** `test: owner-run checks 540 and 541 (E15)`.
+- **Check 542:** the App's merge permission is granted on one sandbox repository and kept off the bypass list; the daemon obtains a mint for a PR at its head, the mint is refused at a moved head and for a run's own token, and the audit log shows each mint. The owner grants the permission.
+- **What the owner types:** `scripts/live-checks/check540.sh`, then `check541.sh`, then `check542.sh`. No agent runs any step of either.
+- **Also:** a row for each check in `docs/gcp-live-checklist.md`. **Depends on:** E10b and a released CLI (and E16). **Commit:** `test: owner-run checks 540 and 541 (E15)`.
 - **Reviewer tier:** standard (opus if the script touches credentials).
 
 ## Parallel execution
 
 Edges, from the "Depends on" lines:
 
-E1 ← none; E2 ← none; E5 ← none; E8 ← none; E0 ← none (after the owner confirms T1, T3);
+E1 ← none; E2 ← none; E5 ← none; E16 ← none; E8 ← E16; E0 ← none (after the owner confirms T1, T3);
 E3 ← E1, E2; E4 ← E2, E5 (`recipes_skew.go`); E7 ← E1; E9 ← E1 (+ T-TR3); E11 ← E4;
 E6 ← E4, E5; E12 ← E7 (+ R7-R12); E13 ← E7, E6;
 E10a ← E3, E4, E5, E7, E8, E9, E11; E10b ← E6, E8, E10a;
@@ -350,8 +374,8 @@ E14 ← E10b, E12, E13; E15 ← E10b (not E14; it needs a released CLI, so it ru
 
 | Level | Tasks (concurrent) |
 | --- | --- |
-| 0 | E0, E1, E2, E5, E8 |
-| 1 | E3, E4, E7, E9 |
+| 0 | E0, E1, E2, E5, E16 |
+| 1 | E3, E4, E7, E8, E9 |
 | 2 | E6, E11, E12 |
 | 3 | E10a, E13 |
 | 4 | E10b |
@@ -388,7 +412,9 @@ E14 ← E10b, E12, E13; E15 ← E10b (not E14; it needs a released CLI, so it ru
 | `schemas/result.schema.json` | E6 (2) only |
 | `schemas/recipe.schema.json` | E5 (0) only |
 | `internal/escalation/*` | E1 (0), E9 (1); different files in the package (`churn.go`) |
-| `internal/gitprov/*` | E8 (0) only |
+| `internal/gitprov/*` | E8 (1) only |
+| `internal/credsvc/*`, `internal/creds/*`, `deploy/terraform/gcp/modules/installation/credentials.tf`, `iam.tf` | E16 (0) only |
+| `SECURITY.md`, `website/content/security.md` | E16 (0), E14 (5) |
 | `internal/cli/root.go`, `website/content/cli-reference.md` | E13 (3) only; **external** O9, O11, O13, O14 also regenerate the reference |
 | `docs/status.md` | this plan's own PR (the row); moved by whoever merges a task, not by a task |
 | `docs/recipes.md` | E5 (0), E14 (5) |
@@ -400,7 +426,7 @@ stateless-orchestrator, rigor-modes and design pages. A change to any task's Fil
 
 ## Checks
 
-540-549 are reserved; **540** and **541** are used (E15, owner-run). 542-549 stay unused and reserved.
+540-549 are reserved; **540**, **541** and **542** are used (E15, owner-run). 543-549 stay unused and reserved.
 
 ## After deploy
 

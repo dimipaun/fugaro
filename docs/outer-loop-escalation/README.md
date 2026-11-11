@@ -13,8 +13,8 @@ post-review triage, and it is built on BF2/O14 of `docs/stateless-orchestrator`,
 | Document | What it is |
 | --- | --- |
 | [spec.md](spec.md) | the owner's spec, verbatim, in its own commit (no typo was fixed) |
-| [reconciliation.md](reconciliation.md) | F1-F28 findings against the code, decisions D2030-D2046 with the owner's answers, open tensions, UNVERIFIED; where it differs from the spec, it wins |
-| [implementation-plan.md](implementation-plan.md) | four slices, seventeen tasks with files, tests, red steps, levels, critical path and shared-files table |
+| [reconciliation.md](reconciliation.md) | F1-F28 findings against the code, decisions D2030-D2049 with the owner's answers, open tensions, UNVERIFIED; where it differs from the spec, it wins |
+| [implementation-plan.md](implementation-plan.md) | four slices, eighteen tasks with files, tests, red steps, levels, critical path and shared-files table |
 
 ## In one paragraph
 
@@ -27,7 +27,7 @@ draft and merge it (D2041), behind a local switch that ships off.
 
 ## Numbers this work holds
 
-Decisions **D2030-D2069** (D2030-D2046 used) and checks **540-549** (540-541 used, both owner-run).
+Decisions **D2030-D2069** (D2030-D2049 used) and checks **540-549** (540-542 used, all owner-run).
 
 ## Notes on the spec
 

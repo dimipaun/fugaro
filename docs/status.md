@@ -38,7 +38,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | issues-resolved-on-update | 3/8 | T-RU4 to T-RU8 |
 | catalog-build-context | 2/5 | CB2, CB4, CB5 |
 | post-review-triage | 6/14 | TR3, TR6 (in a run), TR7 to TR10, TR12; TR5 merged, BF1m (#1999) merged |
-| outer-loop-escalation | 0/17 | plan only, no task approved (E0 to E15 with E10a and E10b); owner Checks 540 and 541 |
+| outer-loop-escalation | 0/18 | plan only, no task approved (E0 to E16 with E10a and E10b); owner Checks 540 to 542 |
 | model-crafts | 4/10 | MC4 to MC7, MC9; owner MC10 |
 | security-classification | 6/11 | SC3, SC5, SC9 to SC11 |
 | settings-commands | about 6/12 | S6, S8 to S11; S7 closed 2026-11-10 as a duplicate of config-management's G7 |
