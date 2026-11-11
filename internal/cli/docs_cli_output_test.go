@@ -64,6 +64,7 @@ func TestDocsCliOutputStatesTheContract(t *testing.T) {
 		"`Left for you in 8.1s, 5 steps`",
 		"0 done or only planned, 1 a failure or a step left for you, 2 a cloud error",
 		"the last lines of context on the screen",
+		"a step left for you prints that path under it too",
 		"the line in flight is taken down before anything reads stdin",
 		"a read command writes no log at all and prints its error as it always has",
 		"`$XDG_STATE_HOME/fugaro/logs`, else `~/.local/state/fugaro/logs` on macOS and Linux and `%LOCALAPPDATA%\\fugaro\\logs` on Windows",
