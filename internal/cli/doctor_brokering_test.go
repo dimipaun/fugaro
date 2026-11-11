@@ -498,29 +498,25 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 }
 
 // TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches: the live
-// check's `proxied` row decides whether the sandbox repository is served by
-// reading this line, and it tells its arms apart by their words — the row's
-// JSON carries no account list, so the words are the only handle it has
-// (scripts/live-checks/check191.sh, its `switch_state`). A rewording here is not
-// a break the check reports as one: the arm becomes one the reading does not
-// know, and the check records that as unmeasured (exit 2, nothing launched)
-// rather than as a switch that is on. That is the safe direction, and it is why
-// each phrase is pinned on the Go side of the contract, where a reword lands.
-// The arm that matters most is the installation that carries no service at all:
-// its runs hold their own Bitbucket token, and a `proxied: PASS` over it is the
-// lie this whole reading exists to refuse.
+// check reads this line for one state only — an installation that carries no
+// credentials service at all, where proxy: true brokers nothing and a
+// `proxied: PASS` over it is the lie the reading exists to refuse
+// (scripts/live-checks/check191.sh, its `switch` reading). It tells that state
+// apart by this line's own words, because the row's JSON carries no account
+// list: the two phrases pinned below are the whole of what the check matches,
+// and a rewording of either is not a break it reports as one — the arm becomes
+// one the reading does not place, and the check records that as unmeasured
+// (exit 2, nothing launched) rather than as a switch that is on. That is the
+// safe direction, and it is why each phrase is pinned on the Go side of the
+// contract, where a reword lands.
+//
+// Nothing else in this row is read by the check: the switch is the credentials
+// service's own IAM policy crossed with the repository's own jobs, so the
+// sentence that names the accounts the service does not admit — and doctor's
+// other arms with it — decides nothing there. Those arms keep their own
+// coverage in TestDoctorBrokeringCredentialsServiceDeployed and
+// TestDoctorReportsTheServiceStateInOneLine.
 func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *testing.T) {
-	deployed := func(t *testing.T) *brokeringRig {
-		t.Helper()
-		r := newBrokeringRig(t)
-		r.svcs.AddService(infra.CredentialsServiceName)
-		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
-			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
-		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
-		return r
-	}
-	// The healthy arm is the one case with no phrase: the reading answers `on`
-	// from its silence, so any line written there is an arm it does not know.
 	cases := []struct {
 		arm    string
 		phrase string
@@ -532,45 +528,9 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 			build:  newBrokeringNoServiceRig,
 		},
 		{
-			arm:    "the service is deployed and a job account may not invoke it",
-			phrase: "grants no roles/run.invoker to",
-			build: func(t *testing.T) *brokeringRig {
-				t.Helper()
-				r := newBrokeringRig(t)
-				r.svcs.AddService(infra.CredentialsServiceName)
-				return r
-			},
-		},
-		{
 			arm:    "the block is written and Cloud Run has no service",
 			phrase: "Cloud Run has no service",
 			build:  newBrokeringRig,
-		},
-		{
-			arm:    "a role doctor cannot judge",
-			phrase: "could not be checked",
-			build: func(t *testing.T) *brokeringRig {
-				t.Helper()
-				r := newBrokeringRig(t)
-				r.svcs.AddService(infra.CredentialsServiceName)
-				r.svcs.SetServicePolicy(infra.CredentialsServiceName,
-					gcpfake.Binding{Role: "projects/proj-1234/roles/deployer", Members: []string{brokeringJobAccount("app")}})
-				return r
-			},
-		},
-		{
-			arm:    "the verify route admits nobody",
-			phrase: "admits nobody on the verify route",
-			build: func(t *testing.T) *brokeringRig {
-				t.Helper()
-				r := deployed(t)
-				addLocalLines(t, r.doctorRig, "verifier_accounts: []\n")
-				return r
-			},
-		},
-		{
-			arm:   "every job account may invoke it, with a version in the bundle",
-			build: deployed,
 		},
 	}
 	for _, c := range cases {
@@ -582,12 +542,6 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 			cs := checksByID(o, "credentials-service-deployed")
 			if len(cs) != 1 {
 				t.Fatalf("the state emitted %d credentials-service-deployed checks, want exactly one: %+v", len(cs), cs)
-			}
-			if c.phrase == "" {
-				if cs[0].Problem != "" {
-					t.Fatalf("the healthy arm carries a problem: check191.sh answers `on` from its silence, and a line here reads as an arm it does not know: %q", cs[0].Problem)
-				}
-				return
 			}
 			if !strings.Contains(cs[0].Problem, c.phrase) {
 				t.Errorf("check191.sh tells this arm apart by %q, and the line does not carry it: %q", c.phrase, cs[0].Problem)

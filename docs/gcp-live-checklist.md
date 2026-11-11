@@ -11890,8 +11890,9 @@ because a call naming another repository is refused for the repository before th
 reached, so a pull request of the second repository would earn `other_repository` and never
 `other_pull_request`. `bash`,
 `mktemp`, `python3`, `curl`, `gcloud` and `fugaro` on PATH, `gcloud` authenticated as an account that may
-read Cloud Logging for the installation, read the job list, **list the installation's secrets and read the
-IAM policy of the one labelled `fugaro_secret=bitbucket-token`** (Check 192's accessor row: the
+read Cloud Logging for the installation, read the job list, **read the credentials service's own IAM
+policy** (`gcloud run services get-iam-policy`, the switch's own half), **list the installation's secrets
+and read the IAM policy of the one labelled `fugaro_secret=bitbucket-token`** (Check 192's accessor row: the
 project-wide container, and a repository that stored the token itself has its own), and
 **write and delete one node** in the installation's Realtime Database (the register's Check 95 step 3 is
 the same write): the ended-run row is set up by hand, as you, with `gcloud auth print-access-token` and
