@@ -837,16 +837,15 @@ func (s *Store) applyDangling(ctx context.Context, c pruneCandidate) error {
 // task again. It is the prune's last check before a deletion, taken as the
 // deletion is put: the record's second read is stale in exactly the direction a
 // republish moves, because a republish writes the plan document while the ETag
-// the deletion rests on guards the assignment or the edge. A candidate every
-// one of whose tasks is back is one whose dangling has ended, and the mark just
-// cleared is what the ledger pass would have done with it anyway.
+// the deletion rests on guards the assignment or the edge. A candidate whose
+// every task is carried again is one whose dangling has ended, and the mark
+// just cleared is what the ledger pass would have done with it anyway.
 //
 // What is left is the round trip between this read and the put, and it is the
 // prune's residual: a task put back inside it has its assignment or its edge
-// deleted by the very next request, and the next move the task is given writes
-// the assignment again without the release and the log it had. No single
-// document's compare-and-set closes it, and the alternative — never deleting —
-// gives up D2115's 30-day bound altogether.
+// deleted by the very next request, and the release and the log the move
+// recorded go with it. No single document's compare-and-set closes it, and the
+// alternative — never deleting — gives up D2115's 30-day bound altogether.
 func (s *Store) allPlansCarry(ctx context.Context, tasks []string) (bool, error) {
 	for _, task := range tasks {
 		carried, err := s.aPlanCarries(ctx, task)
