@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,6 +58,15 @@ const (
 	unapprovedURL    = "https://code.example/acme/unapproved"
 	openSourceOrg    = "code.example/acme/widget"
 	applicantAddress = "dev@acme.example"
+
+	// The admin page's own fixtures (S3.4): the account the project's sign-in
+	// answers as the owner's, the plan an Order Form mints under, and the page's
+	// own secret, which is obviously not a real one — the deploy holds the
+	// secret and the account, and a test names its own of both.
+	ownerAccount       = "owner@fugaro.example"
+	enterprisePlanName = "enterprise"
+	adminSecret        = "fake-admin-secret-0123456789"
+	stepUpCode         = "step-up-code"
 )
 
 // buyerAddress is the address a merchant's payload carries for the buyer of a
@@ -155,6 +165,10 @@ func (p *proofSpy) Proved(_ context.Context, _ OpenSource) (Proof, error) {
 type recordingMints struct {
 	inner Mints
 	keys  []string
+	// log, when a test sets it, is the order hook: a mint is written down where
+	// the key comes out, which is what makes "the audit line is written before
+	// the key is returned" a claim a test can read.
+	log *steps
 }
 
 func (r *recordingMints) Mint(ctx context.Context, req Request) (Minted, error) {
@@ -162,8 +176,98 @@ func (r *recordingMints) Mint(ctx context.Context, req Request) (Minted, error) 
 	if err != nil {
 		return Minted{}, err
 	}
+	if r.log != nil {
+		r.log.add("mint")
+	}
 	r.keys = append(r.keys, minted.Key)
 	return minted, nil
+}
+
+// ownerSpy is the project's identity in a test: the account a request arrives
+// signed in as. An empty one is nobody signed in, which is the state §6's first
+// row is about.
+type ownerSpy struct{ account string }
+
+func (o *ownerSpy) SignedIn(context.Context) (string, bool) {
+	return o.account, o.account != ""
+}
+
+// stepUpSpy is the second factor in a test: the code it accepts, and what it
+// was asked. **D455 is open** — a hardware key or TOTP — so the factor is a seam
+// and this is its only implementation in the tree.
+type stepUpSpy struct {
+	accepts string
+	accept  bool
+	err     error
+	asked   []string
+}
+
+func (p *stepUpSpy) Verified(_ context.Context, account, code string) (bool, error) {
+	p.asked = append(p.asked, account+" "+code)
+	if p.err != nil {
+		return false, p.err
+	}
+	return p.accept && code == p.accepts, nil
+}
+
+// notifierSpy records what the owner was told a request is waiting (§4.5). It
+// is a seam of its own and not the applicant's mail path, which is what lets
+// §7.2's "the manual form mails nothing" hold while the owner is notified.
+type notifierSpy struct {
+	alerts []Alert
+	err    error
+}
+
+func (n *notifierSpy) Notify(_ context.Context, alert Alert) error {
+	if n.err != nil {
+		return n.err
+	}
+	n.alerts = append(n.alerts, alert)
+	return nil
+}
+
+// auditorSpy records the page's audit lines (§6, D456). log, when a test sets
+// it, is the order hook beside recordingMints'.
+type auditorSpy struct {
+	lines []MintLine
+	err   error
+	log   *steps
+}
+
+func (a *auditorSpy) Mint(_ context.Context, line MintLine) error {
+	if a.err != nil {
+		return a.err
+	}
+	a.lines = append(a.lines, line)
+	if a.log != nil {
+		a.log.add("audit")
+	}
+	return nil
+}
+
+// steps is one ordered log of what the intake reached, in the order it reached
+// it: the only way a test can say "before" about two seams that are handed and
+// answer in one call each.
+type steps struct {
+	mu sync.Mutex
+	at []string
+}
+
+func (s *steps) add(step string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.at = append(s.at, step)
+}
+
+func (s *steps) index(step string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, at := range s.at {
+		if at == step {
+			return i
+		}
+	}
+	return -1
 }
 
 // staticTokens is a Tokens that hands out one token: the platform's metadata
@@ -191,6 +295,10 @@ type fixture struct {
 	proofs    *proofSpy
 	signer    *signerSpy
 	recording *recordingMints
+	owner     *ownerSpy
+	stepUp    *stepUpSpy
+	notifier  *notifierSpy
+	auditor   *auditorSpy
 	keys      Keys
 	ring      licence.Keyring
 	secret    []byte
@@ -236,6 +344,10 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		"acme/unapproved":  {Public: true, Licence: "OpenSSL"},
 	}}
 	f.proofs = &proofSpy{proved: true, organisation: openSourceOrg}
+	f.owner = &ownerSpy{account: ownerAccount}
+	f.stepUp = &stepUpSpy{accept: true, accepts: stepUpCode}
+	f.notifier = &notifierSpy{}
+	f.auditor = &auditorSpy{}
 	f.recording = &recordingMints{inner: Minter{Signer: f.signer, Keys: f.keys, Environment: env, Now: f.clock}}
 	f.cfg = &Config{
 		Environment: env,
@@ -253,6 +365,23 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		FreeMailDomains: []string{"gmail.example", "outlook.example"},
 		VerificationTTL: 24 * time.Hour,
 		MerchantSecret:  f.secret,
+		// §6's own deployment: the one account the page answers to, the secret
+		// its tokens are signed with (obviously not a real one), the period a
+		// rendered form stays submittable, D454's caps and the plan the page
+		// reaches that the site's forms do not (§5.5). The caps are loose enough
+		// that a test which is not about the limit never meets it.
+		AdminAccount:  ownerAccount,
+		AdminSecret:   []byte(adminSecret),
+		AdminTokenTTL: 15 * time.Minute,
+		MintCaps: map[string]Limits{
+			licence.TierCommunity:  {Requests: 20, Window: time.Hour},
+			licence.TierTeam:       {Requests: 20, Window: time.Hour},
+			licence.TierEnterprise: {Requests: 20, Window: time.Hour},
+		},
+		PagePlans: []Plan{{
+			Name: enterprisePlanName, Tier: licence.TierEnterprise,
+			Features: []string{"seats"}, Seats: 25, TermDays: 365,
+		}},
 		// The deploy's own code host, which §4.4's check reads and no other: the
 		// fixture's repositories are all on it, so a test that names a repository
 		// elsewhere reads that the line was refused before any call.
@@ -266,6 +395,10 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		Mailer:   f.mail,
 		CodeHost: f.host,
 		Proofs:   f.proofs,
+		Owner:    f.owner,
+		StepUp:   f.stepUp,
+		Notifier: f.notifier,
+		Auditor:  f.auditor,
 		Now:      f.clock,
 	}
 	if edit != nil {
@@ -498,6 +631,77 @@ func (f *fixture) event(e Event) *httptest.ResponseRecorder {
 		e.OccurredAt = f.now
 	}
 	return f.deliver(e)
+}
+
+// adminGet opens the page. It is a GET because the page is one: nothing it does
+// changes anything, and the two actions are POSTs.
+func (f *fixture) adminGet() *httptest.ResponseRecorder {
+	f.t.Helper()
+	req := httptest.NewRequest(http.MethodGet, intakeOrigin+RouteAdmin, nil)
+	req.RemoteAddr = applicantIP
+	rec := httptest.NewRecorder()
+	f.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// adminPost submits one of the page's forms.
+func (f *fixture) adminPost(route string, form url.Values) *httptest.ResponseRecorder {
+	f.t.Helper()
+	req := httptest.NewRequest(http.MethodPost, intakeOrigin+route, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = applicantIP
+	rec := httptest.NewRecorder()
+	f.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// pageToken is the token the page renders for one action and one account, built
+// the way the page builds it. A test that is about the token being refused
+// builds its own instead.
+func (f *fixture) pageToken(account, action string) string {
+	f.t.Helper()
+	token, err := f.svc.pageToken(account, action)
+	if err != nil {
+		f.t.Fatalf("minting a page token: %v", err)
+	}
+	return token
+}
+
+// mintForm is the page's mint form as the page renders it: the action's own
+// token, the second factor, and whatever the test fills the rest with.
+func (f *fixture) mintForm(values url.Values) url.Values {
+	f.t.Helper()
+	if values == nil {
+		values = url.Values{}
+	}
+	if values.Get("token") == "" {
+		values.Set("token", f.pageToken(ownerAccount, actionMint))
+	}
+	if values.Get("step_up") == "" {
+		values.Set("step_up", stepUpCode)
+	}
+	return values
+}
+
+// decideForm is the page's decline form, built the same way.
+func (f *fixture) decideForm(id string) url.Values {
+	f.t.Helper()
+	return url.Values{
+		"application": {id},
+		"token":       {f.pageToken(ownerAccount, actionDecide)},
+	}
+}
+
+// open is the queue as the page reads it: the requests nobody has answered.
+func (f *fixture) open() []Application {
+	f.t.Helper()
+	out := []Application{}
+	for _, a := range f.queued() {
+		if a.Decision == Undecided {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // answerBody is the one page every application gets (§7.1), which a test holds
