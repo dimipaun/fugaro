@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -112,29 +113,53 @@ func TestInitPluginStageInstallsInClaudeCode(t *testing.T) {
 	}
 }
 
-// A pin an older fugaro left in the checkout is not this stage's to move, and
-// neither is a file it cannot read: the install half goes to the machine's own
-// marketplace (dimipaun/fugaro) whatever the file says, and the file comes out
-// of the run byte for byte as it was. U5 is the task that offers to take a pin
-// out.
-func TestInitPluginStageLeavesTheCheckoutsSettingsAlone(t *testing.T) {
-	for name, content := range map[string]string{
-		"a pin an older fugaro left": wiredAt("v0.1.0") + "\n",
-		"a fork's marketplace":       forkAt("acme/fugaro-fork", "v0.1.0") + "\n",
-		"a file that is not JSON":    "{not json",
+// A pin the removal cannot call its own is left exactly as it is, with the
+// sentence for the condition, and it is not a failure: the install half goes to
+// the machine's own marketplace (dimipaun/fugaro) whatever the file says, the
+// file comes out of the run byte for byte as it was, and the run goes on to the
+// next stage (spec §8, U5).
+func TestInitPluginStageLeavesAPinItCannotRemoveAlone(t *testing.T) {
+	for name, tc := range map[string]struct{ content, said string }{
+		"a fork's marketplace": {
+			content: forkAt("acme/fugaro-fork", "v0.1.0") + "\n",
+			said:    "names the repository acme/fugaro-fork, not dimipaun/fugaro",
+		},
+		"a file that is not JSON": {
+			content: "{not json",
+			said:    "is not usable settings",
+		},
+		"a ref that is not a release tag": {
+			content: forkAt(pluginwire.Repo, "main") + "\n",
+			said:    `is pinned to "main", which is not a release tag vX.Y.Z`,
+		},
+		"a plugin the repository disabled": {
+			content: `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"dimipaun/fugaro","ref":"v0.1.0"}}},"enabledPlugins":{"fugaro@fugaro":false}}`,
+			said:    "is disabled by the repository",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			releaseBuild(t, "0.2.0")
+			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 			f := testutil.NewClaudePluginFake(t, "[]", "[]")
 			f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
-			settings := wiringCheckout(t, content)
+			settings := wiringCheckout(t, tc.content)
 			e, out := stageEngine(t, "", &initOptions{yes: true})
 			useFakeClaude(t, f)
 			res := runPlugin(t, e)
-			if got, _ := os.ReadFile(settings); string(got) != content {
+			if got, _ := os.ReadFile(settings); string(got) != tc.content {
 				t.Errorf("the stage rewrote %s:\n%s", settings, got)
 			}
-			if stateOf(res, "plugin") != initflow.Changed || !slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
+			// The sentence goes on the stage's own line, which the run prints
+			// with the plan, and it is not a stop: the install half is what the
+			// run came to this checkout for and it still happens (spec §8).
+			if seen := out.String(); !strings.Contains(seen, "the pin is left as it is: ") || !strings.Contains(seen, tc.said) {
+				t.Errorf("the run does not say %q about the pin it may not remove\n%s", tc.said, seen)
+			}
+			if res.Failed != nil || len(res.Left) != 0 {
+				t.Errorf("a pin that cannot be removed is not a failure: failed %+v left %+v", res.Failed, res.Left)
+			}
+			if stateOf(res, "plugin") != initflow.Changed ||
+				!slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
 				t.Errorf("the machine's own install did not happen: %+v\n%s", res.Stages, out)
 			}
 		})
@@ -302,6 +327,10 @@ func TestInitPluginStageDevBuildSkipped(t *testing.T) {
 // installation that needs nothing (#1836c). The last case is the other
 // direction, so the plan does not become a stage that always has something to
 // do: a machine already at this release is done and says so.
+//
+// The fixture carries no pin, so the install half's own line is the whole of
+// what the plan says: a pin beside it is U5's removal, and the tests below read
+// that.
 func TestInitPluginStagePlanOnlySaysTheInstallRuns(t *testing.T) {
 	const (
 		installedAtThisRelease = `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`
@@ -333,7 +362,7 @@ func TestInitPluginStagePlanOnlySaysTheInstallRuns(t *testing.T) {
 			t.Setenv("CLAUDE_CONFIG_DIR", cfg)
 			dir := repoCheckout(t, githubOrigin, "")
 			t.Chdir(dir)
-			checkoutFile(t, filepath.Join(dir, ".claude", "settings.json"), wiredAt("v0.5.1"))
+			checkoutFile(t, filepath.Join(dir, ".claude", "settings.json"), settingsWithOthers)
 			if tc.noOrigin {
 				testutil.Git(t, dir, "remote", "remove", "origin")
 			}
