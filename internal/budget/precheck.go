@@ -173,13 +173,14 @@ func dailyWarnNotes(caps Caps, st State) []string {
 }
 
 // DailyHeadroom is the day's remaining headroom: what a sampling margin is
-// measured against (D573), read without leasing anything. It is the same
-// arithmetic Precheck does, with the lease left out — no write, no
-// reservation, no claim — so a caller that only wants to know how much room
-// is left never spends any of it.
+// measured against (D573), read without leasing anything. It measures the same
+// counters the rules do — Counted, reservations included, not Spent — so a
+// figure it gives is the figure Evaluate would refuse a lease against, and a
+// caller that only wants to know how much room is left never spends any of it.
 type DailyHeadroom struct {
 	// Remaining is what the day has left: the least of the counters that
-	// exist, the repository's own day and the project's.
+	// exist, the repository's own day and the project's, each cap less its own
+	// Counted.
 	Remaining Micros
 	// PerRun is the per-run cap Remaining is measured against (Caps.PerRun):
 	// the smallest of the repository's, the defaults' and the project's.
@@ -252,10 +253,10 @@ func ReadDailyHeadroom(ctx context.Context, r Reader, in PrecheckInput) (DailyHe
 	h := DailyHeadroom{PerRun: perRun, Capped: true}
 	bound := false
 	if cap, ok := caps.RepoDaily(); ok {
-		h.Remaining, bound = cap-st.Repo.Spent, true
+		h.Remaining, bound = cap-st.Repo.Counted, true
 	}
 	if cap, ok := caps.GlobalDaily(); ok {
-		if room := cap - st.Global.Spent; !bound || room < h.Remaining {
+		if room := cap - st.Global.Counted; !bound || room < h.Remaining {
 			h.Remaining = room
 		}
 		bound = true

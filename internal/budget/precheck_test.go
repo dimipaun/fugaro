@@ -138,11 +138,15 @@ func TestDailyHeadroomReadsWithoutLeasing(t *testing.T) {
 	n[PathSpendRepo(Day(preNow), "gh-acme-app")] = map[string]any{"counted": 20_000_000, "spent": 19_000_000}
 	n[PathSpendGlobal(Day(preNow))] = map[string]any{"counted": 30_000_000, "spent": 25_000_000}
 	h, r := headroom(t, n, true)
-	// The repository's day is the tighter of the two: 50M - 19M against the
-	// project's 100M - 25M. The per-run cap is the smallest in force, the
-	// repository's 5M. Five of those is 25M, so this day still samples.
-	if !h.Capped || h.Remaining != 31_000_000 || h.PerRun != 5_000_000 {
-		t.Fatalf("headroom = %+v, want 31M left at a 5M per-run cap", h)
+	// The repository's day is the tighter of the two: 50M - 20M counted against
+	// the project's 100M - 30M counted. Counted is what runs hold reserved and
+	// have not released, the ceiling a lease is judged against; the Spent
+	// figures seeded beside it (19M, 25M) are lower, as they are while a live
+	// run has not reported its cost, so a figure read off them would promise
+	// room the next lease is refused. The per-run cap is the smallest in force,
+	// the repository's 5M, and five of those is 25M, so this day still samples.
+	if !h.Capped || h.Remaining != 30_000_000 || h.PerRun != 5_000_000 {
+		t.Fatalf("headroom = %+v, want 30M left at a 5M per-run cap", h)
 	}
 	want := []string{PathProject, PathCapsGlobal, PathCapsDefaults, PathCapsRepo("gh-acme-app"), PathSpendGlobal(Day(preNow)), PathSpendRepo(Day(preNow), "gh-acme-app")}
 	if strings.Join(r.paths, ",") != strings.Join(want, ",") {

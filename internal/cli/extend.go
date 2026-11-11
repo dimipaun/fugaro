@@ -171,9 +171,10 @@ type PlannedRun struct {
 	// Chosen is whether the caller named the run id (--run-id). D558 samples
 	// the first runs of code tasks and never a launch whose id a person chose.
 	Chosen bool
-	// Config is the configuration the run will read, nil when the launcher
-	// could read none (a --repo launch from outside a checkout of the
-	// repository, with no project layer to stand in for the file).
+	// Config is the configuration the run will read (launchLevelsConfig): the
+	// repository's file at the ref when this machine holds a checkout of it,
+	// else the project layer the task carries resolved over the anchoring that
+	// layer applies to, and the empty configuration where there is neither.
 	Config *config.Config
 	// Policy is the policy this launch resolves — the launcher's own merge of
 	// the deployed ceiling, the default branch's fugaro.yaml, this

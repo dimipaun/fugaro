@@ -817,8 +817,12 @@ func TestPlannerErrorNeverFailsLaunch(t *testing.T) {
 // pre-check every launch makes (D554, D566).
 func TestPairPrecheckRefusedLaunchesChampionAloneUnmarked(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	// The repository's day is nearly spent: room for one run, not for two.
-	f.db.Set(budget.PathSpendRepo(budget.Day(time.Now()), appSlug), map[string]any{"spent": 49 * usd1})
+	// The repository's day is nearly spent: 49.7 counted against its 50 cap
+	// leaves room for the champion's own 250k lease and not for the pair's two.
+	// The counter is Counted, the one the rules and this pre-check both judge
+	// (Spent is seeded beside it as a live run leaves it).
+	f.db.Set(budget.PathSpendRepo(budget.Day(time.Now()), appSlug),
+		map[string]any{"counted": 49_700_000, "spent": 49 * usd1})
 	installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
 		return abPair("20261111-abcd1234", "20261111-120000-beef", "gemini-2.5-pro"), nil
 	})
@@ -878,9 +882,13 @@ func TestPlannerSkipReasonInJSON(t *testing.T) {
 // alone, unmarked, when the margin is not there.
 func TestMarginNeedsFiveCaps(t *testing.T) {
 	// The fixture's per-run cap is 5 USD (the default), so the margin is 25.
+	// The day is seeded with Counted — what runs hold reserved and have not
+	// released, the counter every cap question is judged against — and not with
+	// Spent, which lags it while a run is live and would read as room the next
+	// lease is refused.
 	for _, tc := range []struct {
 		name    string
-		spent   int64
+		counted int64
 		sampled bool
 	}{
 		{"the day has five caps left", 25 * usd1, true},
@@ -888,7 +896,7 @@ func TestMarginNeedsFiveCaps(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchBudget(t, "observe")
-			f.db.Set(budget.PathSpendRepo(budget.Day(time.Now()), appSlug), map[string]any{"spent": tc.spent})
+			f.db.Set(budget.PathSpendRepo(budget.Day(time.Now()), appSlug), map[string]any{"counted": tc.counted})
 			installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
 				return abPair("20261111-abcd1234", "20261111-120000-beef", "gemini-2.5-pro"), nil
 			})
@@ -898,7 +906,7 @@ func TestMarginNeedsFiveCaps(t *testing.T) {
 			}
 			sampled := readSpec(t, f.cloudFixture, budgetRun).AB != nil
 			if sampled != tc.sampled {
-				t.Errorf("sampled = %v with %d micros spent, want %v (%s)", sampled, tc.spent, tc.sampled, errOut)
+				t.Errorf("sampled = %v with %d micros counted, want %v (%s)", sampled, tc.counted, tc.sampled, errOut)
 			}
 			if n := len(f.run.Executions()); n != map[bool]int{true: 2, false: 1}[tc.sampled] {
 				t.Errorf("%d executions, want %d", n, map[bool]int{true: 2, false: 1}[tc.sampled])
@@ -934,6 +942,87 @@ func TestPlannerNotCalledForFollowUpRetryAttempts(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatalf("--retry asked the planner %d times, want none", calls)
+	}
+}
+
+// TestPlannerPairBlocksMustBeArms: the launcher judges the two blocks a planner
+// answers as the pair they have to be, which is the half of the pair the task
+// codec cannot see — it judges a block's own shape, and an absent block is
+// legal to it. A challenger's task with no block at all, or with the champion's
+// arm, would launch a second run that publishes (D554); two blocks carrying
+// different pair ids are a pair no reader can join. Each answer starts the
+// champion alone, unmarked.
+func TestPlannerPairBlocksMustBeArms(t *testing.T) {
+	cases := []struct {
+		name string
+		bad  func(p *Pair)
+		want string
+	}{
+		{"no challenger block", func(p *Pair) { p.Challenger.AB = nil },
+			"the challenger's task carries no ab block"},
+		{"the challenger carries the champion's arm", func(p *Pair) { p.Challenger.AB.Arm = task.ABArmChampion },
+			`the challenger's block carries the "champion" arm`},
+		{"the champion carries the challenger's arm", func(p *Pair) { p.Champion.Arm = task.ABArmChallenger },
+			`the champion's block carries the "challenger" arm`},
+		{"two pair ids", func(p *Pair) { p.Challenger.AB.PairID = "20261111-9999999999" },
+			"the two blocks carry different pair ids"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
+				p := abPair("20261111-abcd1234", "20261111-120000-beef", "gemini-2.5-pro")
+				tc.bad(p)
+				return p, nil
+			})
+			_, errOut, err := runBudget(t)
+			if err != nil {
+				t.Fatalf("a planner's bad pair failed the launch: %v", err)
+			}
+			if n := len(f.run.Executions()); n != 1 {
+				t.Fatalf("%d executions, want the champion alone", n)
+			}
+			spec := readSpec(t, f.cloudFixture, budgetRun)
+			if spec.AB != nil || spec.Batch != "" {
+				t.Errorf("the champion carries %+v / %q, want no pair block and no batch", spec.AB, spec.Batch)
+			}
+			if !strings.Contains(errOut, "ab: no pair sampled: "+tc.want) {
+				t.Errorf("the skip line = %q, want it to say %q", errOut, tc.want)
+			}
+		})
+	}
+}
+
+// TestPairNotSampledWhenTheLaunchAttaches: an --attach launch uploads its files
+// under its own run's prefix, and a mode: artifact run downloads them from
+// there (runstore.InputKey) — so the challenger, a run id of its own, would
+// name files that are not in its bucket and die at bootstrap. A launch that
+// attaches files samples nothing: the champion goes alone, unmarked, with its
+// own inputs.
+func TestPairNotSampledWhenTheLaunchAttaches(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	projectRecipesFixture(t, f.cloudFixture, map[string]string{"sizzle": projectSizzle})
+	installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
+		return abPair("20261111-abcd1234", "20261111-120000-beef", "gemini-2.5-pro"), nil
+	})
+	shot := attachShot(t, "shot.png", "png")
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--recipe", "sizzle", "--run-id", budgetRun,
+		"--attach", shot, "Render the nightly bundle")
+	if err != nil {
+		t.Fatalf("an --attach launch failed: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the champion alone", n)
+	}
+	spec := readSpec(t, f.cloudFixture, budgetRun)
+	if spec.AB != nil || spec.Batch != "" {
+		t.Errorf("the champion carries %+v / %q, want no pair block and no batch", spec.AB, spec.Batch)
+	}
+	if len(spec.Inputs) != 1 {
+		t.Errorf("the champion's inputs = %+v, want the attached file", spec.Inputs)
+	}
+	if !strings.Contains(errOut, "ab: no pair sampled: the launch attaches files") {
+		t.Errorf("the skip line = %q, want the attach reason", errOut)
 	}
 }
 

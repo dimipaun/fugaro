@@ -949,6 +949,25 @@ func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string,
 		pairSkip(warn, why)
 		return nil, why
 	}
+	// A launch that attaches files samples nothing. An --attach launch uploads
+	// them under its own run's prefix and a mode: artifact run downloads them
+	// from there (runstore.InputKey), so the challenger — a run id of its own —
+	// would name files that are not in its bucket and die at bootstrap
+	// (runner/artifact.go). The arms cannot be the one run a pair needs them to
+	// be, and a task file that names inputs has the same shape.
+	if len(o.attach) > 0 || len(spec.Inputs) > 0 {
+		why := "the launch attaches files, and a challenger would read them under its own run id, where they are not"
+		pairSkip(warn, why)
+		return nil, why
+	}
+	// The two blocks are the arms they claim, and one pair: the codec below
+	// judges a block's own shape, and an absent block is legal to it, so a
+	// challenger's task with no block at all — or with the champion's arm —
+	// would pass it and launch a second run that publishes (D554).
+	if why := pairArms(pair); why != "" {
+		pairSkip(warn, why)
+		return nil, why
+	}
 	label, why := pairLabel(o.batch, pair)
 	if why != "" {
 		pairSkip(warn, why)
@@ -1024,10 +1043,8 @@ func plannedRun(ctx context.Context, env *cloudEnv, o *runOptions, slug string, 
 		Prices:         prices,
 		ServiceHeldKey: len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, deployed)) > 0,
 	}
-	if cfg != nil {
-		eff, _ := chainLimitPolicyOf(ctx, env, spec, cfg).merge(o.limits.layer())
-		run.Policy = eff
-	}
+	eff, _ := chainLimitPolicyOf(ctx, env, spec, cfg).merge(o.limits.layer())
+	run.Policy = eff
 	return run, ""
 }
 
@@ -1073,6 +1090,30 @@ func cloneSpec(spec *task.Spec) (*task.Spec, error) {
 	return out, nil
 }
 
+// pairArms judges the two blocks a planner answered as the pair they have to
+// be: the champion's arm on the champion, a challenger's arm on the challenger,
+// and one pair id on both. task.Validate judges each block's own shape and
+// treats an absent block as the ordinary unsampled task, so this is the half of
+// the pair it cannot see — and the half that decides whether the second run is
+// a shadow that never publishes (D554) or a record a reader can join to its
+// pair (task.AB.PairID). It answers why the answer is not a pair, or "".
+func pairArms(pair *Pair) string {
+	if pair.Champion.Arm != task.ABArmChampion {
+		return fmt.Sprintf("the champion's block carries the %q arm", oneLine(string(pair.Champion.Arm)))
+	}
+	if pair.Challenger.AB == nil {
+		return "the challenger's task carries no ab block"
+	}
+	if pair.Challenger.AB.Arm != task.ABArmChallenger {
+		return fmt.Sprintf("the challenger's block carries the %q arm", oneLine(string(pair.Challenger.AB.Arm)))
+	}
+	if pair.Champion.PairID != pair.Challenger.AB.PairID {
+		return fmt.Sprintf("the two blocks carry different pair ids (%q and %q)",
+			oneLine(pair.Champion.PairID), oneLine(pair.Challenger.AB.PairID))
+	}
+	return ""
+}
+
 // pairLabel is the one batch label both arms of a pair carry, so a person
 // reads the pair out of `fugaro runs ls --batch`: the launch's own --batch
 // when it has one, else one derived from the pair's id, which has to be a
@@ -1111,8 +1152,18 @@ func launchChallenger(ctx context.Context, env *cloudEnv, slug string, champion 
 		pairWarn(warn, "the challenger's task was not stored: "+oneLineCLI(err.Error()))
 		return ""
 	}
-	if _, err := launchRun(ctx, env, slug, arm, time.Now()); err != nil {
+	res, err := launchRun(ctx, env, slug, arm, time.Now())
+	if err != nil {
 		pairWarn(warn, "the challenger did not launch: "+oneLineCLI(err.Error()))
+		return ""
+	}
+	if res.Status != "launched" {
+		// The run id already went, so this is not the pair's second arm:
+		// naming it as one would put a challenger in the champion's record
+		// that this launcher never started, which is the run a batch refuses
+		// to count for the same reason (runAttempts).
+		pairWarn(warn, fmt.Sprintf("run %s had already launched, so no challenger is recorded for this pair",
+			task.ShortRun(oneLine(res.Run))))
 		return ""
 	}
 	return arm.RunID
