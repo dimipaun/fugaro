@@ -159,11 +159,17 @@ export function readScannedPayload(text) {
   // One field, one value. `JSON.parse` lets the last of two equal keys win,
   // silently, and its reviver never sees the loser -- by the time a reviver
   // runs the object is built. So the check is on the text, where it is exact
-  // (see the backslash rule above): a field's token can only occur as its key,
-  // so a second occurrence is a second spelling of one field and the payload
-  // is refused whole rather than resolved.
+  // (see the backslash rule above), and the needle is the **key**: `"field":`.
+  // The colon is what makes it a key and not a value, and two of the rules
+  // above are what make it enough -- there is no whitespace, so the colon
+  // follows the quote directly, and no backslash, so no value can hold a `"`.
+  // A value is therefore never followed by a colon, and a field's name inside
+  // a longer key (`"gcp_project"` holds `project`, not `"project"`) does not
+  // carry the quote. Counting the bare name instead would refuse the QR of an
+  // installation whose own name is one of these words, which is a name
+  // `ProjectNameRE` allows and the owner may have chosen.
   for (const field of PAYLOAD_FIELDS) {
-    if (occurrences(text, `"${field}"`) > 1) return refuse(PAYLOAD_CODES.DUPLICATE_FIELD, field);
+    if (occurrences(text, `"${field}":`) > 1) return refuse(PAYLOAD_CODES.DUPLICATE_FIELD, field);
   }
 
   const parsed = parseOnce(text);

@@ -118,7 +118,16 @@ export function stateSentence(snapshot) {
   if (snapshot === null || typeof snapshot !== 'object') return IDLE_SENTENCE;
   if (snapshot.state === SESSION_STATES.DELIVERED) return DELIVERED_SENTENCE;
   if (snapshot.state === SESSION_STATES.EXPIRED) return EXPIRED_SENTENCE;
-  if (snapshot.state === SESSION_STATES.WATCHING) return WATCHING_SENTENCE;
+  // A starting session says the waiting sentence too: the code is already on
+  // screen (§7.2 shows it before the token is exchanged, so it is drawn for the
+  // whole of the write) and what the person does next is the same -- type it
+  // into their computer. What the two states do not share is the button: a
+  // starting session still draws Pair, and a press there is answered by the
+  // session's own "already in progress" (`session.js`), which is why the
+  // sentence is the one thing it inherits.
+  if (snapshot.state === SESSION_STATES.STARTING || snapshot.state === SESSION_STATES.WATCHING) {
+    return WATCHING_SENTENCE;
+  }
   if (snapshot.state === SESSION_STATES.REFUSED && snapshot.refusal !== null && snapshot.refusal !== undefined) {
     return refusalSentence(snapshot.refusal.code);
   }

@@ -92,6 +92,25 @@ test('a field named twice is refused whole, in every object the document carries
   }
 });
 
+test('a delivery whose project is named after a field is not a duplicate', () => {
+  // The needle is the key, `"field":`, and not the bare name, so a *value* that
+  // happens to be a field's name is not a second spelling of it. This carrier
+  // is where that bites hardest: an installation named `token` -- a name
+  // `ProjectNameRE` accepts, and the owner's to choose (D114) -- carries
+  // `"project":"token"` beside the device's own `"token"` key, and a check that
+  // counted values would refuse every delivery it ever sent. (The scan's own
+  // text is walked the same way, `payload.test.js`.)
+  const config = { ...CONFIG, project: 'token' };
+  const judged = readDelivery({ plaintext: new TextEncoder().encode(documentText({ config })), scan: scanOf(config) });
+  assert.equal(judged.ok, true, JSON.stringify(judged));
+  assert.equal(judged.delivery.config.project, 'token');
+  // ... and the rule still bites: the same field as a key twice is refused.
+  const doubled = documentText({ config }).replace('"token":', '"token":"x","token":');
+  const refused = readDelivery({ plaintext: new TextEncoder().encode(doubled), scan: scanOf(config) });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, DELIVERY_CODES.DUPLICATE_FIELD);
+});
+
 test('the document is refused rather than resolved, which is what the rule is for', () => {
   const text = twice(documentText(), 'project', 'other');
   // What a reader that skipped the check would get: the last spelling wins,

@@ -134,6 +134,34 @@ test('the JSON is an object with exactly the contract’s fields, once each', ()
   assert.equal(codeOf(scanned({ expires_at: 0 })), PAYLOAD_CODES.BAD_TYPE);
 });
 
+test('a project named after one of the payload’s own fields is not a duplicate', () => {
+  // The "one field, one value" needle is the key -- `"field":` -- and not the
+  // bare name, because a *value* can be one: `ProjectNameRE` accepts `v`,
+  // `token`, `uid`, `project`, `config` and `device`, and the GCP project id's
+  // rule takes the six-character ones. The name is the owner's (`internal/config` is the
+  // rule, D114's list is theirs), so an installation really can be called
+  // `token` -- and a check that counted values would refuse its QR for ever,
+  // with no way on the phone to pair it. (The same walk is on the delivery's
+  // text, `delivery.test.js`, for the same reason.)
+  for (const name of ['v', 'token', 'uid', 'project', 'config', 'device']) {
+    const result = readScannedPayload(scanned({ project: name }));
+    assert.equal(result.ok, true, `project: "${name}" was refused: ${JSON.stringify(result)}`);
+    assert.equal(result.payload.project, name);
+  }
+  for (const name of ['config', 'device', 'project']) {
+    const result = readScannedPayload(
+      scanned({ gcp_project: name, database_url: `https://${name}-default-rtdb.firebaseio.com` }),
+    );
+    assert.equal(result.ok, true, `gcp_project: "${name}" was refused: ${JSON.stringify(result)}`);
+  }
+  // ... and the rule still bites: the same field as a key twice is refused, and
+  // its name being this payload's project does not hide that.
+  assert.equal(
+    codeOf(scanned({ project: 'token' }).replace('"token":', '"token":"x","token":')),
+    PAYLOAD_CODES.DUPLICATE_FIELD,
+  );
+});
+
 test('the version is this build’s, and nothing else is guessed at', () => {
   const result = readScannedPayload(scanned());
   assert.equal(result.ok, true);

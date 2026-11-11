@@ -441,6 +441,51 @@ test('the session refuses to pair twice at once, and cancels cleanly', async () 
   assert.equal(database.writes.length, 2);
 });
 
+test('a second Pair before the first finishes is refused, not interleaved', async () => {
+  // The Pair button is drawn for every state but `watching` (`screen.js`), so a
+  // double-tap arrives while the first attempt is suspended on the exchange.
+  // The two would share this object's variables: the second press would reset
+  // the first's key and draw its own, the first would write the second one's
+  // public key to the request node, and the second's write would be denied by
+  // that node's own rule (`!data.exists()`) -- so the loser's refusal would
+  // stop the winner's listener and leave a node behind that nothing can pair
+  // against again, because the request is written exactly once.
+  const auth = {
+    async signIn() {
+      // An exchange that does not answer in the same turn, which is what a
+      // network round trip is: `begin` is suspended here when the second press
+      // arrives.
+      await null;
+      return { ok: true, uid: UID };
+    },
+  };
+  // A draw per key pair, so the test can name whose key reached the tree: if
+  // the second press got as far as drawing, it is the second draw that is
+  // written and the first attempt's key is lost.
+  const draws = [0x21, 0x22];
+  const { session, database } = makeSession({ auth, random: (count) => new Uint8Array(count).fill(draws.shift()) });
+  const first = session.start(scanned(), { id: 'laptop' });
+  const second = await session.start(scanned(), { id: 'laptop' });
+  assert.equal(second.ok, false);
+  assert.equal(second.code, SESSION_CODES.ALREADY_STARTED);
+  assert.equal(session.snapshot().state, SESSION_STATES.STARTING, 'the first attempt is in flight');
+  // §7.2's order: the code is shown before the token is exchanged, so it is on
+  // screen for the whole of the write.
+  assert.equal(typeof session.snapshot().code, 'string');
+
+  const started = await first;
+  assert.equal(started.ok, true, JSON.stringify(started));
+  assert.equal(started.session.state, SESSION_STATES.WATCHING);
+  assert.equal(database.writes.length, 1, 'one press, one request node');
+  assert.equal(database.watched.length, 1, 'and one listener');
+  assert.equal(database.watched[0].path, deliveryPath(UID));
+  assert.equal(session.snapshot().state, SESSION_STATES.WATCHING);
+  // The node carries the first press's key, and the second press drew none:
+  // the two attempts never shared a variable.
+  assert.equal(database.writes[0].value.key, encodeDeviceKey(nodeX25519.getPublicKey(new Uint8Array(32).fill(0x21))));
+  assert.deepEqual(draws, [0x22], 'the second press never reached the key pair');
+});
+
 test('a port that fails ends the attempt with a refusal, and stores nothing', async () => {
   // The request write failing is the case the ordering is for: no code is
   // shown to the operator for a pairing that cannot proceed.

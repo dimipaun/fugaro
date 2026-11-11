@@ -106,6 +106,7 @@ import { readScannedPayload } from './payload.js';
 /** The states a session is in, in the order it reaches them. */
 export const SESSION_STATES = Object.freeze({
   IDLE: 'idle',
+  STARTING: 'starting',
   WATCHING: 'watching',
   DELIVERED: 'delivered',
   REFUSED: 'refused',
@@ -232,8 +233,29 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     // Only a pairing already in flight is refused. A refused, expired or
     // delivered session may be started again -- a second QR, a re-pair -- and
     // every attempt begins from nothing: a new key, a new code, a new watch.
-    if (state === SESSION_STATES.WATCHING) return refuse(SESSION_CODES.ALREADY_STARTED);
+    //
+    // **In flight includes the exchange and the write**, and that is the whole
+    // point of the `starting` state: the steps below are one `begin`'s, over
+    // this object's own variables, and two of them at once interleave rather
+    // than queue. The second `begin` would reset the first's key and draw its
+    // own, the first would write the *second* one's public key to the request
+    // node, and the second's write would be denied by that node's own rule
+    // (`!data.exists()`) -- so the loser's refusal would stop the winner's
+    // listener and leave a request node behind that nothing can pair against
+    // again, because the request is written exactly once. A second press is a
+    // real event and not a hypothetical: the Pair button is drawn for every
+    // state but `watching` (`screen.js`), so a double-tap arrives while the
+    // first attempt is suspended on the exchange.
+    if (state === SESSION_STATES.STARTING || state === SESSION_STATES.WATCHING) {
+      return refuse(SESSION_CODES.ALREADY_STARTED);
+    }
     reset();
+    // The attempt is in flight from here, before the first await, so a press
+    // that arrives during it is refused above rather than racing it. Nothing
+    // has happened yet that a person can see -- the payload has not been read,
+    // no key exists and no node is written -- and every path out of the steps
+    // below ends the attempt in a state of its own (`refused`, `expired`).
+    state = SESSION_STATES.STARTING;
     // 1. The payload, judged before anything is stored (`payload.js`). A
     //    refusal here has no side effect at all: no key drawn, no node written,
     //    no code shown.

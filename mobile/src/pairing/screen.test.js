@@ -152,6 +152,10 @@ test('the screen draws no code it was not given, and no credential ever', () => 
 test('the screen says one sentence per state, and a refusal says which', () => {
   assert.equal(stateSentence(null), IDLE_SENTENCE);
   assert.equal(stateSentence(snapshot()), IDLE_SENTENCE);
+  // A starting session says the same sentence as a watching one: the code is
+  // already on screen and the person's next move is the same. What the two do
+  // not share is the button -- and a press on it is answered by the session.
+  assert.equal(stateSentence(snapshot({ state: SESSION_STATES.STARTING })), WATCHING_SENTENCE);
   assert.equal(stateSentence(snapshot({ state: SESSION_STATES.WATCHING })), WATCHING_SENTENCE);
   assert.equal(stateSentence(snapshot({ state: SESSION_STATES.DELIVERED })), DELIVERED_SENTENCE);
   assert.equal(stateSentence(snapshot({ state: SESSION_STATES.EXPIRED })), EXPIRED_SENTENCE);

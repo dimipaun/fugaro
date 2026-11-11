@@ -121,8 +121,15 @@ export function readDelivery({ plaintext, scan }) {
   // field left out of this walk is a field `JSON.parse` resolves silently by
   // letting the last of two equal keys win, which is the one thing the
   // configuration may not do: it decides what the app stores (D199).
+  //
+  // The needle is the key, `"field":`, for `payload.js`'s reason: the document
+  // is compact and escape-free, so no value can be followed by a colon, and a
+  // *value* that happens to spell a field's name is not a second spelling of
+  // it -- which matters here too, because `project: "token"` and
+  // `gcp_project: "device"` are names `ProjectNameRE` and `GCPProjectRE`
+  // accept, and the device object carries a `token` of its own.
   for (const field of [...DELIVERY_FIELDS, ...DEVICE_FIELDS, ...CONFIG_FIELDS]) {
-    if (occurrences(text, `"${field}"`) > 1) return refuse(DELIVERY_CODES.DUPLICATE_FIELD, field);
+    if (occurrences(text, `"${field}":`) > 1) return refuse(DELIVERY_CODES.DUPLICATE_FIELD, field);
   }
 
   let raw;
