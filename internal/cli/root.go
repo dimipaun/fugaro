@@ -259,6 +259,11 @@ func newCoreRoot() *cobra.Command {
 		// service's container sets no command and the image's CMD is what
 		// names `fugaro intake serve` (intake_serve.go).
 		newIntakeCmd(),
+		// The local diagnosis of a command that failed on this machine: its
+		// log, this machine's configuration and the source at this version,
+		// read by a read-only agent (docs/diagnose-agent, D1604). Beside
+		// `fugaro diagnose`, which explains a cloud run instead.
+		newTroubleshootCmd(),
 	)
 	annotateManagedMutating(root)
 	return root

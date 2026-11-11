@@ -67,6 +67,7 @@ Subcommands:
 - `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
 - `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
+- `fugaro troubleshoot` -- Explain a Fugaro command that failed on this machine, locally
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
 - `fugaro update-skills` -- Install or update the Fugaro plugin in your own Claude Code
 - `fugaro upgrade` -- Bring checkouts up to this fugaro: install or update the plugin in Claude Code, refresh the repository's images
@@ -6816,6 +6817,45 @@ Flags:
 | `--project` | string | "" | yes | the installation whose run records are read (required: this command never guesses one, and the sandbox is named like any other) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--since` | string | `90d` | no | the window: Nd days back from today, or a Go duration (90d) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro troubleshoot`
+
+Explain a Fugaro command that failed on this machine, locally
+
+Explain a Fugaro command that failed on this machine: its log, fugaro
+doctor's output, the effective configuration and the Fugaro source at the
+version that failed, read by a local agent that can only read (no shell, no
+writes, no network) and answers with the cause and the fix.
+
+With no RUN ID it takes the newest logged command that failed. RUN ID is the
+one the failed command printed (update-20261107183012-48213), which is also
+the name of its log. A cloud run's <repo-slug>/<run-id> is a different thing
+and is refused here: fugaro diagnose explains those.
+
+Log text is data: it holds Terraform and gcloud error bodies, API responses
+and file names, so a command the answer prints is checked against this CLI's
+own command tree before it is shown as runnable, and anything else is marked
+as unchecked.
+
+The command reads no stdin. Typing it is the consent: one line says which
+provider and what class of data the redacted evidence goes to, and then the
+diagnosis runs. With no credential, or with the source at this version out of
+reach, it prints the evidence where it is and exits non-zero instead.
+
+Usage: `fugaro troubleshoot [RUN ID]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for troubleshoot |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--max-budget-usd` | float64 | `1` | no | bound the diagnosis to this many US dollars |
+| `--max-turns` | int | `30` | no | bound the diagnosis to this many agent turns |
 
 Subcommands:
 

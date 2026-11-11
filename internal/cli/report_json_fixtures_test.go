@@ -32,6 +32,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/diagnoseagent"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -507,6 +508,23 @@ var jsonCases = map[string]jsonCase{
 		run: func(t *testing.T) []string {
 			jsonCloud(t)
 			return []string{"stats", "runs", "--project", "aurora"}
+		},
+	},
+	"troubleshoot": {
+		run: func(t *testing.T) []string {
+			// The command's own rig (troubleshoot_test.go): a failed
+			// command's log, a source tree, a credential and the agent's
+			// answer, none of them this machine's -- the run reaches its own
+			// document without an agent, a network or a change to anything of
+			// the person's.
+			x := tsSetup(t)
+			x.id = tsFailedLog(t, time.Now().UTC(), "error: the account is not allowed here", "Failed in 1.2s")
+			x.diag = diagnoseagent.Diagnosis{
+				Outcome:   diagnoseagent.OutcomeConfiguration,
+				Signature: "update configuration",
+				Text:      "The account is not allowed for this repository.",
+			}
+			return []string{"troubleshoot", x.id.String()}
 		},
 	},
 	"update": {

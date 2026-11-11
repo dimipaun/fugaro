@@ -197,6 +197,18 @@ var yamlMeta = map[string]Row{
 		Default: unset("none: a stage whose own model cannot read an image keeps it"),
 		Doc:     docVision,
 	},
+	// The diagnose slot (D1607) is the model `fugaro troubleshoot` runs on,
+	// and it is a decision rather than a value like the vision slot's: nothing
+	// applies Fugaro's own choice to the resolved configuration, so the row
+	// says what unset means instead of naming the constant. The models family
+	// owns it as it owns the four rows above — what a model key may hold is
+	// that command's check — and the key is written by hand until `models use`
+	// takes the role.
+	"agent.models.diagnose": {
+		Owner:   "models",
+		Default: unset("Fugaro's own diagnose model (config.DefaultDiagnoseModel)"),
+		Doc:     docDiagnose,
+	},
 	// The four crafts (docs/model-crafts/spec.md §3), the spec's own table
 	// read back: the coder and the senior review are what a run cannot do
 	// without, and the review and the security review follow the craft above
@@ -429,6 +441,10 @@ const (
 	docRigor  = "docs/rigor-modes/spec.md"
 	docCrafts = "docs/model-crafts/spec.md"
 	docImages = "docs/project-image-catalog/spec.md"
+	// docDiagnose is the troubleshooting guide's document: it is written for
+	// the model `fugaro troubleshoot` starts, so it is where the key that
+	// chooses that model is stated (D1607).
+	docDiagnose = "docs/troubleshooting-for-agents.md"
 	// docOrchestrator is the document that states the orchestrator daemon's
 	// guardrails. It is the work's plan rather than a spec because the guardrail
 	// keys are stated there and nowhere else yet (D1239, D1234): a spec of the
@@ -569,6 +585,10 @@ var layerRows = []Row{
 	// repository's own row to decide — including the empty answer, which is
 	// the one slot whose empty answer is not the layer's model.
 	layerRow("defaults.agent.models.vision", "none: a stage whose own model cannot read an image keeps it", "models", docVision),
+	// The diagnose slot's layer row (D1607): the layer sets the local
+	// diagnosis's model for every repository of the project, and a layer that
+	// states nothing leaves Fugaro's own choice to the command.
+	layerRow("defaults.agent.models.diagnose", "Fugaro's own diagnose model (config.DefaultDiagnoseModel)", "models", docDiagnose),
 	// The crafts' models are the layer's to set, as the three models rows
 	// above are; their access is not, and the row says so rather than leaving
 	// the layer's reader to find out at publish time (config.Scopes refuses

@@ -168,6 +168,12 @@ const (
 // block it sits in is a wildcard block no prefix reaches either, so it is one
 // of the rows with no generic writer — one more of them.
 //
+// The diagnose slot (docs/diagnose-agent, T-DG8) moved it by two the same way
+// and in the same family: `agent.models.diagnose` is the model a local
+// diagnosis runs on and `defaults.agent.models.diagnose` is the layer's key
+// for it, and both are written by hand until `models use` takes the role, so
+// neither is in the allowlist.
+//
 // The settings design's S6 moved the registry's figure once more, by one row
 // and not the allowlist's: the clone URLs a run clones its repository from
 // (settings spec §5.6, SD5, D842) left the policy node for a block of the
@@ -177,7 +183,7 @@ const (
 // (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
 // list does not.
 const (
-	cfmRegistryRows   = 410
+	cfmRegistryRows   = 412
 	cfmAllowlistNamed = 101
 )
 
