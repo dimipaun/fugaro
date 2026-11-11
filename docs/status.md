@@ -11,7 +11,6 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | console-dependency-graph | 13/17 | GV3.1, GV3.2, GV4.1 |
 | bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145, and 148's read half (S2, D1961); S3 superseded by the secrets-brokering proxy chain (2026-11-10), except T3.3's trust paths; Check 147 retired (D1960) and T2.6 unblocked (D1962); D1960–D1962 answered 2026-11-10 as recommended (its reconciliation-secrets-brokering.md) |
 | mcp-server | 8/12 | M4 store (draft #2117), M5b (draft #2114, a follow-up in a run); M9 parked (D936, the fence declined): no release schedules it |
-| issue-mine | 5/7 | T-IM3, T-IM7 (in a run); T-IM6 merged |
 | contract-first-decoupling | 4/7 | CD4, CD5, CD7 |
 | task-governance | 24/31 | 7 left: T3.4 (docs), and the rest in `ee/governance` |
 | mobile | about 35/45 | P5.x, P7.2 to P7.5; owner P2.3 and P4.4 |
@@ -77,6 +76,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | project-workflow-secrets | none |
 | accounts-add | owner checks LC1 to LC4 |
 | c39-review-identity | owner live check |
+| issue-mine | owner Checks 470 to 472 |
 | image-env | owner Check 291 |
 | setup-wizard | owner Checks 27 and 111 |
 | ee-reorg | owner E3.4; E4.1 deferred |
