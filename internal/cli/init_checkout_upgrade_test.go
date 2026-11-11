@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -1285,5 +1286,30 @@ func TestUpdateFailedBuildNamesTheRunThatRetries(t *testing.T) {
 	res2 := stageOutcome(t, e2, checkoutStageOf(t, e2))
 	if res2.Failed != nil || stateOf(res2, checkoutStageName) != initflow.Done || len(*ran) != 0 {
 		t.Errorf("a rerun of this door is not done at the checkout after a failed build: %+v, steps %q\n%s", res2, *ran, out2)
+	}
+}
+
+// TestUpdateCheckoutPlanLineIsTheUpdateDoorsOwnWords: the stage's one line is
+// what `fugaro update` says it does for the checkout, and the command the
+// person is running is this one. Naming fugaro upgrade sent a reader to a
+// command they never run, and to a run of it that is not this run — the steps
+// this stage takes are the converge's, in this project, with the local config
+// this run wrote.
+func TestUpdateCheckoutPlanLineIsTheUpdateDoorsOwnWords(t *testing.T) {
+	_, root := upgradeRig(t)
+	e, _ := checkoutEngine(t, &initOptions{yes: true})
+	st := checkoutStageOf(t, e)
+	plan, err := st.Plan(t.Context(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plan.Detail, "fugaro upgrade") {
+		t.Errorf("the plan's line sends the reader to a command this run is not: %q", plan.Detail)
+	}
+	if !strings.Contains(plan.Detail, pluginwire.Printable(root)) {
+		t.Errorf("the plan's line does not say which checkout it is for: %q", plan.Detail)
+	}
+	if !strings.Contains(plan.Detail, "cloud") {
+		t.Errorf("the plan's line does not name the step it runs: %q", plan.Detail)
 	}
 }

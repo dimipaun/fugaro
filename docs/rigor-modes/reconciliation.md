@@ -846,15 +846,7 @@ folder's pin over SECURITY.md's section for the read mint and its two caller
 classes, moved it from 121 to 122.
 Amended 2026-11-11: `internal/cli/docs_forge_checks_test.go`, the
 forge-authorship-images plan's pin over the register's Checks 230, 231, 232, 234
-and 235 (X1), moved the table's row from 123 to 124.
-Amended 2026-11-11: `86443b6b` (#2337) added the rigor-levels addendum's own pin,
-`internal/cli/docs_rigor_levels_test.go`, and moved this row to 124 — the figure
-`90cfd931` (#2331) had already moved it to for its own file — so the tree holds
-125 of them and the row moves to 125.
-Amended 2026-11-11: `51ad2b6a` (#2319), the escalation and rebase recipes, added
-the image-skew `Since` constant `escalationSince` to
-`internal/cli/recipes_skew.go` and left the image-skew row at 36, so it moves to
-37.) They
+and 235 (X1), moved the table's row from 123 to 124.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -871,7 +863,7 @@ stale has found a merge that did not.
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 37 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 38 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 125 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |

@@ -823,9 +823,9 @@ export const CONSOLE_OPERATIONS = [
   //
   // What is deliberately absent is the point. `--all-users` is a flag of
   // `newRunsStatsCmd` that shows every user's row, and it is not a key of this
-  // schema: the command resolves the view itself -- an operator of the
+  // schema: the command resolves the view itself -- an admin of the
   // installation (the identity named in the local config's `user:`/git, listed
-  // in its `terraform.operators`) sees every user's rows, and everyone else sees
+  // in its `terraform.admins`) sees every user's rows, and everyone else sees
   // their own row alone (`internal/cli/runs_stats.go`, `userStatsViewOwn`) --
   // and a console that could pass the flag could widen a private view to
   // everyone's with one click. `--by` is fixed to `user` by the command's own
@@ -2438,7 +2438,7 @@ const MAX_SETTING_KEY_LENGTH = 120
  * **`*` is admitted anywhere a letter is, on purpose.** A standalone segment is
  * the spelling the registry uses, but `stages.rev*iew.x` passes this grammar
  * too, and that is the honest shape of the claim: this expression bounds the
- * **word** a key can be, and `internal/cli/settings_set.go:331` refuses any key
+ * **word** a key can be, and `internal/cli/settings_set.go:537` refuses any key
  * carrying a `*` with its own sentence -- "varies with a name this command does
  * not take" -- before the allow-list is consulted. Tightening the segment here
  * would move that refusal from the CLI's words to a schema refusal of this
@@ -2446,7 +2446,7 @@ const MAX_SETTING_KEY_LENGTH = 120
  *
  * **It is a shape and not the allow-list.** Whether the generic write path owns
  * a key is `settingsGenericKeys`/`settingsGenericPrefixes`
- * (`internal/cli/settings_set.go:75`, `:99`) -- the CLI's own list, which the
+ * (`internal/cli/settings_set.go:96`, `:251`) -- the CLI's own list, which the
  * console keeps no copy of (D1102). What this grammar does is keep the argv
  * word a key can be: no space, no dash, no `=`, nothing that could be read as a
  * flag or quoted by a shell, so the key never needs the terminator the value

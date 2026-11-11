@@ -43,7 +43,10 @@ func settingsWriteHomeWith(t *testing.T, extra string) (home, localPath string) 
 // takes the current directory's checkout, which is what these tests exercise.
 func settingsWriteCheckout(t *testing.T, fugaroYAML string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	testutil.Git(t, dir, "init", "-q")
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(fugaroYAML), 0o600); err != nil {
 		t.Fatal(err)
@@ -907,6 +910,10 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		// spelling — the pattern, not a concrete spelling of it.
 		"workflows.*.commands.test", "workflows.*.image.apt", "workflows.*.secrets",
 		"layer.profiles.*.image.apt", "layer.profiles.*.cache.*.key", "layer.ab.rate",
+		// D1173 (G10): the four rows of a repository's own entry that a person
+		// writes are the generic path's; the machine-written vertex and
+		// credentials_service_ready beside them stay the project family's.
+		"repos.*.provider", "repos.*.base_branch", "repos.*.workflows", "repos.*.github_app_id",
 	}
 	for _, key := range allowed {
 		if !settingsGenericKey(key) {
@@ -916,7 +923,7 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 	refused := []string{
 		"endpoints.compute", "terraform.state_bucket", "policy_generation", "layer_generation",
 		"credentials_service.url", "budget.rtdb_url", "budget.firebase_api_key",
-		"name", "runs_bucket", "bucket_url", "repos.*.base_branch",
+		"name", "runs_bucket", "bucket_url", "repos.*.vertex",
 		"providers.*.base_url", "bitbucket_api_roots", "model_prices", "routing.claude",
 		// The registry's other wildcard rows, and the blocks the layer's own
 		// file holds that this design hands to no command of this path.
@@ -1474,7 +1481,7 @@ func TestSettingsSetConcreteKeyOfAnUnlistedRowIsRefused(t *testing.T) {
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	before := readFileString(t, path)
 
-	for _, key := range []string{"repos.web.base_branch", "providers.corp.base_url", "claude_accounts.corp.allow_data_to"} {
+	for _, key := range []string{"repos.web.vertex", "providers.corp.base_url", "claude_accounts.corp.allow_data_to"} {
 		t.Run(key, func(t *testing.T) {
 			if _, _, ok := settingsWriteLookup(key); ok {
 				t.Errorf("settingsWriteLookup(%q) resolved a wildcard row the allowlist does not carry", key)
@@ -1496,13 +1503,14 @@ func TestSettingsSetConcreteKeyOfAnUnlistedRowIsRefused(t *testing.T) {
 
 // TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys: the pattern lookup
 // resolves a wildcard registry row only for a spelling settingsGenericKeys
-// carries, so a concrete spelling of the project family's `repos.*.*` or the
-// models family's `providers.*.*` is refused like any other key the generic
-// path does not write, and nothing is written.
+// carries, so a concrete spelling of a row outside it — a repository's
+// machine-written `repos.*.vertex`, whose four neighbours are the generic
+// path's (D1173), or the models family's `providers.*.*` — is refused like any
+// other key the generic path does not write, and nothing is written.
 func TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
-	for _, key := range []string{"repos.web.base_branch", "providers.corp.base_url"} {
+	for _, key := range []string{"repos.web.vertex", "providers.corp.base_url"} {
 		t.Run(key, func(t *testing.T) {
 			// The rule itself, so the test says which of the two reasons the
 			// refusal has: this key resolves no row here at all.

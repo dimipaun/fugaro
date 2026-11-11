@@ -188,6 +188,15 @@ var jsonCases = map[string]jsonCase{
 			return []string{"doctor"}
 		},
 	},
+	"followups": {
+		// The plan and not a launch: the fixture's parent is merged, so
+		// --launch here would file the tasks rather than print them.
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			launchable(t, f)
+			return []string{"followups", mergedParent(t, f, allDeferred(t))}
+		},
+	},
 	"image build": {
 		why: "the run's confirmation is typed at a terminal, and --json never gives one, so the command refuses before it prints any document",
 	},
@@ -337,6 +346,14 @@ var jsonCases = map[string]jsonCase{
 		run: func(t *testing.T) []string {
 			jsonCloud(t)
 			return []string{"plan", "status"}
+		},
+	},
+	"project clone-url ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := newBudgetFixture(t, "")
+			f.appendConfig(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n")
+			return []string{"project", "clone-url", "ls"}
 		},
 	},
 	"project policy show": {

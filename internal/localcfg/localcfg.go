@@ -38,8 +38,37 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
+// ConfigVersion is the version of the local config this release writes, and
+// the newest Parse reads.
+//
+// Version 1 is the document every installation had before the roles' own words
+// arrived: its `terraform` block spelled the two member lists `launchers` (who
+// may start runs — the role operator) and `operators` (who administer the
+// project — the role admin). Version 2 spells the same two lists `operators`
+// and `admins`, and the bump exists precisely because ONE NAME MOVED: the word
+// `operators` names the first list in version 2 and named the second in version
+// 1, so a reader that cannot tell the two shapes apart would read a version-1
+// admin list as this version's operator list, which is a privilege change
+// nobody asked for. The document's own `version` is therefore read BEFORE the
+// document is decoded, a version-1 document is folded into this shape
+// (foldLegacyLists), and a document of a version newer than this one is refused
+// by name rather than guessed at — which is also the floor an older Fugaro
+// meets: it reads a `version` it does not write and refuses the document, so an
+// old binary never converges an installation whose shape it cannot see.
+//
+// The two keys are the machine's copy of the role words, and the grants node
+// (internal/access, under config/admin) is their authority: `fugaro update`
+// derives these lists from it on every converge, and its migration writes the
+// node from the version-1 lists an installation already had.
+const ConfigVersion = 2
+
 // Config is the local CLI config.
 type Config struct {
+	// Version is the document's own version, and the field an older Fugaro
+	// refuses: ConfigVersion is the one this release writes, and Parse returns
+	// every accepted document as this version, because folding a version-1
+	// document produces version 2's shape and a document that says 1 while
+	// carrying 2's keys is the one spelling nobody may read.
 	Version int `yaml:"version"`
 	// Name is the Fugaro project (config.ProjectNameRE), which the file
 	// is named after.
@@ -172,6 +201,18 @@ type Config struct {
 	// (spec §2). They are created where credentials are, and for the same
 	// reason.
 	Pools []config.Pool `yaml:"pools,omitempty"`
+	// SubscriptionSpread is whether a run may spread across two or more Claude
+	// OAuth subscription credentials at all (D1622, D1636): the D875 switch
+	// `claude_account_auto` held, under the name the pools it governs use, and
+	// off is what every installation reads until the owner turns it on — the
+	// arrangement a subscription's terms may forbid is not what Fugaro does
+	// unattended. It is a pointer so that "the owner wrote false" and "the
+	// owner wrote nothing" are two facts: the second is what a publish keeps
+	// the node's member for, and only the first turns a pool that is already
+	// spread off. It is created where the pools are, and for their reason: the
+	// node a run reads it from is the owner's own, and a key a launcher could
+	// write would be one that spends a subscription nobody agreed to spread.
+	SubscriptionSpread *bool `yaml:"subscription_spread,omitempty"`
 	// Crafts are the credential or pool each craft's calls go out on (spec
 	// §3): the project's own answer, published to the policy node by the same
 	// publish that carries the two blocks above. It is here rather than in the
@@ -232,6 +273,29 @@ type Config struct {
 	// refused by the publish that builds the node, before anything is written,
 	// with a sentence naming the entry.
 	BitbucketAPIRoots []string `yaml:"bitbucket_api_roots,omitempty"`
+	// CloneURLs are the URLs the project's repositories clone from, keyed by
+	// the canonical repository name (projectpolicy's clone_urls, which
+	// `fugaro project policy publish` copies this into — the runner computes a
+	// project job's clone URL from the node, so this file is where the owner
+	// writes it). Only the owner sets it, here or in the published node, and
+	// the shared config never carries it: a launcher who could write it into
+	// the runs bucket's shared file would be choosing where every teammate's
+	// runs clone from.
+	//
+	// It is a copy and not a derivation, and it is held to the node's rule
+	// alone (projectpolicy.ValidCloneURLs): an https URL without credentials
+	// that names exactly this repository on its own provider's host. There is
+	// no second copy of that rule here on purpose — an entry the node would
+	// refuse is refused by the publish that builds the node, before anything is
+	// written, with a sentence naming the entry, and by `fugaro project
+	// clone-url` where it is typed.
+	//
+	// A map and not a pointer, like ImageMap: nil is "this file states
+	// nothing", which keeps the node's block (CloneURLsEffective), and a
+	// written block with no entry in it is a statement of its own — the
+	// project gives no repository a URL, which is how a published block is
+	// taken away on purpose.
+	CloneURLs map[string]string `yaml:"clone_urls,omitempty"`
 	// VerifierAccounts are the identities that may ask the installation's
 	// credentials service whether a verdict's signature is its own (C3.9g3,
 	// D1068, D1075): the coordinator's own account once it exists, and the
@@ -1016,11 +1080,37 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 
 // Terraform is what fugaro update needs to plan the installation again: its
 // state bucket, and the inputs that exist only as flags.
+//
+// Its two member lists carry the ROLES' own words (docs/roles-scopes, D1581):
+// `operators` are the members who start and steer runs, `admins` those who
+// onboard repositories, apply Terraform and submit builds. Before this release
+// the same two lists were spelled `launchers` and `operators`, which is the
+// collision a reader of this file must know about: the word `operators` names
+// one list here and named the OTHER one until version 1, so the document's own
+// `version` is what tells the two shapes apart (Parse folds version 1 into this
+// shape, and the migration in `fugaro update` rewrites the file as version 2
+// once the grants node holds the roles). The Terraform variables keep their old
+// names (D1589) — the installation's module still takes `launchers` and
+// `operators`, filled from these two lists by internal/cli's spec builders — so
+// a pure rename plans nothing.
+//
+// The lists are the machine's copy, not the authority: the roles live in the
+// grants node, and `fugaro update` derives these two lists from it on every
+// converge (internal/cli's access step). A file that disagrees with the
+// installation's own lists is a refusal, not a silent preference.
 type Terraform struct {
-	StateBucket string   `yaml:"state_bucket,omitempty"`
-	AlertEmail  string   `yaml:"alert_email,omitempty"`
-	Launchers   []string `yaml:"launchers,omitempty"` // IAM members, such as user:a@example.com
-	Operators   []string `yaml:"operators,omitempty"`
+	StateBucket string `yaml:"state_bucket,omitempty"`
+	AlertEmail  string `yaml:"alert_email,omitempty"`
+	// Operators are the IAM members who launch and watch runs (the role word is
+	// the spec's operator). The key was `launchers` in version 1: the list is
+	// the same one, under the role's name.
+	Operators []string `yaml:"operators,omitempty"`
+	// Admins are the IAM members who onboard repositories and apply Terraform
+	// (the role word is the spec's admin). The key was `operators` in version 1,
+	// and that reuse is why the document carries a version at all: a version-1
+	// reader must not read this list as the one above, and it does not — it
+	// refuses the document instead (Version).
+	Admins []string `yaml:"admins,omitempty"`
 	// BudgetAdmins are further budget admins on the Firebase project, IAM
 	// members (user:, group: or serviceAccount:); the GCP project's owners
 	// and editors are admins too, read when fugaro update --firebase-project runs.
@@ -1680,6 +1770,90 @@ func oldMailboxKeychainItem(mailbox *yaml.Node) string {
 	return ""
 }
 
+// foldLegacyLists rewrites a version-1 document's `terraform` block into the
+// spelling this release reads: `launchers` becomes `operators` and `operators`
+// becomes `admins` (ConfigVersion).
+//
+// It is the ONE place the two spellings are told apart, and it does so from the
+// document's own version rather than from the keys it carries: a version-1
+// document's `operators` is the ADMINS (and its `launchers` the operators),
+// whichever of the two keys it happens to carry, so reading it by "which keys
+// are here" would take a version-1 roster of admins for this version's
+// operators — the exact misread the version exists to prevent. A document at
+// this version or newer is returned untouched, and one whose `terraform` block
+// holds neither key has nothing to move either way.
+//
+// It works on the parsed YAML tree, not on text and not on the typed struct:
+// the rewrite is two key names, the comments and the rest of the document are
+// nobody's business here, and a document whose `terraform` block is not a
+// mapping (or whose `launchers` is written twice) is left for the typed decode
+// to refuse with its own message.
+func foldLegacyLists(data []byte, top map[string]yaml.Node) ([]byte, error) {
+	if documentVersion(top) >= 2 {
+		return data, nil
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return data, nil // not YAML at all: the typed decode says so, in its own words
+	}
+	if root.Kind != yaml.DocumentNode || len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
+		return data, nil
+	}
+	block := mappingValue(root.Content[0], "terraform")
+	if block == nil || block.Kind != yaml.MappingNode {
+		return data, nil
+	}
+	moved := false
+	for i := 0; i+1 < len(block.Content); i += 2 {
+		switch block.Content[i].Value {
+		case "launchers":
+			block.Content[i].Value = "operators"
+			moved = true
+		case "operators":
+			block.Content[i].Value = "admins"
+			moved = true
+		}
+	}
+	if !moved {
+		return data, nil
+	}
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// documentVersion is the `version` a document states, or 0 when it states none
+// and when the document itself could not be read.
+func documentVersion(top map[string]yaml.Node) int {
+	n, ok := top["version"]
+	if !ok {
+		return 0
+	}
+	var v int
+	if err := n.Decode(&v); err != nil {
+		return 0
+	}
+	return v
+}
+
+// mappingValue is the value node of key in a YAML mapping node, or nil when the
+// mapping does not carry it. A key written twice answers with its last value,
+// which is what a YAML reader would take; the fold above only asks whether a
+// key is there at all.
+func mappingValue(m *yaml.Node, key string) *yaml.Node {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
 // The local loader's own values, which Parse leaves in place for a file that
 // sets the key nowhere. They are named because the settings registry cites
 // them in the DEFAULT column (spec §2.4): the row for one of these keys is the
@@ -1713,15 +1887,27 @@ func Parse(data []byte) (*Config, error) {
 			}
 		}
 	}
+	folded, err := foldLegacyLists(data, top)
+	if err != nil {
+		return nil, fmt.Errorf("local config: %w", err)
+	}
 	var c Config
-	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec := yaml.NewDecoder(bytes.NewReader(folded))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("local config: %w", err)
 	}
 	if c.Version == 0 {
-		c.Version = 1
+		c.Version = 1 // the first spelling: a document that says nothing is version 1's
 	}
+	if c.Version > ConfigVersion {
+		// Refused by name rather than guessed at, and the sentence names the
+		// one command that settles it, exactly as the policy node's own floor
+		// does: a newer document's shape is that release's to read, and this
+		// binary's guess at it is the misread ConfigVersion exists to prevent.
+		return nil, fmt.Errorf("local config: version %d is newer than the %d this Fugaro writes: upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run fugaro update", c.Version, ConfigVersion)
+	}
+	c.Version = ConfigVersion
 	if c.MaxParallel == 0 {
 		c.MaxParallel = DefaultMaxParallel
 	}
@@ -1836,6 +2022,32 @@ func (c *Config) ImageMapEffective(published map[string]string) map[string]strin
 	return effective
 }
 
+// CloneURLsEffective is the keep rule for the clone URLs (SD5, D842, D844): the
+// block this file states when it writes one — a written block with no entry
+// included, which is how a published one is taken away on purpose — and the
+// published node's otherwise.
+//
+// The second half is what makes the import's refusal harmless: a machine whose
+// file predates the block, or an owner who declined the import, publishes the
+// node's own entries rather than dropping them, so the node is left exactly as
+// it was (§6.4's "a declined import leaves the file and the node exactly as
+// they were"). A nil answer is the whole of the answer, as it is for the image
+// map: the publisher omits the key when the effective block names no entry, so
+// a project that gives no repository a URL has a node byte for byte what it had
+// before the key existed. The two halves cannot be one field for the image
+// map's reason: "this file says nothing" must keep the node's block, and "this
+// file says nothing is in it" must take it away.
+func (c *Config) CloneURLsEffective(published map[string]string) map[string]string {
+	effective := published
+	if c.CloneURLs != nil {
+		effective = c.CloneURLs
+	}
+	if len(effective) == 0 {
+		return nil
+	}
+	return effective
+}
+
 // BakeReposEffective is the keep rule for the bake switch (D1901): this file's
 // answer when it writes one, and the published node's otherwise — so a machine
 // whose config predates the key does not publish a node that turns baking off
@@ -1869,6 +2081,28 @@ func (c *Config) TriageEffective(published *bool) *bool {
 	return published
 }
 
+// SubscriptionSpreadEffective is the keep rule for the pools' subscription
+// switch (F22, D1622, D1636), stated here beside the field for the triage
+// switch's reason and one of its own: this file's answer when the owner wrote
+// one, and the published node's otherwise, so a machine whose config says
+// nothing about it does not publish a node that turns off — for every teammate,
+// and for the runs in flight while `fugaro update` republishes the node — a
+// spread the owner turned on somewhere else. The cost of the other reading is
+// the triage switch's: the switch is what makes a pool of two or more
+// subscriptions serve anything at all (D1622), so a publish that invented an
+// "off" for it would take a project's pools away from its runs.
+//
+// A written false is the owner's own "no" and is kept as the value it is, which
+// is what the pointer on both sides is for: the two are different facts here,
+// since the field's own default is off and a written false is a decision, and a
+// config and a node that both say nothing publish no member at all.
+func (c *Config) SubscriptionSpreadEffective(published *bool) *bool {
+	if c.SubscriptionSpread != nil {
+		return c.SubscriptionSpread
+	}
+	return published
+}
+
 // OrchestratorEffective is the keep rule for the orchestrator block, stated
 // here beside the field for the verifier list's and the catalog's reason
 // (D1239, D1234): this file's block when it writes one that sets a key, and the
@@ -1890,8 +2124,8 @@ func (c *Config) OrchestratorEffective(published *policy.Orchestrator) *policy.O
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
-	if c.Version != 1 {
-		bad("version must be 1")
+	if c.Version != ConfigVersion {
+		bad("version must be %d", ConfigVersion)
 	}
 	if !config.ProjectNameRE.MatchString(c.Name) {
 		bad("name %q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", c.Name)
@@ -2021,7 +2255,7 @@ func (c *Config) validate() error {
 	for _, l := range []struct {
 		name    string
 		members []string
-	}{{"launchers", c.Terraform.Launchers}, {"operators", c.Terraform.Operators}} {
+	}{{"operators", c.Terraform.Operators}, {"admins", c.Terraform.Admins}} {
 		for _, m := range l.members {
 			if !memberRE.MatchString(m) {
 				bad("terraform.%s: %q is not an IAM member (user:, group:, serviceAccount: or domain:)", l.name, m)

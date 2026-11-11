@@ -252,7 +252,7 @@ func (s *checkoutStage) detail(steps []plannedStep, loc pluginwire.Location) str
 		}
 		names = append(names, p.step.name)
 	}
-	line := fmt.Sprintf("runs fugaro upgrade's own steps for %s: %s", pluginwire.Printable(loc.Root), strings.Join(names, ", "))
+	line := fmt.Sprintf("moves the checkout %s to this release: %s", pluginwire.Printable(loc.Root), strings.Join(names, ", "))
 	if len(skipped) > 0 {
 		line += "; skipped here: " + strings.Join(skipped, "; ")
 	}

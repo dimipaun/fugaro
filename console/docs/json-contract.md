@@ -1531,8 +1531,8 @@ insertion above it. **The console spawns it** — design §5.1 rule 6's
 `runs stats --json` row, the console's `runs.stats` operation — as the data
 behind the Spend screen's by-person view, and the console passes `--since`
 and nothing else. **`--all-users` is not on the spawn list**, which is what
-keeps the view the CLI resolved out of a screen's hands: an operator of the
-installation sees every user's rows, a plain launcher sees their own row
+keeps the view the CLI resolved out of a screen's hands: an admin of the
+installation sees every user's rows, a plain operator sees their own row
 alone, and an identity the installation's own lists do not place stays
 private. It is read-only —
 the figures come from the run records (`launch.json`'s `launched_by`, and
@@ -1541,11 +1541,12 @@ there is no write path behind it and no counter a screen has to reconcile.
 
 | Field | Type | omitempty | Availability state |
 |---|---|---|---|
+| `version` | int | no | the document's own shape version, `2` today (`userStatsDocVersion`). **A field's meaning never changes under it** (the rule at the top of this document): adding a field is compatible, removing or retyping one bumps the version, and a field whose meaning must change gets a new name. Version 1 carried the privileged list's answer under `operator` — that role's word before the roles' rename, when the config's `terraform.operators` WAS the privileged set — and that word names the run-starters now, so a consumer reads `admin` and refuses a version it does not know rather than reading `operator` as the set it named then |
 | `project` | string | no | the Fugaro project, the marker's name |
 | `by` | string | no | the breakdown asked for: `"user"`, the only value the command publishes |
-| `view` | string | no | `"all"` or `"own"`: which rows the caller is shown. **The ruling, not a preference** — an operator of the installation (the identity the local config's `user:`/git names, listed in its `terraform.operators`) sees `"all"`; a plain launcher gets `"own"` unless they pass `--all-users`; an identity the lists do not place stays `"own"`. `"own"` with `rows: []` is a real state, not a failure: see the note below |
+| `view` | string | no | `"all"` or `"own"`: which rows the caller is shown. **The ruling, not a preference** — an admin of the installation (the identity the local config's `user:`/git names, listed in its `terraform.admins`) sees `"all"`; anyone else gets `"own"` unless they pass `--all-users`; an identity the lists do not place stays `"own"`. `"own"` with `rows: []` is a real state, not a failure: see the note below |
 | `you` | string | no | the identity the view was resolved for, in the same domain a row's key is. `""` is *unavailable*, not anonymous: the CLI could not tell who the caller is — no identity at all, or one with nothing printable in it — which `--all-users` gets past. It is `"unknown"` only when the caller's own identity literally says so, never as a stand-in for "no key of its own", because that word is a group of runs rather than a person. A screen must not read `you` as a row it can always find in `rows` (see below) |
-| `operator` | bool | no | whether the installation's own lists place `you` as an operator. A screen must not render `"all"` as "you are an operator": `--all-users` produces `"all"` with `operator: false` |
+| `admin` | bool | no | whether the installation's own lists place `you` as an **admin** — the privileged set the wider view is resolved from (`terraform.admins`), not the run-starters `operator` names. A screen must not render `"all"` as "you are an admin": `--all-users` produces `"all"` with `admin: false` |
 | `since` | string | no | the window's first UTC day (`YYYY-MM-DD`); `""` (unbounded) for `--since 0` |
 | `until` | string | no | the window's last UTC day. Both are UTC days, like `runs ls`'s window |
 | `max_runs` | int | no | the bound the read ran under (`--max-runs`, default 5000) |
@@ -2594,7 +2595,7 @@ registry (D1102).
 | `state` | string | never | never | the read's own words for the row: a stale layer's age (`stale 3h`), or `unread: <what could not be read>`. The console's argv deliberately omits `--offline`, so an unreachable layer says so and the row is drawn as unread rather than as a value |
 | `sensitive` | bool | **yes** | never | `omitempty`, so it appears only on a sensitive row. **The console drops such a row whole** — no key, no value, no control (D1111, the owner's ruling of 2026-11-01) — which is why the `value` member above is absent for one |
 | `writable` | bool | never | never | whether the **generic path** may write this key (`settings set KEY --layer <L> --yes -- <VALUE>`). Written on every row — a consumer branches on the value, never on the member's presence |
-| `owner` | string | never | never | the command family that writes the key when the generic path may not (`settingsFamilyCommands`, `internal/cli/settings_set.go`: `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`), or `""` when there is none. `writable` and `owner` are answers about the same question, and a row with neither is a row no command writes |
+| `owner` | string | never | never | the command that writes the key (`settingsOwnerCommands`, `internal/cli/settings_read.go`, D1178): `fugaro settings set` on a row the generic path writes, the family that writes one it does not (`fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`, `fugaro workspace`, `fugaro image map`), and, for a key no command edits, a sentence naming the command that carries its file — `fugaro setup` and `fugaro update` for the installation's own keys, `fugaro config publish` for a key the layer file states and `fugaro config init` for one the repository's own file is opened with. **A `writable: false` row never spells the generic writer**: the write is what decides (D1102), and a row whose owner were `fugaro settings set` would say a command writes a key it has just refused. **`""` is a row no command writes** — the literal `*` of a wildcard row, which `settings set` writes only in its concrete spellings — and it is also what a CLI that predates D1178 wrote on every row it did not name, so a consumer treats the empty and the absent member the same way, and the screen draws this member only on a row `writable: false` — which is the one member a screen's drawing turns on |
 | `target_layer` | string | never | never | the layer a write with **no** `--layer` lands in: the narrowest of `repo`, `project` and `local` the key may be set in (`settingsDefaultLayer`, `internal/cli/settings_set.go`), and the layer the console passes back as `--layer` — what the window showed is what is spawned (D1105). **It is a fact about the key and not about the generic path's allowlist**, so it is **non-empty on a row the generic path refuses**: `mailbox.keychain_item` is `writable: false` with `owner: fugaro secrets` and `target_layer: "local"`. `""` is a key none of the three layers holds, which is a row no edit may target — a document from a CLI older than D1102 carries no such member at all, and it reads the same — and **empty is not a layer a screen can pass**: such a row gains no pencil, whatever `writable` says |
 | `levels` | array of level rows | **yes** | never | one row per layer that sets the key, for `--why`. Absent when the read did not compute them |
 
@@ -2620,10 +2621,15 @@ spellings is set:**
 `console/`: `writable` says whether the generic path may write the key at all,
 `target_layer` names the layer a write with no `--layer` lands in — the
 narrowest of `repo`, `project` and `local` the key may be set in, which the
-console passes back as `--layer` — and `owner` names the family that does write
-the key when the generic path may not — in S5's own words, so the sentence the
-screen draws ("`written by <owner>, not by the generic path`") is the CLI's
-refusal sentence and not the console's invention. **The first and the second are
+console passes back as `--layer` — and `owner` names the command that writes the
+key when the generic path may not, the family's own name or, for a key no
+command edits, the sentence naming the command that carries its file (D1178),
+in the CLI's own words, so the sentence the screen draws ("`written by <owner>,
+not by the generic path`") is the CLI's and not the console's invention. The
+pair is read together and never drawn apart: a row whose `writable` is false
+names a command other than the generic writer or names none, so the sentence
+the screen draws is never the contradiction of `written by fugaro settings set,
+not by the generic path`. **The first and the second are
 independent**: `target_layer` is a fact about the key, so a row the generic path
 refuses still names a layer and is refused by `writable: false`; the empty
 `target_layer` is a key none of the three layers holds, and there a screen has

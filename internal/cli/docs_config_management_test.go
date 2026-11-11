@@ -152,9 +152,27 @@ const (
 // project-layer key `defaults.agent.models.vision` are both the `models`
 // family's, and a row claiming a family is refused before the allowlist is
 // asked — the same shape as the two rows above it.
+//
+// The model-crafts work (MC5) moved both figures once more, by one row each,
+// and the figures below are the tree's: the pools' subscription switch
+// `subscription_spread` (F22, D1622, D1636) is a widening direction the owner
+// answers at their own terminal, so the generic path is its owner and the
+// named list carries it; the pools' own `pools.*` rows are the `accounts`
+// family's and were already counted here. The registry's figure is one row
+// longer and the allowlist's one key wider, so the gap the audit is about does
+// not move.
+//
+// The settings design's S6 moved the registry's figure once more, by one row
+// and not the allowlist's: the clone URLs a run clones its repository from
+// (settings spec §5.6, SD5, D842) left the policy node for a block of the
+// owner's local config, and its row is one for the whole map whose owner is the
+// `project clone-url` family -- `settings set` can make no cross-key check
+// between an entry's canonical name and its URL, which is the node's own rule
+// (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
+// list does not.
 const (
-	cfmRegistryRows   = 407
-	cfmAllowlistNamed = 96
+	cfmRegistryRows   = 409
+	cfmAllowlistNamed = 101
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

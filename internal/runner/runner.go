@@ -291,6 +291,10 @@ type run struct {
 	// for this run (accountchoice.go, D874): off unless the owner's published
 	// policy turns it on, and the account each stage has reached.
 	accounts accountChoice
+	// pools is the ordered failover the stage-start pool choice keeps for this
+	// run (poolchoice.go, MC5): off unless a craft's access names a pool, and
+	// the member each stage has reached.
+	pools poolChoice
 	// mu guards halt, cancelled, failReason, failClass, tokens, gatewayTokens
 	// and haltStage: the cancel watcher and, with the gateway, its halt
 	// callback record into them from other goroutines. Whichever of a halt
@@ -2683,7 +2687,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.startBudgetBackend(ctx); err != nil {
 		return err
 	}
-	if err := r.checkBudget(); err != nil {
+	if err := r.checkBudget(ctx); err != nil {
 		// These checks judged the challenger as this run's coder
 		// (applyChallenger), so the policy refusing *that* pin is the arm's
 		// own refusal and is recorded as one (D556) rather than as
@@ -3178,7 +3182,11 @@ func (r *run) readRepoFile(rel string) (string, error) {
 func (r *run) systemPromptData() PromptData {
 	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
 		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
-		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != ""}
+		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != "",
+		// The brief is the coder's, and "implement" is one of its stages: the
+		// answer is the coder's own model, never a review stage's, which is
+		// why denyBinaryReads' review half cannot reach it (D2014).
+		NoImageReads: r.denyBinaryReads("implement")}
 	if r.follow != nil {
 		pd.FollowUp = followup.SystemPromptLines(r.promptData())
 	}
@@ -4460,6 +4468,16 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.fail("stage " + name + ": " + reason)
 		return agent.Result{}, false, errors.New(reason)
 	}
+	// The stage's own credential or pool (poolchoice.go, MC5): the craft this
+	// stage's calls go out on, the pool member that serves it, and a stage
+	// whose pool serves nothing yet or names a member this job does not hold
+	// refused here rather than run as another credential. The member is the one
+	// the run's own route for the stage's model already carries; the check
+	// decides whether the pool lets it serve at all.
+	if _, reason := r.checkStagePool(ctx, name); reason != "" {
+		r.fail("stage " + name + ": " + reason)
+		return agent.Result{}, false, errors.New(reason)
+	}
 	// With the gateway on, nothing the agent or the repository wrote since
 	// the last stage may send Claude Code around it.
 	if r.gatewayOn() {
@@ -4934,7 +4952,12 @@ func (r *run) stageErrorText(text string) string {
 // agent's own text -- which the skill's own loose "usage limit" match reads
 // there anyway -- while naming an allowance a run never spent is a claim the
 // reason has no business making.
-var oauthLimitPhrases = []string{"claude ai usage limit", "hit your limit", `"type":"rate_limit_error"`}
+//
+// It is the claude-oauth row of exhaustionSignals (F5), which is where those
+// shapes are recorded and where every other credential type's are: the name is
+// kept because this is what the allowance's own readers cite, and it is a view
+// of that one table rather than a second list to keep in step.
+var oauthLimitPhrases = signalPhrases(config.CredentialTypeClaudeOAuth)
 
 // subscriptionUsageLimit reports whether a stage's own text says it stopped on
 // the OAuth account's subscription usage limit rather than on anything about

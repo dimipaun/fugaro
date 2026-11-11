@@ -295,7 +295,7 @@ func TestInitRepoUnchanged(t *testing.T) {
 	// repository's still refused without it.
 	for _, tc := range [][]string{
 		{"setup", "--repo", "--firebase-project", "fb-proj-1234", root},
-		{"setup", "--repo", "--launcher", "user:a@b.c", root},
+		{"setup", "--repo", "--operator", "user:a@b.c", root},
 		{"setup", "--no-build"},
 		{"setup", "--allow-job-delete"},
 	} {

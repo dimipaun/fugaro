@@ -352,6 +352,102 @@ func TestFindEscapesBranchName(t *testing.T) {
 	}
 }
 
+// byBranchListPath pins PullRequestByBranch's listing request: find's query with
+// the state clause left out, which is what makes a MERGED or DECLINED parent
+// visible to F30's parent lookup (`fugaro followups`), and sort=-created_on so
+// the newest pull request of the branch answers first. The fixture server
+// compares the query after parsing, so every parameter the adapter asks with —
+// and every clause it leaves out — is pinned right here.
+const byBranchListPath = `/2.0/repositories/acme/web/pullrequests?q=source.branch.name=\"fugaro/20260927-101500-abcd\" AND source.repository.full_name=\"acme/web\"&sort=-created_on`
+
+// listByBranch is the listing exchange PullRequestByBranch sends, with body as
+// its response.
+func listByBranch(body string) string {
+	return `{"method": "GET", "path": "` + byBranchListPath + `", "status": 200, "response": ` + body + `}`
+}
+
+// TestPullRequestByBranchFindsAMergedParent: the parent is looked up by branch
+// — never by a number a job-written record carries (F30) — and a MERGED pull
+// request answers it, which find's own state="OPEN" query could not: the
+// fixture refuses the query a reader that kept that clause would send, so an
+// adapter that answered "no pull request" for every merged parent fails here.
+func TestPullRequestByBranchFindsAMergedParent(t *testing.T) {
+	p := openInline(t, nil,
+		listByBranch(`{"values": [{"type": "pullrequest", "id": 12}]}`),
+		`{"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests/12", "status": 200, "response": `+prJSON("MERGED", false, "Add search", "", "[]")+`}`,
+	)
+	got, found, err := p.PullRequestByBranch(ctx, branchName)
+	if err != nil || !found || got.Number != 12 || got.State != gitprov.PRMerged {
+		t.Fatalf("got %+v, found %v, %v", got, found, err)
+	}
+}
+
+// TestPullRequestByBranchNone: a branch no pull request was ever opened from is
+// an answer — found false, no error — and nothing is read back.
+func TestPullRequestByBranchNone(t *testing.T) {
+	p := openInline(t, nil, listByBranch(`{"values": []}`))
+	got, found, err := p.PullRequestByBranch(ctx, branchName)
+	if err != nil || found || got != (gitprov.PRInfo{}) {
+		t.Fatalf("got %+v, found %v, %v", got, found, err)
+	}
+}
+
+// TestPullRequestByBranchNewest: sort=-created_on asks the host for the newest
+// pull request of the branch first, and that is the one read back — a reply
+// carrying an older entry as well must not be read out of the host's order.
+// The fixture holds a read-back for #12 alone, so an adapter that reached for
+// the older entry fails here.
+func TestPullRequestByBranchNewest(t *testing.T) {
+	p := openInline(t, nil,
+		listByBranch(`{"values": [{"type": "pullrequest", "id": 12}, {"type": "pullrequest", "id": 9}]}`),
+		`{"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests/12", "status": 200, "response": `+prJSON("MERGED", false, "Add search", "", "[]")+`}`,
+	)
+	got, found, err := p.PullRequestByBranch(ctx, branchName)
+	if err != nil || !found || got.Number != 12 || got.State != gitprov.PRMerged {
+		t.Fatalf("got %+v, found %v, %v", got, found, err)
+	}
+}
+
+// TestPullRequestByBranchEscapesBranchName: the branch reaches this query the
+// same way it reaches find's, so a name carrying a double quote or a backslash
+// cannot break out of the BBQL string literal or splice another clause in.
+func TestPullRequestByBranchEscapesBranchName(t *testing.T) {
+	var gotQuery, gotSort string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery, gotSort = r.URL.Query().Get("q"), r.URL.Query().Get("sort")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"values":[]}`))
+	}))
+	defer srv.Close()
+
+	p, err := New(Options{Workspace: "acme", Slug: "web", Token: "t", BaseURL: srv.URL + "/2.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := p.PullRequestByBranch(ctx, `fugaro/quo"te\slash`); err != nil {
+		t.Fatal(err)
+	}
+	want := `source.branch.name="fugaro/quo\"te\\slash" AND source.repository.full_name="acme/web"`
+	if gotQuery != want {
+		t.Fatalf("query = %q, want %q", gotQuery, want)
+	}
+	if gotSort != "-created_on" {
+		t.Fatalf("sort = %q, want %q", gotSort, "-created_on")
+	}
+}
+
+// TestPullRequestByBranchListFailure: a listing that fails is an error, not
+// "this branch opened nothing", so the caller stops rather than files a
+// follow-up on an answer it never got.
+func TestPullRequestByBranchListFailure(t *testing.T) {
+	p := openInline(t, nil,
+		`{"method": "GET", "path": "`+byBranchListPath+`", "status": 500, "response": {"error": {"message": "Server Error"}}}`)
+	_, found, err := p.PullRequestByBranch(ctx, branchName)
+	if err == nil || found || !strings.Contains(err.Error(), "finding the pull request for "+branchName) {
+		t.Fatalf("found %v, err = %v", found, err)
+	}
+}
+
 // TestPrefixedPRStaysDraftWithoutPUT covers an existing pull request that
 // is already a draft by its fallback title ("[DRAFT] …", draft false) when
 // a draft is wanted: it counts as a draft already, so no PUT is sent (one
