@@ -103,6 +103,18 @@ func TestChurnNewMinorEveryRound(t *testing.T) {
 		t.Errorf("a new blocking finding = %q; want %q", got, KindNone)
 	}
 
+	// The first round is read at the table too: "each round raises new, minor
+	// findings" is the spec's sentence, and an item whose own first review left
+	// a blocker is not a reviewer churning — new-minor there would reach rung 3
+	// with that finding still open.
+	if got := Churn([]Round{
+		round(rigor.Pro, held("k-1", "internal/a.go")),
+		round(rigor.Pro, tolerated("k-2", "internal/b.go")),
+		round(rigor.Pro, tolerated("k-3", "internal/c.go")),
+	}); got != KindNone {
+		t.Errorf("a blocking finding in the first round = %q; want %q", got, KindNone)
+	}
+
 	// A round that raised nothing is a round the reviewer converged, so the
 	// rounds after the first are not all raising new findings and this is not
 	// a pattern: KindNone is the normal path (G5).
@@ -180,6 +192,25 @@ func TestChurnRewordedSameFileClassIsSame(t *testing.T) {
 	}); got != KindNewMinor {
 		t.Errorf("another file under the same class = %q; want %q", got, KindNewMinor)
 	}
+
+	// A file the reviewer named none is no file to match on: two findings whose
+	// only shared fact is a class are not the one unresolved issue, and reading
+	// them as it would spend rung 2 and D1246's split on a guess.
+	if got := Churn([]Round{
+		round(rigor.Pro, tolerated("k-1", "")),
+		round(rigor.Pro, tolerated("k-2", "")),
+	}); got != KindNewMinor {
+		t.Errorf("two file-less findings of one class = %q; want %q", got, KindNewMinor)
+	}
+
+	// The key still carries them: a file-less finding raised again under its own
+	// key is the same one (D1850).
+	if got := Churn([]Round{
+		round(rigor.Pro, tolerated("k-1", "")),
+		round(rigor.Pro, tolerated("k-1", "")),
+	}); got != KindSame {
+		t.Errorf("a file-less finding raised again = %q; want %q", got, KindSame)
+	}
 }
 
 // TestChurnNoKeyIsNone: a finding carries no key only when the triage stage
@@ -219,25 +250,45 @@ func TestChurnNoKeyIsNone(t *testing.T) {
 // and Pro only (D1851), so a round in another mode is not one this comparator
 // reads — the item stays on the ladder's normal path rather than escalating on
 // a guess (F11).
+//
+// Both shapes are asked of every mode, because it is the gate and not the table
+// that answers none for all four of them: the repeat is KindSame in a keyed
+// mode before the table is ever asked, and the two new findings are minor by
+// the table in POC and Hotfix (whose rows block no axis) and blocking in
+// Critical and in the zero mode, which blocks on everything. One leg of each
+// pair therefore fails if the gate is dropped, whichever the mode makes of the
+// findings.
 func TestChurnOffInPOCCriticalHotfix(t *testing.T) {
-	for _, mode := range []rigor.Mode{rigor.POC, rigor.Critical, rigor.Hotfix, ""} {
-		rounds := []Round{
-			round(mode, tolerated("k-1", "internal/a.go")),
-			round(mode, tolerated("k-2", "internal/b.go")),
+	repeat := func(m rigor.Mode) []Round {
+		return []Round{
+			round(m, tolerated("k-1", "internal/a.go")),
+			round(m, tolerated("k-1", "internal/a.go")),
 		}
-		if got := Churn(rounds); got != KindNone {
+	}
+	raised := func(m rigor.Mode) []Round {
+		return []Round{
+			round(m, tolerated("k-1", "internal/a.go")),
+			round(m, tolerated("k-2", "internal/b.go")),
+		}
+	}
+
+	for _, mode := range []rigor.Mode{rigor.POC, rigor.Critical, rigor.Hotfix, ""} {
+		if got := Churn(repeat(mode)); got != KindNone {
+			t.Errorf("the same finding in %q = %q; want %q", mode, got, KindNone)
+		}
+		if got := Churn(raised(mode)); got != KindNone {
 			t.Errorf("new minor findings in %q = %q; want %q", mode, got, KindNone)
 		}
 	}
 
-	// The control: the same rounds in the two modes the stage runs for are
-	// churn, so the loop above is the mode's doing and not the rounds'.
+	// The control: the same records in the two modes the stage runs for are the
+	// churn they look like, so the loop above is the mode's doing and not the
+	// rounds'.
 	for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro} {
-		rounds := []Round{
-			round(mode, tolerated("k-1", "internal/a.go")),
-			round(mode, tolerated("k-2", "internal/b.go")),
+		if got := Churn(repeat(mode)); got != KindSame {
+			t.Errorf("the same finding in %q = %q; want %q", mode, got, KindSame)
 		}
-		if got := Churn(rounds); got != KindNewMinor {
+		if got := Churn(raised(mode)); got != KindNewMinor {
 			t.Errorf("new minor findings in %q = %q; want %q", mode, got, KindNewMinor)
 		}
 	}

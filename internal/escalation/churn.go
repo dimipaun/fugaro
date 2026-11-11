@@ -49,6 +49,8 @@ type Finding struct {
 	// two findings are held to be the same one, and it is the one that survives
 	// a reworded summary: the key is a hash of the file and the summary, so a
 	// paraphrase keeps the file and the class and loses the key (D1246, D2036).
+	// A finding that names no file is matched by its key alone — a comparison
+	// of one empty path with another is no evidence that two findings are one.
 	File string
 	// Score is the three anchored axes and the class, which are what the mode's
 	// table reads (rigor.Score). Minor is Blocks' answer for it and never a
@@ -79,13 +81,20 @@ type Finding struct {
 //     equal, or the file and the class are. The second half is D1246's rule and
 //     what keeps a reviewer's paraphrase of the finding it keeps raising from
 //     reading as new work — it is asked of every earlier round and not only of
-//     the one before, because the issue need not repeat in consecutive rounds.
-//   - Otherwise "new, minor" is every round after the first raising at least
-//     one finding, with every one of them new and none of them blocking at its
-//     own round's mode. A round that raised nothing is a round the reviewer
-//     converged, and a finding the mode blocks is a reviewer doing its job, so
-//     either one makes the answer KindNone: the ladder's normal path, never an
-//     escalation on a pattern this code did not see (G5).
+//     the one before, because the issue need not repeat in consecutive rounds,
+//     and it needs a file on both findings: two file-less findings of one class
+//     are not held to be the same one on the strength of a path neither has.
+//   - Otherwise "new, minor" is every round — the first included — raising at
+//     least one finding and none of them blocking at its own round's mode, with
+//     every round after the first raising only findings no earlier round
+//     raised. A round that raised nothing is a round the reviewer converged,
+//     and a finding the mode blocks is a reviewer doing its job, so either one
+//     makes the answer KindNone: the ladder's normal path, never an escalation
+//     on a pattern this code did not see (G5). The first round is read at the
+//     table like the rest, because "each round raises new, minor findings" is
+//     the spec's sentence: a first round that raised a blocker is not a reviewer
+//     churning, and answering new-minor there would merge at rung 3 an item
+//     whose own first review left a finding the mode blocks.
 //
 // Same wins over new-minor, because a round raising both is a round where the
 // unresolved finding is still there — the spec's "same unresolved issue" — and
@@ -107,13 +116,13 @@ func Churn(rounds []Round) Kind {
 	}
 
 	newMinor := true
-	for i, r := range rounds[1:] {
+	for i, r := range rounds {
 		if len(r.Findings) == 0 {
 			newMinor = false
 			continue
 		}
 		for _, f := range r.Findings {
-			if sameAsAny(rounds[:i+1], f) {
+			if i > 0 && sameAsAny(rounds[:i], f) {
 				return KindSame
 			}
 			if rigor.Blocks(r.Mode, f.Score) {
@@ -136,14 +145,22 @@ func Churn(rounds []Round) Kind {
 func churnKeyed(m rigor.Mode) bool { return m == rigor.Startup || m == rigor.Pro }
 
 // sameAsAny reports whether f is a finding an earlier round already raised:
-// the same key, or the same file and class (D1246's rule, D2036). The class is
-// the score's own, so a finding whose reviewer named no class matches only
-// another one that named none — the comparison never widens to the axes, which
-// a re-review re-scores and which therefore say nothing about identity.
+// the same key, or the same file and class (D1246's rule, D2036).
+//
+// The file half of D1246's rule is asked only of findings that named a file.
+// Two findings with no file are two findings whose reviewer said no more than
+// their class, and "same file" between them is not a fact about either one: a
+// match on a path neither carries would read two unrelated nits as the one
+// unresolved issue and spend rung 2 and D1246's split on it.
+//
+// The class is the score's own, so a finding whose reviewer named no class
+// matches only another one that named none — the comparison never widens to
+// the axes, which a re-review re-scores and which therefore say nothing about
+// identity.
 func sameAsAny(earlier []Round, f Finding) bool {
 	for _, r := range earlier {
 		for _, g := range r.Findings {
-			if g.Key == f.Key || (g.File == f.File && g.Score.Class == f.Score.Class) {
+			if g.Key == f.Key || (f.File != "" && g.File == f.File && g.Score.Class == f.Score.Class) {
 				return true
 			}
 		}
