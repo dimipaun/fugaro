@@ -9,6 +9,7 @@ import (
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -145,10 +146,13 @@ func TestUpdateMigratesListsToAccessNode(t *testing.T) {
 // confirmation stands in front of — and a coding agent's session writes nothing.
 // The migration is no exception: it is computed in the step and written by the
 // installation root, past the confirmation and the gate (landSeed), and the
-// root's own writes refuse the session anyway (refuseAgentAccess). The node is
+// loop hands a session whose project is not managed no apply to reach that
+// landing from (initflow's agentStage): it plans read-only, records a stage
+// with nothing to do and stops at the first that has something. The node is
 // left absent, the run answers with the session's own refusal instead of the
 // migration's line, and the installation is left for the person's next `fugaro
-// update`.
+// update`. A project the managed gate admits is the one session that applies,
+// and there the migration lands (TestAManagedSessionMigratesTheNode).
 //
 // Mutation (the migration's write in the step, as it was): the node is there
 // when the session stops, and this fails.
@@ -173,6 +177,52 @@ func TestAnAgentSessionWritesNoGrantsNode(t *testing.T) {
 	}
 	if n := len(r.ran(t, "apply")); n != 0 {
 		t.Errorf("terraform applied %d time(s) in an agent session: %q", n, r.calls(t))
+	}
+}
+
+// TestAManagedSessionMigratesTheNode: the managed gate stands in for the
+// confirmations of the run it admits (D1016), so a coding agent's session on a
+// managed project IS the run that converges the installation — the installation
+// stage applies, and the roles step's migration lands with it, exactly as the
+// steps beside it do (update.go's writeAdminList, update_managed.go's
+// gateLeavesTheIAMCall). The world is the first `fugaro update` after this
+// release against a managed installation whose node is still absent, which is
+// where a refusal of the session would leave the roles unmigrated until a
+// person ran the door by hand, and would stop the installation stage — and
+// every stage after it — over a write the gate admitted.
+//
+// Mutation (the refusal this landing used to carry, refuseAgentAccess): the
+// node is left absent, the installation stage is left for the user, and this
+// fails.
+func TestAManagedSessionMigratesTheNode(t *testing.T) {
+	operators := []string{"user:ops@example.com"}
+	admins := []string{"user:root@example.com"}
+	r, db := accessRig(t, operators, admins, operators, admins)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	// The installation has work to do, so the gate has a plan to admit and the
+	// step applies: the run's own confirmation is the one the gate stands in
+	// for, and an apply is what puts the local config's write out of the
+	// confirmations of a run that applied nothing (writeLocalConfig).
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	t.Setenv(agentMarkers[0], "1")
+	got, _ := updateRun(t, r, "update", "--yes")
+	want := []string{"user:ops@example.com (operator)", "user:root@example.com (admin)"}
+	if have := grantLines(accessGrants(t, db)); !slices.Equal(have, want) {
+		t.Errorf("a managed session's migration did not land: the grants node holds %v, want %v:\n%s", have, want, got)
+	}
+	if !strings.Contains(got, "migrated the installation's member lists into the grants node") {
+		t.Errorf("the run does not say it migrated the roles, which is what the next converge derives from:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n == 0 {
+		t.Errorf("the gate admitted the plan and the installation applied nothing:\n%s", got)
+	}
+	// A stage that applied prints no left-for-you, and the refusal this landing
+	// used to carry is the session's own: it would show exactly here, on the
+	// installation stage, in a run the gate admitted.
+	if strings.Contains(got, "left for you ("+initflow.Installation+", ") {
+		t.Errorf("the installation stage was left for the user on a managed project the gate admitted:\n%s", got)
 	}
 }
 

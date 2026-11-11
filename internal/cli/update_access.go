@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -65,10 +63,11 @@ import (
 // and written by the installation root, once the run is past its confirmation
 // and about to apply (landSeed, landFlagLists). This step runs before the
 // loop's first stage and before the confirmation and the guard, so a write here
-// would have landed in a run the user declines, or in a coding agent's session,
-// which applies nothing at all (refuseAgentAccess): a run that is declined or
-// refused may not have changed the installation's roles on its way to applying
-// nothing.
+// would have landed in a run the user declines — or in a coding agent's
+// session, which the loop gives no apply to reach the landing from (the managed
+// gate's own admission is the one session that applies, D1016): a run that is
+// declined or refused may not have changed the installation's roles on its way
+// to applying nothing.
 
 // syncAccess is the run's roles step, called once by the converge before its
 // first stage so that every spec this run builds carries the lists the node
@@ -420,10 +419,19 @@ func (e *initEngine) seedNode(node accesslib.Node, operators, admins []string) (
 // The roles step runs before the loop's first stage, before the run's
 // confirmation and before the guard that may refuse the plan, so a write there
 // would have changed the installation's roles in a run the user declines — and
-// in a coding agent's session, which applies nothing at all and stops at its
-// first stage (refuseAgentAccess). This runs from the installation root, past
-// all three and just before the apply (landFlagLists), so the roles this run
-// applies and the node agree, and a run that stops earlier has written neither.
+// in a coding agent's session, which the loop hands no apply to reach this
+// landing from (initflow's agentStage). This runs from the installation root,
+// past all three and just before the apply (landFlagLists), so the roles this
+// run applies and the node agree, and a run that stops earlier has written
+// neither.
+//
+// What the session does NOT get is a refusal of its own here, and it must not:
+// the managed gate is the one case in which a coding agent's session applies
+// (D1016), so where the gate stands in for the run's confirmation the session
+// IS the run that converges the installation, and a refusal beside the landing
+// would stop the installation stage — and every stage after it — on the first
+// update after this release, against the installation whose node is still
+// absent.
 //
 // It is best-effort in the one state the step's own doc names: a caller whose
 // IAM refuses the write (accessNeedsAdmin). Nothing this run applies depends on
@@ -437,9 +445,6 @@ func (e *initEngine) landSeed(ctx context.Context) error {
 		return nil
 	}
 	e.accessSeed = nil
-	if err := e.refuseAgentAccess(); err != nil {
-		return err
-	}
 	err := accesslib.WriteIfMatch(ctx, e.accessDB, seed.Grants, seed.ETag)
 	switch {
 	case err == nil:
@@ -456,24 +461,6 @@ func (e *initEngine) landSeed(ctx context.Context) error {
 	default:
 		return remote(err)
 	}
-}
-
-// refuseAgentAccess is the check both of this file's writes to the grants node
-// make before they are attempted: a coding agent's session writes no node.
-//
-// Every other write of the converge is behind a confirmation that session
-// refuses (init_review.go's askOrdinary and askPlanned), while this step runs
-// before the loop (init_stages.go's syncAccess) and the fold can follow a plan
-// with nothing in it — so without this check the session would change who the
-// installation's operators and admins are, and only then stop at the first
-// stage's AgentError. The refusal is the session's own, and it is not a drift
-// refusal: the session applies nothing at all, and the installation's next
-// `fugaro update`, run by the person, migrates the lists as it would have here.
-func (e *initEngine) refuseAgentAccess() error {
-	if m := agentMarker(os.Getenv, e.r.stdinTerminal()); m != "" {
-		return &initflow.AgentError{Marker: m}
-	}
-	return nil
 }
 
 // accessNodeMoved is what a run says when another writer got to the node first.
