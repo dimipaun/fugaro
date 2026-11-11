@@ -1,23 +1,37 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The pairing session: §7.2's contract, in the order it is written (mobile
-// plan, Task P6.8; the pairing plan's §7.2, §4.4, D111, D114, D165, D171,
-// D199).
+// plan, Task P6.8; the pairing plan's §7.2, §2 (a), §4.4, D111, D114, D165,
+// D171, D199).
 //
-// **The order is the security property, so it is one function.** §7.2:
+// **The order is the security property, so it is one function.** §7.2, as
+// amended 2026-11-11 (the token and the write change places, and the reason is
+// the paragraph after this one):
 //
 //     scan → validate before anything is stored → generate a key pair → show
-//     the code derived from the public key → write {key, at} to the request
-//     node once → sign in with the pairing token → watch `pairing/$uid` →
-//     refuse the whole payload unless the envelope opens, the version is this
+//     the code derived from the public key → sign in with the pairing token →
+//     write {key, at} to the request node once → watch `pairing/$uid/delivery`
+//     → refuse the whole payload unless the envelope opens, the version is this
 //     build's, and the AAD names this uid and this key → store the device token
 //     and the MAC key in secure storage only → store the configuration from the
 //     payload, not the scan (D199)
 //
+// **Why the token is exchanged before the request is written.** The request
+// node's own rule is `PAIRING && newData.exists() && !data.exists()` (§2 (a)),
+// where `PAIRING` is the pairing claim: `auth.token.pu == auth.uid`, on a `p~`
+// uid. The write is therefore an authenticated write, and a phone that wrote
+// first would be denied by the deployed document -- a pairing that can never
+// start. Nothing in the exchange needs the node: the phone holds the pairing
+// token from the QR and needs nothing from the CLI to use it. What §7.2's
+// ordering is really about survives the move, because the write still happens
+// before the operator can have typed anything (they type the code the CLI
+// derived from the key in that node, so the node must exist first) and it is
+// still written exactly once.
+//
 // Every step above is a line of `#start` or `#delivered` below, in that order,
 // and each one refuses rather than continuing: a payload that is not a payload
-// never reaches a key pair, a key pair whose request write failed never shows a
-// code, and a delivery that does not open stores nothing at all. The whole
+// never reaches a key pair, a key pair whose sign-in failed never reaches the
+// tree, and a delivery that does not open stores nothing at all. The whole
 // session is one object because the alternative -- a caller sequencing these
 // steps -- is a caller that can get the order wrong, and this is the one
 // sequence in the app where getting it wrong leaves a credential in the wrong
@@ -33,17 +47,37 @@
 // would be a third copy that could disagree -- and a code on disk is the one
 // thing M3's "what a photographed QR does not give you" rests on.
 //
-// **Why the watch is a listener and not a read** (§7.2's amendment of
-// 2026-10-30, T3b): the CLI writes the delivery and deletes the whole
-// `pairing/$uid` subtree in the next instant, because the payload must not sit
-// readable for the hour the `p~` ID token lives. A one-shot read after sign-in
-// races a window microseconds wide and loses it, so the contract is a `value`
-// observer attached as soon as the token is exchanged, holding the first
-// snapshot that carries a delivery. A node that answers `null` before any
-// delivery arrived is the pairing **expired**: the operator's wait ended
-// without a completed code, or the sweep removed the session (decision 1), and
-// §7.2's answer is to say so and show the code path again -- never to re-pair
-// without an operator.
+// **Why the watch is a listener, and why it is on the delivery child**
+// (§7.2's amendment of 2026-10-30, T3b; the path corrected 2026-11-11). The CLI
+// writes the delivery and deletes the whole `pairing/$uid` subtree in the next
+// instant, because the payload must not sit readable for the hour the `p~` ID
+// token lives. A one-shot read issued after sign-in races a window microseconds
+// wide and loses it, so the contract is a `value` observer attached as soon as
+// the token is exchanged, holding the first snapshot that carries a delivery.
+//
+// The observer is on `pairing/$uid/delivery` and not on the node above it: the
+// merged rules grant `.read` at that child and nowhere else -- there is no
+// `.read` at `pairing` or at `pairing/$uid`, so a listener above it is a
+// default deny and every attempt would end `watch-refused` -- and P6.4's
+// emulator fence reads exactly this child. The parent would have carried one
+// extra signal, the delete, and that is the signal this node cannot carry:
+//
+// **A null is passed over, and the deadline is the phone's own.** On the
+// delivery child a null means "no delivery yet" -- the ordinary case for the
+// whole of the operator's typing, since the listener is attached before the CLI
+// has written anything there -- and it is also what the delete of the subtree
+// looks like. Those two are the same event seen from this node, so a session
+// that read a null as an ending would end the instant it started. What ends a
+// pairing nobody completed is the deadline the QR already carries: `expires_at`
+// is the pairing token's own `exp` (`token.PairingLifetime` mints it as the
+// CLI's wait plus slack), so no delivery can arrive after it and a phone past
+// it is waiting for something that is not coming. `payload.js` reads that
+// instant and does not judge it -- a late *delivery* is not refused for its
+// lateness, because a delivery that arrived at all is a pairing that completed
+// -- and this file is where the deadline is used: `start` ends a scan whose
+// deadline has already gone, and `tick` ends a watch whose deadline goes by
+// while it waits. There is no timer in this module (the caller ticks, as
+// `voice-session/machine.js` says of its own), so the entry asks on each render.
 //
 // **What is deliberately not here.** Persisting the delivered configuration.
 // D199 makes the delivery's copy the record, and D259's amendment of
@@ -65,7 +99,7 @@ import { isAccountId, secret as makeSecret } from '../accounts/index.js';
 
 import { encodeBase64url } from './base64url.js';
 import { readDelivery } from './delivery.js';
-import { decodeEnvelope, openDelivery } from './envelope.js';
+import { openDelivery, readDeliveryNode } from './envelope.js';
 import { encodeDeviceKey, fingerprint, generateKeyPair, isDriver } from './key.js';
 import { readScannedPayload } from './payload.js';
 
@@ -82,14 +116,12 @@ export const SESSION_STATES = Object.freeze({
  * a `scan` refusal is `payload.js`'s, a delivery refusal is `delivery.js`'s or
  * `envelope.js`'s, and a refusal of the session's own sequencing is here. */
 export const SESSION_CODES = Object.freeze({
-  BAD_PORT: 'bad-port',
   PORT_FAILED: 'port-failed',
   BAD_ACCOUNT: 'bad-account',
   ALREADY_STARTED: 'already-started',
-  NOT_STARTED: 'not-started',
-  REQUEST_REFUSED: 'request-refused',
   SIGN_IN_REFUSED: 'sign-in-refused',
   IDENTITY_MISMATCH: 'identity-mismatch',
+  REQUEST_REFUSED: 'request-refused',
   WATCH_REFUSED: 'watch-refused',
   STORE_REFUSED: 'store-refused',
   EXPIRED: 'expired',
@@ -101,19 +133,27 @@ export function requestPath(uid) {
   return `pairing/${uid}/request`;
 }
 
-/** What the phone watches: the whole pairing node, so the delivery and the
- * delete are both seen. */
-export function pairingPath(uid) {
-  return `pairing/${uid}`;
+/** What the phone reads: the delivery child and only it. The merged rules grant
+ * `.read` there and nowhere above it, so this is the one path a pairing token
+ * can watch (the module header's reason). */
+export function deliveryPath(uid) {
+  return `pairing/${uid}/delivery`;
 }
 
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, ...(field === undefined ? {} : { field }) });
 }
 
-/** An instant in the spelling `pair.go` writes: RFC3339 UTC. */
-function instant(nowMs) {
-  return new Date(nowMs).toISOString();
+/** The instant in the one spelling the request node's rule takes: a
+ * non-negative whole number of epoch milliseconds (`TIMESTAMP` in the rules is
+ * `newData.isNumber() && newData.val() % 1 == 0`). `pair.go`'s
+ * `pairRequestNode.At` is a `json.Number` for the same reason and
+ * `pairDecodeRequest` refuses a quoted instant, so a clock port that answers
+ * anything else is a port that failed, not a value to spell differently. */
+function epochMs(clock) {
+  const now = clock.nowMs();
+  if (typeof now !== 'number' || !Number.isInteger(now) || now < 0) return null;
+  return now;
 }
 
 /**
@@ -125,9 +165,8 @@ function instant(nowMs) {
  *   * `x25519` -- `getPublicKey` / `getSharedSecret`, the app's dependency;
  *   * `random` -- `randomBytes(n)`, the key pair's draw (a function, as
  *     `key.js`'s `generateKeyPair` takes it);
- *   * `clock` -- `nowMs()`, for the request's `at` and nothing else (the code's
- *     life is the CLI's `exp`, and the phone enforces no expiry of its own:
- *     `payload.js` reads the instant and does not judge it);
+ *   * `clock` -- `nowMs()`, for the request's `at` and for the deadline the
+ *     scan's `expires_at` names, and for nothing else;
  *   * `database` -- `set(path, value)` and `watch(path, onValue, onError)`;
  *   * `auth` -- `signIn({ apiKey, databaseUrl, customToken })`, the Identity
  *     Toolkit exchange;
@@ -200,7 +239,13 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     //    no code shown.
     const scanned = readScannedPayload(text);
     if (!scanned.ok) return refusedWith(scanned);
-    // The label is judged here, before the request node exists: `account.js`
+    // The deadline the QR carries is judged next, and before the key is drawn:
+    // `expires_at` is the pairing token's own `exp`, so a scan past it holds a
+    // token the exchange would refuse anyway, and the request node it would
+    // have written is an orphan only the sweep removes. §7.2's answer for a
+    // pairing that is over is "say the pairing expired".
+    if (pastDeadline(scanned.payload)) return endExpired();
+    // The label is judged here too, before the request node exists: `account.js`
     // owns the rule (an id is a storage key segment), and a label the store
     // would refuse must not leave a pairing half-done in the tree.
     if (!isAccountId(id)) return refusedWith(refuse(SESSION_CODES.BAD_ACCOUNT, 'id'));
@@ -216,17 +261,11 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     //    CLI derives it from the key it read off the request node, and the two
     //    matching is the whole of M3.
     code = fingerprint(publicKey);
-    // 4. The request, written **once** (§7.2). This is the only thing the phone
-    //    puts in the tree, and the rules give the pairing uid exactly this child
-    //    and the delivery.
-    const written = await database.set(requestPath(scan.uid), {
-      key: encodeDeviceKey(publicKey),
-      at: instant(clock.nowMs()),
-    });
-    if (!written || written.ok !== true) return refusedWith(refuse(SESSION_CODES.REQUEST_REFUSED, 'request'));
-    // 5. Sign in with the pairing token from the QR: it reaches two nodes and
-    //    nothing else (§4.4), and the uid it authenticates as is the pairing's
-    //    own name -- an Auth answer naming another identity is not ours to use.
+    // 4. Sign in with the pairing token from the QR -- **before the write**,
+    //    because the request node's rule is the pairing claim (§2 (a)). The
+    //    token reaches two nodes and nothing else (§4.4), and the uid it
+    //    authenticates as is the pairing's own name -- an Auth answer naming
+    //    another identity is not ours to use.
     const signed = await auth.signIn({
       apiKey: scan.apiKey,
       databaseUrl: scan.databaseUrl,
@@ -235,10 +274,21 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     if (!signed || signed.ok !== true) return refusedWith(refuse(SESSION_CODES.SIGN_IN_REFUSED, 'token'));
     if (signed.uid !== scan.uid) return refusedWith(refuse(SESSION_CODES.IDENTITY_MISMATCH, 'uid'));
     signIn = Object.freeze({ deviceUid: null });
+    // 5. The request, written **once** (§7.2), now that the token is exchanged
+    //    and before the operator can have typed the code they read off it. This
+    //    is the only thing the phone puts in the tree, and the rules give the
+    //    pairing uid exactly this child and the delivery.
+    const at = epochMs(clock);
+    if (at === null) return refusedWith(refuse(SESSION_CODES.PORT_FAILED, 'clock'));
+    const written = await database.set(requestPath(scan.uid), {
+      key: encodeDeviceKey(publicKey),
+      at,
+    });
+    if (!written || written.ok !== true) return refusedWith(refuse(SESSION_CODES.REQUEST_REFUSED, 'request'));
     // 6. The watch, attached before anything else can happen, because the
     //    delivery and the delete are two events and only a client that is
     //    watching sees the first (§7.2's amendment).
-    const watching = database.watch(pairingPath(scan.uid), onValue, onError);
+    const watching = database.watch(deliveryPath(scan.uid), onValue, onError);
     if (!watching || watching.ok !== true || typeof watching.stop !== 'function') {
       return refusedWith(refuse(SESSION_CODES.WATCH_REFUSED, 'watch'));
     }
@@ -247,24 +297,19 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     return Object.freeze({ ok: true, session: snapshot() });
   }
 
-  /** The listener's value: the pairing node, as the CLI left it. */
-  async function onValue(value) {
+  /** The listener's value: the delivery node, as the CLI left it. */
+  async function onValue(node) {
     if (state !== SESSION_STATES.WATCHING) return;
-    if (value === null || value === undefined) {
-      // The subtree is gone and no delivery was ever seen: the CLI's wait
-      // ended without a typed code, or the sweep removed the session. §7.2:
-      // say the pairing expired.
-      expired();
-      return;
-    }
-    // A snapshot with no delivery is the phone's own request write coming back
-    // (the listener was attached after it) or a node caught mid-write. It is
-    // not the event this session waits for, so it is passed over rather than
-    // refused: the CLI deletes the subtree in the next instant, and a session
-    // that gave up here would never see the delivery behind it.
-    if (typeof value !== 'object' || typeof value.delivery !== 'string') return;
+    // A null is the delivery child not existing yet -- the ordinary case for
+    // the whole of the operator's typing -- and it is also what the subtree's
+    // deletion looks like. The rules give the phone no read on the parent to
+    // tell those apart, so neither is read as an ending here; the deadline is
+    // (`tick`, and the module header's paragraph).
+    if (node === null || node === undefined) return;
+    const envelope = readDeliveryNode(node);
+    if (!envelope.ok) return refusedWith(envelope);
     try {
-      await delivered(value.delivery);
+      await delivered(envelope.bytes);
     } catch {
       onError();
     }
@@ -278,16 +323,14 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
   }
 
   /** §7.2's last three steps, on the delivery the CLI sealed. */
-  async function delivered(text) {
+  async function delivered(envelope) {
     // Stop first: one delivery, one store, and no second value event can start
     // a second write while these awaits are in flight.
     if (stop !== null) {
       stop();
       stop = null;
     }
-    const envelope = decodeEnvelope(text);
-    if (!envelope.ok) return refusedWith(envelope);
-    const opened = openDelivery({ envelope: envelope.bytes, secret, publicKey, uid: scan.uid, x25519 });
+    const opened = openDelivery({ envelope, secret, publicKey, uid: scan.uid, x25519 });
     if (!opened.ok) return refusedWith(opened);
     const judged = readDelivery({ plaintext: opened.plaintext, scan });
     if (!judged.ok) return refusedWith(judged);
@@ -335,6 +378,21 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
   }
 
   /**
+   * Time passed. The caller ticks this -- there is no timer in this module --
+   * and a watch whose deadline has gone ends here: §7.2's answer to a pairing
+   * the operator never completed, and the one ending the delivery child cannot
+   * report (the module header's paragraph). Nothing else changes state: a
+   * session that is idle, delivered or refused is already over, and a watch
+   * inside its deadline is still waiting.
+   */
+  function tick() {
+    if (state !== SESSION_STATES.WATCHING) return snapshot();
+    if (!pastDeadline(scan)) return snapshot();
+    endExpired();
+    return snapshot();
+  }
+
+  /**
    * Give up: stop the listener and forget the key. The pairing node is the
    * CLI's to delete, and the phone has nothing to write.
    */
@@ -348,7 +406,17 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     return snapshot();
   }
 
-  function expired() {
+  /** Has the scan's own deadline gone? `payload.js` parsed `expires_at` into
+   * epoch milliseconds and deliberately did not judge it; a clock that cannot
+   * answer is not a deadline that has passed. */
+  function pastDeadline(payload) {
+    if (payload === null || typeof payload !== 'object') return false;
+    const now = epochMs(clock);
+    if (now === null) return false;
+    return now >= payload.expiresAt;
+  }
+
+  function endExpired() {
     if (stop !== null) {
       stop();
       stop = null;
@@ -360,7 +428,7 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     publicKey = null;
     state = SESSION_STATES.EXPIRED;
     refusal = Object.freeze({ ok: false, code: SESSION_CODES.EXPIRED });
-    return snapshot();
+    return refusal;
   }
 
   function refusedWith(answer) {
@@ -392,6 +460,5 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     signIn = null;
   }
 
-  return Object.freeze({ start, cancel, snapshot });
+  return Object.freeze({ start, cancel, tick, snapshot });
 }
-

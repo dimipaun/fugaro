@@ -31,6 +31,7 @@ const SURFACE = Object.freeze([
   'DELIVERY_FIELDS',
   'DELIVERY_INFO',
   'DELIVERY_MIN_ENVELOPE',
+  'DELIVERY_NODE_FIELDS',
   'DELIVERY_VERSION',
   'DELIVERED_SENTENCE',
   'DEVICE_FIELDS',
@@ -67,6 +68,7 @@ const SURFACE = Object.freeze([
   'decodeDeviceKey',
   'decodeEnvelope',
   'deliveryAAD',
+  'deliveryPath',
   'encodeBase64url',
   'encodeDeviceKey',
   'encodedLength',
@@ -77,8 +79,8 @@ const SURFACE = Object.freeze([
   'judgeConfig',
   'judgeFieldSet',
   'openDelivery',
-  'pairingPath',
   'readDelivery',
+  'readDeliveryNode',
   'readScannedPayload',
   'refusalSentence',
   'requestPath',
@@ -120,6 +122,7 @@ test('createPairing binds the ports to the session and the screen', () => {
   const { session, Screen } = pairing.createPairing(ports());
   assert.equal(typeof session.start, 'function');
   assert.equal(typeof session.cancel, 'function');
+  assert.equal(typeof session.tick, 'function');
   assert.equal(typeof session.snapshot, 'function');
   assert.equal(typeof Screen, 'function');
   // The session starts where every session starts: nothing scanned, no code.

@@ -17,6 +17,15 @@
 //   * "the code shown is derived per pairing" -- two pairings, two keys, two
 //     codes, and no code stored.
 //
+// The wire shapes the CLI and the rules already fix are pinned here as well,
+// because the session is what writes and reads them: the request's `at` is the
+// whole number the rules' `TIMESTAMP` macro takes and not a string, the request
+// is written **after** the token is exchanged (the write is authenticated,
+// §2 (a)), the listener is on the delivery child (the one path a pairing token
+// may read), and a delivery arrives inside the CLI's node -- `{v, sealed}` --
+// whose version is judged before the envelope is. Each of those was a way for
+// the session to be wrong while every other test passed.
+//
 // The delivery is sealed with `node:crypto`, as in `envelope.test.js`, so the
 // test's own implementation is OpenSSL's and the app's X25519 is a port. Every
 // value is synthetic: the token and the MAC key are shaped like nothing.
@@ -31,13 +40,21 @@ import { MemorySettingsStore, SettingsStore } from '../accounts/settings.js';
 import { AccountStore } from '../accounts/store.js';
 
 import { encodeBase64url } from './base64url.js';
-import { DELIVERY_INFO, DELIVERY_VERSION, deliveryAAD } from './envelope.js';
+import { DELIVERY_INFO, DELIVERY_VERSION, ENVELOPE_CODES, deliveryAAD } from './envelope.js';
 import { encodeDeviceKey, fingerprint } from './key.js';
 import { PAYLOAD_VERSION } from './payload.js';
-import { SESSION_CODES, SESSION_STATES, createPairingSession, pairingPath, requestPath } from './session.js';
+import { SESSION_CODES, SESSION_STATES, createPairingSession, deliveryPath, requestPath } from './session.js';
 
 /** The pairing's uid, in the one canonical spelling. */
 const UID = 'p~' + 'A'.repeat(43);
+
+/** The phone's clock, and the deadline the QR carries: ten minutes after it, so
+ * every test starts inside the pairing's own deadline unless it says otherwise.
+ * The deadline is the instant the QR names -- the pairing token's own `exp` --
+ * and not the test's invention. */
+const T0 = Date.UTC(2026, 10, 11, 17, 40, 0);
+const DEADLINE = '2026-11-11T17:50:00Z';
+const DEADLINE_MS = Date.parse(DEADLINE);
 
 /** The installation the QR names: `internal/cli/pair.go`'s `pairQR` shape with
  * this file's values. */
@@ -50,7 +67,7 @@ function scanned(over = {}) {
     api_key: 'test-web-api-key',
     token: 'test-pairing-token-not-a-credential',
     uid: UID,
-    expires_at: '2026-11-11T17:50:00Z',
+    expires_at: DEADLINE,
     ...over,
   });
 }
@@ -120,6 +137,13 @@ function seal({ phonePublic, uid, payload, ephemeralSecret }) {
   return encodeBase64url(envelope);
 }
 
+/** The node `pair.go` writes at `pairing/$uid/delivery` (`pairDeliveryNode`):
+ * the version and the sealed envelope, and nothing else. The phone watches this
+ * node, so a delivery reaches the session inside it and never bare. */
+function deliveryNode(sealed, over = {}) {
+  return { v: DELIVERY_VERSION, sealed, ...over };
+}
+
 /** The three stores, and the raw ports a test inspects. */
 function makeStores() {
   const secretPort = new MemorySecureStore();
@@ -175,7 +199,7 @@ function makeDatabase({ failSet = false, failWatch = false } = {}) {
   };
 }
 
-function makeSession({ random = randomPort(9), database = makeDatabase(), auth, stores = makeStores(), clock = { nowMs: () => 1_700_000_000_000 } } = {}) {
+function makeSession({ random = randomPort(9), database = makeDatabase(), auth, stores = makeStores(), clock = { nowMs: () => T0 } } = {}) {
   const signedIn = [];
   const authPort = auth ?? {
     signIn(call) {
@@ -228,12 +252,61 @@ test('the key pair is the phone’s, and the code is its fingerprint', async () 
   assert.equal(request.path, requestPath(UID));
   assert.deepEqual(Object.keys(request.value).sort(), ['at', 'key']);
   assert.equal(request.value.key, encodeDeviceKey(phonePublic));
-  assert.equal(request.value.at, '2023-11-14T22:13:20.000Z');
+  // The instant is the number the rules' `TIMESTAMP` macro validates and not a
+  // string: `pairRequestNode.At` is a `json.Number` and `pairDecodeRequest`
+  // refuses a quoted instant, so a quoted one is a request the CLI cannot read
+  // and the deployed document will not take.
+  assert.equal(request.value.at, T0);
+  assert.equal(Number.isInteger(request.value.at), true);
   assert.equal(JSON.stringify(request.value).includes(started.session.code), false, 'the code is never written');
-  // ... and the listener is on the pairing node, which is what sees both the
-  // delivery and the delete.
+  // ... and the listener is on the delivery child, the one path the rules grant
+  // a pairing token `.read` on.
   assert.equal(database.watched.length, 1);
-  assert.equal(database.watched[0].path, pairingPath(UID));
+  assert.equal(database.watched[0].path, deliveryPath(UID));
+});
+
+test('the token is exchanged before the request is written', async () => {
+  const database = makeDatabase();
+  const { session } = makeSession({
+    database,
+    auth: {
+      signIn() {
+        // The request node's rule is the pairing claim (§2 (a)), so the write is
+        // an authenticated write: a phone that wrote first would be denied by
+        // the deployed document and the pairing could never start.
+        assert.deepEqual(database.writes, [], 'the request is written by an authenticated phone');
+        return Promise.resolve({ ok: true, uid: UID });
+      },
+    },
+  });
+  const started = await session.start(scanned(), { id: 'laptop' });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  assert.equal(database.writes.length, 1, 'and it is written exactly once');
+  assert.equal(database.writes[0].path, requestPath(UID));
+});
+
+test('a delivery node this build cannot read is refused whole', async () => {
+  const phonePublic = nodeX25519.getPublicKey(new Uint8Array(32).fill(0x55));
+  const sealed = seal({ phonePublic, uid: UID, payload: payloadOf(), ephemeralSecret: new Uint8Array(32).fill(9) });
+  const cases = [
+    // The envelope on its own is not a delivery: the CLI writes it inside the
+    // node, and a listener on the delivery child is handed the node.
+    ['the envelope without its node', sealed, ENVELOPE_CODES.NOT_A_NODE],
+    ['a version from a later format', deliveryNode(sealed, { v: DELIVERY_VERSION + 1 }), ENVELOPE_CODES.BAD_VERSION],
+    ['a version that is not a number', deliveryNode(sealed, { v: String(DELIVERY_VERSION) }), ENVELOPE_CODES.BAD_VERSION],
+    ['a field this build does not know', { ...deliveryNode(sealed), extra: 1 }, ENVELOPE_CODES.UNKNOWN_FIELD],
+    ['a node with no envelope', { v: DELIVERY_VERSION }, ENVELOPE_CODES.MISSING_FIELD],
+    ['an envelope that is not text', { v: DELIVERY_VERSION, sealed: 5 }, ENVELOPE_CODES.NOT_TEXT],
+  ];
+  for (const [what, node, code] of cases) {
+    const { session, database, stores } = makeSession({ random: randomPort(0x55) });
+    await session.start(scanned(), { id: 'laptop' });
+    await database.push(node);
+    const shown = session.snapshot();
+    assert.equal(shown.state, SESSION_STATES.REFUSED, what);
+    assert.equal(shown.refusal.code, code, what);
+    assert.deepEqual(stores.secretPort.keys(), [], what);
+  }
 });
 
 test('the delivered token and MAC key go to secure storage and nowhere else', async () => {
@@ -241,9 +314,9 @@ test('the delivered token and MAC key go to secure storage and nowhere else', as
   const started = await session.start(scanned(), { id: 'laptop' });
   const phonePublic = nodeX25519.getPublicKey(new Uint8Array(32).fill(0x11));
   const payload = payloadOf();
-  const delivered = await database.push({
-    delivery: seal({ phonePublic, uid: UID, payload, ephemeralSecret: new Uint8Array(32).fill(5) }),
-  });
+  const delivered = await database.push(
+    deliveryNode(seal({ phonePublic, uid: UID, payload, ephemeralSecret: new Uint8Array(32).fill(5) })),
+  );
   assert.equal(delivered, true);
   const shown = session.snapshot();
   assert.equal(shown.state, SESSION_STATES.DELIVERED, JSON.stringify(shown));
@@ -300,7 +373,7 @@ test('a delivery that disagrees with the scan is refused whole', async () => {
   const payload = payloadOf({
     config: { ...payloadOf().config, project: 'other', gcp_project: 'fp-9999', database_url: 'https://fp-9999-default-rtdb.firebaseio.com' },
   });
-  await database.push({ delivery: seal({ phonePublic, uid: UID, payload, ephemeralSecret: new Uint8Array(32).fill(6) }) });
+  await database.push(deliveryNode(seal({ phonePublic, uid: UID, payload, ephemeralSecret: new Uint8Array(32).fill(6) })));
   const shown = session.snapshot();
   assert.equal(shown.state, SESSION_STATES.REFUSED);
   assert.equal(shown.refusal.code, 'disagrees-with-scan');
@@ -308,17 +381,47 @@ test('a delivery that disagrees with the scan is refused whole', async () => {
   assert.deepEqual([...(await stores.store.list()).accounts], [], 'and no account is added');
 });
 
-test('a node that goes away before a delivery says the pairing expired', async () => {
-  const { session, database, stores } = makeSession();
+test('a null on the delivery child is passed over, and the deadline is what ends the wait', async () => {
+  // The delivery child does not exist for the whole of the operator's typing,
+  // and the subtree's deletion looks exactly the same from it: the rules give
+  // the phone no read on the parent to tell those apart, so neither may end the
+  // session -- a session that gave up on a null would give up the instant it
+  // started.
+  let now = T0;
+  const { session, database, stores } = makeSession({ clock: { nowMs: () => now } });
   await session.start(scanned(), { id: 'laptop' });
   await database.push(null);
-  const shown = session.snapshot();
+  assert.equal(session.snapshot().state, SESSION_STATES.WATCHING, 'no delivery yet is not an ending');
+  // A tick inside the deadline changes nothing either.
+  now = DEADLINE_MS - 1;
+  assert.equal(session.tick().state, SESSION_STATES.WATCHING);
+  // The deadline itself is the end of it: `expires_at` is the pairing token's
+  // own `exp`, so nothing can arrive after it.
+  now = DEADLINE_MS;
+  const shown = session.tick();
   assert.equal(shown.state, SESSION_STATES.EXPIRED);
   assert.equal(shown.refusal.code, SESSION_CODES.EXPIRED);
+  assert.equal(database.stopped, 1, 'the listener is stopped');
   assert.deepEqual(stores.secretPort.keys(), []);
   // ... and the code path is still there to be shown again, with no key behind
   // it: a re-scan draws a new pair.
   assert.equal(typeof shown.code, 'string');
+});
+
+test('a scan whose deadline has gone is expired before a key is drawn', async () => {
+  const { session, database, signedIn, stores } = makeSession({ clock: { nowMs: () => DEADLINE_MS } });
+  const expired = await session.start(scanned(), { id: 'laptop' });
+  assert.equal(expired.ok, false);
+  assert.equal(expired.code, SESSION_CODES.EXPIRED);
+  assert.equal(session.snapshot().state, SESSION_STATES.EXPIRED);
+  // The token in that QR died with the deadline, so there is nothing to
+  // exchange and no request node worth writing: the pairing leaves no orphan
+  // for the sweep and no code on screen.
+  assert.deepEqual(signedIn, []);
+  assert.deepEqual(database.writes, []);
+  assert.deepEqual(database.watched, []);
+  assert.deepEqual(stores.secretPort.keys(), []);
+  assert.equal(session.snapshot().code, null);
 });
 
 test('the session refuses to pair twice at once, and cancels cleanly', async () => {
@@ -345,11 +448,12 @@ test('a port that fails ends the attempt with a refusal, and stores nothing', as
   const written = await refusedSet.session.start(scanned(), { id: 'laptop' });
   assert.equal(written.code, SESSION_CODES.REQUEST_REFUSED);
   // The code was derived before the write (§7.2's own order) and the screen
-  // shows the refusal; what matters is that nothing was stored, no listener
-  // was opened and nobody was signed in.
+  // shows the refusal; what matters is that nothing was stored and no listener
+  // was opened. The token was exchanged first -- the write is an authenticated
+  // write (§2 (a)) -- so the exchange is the one step that did happen.
   assert.equal(refusedSet.session.snapshot().state, SESSION_STATES.REFUSED);
   assert.deepEqual(refusedSet.database.watched, []);
-  assert.deepEqual(refusedSet.signedIn, []);
+  assert.equal(refusedSet.signedIn.length, 1);
   assert.deepEqual(refusedSet.stores.secretPort.keys(), []);
 
   // The auth exchange failing leaves the listener unopened and nothing stored.

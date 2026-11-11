@@ -32,6 +32,14 @@
 // The camera is the same shape: the screen takes the payload's text, and how a
 // device obtains it is the entry's (`screen.js` says why).
 //
+// **The one thing a caller of the session owes it.** A pairing that nobody
+// completes ends on the phone's own clock, and this module starts no timer
+// (`session.js` says why): the entry calls `session.tick()` while a pairing is
+// `watching`, on whatever tick it already has -- a render, a focus event -- and
+// the session says `expired` when the QR's deadline has gone. Nothing else
+// needs ticking, and a caller that never ticks leaves a pairing waiting rather
+// than breaking it.
+//
 // `mobile/src/app/first-screen.js` already carries the seam this screen fills
 // (`pairingScreen`), and nothing wires it yet: wiring it needs the device's
 // ports, which is the entry's line to write.
@@ -85,12 +93,14 @@ export {
 export {
   DELIVERY_INFO,
   DELIVERY_MIN_ENVELOPE,
+  DELIVERY_NODE_FIELDS,
   DELIVERY_VERSION,
   ENVELOPE_CODES,
   ENVELOPE_MAX_CHARS,
   decodeEnvelope,
   deliveryAAD,
   openDelivery,
+  readDeliveryNode,
 } from './envelope.js';
 
 export {
@@ -105,7 +115,7 @@ export {
   SESSION_CODES,
   SESSION_STATES,
   createPairingSession,
-  pairingPath,
+  deliveryPath,
   requestPath,
 } from './session.js';
 

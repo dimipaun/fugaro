@@ -35,7 +35,15 @@ import test from 'node:test';
 
 import { decodeBase64url, encodeBase64url } from './base64url.js';
 import { readDelivery } from './delivery.js';
-import { DELIVERY_INFO, DELIVERY_VERSION, ENVELOPE_CODES, decodeEnvelope, deliveryAAD, openDelivery } from './envelope.js';
+import {
+  DELIVERY_INFO,
+  DELIVERY_VERSION,
+  ENVELOPE_CODES,
+  decodeEnvelope,
+  deliveryAAD,
+  openDelivery,
+  readDeliveryNode,
+} from './envelope.js';
 import { fingerprint } from './key.js';
 import { readScannedPayload } from './payload.js';
 
@@ -221,6 +229,37 @@ test('an envelope this build did not write is refused before anything is derived
   assert.equal(open({ publicKey: PHONE_PUBLIC.subarray(0, 31) }).code, ENVELOPE_CODES.BAD_KEY);
   assert.equal(open({ x25519: {} }).code, ENVELOPE_CODES.BAD_PORT);
   assert.equal(open({ x25519: null }).code, ENVELOPE_CODES.BAD_PORT);
+});
+
+test('the delivery node is judged before the envelope is decoded', () => {
+  // The node is `pairDeliveryNode`'s document, and the vector's envelope is
+  // what the CLI put in `sealed` on the wire.
+  const read = readDeliveryNode({ v: DELIVERY_VERSION, sealed: VECTOR.envelope });
+  assert.equal(read.ok, true);
+  assert.deepEqual(read.bytes, ENVELOPE);
+
+  // The version is judged first, so a format this build does not read is
+  // refused before a character of the payload is decoded -- and a version that
+  // is quoted, or fractional, is not this build's either (the CLI writes a JSON
+  // number, `pairDeliveryNode.V`).
+  assert.equal(readDeliveryNode({ v: DELIVERY_VERSION + 1, sealed: VECTOR.envelope }).code, ENVELOPE_CODES.BAD_VERSION);
+  assert.equal(readDeliveryNode({ v: String(DELIVERY_VERSION), sealed: VECTOR.envelope }).code, ENVELOPE_CODES.BAD_VERSION);
+  assert.equal(readDeliveryNode({ v: DELIVERY_VERSION + 0.5, sealed: VECTOR.envelope }).code, ENVELOPE_CODES.BAD_VERSION);
+
+  // The node has exactly two fields. The envelope on its own -- what the bytes
+  // look like before the CLI wraps them -- is not one, and neither is a node
+  // carrying a field this build does not know.
+  assert.equal(readDeliveryNode(VECTOR.envelope).code, ENVELOPE_CODES.NOT_A_NODE);
+  assert.equal(readDeliveryNode(null).code, ENVELOPE_CODES.NOT_A_NODE);
+  assert.equal(readDeliveryNode([DELIVERY_VERSION]).code, ENVELOPE_CODES.NOT_A_NODE);
+  assert.equal(readDeliveryNode({ v: DELIVERY_VERSION }).code, ENVELOPE_CODES.MISSING_FIELD);
+  assert.equal(readDeliveryNode({ v: DELIVERY_VERSION, sealed: VECTOR.envelope, extra: 1 }).code, ENVELOPE_CODES.UNKNOWN_FIELD);
+  assert.equal(readDeliveryNode({ v: DELIVERY_VERSION, sealed: 5 }).code, ENVELOPE_CODES.NOT_TEXT);
+
+  // A `sealed` that is not this encoding is `decodeEnvelope`'s refusal, which
+  // is the code the node reader answers with rather than a second vocabulary
+  // for the same thing.
+  assert.equal(readDeliveryNode({ v: DELIVERY_VERSION, sealed: 'not base64url!' }).code, ENVELOPE_CODES.NOT_BYTES);
 });
 
 test('a delivery bound to another uid or another phone does not open', () => {

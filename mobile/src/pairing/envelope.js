@@ -13,6 +13,11 @@
 // key, verify the tag, and hand back the plaintext bytes. `delivery.js` is what
 // judges those bytes; nothing here looks inside them.
 //
+// **How those bytes arrive.** Not bare: the CLI writes them inside the delivery
+// node, `{ "v": <version>, "sealed": "<base64url of the envelope>" }`
+// (`pairDeliveryNode`), which is what the phone's listener is handed and what
+// `readDeliveryNode` below judges before `decodeEnvelope` sees a character.
+//
 // **Why the version byte is first and why it is bound into the AAD.** §8's
 // reasoning, kept rather than paraphrased: a later format is *refused* rather
 // than misread as this one, and binding the version into the AAD means a
@@ -62,10 +67,18 @@ export const DELIVERY_MIN_ENVELOPE = 1 + DEVICE_KEY_SIZE + GCM_NONCE_SIZE + GCM_
  * a hostile node's value cannot ask for an allocation of its own choosing. */
 export const ENVELOPE_MAX_CHARS = 4096;
 
+/** The delivery **node**'s fields, exactly: `pairDeliveryNode`'s two tags. The
+ * node is what the CLI writes at `pairing/$uid/delivery` and what the phone
+ * watches; the envelope's bytes are the `sealed` string inside it. */
+export const DELIVERY_NODE_FIELDS = Object.freeze(['v', 'sealed']);
+
 /** How this module refuses. */
 export const ENVELOPE_CODES = Object.freeze({
   NOT_BYTES: 'not-bytes',
   NOT_TEXT: 'not-text',
+  NOT_A_NODE: 'not-a-node',
+  UNKNOWN_FIELD: 'unknown-field',
+  MISSING_FIELD: 'missing-field',
   TOO_LONG: 'too-long',
   TOO_SHORT: 'too-short',
   BAD_VERSION: 'bad-version',
@@ -107,6 +120,46 @@ export function decodeEnvelope(text) {
   const decoded = decodeBase64url(text, Math.floor((text.length * 6) / 8));
   if (!decoded.ok) return refuse(ENVELOPE_CODES.NOT_BYTES, 'delivery');
   return Object.freeze({ ok: true, bytes: decoded.bytes });
+}
+
+/**
+ * The delivery **node** as the envelope's bytes: `{ "v": 1, "sealed": "…" }`,
+ * which is `pairDeliveryNode`'s document and nothing else.
+ *
+ * **Why the node is judged and not just unwrapped.** The node has no `.validate`
+ * in the rules (§2 (a) 4: its shape is unconstrained), so its fields are the
+ * CLI's convention and every one of them is checked here: exactly these two,
+ * `v` a whole number and this build's version, `sealed` a string that decodes.
+ * A node carrying a field this build does not know, or a `v` from a later
+ * format, is refused rather than guessed at -- §7.2's "the version byte is this
+ * build's" said one level out, before a byte of the payload is decoded. The
+ * envelope's own first byte carries the same number on the wire
+ * (`DeliveryEnvelopeVersion` is what the CLI puts in both places) and is
+ * checked again by `openDelivery`, because that byte is what the AAD binds.
+ *
+ * A `null` node is refused here like any other non-node, and `session.js` asks
+ * about it first: on the delivery child a null means "no delivery yet", which
+ * is the ordinary state of that node before the CLI writes it and not a
+ * refusal.
+ */
+export function readDeliveryNode(node) {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) {
+    return refuse(ENVELOPE_CODES.NOT_A_NODE, 'delivery');
+  }
+  for (const field of Object.keys(node)) {
+    if (!DELIVERY_NODE_FIELDS.includes(field)) return refuse(ENVELOPE_CODES.UNKNOWN_FIELD, `delivery.${field}`);
+  }
+  for (const field of DELIVERY_NODE_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(node, field)) return refuse(ENVELOPE_CODES.MISSING_FIELD, `delivery.${field}`);
+  }
+  // A quoted version -- `"1"` -- is not this build's version either: the CLI
+  // writes a JSON number (`V byte` with no `,string` tag), and a string here is
+  // a document nobody wrote.
+  if (typeof node.v !== 'number' || !Number.isInteger(node.v) || node.v !== DELIVERY_VERSION) {
+    return refuse(ENVELOPE_CODES.BAD_VERSION, 'delivery.v');
+  }
+  if (typeof node.sealed !== 'string') return refuse(ENVELOPE_CODES.NOT_TEXT, 'delivery.sealed');
+  return decodeEnvelope(node.sealed);
 }
 
 /**
