@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
@@ -41,33 +42,55 @@ const (
 
 // doctorSecurityChecks is the check doctor runs in a checkout: the list in
 // force there, and the written row that matched nothing in its base.
+//
+// The two written layers are read offline and at the base branch (D1518): the
+// repository's own rows out of its fugaro.yaml at the default branch's ref, and
+// the project layer's out of this machine's cached copy of the published layer
+// (modelsLayer). A machine that holds no cached layer for the project has its
+// rows missing from the count, which doctor cannot tell apart from a project
+// that wrote none — the layer is not on this machine to be read, and doctor is
+// an offline read (SC4).
 func doctorSecurityChecks(ctx context.Context, root string) []doctorCheck {
-	// Slice 1 (D1519): the list in force is the engine's floor alone — the
-	// keys that write a list exist and are validated, and no run reads one yet
-	// — so nothing is written and no base is read. SC9 re-points this at
-	// config.SecurityPatterns' one resolution, which is where the project's and
-	// the repository's rows come from; the closure below is what reads the base
-	// then.
-	return doctorSecurityListChecks(sensitivity.Floor(), nil, func() (string, []string) {
-		ref := defaultBranchRef(ctx, root)
-		paths, ok := doctorSecurityBaseTree(ctx, root, ref)
-		if !ok {
-			return "", nil
-		}
-		return ref, paths
-	})
+	return doctorSecurityListChecks(
+		func() (*config.Security, *config.ProjectLayer) {
+			ref := defaultBranchRef(ctx, root)
+			if ref == "" {
+				return nil, nil
+			}
+			project, own, reason := securityBaseFile(ctx, root, ref)
+			if reason != "" {
+				// The repository's own file is not one this reader can read:
+				// there are no rows of the repository's, and no project to read
+				// a layer for either, so the list in force is the floor.
+				return nil, nil
+			}
+			return own, modelsLayer(project)
+		},
+		func() (string, []string) {
+			ref := defaultBranchRef(ctx, root)
+			paths, ok := doctorSecurityBaseTree(ctx, root, ref)
+			if !ok {
+				return "", nil
+			}
+			return ref, paths
+		})
 }
 
-// doctorSecurityListChecks is the check over a list in force: floor is the
-// engine's rows, written the project's and the repository's, and baseTree
-// answers the base branch's ref and its committed paths — lazily, since a list
-// nothing was written to has no row of the reader's to measure and costs no
-// git read at all. An answer of no ref at all — a checkout with no default
-// branch, or a tree this checkout could not read — says the floor alone: there
-// is no tree to measure a row against, and a finding nobody can check is worse
-// than none.
-func doctorSecurityListChecks(floor, written []sensitivity.Pattern, baseTree func() (string, []string)) []doctorCheck {
-	out := []doctorCheck{doctorSecurityInForce(floor, written)}
+// doctorSecurityListChecks is the check over the list in force: layers answers
+// the two lists a person wrote — the repository's own block and the project
+// layer, either of which may be nil — and baseTree answers the base branch's ref
+// and its committed paths. Both are lazy, and the tree listing is the one that
+// has to be: a list nothing was added to carries no row of the reader's to
+// measure, so it costs no git read over the base at all.
+//
+// An answer of no ref at all — a checkout with no default branch, or a tree this
+// checkout could not read — says the floor alone: there is no tree to measure a
+// row against, and a finding nobody can check is worse than none.
+func doctorSecurityListChecks(layers func() (*config.Security, *config.ProjectLayer), baseTree func() (string, []string)) []doctorCheck {
+	own, layer := layers()
+	list := config.SecurityPatterns(own, layer)
+	out := []doctorCheck{doctorSecurityInForce(list)}
+	written := doctorSecurityWritten(list)
 	if len(written) == 0 {
 		return out
 	}
@@ -93,13 +116,33 @@ func doctorSecurityListChecks(floor, written []sensitivity.Pattern, baseTree fun
 	return append(out, doctorSecurityUnused(unused, ref))
 }
 
+// doctorSecurityWritten is the rows of the list in force a person wrote, in the
+// list's own order: every row that is not the engine's. They are what D1503's
+// finding measures, because a row of the floor is not the reader's to fix and
+// names trees most repositories do not have.
+func doctorSecurityWritten(list config.SecurityList) []sensitivity.Pattern {
+	var written []sensitivity.Pattern
+	for _, row := range list {
+		if row.Source != config.SecuritySourceFloor {
+			written = append(written, row.Pattern)
+		}
+	}
+	return written
+}
+
 // doctorSecurityInForce is the measurement: the list in force by counts, and
-// where each count comes from. The project's rows and the repository's are one
-// count here, because slice 1 can hold rows from neither: SC9 takes the one
-// resolution's per-layer lists and gives each its own.
-func doctorSecurityInForce(floor, written []sensitivity.Pattern) doctorCheck {
-	problem := fmt.Sprintf("the security list in force is %s: %s from the engine's floor, and %s written by this project or by this repository",
-		doctorSecurityPatternCount(len(floor)+len(written)), doctorSecurityPatternCount(len(floor)), doctorSecurityPatternCount(len(written)))
+// where each count comes from. The floor's rows and the two layers' are three
+// counts rather than one, because a reader who is missing a whole layer's rows —
+// a project whose layer this machine holds no cached copy of — has to be able to
+// see the count that would have moved.
+func doctorSecurityInForce(list config.SecurityList) doctorCheck {
+	count := map[config.SecuritySource]int{}
+	for _, row := range list {
+		count[row.Source]++
+	}
+	problem := fmt.Sprintf("the security list in force is %s: %s from the engine's floor, %s written by this project's layer, and %s written by this repository",
+		doctorSecurityPatternCount(len(list)), doctorSecurityPatternCount(count[config.SecuritySourceFloor]),
+		doctorSecurityPatternCount(count[config.SecuritySourceProject]), doctorSecurityPatternCount(count[config.SecuritySourceRepo]))
 	return doctorCheck{
 		ID:       doctorSecurityID,
 		OK:       true,

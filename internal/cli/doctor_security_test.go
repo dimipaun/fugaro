@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -33,17 +35,17 @@ func doctorSecurityTestBase(t *testing.T, files map[string]string) string {
 	return root
 }
 
-// doctorSecurityTestWritten is the list a project layer or the repository
-// wrote: one row the base matches and one it does not.
-func doctorSecurityTestWritten() []sensitivity.Pattern {
-	return []sensitivity.Pattern{
+// doctorSecurityTestOwn is a repository's own security: block: one row the base
+// matches and one it does not.
+func doctorSecurityTestOwn() *config.Security {
+	return &config.Security{Patterns: []sensitivity.Pattern{
 		{Name: "creds", Match: "internal/creds/**", Category: sensitivity.Credentials},
 		{Name: "prod-secrets", Match: "config/prod/**", Category: sensitivity.Credentials},
-	}
+	}}
 }
 
-// doctorSecurityTestChecks runs the check over a written list and the base of
-// a checkout, the way SC9 will hand it the resolution.
+// doctorSecurityTestChecks runs the check over the repository's own rows and the
+// base of a checkout, the way the command hands it the two layers.
 func doctorSecurityTestChecks(t *testing.T) []doctorCheck {
 	t.Helper()
 	root := doctorSecurityTestBase(t, map[string]string{
@@ -59,9 +61,9 @@ func doctorSecurityTestChecks(t *testing.T) []doctorCheck {
 	if !ok {
 		t.Fatalf("no base tree for %s", ref)
 	}
-	return doctorSecurityListChecks(sensitivity.Floor(), doctorSecurityTestWritten(), func() (string, []string) {
-		return ref, paths
-	})
+	return doctorSecurityListChecks(
+		func() (*config.Security, *config.ProjectLayer) { return doctorSecurityTestOwn(), nil },
+		func() (string, []string) { return ref, paths })
 }
 
 // doctorSecurityTestFinding is that run's finding, or a failure.
@@ -92,7 +94,8 @@ func TestDoctorNamesTheSecurityListInForce(t *testing.T) {
 	for _, want := range []string{
 		doctorSecurityPatternCount(floor), // the list in force
 		"from the engine's floor",
-		"written by this project or by this repository",
+		"written by this project's layer",
+		"written by this repository",
 	} {
 		if !strings.Contains(c.Problem, want) {
 			t.Errorf("problem = %q, want %q", c.Problem, want)
@@ -107,10 +110,12 @@ func TestDoctorNamesTheSecurityListInForce(t *testing.T) {
 // of doctor, and it costs no git read over the base.
 func TestDoctorSecurityCheckIsAMeasureWhenTheListIsSound(t *testing.T) {
 	read := false
-	checks := doctorSecurityListChecks(sensitivity.Floor(), nil, func() (string, []string) {
-		read = true
-		return "origin/main", []string{"README.md"}
-	})
+	checks := doctorSecurityListChecks(
+		func() (*config.Security, *config.ProjectLayer) { return nil, nil },
+		func() (string, []string) {
+			read = true
+			return "origin/main", []string{"README.md"}
+		})
 	if read {
 		t.Error("the check read the base for a list nothing was written to")
 	}
@@ -169,7 +174,8 @@ func TestDoctorSecurityCheckIsAFindingWhenAPatternMatchedNothing(t *testing.T) {
 }
 
 // A base nothing can be measured against — no ref, or a tree that cannot be
-// read — says the floor alone rather than calling every written row unmatched.
+// read — says the list in force and no finding, rather than calling every
+// written row unmatched.
 func TestDoctorSecuritySaysNothingAboutABaseItCannotRead(t *testing.T) {
 	root := doctorSecurityTestBase(t, map[string]string{"README.md": "# aurora\n"})
 	ctx := context.Background()
@@ -179,11 +185,52 @@ func TestDoctorSecuritySaysNothingAboutABaseItCannotRead(t *testing.T) {
 	if _, ok := doctorSecurityBaseTree(ctx, root, ""); ok {
 		t.Error("no ref was read as a tree")
 	}
-	checks := doctorSecurityListChecks(sensitivity.Floor(), doctorSecurityTestWritten(), func() (string, []string) {
-		return "", nil
-	})
+	checks := doctorSecurityListChecks(
+		func() (*config.Security, *config.ProjectLayer) { return doctorSecurityTestOwn(), nil },
+		func() (string, []string) { return "", nil })
 	if len(checks) != 1 {
-		t.Fatalf("checks = %+v, want the floor's line alone", checks)
+		t.Fatalf("checks = %+v, want the list in force's line alone", checks)
+	}
+}
+
+// TestDoctorReadsTheRepositorysOwnRowsAtTheBase: the two written layers come
+// from the one resolution, and the repository's half of it is read out of its
+// fugaro.yaml at the default branch's ref and never out of the working copy
+// (D1518). The row the base writes is counted as the repository's own and
+// measured against the base's tree; the row only the working copy writes is not
+// read at all.
+func TestDoctorReadsTheRepositorysOwnRowsAtTheBase(t *testing.T) {
+	isolateCache(t)
+	const file = "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"security: { patterns: [ { name: %s, match: \"%s\", category: credentials } ] }\n" +
+		"workflows: { web: { commands: { build: sh b.sh, test: sh t.sh } } }\n"
+	root := doctorSecurityTestBase(t, map[string]string{
+		"README.md":               "# aurora\n",
+		"internal/creds/state.go": "package creds\n",
+		"fugaro.yaml":             fmt.Sprintf(file, "payments", "internal/payments/**"),
+	})
+	testutil.WriteFiles(t, root, map[string]string{
+		"fugaro.yaml": fmt.Sprintf(file, "rogues", "internal/rogues/**"),
+	})
+
+	checks := doctorSecurityChecks(context.Background(), root)
+
+	line, ok := doctorCheckByID(checks, doctorSecurityID)
+	if !ok {
+		t.Fatalf("no %s check: %+v", doctorSecurityID, checks)
+	}
+	if !strings.Contains(line.Problem, "1 pattern written by this repository") {
+		t.Errorf("problem = %q, want the base's own row counted as the repository's", line.Problem)
+	}
+	found, ok := doctorCheckByID(checks, doctorSecurityUnusedID)
+	if !ok {
+		t.Fatalf("no %s check: %+v", doctorSecurityUnusedID, checks)
+	}
+	if !strings.Contains(found.Problem, "payments") {
+		t.Errorf("problem = %q, want the row the base's own file writes", found.Problem)
+	}
+	if strings.Contains(found.Problem, "rogues") {
+		t.Errorf("problem = %q, names a row only the working copy writes: the base branch's file is the one read (D1518)", found.Problem)
 	}
 }
 

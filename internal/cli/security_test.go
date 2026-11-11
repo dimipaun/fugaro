@@ -8,8 +8,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -59,6 +61,10 @@ var securityNoKeyYAML = baseBranchYAML("git: { provider: github, base_branch: ma
 // the list at that checkout's base branch, so every test here starts in one.
 func securityCheckout(t *testing.T, repo, yaml string) string {
 	t.Helper()
+	// The project layer's half of the list comes from this machine's cached copy
+	// of the published layer (modelsLayer), so a test that did not isolate the
+	// cache would read whatever layer the machine running it happens to hold.
+	isolateCache(t)
 	baseBranchCheckout(t, repo, yaml, "main")
 	dir, err := os.Getwd()
 	if err != nil {
@@ -536,5 +542,122 @@ func TestSecurityPathsOpensNoBucket(t *testing.T) {
 	}
 	if doc.Security.Count != len(securityFloorRows()) {
 		t.Errorf("security.count = %d, want the floor's %d rows", doc.Security.Count, len(securityFloorRows()))
+	}
+}
+
+// securityOwnRowsYAML is a repository whose own file writes a security: block:
+// the fallback's half of the resolution (D1500). The row it writes is on no
+// floor row and in no routine tree this test reads, so the only list that can
+// carry it is the resolution's.
+const securityOwnRowsYAML = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
+	"security:\n  patterns:\n    - { name: payments, match: \"internal/payments/**\", category: credentials }\n" +
+	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// TestSecurityPathsResolvesTheRepositorysRowsAtTheBase: the repository's own
+// rows are part of the list in force (SC9, D1506, D1511), they carry the source
+// `repo`, and they are read at the base branch and never from the working copy
+// (D1518). The working tree here writes a different row from the committed base,
+// so a read of the working copy would print a list that is not the run's.
+func TestSecurityPathsResolvesTheRepositorysRowsAtTheBase(t *testing.T) {
+	dir := securityCheckout(t, "acme/app", securityOwnRowsYAML)
+	working := strings.Replace(securityOwnRowsYAML, "internal/payments/**", "internal/rogues/**", 1)
+	if working == securityOwnRowsYAML {
+		t.Fatal("the fixture no longer writes the row, so this test would pass on two identical files")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(working), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	doc := securityDoc(t, "security", "paths")
+
+	rows := securityRows(doc)
+	if want := len(securityFloorRows()) + 1; len(rows) != want {
+		t.Fatalf("security.patterns = %d rows, want the floor's %d and the repository's one", len(rows), want)
+	}
+	if doc.Security.Count != len(rows) {
+		t.Errorf("security.count = %d, want the list's own %d", doc.Security.Count, len(rows))
+	}
+	want := securityRow{"payments", "internal/payments/**", "credentials", "repo"}
+	if got := rows[len(rows)-1]; got != want {
+		t.Errorf("the last row = %+v, want %+v: a repository's own block is read at the base ref and carries the source repo", got, want)
+	}
+	for i, row := range rows[:len(rows)-1] {
+		if row != securityFloorRows()[i] {
+			t.Errorf("security.patterns[%d] = %+v, want the floor's %+v: a repository's rows are added beside the floor's", i, row, securityFloorRows()[i])
+		}
+	}
+}
+
+// securityProjectLayerYAML is a project layer whose security: block writes one
+// row (D1501), in the shape the layer cache holds: the same text the published
+// layer carries.
+const securityProjectLayerYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+	"security:\n  patterns:\n    - { name: settlements, match: \"internal/settlements/**\", category: credentials }\n"
+
+// TestSecurityPathsCarriesTheProjectLayersRows: the project layer's rows are the
+// list's middle half (SC9, D1506, D1511) and carry the source `project`. This
+// command reads no bucket (§6.23), so the layer it reads is this machine's
+// cached copy of the published one — the read `fugaro models ls` makes — and a
+// machine that holds it gets the project's rows with no warning beside them.
+func TestSecurityPathsCarriesTheProjectLayersRows(t *testing.T) {
+	// The checkout first: it isolates the cache, so the layer is written into the
+	// same cache the command will read.
+	securityCheckout(t, "acme/app", securityAnchoredYAML)
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234", CheckedAt: time.Now(), YAML: securityProjectLayerYAML,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	doc := securityDoc(t, "security", "paths")
+
+	rows := securityRows(doc)
+	if want := len(securityFloorRows()) + 1; len(rows) != want {
+		t.Fatalf("security.patterns = %d rows, want the floor's %d and the project layer's one", len(rows), want)
+	}
+	want := securityRow{"settlements", "internal/settlements/**", "credentials", "project"}
+	if got := rows[len(rows)-1]; got != want {
+		t.Errorf("the last row = %+v, want %+v: the cached layer's row is in force and carries the source project", got, want)
+	}
+
+	out, errOut, err := execute(t, "security", "paths")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, out)
+	}
+	if errOut != "" {
+		t.Errorf("stderr = %q, want nothing: this machine holds the layer the list was read from", errOut)
+	}
+}
+
+// TestSecurityPathsSaysSoWhenTheProjectLayerIsNotCached: a machine that holds no
+// cached copy of the project's layer prints the floor's rows and the
+// repository's without the project's, which the document's shape cannot say
+// (every member of it is the console's contract, §6.23). The command says so on
+// stderr, in both forms of the document, and the `error` member stays what it
+// was — the repository's own file, which was read.
+func TestSecurityPathsSaysSoWhenTheProjectLayerIsNotCached(t *testing.T) {
+	securityCheckout(t, "acme/app", securityAnchoredYAML)
+
+	out, errOut, err := execute(t, "security", "paths")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, out)
+	}
+	if !strings.Contains(errOut, "aurora") || !strings.Contains(errOut, "layer") {
+		t.Errorf("stderr = %q, want the project whose layer is missing and that it is the layer", errOut)
+	}
+	_, jsonErr, err := execute(t, "security", "paths", "--json")
+	if err != nil {
+		t.Fatalf("fugaro security paths --json: %v", err)
+	}
+	if jsonErr != errOut {
+		t.Errorf("--json stderr = %q, want %q: the missing layer is not something the document can carry", jsonErr, errOut)
+	}
+
+	doc := securityDoc(t, "security", "paths")
+	if doc.Project != "aurora" || doc.Error != "" {
+		t.Errorf("project = %q, error = %q, want the file read and no error member: a missing cached layer is not a read that failed", doc.Project, doc.Error)
+	}
+	if doc.Security.Count != len(securityFloorRows()) {
+		t.Errorf("security.count = %d, want the floor's %d rows: the project's rows are not on this machine to be read", doc.Security.Count, len(securityFloorRows()))
 	}
 }

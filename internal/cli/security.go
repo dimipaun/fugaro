@@ -62,15 +62,19 @@ import (
 // document carries no argv of its own. A refusal names a path or a ref and
 // never a value read out of a file.
 //
-// What is not here yet. This slice is the floor alone (D1504, D1519): no
-// project key and no repository key exists, so every row's `source` is `floor`
-// and the resolution has one layer to merge. SC7 and SC8 add the keys, SC9
-// re-points this read at the one resolution, and nothing in the document's
-// shape has to move for either.
-
-// securitySourceFloor is the source label the floor's own rows carry (D1512's
-// three words: floor, project, repo).
-const securitySourceFloor = "floor"
+// Which list, and where its three layers are read (SC9, D1506, D1511). The list
+// in force is config.SecurityPatterns' one resolution — the engine's floor, the
+// project layer's rows and the repository's own, unioned — and each row carries
+// the layer it came from. The two written halves are read offline, like every
+// other read here: the repository's own rows out of its fugaro.yaml at the base
+// ref, and the project layer's out of this machine's cached copy of the
+// published layer (modelsLayer, the read `fugaro models ls` makes), never out of
+// the bucket the published layer lives in. A machine that holds no cached layer
+// for the project therefore prints the floor's rows and the repository's without
+// the project's, and the command says so on stderr rather than letting an
+// incomplete list read like a complete one. The run is not weakened by that gap:
+// it resolves the published layer in the cloud, so `fugaro security paths` is
+// the advisory read and the runner's own resolution is the control.
 
 // securityPathsDoc is D1512's document, and it is the contract the desktop
 // console's §6.23 describes. The shape is closed in the way every wire shape in
@@ -88,8 +92,9 @@ type securityPathsDoc struct {
 	Base string `json:"base"`
 	// FloorSource is the source label the floor's rows carry in Security. It is
 	// what lets a reader tell the engine's own rows from a layer's without
-	// scanning the list for one label, and it is "floor" in every answer this
-	// slice can give (D1504).
+	// scanning the list for one label, and it is always `floor`: the engine's
+	// rows are the resolution's first writer, so no project layer and no
+	// repository can relabel one (D1504, D1506).
 	FloorSource string `json:"floor_source"`
 	// Security is the list in force: the rows, and how many of them there are.
 	Security securityListDoc `json:"security"`
@@ -104,7 +109,10 @@ type securityPathsDoc struct {
 	// not a refusal, because the list in force still answers — it is the floor
 	// alone — and a caller that only wants to know what a path is treated as
 	// still gets its answer. "" means the read answered. The text names a ref or
-	// a line, never a value read out of the file.
+	// a line, never a value read out of the file. It is about this file alone
+	// and never about the project layer: a file that names no project names no
+	// layer either, and a machine holding no cached copy of a project's layer is
+	// said on stderr rather than here.
 	Error string `json:"error"`
 }
 
@@ -243,25 +251,42 @@ func runSecurityPaths(cmd *cobra.Command, o *securityPathsOptions) error {
 	doc := securityPathsDoc{
 		Repo:        repo,
 		Base:        base,
-		FloorSource: securitySourceFloor,
+		FloorSource: string(config.SecuritySourceFloor),
 	}
-	doc.Project, doc.Error = securityBaseProject(ctx, root, base)
+	var own *config.Security
+	doc.Project, own, doc.Error = securityBaseFile(ctx, root, base)
 
-	// The list in force is the floor alone in this slice (D1504): an absent
-	// project list, an absent repository list and an explicitly empty list all
-	// mean the floor, and no run reads the keys that write one yet (SC9).
-	list := sensitivity.Floor()
+	// The list in force is the one resolution (SC9, D1506, D1511): the engine's
+	// floor, the project layer that applies to this repository and the
+	// repository's own rows, each row carrying the layer it came from.
+	layer := modelsLayer(doc.Project)
+	list := config.SecurityPatterns(own, layer)
 	doc.Security.Count = len(list)
 	for _, row := range list {
 		doc.Security.Patterns = append(doc.Security.Patterns, securityPattern{
-			Name:     row.Name,
-			Match:    row.Match,
-			Category: string(row.Category),
-			Source:   securitySourceFloor,
+			Name:     row.Pattern.Name,
+			Match:    row.Pattern.Match,
+			Category: string(row.Pattern.Category),
+			Source:   string(row.Source),
 		})
 	}
 	for _, path := range o.check {
 		doc.Checked = append(doc.Checked, securityAnswer(path, list))
+	}
+
+	if doc.Error != "" {
+		// The answer is still an answer — with the repository's own file
+		// unreadable there is no project to read a layer for and no rows of the
+		// repository's, so the list really is the floor alone — and a caller
+		// piping stdout should be told what it is missing without a JSON member
+		// in a table.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: the repository's own list could not be read: %s; what is printed is the floor alone\n", oneLine(doc.Error))
+	} else if doc.Project != "" && layer == nil {
+		// The floor and the repository's rows are printed and the project's are
+		// not, which the document's shape cannot say: its every member is the
+		// console's contract (§6.23) and none of them is this. stderr is where
+		// the table already says what a read did not answer.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this machine holds no cached copy of project %s's layer, so the rows its security: block writes are not in this list; a run resolves the published layer itself\n", oneLine(doc.Project))
 	}
 
 	if o.json {
@@ -313,35 +338,58 @@ func securityPlaceable(path string) bool {
 // a later one. `sensitive` is a row match, or a path the reader cannot place at
 // all: the classifier's class is deliberately not a third input, because a run
 // escalates on the list and not on the class (see this file's header).
-func securityAnswer(path string, list []sensitivity.Pattern) securityPathAnswer {
+func securityAnswer(path string, list config.SecurityList) securityPathAnswer {
 	answer := securityPathAnswer{Path: path}
-	matched := sensitivity.Match([]string{path}, list)
+	matched := sensitivity.Match([]string{path}, list.Patterns())
 	if len(matched) > 0 {
 		answer.Matched = &securityMatch{
 			Name:     matched[0].Name,
 			Category: string(matched[0].Category),
-			Source:   securitySourceFloor,
+			Source:   securityRowSource(list, matched[0].Name),
 		}
 	}
 	answer.Sensitive = answer.Matched != nil || !securityPlaceable(path)
 	return answer
 }
 
-// securityBaseProject is the project the repository's own fugaro.yaml names at
-// ref, and the reason that read did not answer ("" when it did). The second
-// return is the document's `error`: a ref this checkout does not hold, no
-// fugaro.yaml at it, or a file with no place for a project name in it. Both
-// texts name a ref or a line and never a value read out of the file.
-func securityBaseProject(ctx context.Context, root, ref string) (string, string) {
+// securityRowSource is the layer the matched row is in force from. A name is a
+// row's identity in the list in force (sensitivity.Union), so the row Match
+// answered with is the one row of that list carrying that name, and a caller
+// that wants the layer the answer came from wants the one the row carries.
+func securityRowSource(list config.SecurityList, name string) string {
+	for _, row := range list {
+		if row.Pattern.Name == name {
+			return string(row.Source)
+		}
+	}
+	return string(config.SecuritySourceFloor)
+}
+
+// securityBaseFile is what the repository's own fugaro.yaml says at ref: the
+// project it names and the security: block it writes, plus the reason the read
+// did not answer ("" when it did). The third return is the document's `error`:
+// a ref this checkout does not hold, no fugaro.yaml at it, or a file this
+// reader cannot read as one. Both texts name a ref or a line and never a value
+// read out of the file. It is one read of one file, because the two answers are
+// the same file's and a second read could only disagree with the first.
+//
+// A file that writes no security: key answers with a nil block, which is the
+// same list as an empty one: the resolution reads a nil half as "this layer
+// wrote nothing" (config.SecurityPatterns, D1504).
+func securityBaseFile(ctx context.Context, root, ref string) (string, *config.Security, string) {
 	data, err := readFugaroYAMLAtRef(ctx, root, ref)
 	if err != nil {
-		return "", err.Error()
+		return "", nil, err.Error()
 	}
 	project, err := config.ProjectOf(data)
 	if err != nil {
-		return "", fmt.Sprintf("fugaro.yaml at %s: %v", ref, err)
+		return "", nil, fmt.Sprintf("fugaro.yaml at %s: %v", ref, err)
 	}
-	return project, ""
+	own, ok := config.SecurityOf(data)
+	if !ok {
+		return "", nil, fmt.Sprintf("fugaro.yaml at %s: this reader cannot read the file as a fugaro.yaml", ref)
+	}
+	return project, own, ""
 }
 
 // securityBaseBranch is the ref the list in force is read at, resolved through
@@ -400,10 +448,11 @@ func securityFileBaseBranch(ctx context.Context, repo string) (string, bool) {
 }
 
 // writeSecurityPaths prints the document as the table a person reads: the list
-// with its layers, or one answer per checked path. The error, when there is
-// one, goes to stderr beside the answer rather than inside it, because the
-// answer is still an answer — the floor alone — and a caller piping stdout
-// should be told what it is missing without a JSON member in a table.
+// with its layers, or one answer per checked path. A read that did not answer,
+// and the project layer this machine holds no cached copy of, are said on stderr
+// by runSecurityPaths rather than here — for both forms of the document, since
+// neither is something a table can carry and a caller piping stdout should be
+// told what it is missing.
 func writeSecurityPaths(cmd *cobra.Command, doc securityPathsDoc) error {
 	w := cmd.OutOrStdout()
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
@@ -430,9 +479,6 @@ func writeSecurityPaths(cmd *cobra.Command, doc securityPathsDoc) error {
 	}
 	if err := tw.Flush(); err != nil {
 		return err
-	}
-	if doc.Error != "" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: the repository's own list could not be read: %s; what is printed is the floor alone\n", oneLine(doc.Error))
 	}
 	return nil
 }
