@@ -223,9 +223,9 @@ func (d *orchestratorDaemon) start(ctx context.Context) error {
 		return d.abandon(ctx, err)
 	}
 	d.tick = tick
+	fmt.Fprintf(d.out, "orchestrator %s: driving it as %s, one cycle every %s\n", safetext.Field(d.id), safetext.Field(d.holder), d.interval)
 	d.serve(ctx)
 	defer d.unserve(ctx)
-	fmt.Fprintf(d.out, "orchestrator %s: driving it as %s, one cycle every %s\n", safetext.Field(d.id), safetext.Field(d.holder), d.interval)
 	return d.loop(ctx)
 }
 
@@ -310,9 +310,7 @@ func closeEndpoint(srv *endpoint.Server, warn io.Writer) {
 //
 // It is held in memory rather than read from the node per request because the
 // endpoint exists to save the reader a cloud read: a request that read the
-// database would be the cache file with a listener in front of it, which is the
-// cost D1358 weighed and the owner's request of 2026-11-11 is the reason it was
-// built anyway.
+// database would be the cache file with a listener in front of it.
 type endpointFeed struct {
 	mu     sync.Mutex
 	state  orchestrator.State
