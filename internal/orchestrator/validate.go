@@ -36,12 +36,12 @@ var (
 	roleRE  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 )
 
-// headSHARE is a head as the ladder records one in its ledger: a git object
-// name as a provider gives it, which is lower-hex and may be abbreviated —
-// Bitbucket reports twelve characters. The seven is git's own abbreviation
-// floor and the sixty-four a SHA-256 object name's length, so the two ends are
-// the two ends gitprov.SameCommit compares abbreviated heads between.
-var headSHARE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+// headRE is a head as the ladder records one in its ledger: a git object name
+// as a provider gives it, which is lower-hex and may be abbreviated — Bitbucket
+// reports twelve characters. Seven is git's own abbreviation floor, which is
+// what gitprov.SameCommit compares two heads down to, and sixty-four is a
+// SHA-256 object name's length.
+var headRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
 // DecodeState reads a state node. The decode is strict — a field this release
 // does not model is an error, not something to carry along — and a node
@@ -360,7 +360,7 @@ func validateEscalation(itemID string, e Escalation) error {
 		if tr.At.IsZero() {
 			return fmt.Errorf("%w: the transition %d of %q carries no time", ErrInvalid, i+1, safetext.OneLine(itemID))
 		}
-		if tr.HeadSHA != "" && !headSHARE.MatchString(tr.HeadSHA) {
+		if tr.HeadSHA != "" && !headRE.MatchString(tr.HeadSHA) {
 			return fmt.Errorf("%w: the transition %d of %q names the head %q, which is not a git object name", ErrInvalid, i+1, safetext.OneLine(itemID), safetext.OneLine(tr.HeadSHA))
 		}
 		previous = tr.To
