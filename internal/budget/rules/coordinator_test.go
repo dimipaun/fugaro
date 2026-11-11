@@ -69,7 +69,7 @@ func TestRoadmapNodesAreWrittenByNoClient(t *testing.T) {
 	roadmap := coordpath.PathProjectDocument("roadmap")
 	for _, node := range []string{
 		roadmap,
-		roadmap + "/plans", roadmap + "/releases", roadmap + "/edges", roadmap + "/assigns",
+		roadmap + "/plans", roadmap + "/releases", roadmap + "/edges", roadmap + "/assign",
 	} {
 		governing := governingPaths(t, node)
 		if len(governing) == 0 {

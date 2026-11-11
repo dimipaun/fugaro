@@ -84,7 +84,7 @@ func TestNoClientWritesARoadmapNode(t *testing.T) {
 
 	for _, node := range []string{
 		roadmap,
-		roadmap + "/plans", roadmap + "/releases", roadmap + "/edges", roadmap + "/assigns",
+		roadmap + "/plans", roadmap + "/releases", roadmap + "/edges", roadmap + "/assign",
 	} {
 		doc := map[string]any{"schema": 1}
 		h.mustDeny(reader, "the signed-in reader writing /"+node, put(node+"/a-document", doc))

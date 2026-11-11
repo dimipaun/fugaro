@@ -187,13 +187,25 @@ func (s *Store) PublishPlan(ctx context.Context, doc Plan, expect string, replac
 		if reflect.DeepEqual(stored.sanitised(), doc) {
 			return nil
 		}
-	} else if err := s.checkPlanRoom(ctx); err != nil {
+	}
+	// The record as this write found it, read before the put and never on the
+	// path that writes nothing: it is the room the plan needs, and the basis the
+	// prune below rests on — a document this publish is about to orphan is not
+	// dangling in it, which is what keeps "kept and shown dangling" (D2115) true
+	// of the very write that orphaned it.
+	before, err := s.ReadRoadmap(ctx)
+	if err != nil {
 		return err
+	}
+	if !found {
+		if err := checkPlanRoom(before); err != nil {
+			return err
+		}
 	}
 	if err := s.Put(ctx, path, etag, doc); err != nil {
 		return fmt.Errorf("coordinator: publishing /%s: %w", path, err)
 	}
-	return s.pruneDangling(ctx)
+	return s.pruneDangling(ctx, before)
 }
 
 // UnpublishPlan removes a plan document, and the tasks it carried become
@@ -209,10 +221,14 @@ func (s *Store) UnpublishPlan(ctx context.Context, plan string) error {
 	if !found {
 		return nil
 	}
+	before, err := s.ReadRoadmap(ctx)
+	if err != nil {
+		return err
+	}
 	if err := s.Put(ctx, path, etag, nil); err != nil {
 		return fmt.Errorf("coordinator: unpublishing /%s: %w", path, err)
 	}
-	return s.pruneDangling(ctx)
+	return s.pruneDangling(ctx, before)
 }
 
 // Move puts one task's assignment in the release a request names, or removes
@@ -475,75 +491,165 @@ func (s *Store) RemoveEdge(ctx context.Context, task, needs string) error {
 // is where the 30 days are counted, and the batch bound is what keeps one
 // person's request from carrying the whole of a record's clean-up.
 //
-// Nothing is deleted that moved under the writer: each deletion is put on the
-// ETag of the document the read returned, so a task moved out of a dangling
-// assignment between the read and the delete keeps its new assignment.
-func (s *Store) pruneDangling(ctx context.Context) error {
-	rm, err := s.ReadRoadmap(ctx)
+// before is the record as the write that called this found it, and it is what
+// makes the prune safe to run beside a record other writers are changing. No
+// deletion rests on a single read: a document goes only when three observations
+// agree, and the put that takes it is made on the ETag its own document was
+// read on, so anything written to that document in between fails the put.
+//
+//   - The candidates come from before, so this write never deletes what it has
+//     itself just orphaned: a document that was not dangling before the call is
+//     not on the list whatever its own `at` says. That is what keeps D2115's
+//     "kept and shown dangling" true of the publish or the unpublish that
+//     orphaned it, and what lets a republish inside the 30 days put the task
+//     back with its moves still on it.
+//   - The candidates' own documents are read before the deletion is decided, so
+//     a task moved out of a dangling assignment is seen for what it is: its
+//     document no longer matches the one the record read holds, or it is no
+//     longer dangling, and either way it stays.
+//   - The decision comes from a second read of the record, taken after those
+//     documents were read — never from before — so a plan published back
+//     between the write and the prune leaves the assignments it restores
+//     assigned: before is stale in exactly that direction, and a prune that
+//     decided from it would delete the moves a republish has just put back.
+//
+// What this cannot do, named rather than papered over: the 30 days are counted
+// from the document's own last write (`at`), which is a lower bound on how long
+// it has been dangling and not the day it went dangling. A document whose task
+// left the plans long after its last move can therefore still be deleted inside
+// D2115's 30 days — by a later publish, never by the one that orphaned it. The
+// record holds no fact that would date the orphaning: P9a's shape (schema 1)
+// carries no "dangling since" field and no marker node, and a shape that did
+// would be a later schema's.
+func (s *Store) pruneDangling(ctx context.Context, before Roadmap) error {
+	idx := indexRoadmap(before)
+	cutoff := time.Now().Add(-PruneAge)
+	var assigns, edges []pruneCandidate
+	for _, a := range before.Assignments {
+		if len(assigns)+len(edges) == PruneBatch {
+			break
+		}
+		if !idx.assignment(a) || a.At.After(cutoff) {
+			continue
+		}
+		c, ok, err := s.readPruneCandidate(ctx, PathAssign(a.Task))
+		if err != nil {
+			return err
+		}
+		if ok {
+			assigns = append(assigns, c)
+		}
+	}
+	for _, e := range before.Edges {
+		if len(assigns)+len(edges) == PruneBatch {
+			break
+		}
+		if !idx.edge(e) || e.At.After(cutoff) {
+			continue
+		}
+		c, ok, err := s.readPruneCandidate(ctx, PathEdge(e.Task, e.Needs))
+		if err != nil {
+			return err
+		}
+		if ok {
+			edges = append(edges, c)
+		}
+	}
+	if len(assigns)+len(edges) == 0 {
+		return nil
+	}
+	after, err := s.ReadRoadmap(ctx)
 	if err != nil {
 		return err
 	}
-	if len(rm.Dangling) == 0 {
-		return nil
-	}
-	dangling := make(map[string]bool, len(rm.Dangling))
-	for _, id := range rm.Dangling {
-		dangling[id] = true
-	}
-	cutoff := time.Now().Add(-PruneAge)
-	deleted := 0
-	for _, a := range rm.Assignments {
-		if deleted == PruneBatch {
-			return nil
-		}
-		if !dangling[a.Task] || a.At.After(cutoff) {
+	now := indexRoadmap(after)
+	for _, c := range assigns {
+		var doc Assignment
+		if !roadmapDocument(c.raw, &doc) {
 			continue
 		}
-		gone, err := s.deleteIfUnmoved(ctx, PathAssign(a.Task))
-		if err != nil {
-			return err
-		}
-		if gone {
-			deleted++
-		}
-	}
-	for _, e := range rm.Edges {
-		if deleted == PruneBatch {
-			return nil
-		}
-		if (!dangling[e.Task] && !dangling[e.Needs]) || e.At.After(cutoff) {
+		doc = doc.sanitised()
+		stored, held := heldAssignment(after, doc.Task)
+		if !held || !reflect.DeepEqual(stored, doc) || !now.assignment(stored) {
 			continue
 		}
-		gone, err := s.deleteIfUnmoved(ctx, PathEdge(e.Task, e.Needs))
-		if err != nil {
+		if err := s.deletePruned(ctx, c); err != nil {
 			return err
 		}
-		if gone {
-			deleted++
+	}
+	for _, c := range edges {
+		var doc Edge
+		if !roadmapDocument(c.raw, &doc) {
+			continue
+		}
+		doc = doc.sanitised()
+		stored, held := heldEdge(after, doc.Task, doc.Needs)
+		if !held || !reflect.DeepEqual(stored, doc) || !now.edge(stored) {
+			continue
+		}
+		if err := s.deletePruned(ctx, c); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// deleteIfUnmoved deletes the document at path only while it is the one the
-// caller read, and reports whether it deleted anything: a lost race is a
-// document somebody else has just changed, and it is not this writer's to
-// remove.
-func (s *Store) deleteIfUnmoved(ctx context.Context, path string) (bool, error) {
-	etag, found, err := s.Read(ctx, path, nil)
-	if err != nil {
-		return false, err
+// pruneCandidate is one document the prune may delete: where it lives, the ETag
+// it was read on, and the document as it was read — the three facts the
+// deletion is put on and checked against.
+type pruneCandidate struct {
+	path string
+	etag string
+	raw  json.RawMessage
+}
+
+// readPruneCandidate reads one candidate's own document. A document that is
+// gone is one an earlier prune or a move has already taken, and one this build
+// cannot read is not this writer's to delete: both are left alone, and neither
+// is a candidate.
+func (s *Store) readPruneCandidate(ctx context.Context, path string) (pruneCandidate, bool, error) {
+	var c pruneCandidate
+	c.path = path
+	etag, found, err := s.Read(ctx, path, &c.raw)
+	if err != nil || !found {
+		return pruneCandidate{}, false, err
 	}
-	if !found {
-		return false, nil
-	}
-	if err := s.Put(ctx, path, etag, nil); err != nil {
+	c.etag = etag
+	return c, true, nil
+}
+
+// deletePruned deletes the document a candidate was read on. A put that loses
+// its ETag race is a document somebody else changed between the read and here,
+// and it is not this writer's to remove — the next publish or unpublish decides
+// again on the record as it then stands.
+func (s *Store) deletePruned(ctx context.Context, c pruneCandidate) error {
+	if err := s.Put(ctx, c.path, c.etag, nil); err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
-			return false, nil
+			return nil
 		}
-		return false, fmt.Errorf("coordinator: pruning /%s: %w", path, err)
+		return fmt.Errorf("coordinator: pruning /%s: %w", c.path, err)
 	}
-	return true, nil
+	return nil
+}
+
+// heldAssignment is the assignment one read of the record holds for a task.
+func heldAssignment(r Roadmap, task string) (Assignment, bool) {
+	for _, a := range r.Assignments {
+		if a.Task == task {
+			return a, true
+		}
+	}
+	return Assignment{}, false
+}
+
+// heldEdge is the edge one read of the record holds between two tasks.
+func heldEdge(r Roadmap, task, needs string) (Edge, bool) {
+	for _, e := range r.Edges {
+		if e.Task == task && e.Needs == needs {
+			return e, true
+		}
+	}
+	return Edge{}, false
 }
 
 // checkPlan refuses a plan document that is not the shape the record holds, or
@@ -573,12 +679,10 @@ func checkPlan(doc Plan) error {
 	return nil
 }
 
-// checkPlanRoom refuses a plan document the record has no room for.
-func (s *Store) checkPlanRoom(ctx context.Context) error {
-	rm, err := s.ReadRoadmap(ctx)
-	if err != nil {
-		return err
-	}
+// checkPlanRoom refuses a plan document the record has no room for (D2116). It
+// is asked of the record the caller already read, so the room a publish needs
+// and the prune beside it are decided against one state of the record.
+func checkPlanRoom(rm Roadmap) error {
 	if len(rm.Plans) >= MaxPlanDocuments {
 		return fmt.Errorf("%w: the record holds %d plan documents; unpublish one before publishing another", ErrRoadmapTooLarge, len(rm.Plans))
 	}
