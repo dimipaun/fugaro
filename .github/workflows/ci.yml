@@ -60,11 +60,13 @@ jobs:
       - run: go vet -tags terraform ./...
       # Type-checks the emulator tests of the database rules (the rules job runs them).
       - run: go vet -tags firebase ./...
-  # The Go tests run as shards on their own runners: the four slowest packages
-  # (internal/cli, scripts, internal/runner, internal/issues) are split by test
-  # name (a stable hash of the name, mod the shard count, so a new test lands
-  # in a shard on its own and none is dropped or run twice), and one shard runs
-  # every other package. A shard that is a whole package has of: 1.
+  # The Go tests run on parallel runners: scripts and internal/runner are split
+  # by test name (a stable hash of the name, mod the shard count, so a new test
+  # lands in a shard on its own and none is dropped or run twice), internal/cli
+  # and internal/issues each get a runner, and one runner takes every other
+  # package. internal/cli is not split: its update tests hang when a subset of
+  # the package runs without the tests that precede them, so the package has to
+  # run whole. A runner that is a whole package has of: 1.
   shard:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
@@ -75,12 +77,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: cli-0, pkg: ./internal/cli, index: 0, of: 6}
-          - {name: cli-1, pkg: ./internal/cli, index: 1, of: 6}
-          - {name: cli-2, pkg: ./internal/cli, index: 2, of: 6}
-          - {name: cli-3, pkg: ./internal/cli, index: 3, of: 6}
-          - {name: cli-4, pkg: ./internal/cli, index: 4, of: 6}
-          - {name: cli-5, pkg: ./internal/cli, index: 5, of: 6}
+          - {name: cli, pkg: ./internal/cli, index: 0, of: 1}
           - {name: scripts-0, pkg: ./scripts, index: 0, of: 2}
           - {name: scripts-1, pkg: ./scripts, index: 1, of: 2}
           - {name: runner-0, pkg: ./internal/runner, index: 0, of: 2}
