@@ -413,8 +413,13 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 		// that says it is this one, and the two claims it must not lose are
 		// what the exemption is *not*: a repository cannot write a stage
 		// account of its own, and vertex keeps its refusal.
+		//
+		// The note line is pinned to its list: the doc shows what the operator
+		// reads, so it carries the stages in the order
+		// config.CascadeSkippedStageAccounts writes them (sorted, as its own
+		// test pins), not in the order the sentence happens to read well in.
 		"reads no stage account of the project's",
-		"project stage accounts do not apply to a cascade repository",
+		"project stage accounts do not apply to a cascade repository: adversarial, review skipped",
 		"a repository cannot write one",
 		"`agent.auth: vertex` keeps the refusal",
 	} {
