@@ -387,48 +387,65 @@ func verifiedAtHead(records []verify.Record, head string) bool {
 }
 
 // decidingRound is the review round an arm's readiness is read from: the last
-// round above the first line, whatever it answered (the runner's own
-// seniorReview, decidingReview). A first-line round advises the levels above it
-// and never decides readiness on its own, and a deciding round that answered
-// nothing parseable — "none", after the retry the loop gives it — is a run the
-// runner ends unreviewed: readiness read backwards from it to an earlier
-// verdict about a commit the run did not ship would call a draft ready.
+// round of the highest review level the mode runs by default, whatever it
+// answered (the runner's own decidingReview, D723). Readiness is never read
+// backwards to a lower level: a round that advises never decides, and the level
+// above it leaving no round at all is a run whose decider never read it — the
+// case the runner keeps a draft for, so this reports the arm not ready rather
+// than reading the round below it.
 //
-// A record holding no round above the first line is read on its last first-line
-// round only under a mode that runs no level-2 step at all (POC's default
-// levels, D723): there the first line is the level that decides. Every other
-// mode runs one, so a record of one of those holding no such round is a run
-// whose decider never read it — the case the runner keeps a draft for — and
-// this says the same rather than letting the round that advises take its place.
+// A round that answered nothing parseable — "none", after the retry the loop
+// gives it — is a deciding round like any other, and an arm whose last one is
+// that is not ready: readiness read backwards from it to an earlier verdict
+// about a commit the run did not ship would call a draft ready.
 //
-// The record carries no resolved levels, so the mode's own default stands in
-// for them: a repository that turns level 2 off under another mode leaves a
-// record this reads as not ready where the runner shipped it, which is the
-// direction that never calls a draft ready.
+// The record carries no resolved levels, so the mode's own defaults stand in
+// for them (rigor.DefaultLevels), and the record cannot say whether a stop cut
+// a level the mode enables: at the runner's own stop an enabled level that left
+// no round is one the stop cut rather than one the run failed to reach, and a
+// record holds nothing that tells the two apart (the Accepted block is written
+// only for a stop that let findings through). This reads the level as one the
+// run never held, the direction that never calls a draft ready.
 func decidingRound(records []runstore.ReviewSummary, mode rigor.Mode) *runstore.ReviewSummary {
-	var firstLine *runstore.ReviewSummary
+	decider := deciderTier(mode)
 	for i := len(records) - 1; i >= 0; i-- {
-		r := &records[i]
-		if r.Tier != runstore.TierFirst {
-			return r
+		if reviewTier(records[i]) == decider {
+			return &records[i]
 		}
-		if firstLine == nil {
-			firstLine = r
-		}
-	}
-	if firstLine != nil && firstLineDecides(mode) {
-		return firstLine
 	}
 	return nil
 }
 
-// firstLineDecides reports whether the mode's own review starts and ends at the
-// first line: POC runs level 1 alone (rigor.DefaultLevels), so its first-line
-// round is the round readiness is decided on. A mode outside the vocabulary
-// answers no, like the rest of the fail-closed readings here.
-func firstLineDecides(mode rigor.Mode) bool {
+// reviewTier is the level a round ran at, in the record's own vocabulary: an
+// empty tier is the senior review of a run that had no first line.
+func reviewTier(rec runstore.ReviewSummary) string {
+	if rec.Tier == "" {
+		return runstore.TierSenior
+	}
+	return rec.Tier
+}
+
+// deciderTier is the tier of the level readiness is decided on: the highest
+// review level the mode's own defaults turn on (rigor.DefaultLevels). POC runs
+// level 1 alone, so its first-line round decides; Startup, Pro and Hotfix run
+// level 2; Critical runs level 2 and level 3, so its adversarial round is the
+// one that decides and an arm holding none is not ready.
+//
+// A mode outside the vocabulary is read as the strictest set — level 3's —
+// which is the reading signalVector gives it too.
+func deciderTier(mode rigor.Mode) string {
 	levels, err := rigor.DefaultLevels(mode)
-	return err == nil && levels.L2 != rigor.LevelOn
+	if err != nil {
+		return runstore.TierAdversarial
+	}
+	switch {
+	case levels.L3 == rigor.LevelOn:
+		return runstore.TierAdversarial
+	case levels.L2 == rigor.LevelOn:
+		return runstore.TierSenior
+	default:
+		return runstore.TierFirst
+	}
 }
 
 // untoleratedFindings is D561's fourth signal: what the deciding round left

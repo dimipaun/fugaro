@@ -283,6 +283,20 @@ func TestPairInvalidWhenStartSHADiffers(t *testing.T) {
 			t.Errorf("Pairs returned %d pairs, want none", len(got))
 		}
 	})
+
+	t.Run("both arms never started", func(t *testing.T) {
+		// Two arms that never started agree on every fact R2 compares — both
+		// carry no start commit — so only the guard that reads the absence
+		// itself keeps them out of every figure.
+		neverStarted := pairArm("run-never-started", "pair-1", task.ABArmChampion)
+		neverStarted.StartSHA = ""
+		alsoNever := pairArm("run-also-never", "pair-1", task.ABArmChallenger)
+		alsoNever.StartSHA = ""
+
+		if got := Pairs([]runstore.Record{neverStarted, alsoNever}); len(got) != 0 {
+			t.Errorf("Pairs returned %d pairs, want none", len(got))
+		}
+	})
 }
 
 // TestPairInvalidWhenModeDiffers is the rest of R2: the arms' resolved mode,
@@ -392,11 +406,11 @@ func TestFollowUpCountIsContextOnly(t *testing.T) {
 }
 
 // TestPairReadinessFollowsTheLevelThatDecided is D561's third signal read the
-// way the runner decides readiness: the last round above the first line,
-// whatever it answered, and the first line only where the mode runs nothing
-// above it (POC, D723). An arm whose decider left no round — or left one that
-// answered nothing parseable — is not ready, and an arm whose only round is a
-// first-line one is not ready under a mode that has a level 2 either.
+// way the runner decides readiness: the last round of the highest level the
+// mode runs by default, whatever it answered (D723). Readiness is never read
+// backwards to a round that advises, and never to a level below the one that
+// decides, so an arm whose decider left no round — or left one that answered
+// nothing parseable — is not ready.
 func TestPairReadinessFollowsTheLevelThatDecided(t *testing.T) {
 	firstLine := []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierFirst, Verdict: verdictShip}}
 
@@ -439,6 +453,62 @@ func TestPairReadinessFollowsTheLevelThatDecided(t *testing.T) {
 		}
 		if res.Winner != WinChallenger {
 			t.Errorf("winner = %q, want %q", res.Winner, WinChallenger)
+		}
+	})
+
+	t.Run("a senior round does not decide under Critical", func(t *testing.T) {
+		// Critical runs level 3 as well, so its adversarial round is the one
+		// readiness is read from: an arm whose senior level shipped and whose
+		// adversarial pass never ran is a run Decide leaves a draft, and the
+		// arm that ran it is the one that takes the pair.
+		champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+
+		challenger := pairArm("run-challenger", "pair-1", task.ABArmChallenger)
+		challenger.Reviews = append(rounds(verdictShip), runstore.ReviewSummary{
+			Round: 2, Tier: runstore.TierAdversarial, Verdict: verdictShip,
+		})
+
+		res := onePair(t, rigor.Critical, champion, challenger)
+		if res.Champion.ReviewReady {
+			t.Error("champion ready = true, want false: its adversarial level left no round")
+		}
+		if !res.Challenger.ReviewReady {
+			t.Error("challenger ready = false, want true: its adversarial round shipped")
+		}
+		if res.Winner != WinChallenger {
+			t.Errorf("winner = %q, want %q", res.Winner, WinChallenger)
+		}
+	})
+
+	t.Run("a round with no tier is the senior level", func(t *testing.T) {
+		// The record's own reading of the field: empty is the senior review of
+		// a run that had no first line, which is level 2's round.
+		champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+		champion.Reviews = []runstore.ReviewSummary{{Round: 1, Verdict: verdictShip}}
+
+		res := onePair(t, rigor.Startup, champion, pairArm("run-challenger", "pair-1", task.ABArmChallenger))
+		if !res.Champion.ReviewReady {
+			t.Error("champion ready = false, want true: an empty tier is level 2's round")
+		}
+		if res.Winner != WinTie {
+			t.Errorf("winner = %q, want %q", res.Winner, WinTie)
+		}
+	})
+
+	t.Run("a mode outside the vocabulary reads the strictest level", func(t *testing.T) {
+		champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+
+		challenger := pairArm("run-challenger", "pair-1", task.ABArmChallenger)
+		challenger.Reviews = append(rounds(verdictShip), runstore.ReviewSummary{
+			Round: 2, Tier: runstore.TierAdversarial, Verdict: verdictShip,
+		})
+
+		res := onePair(t, rigor.Mode("paranoid"), champion, challenger)
+		if res.Champion.ReviewReady {
+			t.Error("champion ready = true, want false: level 3 left no round")
+		}
+		if !res.Challenger.ReviewReady {
+			t.Error("challenger ready = false, want true")
 		}
 	})
 }
