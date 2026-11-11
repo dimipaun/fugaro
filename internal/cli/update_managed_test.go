@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // update_managed_test.go: `fugaro update`'s steps under the managed gate (M1,
@@ -1483,24 +1484,14 @@ func TestUpdateManagedTerminalControlKeepsTheRefusal(t *testing.T) {
 	}
 }
 
-// The plugin pin's write is a step `fugaro update` makes on a managed project
-// with nothing asked: "Write this to .claude/settings.json? [y/N]" is the
-// question it used to be, and the gate being underway is the whole of what
-// admits it now, with the diff still printed and nothing typed. The stage is
-// called directly, which is the call the loop makes for a step that is not
-// SelfConfirming, and the stdin is EMPTY: a stage that asked would get no
-// answer and write nothing, so the file being wired at all is the assertion
-// about the question.
-//
-// The two worlds a project that is NOT managed has (T7): a person at the
-// terminal answers the write by being there, with nothing typed and nothing
-// read, and a session with nobody at it is left the step, refused without a
-// read. Those are the control that keeps the gate's branch from being a stage
-// that simply stopped asking, and the mutation they catch: the wiring's
-// managed branch taken on anything but the project's own marks (gateUnderway
-// answering true for every project) — the pipe arm would then write the file
-// under the gate's own sentence with nobody there at all.
-func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
+// The plugin stage asks nothing and reads nothing, in every world it can run
+// in — managed or not, a person at the terminal or nobody. The question it used
+// to ask was the settings write's ("Write this to .claude/settings.json?
+// [y/N]"), and that write went with the merge (U2, D949): what is left is the
+// install in Claude Code, which no terminal and no --yes decides, and the file
+// an older fugaro left comes out of all four worlds byte for byte. The stage is
+// called directly, which is the call the loop makes, and the stdin is EMPTY.
+func TestUpdateManagedPluginStageAsksNothing(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	for _, tc := range []struct {
 		name     string
@@ -1513,6 +1504,8 @@ func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
 		{"not managed, nobody at the terminal", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			f := testutil.NewClaudePluginFake(t, "[]", "[]")
+			f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 			settings := wiringCheckout(t, settingsWithOthers)
 			withTerminal(t, tc.terminal)
 			e, out := stageEngine(t, "", &initOptions{})
@@ -1522,45 +1515,24 @@ func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
 			if tc.managed {
 				e.r.gate = &initGate{managed: true}
 			}
+			useFakeClaude(t, f)
 			s := newPluginStage(e)
-			_, err := s.Apply(t.Context(), initflow.Env{Interactive: tc.terminal})
-			got, _ := os.ReadFile(settings)
-			written := string(got) != settingsWithOthers
-			if !strings.Contains(out.String(), "extraKnownMarketplaces") {
-				t.Fatalf("the step printed no diff of what it would write:\n%s", out.String())
+			if _, err := s.Apply(t.Context(), initflow.Env{Interactive: tc.terminal}); err != nil {
+				t.Fatalf("the plugin step was stopped (%v), and it has nothing to ask:\n%s", err, out.String())
+			}
+			if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
+				t.Errorf("the step wrote the checkout's settings:\n%s", got)
 			}
 			if spy.read {
-				t.Errorf("the step read the input: nothing is typed at this write any more (T7):\n%s", out.String())
+				t.Errorf("the step read the input: nothing is typed at this step any more (U2, D949):\n%s", out.String())
 			}
-			if strings.Contains(out.String(), "[y/N]") || strings.Contains(out.String(), "confirmed by --yes") {
-				t.Errorf("the step was asked for what neither the terminal nor --yes gives:\n%s", out.String())
+			for _, bad := range []string{"[y/N]", "extraKnownMarketplaces", initflow.GateOrdinary()} {
+				if strings.Contains(out.String(), bad) {
+					t.Errorf("the step says %q, and it writes nothing in the checkout:\n%s", bad, out.String())
+				}
 			}
-			if tc.managed {
-				if err != nil {
-					t.Fatalf("a managed project was stopped: %v\n%s", err, out.String())
-				}
-				if !written {
-					t.Errorf("the settings were not wired, so the gate's verdict did not stand in for the y/N:\n%s", out.String())
-				}
-				if !strings.Contains(out.String(), initflow.GateOrdinary()) {
-					t.Errorf("the write does not say what decided it:\n%s", out.String())
-				}
-				return
-			}
-			if strings.Contains(out.String(), initflow.GateOrdinary()) {
-				t.Errorf("a project that is not managed printed the managed gate's sentence:\n%s", out.String())
-			}
-			if tc.terminal {
-				if err != nil {
-					t.Fatalf("a person's own terminal was stopped: %v\n%s", err, out.String())
-				}
-				if !written {
-					t.Errorf("the settings were not wired at the person's own terminal:\n%s", out.String())
-				}
-				return
-			}
-			if err == nil || written {
-				t.Fatalf("the settings were wired with nobody at the terminal (err %v):\n%s", err, out.String())
+			if calls := callArgs(f.Calls(t)); !slices.ContainsFunc(calls, func(a []string) bool { return slices.Equal(a, argsInstall) }) {
+				t.Errorf("the machine's own install did not happen: %q\n%s", calls, out.String())
 			}
 		})
 	}

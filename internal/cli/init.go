@@ -108,7 +108,6 @@ type initOptions struct {
 	provisionBatch                      bool   // --provision-batch: provision the Batch backend's installation-level root (owner-run, typed confirmation)
 	coordinator                         bool   // --coordinator: opt the installation in to the coordinator's aggregation job (owner-run, at a terminal, never --yes)
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
-	allowFork                           bool   // --allow-fork: the plugin-wiring stage may move a fork's marketplace ref
 	allowDelete                         []string
 	launchersChanged, operatorsChanged  bool
 	alertEmailChanged, baseImageChanged bool
@@ -518,25 +517,25 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	}
 	// The agent clause is about what leaves this machine, and about how far
 	// such a session actually gets: the writes on this machine's own files are
-	// the only ones an apply there may make (the checkout's pin and plugin
-	// wiring; the checkout stage is LocalUnderAgent for exactly those two),
-	// and they are reached only where nothing before the checkout stops over
-	// them — the loop stops at the first stage that needs the user and blocks
-	// the rest, and the one need that does not is the repository stage's
-	// (#1836, initflow's RunsPastStop): the checkout's two local steps read no
-	// repository state, and its cloud step, which builds that repository's job
-	// images, is skipped rather than run over the stop
-	// (checkoutStage.planFor's repositoryStopped). The plugin stage runs before
-	// the checkout on the same pin
-	// and is not LocalUnderAgent, so a stale plugin stops the run at the
-	// plugin (`fugaro update-skills`) with the checkout's local steps never
-	// reached (TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout). The
-	// help has to say that rather than promise a session a write it may not
+	// the only ones an apply there may make, and the stage that has them is the
+	// plugin's — the plugin installed in the user's own Claude Code at user
+	// scope, with nothing written in the checkout since the settings merge was
+	// deleted (U1 and U2 of docs/plugin-user-scope/implementation-plan.md). It
+	// is LocalUnderAgent for exactly that reason, so a stale plugin is applied
+	// in such a session rather than left for the user — the #1836 claim the
+	// stage was moved for
+	// (TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop). The
+	// checkout stage is LocalUnderAgent too, and what that buys there is the
+	// run's own account of its cloud half: the plan drops the image refresh,
+	// whose writes are not this machine's, and the apply leaves it for the user
+	// as a named step rather than one line naming `fugaro upgrade` and nothing
+	// of what became of the images (checkoutStage.planFor's repositoryStopped;
+	// the repository stop it applies past is #1836's, initflow's RunsPastStop).
+	// The help has to say that rather than promise a session a write it may not
 	// get to.
-	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": those take a person at a real terminal, and no flag stands in for one. The single step a managed project does not confirm at all is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) "+d.name+" changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where nothing before the checkout stops over them, because a stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. The one need that does not stop them is the repository stage's — the checkout's own pin and plugin steps read no repository state, and the plugin install is the one the reader of a stale line is stuck on — and the checkout's local steps run past it, while its cloud step, which builds that repository's job images, is skipped rather than run over it. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the confirmations at a real terminal and the skills' lint")
+	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": those take a person at a real terminal, and no flag stands in for one. The single step a managed project does not confirm at all is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) "+d.name+" changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the plugin stage, whose every write is on this machine's own files — the plugin installed in your own Claude Code at user scope, with nothing written in the checkout — so a coding agent's session applies it rather than leaving it for you. What such a session cannot take is the cloud half, whose writes are not this machine's: the checkout stage applies past a repository stage that needs you, and its plan drops the image refresh, which is left for the user as a named step (exit 1) rather than run over the stop. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the confirmations at a real terminal and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal)")
 	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. --yes never covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
-	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	// The flags --non-interactive only stops from prompting, worded for this
 	// door: --forget is fugaro update's, and setup's help must not describe
 	// what a flag setup refuses does.
@@ -1588,7 +1587,7 @@ func (o *initOptions) check() error {
 			name string
 			on   bool
 		}{{"--onboard-repo", o.onboardRepo != ""}, {"--github-app-id", o.githubAppID != ""}, {"--allow-delete", len(o.allowDelete) > 0},
-			{"--allow-fork", o.allowFork}, {"--check-github-app", o.checkApp}} {
+			{"--check-github-app", o.checkApp}} {
 			if f.on {
 				set = append(set, f.name)
 			}

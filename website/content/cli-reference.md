@@ -66,8 +66,8 @@ Subcommands:
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
 - `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
-- `fugaro update-skills` -- Pin the Fugaro plugin in the repository's .claude/settings.json to this release
-- `fugaro upgrade` -- Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
+- `fugaro update-skills` -- Install or update the Fugaro plugin in your own Claude Code
+- `fugaro upgrade` -- Bring checkouts up to this fugaro: install or update the plugin in Claude Code, refresh the repository's images
 - `fugaro user` -- List, add and remove the installation's launchers and operators
 - `fugaro validate` -- Check a fugaro.yaml against the schema and the repository
 - `fugaro verify` -- Run and record this repository's build, test or lint command (inside a Fugaro run)
@@ -5970,8 +5970,8 @@ of the markers above it is an agent's session like theirs, and a pipe, --json,
 --non-interactive and --yes behave exactly as they did. A run that writes this
 machine's local config from an installation that already exists (fugaro
 update on a new machine) changes nothing in the cloud in the same run (the
-local config and, in a checkout, the plugin wiring in .claude/settings.json
-are the only files it writes).
+local config and, in a checkout, the plugin installed in your own Claude Code
+at user scope are all it writes).
 
 In a checkout of a repository of this project, the converge's secrets stage
 asks, at hidden prompts, for the secrets its jobs mount (the git credential,
@@ -6009,11 +6009,12 @@ flag). Marking any other project the owner runs an installation in is fugaro
 managed flag's. An ID that already exists and was not created by fugaro
 setup, or that is pending deletion, is refused.
 
-The plugin-wiring stage merges the Fugaro marketplace and plugin into the
-checkout's .claude/settings.json, pinned to this release's tag, after showing
-the diff and asking (--yes confirms it); see update-skills. The repository
-stage runs setup --repo for the checkout, after the secrets, when its
-origin's default branch (origin/HEAD, main or master, as last fetched) has a
+The plugin stage installs or updates the Fugaro plugin in your own Claude Code,
+at user scope, through the claude CLI, and writes nothing in the checkout: the
+merge of the marketplace and the plugin into .claude/settings.json is deleted
+(D949); see update-skills. The repository stage runs setup --repo for the
+checkout, after the secrets, when its origin's default branch (origin/HEAD,
+main or master, as last fetched) has a
 fugaro.yaml naming this project (else it is skipped and says why); it asks
 once for the GitHub App's ID of a GitHub repository (or take --github-app-id)
 and keeps its own confirmations, the first image build's included.
@@ -6049,7 +6050,6 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--alert-email` | string | "" | no | where failed image checks and rebuilds are reported (default: the local config's) |
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
-| `--allow-fork` | bool | `false` | no | let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a person at the terminal confirms it) |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
@@ -6096,7 +6096,7 @@ Flags:
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, the Firestore database's location, a secret value, or a policy publish that would loosen the published node: those take a person at a real terminal, and no flag stands in for one. The single step a managed project does not confirm at all is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) setup changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are setup --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where nothing before the checkout stops over them, because a stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. The one need that does not stop them is the repository stage's — the checkout's own pin and plugin steps read no repository state, and the plugin install is the one the reader of a stale line is stuck on — and the checkout's local steps run past it, while its cloud step, which builds that repository's job images, is skipped rather than run over it. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the confirmations at a real terminal and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, the Firestore database's location, a secret value, or a policy publish that would loosen the published node: those take a person at a real terminal, and no flag stands in for one. The single step a managed project does not confirm at all is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) setup changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are setup --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the plugin stage, whose every write is on this machine's own files — the plugin installed in your own Claude Code at user scope, with nothing written in the checkout — so a coding agent's session applies it rather than leaving it for you. What such a session cannot take is the cloud half, whose writes are not this machine's: the checkout stage applies past a repository stage that needs you, and its plan drops the image refresh, which is left for the user as a named step (exit 1) rather than run over the stop. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the confirmations at a real terminal and the skills' lint |
 
 Subcommands:
 
@@ -6239,7 +6239,6 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--alert-email` | string | "" | no | where failed image checks and rebuilds are reported (default: the local config's) |
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
-| `--allow-fork` | bool | `false` | no | let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a person at the terminal confirms it) |
 | `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed |
@@ -6282,7 +6281,7 @@ Flags:
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a rebuild of the checkout's workflow images, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, a secret value, or a policy publish that would loosen the published node: those take a person at a real terminal, and no flag stands in for one. The single step a managed project does not confirm at all is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) update changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where nothing before the checkout stops over them, because a stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. The one need that does not stop them is the repository stage's — the checkout's own pin and plugin steps read no repository state, and the plugin install is the one the reader of a stale line is stuck on — and the checkout's local steps run past it, while its cloud step, which builds that repository's job images, is skipped rather than run over it. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the confirmations at a real terminal and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a rebuild of the checkout's workflow images, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, a secret value, or a policy publish that would loosen the published node: those take a person at a real terminal, and no flag stands in for one. The single step a managed project does not confirm at all is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) update changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the plugin stage, whose every write is on this machine's own files — the plugin installed in your own Claude Code at user scope, with nothing written in the checkout — so a coding agent's session applies it rather than leaving it for you. What such a session cannot take is the cloud half, whose writes are not this machine's: the checkout stage applies past a repository stage that needs you, and its plan drops the image refresh, which is left for the user as a named step (exit 1) rather than run over the stop. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the confirmations at a real terminal and the skills' lint |
 
 Subcommands:
 
@@ -6290,24 +6289,24 @@ This command has no subcommands.
 
 ## `fugaro update-skills`
 
-Pin the Fugaro plugin in the repository's .claude/settings.json to this release
+Install or update the Fugaro plugin in your own Claude Code
 
-update-skills merges the Fugaro plugin's marketplace and its enablement into the
-checkout's .claude/settings.json, pinned to this binary's release tag (a dev
-build writes no pin). Every other key is kept; a fork's marketplace
-repository is kept and only its ref moves; a file that is not valid JSON is
-never rewritten; a changed file is re-indented to two spaces. A marketplace
-that names another repository than dimipaun/fugaro is reported with a
-warning and left alone unless --allow-fork says it is yours (then only its ref
-moves); a plugin the repository sets to false stays disabled. It shows the diff and writes the file; it never commits:
-review it with git diff. It needs no credentials, no network and no
-Terraform. Outside a checkout it prints the settings to add.
+update-skills installs the Fugaro plugin in Claude Code at user scope, or updates
+the install it finds there, through the claude CLI on PATH: a fixed set of
+claude plugin commands, never with -y, with the marketplace declared at this
+binary's release tag. It writes nothing in the checkout — the plugin is this
+machine's, and no repository's settings are merged into any more (D949) — and
+it needs no credentials and no Terraform. Without claude on PATH it prints the
+slash commands to type in Claude Code instead. Running Claude Code sessions
+apply the new version after a restart.
 
---check writes nothing: it prints how the pin compares with this binary (and
-with the plugin installed on this machine when Claude Code's record is
-readable) and exits 1 on any warning state (outdated, newer, unpinned,
-foreign, not wired, installed differs); "not installed" and "cannot
-compare" are informational.
+--check writes nothing and runs no claude command: it prints how the plugin
+installed on this machine compares with this binary, and the pin a checkout
+that still carries one holds — the merge that wrote those pins is gone, so a
+pin an older fugaro left is read here (and by fugaro doctor's plugin-pin
+check). It exits 1 on any warning state (outdated, newer, unpinned, foreign,
+not wired, installed differs); "not installed" and "cannot compare" are
+informational.
 
 Usage: `fugaro update-skills [--check] [--dir D] [--json]`
 
@@ -6315,8 +6314,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--allow-fork` | bool | `false` | no | move the ref of a marketplace repository other than dimipaun/fugaro (a fork you host) to this release's tag |
-| `--check` | bool | `false` | no | print the state and exit 1 unless it is ok (informational states pass); write nothing |
+| `--check` | bool | `false` | no | print the state and exit 1 unless it is ok (informational states pass); write nothing and run no claude command |
 | `--dir` | string | `.` | no | a directory in the checkout |
 | `-h`, `--help` | bool | `false` | no | help for update-skills |
 | `--json` | bool | `false` | no | print machine-readable output |
@@ -6327,22 +6325,20 @@ This command has no subcommands.
 
 ## `fugaro upgrade`
 
-Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
+Bring checkouts up to this fugaro: install or update the plugin in Claude Code, refresh the repository's images
 
 upgrade brings each checkout (PATH, default the current directory; several are
-processed one after the other, each on its own) up to this fugaro, in five
+processed one after the other, each on its own) up to this fugaro, in four
 steps, stopping that checkout at the first step that fails:
 
-  pin     what fugaro update-skills does: the Fugaro plugin in the checkout's
-          .claude/settings.json pinned to this release's tag, shown as a diff
-          and never committed; a fork's marketplace moves only with
-          --allow-fork; a file that is not valid JSON is never rewritten; a
-          pin newer than this fugaro is never moved down.
-  plugin  the plugin installed (user scope) or updated (each install that
-          applies to the checkout, at its own scope) in Claude Code through
+  plugin  the plugin installed (user scope) or updated in Claude Code through
           the claude CLI on PATH: a fixed set of claude plugin commands, never
-          with -y. Without claude it prints the slash commands to type in
-          Claude Code. Running Claude Code sessions apply it after a restart.
+          with -y, the marketplace declared at this release's tag. It writes
+          nothing in the checkout: the plugin is this machine's, and the pin an
+          older fugaro left in .claude/settings.json is read, never moved
+          (fugaro update-skills --check and fugaro doctor report it). Without
+          claude it prints the slash commands to type in Claude Code. Running
+          Claude Code sessions apply it after a restart.
   cloud   what fugaro image refresh does for the checkout's repository: this
           release's base image, the daily image check job, the builds. It
           asks at each step, or with --yes confirms every step itself, each
@@ -6388,10 +6384,10 @@ steps, stopping that checkout at the first step that fails:
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
---local runs pin and plugin only. Under --local and in a coding agent's
+--local runs the plugin step only. Under --local and in a coding agent's
 session (CLAUDECODE and the like) the cloud, rules and policy steps are
 skipped before they read anything, never attempted, with the command to run in
-your own terminal, so the exit code is 0 when the local steps succeeded.
+your own terminal, so the exit code is 0 when the local step succeeded.
 --check writes nothing, runs no claude command and makes no cloud call: it
 reads the settings file, Claude Code's record of installed plugins and the
 local project config, prints what each step would do and exits 1 when anything
@@ -6413,14 +6409,13 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--allow-fork` | bool | `false` | no | move the ref of a marketplace repository other than dimipaun/fugaro (a fork you host) to this release's tag, and add it to Claude Code |
 | `--check` | bool | `false` | no | write nothing, run no claude command, make no cloud call: print what each step would do and exit 1 when anything is stale |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--expect-digest` | stringArray | `[]` | no | cross-check the digest of a base image's release signature, KIND=sha256:<hex> (repeatable; one PATH only) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for upgrade |
 | `--image-source` | string | "" | no | the registry and owner the release base images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository (default ghcr.io/dimipaun) |
-| `--local` | bool | `false` | no | run the pin and plugin steps only, and skip the cloud, rules and policy steps (the only mode that does everything it can inside a coding agent's session) |
+| `--local` | bool | `false` | no | run the plugin step only, and skip the cloud, rules and policy steps (the only mode that does everything it can inside a coding agent's session) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | owner/name (or a path inside its checkout) of the repository; it must be the checkout's origin (one PATH only) |
