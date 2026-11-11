@@ -161,7 +161,11 @@ line read from `result.json` stages' **model** spend only (`:489-538`).
 objects under `runs/` at `bucket_lifecycle.runs_days`, **default 90**
 (`deploy/terraform/gcp/modules/installation/bucket.tf:29-37`,
 `variables.tf:109-121`) — and that is the *whole* run record: `result.json`,
-`report.md` and the transcripts expire with the artifacts. IAM
+`report.md` and the transcripts expire with the artifacts. The bucket is
+**versioned** (`bucket.tf:25-27`), so each of those deletions leaves a
+noncurrent version that the purge at `bucket.tf:85-93` removes 7 days later
+(default `noncurrent_days`): who may read the run's bytes is the question
+below, and the answer holds for a week longer than `runs_days` suggests. IAM
 (`docs/design/bucket-iam.md` §H4, `:126-128`): an operator holds
 `objectAdmin` unconditioned; a launcher who is not an operator holds
 `objectViewer` on the whole bucket plus `objectUser` on `runs/`; the history
@@ -1017,6 +1021,24 @@ therefore lives **exactly as long as the run record it belongs to** —
 disappear in the same sweep. bucket-iam §10's L6 already treats "fill `runs/`
 with junk" as bounded by this rule.
 
+**That sweep is a deletion and not an erasure, and the difference is a week.**
+The bucket **is versioned** (`bucket.tf:25-27`), the change D1545's ruling of
+2026-11-07 made so the managed audit record cannot be erased in place
+(`docs/design/bucket-iam.md:50`): the rule above deletes the *current* version
+of an object, and what that leaves behind is a **noncurrent version**, which
+the bucket purges only `noncurrent_days` after it stopped being current — 7
+days by default (`bucket.tf:85-93`, `variables.tf:109-121`). So a run record,
+its transcripts, its `result.json` and its artifacts stay **readable for about
+a week past the day they "expire"**, and to every identity that may read the
+bucket at all: a launcher's `ls`, `logs` and `diagnose` cannot see them once
+they are noncurrent, but `gcloud storage ls -a` and `gcloud storage cp` with
+the generation can, and an operator's `objectAdmin` can. The window is the
+purge's own clock and moves with `noncurrent_days`; it is not a longer promise
+than `runs_days` and nothing should be kept on it. `fugaro/` — the marker, the
+owner's delete list and the audit record — is the same fact read the other way:
+it sits under **no** lifecycle rule and is never purged (`bucket.tf:78-84`),
+so nothing there expires at all, which is the half D1545 depends on.
+
 **Recommendation (D2): keep the artifacts under the run prefix and accept the
 90-day window, and make the "keep it" path explicit in the docs.** The
 reasoning is that the artifact and its record are one thing: an artifact that
@@ -1635,7 +1657,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 |---|---|---|
 | V1 | The run prefix is `runs/<slug>/<run>/`, and the object names are `task.json`, `result.json`, `launch.json`, `cancel`, `report.md`, `transcripts/<stage>-<n>.jsonl`, `session/session.json`, `verify/<n>.json` | `internal/runstore/runstore.go:386-387,492,502,547`, `internal/runner/runner.go:1710,2132,2192`, `internal/runstore/session.go:39` |
 | V2 | `blobx.Open` accepts `gs://` **and** `file://`, so an artifact path is testable with no cloud | `blobx.Open` call sites `internal/cli/exec.go:146,296`, its flag default `:59`, `internal/e2e/budget_test.go:129` |
-| V3 | The bucket deletes `runs/` objects at `runs_days` (default 90); `builds/` has no rule | `deploy/terraform/gcp/modules/installation/bucket.tf:29-37,78`, `variables.tf:109-121` |
+| V3 | The bucket deletes `runs/` objects at `runs_days` (default 90) and is **versioned**, so each deletion leaves a noncurrent version purged `noncurrent_days` later (default 7); `fugaro/` and `builds/` have no rule | `deploy/terraform/gcp/modules/installation/bucket.tf:25-27,29-37,78,85-93`, `variables.tf:109-121` |
 | V4 | A run's account is scoped to the **repository's** prefixes (`runs`, `cache`, `locks`), **not** to one run; a launcher reads the whole bucket and writes under `runs/`; an operator has `objectAdmin`; project Owners/Editors bypass it | `internal/backend/gcp/names.go:374,383-389`, `deploy/terraform/gcp/modules/workflow/sa.tf:24-33`, `docs/design/bucket-iam.md:88,126-128`, `SECURITY.md:36,62` |
 | V5 | `mode:` is `implement|review`; `review` is the no-git-token, no-PR precedent, with the outcome `reviewed` | `internal/recipe/recipe.go:38-42,356-362,632-639`, `docs/design/generic-tool.md:195-203`, `internal/runner/runner.go:635` |
 | V6 | The `check` step is deterministic, runs `verify.Run` in the checkout as the agent's user, may only come first, and may name only `commands.build|test|lint` | `internal/recipe/recipe.go:47-62`, `internal/runner/gate.go:61,125-132`, `internal/verify/verify.go:176,243`, `schemas/recipe.schema.json` |
