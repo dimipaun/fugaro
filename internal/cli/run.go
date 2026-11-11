@@ -3448,12 +3448,17 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	// one, and the image gate below would not fire: a silent pull request
 	// where the owner asked for a file. The conservative direction is the
 	// right one; the owner reruns when the layer is reachable.
-	if rr.Recipe.Mode == recipe.ModeArtifact {
+	//
+	// A mode: evaluate launch carries its mode the same way and for the same
+	// reason: the runner's own shape, the branch claim its identity may not
+	// carry (budgetBranch) and the whole of the run's work are decided from
+	// the spec's mode before the recipe is read.
+	if rr.Recipe.Mode == recipe.ModeArtifact || rr.Recipe.Mode == recipe.ModeEvaluate {
 		if rr.Note != "" {
-			return nil, "", userErr("recipe %s is mode: artifact, but %s; the launch is refused rather than run without the recipe's mode in its task (retry when the layer is reachable)", rr.Name, rr.Note)
+			return nil, "", userErr("recipe %s is mode: %s, but %s; the launch is refused rather than run without the recipe's mode in its task (retry when the layer is reachable)", rr.Name, rr.Recipe.Mode, rr.Note)
 		}
 		if forAttempts {
-			return nil, "", userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; --attempts launches a fresh batch of pull requests and cannot use it", rr.Name)
+			return nil, "", userErr("recipe %s is mode: %s, which opens no pull request; --attempts launches a fresh batch of pull requests and cannot use it", rr.Name, rr.Recipe.Mode)
 		}
 	}
 	// A report recipe reads this repository's own run records and writes the
@@ -3473,8 +3478,12 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	// it at the ref: then the default is carried in the task.
 	override := flag == recipe.DefaultName && (cfg == nil || cfg.Agent.Recipe != "")
 	mode := ""
-	if rr.Recipe.Mode == recipe.ModeArtifact {
-		mode = recipe.ModeArtifact
+	// The two modes whose shape the runner selects from the spec: mode:
+	// review and mode: implement are decided from the task's own fields
+	// (ReviewPRs, the recipe's steps), so neither is carried here.
+	switch rr.Recipe.Mode {
+	case recipe.ModeArtifact, recipe.ModeEvaluate:
+		mode = rr.Recipe.Mode
 	}
 	return rr.taskRecipeEmbedding(override), mode, nil
 }

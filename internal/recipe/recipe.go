@@ -160,6 +160,14 @@ func registeredKind(name string) bool {
 	return ok
 }
 
+// StepKindRegistered reports whether a step kind was registered by this
+// build's own code (RegisterStepKind): false for every built-in kind and for a
+// name no build knows. internal/runner's RegisterStep asks it, so the function
+// a step kind runs and the kind the parser accepts are always registered
+// together — a kind with a function and no parse rule is a recipe no build
+// could read.
+func StepKindRegistered(kind StepKind) bool { return registeredKind(string(kind)) }
+
 // builtinStepKinds are version 1's own step kinds, the names a registration
 // may not take over. "checks" is in the set for the same reason it has a
 // message of its own in steps(): it is a spelling of check, and a registered
