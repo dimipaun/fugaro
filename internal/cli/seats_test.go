@@ -105,7 +105,7 @@ func TestSeatsCountsOperatorsAdminsAndRequesters(t *testing.T) {
 	// The lists are written in the version-1 keys this fixture's config carries,
 	// which fold to the roles' own words: v1's `launchers` IS this version's
 	// operators and v1's `operators` its admins (localcfg.foldLegacyLists), so
-	// the sources below read operator and admin.
+	// the sources below read the run-starters' list and the admins'.
 	f.appendConfig(t, "terraform:\n  launchers: [user:alice@example.com, user:bob@example.com]\n"+
 		"  operators: [user:bob@example.com, user:carol@example.com]\n")
 	seedRun(t, f, runIDAt(3, "090000", "aaaa"), "", "dave@example.com", false)
@@ -131,13 +131,13 @@ func TestSeatsCountsOperatorsAdminsAndRequesters(t *testing.T) {
 	// Two operators, two admins -- bob is on both lists -- and the requester
 	// of the window's one run: four people, each counted once. A row's sources
 	// name the list it was read from in the roles' own words, so carol, who is
-	// on terraform.admins alone, is seen as an admin and not as an operator.
+	// on terraform.admins alone, is seen as an admin and not as a run operator.
 	if len(doc.People) != 4 {
 		t.Fatalf("people = %+v, want alice, bob, carol and dave, once each", doc.People)
 	}
 	for _, want := range []struct{ person, sources string }{
-		{"alice@example.com", "operator"},
-		{"bob@example.com", "operator, admin"},
+		{"alice@example.com", "run_operator"},
+		{"bob@example.com", "run_operator, admin"},
 		{"carol@example.com", "admin"},
 		{"dave@example.com", "requester"},
 	} {
@@ -174,8 +174,8 @@ func TestSeatsFlagsGroups(t *testing.T) {
 		t.Fatalf("not_counted = %+v, want the group, the domain and the account", doc.NotCounted)
 	}
 	for _, want := range []struct{ member, why, sources string }{
-		{"group:eng@example.com", "unknown_size", "operator, admin"},
-		{"domain:example.org", "unknown_size", "operator"},
+		{"group:eng@example.com", "unknown_size", "run_operator, admin"},
+		{"domain:example.org", "unknown_size", "run_operator"},
 		{"serviceAccount:ci@proj-1234.iam.gserviceaccount.com", "account", "admin"},
 	} {
 		if got := seatsSources(doc, want.member); got != want.sources {
@@ -225,7 +225,7 @@ func TestSeatsDeduplicatesPeople(t *testing.T) {
 	if len(doc.People) != 1 {
 		t.Fatalf("people = %+v, want one row: one person, however many sources name them", doc.People)
 	}
-	if got := seatsSources(doc, doc.People[0].Person); got != "operator, admin, requester" {
+	if got := seatsSources(doc, doc.People[0].Person); got != "run_operator, admin, requester" {
 		t.Errorf("%s: sources = %q, want all three sources on the one row", doc.People[0].Person, got)
 	}
 }
@@ -322,7 +322,7 @@ func TestSeatsSanitizesHostileValues(t *testing.T) {
 		t.Fatalf("seats: %v", err)
 	}
 	people, flagged := seatsTableRows(out, "PERSON"), seatsTableRows(out, "NOT COUNTED")
-	// The operator list's one person, and the requesters: the three that
+	// The run-starters' list one person, and the requesters: the three that
 	// differ only in whitespace print alike and are one row, an ESC's CSI
 	// sequence is dropped whole, and the rest are one each.
 	if len(people) != 7 || len(flagged) != 1 {

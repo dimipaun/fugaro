@@ -759,16 +759,28 @@ func (e *initEngine) deriveAccess(node accesslib.Node) {
 	ranOperators, ranAdmins := e.runList(accesslib.RoleOperator), e.runList(accesslib.RoleAdmin)
 	operators := legacyMembers(ranOperators)
 	admins := legacyMembers(ranAdmins)
+	spellings := installedSpellings(ranOperators, ranAdmins)
 	for _, g := range node.Grants {
 		if g.Scope.Kind != accesslib.ScopeProject || !g.Role.Valid() {
 			continue
 		}
+		// The node holds a member canonically and the lists are Terraform's:
+		// the spelling is the IAM resource's key, so a member that comes back
+		// under another one is a grant destroyed and another created — a
+		// replace tf.Guard refuses, which is a converge stopping for a
+		// difference nobody made. A person one of these lists already names is
+		// written the way that list spells them; only someone no list here
+		// names takes the node's spelling, which is a create and no replace.
+		user := g.User
+		if spelled, ok := spellings[g.User]; ok {
+			user = spelled
+		}
 		switch {
 		case g.Role == accesslib.RoleAdmin:
-			admins = append(admins, g.User)
-			operators = append(operators, g.User)
+			admins = append(admins, user)
+			operators = append(operators, user)
 		case g.Role == accesslib.RoleOperator:
-			operators = append(operators, g.User)
+			operators = append(operators, user)
 		}
 	}
 	e.spec.Launchers = sortedMembers(operators)
@@ -899,6 +911,36 @@ func (e *initEngine) runList(role accesslib.Role) []string {
 // isUserMember reports whether an IAM member names a person the CLI can rank:
 // the `user:` form and nothing else (F25).
 func isUserMember(member string) bool { return strings.HasPrefix(member, "user:") }
+
+// installedSpellings is how the lists this run already holds spell the people
+// they name, keyed by the canonical member the grants node holds them as: the
+// node's reader refuses any other spelling (accesslib.Member folds the domain),
+// and the IAM lists are Terraform's keys, so the derive reads this to give each
+// grant back the spelling the installation has it under.
+//
+// A member no list here names is not in it, and takes the node's spelling: a
+// grant nobody holds in the cloud yet is one resource created, not a pair
+// replaced. The first list wins for a member both of them name — the two
+// spellings name one person (the fold is what makes them one), and which of
+// them the plan carries is a difference the operator would read for nothing.
+func installedSpellings(lists ...[]string) map[string]string {
+	out := map[string]string{}
+	for _, list := range lists {
+		for _, m := range list {
+			if !isUserMember(m) {
+				continue
+			}
+			canonical, err := accesslib.Member(strings.TrimPrefix(m, "user:"))
+			if err != nil {
+				continue
+			}
+			if _, ok := out[canonical]; !ok {
+				out[canonical] = m
+			}
+		}
+	}
+	return out
+}
 
 // legacyMembers is the members of a list that are not `user:` ones: the
 // group:, domain: and serviceAccount: forms, in the order they were written.

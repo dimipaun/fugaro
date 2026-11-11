@@ -5078,12 +5078,14 @@ estimate is the number of rows.
 
 --json prints {version, project, days, since, until, people[], not_counted[],
 unreadable, notes}; people carry {person, sources[]} and not_counted {member,
-why, sources[]}, sources from operator, admin and requester, and why is
+why, sources[]}, sources from run_operator, admin and requester, and why is
 unknown_size or account.
 
 Version 2 is this document. Version 1 named a row's sources with the words the
-roles carried before they were renamed: a consumer reading "operator" as the
-list version 1 named it would now draw the admins.
+roles carried before they were renamed -- "launcher" for the run-starters and
+"operator" for the admins -- and neither word is a value here any more: a
+consumer reading "operator" as the list version 1 named it would draw the
+admins.
 
 Usage: `fugaro seats`
 

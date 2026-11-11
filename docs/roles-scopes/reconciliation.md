@@ -230,11 +230,17 @@ stores the node under `config/admin/` and pins it with a rules test.
 - **Size:** the node has no `MaxPolicyBytes` bound if it is not in the policy (F22/D1585 amended), so RS2
   defines its own cap (a count and a byte bound) and refuses a write over it.
 - **An older CLI:** once the node is written, an older CLI's `fugaro update` could ignore or drop it.
-  RS3 adds a floor so an older CLI refuses naming `brew upgrade` and `fugaro update`; UNVERIFIED how an
-  older CLI treats an unknown `config/admin` member today (RS3's first step reads it).
+  RS3 was to add a floor so an older CLI refuses naming `brew upgrade` and `fugaro update`; UNVERIFIED how
+  an older CLI treats an unknown `config/admin` member today (RS3's first step reads it). **Round 3 of
+  the review found that floor unbuilt, and RS3 does not build it**: a floor is honoured only by the
+  binary that carries it, so no code written now makes an already-released binary refuse, and an older
+  `update` never reads the node. What ships is the migrating machine's refusal of the version-2 config;
+  the gap is stated in RS3's line, not promised here.
 - **The `fugaro user ls --json` document** must not reuse the key `operators` or `launchers` with the new
-  meaning (CLAUDE.md "a field never changes meaning"): it gets new names (`grants`, `effective`) and the
-  old keys are removed with a version bump.
+  meaning (CLAUDE.md "a field never changes meaning"): it gets new names and the old keys are removed
+  with a version bump — RS3 publishes the two lists as `run_operators` and `admins` (the `operators` key
+  of version 1 held the ADMINS, so the run-starters' list cannot take the role's bare word back), and
+  RS5's scoped document is the one that carries `grants` and `effective`.
 - **The subset algorithm** is written down in RS1 (below) with hostile cases.
 
 ## 3. Decisions

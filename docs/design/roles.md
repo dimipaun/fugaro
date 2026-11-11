@@ -32,11 +32,11 @@ Five things already name people, and none of them is a role model.
 | `terraform.operators` | `internal/localcfg/localcfg.go:1072`, `fugaro setup --operator` (`internal/cli/init.go:468`) | IAM members who start runs |
 | `terraform.admins` | `internal/localcfg/localcfg.go:1078`, `fugaro setup --admin` (`internal/cli/init.go:469`) | IAM members who onboard repositories and apply Terraform |
 | The project's owners and editors (implicit admins) | read from the project's IAM policy into `deploy/terraform/gcp/modules/firebase/variables.tf:92` | whoever Google Cloud already trusts with the whole project |
-| `terraform.budget_admins` | `internal/localcfg/localcfg.go:563`, `fugaro setup --budget-admin` (`internal/cli/init.go:384`) | further people who may change caps and kill switches; refuses `domain:` members (`internal/localcfg/localcfg_test.go:981`) |
+| `terraform.budget_admins` | `internal/localcfg/localcfg.go:1082`, `fugaro setup --budget-admin` (`internal/cli/init.go:478`) | further people who may change caps and kill switches; refuses `domain:` members (`internal/localcfg/localcfg_test.go:993`) |
 | The device allowlist `config/admin/devices/<uid>` | `internal/budget/rules/rules.go:470` (`PathDevices`), written over IAM by `fugaro pair` and `fugaro pair revoke` | paired phones; each entry carries a `role` child (`internal/mobileauth/mobileauth.go:117`, `NodeFieldRole`) |
 
 `localcfg`'s member grammar accepts `user:`, `group:`, `domain:` and `serviceAccount:`
-(`internal/localcfg/localcfg.go:885`). A `domain:` member therefore grants a whole domain whatever
+(`internal/localcfg/localcfg.go:1492`). A `domain:` member therefore grants a whole domain whatever
 the list grants — which is why `budget_admins` refuses it (F42,
 `docs/forge-authorship-images/reconciliation.md:328`).
 
@@ -50,8 +50,8 @@ Three more facts about the lists matter here.
 - **A pairing inherits and only lowers.** `--role` defaults to the pairing user's own role and a word
   above it is refused (`docs/plans/2026-10-22-mobile-pairing-cli.md:477`, decision 13, amended
   2026-10-29). The pairing user's role is read from the CLI's lists, and `pairInheritedRole` maps
-  **both** a launcher and an operator to the device word `operator`, because the lists hold no viewer
-  and no admin (`internal/cli/pair.go:511`).
+  **both lists** to the device word `operator` — an admin's membership included, since no device word
+  is an admin — because neither list holds a viewer (`internal/cli/pair.go:817`).
 - **A pairing session is a third identity**, the one-shot `pu` claim (`pairingClaim`,
   `internal/budget/rules/rules.go:552`). It reaches the two pairing nodes and nothing else.
 - **A run is not a person.** A run's job account holds no role on the Firebase project

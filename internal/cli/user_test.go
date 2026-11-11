@@ -707,14 +707,19 @@ func TestUserLsListsBoth(t *testing.T) {
 	if doc.Version != userListDocVersion {
 		t.Errorf("the document is version %d, and the shape it publishes is %d", doc.Version, userListDocVersion)
 	}
-	if strings.Join(doc.Operators, ",") != "user:person-1@example.com" || strings.Join(doc.Admins, ",") != "user:person-2@example.com" {
-		t.Errorf("the document lists %v / %v", doc.Operators, doc.Admins)
+	if strings.Join(doc.RunOperators, ",") != "user:person-1@example.com" || strings.Join(doc.Admins, ",") != "user:person-2@example.com" {
+		t.Errorf("the document lists %v / %v", doc.RunOperators, doc.Admins)
 	}
-	// The two keys the roles were spelled with before this release are gone:
-	// `launchers` names nothing any more, and `operators` is the run-starters'
-	// list here rather than the admins' list it named in version 1.
-	if strings.Contains(js, `"launchers"`) || !strings.Contains(js, `"admins"`) {
-		t.Errorf("the document still spells the roles the old way:\n%s", js)
+	// The two keys the roles were spelled with before this release are gone,
+	// and neither is reused: `launchers` names nothing any more, and `operators`
+	// is the key version 1 held the ADMINS under, so the run-starters' list is
+	// published as `run_operators` rather than under a name a version-1 reader
+	// already reads (CLAUDE.md, "a field never changes meaning").
+	if strings.Contains(js, `"launchers"`) || strings.Contains(js, `"operators"`) {
+		t.Errorf("the document carries a key version 1 carried:\n%s", js)
+	}
+	if !strings.Contains(js, `"run_operators"`) || !strings.Contains(js, `"admins"`) {
+		t.Errorf("the document does not carry the names it publishes the two lists under:\n%s", js)
 	}
 	// Neither form reads the cloud or runs Terraform: ls is the two lists the
 	// config holds, and nothing else.

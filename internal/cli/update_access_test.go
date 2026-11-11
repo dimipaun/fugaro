@@ -140,6 +140,51 @@ func TestUpdateMigratesListsToAccessNode(t *testing.T) {
 	}
 }
 
+// TestUpdateKeepsTheInstallationSpellingOfAMixedCaseDomain: the grants node
+// holds a member canonically (accesslib.Member folds the domain, and the node's
+// reader refuses any other spelling) while the IAM lists are Terraform's keys,
+// so a converge that applied the node's spelling would destroy the grant the
+// installation holds and create another in its place — a replace tf.Guard
+// refuses, which is `fugaro update` stopping until someone names the address to
+// --allow-delete, for a difference nobody made. The lists this run applies are
+// spelled the way the installation already spells the person, and the node's
+// spelling is only what a member no list here names takes.
+//
+// The announcement reads the same lists, so the respelled member would also be
+// a member the review screen does not list: the plan granting them would name
+// itself in the step's banner and a managed project's gate would refuse it.
+//
+// Mutation (the node's spelling handed to the lists, as it was): the plan's
+// launchers and the local config carry `user:A@example.com`, and the banner
+// fires.
+func TestUpdateKeepsTheInstallationSpellingOfAMixedCaseDomain(t *testing.T) {
+	spelled := "user:A@Example.com"
+	r, db := accessRig(t, []string{spelled}, nil, []string{spelled}, nil)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	all := accessOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("one fugaro update did not converge an installation whose member is spelled with a mixed-case domain: %v\n%s", err, all)
+	}
+	// The node holds the canonical member: the fold is what makes one person
+	// one grant, whatever a list spells them.
+	if got, want := grantLines(accessGrants(t, db)), []string{"user:A@example.com (operator)"}; !slices.Equal(got, want) {
+		t.Errorf("the grants node holds %v, want %v:\n%s", got, want, all)
+	}
+	if got, want := members(r.tfvars(t)["launchers"]), []string{spelled}; !slices.Equal(got, want) {
+		t.Errorf("the plan's launchers are %v, want the spelling the installation holds (%v): a member respelled is one grant destroyed and another created, which the plan's own guard refuses\n%s", got, want, all)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the local config the run wrote does not load: %v\n%s", err, all)
+	}
+	if got, want := lc.Terraform.Operators, []string{spelled}; !slices.Equal(got, want) {
+		t.Errorf("the local config's operators are %v, want %v:\n%s", got, want, all)
+	}
+	if strings.Contains(all, "which the review did not announce") {
+		t.Errorf("the member the installation has always held is named as one the review did not announce, so the screen drops a member the plan grants:\n%s", all)
+	}
+}
+
 // TestAnAgentSessionWritesNoGrantsNode: the roles step runs before the loop's
 // first confirmation (init_stages.go's converge calls syncAccess), so a
 // migration written there would be a cloud write of a converge that no

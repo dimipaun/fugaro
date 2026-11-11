@@ -58,13 +58,18 @@ import (
 const seatsWindow = 90 * 24 * time.Hour
 
 // The three sources a row's SEEN AS column names, in the order every row
-// lists them. Each names the list the identity came from in the roles' own
-// words, so a reader can match a row to the config key it was read from:
-// terraform.operators, terraform.admins, and a run's own recorded requester.
+// lists them. Each names the list the identity came from, so a reader can
+// match a row to the config key it was read from: terraform.operators,
+// terraform.admins, and a run's own recorded requester. The run-starters'
+// source is `run_operator` and not the role's bare word, which is the value
+// this document named the ADMINS with before the rename: a version-1 reader
+// that reads `operator` as the privileged list it named would draw the wrong
+// list out of the same value, with no error (CLAUDE.md, "a field never changes
+// meaning").
 const (
-	seatsOperator  = "operator"
-	seatsAdmin     = "admin"
-	seatsRequester = "requester"
+	seatsRunOperator = "run_operator"
+	seatsAdmin       = "admin"
+	seatsRequester   = "requester"
 )
 
 // The two reasons a member is listed AND NOT COUNTED. They are the
@@ -103,13 +108,13 @@ type seatsFlaggedRow struct {
 }
 
 // seatsDocVersion is `fugaro seats --json`'s document version. Each row's
-// sources name the list the identity was read from in the roles' own words,
-// and those words are not the ones this document first carried: version 1
-// labelled the second list `operator`, which under the renamed config keys is
-// the admins, so a consumer that read `operator` as the list version 1 named
-// would draw the admins. The values changed meaning, so the document is a new
-// version rather than the same one (CLAUDE.md, "a field never changes
-// meaning"). Version 1 is the shape this document had.
+// sources name the list the identity was read from, and version 1 named those
+// lists with the words the roles carried before the rename: `launcher` for the
+// run-starters and `operator` for the admins. Both values are gone, and no
+// value of version 1 is reused for another list — the run-starters are
+// `run_operator` and the admins `admin`, names version 1 never carried — so
+// what the version records is the two removals (CLAUDE.md, "a field never
+// changes meaning"). Version 1 is the shape this document had.
 const seatsDocVersion = 2
 
 // seatsDoc is fugaro seats --json's document.
@@ -178,11 +183,13 @@ func newSeatsCmd() *cobra.Command {
 			"estimate is the number of rows.\n\n" +
 			"--json prints {version, project, days, since, until, people[], not_counted[],\n" +
 			"unreadable, notes}; people carry {person, sources[]} and not_counted {member,\n" +
-			"why, sources[]}, sources from operator, admin and requester, and why is\n" +
+			"why, sources[]}, sources from run_operator, admin and requester, and why is\n" +
 			"unknown_size or account.\n\n" +
 			"Version 2 is this document. Version 1 named a row's sources with the words the\n" +
-			"roles carried before they were renamed: a consumer reading \"operator\" as the\n" +
-			"list version 1 named it would now draw the admins.",
+			"roles carried before they were renamed -- \"launcher\" for the run-starters and\n" +
+			"\"operator\" for the admins -- and neither word is a value here any more: a\n" +
+			"consumer reading \"operator\" as the list version 1 named it would draw the\n" +
+			"admins.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runSeats(cmd, &o) },
 	}
@@ -341,7 +348,7 @@ func seatsEstimate(operators, admins, requesters []string) (people []seatsPerson
 		}
 	}
 	for _, m := range operators {
-		add(m, seatsOperator)
+		add(m, seatsRunOperator)
 	}
 	for _, m := range admins {
 		add(m, seatsAdmin)
@@ -397,7 +404,7 @@ func seatsIdentity(member string) (text, why string) {
 func seatsNotes(doc seatsDoc) []string {
 	notes := []string{
 		"advisory: an estimate, never a count of seats or a bill: it reads this installation's own data alone (the operator and admin lists of this machine's config, and the requester each run of the window recorded), and it stores nothing and sends nothing",
-		"sources:  SEEN AS names why an identity counts: operator (terraform.operators), admin (terraform.admins), requester (a run of the window whose task.json recorded it)",
+		"sources:  SEEN AS names why an identity counts: run_operator (terraform.operators), admin (terraform.admins), requester (a run of the window whose task.json recorded it)",
 	}
 	if doc.Unreadable > 0 {
 		notes = append(notes, fmt.Sprintf("read:     %d run %s of the window could not be read (an object this build cannot use), so whoever requested %s is counted nowhere: the estimate is a lower bound by that much",
