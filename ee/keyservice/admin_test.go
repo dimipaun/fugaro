@@ -12,6 +12,7 @@ package keyservice
 // and that the key never appears on the page at all.
 
 import (
+	"context"
 	"errors"
 	"html"
 	"log"
@@ -604,6 +605,101 @@ func TestAnOrderFormMintCanBeIssuedAgain(t *testing.T) {
 	if first.Organisation != second.Organisation || first.Seats != second.Seats {
 		t.Errorf("the two licences name %q/%d and %q/%d, want one order form and seat count issued twice",
 			first.Organisation, first.Seats, second.Organisation, second.Seats)
+	}
+}
+
+// failingApplications is the store as a deployment that cannot answer a
+// request: the write §5.2 puts **after** the mint, which is the one failure that
+// leaves a key issued for a request the queue still shows as open.
+type failingApplications struct {
+	*Memory
+	refuse int
+}
+
+func (f *failingApplications) SaveApplication(ctx context.Context, a Application) error {
+	if f.refuse > 0 {
+		f.refuse--
+		return errors.New("the store refused the write")
+	}
+	return f.Memory.SaveApplication(ctx, a)
+}
+
+// TestAFailedDecisionIsWrittenByTheNextClick: the write that answers a request
+// comes after the key is out (§5.2's order), so a store that cannot take it
+// leaves a request that is open in the queue and already has a key. Both of the
+// page's actions have to read that the same way.
+//
+// A click that only redirected would leave the request in the queue for good —
+// the queue is where the owner works and the approval that follows is a replay
+// — and a decline would take a "no" for a request the owner has licensed. What
+// says a request has been granted is the record, and the flag is only what the
+// queue is drawn from.
+func TestAFailedDecisionIsWrittenByTheNextClick(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.deps.Store = &failingApplications{Memory: f.store}
+	})
+	store := f.deps.Store.(*failingApplications)
+
+	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a multi-seat trial"}}))
+	open := f.open()
+	if len(open) != 1 {
+		t.Fatalf("the manual form left %d open request(s), want one", len(open))
+	}
+	id := open[0].ID
+	// A fresh token each time, so neither click is about the page's own state.
+	form := func() url.Values {
+		return f.mintForm(url.Values{
+			"application": {id}, "plan": {paidPlanName}, "seats": {"3"},
+			"term_days": {"365"}, "organisation": {"acme.example"},
+		})
+	}
+
+	// The click that mints: the key is out and the record is written, and the
+	// answer is the write that fails.
+	store.refuse = 1
+	if rec := f.adminPost(RouteAdminMint, form()); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the approval answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.recording.keys); got != 1 {
+		t.Fatalf("the approval minted %d key(s), want one", got)
+	}
+	if got := f.open(); len(got) != 1 || got[0].ID != id {
+		t.Fatalf("the request whose answer could not be written is not in the queue: %+v", got)
+	}
+
+	// A decline is refused, and the refusal is what leaves the request where it
+	// is: the owner's next click is the approval, not a "no" for a live key.
+	if rec := f.adminPost(RouteAdminDecide, f.decideForm(id)); rec.Code != http.StatusConflict {
+		t.Errorf("declining a request that already has a key answered %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if got := f.open(); len(got) != 1 || got[0].Decision != Undecided {
+		t.Fatalf("the refused decline changed the request: %+v", got)
+	}
+
+	// The next approval finishes what the first one started: the answer is
+	// written, and nothing is minted, mailed or recorded a second time.
+	before := [3]int{len(f.recording.keys), len(f.auditor.lines), len(f.mail.sent)}
+	if rec := f.adminPost(RouteAdminMint, form()); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the second approval answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := f.open(); len(got) != 0 {
+		t.Errorf("the request is still open after the second approval: %+v", got)
+	}
+	if got := f.queued(); len(got) != 1 || got[0].Decision != Approved {
+		t.Errorf("the request reads %+v, want an approved one: the queue is the requests nobody has answered", got)
+	}
+	for _, counted := range []struct {
+		what string
+		got  int
+		want int
+	}{
+		{what: "key", got: len(f.recording.keys), want: before[0]},
+		{what: "audit line", got: len(f.auditor.lines), want: before[1]},
+		{what: "message", got: len(f.mail.sent), want: before[2]},
+	} {
+		if counted.got != counted.want {
+			t.Errorf("the second approval added %d %s(s), want none: the key was already out and written down", counted.got-counted.want, counted.what)
+		}
 	}
 }
 

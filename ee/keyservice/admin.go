@@ -322,6 +322,18 @@ func (s *Service) adminMint(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	} else if held {
+		// The mint this click repeats is in the record; what can still be
+		// missing is the answer, when the write after that mint failed. This is
+		// where it is written, because the queue is where the owner finds the
+		// request: a click that only redirected would leave it open for good,
+		// with a key issued for it and no action left that could answer it
+		// (§5.2's order, one step out; TestAFailedDecisionIsWrittenByTheNextClick).
+		if queued.ID != "" {
+			if err := s.decide(ctx, queued, Approved); err != nil {
+				fail(w, err)
+				return
+			}
+		}
 		seeOther(w, r)
 		return
 	}
@@ -353,7 +365,9 @@ func (s *Service) adminMint(w http.ResponseWriter, r *http.Request) {
 		if err := s.decide(ctx, queued, Approved); err != nil {
 			// The key is out and the record is written (§5.2's order): what a
 			// failed write here costs is that the request stays in the queue,
-			// where the owner's next click finds the record and mints nothing.
+			// where the owner's next click finds the record, mints nothing and
+			// writes the answer this one could not
+			// (TestAFailedDecisionIsWrittenByTheNextClick).
 			log.Printf("keyservice: recording the decision on the request %s: %v", queued.ID, err)
 		}
 	}
@@ -385,6 +399,19 @@ func (s *Service) adminDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if held.Decision == Approved {
+		adminRefuse(w, http.StatusConflict, refuseApproved)
+		return
+	}
+	// The flag can lag the mint: the write that answers a request comes after
+	// the key is out, and a store that could not take it leaves the request open
+	// with a key already issued for it. What says a request has been granted is
+	// the record rather than the flag (§5.2's order), so the decline reads it
+	// too — a request the owner has already licensed is the one the queue must
+	// not take a "no" for (TestAFailedDecisionIsWrittenByTheNextClick).
+	if _, minted, err := s.recorded(ctx, sourceApproval+held.ID); err != nil {
+		fail(w, err)
+		return
+	} else if minted {
 		adminRefuse(w, http.StatusConflict, refuseApproved)
 		return
 	}
