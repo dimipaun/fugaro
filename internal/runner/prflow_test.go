@@ -1114,3 +1114,129 @@ func TestCancelledRunWithClosedPRStaysCancelled(t *testing.T) {
 		t.Fatal("something was posted on a closed PR")
 	}
 }
+
+// ---- deferrals ----
+
+// deferredAtRunStart puts the deferred block on the run's own record as it
+// starts, so finalize renders the section from a record carrying one exactly
+// as it does for a run that deferred: T-TR7b (a round's deferrals) and T-TR8
+// (the cap's) are the writers of that field in a real run, and both land after
+// this task.
+func deferredAtRunStart(t *testing.T, findings ...runstore.DeferredFinding) {
+	t.Helper()
+	df := runstore.NewDeferred(findings)
+	if df == nil {
+		t.Fatal("no deferral survived NewDeferred: the test would prove nothing")
+	}
+	runner.OnRun(t, func(h *runner.RunHandle) { h.SetDeferred(df) })
+}
+
+// TestPRStatusListsDeferralsWithReasons: the pull request's status section
+// lists what the run did not fix and left to a follow-up -- one line per
+// deferral, the key it is known by, the reviewer's own summary and the
+// one-line why -- and the command that files them, naming the run exactly
+// (T-TR9, D1843).
+//
+// The section says the pull request is ready, never that the run merged it
+// (D1842): the merge is a person's, and the command refuses until it happened.
+func TestPRStatusListsDeferralsWithReasons(t *testing.T) {
+	h := prHarness(t, prCfg(t, 2, ""))
+	deferredAtRunStart(t,
+		runstore.DeferredFinding{
+			Key: "unbounded-retry", Summary: "unbounded retry loop in the fetch",
+			Reason: "doc drift, and a follow-up can bound it", Source: runstore.TriageSourceAgent,
+		},
+		runstore.DeferredFinding{
+			Key: "cache-cap", Summary: "no bound on the cache",
+			Reason: "the cap left it unjudged", Group: "cache", Source: runstore.TriageSourceCap,
+		},
+	)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady || rec.Deferred == nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	body := onlyPR(t, h.provider).Body
+	for _, want := range []string{
+		"**Ready for review**",
+		"**Deferred (follow-ups)**",
+		"- `unbounded-retry`: unbounded retry loop in the fetch — doc drift, and a follow-up can bound it",
+		"- `cache-cap`: no bound on the cache — the cap left it unjudged",
+		"Run `fugaro followups " + runID + "` after merging",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the pull request's status section lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestNoDeferralsLeavesTheBodyUnchanged: a run that deferred nothing writes no
+// deferred section at all. Every part of it is absent -- the heading, a bullet,
+// the command line -- so the body of the many runs that defer nothing is what
+// it was, and not a heading over an empty list.
+func TestNoDeferralsLeavesTheBodyUnchanged(t *testing.T) {
+	h := prHarness(t, prCfg(t, 2, ""))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady || rec.Deferred != nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	body := onlyPR(t, h.provider).Body
+	if !strings.Contains(body, "**Ready for review**") {
+		t.Fatalf("the run is ready but its section does not say so:\n%s", body)
+	}
+	for _, unwanted := range []string{"Deferred", "follow-up", "fugaro followups"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("a run that deferred nothing carries %q:\n%s", unwanted, body)
+		}
+	}
+}
+
+// TestDeferralTextIsEscapedAndRedacted: a deferral's summary and reason are the
+// reviewer's and the judge's words about an untrusted diff, and the record they
+// arrive in is launcher-writable, so neither reaches the pull request's body or
+// the report as markup, as a marker or as a mention -- and a secret the run
+// holds is redacted out of both (T-TR9).
+func TestDeferralTextIsEscapedAndRedacted(t *testing.T) {
+	h := prHarness(t, prCfg(t, 2, ""))
+	withProviderKey(h)
+	deferredAtRunStart(t, runstore.DeferredFinding{
+		Key:     "cache-cap",
+		Summary: "no bound on the cache " + providerKey + "\n## Heading | `x`",
+		Reason:  "the judge deferred it: " + providerKey + " @octocat <script>",
+		Source:  runstore.TriageSourceAgent,
+	})
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	body := onlyPR(t, h.provider).Body
+	if strings.Contains(body, providerKey) {
+		t.Errorf("the provider key reached the pull request:\n%s", body)
+	}
+	if n := strings.Count(body, "fugaro:status"); n != 2 {
+		t.Errorf("%d status markers in the body, want the section's own two:\n%s", n, body)
+	}
+	for _, unwanted := range []string{"## Heading", "@octocat", "<script>", "| `x`"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("the deferral's text reached the body as %q:\n%s", unwanted, body)
+		}
+	}
+	if want := "- `cache-cap`: no bound on the cache [REDACTED] Heading 'x' — the judge deferred it: [REDACTED] @\u200boctocat script\n"; !strings.Contains(body, want) {
+		t.Errorf("the section's deferral line is not %q:\n%s", want, body)
+	}
+	raw, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := string(raw)
+	if strings.Contains(report, providerKey) {
+		t.Errorf("the provider key reached the report:\n%s", report)
+	}
+	for _, unwanted := range []string{"## Heading", "@octocat", "<script>", "fugaro:status end"} {
+		if strings.Contains(report, unwanted) {
+			t.Errorf("the deferral's text reached the report as %q:\n%s", unwanted, report)
+		}
+	}
+	if want := "- `cache-cap`: no bound on the cache [REDACTED] Heading 'x' — the judge deferred it: [REDACTED] @\u200boctocat script"; !strings.Contains(report, want) {
+		t.Errorf("the report's deferral line is not %q:\n%s", want, report)
+	}
+}
