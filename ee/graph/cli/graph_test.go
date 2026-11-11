@@ -13,6 +13,10 @@ package cli
 //     here knows is refused, as a fact about the id rather than about a missing
 //     reader (CG5), rather than answered with an empty graph. The control at the
 //     end keeps the "no read" half from passing vacuously.
+//   - TestGraphRefusedOrchestratorReadIsTerminal: the one failure of an
+//     orchestrator read that is the command's rather than the scope's — a
+//     database that refuses the read, which is exit 1 with no document and
+//     never a scope that is down or a cached brief (CG5, H3, T3).
 //   - TestGraphReadsTheOrchestratorAndLocalScopes: CG5's scopes through the
 //     command — one orchestrator's work items and their `depends_on`, a local
 //     scope falling back to this machine's cached brief, and `all` as the union
@@ -614,6 +618,58 @@ func TestGraphReadsTheOrchestratorAndLocalScopes(t *testing.T) {
 		t.Error("a local scope with no node and no cached brief was answered rather than refused")
 	} else if !strings.Contains(err.Error(), "fugaro orchestrator ls") {
 		t.Errorf("the refusal is %q, want it to say where the ids this installation has are listed", err)
+	}
+}
+
+// TestGraphRefusedOrchestratorReadIsTerminal: a read the database *refuses* is
+// the command's and not the scope's, and the orchestrator scopes are the ones
+// that can get it wrong. A read that failed is a scope that is down (H3); a read
+// this CLI may not make at all is exit 1 with **no document**, which is what a
+// console reads as "this CLI has no graph" rather than as a graph that is down
+// (T3, §6.22, `graphSources`' classification).
+//
+// Both kinds are held, because the local one is where the fallback is: a cached
+// brief is what a local scope draws with when the node cannot be read, and it is
+// never what it draws with when the read was refused — there is no failed read
+// here to answer, and putting a brief beside a refusal would turn "you may not
+// read this" into a scope that is merely down.
+func TestGraphRefusedOrchestratorReadIsTerminal(t *testing.T) {
+	written := time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC)
+	state, err := orchestrator.PathState("o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, src := range []string{"orchestrator:o1", "local:o1"} {
+		t.Run(src, func(t *testing.T) {
+			f := newGraphFixture(t)
+			f.writeStoredView(t, storedView())
+			// A cached brief the local kind could fall back to, and must not:
+			// the brief is the answer to a read that failed, and this is a read
+			// that was refused (D1358, H3).
+			f.writeCachedBrief(t, "o1", written)
+			f.db.DenyRead(state)
+
+			before := len(f.db.Requests())
+			out, _, err := execute(t, "graph", "--source", src, "--json")
+			if err == nil {
+				t.Fatalf("graph --source %s answered with a document for a node this CLI may not read", src)
+			}
+			if got := fcli.ExitCode(err); got != fcli.ExitUserError {
+				t.Errorf("the refusal exits %d, want %d: a read the database refuses is the caller's, not a remote failure", got, fcli.ExitUserError)
+			}
+			for _, want := range []string{"refused the read", "Viewer role"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal is %q, want it to carry %q: the sentence says what fixes it", err, want)
+				}
+			}
+			if out != "" {
+				t.Errorf("the refused scope wrote %q to stdout, want no document at all: a refusal is not a scope that is down", out)
+			}
+			if got := len(f.db.Requests()); got == before {
+				t.Errorf("graph --source %s read nothing: the refusal is not about this node", src)
+			}
+		})
 	}
 }
 

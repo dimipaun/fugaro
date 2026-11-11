@@ -77,6 +77,7 @@ import (
 	"github.com/dimipaun/fugaro/ee/graph"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/coordpath"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -1156,7 +1157,7 @@ func TestWatchAWithdrawnListenIsADownScopeAndNotAnExit(t *testing.T) {
 func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) {
 	t.Run("the cancel event", func(t *testing.T) {
 		var w watcher
-		if err := w.observe(rtdb.Event{Type: "cancel"}); err != nil {
+		if err := w.observe(coordpath.PathRoot, rtdb.Event{Type: "cancel"}); err != nil {
 			t.Fatalf("the cancel event ended the child with %v, want a scope that is down", err)
 		}
 		if w.down != withdrawnListen {
@@ -1189,6 +1190,9 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 		if len(doc.Sources) != 1 || doc.Sources[0].State != graph.SourceDown {
 			t.Errorf("the first document's sources are %+v, want the one scope down", doc.Sources)
 		}
+		if got := doc.Sources[0].Source; got != "coordinator" {
+			t.Errorf("the first document's source is %q, want coordinator: a child with no last document still names the scope it holds", got)
+		}
 		if got := doc.Sources[0].Reason; got != withdrawnListen {
 			t.Errorf("the reason is %q, want %q", got, withdrawnListen)
 		}
@@ -1196,15 +1200,51 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 			t.Errorf("the first document is seq %d under stream %q, want seq 1 under this child's stream", doc.Seq, doc.StreamID)
 		}
 	})
+
+	t.Run("before the opening put, and the scope is the one asked for", func(t *testing.T) {
+		// The child of a named orchestrator scope holds that id's node and
+		// nothing else, so the document it writes before it has ever read
+		// anything names that scope rather than the coordinator: a screen keys
+		// every node by the source it came from, and a source the caller never
+		// asked for is a key space it did not select (D1356, contract §6.22).
+		closed := make(chan streamEvent)
+		close(closed)
+
+		st, err := graph.NewStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		scope := mustScope(t, "orchestrator:o1")
+		node, err := orchestrator.PathNode(scope.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := &watcher{out: &out, st: st, scope: scope, subs: []string{node}}
+		if err := w.first(context.Background(), closed); err != nil {
+			t.Fatalf("a withdrawn listen ended the child with %v, want the first document, its scope down", err)
+		}
+		doc, err := graph.ParseDocument(bytes.TrimSpace(out.Bytes()))
+		if err != nil {
+			t.Fatalf("the child wrote a line that is not a document: %v: %s", err, out.String())
+		}
+		if len(doc.Sources) != 1 || doc.Sources[0].Source != "orchestrator:o1" {
+			t.Errorf("the first document's sources are %+v, want the one scope the child was asked for", doc.Sources)
+		}
+		if doc.Sources[0].State != graph.SourceDown || doc.Sources[0].Reason != withdrawnListen {
+			t.Errorf("the scope is %+v, want it down because %q", doc.Sources[0], withdrawnListen)
+		}
+	})
 }
 
 // TestWatchRefusedReadIsTerminalAndNamesTheCommand: a refusal is what ends the
 // child, and the sentence it ends with is the command's own, naming what to do
 // about it, because a console shows that sentence and draws no graph (H3, T3,
-// contract §6.22). Three refusals reach it — the listen refused when it opens,
-// the listen refused on a reconnect, and a caller asking for the stream without
-// --json — and each names its own way out. A listen the server *withdrew* is not
-// one of them: that is a scope that is down, and
+// contract §6.22). Four refusals reach it — the listen refused when it opens,
+// the listen refused on a reconnect, the listen to a named orchestrator's own
+// node refused, and a caller asking for the stream without --json — and each
+// names its own way out. A listen the server *withdrew* is not one of them: that
+// is a scope that is down, and
 // TestWatchAWithdrawnListenIsADownScopeAndNotAnExit holds it.
 //
 // The two credential refusals are asserted on the database's own cause — the
@@ -1275,6 +1315,35 @@ func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
 		// apart: the transport fell over, and then this CLI was refused.
 		if written := sink.text(); !strings.Contains(written, `"state":"down"`) {
 			t.Errorf("the child never said the scope was down before it was refused; it wrote:\n%s", written)
+		}
+	})
+
+	t.Run("the listen to one orchestrator is refused", func(t *testing.T) {
+		f := newGraphFixture(t)
+		f.writeStoredView(t, storedView())
+		fast(t, testFloor, testKeep)
+
+		// The grant is gone and the child was asked for one orchestrator, so
+		// the only subscription it holds is that id's own node.
+		f.db.Refuse(http.StatusForbidden, "403", "Forbidden", "Permission denied")
+
+		sink := newWatchSink()
+		child := startWatch(t, sink, "graph", "--source", "orchestrator:o1", "--watch", "--json")
+		err := child.wait(t, testPatience)
+		if err == nil {
+			t.Fatalf("the child streamed an orchestrator it may not read")
+		}
+		// The subtree the refusal is about and not a fixed one: this child holds
+		// /orchestrator/o1 and nothing else, so a sentence naming /coordinator
+		// names a node it never asked to read (ScopeSubtrees, H6).
+		if !strings.Contains(err.Error(), "/orchestrator/o1") {
+			t.Errorf("the refusal is %q, want it to name the subtree it was refused on", err)
+		}
+		if strings.Contains(err.Error(), "/coordinator") {
+			t.Errorf("the refusal is %q, want no mention of a subtree this child does not hold", err)
+		}
+		if got := sink.text(); got != "" {
+			t.Errorf("the refused stream wrote %q, want no document at all", got)
 		}
 	})
 

@@ -183,7 +183,7 @@ func (w *watcher) run(ctx context.Context) error {
 				// stream of zero events.
 				events = nil
 				w.down, w.dirty = withdrawnListen, true
-			} else if err := w.observe(e.ev); err != nil {
+			} else if err := w.observe(e.subtree, e.ev); err != nil {
 				return err
 			}
 		}
@@ -300,7 +300,7 @@ func (w *watcher) first(ctx context.Context, events <-chan streamEvent) error {
 				open[e.subtree] = true
 				w.down, w.dirty = withdrawnListen, true
 			case e.ev.Type == "error" && errors.Is(e.ev.Err, rtdb.ErrPermission):
-				return refusedStream(e.ev.Err)
+				return refusedStream(e.subtree, e.ev.Err)
 			}
 		}
 	}
@@ -316,7 +316,11 @@ func (w *watcher) first(ctx context.Context, events <-chan streamEvent) error {
 // prints for either is the last document with its sources marked down (H3). The
 // one event that ends the child is a refusal: a database answering 401 or 403,
 // which is a read this CLI may not make rather than a scope that is down.
-func (w *watcher) observe(ev rtdb.Event) error {
+//
+// subtree is the subtree the event came from, and it is carried through to the
+// refusal's sentence: an event is one of the child's subscriptions, and which
+// one is a fact only the tag knows (subscribe).
+func (w *watcher) observe(subtree string, ev rtdb.Event) error {
 	switch ev.Type {
 	case "put", "patch":
 		w.down, w.dirty = "", true
@@ -336,7 +340,7 @@ func (w *watcher) observe(ev rtdb.Event) error {
 		w.dirty = true
 	case "error":
 		if errors.Is(ev.Err, rtdb.ErrPermission) {
-			return refusedStream(ev.Err)
+			return refusedStream(subtree, ev.Err)
 		}
 		w.down, w.dirty = "the database stream is down: "+ev.Err.Error(), true
 	}
@@ -389,7 +393,7 @@ func (w *watcher) write(ctx context.Context, now time.Time) error {
 // graph that is down.
 func (w *watcher) snapshot(ctx context.Context, now time.Time) (graph.Document, error) {
 	if w.down != "" {
-		return downDoc(w.last, w.down), nil
+		return w.downDoc(w.last, w.down), nil
 	}
 	var warned bytes.Buffer
 	// The read's own instant is the age the stream can give (contract §6.22):
@@ -401,7 +405,7 @@ func (w *watcher) snapshot(ctx context.Context, now time.Time) (graph.Document, 
 		return doc, nil
 	case fcli.ExitCode(err) != fcli.ExitUserError:
 		w.dirty = true
-		return downDoc(w.last, "the graph could not be read: "+err.Error()), nil
+		return w.downDoc(w.last, "the graph could not be read: "+err.Error()), nil
 	default:
 		return graph.Document{}, err
 	}
@@ -417,12 +421,17 @@ func (w *watcher) snapshot(ctx context.Context, now time.Time) (graph.Document, 
 // its reason and no nodes. That is a scope whose first read failed, which is a
 // document a console draws rather than the child ending with no graph at all —
 // which is the whole of H3, at the one instant a child has no last document.
-func downDoc(last graph.Document, reason string) graph.Document {
+//
+// That source is the scope the child was asked for and never the coordinator
+// by default: `all` is a selector and not a source, so it is named by the scope
+// its documents list first (contract §6.22), and a child of `orchestrator:<id>`
+// or `local:<id>` names that scope, which is the only one it holds.
+func (w *watcher) downDoc(last graph.Document, reason string) graph.Document {
 	doc := last
 	if len(doc.Sources) == 0 {
 		doc = graph.Document{
 			Version: graph.DocumentVersion,
-			Sources: []graph.SourceState{{Source: graph.Scope{Kind: graph.ScopeCoordinator}.String()}},
+			Sources: []graph.SourceState{{Source: w.scopeName()}},
 			Nodes:   []graph.Node{},
 			Edges:   []graph.Edge{},
 		}
@@ -435,6 +444,18 @@ func downDoc(last graph.Document, reason string) graph.Document {
 		doc.Sources[i].AsOf = nil
 	}
 	return doc
+}
+
+// scopeName is the scope this child was asked for, as a document names a source:
+// the two scopes that name a node — `orchestrator:<id>` and `local:<id>` — name
+// themselves, and everything else is the coordinator, because `all` is a
+// selector and never a source and is named by the scope its documents list
+// first (contract §6.22).
+func (w *watcher) scopeName() string {
+	if w.scope.Kind == graph.ScopeOrchestrator || w.scope.Kind == graph.ScopeLocal {
+		return w.scope.String()
+	}
+	return graph.Scope{Kind: graph.ScopeCoordinator}.String()
 }
 
 // refusedStream is the refusal that ends the child: the database refused the
@@ -454,6 +475,13 @@ func downDoc(last graph.Document, reason string) graph.Document {
 // a command to run: `graph --json` reads the same node with the same credential
 // and is refused in the same breath, so sending a person there is sending them
 // in a circle.
-func refusedStream(err error) error {
-	return fcli.UserErr("graph: the database refused this CLI's credential and it may not listen to /coordinator: that read is a signed-in reader's and the database role its caller holds (roles/firebasedatabase.viewer, which terraform.launchers and terraform.operators have), so run gcloud auth application-default login if the grant has expired, and otherwise ask an owner to add the role (%v)", err)
+//
+// The subtree is the one the refused subscription was on, and it is named
+// as it is: a child of `--source all` holds two and a named orchestrator scope
+// holds that id's own node (ScopeSubtrees), so a sentence that said
+// `/coordinator` for every one of them would send a person to a node this child
+// never asked to read — and, for a scope whose own node is the only one it
+// holds, name a scope the caller did not ask for at all.
+func refusedStream(subtree string, err error) error {
+	return fcli.UserErr("graph: the database refused this CLI's credential and it may not listen to /%s: that read is a signed-in reader's and the database role its caller holds (roles/firebasedatabase.viewer, which terraform.launchers and terraform.operators have), so run gcloud auth application-default login if the grant has expired, and otherwise ask an owner to add the role (%v)", subtree, err)
 }
