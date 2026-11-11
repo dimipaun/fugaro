@@ -39,7 +39,15 @@ import (
 // than after the selector because this function is the one place that decides
 // which credentials a call may be offered — a review caller's list must never
 // contain an entry the cascade could fall to.
-func (s *Server) candidates(ctx context.Context, id Identity, canonical string, b *Bundle) ([]creds.Credential, []Tried, error) {
+//
+// The project's crafts narrow it once more (poolOffering, MC6): a node that
+// publishes crafts offers the union of what they go out on and nothing beside
+// it, which is where a pool's members enter this list and where a credential no
+// craft names leaves it. A node that publishes none — every installation today
+// — is not narrowed at all. The list the crafts produce is kept in their own
+// order, because that order is the owner's and the tier rule reads it: a pool's
+// listed order only breaks a tie (F7).
+func (s *Server) candidates(ctx context.Context, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle) ([]creds.Credential, []Tried, error) {
 	// b.Credentials() and never b.Entries(): the bundle holds the GitHub App
 	// key (C2.1), the upstream Bitbucket token (D506), the read consumer (F21),
 	// the review-signing keys (D1069) and the provider key (AK6b) as well, and
@@ -66,8 +74,30 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		out, skipped := reviewCandidates(reviewOfferings(b), ra.Account)
 		return out, skipped, nil
 	}
+	cands := all
+	var skipped []Tried
+	if offer, narrowed, err := poolOffering(shared, b); err != nil {
+		// The crafts leave this call nothing at all (poolRefusal): the refusal's
+		// own sentence is the answer, and it travels as this error rather than
+		// as an empty list, which the selector would answer with a sentence
+		// about the bundle.
+		return nil, nil, err
+	} else if narrowed {
+		cands = offer
+		// The credentials the crafts leave out are ones this call may not be
+		// served by, which is what not_admitted means for a caller (the rule a
+		// review caller's list is built by). They are reported rather than
+		// dropped, so the run's halt message reads the same list either way:
+		// what was considered, and why each one was skipped. A fifth reason
+		// would be a value this contract's closed set does not carry.
+		for _, c := range all {
+			if !named(offer, c.Name) {
+				skipped = append(skipped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
+			}
+		}
+	}
 	hasA := false
-	for _, c := range all {
+	for _, c := range cands {
 		if c.Tier == creds.TierA {
 			hasA = true
 			break
@@ -81,9 +111,8 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 			return nil, nil, err
 		}
 	}
-	out := make([]creds.Credential, 0, len(all))
-	var skipped []Tried
-	for _, c := range all {
+	out := make([]creds.Credential, 0, len(cands))
+	for _, c := range cands {
 		if c.Tier == creds.TierA && !admitted[c.Name] {
 			skipped = append(skipped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
 			continue
