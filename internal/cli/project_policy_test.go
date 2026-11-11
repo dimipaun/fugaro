@@ -2934,14 +2934,19 @@ func TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers(t *testing.T) {
 
 // TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy: a node this
 // binary cannot read as its own shape — hand-written with no version, or with
-// an older one — is refused rather than replaced, but the refusal must name a
-// remedy that works. "Publish again" is the one it cannot: the publish is what
-// is being refused. Removing the node is the path that does.
+// one below the migration chain's first step — is refused rather than replaced,
+// but the refusal must name a remedy that works. "Publish again" is the one it
+// cannot: the publish is what is being refused. Removing the node is the path
+// that does, for a version no step carries.
+//
+// A version the chain *does* carry takes the other remedy, and the test below
+// this one is that state: there the delete would work but costs what only the
+// node holds, so the publish names the update instead.
 func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) {
 	for name, node := range map[string]map[string]any{
-		"no version":    {"budget": map[string]any{"mode": "enforce"}},
-		"version zero":  {"version": 0, "budget": map[string]any{"mode": "enforce"}},
-		"a later shape": {"version": projectpolicy.Version - 1, "budget": map[string]any{"mode": "enforce"}},
+		"no version":                {"budget": map[string]any{"mode": "enforce"}},
+		"version zero":              {"version": 0, "budget": map[string]any{"mode": "enforce"}},
+		"a version no step reaches": {"version": 1, "budget": map[string]any{"mode": "enforce"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newProjectFixture(t, "")
@@ -2967,6 +2972,34 @@ func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) 
 				t.Fatalf("publishing after the remedy: %v", err)
 			}
 		})
+	}
+}
+
+// TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate: the other older
+// state, and the one an operator meets most — a version-4 node is what every
+// installation holds between the binary upgrade and `fugaro update`. The
+// migration chain carries it, so the publish names the update's in-place
+// rewrite rather than the delete: the delete works here, but a publish that
+// follows rebuilds the node from this machine's config and drops the members
+// only the node holds. Doctor's policy-older-than-binary asks the same question
+// of the same node and names the same move.
+func TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version - 1, "budget": map[string]any{"mode": "enforce"}})
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatal("publishing over an older node was allowed")
+	}
+	for _, want := range []string{"fugaro update", "rewrites the node in place", "keeping the members it carries"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--delete") {
+		t.Errorf("the refusal names the delete for a node the migration chain carries: %v", err)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v == nil {
+		t.Fatal("the node was removed by a refused publish")
 	}
 }
 

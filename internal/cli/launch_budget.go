@@ -192,12 +192,14 @@ func policyReadErr(err error) error {
 	var me *projectpolicy.MarkerError
 	switch {
 	case errors.As(err, &ve):
-		// The remedy depends on the direction of the skew — an older node is
-		// removed with `fugaro project policy publish --delete` before this
-		// release publishes again (never a re-run of init, which writes no
-		// policy node), an older binary wants upgrading — and
+		// The remedy depends on the direction of the skew — an older binary
+		// wants upgrading, and an older node is moved by whichever of the two
+		// moves its version allows: `fugaro update`'s in-place rewrite for one
+		// the migration chain carries, `fugaro project policy publish
+		// --delete` and a fresh publish for one below the chain's first step
+		// (never a re-run of init, which writes no policy node) — and
 		// projectpolicy.SkewSentence is the one place that picks between the
-		// two sentences for this reader (the launch gate beside this file
+		// sentences for this reader (the launch gate beside this file
 		// words the same error through it, ReaderCLI, and so does the
 		// runner's own refusal, ReaderRunner).
 		return userErr("%s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderCLI))

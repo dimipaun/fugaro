@@ -47,9 +47,11 @@ var migrators = map[int]migrator{
 // tooOld names the versions this Fugaro reads but has no migrator for. The
 // refusal is not a sentence of this file's: a version below Version is a node
 // older than its reader, which is one direction of the skew version.go's
-// CLISkewNewer already words, so Migrate answers with the *VersionError Decode
-// returns and the caller prints the remedy that fits its side (SkewSentence)
-// rather than a second wording of the same move that could drift from it.
+// CLISkewNewer and RunnerSkewNewer word — the pair for a node no step reaches,
+// beside the carried pair a version above them gets — so Migrate answers with
+// the *VersionError Decode returns and the caller prints the remedy that fits
+// its side (SkewSentence) rather than a second wording of the same move that
+// could drift from it.
 //
 // The table exists so the version-bump guard
 // (TestEveryOlderVersionHasAMigratorOrARefusal) can tell a version this Fugaro
@@ -104,11 +106,13 @@ func Migratable(v int) bool {
 //   - a node written in another version is refused with a *VersionError, the
 //     value Decode returns and SkewSentence words, in both directions: Found
 //     above Understood is a node ahead of this Fugaro (upgrade it), and Found
-//     below it is one behind — the direction CLISkewNewer words, whose remedy
-//     is `fugaro project policy publish --delete` and a fresh publish. A
-//     version below the chain's first step is that second case, and carries no
-//     type of its own so a caller that already branches on *VersionError for
-//     the older direction recognises it;
+//     below it is one behind — the direction SkewSentence words from the chain
+//     itself, `fugaro update`'s in-place rewrite for a version a step reaches
+//     (CLISkewCarried, RunnerSkewCarried) and `fugaro project policy publish
+//     --delete` with a fresh publish for one below the first step
+//     (CLISkewNewer, RunnerSkewNewer). A version below the chain's first step
+//     is that second case, and carries no type of its own so a caller that
+//     already branches on *VersionError for the older direction recognises it;
 //   - a node the migration cannot read at all — not a JSON object, no version,
 //     a version no release ever wrote, a top-level key written twice, or a
 //     migrated document the strict reader still refuses — is refused with a

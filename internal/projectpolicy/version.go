@@ -328,8 +328,8 @@ const (
 	ReaderRunner
 )
 
-// The version-skew messages. Skew is the sentence every reader prints; the four
-// others are its remedies, one per direction of the skew and per reader:
+// The version-skew messages. Skew is the sentence every reader prints; the six
+// others are its remedies, one per state of the skew and per reader:
 //
 //   - CLISkew and RunnerSkew: the node is newer than the reader, so nothing
 //     here can read it and the release that wrote the node is newer than the
@@ -352,10 +352,20 @@ const (
 //     through the same refusal (internal/cli's refuseNewerPolicy, which the
 //     publish path calls before the delete branch), which doctor reports as
 //     policy-newer-than-binary with the upgrade as its fix.
-//   - CLISkewNewer and RunnerSkewNewer: the node is older than the reader.
-//     Nothing is upgraded — the reader is the newer side, so `fugaro upgrade`
-//     would be advice that changes nothing — and the remedy is a new node:
-//     publishing refuses to overwrite a node written in another version
+//   - CLISkewCarried and RunnerSkewCarried: the node is older than the reader
+//     and the migration chain carries it forward (Migratable). Nothing is
+//     upgraded — the reader is the newer side, so `fugaro upgrade` would be
+//     advice that changes nothing — and nothing is deleted either: `fugaro
+//     update`'s policy stage rewrites the node in place at this reader's
+//     version, keeping the members it carries. This is the move `fugaro doctor`
+//     names for the same state (its policy-older-than-binary check asks
+//     Migratable the same question), and it is the state of every installation
+//     between the binary upgrade and `fugaro update`, so it is the one an
+//     operator meets most.
+//   - CLISkewNewer and RunnerSkewNewer: the node is older than the reader and no
+//     migration step reaches it (tooOld: versions 1 and 2, which 0.8.0 and
+//     0.8.5 wrote). Nothing is upgraded here either, and the remedy is a new
+//     node: publishing refuses to overwrite a node written in another version
 //     (internal/cli's publishedPolicyOf, which words the same refusal, and
 //     docs/project-layer.md and `fugaro doctor` carry it too), so the older
 //     node goes first, with `fugaro project policy publish --delete`, and the
@@ -363,23 +373,26 @@ const (
 //     --firebase-project` is deliberately not named in either: it deploys this
 //     release's rules template and marker and never writes
 //     config/policy/shared, so an operator sent to re-run it would come back to
-//     the same refusal. A hand-written node, or one a release before this shape
-//     wrote, is the only way to get here (Decode refuses a version this Fugaro
-//     does not know, and a node below Version is not the legacy path — that is
-//     the marker's job, Read). The runner's own sentence adds that the run
-//     cannot do any of it mid-run: the refusal is the job's, and the operator
-//     who publishes is the one who acts.
+//     the same refusal — while the whole `fugaro update` is, and is named. A
+//     hand-written node, or one a release before this shape wrote, is the only
+//     way to get here (Decode refuses a version this Fugaro does not know, and
+//     a node below Version is not the legacy path — that is the marker's job,
+//     Read). The runner's own sentence adds that the run cannot do any of it
+//     mid-run: the refusal is the job's, and the operator who updates or
+//     publishes is the one who acts.
 //
 // A message that printed one direction's remedy for both sent the operator of a
 // node that was merely behind to upgrade a Fugaro that was already ahead of it
 // (changing nothing), or left the reader of a node that was behind with no move
 // at all. Each takes the found version and the understood one, in that order.
 const (
-	Skew            = "the project policy is version %d; this Fugaro understands version %d"
-	CLISkew         = Skew + "; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then fugaro update"
-	CLISkewNewer    = Skew + "; the node is older than this Fugaro: publishing refuses to overwrite a node written in another version, so remove it with 'fugaro project policy publish --delete' and publish it again from this release"
-	RunnerSkew      = Skew + "; refresh the runner image (fugaro upgrade)"
-	RunnerSkewNewer = Skew + "; the node is older than this runner image: publishing refuses to overwrite a node written in another version, so the project's owner removes it with 'fugaro project policy publish --delete' and publishes one this image understands — and the run cannot do either mid-run"
+	Skew              = "the project policy is version %d; this Fugaro understands version %d"
+	CLISkew           = Skew + "; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then fugaro update"
+	CLISkewCarried    = Skew + "; the node is older than this Fugaro: run 'fugaro update', whose policy stage rewrites the node in place at this Fugaro's version, keeping the members it carries"
+	CLISkewNewer      = Skew + "; the node is older than this Fugaro: publishing refuses to overwrite a node written in another version, so remove it with 'fugaro project policy publish --delete' and publish it again from this release"
+	RunnerSkew        = Skew + "; refresh the runner image (fugaro upgrade)"
+	RunnerSkewCarried = Skew + "; the node is older than this runner image: the project's owner runs 'fugaro update', whose policy stage rewrites the node in place at this Fugaro's version, keeping the members it carries — and the run cannot do it mid-run"
+	RunnerSkewNewer   = Skew + "; the node is older than this runner image: publishing refuses to overwrite a node written in another version, so the project's owner removes it with 'fugaro project policy publish --delete' and publishes one this image understands — and the run cannot do either mid-run"
 )
 
 // SkewSentence is the one place that words a version skew: the shared sentence
@@ -400,12 +413,24 @@ const (
 // A node ahead of its reader also names the release that introduced its
 // version when VersionSince has a row for it ("; policy version 2 arrived in
 // fugaro 0.8.5"), and nothing more when it does not.
+//
+// A node *behind* its reader has two states, and the chain decides between them
+// (Migratable) rather than this function: a version a step reaches is the
+// update's to rewrite in place, and one below the chain's first step is the
+// publisher's to delete and write again. `fugaro doctor`'s
+// policy-older-than-binary check asks the same question of the same node, so
+// the two cannot advise different moves for one state.
 func SkewSentence(ve *VersionError, reader Reader) string {
+	carried := Migratable(ve.Found)
 	switch {
 	case ve.Found > ve.Understood && reader == ReaderRunner:
 		return fmt.Sprintf(RunnerSkew, ve.Found, ve.Understood) + arrivedClause(ve.Found)
 	case ve.Found > ve.Understood:
 		return fmt.Sprintf(CLISkew, ve.Found, ve.Understood) + arrivedClause(ve.Found)
+	case carried && reader == ReaderRunner:
+		return fmt.Sprintf(RunnerSkewCarried, ve.Found, ve.Understood)
+	case carried:
+		return fmt.Sprintf(CLISkewCarried, ve.Found, ve.Understood)
 	case reader == ReaderRunner:
 		return fmt.Sprintf(RunnerSkewNewer, ve.Found, ve.Understood)
 	default:

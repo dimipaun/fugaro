@@ -583,7 +583,16 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 		// An older version (a hand-written node, or one a release before this
 		// shape wrote). "Publish again" would be advice this very refusal
 		// makes impossible — the publish is what is being refused — so the
-		// remedy is the one that works: remove the node, then publish.
+		// remedy is the one that works for the version at hand, and the
+		// migration chain decides which that is (Migratable): a version a step
+		// reaches is rewritten in place by `fugaro update`, which keeps the
+		// members the node holds, and only a version below the chain's first
+		// step has to be removed before a publish — which then rebuilds it
+		// from this machine's config rather than from the node. Doctor's
+		// policy-older-than-binary names the same move for the same state.
+		if projectpolicy.Migratable(ve.Found) {
+			return nil, userErr("the published policy is version %d and this Fugaro writes version %d: publishing over it would rewrite it in this Fugaro's shape, and this command will not do that unasked; run 'fugaro update', whose policy stage rewrites the node in place at version %d, keeping the members it carries", ve.Found, ve.Understood, ve.Understood)
+		}
 		return nil, userErr("the published policy is version %d and this Fugaro writes version %d: publishing over it would rewrite it in this Fugaro's shape, and this command will not do that unasked; remove it with 'fugaro project policy publish --delete' and publish again, or correct its version by hand", ve.Found, ve.Understood)
 	case err != nil:
 		return nil, userErr("the published policy at %s cannot be read, so it cannot be replaced: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
