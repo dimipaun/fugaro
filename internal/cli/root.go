@@ -254,6 +254,11 @@ func newCoreRoot() *cobra.Command {
 		// credentials serve` is what the image's CMD names, and hidden so it
 		// is not something an operator is offered.
 		newCredentialsCmd(),
+		// The local diagnosis of a command that failed on this machine: its
+		// log, this machine's configuration and the source at this version,
+		// read by a read-only agent (docs/diagnose-agent, D1604). Beside
+		// `fugaro diagnose`, which explains a cloud run instead.
+		newTroubleshootCmd(),
 	)
 	annotateManagedMutating(root)
 	return root
