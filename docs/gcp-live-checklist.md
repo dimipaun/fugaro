@@ -11874,15 +11874,18 @@ check already reads): it is ON when every one of those jobs runs as an account t
 `roles/run.invoker` to and at least one job exists, OFF when an existing job's account is not granted, and
 UNREAD — a row the check could not measure — otherwise. `fugaro doctor`'s `credentials-service-deployed`
 sentence is **not** the decision: the released doctor lists job accounts of workflow variants the
-repository does not deploy, so that row is read only for the state where the installation has no
-credentials service at all, and its text is carried in the row for context. It
+repository does not deploy, so that row is read only for the states where the service cannot serve a run
+at all — the installation has no credentials service, or it has one that admits every job account and
+holds nothing to serve a model credential out of — and its text is carried in the row for context. It
 fails the `proxied` row *before it launches anything* when the repository is not admitted, is admitted
 without the proxy, or is off the switch: the published half alone is **inert**, since a repository off the
 switch holds its own Bitbucket token and is served by nothing, so the check stops rather than launch three
 runs at a path the proxy is not on. The remedy is to set `agent.auth: cascade` for that repository (with a
 model credential in the service's bundle), run `fugaro update --repo` for it and run the check again; a
-switch the reading cannot settle is recorded as **unmeasured** (exit `2`, nothing launched) rather than as
-a pass. Three **sandbox** Bitbucket repositories — the proxied one the runs work
+switch the reading cannot settle — and a service doctor reports as not there or as having nothing to
+serve a run's model credential out of, where every model call of a run is refused — is recorded as
+**unmeasured** (exit `2`, nothing launched) rather than as a pass. Three **sandbox** Bitbucket
+repositories — the proxied one the runs work
 in, a second one for the other-repository refusal, and (with `--after-flip`) one the policy does not proxy
 — plus the number of an **open** pull request **in the proxied repository itself** (`CHECK191_OTHER_PR`):
 the run's own repository, and a pull request that is not the run's own. It has to be that repository's,

@@ -498,25 +498,46 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 }
 
 // TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches: the live
-// check reads this line for one state only — an installation that carries no
-// credentials service at all, where proxy: true brokers nothing and a
-// `proxied: PASS` over it is the lie the reading exists to refuse
-// (scripts/live-checks/check191.sh, its `switch` reading). It tells that state
-// apart by this line's own words, because the row's JSON carries no account
-// list: the two phrases pinned below are the whole of what the check matches,
-// and a rewording of either is not a break it reports as one — the arm becomes
-// one the reading does not place, and the check records that as unmeasured
-// (exit 2, nothing launched) rather than as a switch that is on. That is the
-// safe direction, and it is why each phrase is pinned on the Go side of the
-// contract, where a reword lands.
+// check's `proxied` row reads this line, and it tells its arms apart by their
+// words — the row's JSON carries nothing a reader outside the Go code can branch
+// on (scripts/live-checks/check191.sh, its `switch` reading). The check stops on
+// the arms where the service cannot serve a run at all: an installation with no
+// service, where proxy: true brokers nothing, and a service that admits every
+// job account and holds nothing to serve a model credential out of, where every
+// model call of a run is refused — the states its own prerequisites name, and
+// the two where a `proxied: PASS` would launch three runs against a service that
+// answers none of them.
 //
-// Nothing else in this row is read by the check: the switch is the credentials
-// service's own IAM policy crossed with the repository's own jobs, so the
-// sentence that names the accounts the service does not admit — and doctor's
-// other arms with it — decides nothing there. Those arms keep their own
-// coverage in TestDoctorBrokeringCredentialsServiceDeployed and
-// TestDoctorReportsTheServiceStateInOneLine.
+// The arms the check reads PAST are the ones about the invoker grant: the switch
+// is the credentials service's own IAM policy crossed with the repository's own
+// jobs, because the released doctor names accounts of workflow variants a
+// switched repository does not deploy, so a sentence about accounts decides
+// nothing there.
+//
+// Every phrase is pinned on the Go side of the contract, where a reword lands: a
+// sentence this file stops speaking is an arm the check does not place, and the
+// check records that as unmeasured (exit 2, nothing launched) rather than as a
+// switch that is on. That is the safe direction.
 func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *testing.T) {
+	// deployed is the service every arm after the first two starts from: there,
+	// admitting this installation's one job account, with the bundle container
+	// its own apply creates and no version in it.
+	deployed := func(t *testing.T) *brokeringRig {
+		t.Helper()
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		return r
+	}
+	// serving is the same service with a version in its bundle, which is the one
+	// state whose line is silent.
+	serving := func(t *testing.T) *brokeringRig {
+		t.Helper()
+		r := deployed(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		return r
+	}
 	cases := []struct {
 		arm    string
 		phrase string
@@ -532,6 +553,57 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 			phrase: "Cloud Run has no service",
 			build:  newBrokeringRig,
 		},
+		{
+			arm:    "the service's bundle holds no version",
+			phrase: "it admits nobody: every job account may invoke it, and",
+			build:  deployed,
+		},
+		{
+			arm:    "the newest bundle version is disabled",
+			phrase: "it admits nobody: every job account may invoke it, and",
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := deployed(t)
+				r.sm.DisableVersions(r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token"))))
+				return r
+			},
+		},
+		{
+			arm:    "the verify route admits nobody",
+			phrase: "admits nobody on the verify route",
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := serving(t)
+				addLocalLines(t, r.doctorRig, "verifier_accounts: []\n")
+				return r
+			},
+		},
+		{
+			arm:    "a job account the service does not admit",
+			phrase: "grants no roles/run.invoker to",
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := newBrokeringRig(t)
+				r.svcs.AddService(infra.CredentialsServiceName)
+				return r
+			},
+		},
+		{
+			arm:    "a role doctor cannot judge",
+			phrase: "may invoke it could not be checked",
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := newBrokeringRig(t)
+				r.svcs.AddService(infra.CredentialsServiceName)
+				r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+					gcpfake.Binding{Role: "projects/proj-1234/roles/deployer", Members: []string{brokeringJobAccount("app")}})
+				return r
+			},
+		},
+		{
+			arm:   "every job account may invoke it, with a version in the bundle",
+			build: serving,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.arm, func(t *testing.T) {
@@ -542,6 +614,12 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 			cs := checksByID(o, "credentials-service-deployed")
 			if len(cs) != 1 {
 				t.Fatalf("the state emitted %d credentials-service-deployed checks, want exactly one: %+v", len(cs), cs)
+			}
+			if c.phrase == "" {
+				if cs[0].Problem != "" {
+					t.Fatalf("the serving arm carries a problem: check191.sh places this arm by its silence, and a line here reads as one it does not place: %q", cs[0].Problem)
+				}
+				return
 			}
 			if !strings.Contains(cs[0].Problem, c.phrase) {
 				t.Errorf("check191.sh tells this arm apart by %q, and the line does not carry it: %q", c.phrase, cs[0].Problem)

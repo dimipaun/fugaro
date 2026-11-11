@@ -63,7 +63,10 @@ neither deletes nor closes them, and the block names each one.
   off the switch: the published half alone is **inert**, a repository off the switch holds its own
   token and is served by nothing, so the check stops rather than launch three runs at a path the proxy
   is not on. Its remedy is to set `agent.auth: cascade` for that repository, run `fugaro update
-  --repo` for it and run the check again.
+  --repo` for it and run the check again. It stops the same way — unmeasured, nothing launched — when
+  `fugaro doctor --project fugaro --json` says the service is not there at all or has nothing to serve
+  a run's model credential out of: every model call of a run against such a service is refused, so the
+  three runs would fail at their first call rather than measure the proxy.
 - **Three sandbox Bitbucket repositories of that installation**: `CHECK191_REPO` (the proxied one the
   runs work in), `CHECK191_OTHER_REPO` (a **second** one, for the other-repository refusal) and, for
   `--after-flip`, `CHECK191_PLAIN_REPO` (one the published policy does **not** proxy). Plus
@@ -166,8 +169,10 @@ job list the check already reads): it is ON when every one of those jobs runs as
 policy grants `roles/run.invoker` to and at least one job exists, OFF when an existing job's account
 is not granted, and UNREAD — a row the check could not measure — otherwise. `fugaro doctor`'s
 `credentials-service-deployed` sentence is NOT the decision: the released doctor lists job accounts of
-workflow variants the repository does not deploy, so the doctor row is read only for the state where
-the installation has no credentials service at all, and its text is carried in the row for context.
+workflow variants the repository does not deploy, so the doctor row is read only for the states where
+the service cannot serve a run at all — the installation has no credentials service, or it has one that
+admits every job account and holds nothing to serve a model credential out of — and its text is carried
+in the row for context.
 `proxy: true` is inert for a repository off the switch, and a row that passed on the policy alone
 would call a run at the direct path a broken proxy), `run-launch` and
 `run-outcome` (the working run reached a final status, succeeded, and the service served its push and
@@ -228,14 +233,23 @@ knowing by name:
   The check stops here, and no run was launched — the rows below would have measured the direct path,
   not the proxy. An installation with no credentials service at all fails this row with that reason
   instead: `proxy: true` is inert without one, and neither the policy nor a grant can even be read.
+- **The service has nothing to serve a run** (`proxied: FAIL`, exit `2`) — `fugaro doctor --project
+  fugaro --json` says the credentials service admits every job account and that the bundle it serves
+  from holds no version, or that the newest version of it is not `ENABLED`: every model call of a run
+  against it is refused, so whether the repository is on the switch was **not measured** and the three
+  runs would fail at their first call. Give the service a model credential (`fugaro creds set` is the
+  bundle's only writer; a version Secret Manager will not serve has to be enabled first) and run the
+  check again.
 - **The switch could not be read** (`proxied: FAIL`, exit `2`) — the service's own IAM policy or the
   job list could not be read, the policy binds a job account in a way this check cannot interpret (a
   custom role, or a grant that holds only while a condition does), no job of the repository is in the
-  list, or a job runs as no account the check can name — so whether the repository is served was
-  **not measured**. Read the two facts yourself — `gcloud run services get-iam-policy
-  fugaro-credentials --project fugaro-dev --region us-east5 --format=json`, and the jobs of the
-  repository in `gcloud run jobs list` — and settle it before you launch anything: a run whose switch
-  nobody settled is a run whose rows are about nothing.
+  list, a job runs as no account the check can name, or `fugaro doctor`'s
+  `credentials-service-deployed` row is one this check does not place (a bundle it could not read, or a
+  document carrying no such row) — so whether the repository is served was **not measured**. Read the
+  two facts yourself — `gcloud run services get-iam-policy fugaro-credentials --project fugaro-dev
+  --region us-east5 --format=json`, and the jobs of the repository in `gcloud run jobs list` — and
+  settle it before you launch anything: a run whose switch nobody settled is a run whose rows are
+  about nothing.
 - **`the working run reported NO line for the … attempt`** — the probe's task asked for one
   `CHK191 attempt=<name> refused=… answer=…` line per attempt and the log holds none: the attempt was
   never made or never printed. Read `fugaro logs <run id>` and see what the agent did.
