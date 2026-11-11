@@ -695,6 +695,49 @@ func TestUpdatePublishesTheFirstPolicyNodeForTheSubscriptionSwitch(t *testing.T)
 	}
 }
 
+// TestUpdatePublishesTheFirstPolicyNodeForTheCloneURLs is the same member class
+// for the block the local config states (SD5, D842): the URL a run clones from
+// is read off the published node — no job's environment carries it — so a
+// project whose owner had written the block and which had never published a
+// node had left where its runs clone from in a file no run reads. The file is
+// the block's source from this release on, so a first publish that skipped it
+// is the one state where a written block reaches no run at all.
+func TestUpdatePublishesTheFirstPolicyNodeForTheCloneURLs(t *testing.T) {
+	f := newProjectFixture(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n")
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the clone URLs") || strings.Contains(st.Detail, "the bake switch") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "this publish creates the node") || !strings.Contains(out, "clone_urls") {
+		t.Errorf("the diff the operator confirmed does not name the block it creates the node with:\n%s", out)
+	}
+	if got := publishedPolicy(t, f).CloneURL("github/acme/app"); got != "https://github.com/acme/app" {
+		t.Errorf("the published node carries %q for github/acme/app, want the URL the config states", got)
+	}
+}
+
 // catalogConfigWithNoRepos rewrites the fixture's config so the project lists no
 // repository while the catalog the fixture's extra block states stays: a first
 // publish from it would write a node whose allow-list admits nothing, which is

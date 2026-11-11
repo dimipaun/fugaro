@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // The credential a catalog build reads an entry's Dockerfile with (issue
@@ -77,9 +78,9 @@ func catalogGitHubAppID(lc *localcfg.Config, repo string, getenv func(string) st
 // (resolveGitSecretID). The repository's own copy is not named
 // unconditionally, because once that name is project-scoped the repository's
 // own copy has no version at all. Tests replace it.
-var catalogAppKeySecretID = func(ctx context.Context, lc *localcfg.Config, rs infra.RepoSpec) (string, error) {
+var catalogAppKeySecretID = func(ctx context.Context, lc *localcfg.Config, rs infra.RepoSpec, node *projectpolicy.Policy) (string, error) {
 	logical := config.GitHubAppKeySecret
-	projectID, _ := infra.ProjectSecretCandidate(lc, logical, rs.Name)
+	projectID := projectSecretCandidate(lc, logical, rs.Name, rs.Provider, node)
 	return resolveGitSecretID(ctx, lc, lc.GCPProject, rs.Name, logical, gcp.SecretID(rs.Slug, logical), projectID,
 		buildAccountMember(rs.BuildServiceAccountEmail), "the catalog build of "+rs.Name)
 }
@@ -92,8 +93,8 @@ var catalogAppKeySecretID = func(ctx context.Context, lc *localcfg.Config, rs in
 // gitSecretID call). The token this command reads the Dockerfile with and the
 // one that build clones with are therefore one credential by construction and
 // not by two lookups agreeing. Tests replace it.
-var catalogTokenSecretID = func(ctx context.Context, lc *localcfg.Config, rs infra.RepoSpec) (string, error) {
-	return gitSecretID(ctx, lc, rs, "the catalog build of "+rs.Name)
+var catalogTokenSecretID = func(ctx context.Context, lc *localcfg.Config, rs infra.RepoSpec, node *projectpolicy.Policy) (string, error) {
+	return gitSecretID(ctx, lc, rs, node, "the catalog build of "+rs.Name)
 }
 
 // tokenReadNotice is the one line the catalog build prints before it reads the
@@ -155,7 +156,7 @@ func tokenReadHint(cause error) string {
 // secret. Neither does a GitHub build in an installation whose credentials
 // service is on: the key the service holds is the one the provider uses, so no
 // key of this command's is read and no notice about reading one is printed.
-func catalogProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, entries []config.Entry, getenv func(string) string, stdinTerminal bool) ([]string, string, error) {
+func catalogProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, entries []config.Entry, getenv func(string) string, stdinTerminal bool, node *projectpolicy.Policy) ([]string, string, error) {
 	env := os.Environ()
 	if !slices.ContainsFunc(entries, func(e config.Entry) bool {
 		return e.Source.Kind == config.SourceDockerfile
@@ -164,15 +165,15 @@ func catalogProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, r
 	}
 	switch rs.Provider {
 	case gitprov.KindGitHub:
-		return githubProviderEnv(ctx, w, lc, rs, env, getenv, stdinTerminal)
+		return githubProviderEnv(ctx, w, lc, rs, env, getenv, stdinTerminal, node)
 	case gitprov.KindBitbucket:
-		return bitbucketProviderEnv(ctx, w, lc, rs, env, getenv, stdinTerminal)
+		return bitbucketProviderEnv(ctx, w, lc, rs, env, getenv, stdinTerminal, node)
 	}
 	return env, "", nil
 }
 
 // githubProviderEnv is catalogProviderEnv's GitHub half.
-func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, env []string, getenv func(string) string, stdinTerminal bool) ([]string, string, error) {
+func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, env []string, getenv func(string) string, stdinTerminal bool, node *projectpolicy.Policy) ([]string, string, error) {
 	// rs.GitHubAppID is the one answer catalogGitHubAppID gave for this
 	// repository, which the spec the build is submitted with carries too: the
 	// ID is appended after the process environment, so it is the one
@@ -200,7 +201,7 @@ func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs
 	if err := refuseKeyReadAt(getenv, stdinTerminal, catalogKeyRead, "the GitHub App's private key"); err != nil {
 		return nil, "", err
 	}
-	secretID, err := catalogAppKeySecretID(ctx, lc, rs)
+	secretID, err := catalogAppKeySecretID(ctx, lc, rs, node)
 	if err != nil {
 		return nil, "", err
 	}
@@ -231,14 +232,14 @@ func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs
 // always failed with, and the hint says where the token is; failing here
 // instead would replace that sentence with a new one, and the operator's next
 // step is the same either way.
-func bitbucketProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, env []string, getenv func(string) string, stdinTerminal bool) ([]string, string, error) {
+func bitbucketProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, env []string, getenv func(string) string, stdinTerminal bool, node *projectpolicy.Policy) ([]string, string, error) {
 	if getenv(providers.EnvBitbucketToken) != "" {
 		return env, "", nil
 	}
 	if err := refuseKeyReadAt(getenv, stdinTerminal, catalogKeyRead, "the Bitbucket access token"); err != nil {
 		return nil, "", err
 	}
-	secretID, err := catalogTokenSecretID(ctx, lc, rs)
+	secretID, err := catalogTokenSecretID(ctx, lc, rs, node)
 	if err != nil {
 		return nil, "", err
 	}

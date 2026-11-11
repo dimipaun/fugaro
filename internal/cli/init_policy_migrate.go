@@ -93,6 +93,15 @@ type policyMigration struct {
 	// a plan that read them again afterwards would be comparing two states.
 	recorded string
 
+	// importCloneURLs is the published node's clone_urls block, when this
+	// machine's file states none of its own and there is a file to write it
+	// into (D842, D844). It is nil in the common case: an installation whose
+	// file already states the block, and one whose node carries none — the
+	// case D843 words, where no default is seeded into a file nobody wrote.
+	// A plan that holds it writes the file and not the node, which is why it
+	// is read here beside the plan rather than discovered at the write.
+	importCloneURLs map[string]string
+
 	// firstPublish is whether the write this plan holds is the project's FIRST
 	// published node: nothing is at the path today, so the write creates it
 	// rather than replacing one. The distinction is not decoration — every other
@@ -243,6 +252,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 		return nil, true, policyMigrationRefusal(derr)
 	}
 	m.node = old
+	m.importCloneURLs = cloneURLsToImport(lc, old, configPath)
 	m.drift = policyConfigDrift(lc, old)
 	if len(m.drift) > 0 {
 		if err := publishPlanFor(ctx, db, lc, m, base, old); err != nil {
@@ -279,7 +289,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 			return nil, true, err
 		}
 	}
-	if !writes && m.generations == nil && m.record == "" {
+	if !writes && m.generations == nil && m.record == "" && len(m.importCloneURLs) == 0 {
 		return nil, true, nil
 	}
 	return m, true, nil
@@ -293,10 +303,11 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 // A member written but stating no value is not one of them:
 // ImageCatalogEffective is nil for a config that names no catalog and for one
 // that writes an empty catalog, which publishes no member at all (D1156),
-// ImageMapEffective is nil for the same two spellings of the map (D1906), and
-// OrchestratorEffective is nil for a block that sets no key (SetsNothing). The
-// publish would create a policy that admits nothing and carry none of them with
-// it.
+// ImageMapEffective is nil for the same two spellings of the map (D1906),
+// CloneURLsEffective is nil for them too (a block with no entry publishes no
+// member, SD5), and OrchestratorEffective is nil for a block that sets no key
+// (SetsNothing). The publish would create a policy that admits nothing and
+// carry none of them with it.
 //
 // The rule is the publisher's own rows, one member at a time: whatever
 // policyNodeForPublish would put in the node because the file states it is a
@@ -335,6 +346,15 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	if lc.SubscriptionSpreadEffective(nil) != nil {
 		out = append(out, "the pools' subscription switch")
 	}
+	// The clone URLs join them (SD5, D842): the URL a run clones from is the
+	// member the runner computes from the published node, and no job's
+	// environment carries it, so a project whose config writes the block and
+	// which has never published a node has left where its runs clone from in a
+	// file no run reads — the state a cluster with no browser console could not
+	// leave at all before this release (G3).
+	if lc.CloneURLsEffective(nil) != nil {
+		out = append(out, "the clone URLs")
+	}
 	return out
 }
 
@@ -346,12 +366,15 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 // and the shared config refuses the map and the switches outright. The triage
 // switch joins them (D1854) for the half a repository cannot write: a
 // repository's own file states the switch for itself, and the answer a
-// project's runs read is the node's. The pools' subscription switch joins them
-// last (F22, D1636) for the same reason, one over: whether a run may spread a
-// project across two or more subscriptions at all is the node's answer, and a
-// written true is what makes a pool of two or more subscriptions serve
-// anything. So each of them is a member a project that
-// has never published a node has left in a file no run reads.
+// project's runs read is the node's. The clone URLs join them (SD5, D842) for
+// the whole of the member: the runner computes a run's clone URL from the
+// published node, so the block the local config writes reaches no run until the
+// node carries it. The pools' subscription switch joins them last (F22, D1636)
+// for the same reason, one over: whether a run may spread a project across two
+// or more subscriptions at all is the node's answer, and a written true is what
+// makes a pool of two or more subscriptions serve anything. So each of them is
+// a member a project that has never published a node has left in a file no run
+// reads.
 //
 // The members that are not node-only are not this stage's to publish here: a
 // budget ceiling, a base branch or a model list reaches every run through the
@@ -524,6 +547,20 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		return m.confirmReseed(ctx, cmd, restoreAsk(c, ask), yes, w, admitted)
 	}
 	if !m.writesNode() {
+		if len(m.importCloneURLs) > 0 {
+			// The import is a write of its own, and the only one this run
+			// makes: the block has been readable to this operator inside the
+			// published node and nowhere else, so it is confirmed the way the
+			// node's own write is rather than riding on the one-line record
+			// that would otherwise be this run's whole work (spec §6.4).
+			if err := confirmStageWrite(cmd, m.lc, restoreAsk(c, ask), yes, policyCloneURLsWhat); err != nil {
+				return err
+			}
+			if err := m.recordGeneration(ctx, cmd); err != nil {
+				return err
+			}
+			return m.importPolicyNodeCloneURLs(w)
+		}
 		// The one write of this run is the generation record in this machine's
 		// file: there is no node to rewrite and so nothing for the operator to
 		// confirm by name — the file is backed up and replaced the same way, and
@@ -615,7 +652,14 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	if err := m.write(ctx); err != nil {
 		return err
 	}
-	return m.recordGeneration(ctx, cmd)
+	if err := m.recordGeneration(ctx, cmd); err != nil {
+		return err
+	}
+	// The import rides on the confirmation the node's write has just taken:
+	// this run is publishing the node the local config states, and the block's
+	// home is now the file, so it is written there in the run the operator
+	// confirmed rather than left for the next one.
+	return m.importPolicyNodeCloneURLs(w)
 }
 
 // inflightAnswer is what a door does about the runs a node write finds in
@@ -769,6 +813,8 @@ func (m *policyMigration) doneDetail() string {
 		return fmt.Sprintf("re-seeded %s from the published policy node", m.path)
 	case m.writesNode():
 		return fmt.Sprintf("migrated the published policy from version %d to %d in place", m.from, projectpolicy.Version)
+	case len(m.importCloneURLs) > 0:
+		return fmt.Sprintf("imported the published policy node's clone_urls block into %s", m.path)
 	default:
 		return fmt.Sprintf("recorded the published policy's generation in %s", m.path)
 	}
@@ -833,7 +879,10 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 		// Verify to read back either, which is the whole of what it asks
 		// (writesNode): a re-seed that carries a migration with it does write the
 		// node and is verified like any other write.
-		return policyGenerationRecord(w, m.path, m.lc, m.generations.published)
+		if err := policyGenerationRecord(w, m.path, m.lc, m.generations.published); err != nil {
+			return err
+		}
+		return m.importPolicyNodeCloneURLs(w)
 	}
 	if err := m.write(ctx); err != nil {
 		return err
@@ -843,7 +892,10 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 	// re-seeded from — recording the generation the node was at before the write
 	// would leave the file refusing the operator's own next edit against the node
 	// this very run wrote.
-	return m.recordGeneration(ctx, cmd)
+	if err := m.recordGeneration(ctx, cmd); err != nil {
+		return err
+	}
+	return m.importPolicyNodeCloneURLs(w)
 }
 
 // printGenerationState is D854's three-way state: what this machine's config was
@@ -882,6 +934,7 @@ const (
 	policyMigrationWhat  = "this rewrites the published policy node in place"
 	policyPublishWhat    = "this rewrites the published policy node in place, from your local config"
 	policyReseedWhat     = "this re-seeds your local config from the published policy node"
+	policyCloneURLsWhat  = "this imports the published policy node's clone_urls block into your local config, which becomes the block's source from then on"
 	policyNoDBReason     = "the project's config names no Firebase budget backend, so there is no published policy node to read"
 )
 
@@ -1123,6 +1176,14 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 	case m.record != "":
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy node carries what the local config states, and the config records %s as the generation its policy keys were written from: this run records %s in %s",
 			generationText(m.recorded), m.record, m.path)}, nil
+	case m.moved == nil && len(m.importCloneURLs) > 0 && len(m.drift) == 0 && m.record == "":
+		// The only thing this run has to do is move the block: the node is at
+		// this version, the file states nothing the node does not carry, and
+		// the block the node holds is not in the file. A check line that said
+		// "the local config states what the published policy does not carry"
+		// would name an empty list, which reads as a bug rather than as the
+		// migration the next update is.
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy node carries a clone_urls block this machine's config file does not: this run imports it into %s", m.path)}, nil
 	case m.moved == nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local config states what the published policy does not carry: %s", memberListText(m.drift))}, nil
 	}
@@ -1173,6 +1234,8 @@ func (m *policyMigration) planDetail() string {
 		return fmt.Sprintf("re-seed %s from the published policy node, after your confirmation", m.path)
 	case m.record != "":
 		return fmt.Sprintf("record the published policy node's generation (%s) in %s", m.record, m.path)
+	case m.moved == nil && len(m.importCloneURLs) > 0 && m.pub == nil:
+		return fmt.Sprintf("import the published policy node's clone_urls block into %s, after your confirmation", m.path)
 	case m.moved == nil:
 		return "publish the node the local config states, after your confirmation"
 	case m.pub == nil:

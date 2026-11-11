@@ -472,6 +472,14 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   byte-for-byte alone (a re-render that churns an identical file, or a reload with nothing to reload, would make the one command noisy on every run);
   and **reload** the login service (`launchctl` at the user's own login level on macOS, `systemctl --user` on Linux, the same interface
   `install` uses, faked in tests) so the running daemon picks the re-rendered unit up.
+  **The program a re-render writes is one a release installed**: a unit runs its program at every login and restarts it whenever it stops, so the update
+  door re-points an installed unit only at a versioned build outside the system's temporary directory, and an `update` run from a checkout's `go build` or
+  from `go run`'s temporary binary writes nothing, prints **both paths** (the one the unit names and the one this run is) and names
+  `fugaro orchestrator install` — the command that points a unit at another program deliberately. A re-render that keeps the program the unit already
+  names still happens from any build, so a release that changes only the template still converges under one `fugaro update` (the HARD RULE), and the
+  `setup` door keeps the re-point. **This narrowing is the implementation's and not an owner's**: it is recorded, with its date and its one-place
+  reversal, in the reconciliation's T8 section (T7's re-render and T8's reading both say the re-render names the program the unit already named, and the
+  code did not).
   **It is a write to the person's own home and their own service manager, never to a system path and never to the cloud**, and it is stated as such in
   the plan line: no root, no `sudo`, no network. **It never installs a unit**: a machine without one — a project that did not choose the daemon, or a
   person who skipped `setup` — gets no daemon from `update`, and that is a boundary of the ruling rather than an oversight. **It follows the same
@@ -481,6 +489,18 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   and the drift stays visible through `doctor` and O10's nudge until the person runs the command themselves. **`fugaro orchestrator install` stays the
   explicit command** — the first install on a machine that skipped `setup`, and repair — and the re-render reuses its installer rather than a second
   copy of it, but **no release's `### For operators` ever needs it**. `Migrate` stays the daemon's own start-up (O8), so this step carries no state work.
+
+  **The owner's answer of 2026-11-10 on the step's confirmation (reconciliation T8; NOT the recommendation — it supersedes T7's "a terminal asks for the
+  step's own class, which is `Typed`" above).** The owner's complaint of **2026-11-10** is that `fugaro update` stays the whole upgrade **with no extra
+  confirmation prompt**, and it decides open item (1) of T7's ruling: **the re-render step asks nothing at a terminal.** It prints its line of the plan —
+  the file it re-renders and where it lives — and re-renders it, which is the standing Q2 gave the setup step's line (no extra confirmation, because the
+  step is a line of a plan the person already reads before it is applied). Everything T7 fenced stays fenced and nothing is widened: `--yes` never covers
+  the step, so an unattended run leaves it for the person and names `fugaro update`; a coding agent's session writes no unit; a run with nobody at it
+  writes no unit; the managed gate stays exactly as it is; and `update` never installs one. The consequence is stated rather than hidden: **a release that
+  changes only the unit's template asks the person nothing**, because no covered stage has anything to change and the run's single confirmation is asked
+  lazily. `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged` holds the behavior — `askedSomething` fails it if the step ever prints a question —
+  and `TestDocsStatelessOrchestratorUnitRerenderAsksNothing` holds this paragraph. **The reversal is one place**: `internal/cli/update_unit_stage.go`'s
+  `Apply`, plus this paragraph and that pin.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestLaunchdPlistMatchesTheGolden`, `TestSystemdUnitMatchesTheGolden`, `TestInstallWritesOnlyUnderTheUserHome`, `TestWindowsIsRefusedNamed`,
   `TestUninstallRemovesWhatInstallWrote`, `TestInstallRefusedUnderAnAgentMarker`, `TestUnitPointsAtTheStableBinaryPath` (never a versioned
@@ -497,13 +517,17 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   previous template converges under **one `fugaro update`** — the file is re-rendered from the current template and the service reloaded — with no
   second command, which is the HARD RULE), `TestUpdateNeverInstallsAUnit` (no unit installed: `update` writes none and the plan line says why, so a
   project that did not choose the daemon never gets one), `TestUpdateLeavesACurrentUnitAlone` (the rendered text equals the file: no write and no
-  reload, so a repeated `update` is quiet), `TestUpdateRerendersWhenTheBinaryPathChanged` (the render carries the stable path, so a moved Homebrew
-  prefix re-renders), `TestUpdateUnitStepNeedsATypedConfirmation` (the class is `Typed`: `--yes` does not cover it and an agent-marker run writes no
-  unit), `TestUpdateUnitStepTouchesNoSystemPath` (the write stays under the person's home and no `sudo` is asked for), and
+  reload, so a repeated `update` is quiet), `TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall` (the render carries the stable path, so a
+  unit written under another prefix — a moved Homebrew installation — re-renders, and the plan line names both paths),
+  `TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow` (the program a re-render writes is one a release installed: a unit naming
+  `/opt/homebrew/opt/fugaro/bin/fugaro`, met by an `update` running from a `dev` build or from a build in the temporary directory, is left exactly as
+  it is — no write, no reload, no question — and the plan line names both paths and `fugaro orchestrator install`),
+  `TestUpdateUnitStepAsksNothingAndIsLeftForThePerson` (the step asks nothing at a terminal, and `--yes` still does not cover it:
+  an agent-marker run writes no unit), `TestUpdateUnitStepTouchesNoSystemPath` (the write stays under the person's home and no `sudo` is asked for), and
   `TestUpdateUnitStepUsesTheInstallersRenderer` (the step calls `service.Render` and the installer's reload, so there is no second renderer). Tests
   render into `t.TempDir()` and never call
   `launchctl` or `systemctl` (an interface is faked).
-- **Command:** `go test ./internal/orchestrator/service/ -count=1 && go test ./internal/cli/ -run 'TestLaunchd|TestSystemd|TestInstall|TestUninstall|TestWindows|TestSetup|TestUpdateRerenders|TestUpdateNeverInstalls|TestUpdateLeaves|TestUpdateUnitStep|TestDoctorReportsAnOutOfDateUnitTemplate' -count=1`
+- **Command:** `go test ./internal/orchestrator/service/ -count=1 && go test ./internal/cli/ -run 'TestLaunchd|TestSystemd|TestInstall|TestUninstall|TestWindows|TestSetup|TestUpdateRerenders|TestUpdateNeverInstalls|TestUpdateNeverRepoints|TestUpdateLeaves|TestUpdateUnitStep|TestDoctorReportsAnOutOfDateUnitTemplate' -count=1`
 - **Depends on:** O8. **Level 4.**
 - **Commit:** `feat(cli): install the orchestrator unit from fugaro setup and re-render it from fugaro update (O9)`
 - **Red step:** `TestInstallWritesOnlyUnderTheUserHome` fails to build, then fails when a path outside the home is accepted; **and, for T7's ruling,

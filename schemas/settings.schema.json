@@ -462,6 +462,9 @@
         "claude_accounts.*.allow_data_to": {
           "default": "unset = nobody"
         },
+        "clone_urls": {
+          "default": "unset = none: a run clones from its provider's own URL for its repository (https://github.com/owner/name.git)"
+        },
         "commit_email": {
           "default": "unset = Fugaro's own address"
         },
@@ -1063,7 +1066,8 @@
           "default": "unset = the file is refused (gcp_project: is required)"
         },
         "local.version": {
-          "default": "1"
+          "$comment": "localcfg.ConfigVersion",
+          "default": "2"
         },
         "log_view": {
           "default": "unset = the project's default logs"
@@ -1265,6 +1269,9 @@
         "subscription_spread": {
           "default": "unset = false: a run spreads across one subscription at a time"
         },
+        "terraform.admins": {
+          "default": "unset = none"
+        },
         "terraform.alert_email": {
           "default": "unset = none: no budget alert is mailed"
         },
@@ -1276,9 +1283,6 @@
         },
         "terraform.coordinator": {
           "default": "unset = false: no coordinator is deployed"
-        },
-        "terraform.launchers": {
-          "default": "unset = none"
         },
         "terraform.no_log_isolation": {
           "default": "unset = false: each run's logs are isolated"

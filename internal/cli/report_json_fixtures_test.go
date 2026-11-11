@@ -339,6 +339,14 @@ var jsonCases = map[string]jsonCase{
 			return []string{"plan", "status"}
 		},
 	},
+	"project clone-url ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := newBudgetFixture(t, "")
+			f.appendConfig(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n")
+			return []string{"project", "clone-url", "ls"}
+		},
+	},
 	"project policy show": {
 		reads: true,
 		run: func(t *testing.T) []string {
