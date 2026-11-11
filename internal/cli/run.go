@@ -1098,10 +1098,12 @@ func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string,
 	}
 	// The pair's own image gate, after the checks that judge the pair's shape
 	// and before the two that read the cloud for room and for money: a runner
-	// older than the ab field refuses the whole task at bootstrap (task.Parse
-	// decodes with DisallowUnknownFields), so a pair written onto such an image
-	// would cost the champion the run it was launched for. A pair is dropped,
-	// the launch is not (D554, pairImageWhy).
+	// older than the ab field either refuses the whole task at bootstrap
+	// (task.Parse decodes with DisallowUnknownFields, on a release older than
+	// the wire) or reads the block with no challenger rule and publishes the
+	// arm as an ordinary run (the wire's own release, one before abSince), and
+	// either way a pair written onto such an image costs the champion more than
+	// a sample. A pair is dropped, the launch is not (D554, pairImageWhy).
 	if why := pairImageWhy(ctx, env, slug, run.Spec); why != "" {
 		pairSkip(warn, why)
 		return nil, why

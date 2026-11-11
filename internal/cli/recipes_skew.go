@@ -1222,13 +1222,17 @@ func baseBranchSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.
 	}
 }
 
-// abSince is the first fugaro release whose runner acts on a task's ab block:
-// the release the pair's wire and the runner's shadow behaviour both landed
-// in, where a challenger arm publishes nothing and pushes nothing (A1.1,
-// A2.1, D554). The release before it is worse than one that ignores the
-// block: task.Parse decodes with DisallowUnknownFields, so a runner older
-// than this one refuses the whole task — the champion's arm included, which
-// is the developer's own run.
+// abSince is the first fugaro release whose runner gives a task's ab block the
+// challenger's half of the pair: the release A2.1's shadow behaviour landed in,
+// where the arm publishes nothing and pushes nothing (D554). A1.1's wire is one
+// release older, and that is what makes the release before this one the worse
+// of the two to write a pair onto rather than the better: a 0.13.0 runner reads
+// the block, has no challenger rule, and runs the arm handed to it as an
+// ordinary run — one that publishes, taking the developer's own PR and the
+// shadow's whole point with it. A runner older than the wire knows no ab field
+// at all, and task.Parse decodes with DisallowUnknownFields, so it refuses the
+// whole task at bootstrap: the champion's arm included, which is the
+// developer's own run.
 const abSince = "0.14.0"
 
 // pairImageWhy is why this launch samples no pair for the job image it will
@@ -1241,8 +1245,9 @@ const abSince = "0.14.0"
 // that leave the developer's run intact. This one is asked by the *pair* —
 // a second run this build adds on top of that run — so it answers one closed
 // reason and the champion goes on alone, unmarked: a pair dropped costs a
-// sample, while a pair written onto an image that cannot read the block costs
-// the champion its run.
+// sample, while a pair written onto an image whose runner predates abSince
+// costs the champion the run it was launched for either way: the arm publishes
+// as an ordinary run, or the whole task is refused at bootstrap.
 //
 // The image is judged by both judges baseBranchSkew asks where it read no
 // workflow (its own nil arm, whose reasoning this shares): a checkout: clone

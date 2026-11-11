@@ -124,6 +124,17 @@ func newABLaunch(t *testing.T) *abLaunchFixture {
 // choosing: a launch reads the layer it is given before it decides anything.
 func newABLaunchLayer(t *testing.T, layer string) *abLaunchFixture {
 	t.Helper()
+	return newABLaunchBase(t, layer, abLaunchBase, abLaunchBase)
+}
+
+// newABLaunchBase is the whole fixture: the layer's ab: block, the base image
+// the installation itself runs, and the base image the repository's build
+// record names. The two are apart in a test about either judge on its own — a
+// record whose base is not a release is one whose image nothing here can date,
+// which leaves the installation's own base image the judge left with a release
+// to read.
+func newABLaunchBase(t *testing.T, layer, base, recordBase string) *abLaunchFixture {
+	t.Helper()
 	run := gcpfake.NewRun(t)
 	logging := gcpfake.NewLogging(t)
 	iam := gcpfake.NewIAMCredentials(t)
@@ -143,7 +154,7 @@ func newABLaunchLayer(t *testing.T, layer string) *abLaunchFixture {
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\n" +
 		"runs_bucket: fugaro-runs-proj-1234\nbucket_url: " + f.bucket + "\n" +
 		"user: someone@example.com\nmax_parallel: 2\n" +
-		"base_images: { base: " + abLaunchBase + " }\n" +
+		"base_images: { base: " + base + " }\n" +
 		"endpoints: { run: " + run.URL + "/, logging: " + logging.URL + "/, iam_credentials: " + iam.URL + "/, no_auth: true }\n" +
 		"budget: { mode: enforce, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + db.URL + ", token_signer: " + abLaunchSigner + " }\n" +
 		// The route that serves the challenger: the owner's, in the project
@@ -161,7 +172,7 @@ func newABLaunchLayer(t *testing.T, layer string) *abLaunchFixture {
 	db.Set("config/caps/global", map[string]any{"dailyMicros": 100 * abLaunchUSD, "perRunMicros": 10 * abLaunchUSD})
 	db.Set("config/caps/defaults", map[string]any{"repoDailyMicros": 50 * abLaunchUSD, "repoPerRunMicros": 5 * abLaunchUSD})
 	db.Set("config/limits", map[string]any{"maxReserveMicros": 5 * abLaunchUSD})
-	f.writeBuildRecord(t, abLaunchBase)
+	f.writeBuildRecord(t, recordBase)
 	// A launch from outside the repository's checkout resolves the layer the
 	// task carries (launchLayerConfig), so the agent the launch judges — and
 	// the ab: block it samples on — are this layer's.
@@ -530,6 +541,32 @@ func TestOldImageNotSampled(t *testing.T) {
 	// The recipe is the one whose own constructs a 0.13.0 runner knows (solo
 	// reads review and nothing newer), so the image the pair gate refuses is
 	// one the launch itself still goes on with.
+	out, errOut, err := f.launch(t, "--recipe", "solo", "--json", "Add a feature")
+	if err != nil {
+		t.Fatalf("the launch failed: %v\n%s%s", err, out, errOut)
+	}
+	if got := len(f.run.RunRequests()); got != 1 {
+		t.Fatalf("the launch started %d runs, want the champion alone", got)
+	}
+	doc := abLaunchJSON(t, out)
+	if doc.Pair == nil || doc.Pair.Reason != "old-image" {
+		t.Fatalf("--json carried no old-image reason: %q", out)
+	}
+	champion := f.taskOf(t, doc.RunID)
+	if champion.AB != nil || champion.Batch != "" {
+		t.Errorf("the champion was marked with a pair it did not start: %+v, batch %q", champion.AB, champion.Batch)
+	}
+}
+
+// TestOldBaseImageNotSampled: the installation's own base image is a judge of
+// the pair's image gate in its own right — the one left when the job image's
+// build record names a base nothing here can date, as a hand-pushed one does —
+// and the release the challenger's rule landed in is what it is judged against.
+// An installation older than it samples no pair, whatever image the repository
+// built its own on, and the champion goes on alone.
+func TestOldBaseImageNotSampled(t *testing.T) {
+	f := newABLaunchBase(t, abLaunchLayerText(abLaunchPairBlock),
+		"ghcr.io/dimipaun/fugaro-base:0.13.0", "ghcr.io/dimipaun/fugaro-base:handbuilt")
 	out, errOut, err := f.launch(t, "--recipe", "solo", "--json", "Add a feature")
 	if err != nil {
 		t.Fatalf("the launch failed: %v\n%s%s", err, out, errOut)
