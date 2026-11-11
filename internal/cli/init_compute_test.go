@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -65,6 +66,13 @@ func computeRig(t *testing.T) *initRig {
 	// the installation's answer is a different one (a root's name is the
 	// script key's suffix).
 	r.script["output@compute"] = map[string]any{"stdout": computeOutputsJSON(t)}
+	// The machine's login unit is this release's, so the converge's unit step
+	// (O9) has nothing to do. It is part of the rig rather than of a test: a
+	// plan-only run plans the FIRST stage with something to do, so a rig whose
+	// unit were missing would take that slot from the compute stage and the
+	// guard these tests drive would never be planned — the refusal below would
+	// pass for a reason it does not name.
+	unitFileAt(t, currentUnit(t).Text, time.Now())
 	r.save(t)
 	return r
 }

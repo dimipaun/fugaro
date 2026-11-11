@@ -389,6 +389,14 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro orchestrator state":     "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
 	"fugaro orchestrator events":    "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
 	"fugaro orchestrator patch":     "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
+	// The login unit's three commands read this machine's own home and nothing
+	// else, and this world's home has no unit: install is refused before its
+	// typed confirmation (a unit runs code at every login, and the word install
+	// is not something a closed pipe can type), and uninstall and status answer
+	// about a machine that has none.
+	"fugaro orchestrator install":   "refuses before its ask: the typed confirmation of a unit that runs code at every login needs a real terminal",
+	"fugaro orchestrator status":    "reports this machine's login unit, and this world's home has none: it says so and returns",
+	"fugaro orchestrator uninstall": "says there is nothing to remove: this world's home has no login unit",
 	"fugaro pair":                   "refuses from inside its body: the world's project has no budget.firebase_api_key for the phone to exchange the token with",
 	"fugaro pair ls":                "prints the no-project-config refusal",
 	"fugaro plan graph":             "refuses with no graph artifact under docs/plans",
@@ -696,6 +704,13 @@ func closedStdinWorld(t *testing.T) *budgetFixture {
 	// build command and take minutes, and the harness would be measuring the
 	// machine rather than the command.
 	t.Setenv("FUGARO_STATE_DIR", "")
+	// The login unit's file belongs under the person's own home on macOS —
+	// launchd reads $HOME, where Linux reads the XDG directories the fixture
+	// already isolates — and this harness drives the uninstall leaf. Without
+	// this, a developer who has the daemon installed would have their own unit
+	// deleted by a test run, and the leaf would fail on the file it found
+	// rather than on the machine having none.
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
 	// Which machine this is must not decide what a run does: a coding agent's
 	// session refuses writes the closed-stdin case would otherwise reach, and a
 	// real terminal is what this harness is the opposite of.
