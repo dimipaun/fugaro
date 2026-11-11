@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -45,10 +46,10 @@ var argsUpdUser = []string{"plugin", "update", "fugaro@fugaro", "--scope", "user
 //     policy-vs-jobs fires and the images stage has to re-pin it;
 //   - the checkout still carries the pin the previous release wrote, and that
 //     release's plugin is installed, so plugin-pin fires — the pin is a
-//     leftover nothing in the tree moves any more (U2 of
-//     docs/plugin-user-scope/implementation-plan.md, D949), which U5's
-//     migration takes out — and the checkout stage has to move the
-//     installation.
+//     leftover nothing in the tree writes any more (U2 of
+//     docs/plugin-user-scope/implementation-plan.md, D949), which this same
+//     run takes out of the checkout (U5) — and the checkout stage has to move
+//     the installation.
 type convergeRig struct {
 	*imagesRig
 	root     string
@@ -255,12 +256,19 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	t.Helper()
 	r := newConvergeRig(t, node)
 	out := convergeOn(t, r, stale)
-	// Nothing in the tree writes a pin any more (U2, D949): the settings the
-	// checkout carried come out of the run byte for byte as they went in, and
-	// what the run moves is the plugin Claude Code has installed, at user
-	// scope — the one the plugin stage is about now.
-	if got := upgradeRead(t, r.settings); got != wiredAt("v"+convergePrev) {
-		t.Errorf("the checkout's settings changed, and nothing writes a pin any more:\n%s", got)
+	// The one thing this run writes in the checkout is the pin coming out
+	// (U5's migration, inside this same `fugaro update`): the fixture carries
+	// nothing but the pin, so both entries go and both parent keys with them,
+	// and an empty settings object is left — never a deleted file.
+	if got := upgradeRead(t, r.settings); got != "{}\n" {
+		t.Errorf("the checkout's settings after the run:\n%s\nwant the pin taken out and nothing else moved:\n%s", got, "{}\n")
+	}
+	// And with the pin gone there is nothing stale left for the line every
+	// command prints to say about this checkout: the door the line sends the
+	// reader to is also the door that clears it (U2's review, #2235: until this
+	// migration, a checkout an older release pinned kept printing it).
+	if line := staleLine(pluginwire.Status(r.settings, convergeRelease, installedPlugins())); line != "" {
+		t.Errorf("after fugaro update the staleness line still fires for a checkout the run unpinned: %q", line)
 	}
 	if !strings.Contains(out, "plugin: done: installed "+convergeRelease) {
 		t.Errorf("the plugin step did not converge the install on this release's version:\n%s", out)
@@ -324,14 +332,20 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 		}
 	}
 	// plugin-pin is asserted the other way round, and the assertion is not an
-	// omission: the pin this fixture carries is a leftover no run writes or
-	// moves any more (U2, D949), so what this run must NOT do is report it
-	// converged — a pass here would be the merge's write coming back. The
-	// fixture is asserted stale above, with every other id, and still stale
-	// here. U5's migration is what takes the entry out, inside this same
-	// `fugaro update`, and this is the assertion it flips.
-	if c, ok := doctorCheckByID(after.Checks, "plugin-pin"); !ok || c.OK {
-		t.Errorf("after fugaro update, doctor's plugin-pin check reads %+v: the fixture still carries the previous release's pin and nothing in this tree moves one, so the check must still fire (U5's migration is what removes the entry)", c)
+	// omission: nothing in this tree writes a pin any more (U2, D949), so what
+	// this run must NOT do is report the pin converged — a version read back
+	// there would be the merge's write coming back. What it does instead is
+	// take the entry out (U5's migration, inside this same `fugaro update`), so
+	// the check reads the same file as a checkout with no marketplace at all.
+	c, ok := doctorCheckByID(after.Checks, "plugin-pin")
+	if !ok {
+		t.Fatalf("after fugaro update, doctor has no plugin-pin check at all: %+v", after.Checks)
+	}
+	if !strings.Contains(c.Problem, "no fugaro marketplace") {
+		t.Errorf("after fugaro update, doctor's plugin-pin check reads %+v, want the checkout read as one with no fugaro marketplace: the run takes the pin out (U5)", c)
+	}
+	if strings.Contains(c.Problem, convergePrev) {
+		t.Errorf("after fugaro update, doctor's plugin-pin check still reads the previous release's pin: %s", c.Problem)
 	}
 	for _, c := range after.Checks {
 		// The per-workflow settings comparison, which is the update's own

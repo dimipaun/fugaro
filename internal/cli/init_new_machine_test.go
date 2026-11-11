@@ -125,18 +125,22 @@ func TestAdoptModeNamesMissingRole(t *testing.T) {
 }
 
 // A rerun on an installation an older init made (its config, its state, its
-// marks) adopts it without a change: every stage is done or skipped, none
-// changed, and the plan is empty; with the plugin already wired at this
-// release the plugin stage says No changes too. The engines' plans are the
-// ones they always made.
+// marks) adopts it without moving anything of the installation: nothing is
+// applied, the installation stage says No changes, and the engines' plans are
+// the ones they always made. The one write such a run has is the checkout's
+// own: the plugin stage runs in setup as it does in update, so the pin an older
+// fugaro left in the checkout is taken out here too (U5, spec §8) — the
+// migration is the stage's, not the update door's — and that is the change
+// below, with the repository stage still skipped over the fugaro.yaml the
+// default branch has not got.
 func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 	r := newInitRig(t)
 	r.installationState(t)
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
 	releaseBuild(t, "0.2.0")
-	// A checkout of a repository this project has not onboarded, whose
-	// settings already carry the plugin at this release.
+	// A checkout of a repository this project has not onboarded, still
+	// carrying the pin an older fugaro left.
 	settings := wiringCheckoutAt(t, "https://bitbucket.org/acme/sandbox.git", "")
 	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
 		t.Fatal(err)
@@ -152,16 +156,28 @@ func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 	if len(r.ran(t, "apply")) != 0 {
 		t.Errorf("a rerun applied: %q", r.calls(t))
 	}
+	states, details := map[string]initflow.State{}, map[string]string{}
 	for _, s := range res.Stages {
-		if s.State != "done" && s.State != "skipped" {
-			t.Errorf("stage %s is %s (%s), want done or skipped", s.Name, s.State, s.Detail)
-		}
-		if (s.Name == "installation" || s.Name == "plugin") && !strings.Contains(s.Detail, "No changes") {
-			t.Errorf("stage %s: %q does not say No changes", s.Name, s.Detail)
+		states[s.Name], details[s.Name] = s.State, s.Detail
+		if s.State != "done" && s.State != "skipped" && s.State != "changed" {
+			t.Errorf("stage %s is %s (%s), want done, skipped, or the pin's removal", s.Name, s.State, s.Detail)
 		}
 	}
-	if stateOf(res, "installation") != "done" || stateOf(res, "plugin") != "done" || stateOf(res, "repository") != "skipped" {
-		t.Errorf("stages %+v", res.Stages)
+	for name, state := range map[string]initflow.State{"installation": "done", "plugin": "changed", "repository": "skipped"} {
+		if states[name] != state {
+			t.Errorf("stage %s is %q, want %q\nstages %+v", name, states[name], state, res.Stages)
+		}
+	}
+	if !strings.Contains(details["installation"], "No changes") {
+		t.Errorf("the installation stage says %q, want No changes", details["installation"])
+	}
+	// The plugin stage's whole account is the removal: nothing is installed (no
+	// claude in this rig), and the two entries are what the file lost.
+	if !strings.Contains(details["plugin"], "removed the fugaro@fugaro pin from") {
+		t.Errorf("the plugin stage says %q, want the pin it took out\nstages %+v", details["plugin"], res.Stages)
+	}
+	if got := upgradeRead(t, settings); got != "{}\n" {
+		t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin taken out:\n%s", got, "{}\n")
 	}
 }
 
