@@ -2538,7 +2538,7 @@ test('the gate refuses each planted defect', (t) => {
   )
   assert.match(
     verdict(t, scopeUnlinked).join('\n'),
-    /carries 6 links where SECURITY\.md's "In short" section writes 7/,
+    /carries 7 links where SECURITY\.md's "In short" section writes 8/,
     'a cross-reference with its link dropped is not refused',
   )
 
