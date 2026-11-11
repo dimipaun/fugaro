@@ -240,6 +240,58 @@ func TestDoctorReadsTheRepositorysOwnRowsAtTheBase(t *testing.T) {
 	}
 }
 
+// TestDoctorDoesNotMeasureARowTheMatcherCannotUse: the repository's own rows are
+// matched against the base's tree (D1503), so they are measured first with the
+// function a run's load measures them with (sensitivity.Pattern.Validate): the
+// row it refuses is not counted and not measured, and the valid row beside it is
+// counted and measured, so a file that writes one unusable row is diagnosed
+// rather than hung on.
+//
+// The base commits securityAlternationPath, which the fixture's second row would
+// spend hours on if it were matched as written — so this test is the hang too.
+// Mutation checked by removing the drop from securityMatchable: the line's count
+// grows and both checks stop answering (`go test -run
+// TestDoctorDoesNotMeasureARowTheMatcherCannotUse -timeout 30s` times out). The
+// measurement was put back afterwards.
+//
+// What doctor does not do is name the refused row: the file that writes one is
+// the `fugaro-yaml` line's subject, over the working copy's file, and a
+// base-branch file that differs from the working copy's is `fugaro security
+// paths`' to report — which says the row and sensitivity's own reason.
+func TestDoctorDoesNotMeasureARowTheMatcherCannotUse(t *testing.T) {
+	isolateCache(t)
+	file := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"security: { patterns: [ { name: payments, match: \"internal/payments/**\", category: credentials }, " +
+		"{ name: evil, match: \"" + securityAlternationMatch + "\", category: credentials } ] }\n" +
+		"workflows: { web: { commands: { build: sh b.sh, test: sh t.sh } } }\n"
+	root := doctorSecurityTestBase(t, map[string]string{
+		"README.md":               "# aurora\n",
+		"internal/creds/state.go": "package creds\n",
+		securityAlternationPath:   "code\n",
+		"fugaro.yaml":             file,
+	})
+
+	checks := doctorSecurityChecks(context.Background(), root)
+
+	line, ok := doctorCheckByID(checks, doctorSecurityID)
+	if !ok {
+		t.Fatalf("no %s check: %+v", doctorSecurityID, checks)
+	}
+	if !strings.Contains(line.Problem, "1 pattern written by this repository") {
+		t.Errorf("problem = %q, want the one row a reader may match counted and the refused row not", line.Problem)
+	}
+	found, ok := doctorCheckByID(checks, doctorSecurityUnusedID)
+	if !ok {
+		t.Fatalf("no %s check: %+v", doctorSecurityUnusedID, checks)
+	}
+	if !strings.Contains(found.Problem, "payments") {
+		t.Errorf("problem = %q, want the valid row measured against the base's tree", found.Problem)
+	}
+	if strings.Contains(found.Problem, "evil") || strings.Contains(found.Problem, "{a,aa}") {
+		t.Errorf("problem = %q, names a row the matcher refuses: it is not in the list in force, so it is neither counted nor measured", found.Problem)
+	}
+}
+
 // doctorSecurityProjectLayerYAML is a project layer whose security: block writes
 // one row this repository's base matches and one it does not (D1501). A layer's
 // rows are shared by every repository of the project, so a row naming a tree

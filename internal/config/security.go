@@ -204,8 +204,14 @@ func SecurityPatterns(repo *Security, layer *ProjectLayer) SecurityResolution {
 // "the file is not this", never "the file writes no block": a file that writes
 // no security: key answers with a nil block and true. The rows are as written
 // and are not validated here, which is deliberate: a file a run would refuse at
-// load is a file no run of this repository exists for, and the matcher skips a
-// glob it cannot read (sensitivity.Match) rather than matching by its bytes.
+// load is a file no run of this repository exists for, and a reader that wants
+// what a run holds reads the resolved config rather than this. What a caller may
+// not do with what it is handed is match it as it is: sensitivity.Match's cost is
+// the row's own, and the row that costs minutes — `{a,b}` alternation — is
+// refused by sensitivity.Pattern.Validate rather than skipped by the matcher. So
+// a reader of a file's own bytes measures them with that function first, which is
+// what internal/cli does for `fugaro security paths` and `fugaro doctor`
+// (securityMatchable).
 func SecurityOf(data []byte) (*Security, bool) {
 	c, ps := decodeRepo(data)
 	if c == nil || len(ps) > 0 {

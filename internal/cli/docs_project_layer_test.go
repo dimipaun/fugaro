@@ -226,6 +226,7 @@ func TestDocsProjectLayerSaysTheSecurityListIsResolved(t *testing.T) {
 		"the floor's rows and the repository's as if the project had written none",
 		"the one row it reports is one **this repository's own file** wrote that matches no path in the base",
 		"it is counted like the floor's rows and never measured",
+		"a row they refuse is dropped from the list rather than matched as written",
 		"`always_level_3` and the per-run request that belongs to it arrive with the forced level",
 	} {
 		if !strings.Contains(doc, want) {

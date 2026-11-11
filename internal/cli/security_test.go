@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -555,6 +556,152 @@ func TestSecurityPathsOpensNoBucket(t *testing.T) {
 const securityOwnRowsYAML = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
 	"security:\n  patterns:\n    - { name: payments, match: \"internal/payments/**\", category: credentials }\n" +
 	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// securityAlternationMatch is the match of a row sensitivity.Pattern.Validate
+// refuses for what it costs rather than for what it means: 33 `{a,aa}` groups,
+// the most a MaxPatternMatch-long row can spend (198 of its 200 characters),
+// each one a re-entry into doublestar's matcher with the alternative spliced in.
+//
+// securityAlternationPath is what makes that row expensive, and is the shape
+// hasAlternation's measurement was taken against: a path the alternation can
+// consume one or two runs of, so every group doubles what doublestar has to
+// explore. Measured on this tree with sensitivity.Match, one path and one row:
+// 12 groups 0.7 ms, 16 groups 12.6 ms, 20 groups 179 ms, 22 groups 729 ms,
+// 24 groups 3.0 s — the doubling continues to the 33 a bounded row allows.
+var (
+	securityAlternationMatch = strings.Repeat("{a,aa}", 33)
+	securityAlternationPath  = strings.Repeat("a", 66)
+)
+
+// securityUnusableRowYAML is a repository whose own file writes two rows: one a
+// reader may match and one it may not.
+func securityUnusableRowYAML() string {
+	return "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
+		"security:\n  patterns:\n" +
+		"    - { name: payments, match: \"internal/payments/**\", category: credentials }\n" +
+		"    - { name: evil, match: \"" + securityAlternationMatch + "\", category: credentials }\n" +
+		"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+}
+
+// TestSecurityPathsDoesNotMatchARowTheMatcherCannotUse: this reader matches the
+// repository's own rows, so it measures them as a run's load measures them
+// (sensitivity.Pattern.Validate, in internal/config's own rules) before any of
+// them reaches sensitivity.Match. A row the matcher refuses is not in the list
+// in force, is not matched and is not counted, the valid row beside it still is,
+// and the command says on stderr which row it passed over and why — the answer a
+// person diagnosing a security block needs, and a refusal rather than a hang.
+//
+// Mutation checked by removing the drop from securityMatchable: the three
+// assertions here fail, and the test beside this one —
+// TestSecurityPathsAnswersAPathTheRefusedRowWouldHaveCost — stops answering. The
+// measurement was put back afterwards.
+func TestSecurityPathsDoesNotMatchARowTheMatcherCannotUse(t *testing.T) {
+	securityCheckout(t, "acme/app", securityUnusableRowYAML())
+
+	out, errOut, err := execute(t, "security", "paths", "--check", "internal/payments/legacy.go")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, out)
+	}
+	if !strings.Contains(errOut, "evil") || !strings.Contains(errOut, "alternation") {
+		t.Errorf("stderr = %q, want the refused row and sensitivity.Pattern.Validate's own reason", errOut)
+	}
+	if !strings.Contains(out, "payments") {
+		t.Errorf("the answer does not name the valid row beside it:\n%s", out)
+	}
+
+	list, listErr, err := execute(t, "security", "paths")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, list)
+	}
+	if want := "internal/payments/**"; !strings.Contains(list, want) {
+		t.Errorf("the printed list does not carry the valid row beside it (want %s):\n%s", want, list)
+	}
+	if strings.Contains(list, securityAlternationMatch) {
+		t.Errorf("the printed list carries the row the matcher refuses:\n%s", list)
+	}
+	if !strings.Contains(listErr, "evil") {
+		t.Errorf("stderr without --check = %q, want the refused row said there too: the list is what it is missing from", listErr)
+	}
+
+	doc := securityDoc(t, "security", "paths", "--check", "internal/payments/legacy.go")
+	if doc.Error != "" {
+		t.Errorf("error = %q, want the read to have answered: a refused row is dropped, not a file that could not be read", doc.Error)
+	}
+	want := append(securityFloorRows(), securityRow{"payments", "internal/payments/**", "credentials", "repo"})
+	got := securityRows(doc)
+	if len(got) != len(want) {
+		t.Fatalf("security.patterns = %d rows, want the floor's %d and the repository's one", len(got), len(securityFloorRows()))
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("security.patterns[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+	if doc.Security.Count != len(want) {
+		t.Errorf("security.count = %d, want the list's own %d: a row no reader matches is not in the list in force", doc.Security.Count, len(want))
+	}
+	if len(doc.Checked) != 1 || doc.Checked[0].Matched == nil || doc.Checked[0].Matched.Name != "payments" {
+		t.Errorf("checked = %+v, want the repository's valid row answering for internal/payments/legacy.go", doc.Checked)
+	}
+}
+
+// TestSecurityPathsAnswersAPathTheRefusedRowWouldHaveCost is the hang itself, on
+// its own so that it is the one thing it fails as: the fixture's second row
+// matched against securityAlternationPath is hours of doublestar (the numbers
+// are on that variable), so a reader that took the row as written would not
+// answer at all. Mutation checked by removing the drop from
+// securityMatchable: this test does not fail, it stops answering — `go test -run
+// TestSecurityPathsAnswersAPathTheRefusedRowWouldHaveCost -timeout 30s` times
+// out. The measurement was put back afterwards.
+func TestSecurityPathsAnswersAPathTheRefusedRowWouldHaveCost(t *testing.T) {
+	securityCheckout(t, "acme/app", securityUnusableRowYAML())
+
+	out, errOut, err := execute(t, "security", "paths", "--check", securityAlternationPath)
+	if err != nil {
+		t.Fatalf("fugaro security paths --check %s: %v", securityAlternationPath, err)
+	}
+	if !strings.Contains(out, securityAlternationPath) {
+		t.Errorf("the answer does not name the path it was asked about:\n%s", out)
+	}
+	if strings.Contains(errOut, "error") {
+		t.Errorf("stderr = %q, want the row said and no failure: the path is placeable and the list in force answers it", errOut)
+	}
+}
+
+// TestSecurityPathsRefusesABlockOverTheRowBound: a block that writes more rows
+// than a layer may hold is one no run holds either (sensitivity.MaxPatterns, the
+// bound beside a row's own that sensitivity.Match's note rests on), and there is
+// no per-row answer to a count — so the block is refused whole, the answer is the
+// floor alone, and the `error` member says the bound that was broken rather than
+// a list of 101 rows reading like a list a run would carry.
+func TestSecurityPathsRefusesABlockOverTheRowBound(t *testing.T) {
+	rows := make([]string, 0, sensitivity.MaxPatterns+1)
+	for i := 0; i <= sensitivity.MaxPatterns; i++ {
+		rows = append(rows, fmt.Sprintf("    - { name: r%d, match: \"internal/t%d/**\", category: artifacts }", i, i))
+	}
+	securityCheckout(t, "acme/app", "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n"+
+		"security:\n  patterns:\n"+strings.Join(rows, "\n")+"\n"+
+		"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n")
+
+	out, errOut, err := execute(t, "security", "paths", "--check", "internal/t0/x.go")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, out)
+	}
+	if !strings.Contains(errOut, "floor alone") {
+		t.Errorf("stderr = %q, want the block refused and the floor named as what is printed", errOut)
+	}
+	doc := securityDoc(t, "security", "paths", "--check", "internal/t0/x.go")
+	if !strings.Contains(doc.Error, fmt.Sprint(sensitivity.MaxPatterns)) {
+		t.Errorf("error = %q, want the bound the block broke", doc.Error)
+	}
+	floor := securityFloorRows()
+	if doc.Security.Count != len(floor) {
+		t.Errorf("security.count = %d, want the floor's %d: a refused block's rows are not in force", doc.Security.Count, len(floor))
+	}
+	if len(doc.Checked) != 1 || doc.Checked[0].Sensitive {
+		t.Errorf("checked = %+v, want the path answered no: no row of the refused block is matched", doc.Checked)
+	}
+}
 
 // TestSecurityPathsResolvesTheRepositorysRowsAtTheBase: the repository's own
 // rows are part of the list in force (SC9, D1506, D1511), they carry the source

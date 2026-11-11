@@ -80,6 +80,15 @@ import (
 // is not in force and is said on stderr beside the list
 // (config.SecurityIgnoredRow, D1506): the row is what its author believes and
 // the list in force is not, which is a difference only the reader can settle.
+//
+// The repository's own rows are measured before any of them is matched
+// (securityMatchable). This reader matches a file's own bytes, and
+// sensitivity.Match's cost is the row's own: the alternation refusal is what
+// keeps one row from costing minutes, and every row a caller matches is meant to
+// have passed it. So a row sensitivity.Pattern.Validate refuses is dropped and
+// said on stderr, and a block that writes more rows than a layer may hold is
+// refused whole. Both commands that resolve the list read the file through
+// securityBaseFile, so both are bounded by it.
 
 // securityPathsDoc is D1512's document, and it is the contract the desktop
 // console's §6.23 describes. The shape is closed in the way every wire shape in
@@ -109,15 +118,18 @@ type securityPathsDoc struct {
 	// one.
 	Checked []securityPathAnswer `json:"checked"`
 	// Error is why the repository's own file could not be read at Base: this
-	// checkout holds no such ref, holds no fugaro.yaml at it, or holds one this
-	// reader cannot place a project in. It is a state inside the document and
-	// not a refusal, because the list in force still answers — it is the floor
-	// alone — and a caller that only wants to know what a path is treated as
-	// still gets its answer. "" means the read answered. The text names a ref or
-	// a line, never a value read out of the file. It is about this file alone
-	// and never about the project layer: a file that names no project names no
-	// layer either, and a machine holding no cached copy of a project's layer is
-	// said on stderr rather than here.
+	// checkout holds no such ref, holds no fugaro.yaml at it, holds one this
+	// reader cannot place a project in, or holds one whose security: block no run
+	// holds because it writes more rows than a layer may hold
+	// (securityMatchable). It is a state inside the document and not a refusal,
+	// because the list in force still answers — it is the floor alone — and a
+	// caller that only wants to know what a path is treated as still gets its
+	// answer. "" means the read answered, which a block whose individual rows are
+	// refused still does: those are dropped from the list and said on stderr, not
+	// carried here. The text names a ref or a line, never a value read out of the
+	// file. It is about this file alone and never about the project layer: a file
+	// that names no project names no layer either, and a machine holding no cached
+	// copy of a project's layer is said on stderr rather than here.
 	Error string `json:"error"`
 }
 
@@ -259,7 +271,8 @@ func runSecurityPaths(cmd *cobra.Command, o *securityPathsOptions) error {
 		FloorSource: string(config.SecuritySourceFloor),
 	}
 	var own *config.Security
-	doc.Project, own, doc.Error = securityBaseFile(ctx, root, base)
+	var refused []securityRefusedRow
+	doc.Project, own, refused, doc.Error = securityBaseFile(ctx, root, base)
 
 	// The list in force is the one resolution (SC9, D1506, D1511): the engine's
 	// floor, the project layer that applies to this repository and the
@@ -301,6 +314,15 @@ func runSecurityPaths(cmd *cobra.Command, o *securityPathsOptions) error {
 		// console's contract and carries no member for it.
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this %s writes a security row named %s (%s), which is not in force: the %s row of that name (%s) is the one a run matches, because a name is a row's identity in the list and only the first layer that writes it keeps it\n",
 			ig.Source, cellOneLine(ig.Name), cellOneLine(ig.Written.Match), ig.HeldBy, cellOneLine(ig.Kept.Match))
+	}
+	for _, r := range refused {
+		// A row the matcher refuses is a row its author wrote and no run holds
+		// (securityMatchable). It is not the row above: no union of a name kept
+		// it out — the file it is written in is one a run's load refuses. Said on
+		// stderr for the same reason, with the index `fugaro validate` names the
+		// same row by, because the reader's fix is the row's own text.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this repository's security.patterns[%d] writes a security row named %s (%s), which is not in force: %s; a row the matcher refuses is one a run's load refuses, so nothing here matches it and fugaro validate says the same where it is written\n",
+			r.Index, cellOneLine(r.Row.Name), cellOneLine(r.Row.Match), r.Reason)
 	}
 
 	if o.json {
@@ -382,28 +404,96 @@ func securityRowSource(list config.SecurityList, name string) string {
 // securityBaseFile is what the repository's own fugaro.yaml says at ref: the
 // project it names and the security: block it writes, plus the reason the read
 // did not answer ("" when it did). The third return is the document's `error`:
-// a ref this checkout does not hold, no fugaro.yaml at it, or a file this
-// reader cannot read as one. Both texts name a ref or a line and never a value
-// read out of the file. It is one read of one file, because the two answers are
-// the same file's and a second read could only disagree with the first.
+// a ref this checkout does not hold, no fugaro.yaml at it, a file this reader
+// cannot read as one, or a block of it no run holds (securityMatchable). Both
+// texts name a ref or a line and never a value read out of the file. It is one
+// read of one file, because the two answers are the same file's and a second
+// read could only disagree with the first.
+//
+// The rows are the ones a reader may match: the fourth return is the rows of the
+// block sensitivity.Pattern.Validate refuses, which are dropped from the second
+// (securityMatchable), so a caller that matches the block it is handed cannot be
+// made to spend what a row's own text costs.
 //
 // A file that writes no security: key answers with a nil block, which is the
 // same list as an empty one: the resolution reads a nil half as "this layer
 // wrote nothing" (config.SecurityPatterns, D1504).
-func securityBaseFile(ctx context.Context, root, ref string) (string, *config.Security, string) {
+func securityBaseFile(ctx context.Context, root, ref string) (string, *config.Security, []securityRefusedRow, string) {
 	data, err := readFugaroYAMLAtRef(ctx, root, ref)
 	if err != nil {
-		return "", nil, err.Error()
+		return "", nil, nil, err.Error()
 	}
 	project, err := config.ProjectOf(data)
 	if err != nil {
-		return "", nil, fmt.Sprintf("fugaro.yaml at %s: %v", ref, err)
+		return "", nil, nil, fmt.Sprintf("fugaro.yaml at %s: %v", ref, err)
 	}
 	own, ok := config.SecurityOf(data)
 	if !ok {
-		return "", nil, fmt.Sprintf("fugaro.yaml at %s: this reader cannot read the file as a fugaro.yaml", ref)
+		return "", nil, nil, fmt.Sprintf("fugaro.yaml at %s: this reader cannot read the file as a fugaro.yaml", ref)
 	}
-	return project, own, ""
+	own, refused, problem := securityMatchable(own)
+	if problem != "" {
+		return "", nil, nil, fmt.Sprintf("fugaro.yaml at %s: %s", ref, problem)
+	}
+	return project, own, refused, ""
+}
+
+// securityRefusedRow is one row of the repository's own security block that no
+// reader may match: the row, the index the file wrote it at — the index
+// internal/config's own problems name the same row by, so this warning and
+// `fugaro validate` point at the same row of the same block — and the reason
+// sensitivity.Pattern.Validate gives.
+type securityRefusedRow struct {
+	Index  int
+	Row    sensitivity.Pattern
+	Reason string
+}
+
+// securityMatchable measures the repository's own block before a reader matches
+// it, and is the one place that read is bounded.
+//
+// sensitivity.Match's cost is the row's own: doublestar matches most globs in
+// work proportional to the path, and the one shape that is not — `{a,b}`
+// alternation, where every group re-enters the matcher with the alternative
+// spliced in — is refused by Pattern.Validate (hasAlternation) so that no row
+// can cost minutes. That refusal, and the two bounds around it (MaxPatternMatch
+// on a row's text, MaxPatterns on a layer's list), are what Match's own note
+// rests on: "every row a caller matches has passed that check". A run's lists
+// reach the matcher that way — the runner resolves its files through
+// internal/config, whose rules are these — but this reader's repository half is
+// a file's own bytes read at a ref (config.SecurityOf, D1518), which no run has
+// measured. Matching those as written would hang the two commands a person runs
+// to diagnose a security block, which is the opposite of what they are for: so
+// the rules a run's load applies are applied here, to the same rows, by the same
+// function, and what is dropped is said rather than silently passed over.
+//
+// A row Validate refuses is dropped. A block that writes more rows than a layer
+// may hold is refused whole and its problem returned, because there is no
+// per-row answer to a count: the caller answers with the floor (and the project
+// layer) alone and carries the reason in the document's `error`. The floor's
+// rows and the project layer's are never measured here — the floor is the
+// engine's own, and a published layer is validated where it is published
+// (internal/projectpolicy).
+func securityMatchable(own *config.Security) (*config.Security, []securityRefusedRow, string) {
+	if own == nil {
+		return nil, nil, ""
+	}
+	if len(own.Patterns) > sensitivity.MaxPatterns {
+		return nil, nil, fmt.Sprintf("security.patterns writes %d rows and a layer may hold %d: no run holds a block that long, so no row of it is read", len(own.Patterns), sensitivity.MaxPatterns)
+	}
+	kept := make([]sensitivity.Pattern, 0, len(own.Patterns))
+	var refused []securityRefusedRow
+	for i, row := range own.Patterns {
+		if reason := row.Validate(); reason != "" {
+			refused = append(refused, securityRefusedRow{Index: i, Row: row, Reason: reason})
+			continue
+		}
+		kept = append(kept, row)
+	}
+	if len(refused) == 0 {
+		return own, nil, ""
+	}
+	return &config.Security{Patterns: kept}, refused, ""
 }
 
 // securityBaseBranch is the ref the list in force is read at, resolved through

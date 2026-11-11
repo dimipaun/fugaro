@@ -57,6 +57,15 @@ const (
 // offline read (SC4), and the state of that read is the sibling `project-layer`
 // line's own subject (doctorLayerChecks), which says when a layer's state is
 // unknown rather than leaving it out.
+//
+// A row the matcher refuses is not in the count either: securityBaseFile drops
+// it before this check sees the block, so that measuring a written row against
+// the base's tree cannot be made to cost what the row's own text costs
+// (securityMatchable, and sensitivity.Match's own note). The file that writes one
+// is the `fugaro-yaml` line's subject, over the working copy's file — and a
+// base-branch file that differs from it is `fugaro security paths`' to report,
+// which names the row and sensitivity.Pattern.Validate's reason. This check says
+// nothing about it rather than measuring a row no run holds.
 func doctorSecurityChecks(ctx context.Context, root string) []doctorCheck {
 	return doctorSecurityListChecks(
 		func() (*config.Security, *config.ProjectLayer) {
@@ -64,11 +73,12 @@ func doctorSecurityChecks(ctx context.Context, root string) []doctorCheck {
 			if ref == "" {
 				return nil, nil
 			}
-			project, own, reason := securityBaseFile(ctx, root, ref)
+			project, own, _, reason := securityBaseFile(ctx, root, ref)
 			if reason != "" {
-				// The repository's own file is not one this reader can read:
-				// there are no rows of the repository's, and no project to read
-				// a layer for either, so the list in force is the floor.
+				// The repository's own file is not one this reader can read, or
+				// writes a block no run holds: there are no rows of the
+				// repository's, and no project to read a layer for either, so the
+				// list in force is the floor.
 				return nil, nil
 			}
 			return own, modelsLayer(project)
