@@ -309,6 +309,30 @@ func TestTreeRefusesADirectoryOverItsLimit(t *testing.T) {
 	}
 }
 
+// TestTreeRefusesBytesTheListingUnderstated: the ceiling is about the bytes
+// that arrive, and the listing's sizes are only what they were checked
+// against — this API's listing is read before the files are, so a host that
+// understates one, or a file that changed between the two, would carry the
+// tree over the caller's ceiling past the check the listing passed. The file
+// read is bounded by what the ceiling has left, so what arrives is over it by
+// the one byte that tells the caller the file is larger, and the walk refuses
+// there rather than answering a tree of files cut short: the listing says four
+// bytes, the file is a hundred, and only the read can tell.
+func TestTreeRefusesBytesTheListingUnderstated(t *testing.T) {
+	f := newCommitsServer(t)
+	f.routes[srcBase+"ci/?pagelen=100&max_depth=100"] = commitsReply{status: 200, ctype: "application/json",
+		body: `{"values": [{"path": "ci/a", "type": "commit_file", "size": 4}]}`}
+	f.routes[srcBase+"ci/a"] = commitsReply{status: 200, ctype: "application/octet-stream", body: strings.Repeat("x", 100)}
+	p := f.provider(t)
+	files, err := p.Tree(ctx, "ci", commitSHA, gitprov.TreeLimit{MaxFiles: 10, MaxBytes: 10})
+	if err == nil {
+		t.Fatalf("Tree = %v, want the tree over its ceiling refused once the bytes arrived", files)
+	}
+	if !strings.Contains(err.Error(), gitprov.ErrTreeTooLarge.Error()) {
+		t.Errorf("Tree error = %v, want it to carry %v", err, gitprov.ErrTreeTooLarge)
+	}
+}
+
 // TestTreeRefusesMoreFilesThanItsLimit: the same, by count.
 func TestTreeRefusesMoreFilesThanItsLimit(t *testing.T) {
 	one := "one\n"

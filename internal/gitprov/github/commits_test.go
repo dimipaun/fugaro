@@ -197,6 +197,31 @@ func TestTreeRefusesATreeOverItsLimit(t *testing.T) {
 	}
 }
 
+// TestTreeRefusesBytesTheListingUnderstated: the ceiling is about the bytes
+// that arrive, and the listing's sizes are only what they were checked
+// against. A host that understates a file's size — or a listing read before a
+// file changed under it — would carry the tree over the caller's ceiling past
+// the check the listing passed, and hand back a tree the caller asked never to
+// see. The bytes are checked again as they arrive, which is the refusal this
+// fixture is built to reach: the listing says four bytes, the file is nine,
+// and the read happens because only the read can tell.
+func TestTreeRefusesBytesTheListingUnderstated(t *testing.T) {
+	real := []byte("ninebytes")
+	p := contentsProvider(t, append(mintExchanges(t),
+		contentsExchange(t, "/repos/acme/web/git/trees/"+commitSHA+"?recursive=1", 200, treeListing(false,
+			treeEntryJSON("ci/a", "blob", 4),
+		)),
+		contentsExchange(t, "/repos/acme/web/git/blobs/"+blobSHA, 200, blobReply(real)),
+	)...)
+	files, err := p.Tree(ctx, "ci", commitSHA, gitprov.TreeLimit{MaxFiles: 10, MaxBytes: int64(len(real) - 1)})
+	if err == nil {
+		t.Fatalf("Tree = %v, want the tree over its ceiling refused once the bytes arrived", files)
+	}
+	if !strings.Contains(err.Error(), gitprov.ErrTreeTooLarge.Error()) {
+		t.Errorf("Tree error = %v, want it to carry %v", err, gitprov.ErrTreeTooLarge)
+	}
+}
+
 // TestTreeRefusesMoreFilesThanItsLimit: the same, by count — the second file
 // is over the ceiling of one and is never read.
 func TestTreeRefusesMoreFilesThanItsLimit(t *testing.T) {
