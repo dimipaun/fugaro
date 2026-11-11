@@ -336,15 +336,25 @@ func TestSetupSkillRulesAreInSkillMd(t *testing.T) {
 			t.Errorf("SKILL.md step %q is missing or out of order", h)
 		}
 	}
-	// Nothing builds before the lines are shown: the build a repository still
-	// owns (the fallback, where the project's catalog gives its jobs no image)
-	// comes after the show step, and the doctor before every step. An image
-	// build is Cloud Build's, and the skill says so instead of the local one
-	// (F11): the command it gives is the per-workflow cloud build.
+	// Nothing builds before the lines are shown, and nothing before the merge:
+	// the build a repository still owns (the fallback, where the project's
+	// catalog gives its jobs no image) comes after the show step and after the
+	// hand-off, and the doctor before every step. An image build is Cloud
+	// Build's, and the skill says so instead of the local one (F11): the
+	// command it gives is the per-workflow cloud build.
 	if first := at("`fugaro image build --workflow"); first < 0 {
 		t.Error("SKILL.md no longer gives the fallback image's build, `fugaro image build --workflow <name>`: it is the only build a repository of an uncatalogued project has")
 	} else if first < at("## 6. Show what will execute") {
 		t.Errorf("SKILL.md gives `fugaro image build --workflow` before the show-before-build step")
+	} else if first < at("## 9. Hand off") {
+		t.Errorf("SKILL.md gives `fugaro image build --workflow` before the hand-off: the derived build reads the repository's base branch, not the checkout's draft, and a first setup has no registry for it until the converge, so that build is the one setup submits after the merge (step 10)")
+	}
+	// And step 7 checks the file alone, for that reason: the build a repository
+	// used to loop on cannot test an unmerged `fugaro.yaml` or
+	// `.fugaro/<workflow>.Dockerfile` at all, so a skill that promised the loop
+	// there would send the agent to a build of the wrong tree (or to a refusal).
+	if !strings.Contains(text, "not your working tree") || !strings.Contains(text, "after the merge (step 10)") {
+		t.Error("SKILL.md does not say the fallback image's build reads the repository's base branch rather than the checkout, and is setup's after the merge (step 10)")
 	}
 	if at("`fugaro doctor --json`") > at("## 2. Investigate") {
 		t.Error("SKILL.md does not give doctor in step 1")
@@ -374,6 +384,11 @@ func TestSetupSkillContent(t *testing.T) {
 		},
 		"skills/setup/reference/validation.md": {
 			"root-scan", "managed-settings-dir", "mise-cache-dir", "runs the repository's code", "Don't have the token put into your own environment", "visible to the repository's code in the build and to every command your agent runs",
+			// The derived build is the cloud one, so the bullets under it are
+			// the cloud build's: it reads the repository's base branch, never
+			// the checkout's working tree (the local build's old text said the
+			// opposite), and its first build is the converge's, after the merge.
+			"not your working tree", "steps 9 and 10 of the skill",
 		},
 		"skills/setup/reference/discovery.md": {
 			"16 GB on a public one", "GOTOOLCHAIN", "go.mod", "must be a plain version",
