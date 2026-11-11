@@ -142,6 +142,11 @@ func TestKindsListedOnce(t *testing.T) {
 // a doc string or a literal list that merely spells "github" is not a hit —
 // config.Providers and runner's jobProviderKinds are literal lists of their own,
 // held together by internal/cli's TestProviderKindsAgreeWithTheConfigsList.
+//
+// A row pointing into a tree this checkout does not carry at all is skipped:
+// CI's core-without-ee job deletes ee/ and then builds and tests the untagged
+// core, and a guard that a licence-boundary workflow takes down is a guard that
+// gets weakened. See absentTree.
 func TestEveryKindSwitchIsInventoried(t *testing.T) {
 	names := map[string]bool{}
 	for _, c := range declaredKindConstants(t) {
