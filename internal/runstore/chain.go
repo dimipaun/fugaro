@@ -316,7 +316,7 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 	// (D1049), and the dimension left unmeasured where it does not. A run
 	// whose node is absent, a run whose read failed and the hop of a gap are
 	// all three charged here, because all three leave the same figure unknown
-	// -- and the hop is charged the cap rather than read: the cap is the most
+	// — and the hop is charged the cap rather than read: the cap is the most
 	// it could have been holding, so it is the larger of the two figures and
 	// the direction D1049 takes.
 	charge := func(id string, err error) {
