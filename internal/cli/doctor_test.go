@@ -1927,6 +1927,67 @@ func TestDoctorFlagsStaleScopeWhenTheRepoCopyComesBack(t *testing.T) {
 	}
 }
 
+// TestDoctorSecretScopeIsSilentOnABackendWithNoDeployedJob is step 5's second
+// path (plan 2026-10-19-compute-backend.md): `internal/cli/doctor.go`
+// constructs `gcp.New` by hand for the deployed-job read behind
+// project-secret-scope-stale, and lifting the refusal of `backend:
+// cloud-batch` makes that read reachable from an installation that has no
+// deployed Cloud Run workflow job to read at all. The disposition is the
+// check's own: it says nothing on a backend that keeps no applied job, and it
+// still warns on the one that does -- the two arms below are the same fixture
+// with one line of config between them, so the Cloud Run arm is what pins
+// that the guard did not silence the check everywhere.
+//
+// What makes the silence correct rather than a swallowed finding: the check
+// is about a job APPLIED earlier, and Batch creates a job per run and a job is
+// single-use (design compute-backend.md §2.3), so the run's job is built from
+// the config the launch just read -- there is no earlier apply whose mounted
+// reference could have moved since. The doctor run itself still fails on the
+// batch-block gate below, which is not what this case asserts.
+func TestDoctorSecretScopeIsSilentOnABackendWithNoDeployedJob(t *testing.T) {
+	seed := func(t *testing.T) *doctorRig {
+		t.Helper()
+		r := projectSecretsRig(t)
+		slug := mustSlug("github", "acme/app")
+		repoID := gcp.SecretID(slug, "github-app-key")
+		r.sm.Seed(repoID, map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, nil)
+		projID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+		// The deployed job's own mounted reference: the project-wide copy,
+		// while the repository's own is the one Readiness resolves now -- the
+		// state TestDoctorFlagsStaleScope warns about.
+		job := gcp.JobName(slug, "app")
+		r.run.SetJobJSON(job, `{"name":"projects/proj-1234/locations/us-east5/jobs/`+job+`",
+		  "template":{"template":{"containers":[{"image":"fake/app","env":[
+		    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"`+projID+`","version":"latest"}}}]}]}}}`)
+		return r
+	}
+	for _, tc := range []struct {
+		name      string
+		cfg       string
+		wantCheck bool
+	}{
+		{name: "the backend that deploys a job per workflow", cfg: ""},
+		{name: "the backend that builds one per run", cfg: "backend: cloud-batch\n", wantCheck: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := seed(t)
+			if tc.cfg != "" {
+				addLocalLines(t, r, tc.cfg)
+			}
+			out, _, err := execute(t, "doctor", "--json")
+			var o doctorOutput
+			if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+				t.Fatalf("json: %v\n%s", jerr, out)
+			}
+			_, reported := doctorCheckByID(o.Checks, "project-secret-scope-stale")
+			if reported != tc.wantCheck {
+				t.Fatalf("project-secret-scope-stale reported = %v, want %v (err = %v)\n%s", reported, tc.wantCheck, err, out)
+			}
+		})
+	}
+}
+
 // secretScopeRig is a doctor rig whose local config opts github-app-key into
 // project-wide storage for acme/app (projectSecretsRig) and whose checkout
 // carries a workflow secret of its own, so the scope listing has both a

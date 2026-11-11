@@ -790,6 +790,19 @@ func (e *cloudEnv) checkExecution(ctx context.Context, x *backend.Execution, nam
 // checkExecution's correlation of ls/logs/diagnose/--retry/follow-up) must
 // treat "not a workflow name" as "no job can be derived from it", never as a
 // reason to crash.
+//
+// It is gcp's function and it is not a Cloud-Run-only path (Task 10's step 5,
+// third entry): the variant is what a workflow is CALLED once an account is
+// attached, and both backends name a run's job and label it with the same
+// string -- Batch's job id is `fugaro-<slug>-<variant>-<hash>`
+// (batch.JobID) and its labels carry the variant as gcp.LabelWorkflow
+// (batch.Labels), which is what its Terraform module and the reaper read it
+// back as. Only one caller derives a name a backend would have to have
+// deployed -- `gcp.JobName(slug, variant)` for the job `fugaro update --repo`
+// applies per repository -- and that one is behind an assertion that the
+// selected backend keeps deployed jobs at all (run.go's jobImageReader, whose
+// other arm is Batch; TestTheWorkflowVariantIsTheNameBothBackendsDeriveFrom
+// pins the sharing).
 func jobWorkflow(workflow, token string) (variant string, ok bool) {
 	defer func() {
 		if recover() != nil {

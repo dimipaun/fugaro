@@ -22,6 +22,7 @@ import (
 	iam "google.golang.org/api/iam/v1"
 	"google.golang.org/api/option"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/basepin"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
@@ -1182,7 +1183,25 @@ func printableNames(names []string) []string {
 // jobConfigCopyNote documents (internal/cli/upgrade_cloud.go): the one
 // fugaro update --repo that refreshes the default job refreshes every named
 // account's variant of it too, so a finding here is never the only one.
+//
+// An installation that does not run on Cloud Run says nothing, and that is
+// Task 10's step 5 disposition for the gcp.New this function builds by hand
+// rather than through the seam: the check is about an APPLIED job's mounted
+// references, and on `backend: cloud-batch` there is no applied job to be
+// stale. Batch creates a job per run and a job is single-use
+// (internal/backend/batch/batch.go's Timeouts, design compute-backend.md
+// §2.3), so the config a launch reads is the config that run's job is built
+// from, at the moment it launches -- there is no earlier apply whose mounted
+// reference could have moved since, which is the whole of what this check
+// finds on Cloud Run. Reading the Cloud Run API on the other backend would
+// list the installation's internal jobs (the history job, the reaper) and no
+// workflow job at all, so the loop below would find nothing whatever the
+// state of the secrets; naming the backend is what makes that explicit rather
+// than incidental.
 func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo) *doctorCheck {
+	if lc.Backend() != backend.CloudRun {
+		return nil
+	}
 	if lc.Endpoints.NoAuth && lc.Endpoints.Run == "" {
 		// Fakes only, and no fake for Cloud Run: there is nothing to read,
 		// and an empty endpoint would send the call to Google.

@@ -874,3 +874,50 @@ func TestLocateRunStillRefusesAnEnding(t *testing.T) {
 		t.Errorf("locateRun(%s) = %q, %q, %v, want the run", id, slug, got, err)
 	}
 }
+
+// TestTheWorkflowVariantIsTheNameBothBackendsDeriveFrom is step 5's third
+// path (plan 2026-10-19-compute-backend.md): `jobWorkflow` reads
+// `gcp.WorkflowVariant`, which looks like a Cloud Run path -- `gcp`'s package
+// name and its job-naming neighbours -- and is not one. The variant is what a
+// workflow is called once an account is attached, and it is the string a
+// Batch run's job id and labels carry too, so the derivation is shared rather
+// than Cloud-Run-only; the one Cloud-Run-shaped use of it (a deployed job's
+// name, `gcp.JobName`) sits behind the assertion that the selected backend
+// keeps deployed jobs (run.go's jobImageReader).
+//
+// Mutation (swap gcp.WorkflowVariant for a Batch-only spelling, or key the
+// derivation on the selected backend): the id and label assertions below stop
+// holding, and a Batch run's job is named and labelled with something the
+// reaper and the Terraform module do not read back.
+func TestTheWorkflowVariantIsTheNameBothBackendsDeriveFrom(t *testing.T) {
+	const (
+		slug     = "acme-app-0123456789abcdef"
+		workflow = "web"
+		token    = "team"
+		runID    = "20261002-090000-aaaa"
+	)
+	variant, ok := jobWorkflow(workflow, token)
+	if !ok || variant != gcp.WorkflowVariant(workflow, token) {
+		t.Fatalf("jobWorkflow = %q, %v", variant, ok)
+	}
+	if variant == workflow {
+		t.Fatalf("the variant did not take the account: %q", variant)
+	}
+	id := batch.JobID(slug, variant, runID)
+	// The id's charset is the label charset minus "_" (batch.sanitizeName), so
+	// the readable part carries the variant with its separator folded -- the
+	// name is still the variant's, which is what the assertion is about.
+	if !strings.Contains(id, strings.ReplaceAll(variant, "_", "-")) {
+		t.Errorf("the Batch job id %q does not carry the variant %q", id, variant)
+	}
+	labels, err := batch.Labels(slug, variant, runID)
+	if err != nil {
+		t.Fatalf("batch.Labels: %v", err)
+	}
+	if labels[gcp.LabelWorkflow] != variant {
+		t.Errorf("the Batch job's %s label = %q, want the variant %q", gcp.LabelWorkflow, labels[gcp.LabelWorkflow], variant)
+	}
+	if name := gcp.JobName(slug, variant); name == "" || name == gcp.JobName(slug, workflow) {
+		t.Errorf("the Cloud Run job name %q does not carry the variant either", name)
+	}
+}
