@@ -939,6 +939,27 @@ test_no_job_of_the_repository_is_unmeasured() {
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no job of the repository: no run launched"
 }
 
+# Measured on 2026-11-11: a repository's real job carries no FUGARO_REMOTE (the
+# clone URL is the policy's and the runner's to compute, never a launcher-writable
+# env); the job's own label fugaro_repo is what names the repository.
+test_a_job_is_the_repository_s_by_its_label() {
+  local dir=$work/switchlabel
+  prepare "$dir"
+  cat >"$dir/state/jobs.json" <<'JOBS_EOF'
+[{"metadata":{"name":"fugaro-workspace-a-repo-a-web-0123456789ab","labels":{"fugaro":"managed","fugaro_repo":"workspace-a-repo-a-27be4c45d773e3b9","fugaro_workflow":"web"}},
+  "spec":{"template":{"spec":{"template":{"spec":{
+    "serviceAccountName":"fugaro-b-1@fugaro-dev.iam.gserviceaccount.com",
+    "containers":[{"image":"example.invalid/base:0.15.0","env":[{"name":"FUGARO_RUN","value":"1"}]}]}}}}}},
+ {"metadata":{"name":"fugaro-workspace-a-repo-ab-web-111111111111","labels":{"fugaro":"managed","fugaro_repo":"workspace-a-repo-ab-27be4c45d773e3b9"}},
+  "spec":{"template":{"spec":{"template":{"spec":{
+    "serviceAccountName":"fugaro-b-9@fugaro-dev.iam.gserviceaccount.com",
+    "containers":[{"image":"example.invalid/base:0.15.0","env":[]}]}}}}}}]
+JOBS_EOF
+  run_check "$dir" "$script"
+  expect_absent "$out" "holds no job of workspace-a/repo-a" "a labelled job is the repository's"
+  expect_absent "$out" "fugaro-b-9@" "a repository whose slug only starts with this one's is not it"
+}
+
 test_the_switch_is_read_from_the_service_s_own_policy() {
   local dir=$work/switchlong
   prepare "$dir"
@@ -1558,6 +1579,7 @@ t test_a_switch_the_check_cannot_read_is_unmeasured
 t test_a_service_policy_that_could_not_be_read_is_unmeasured
 t test_a_job_list_that_could_not_be_read_is_unmeasured
 t test_no_job_of_the_repository_is_unmeasured
+t test_a_job_is_the_repository_s_by_its_label
 t test_the_switch_is_read_from_the_service_s_own_policy
 t test_an_installation_with_no_credentials_service_is_a_failure
 t test_a_service_with_nothing_to_serve_stops_the_check
