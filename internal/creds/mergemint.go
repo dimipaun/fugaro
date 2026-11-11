@@ -269,15 +269,18 @@ func mergeMintClient(c *http.Client) *http.Client {
 	return &out
 }
 
-// printableValue reports whether s is one printable header value, respelled
-// from the run's own mint: a token with a newline in it is refused here rather
-// than sent.
+// printableValue reports whether s is one clean header value: non-empty
+// printable ASCII with no space, which is the rule the run's own mint applies
+// (internal/gitprov/github/apptoken.go) and internal/credsvc's own for a
+// presented token. It is deliberately the same rule and not a looser one: a
+// check that claims parity without having it drifts further from the thing it
+// is copied from with every edit, and the value it guards is a credential.
 func printableValue(s string) bool {
 	if s == "" {
 		return false
 	}
-	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x21 || s[i] > 0x7e {
 			return false
 		}
 	}

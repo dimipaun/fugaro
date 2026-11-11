@@ -42,13 +42,15 @@ package credsvc
 //     GitHub and refuses when the two differ (G2): a token minted for a head
 //     that has moved is a token for a merge nobody reviewed.
 //
-//   - The token never bypasses branch protection (G14). The service reads the
-//     rulesets that cover the pull request's base and refuses when the App is
-//     one of their bypass actors, and it refuses when that read fails at all:
-//     an unreadable bypass list is not an absent one. It asks for no
-//     administration write and sends no bypass flag — the permission set it
-//     mints is mergeTokenPermissions, which is the narrowest set GitHub's merge
-//     endpoint accepts.
+//   - The token never bypasses branch protection (G14). The service reads both
+//     places GitHub lets an App be named as an actor that may merge past a
+//     protected base — the rulesets that cover it and its classic branch
+//     protection's own bypass list — and refuses when the App is on either, and
+//     it refuses when either read fails in any way but the 404 that means "no
+//     such protection": an unreadable bypass list is not an absent one. It asks
+//     for no administration write and sends no bypass flag — the permission set
+//     it mints is mergeTokenPermissions, which is the narrowest set GitHub's
+//     merge endpoint accepts.
 //
 //   - The mint is rate-limited per repository, and every act of it is audited
 //     once (PurposeMergeMint, no tier): the line names the daemon account, the
@@ -70,6 +72,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -181,6 +184,12 @@ const (
 	mergeMintPerRepo   = 10
 	mergeMintMaxAnswer = 1 << 20
 )
+
+// mergeRulesetPage is the page size the gate asks GitHub's rulesets list for:
+// GitHub's own maximum, so that the list fits in one page for every repository
+// that has one at all, and a page that comes back full is refused rather than
+// read as the whole list (mergeGate).
+const mergeRulesetPage = 100
 
 // headRE is the commit shape a call's head_sha is held to: the 40 hex digits of
 // a git object name. It is a shape and not a parse, and the SHA is compared to
@@ -444,23 +453,29 @@ type mergeGateCall struct {
 	head        string
 }
 
-// mergeGate reads the two facts the mint is bound to and refuses when either
+// mergeGate reads the facts the mint is bound to and refuses when any of them
 // does not hold.
 //
-// Both reads are made with an installation token of the gate's own
+// Every read is made with an installation token of the gate's own
 // (mergeGateReadPermissions), minted from the same App key the answer is minted
-// from: the pull request's head and base, and the rulesets that cover that
-// base. The token never leaves this process, so the reach the gate needs is not
-// a reach a caller is ever handed.
+// from: the pull request's head and base, the rulesets that cover that base,
+// and the base's classic branch protection. The token never leaves this
+// process, so the reach the gate needs is not a reach a caller is ever handed.
 //
-// The rules it holds are G2's and G14's, and both fail closed:
+// The rules it holds are G2's and G14's, and all of them fail closed:
 //
 //   - the head GitHub reports must be the head the call named, character for
 //     character. A pull request that moved since the daemon admitted it is
 //     refused, and so is one whose head cannot be read.
 //   - no ruleset that covers the base may name the App among its bypass
-//     actors, and the rulesets must be readable. An empty list is a repository
-//     with no rulesets, which is a merge nothing bypasses.
+//     actors, and the rulesets must be readable — all of them, which is why a
+//     page that comes back full is refused rather than read as the whole list.
+//     An empty list is a repository with no rulesets, which is a merge nothing
+//     bypasses.
+//   - the base's classic branch protection may not name the App among its own
+//     bypass actors either, and that read must answer — with the object or with
+//     the 404 that says this branch carries no classic protection, which is the
+//     ordinary answer for a repository protected by rulesets alone.
 //
 // What it answers is the binding it read, which the caller of this function
 // does not act on: the mint is bound by the refusal and not by a value carried
@@ -492,12 +507,34 @@ func (s *Server) mergeGate(ctx context.Context, call mergeGateCall) (mergeBindin
 		return mergeBinding{}, fmt.Errorf("%w: the pull request is at %s and the call named %s", ErrMergeMintHeadMoved, shortSHA(pr.Head.SHA), shortSHA(call.head))
 	}
 	var rulesets []githubRuleset
-	rulesPath := "/repos/" + call.owner + "/" + call.name + "/rulesets"
+	rulesPath := "/repos/" + call.owner + "/" + call.name + "/rulesets?per_page=" + strconv.Itoa(mergeRulesetPage)
 	if err := s.githubGet(ctx, readToken, rulesPath, &rulesets); err != nil {
 		return mergeBinding{}, fmt.Errorf("%w: the base's rulesets could not be read: %w", ErrMergeMintBypassActor, err)
 	}
+	if len(rulesets) >= mergeRulesetPage {
+		// GitHub pages this list, and a full page is one this code cannot tell
+		// from a truncated one — so it is not read as the whole list, because the
+		// ruleset that names the App may be the one past the page (G14). The read
+		// asks for GitHub's own maximum and a full answer is refused.
+		return mergeBinding{}, fmt.Errorf("%w: the base's rulesets do not fit in one page of %d", ErrMergeMintBypassActor, mergeRulesetPage)
+	}
 	if rulesetsNameTheApp(rulesets, pr.Base.Ref, call.appID) {
 		return mergeBinding{}, fmt.Errorf("%w: a ruleset covering %s names the App among its bypass actors", ErrMergeMintBypassActor, pr.Base.Ref)
+	}
+	var protection githubBranchProtection
+	protectionPath := "/repos/" + call.owner + "/" + call.name + "/branches/" + url.PathEscape(pr.Base.Ref) + "/protection"
+	if err := s.githubGet(ctx, readToken, protectionPath, &protection); err != nil {
+		// A branch with no classic protection answers 404, which is the ordinary
+		// answer for a repository protected by rulesets alone and is not a
+		// refusal. Every other unreadable answer is (G14): a bypass list this
+		// gate could not read is not one that names nobody.
+		var status *httpjson.StatusError
+		if !errors.As(err, &status) || status.Status != http.StatusNotFound {
+			return mergeBinding{}, fmt.Errorf("%w: the base's branch protection could not be read: %w", ErrMergeMintBypassActor, err)
+		}
+	}
+	if protection.namesTheApp(call.appID) {
+		return mergeBinding{}, fmt.Errorf("%w: the branch protection of %s names the App among its bypass actors", ErrMergeMintBypassActor, pr.Base.Ref)
 	}
 	return mergeBinding{head: pr.Head.SHA, base: pr.Base.Ref}, nil
 }
@@ -554,41 +591,144 @@ func rulesetsNameTheApp(rulesets []githubRuleset, branch, appID string) bool {
 	return false
 }
 
-// rulesetCoversRef reports whether a ruleset's conditions reach one branch. It
-// is the reading of GitHub's own three-state condition, and it is conservative
-// in the direction that refuses: no include list at all covers every ref, and a
-// pattern this code cannot match exactly is matched by its prefix rather than
-// dropped.
-func rulesetCoversRef(rs githubRuleset, branch string) bool {
-	ref := "refs/heads/" + branch
-	for _, exclude := range rs.Conditions.RefName.Exclude {
-		if refPatternCovers(exclude, ref) {
-			return false
-		}
-	}
-	if len(rs.Conditions.RefName.Include) == 0 {
+// githubBranchProtection is the part of a classic branch protection object this
+// gate reads: its own bypass list, which is the second place GitHub lets an App
+// be named as an actor that may merge past a protected branch, beside the
+// rulesets. Both lists exist because the two features are separate, and a
+// repository can carry either one alone.
+type githubBranchProtection struct {
+	RequiredPullRequestReviews *struct {
+		BypassPullRequestAllowances *struct {
+			Apps []struct {
+				ID int `json:"id"`
+			} `json:"apps"`
+		} `json:"bypass_pull_request_allowances"`
+	} `json:"required_pull_request_reviews"`
+}
+
+// namesTheApp reports whether the classic branch protection's bypass list names
+// the App. Every absent part of the object — no pull-request-review requirement,
+// no allowances, no Apps — is a list that names nobody, because the read that
+// produced it answered, and an answer that carries no actor is an answer about a
+// branch the App may not bypass. The App ID that will not parse is the same
+// refusal rulesetsNameTheApp makes of it.
+func (p githubBranchProtection) namesTheApp(appID string) bool {
+	app, err := strconv.Atoi(appID)
+	if err != nil {
 		return true
 	}
-	for _, include := range rs.Conditions.RefName.Include {
-		if refPatternCovers(include, ref) {
+	if p.RequiredPullRequestReviews == nil || p.RequiredPullRequestReviews.BypassPullRequestAllowances == nil {
+		return false
+	}
+	for _, a := range p.RequiredPullRequestReviews.BypassPullRequestAllowances.Apps {
+		if a.ID == app {
 			return true
 		}
 	}
 	return false
 }
 
-// refPatternCovers reports whether one of GitHub's ref patterns covers a ref.
-// ~ALL is every ref, ~DEFAULT_BRANCH is the default branch — which this code
-// cannot tell from the base it was handed, so it covers, which is the direction
-// that refuses — and a trailing * or ** is a prefix.
-func refPatternCovers(pattern, ref string) bool {
-	switch {
-	case pattern == ref, pattern == "~ALL", pattern == "~DEFAULT_BRANCH":
+// rulesetCoversRef reports whether a ruleset's conditions reach one branch. It
+// is the reading of GitHub's own condition, and it is conservative in the
+// direction that refuses: no include list at all covers every ref, an include
+// this code cannot decide covers, and an exclude it cannot decide leaves the
+// ruleset covering the ref — because a ruleset read as not covering is a
+// ruleset skipped, and a skipped ruleset's bypass list is never seen.
+func rulesetCoversRef(rs githubRuleset, branch string) bool {
+	ref := "refs/heads/" + branch
+	for _, exclude := range rs.Conditions.RefName.Exclude {
+		switch matchRefPattern(exclude, ref) {
+		case refPatternCovers:
+			return false
+		case refPatternUndecided:
+			return true
+		}
+	}
+	if len(rs.Conditions.RefName.Include) == 0 {
 		return true
-	case strings.HasSuffix(pattern, "/*"), strings.HasSuffix(pattern, "/**"):
-		return strings.HasPrefix(ref, strings.TrimSuffix(strings.TrimSuffix(pattern, "*"), "*"))
+	}
+	for _, include := range rs.Conditions.RefName.Include {
+		switch matchRefPattern(include, ref) {
+		case refPatternCovers, refPatternUndecided:
+			return true
+		}
 	}
 	return false
+}
+
+// refPatternMatch is what one of GitHub's ref patterns decides about one ref:
+// that it covers it, that it does not, or that this code cannot tell. The third
+// is why the answer is three states and not a bool — a pattern this code reads
+// as "does not cover" while GitHub reads it as covering is a ruleset skipped and
+// the App's place on its bypass list never seen, which is the one direction this
+// gate must not fail in.
+type refPatternMatch int
+
+const (
+	refPatternDoesNotCover refPatternMatch = iota
+	refPatternCovers
+	refPatternUndecided
+)
+
+// matchRefPattern decides one of GitHub's ref patterns against one ref.
+//
+// ~ALL is every ref and ~DEFAULT_BRANCH is the default branch — which this code
+// cannot tell from the base it was handed, so it covers, which is the direction
+// that refuses. Everything else is GitHub's fnmatch: * and ? match within one
+// path segment, ** crosses segments, and the rest is literal. A pattern this
+// code does not translate is answered as undecided and never as "does not
+// cover", which is what the caller reads it as.
+func matchRefPattern(pattern, ref string) refPatternMatch {
+	switch pattern {
+	case ref, "~ALL", "~DEFAULT_BRANCH":
+		return refPatternCovers
+	}
+	re, err := refPatternRegexp(pattern)
+	if err != nil {
+		return refPatternUndecided
+	}
+	if re.MatchString(ref) {
+		return refPatternCovers
+	}
+	return refPatternDoesNotCover
+}
+
+// refPatternRegexp translates one of GitHub's ref patterns into the expression
+// that matches the same refs, or answers an error for a pattern this code does
+// not translate.
+//
+// The error is not a rejection of the pattern: GitHub's own pattern language is
+// wider than this translation (a bracket expression, an escape, a pattern that
+// is not a ref at all), and what this function cannot translate it hands back as
+// undecided rather than as a ref the pattern misses.
+func refPatternRegexp(pattern string) (*regexp.Regexp, error) {
+	if !strings.HasPrefix(pattern, "refs/") {
+		return nil, errors.New("a ref pattern this code does not translate")
+	}
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); {
+		switch c := pattern[i]; c {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				b.WriteString(".*")
+				i += 2
+				continue
+			}
+			b.WriteString("[^/]*")
+			i++
+		case '?':
+			b.WriteString("[^/]")
+			i++
+		case '[', '\\':
+			return nil, errors.New("a ref pattern this code does not translate")
+		default:
+			b.WriteString(regexp.QuoteMeta(string(c)))
+			i++
+		}
+	}
+	b.WriteString("$")
+	return regexp.Compile(b.String())
 }
 
 // githubGet reads one GitHub REST answer into out with an installation token.

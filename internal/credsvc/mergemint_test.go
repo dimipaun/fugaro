@@ -82,12 +82,13 @@ func mergeMintBody(repo string, number int, head, appID string) string {
 // request but the installation lookup and the mint — which is exactly the
 // property the run's own mint needs and exactly the wrong one here.
 //
-// It answers the four calls the route makes: the installation lookup and the
+// It answers the five calls the route makes: the installation lookup and the
 // token mint (twice: once for the gate's read token, once for the answer), the
-// pull request, and the repository's rulesets. What it answers with is the
-// test's: the head the pull request is at, the base it targets, the rulesets
-// that cover it, and the status any of the four answers with when a test wants
-// one to fail.
+// pull request, the repository's rulesets, and the base's classic branch
+// protection. What it answers with is the test's: the head the pull request is
+// at, the base it targets, the rulesets that cover it, the Apps the classic
+// protection lets bypass it, and the status any of the reads answers with when a
+// test wants one to fail.
 type mergeFake struct {
 	t   *testing.T
 	srv *httptest.Server
@@ -100,6 +101,12 @@ type mergeFake struct {
 	head, base string
 	// rulesets is what the rulesets read answers, verbatim.
 	rulesets []map[string]any
+	// protection is the classic branch protection read's bypass list: the Apps it
+	// names. An empty one is answered as GitHub answers a branch with no classic
+	// protection — 404 — and protectionStatus overrides that answer when a test
+	// wants the read to fail another way.
+	protection       []map[string]any
+	protectionStatus int
 	// pullStatus and rulesStatus, when not 2xx, are what those two reads answer
 	// with instead.
 	pullStatus, rulesStatus int
@@ -133,6 +140,7 @@ func (f *mergeFake) serve(w http.ResponseWriter, r *http.Request) {
 	f.seen = append(f.seen, ghSeen{method: r.Method, path: r.URL.Path, body: string(body), auth: r.Header.Get("Authorization")})
 	head, base, rulesets := f.head, f.base, f.rulesets
 	pullStatus, rulesStatus, mintStatus := f.pullStatus, f.rulesStatus, f.mintStatus
+	protection, protectionStatus := f.protection, f.protectionStatus
 	token, expires := f.token, f.expires
 	f.mu.Unlock()
 
@@ -163,8 +171,23 @@ func (f *mergeFake) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.write(w, http.StatusOK, rulesets)
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/protection"):
+		if protectionStatus != 0 && protectionStatus/100 != 2 {
+			w.WriteHeader(protectionStatus)
+			return
+		}
+		if len(protection) == 0 {
+			// GitHub's own answer for a branch with no classic branch protection.
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		f.write(w, http.StatusOK, map[string]any{
+			"required_pull_request_reviews": map[string]any{
+				"bypass_pull_request_allowances": map[string]any{"apps": protection},
+			},
+		})
 	default:
-		f.t.Errorf("the fake GitHub was asked for %s %s, and the merge mint makes four calls and no others", r.Method, r.URL.Path)
+		f.t.Errorf("the fake GitHub was asked for %s %s, and the merge mint reads the installation, the pull request, the rulesets, the branch protection and the two mints and nothing else", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
 	}
 }
@@ -363,10 +386,65 @@ func TestMergeMintRefusesPersonReadCaller(t *testing.T) {
 	}
 }
 
-// TestMergeMintTakesNoRunIdentity: the daemon holds no run identity, and a
-// caller that presents one anyway is refused by name — a whole identity beside
-// the token is a call of a shape this route does not have — and the refusal is
-// written down, because the caller HAS been verified by then.
+// TestMergeMintRefusesARunAccountAsItsDaemon is the third half of the class: an
+// installation that names one of its own run accounts as the daemon does not
+// widen the class, it is refused where the configuration is read.
+//
+// It is the same rule the person list carries a few lines above, and it is here
+// rather than at the route because of where it fails: a job, a shared job's or a
+// review job's address on this list would admit that run's own Google ID token
+// to the merge mint — the credential C2.2 and F28 exist to keep out of it — and
+// the route would have no way to tell it from the daemon's, since it is the same
+// token shape, the same audience and the same fold.
+//
+// The last cell is what the rule must NOT refuse: a verifier and the coordinator
+// are classes of other routes, and one address admitted by two routes is not the
+// overlap the class rule is about (G4).
+func TestMergeMintRefusesARunAccountAsItsDaemon(t *testing.T) {
+	f := newFixture(t)
+	config := func(daemon ...string) AuthConfig {
+		return AuthConfig{
+			Project:              testProject,
+			FirebaseProject:      testFirebase,
+			Audience:             testAudience,
+			JobAccounts:          []string{testJobSA},
+			SharedJobAccounts:    []string{testSharedSA},
+			ReviewJobAccounts:    []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}},
+			VerifierAccounts:     []string{testVerifierSA},
+			PersonAccounts:       []string{testPersonAccount},
+			LauncherAccounts:     []string{testLauncherAccount},
+			OrchestratorAccounts: daemon,
+			Keys:                 f.keys,
+			JobKeys:              f.jobKeys,
+			Outcomes:             RTDBOutcomes{DB: f.db},
+		}
+	}
+	for _, tc := range []struct{ name, account string }{
+		{"a job of this installation", testJobSA},
+		{"a shared project job's account", testSharedSA},
+		{"a review job's account", testReviewSA},
+		{"a person of this installation", testPersonAccount},
+		{"a launcher", testLauncherAccount},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewAuthenticator(config(tc.account))
+			if err == nil {
+				t.Fatalf("NewAuthenticator admitted %s as the orchestrator daemon", tc.name)
+			}
+			if !strings.Contains(err.Error(), "orchestrator account") {
+				t.Errorf("the configuration error is %q, want it to be about the orchestrator list", err)
+			}
+			if strings.Contains(err.Error(), tc.account) {
+				t.Errorf("the configuration error is %q, and it carries the address it refused", err)
+			}
+		})
+	}
+
+	if _, err := NewAuthenticator(config(testVerifierSA, testCoordinatorAccount)); err != nil {
+		t.Fatalf("NewAuthenticator refused a daemon that is also a verifier or the coordinator: %v", err)
+	}
+}
+
 func TestMergeMintTakesNoRunIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -482,6 +560,14 @@ func mergeRuleset(include []string, actors ...map[string]any) map[string]any {
 	}
 }
 
+// mergeRulesetExcluding is mergeRuleset with an exclude list too: the other half
+// of GitHub's condition, which takes a ruleset out of a ref's reach.
+func mergeRulesetExcluding(include, exclude []string, actors ...map[string]any) map[string]any {
+	rs := mergeRuleset(include, actors...)
+	rs["conditions"] = map[string]any{"ref_name": map[string]any{"include": include, "exclude": exclude}}
+	return rs
+}
+
 // mergeAppActor is the App as a bypass actor: GitHub spells an App on a bypass
 // list as an Integration actor whose id is the App ID.
 func mergeAppActor(appID string) map[string]any {
@@ -489,72 +575,145 @@ func mergeAppActor(appID string) map[string]any {
 }
 
 // TestMergeMintRefusesBypassActor is G14: the token never merges past branch
-// protection.
+// protection, in either of the two places GitHub keeps a bypass list.
 //
-// The first two cells are the two ways the gate refuses — a base whose rules the
-// App may bypass, and a bypass list that could not be read at all, because an
-// unreadable list is not an absent one — and both answer `state_unavailable`:
-// what is wrong is this installation's configuration or GitHub, and the daemon
-// must not merge. The three cells after them are the other half, and they are
-// what keeps the refusal from being "refuse whenever the repository has
-// rulesets": a ruleset naming ANOTHER actor, a disabled one, and one covering
-// another branch are all admitted.
+// The first five cells are the ways the gate refuses — a base whose rules the
+// App may bypass, a bypass list that could not be read at all (because an
+// unreadable list is not an absent one), the same rule read out of the classic
+// branch protection's own list, a protection object that could not be read, and
+// a ruleset whose include is a pattern rather than a ref — and every one of them
+// answers `state_unavailable`: what is wrong is this installation's
+// configuration or GitHub, and the daemon must not merge.
+//
+// The wildcard cell is the one that was wrong: GitHub's ref patterns are fnmatch
+// and not literals, so a ruleset whose include is `refs/heads/ma*` covers the
+// base, and a gate that read it as "covers nothing" would skip the ruleset and
+// never see the App on its bypass list.
+//
+// The cells after them are the other half, and they are what keeps the refusal
+// from being "refuse whenever the repository has rulesets": a ruleset naming
+// ANOTHER actor, a disabled one, a ruleset covering another branch, one that
+// excludes the base, a classic protection naming another App, and a repository
+// with neither are all admitted.
 func TestMergeMintRefusesBypassActor(t *testing.T) {
-	t.Run("a ruleset naming the App as a bypass actor", func(t *testing.T) {
-		s, gh := mergeMintSvc(t)
-		gh.rulesets = []map[string]any{mergeRuleset([]string{"refs/heads/main"}, mergeAppActor(testAppID))}
-		resp, body := s.mintMerge(t, 7, mergeHead(1))
-		if resp.StatusCode != StatusUnavailable {
-			t.Fatalf("the merge mint served a base the App may bypass: HTTP %d %s", resp.StatusCode, body)
-		}
-		e := refusal(t, resp.StatusCode, body)
-		if e.Error != ErrorStateUnavailable {
-			t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorStateUnavailable, e.Message)
-		}
-		if !strings.Contains(e.Message, ErrMergeMintBypassActor.Error()) {
-			t.Errorf("the refusal is %q, want it to name the bypass class (%s)", e.Message, ErrMergeMintBypassActor.Error())
-		}
-		if bodies := gh.mintBodies(t); len(bodies) != 1 {
-			t.Errorf("the service minted %d installation tokens for a call it refused, want the gate's read token alone", len(bodies))
-		}
-		if strings.Contains(string(body), gh.token) {
-			t.Errorf("the refusal carries the token GitHub minted: %s", body)
-		}
-	})
-
-	t.Run("a bypass list that cannot be read", func(t *testing.T) {
-		s, gh := mergeMintSvc(t)
-		gh.rulesStatus = http.StatusInternalServerError
-		resp, body := s.mintMerge(t, 7, mergeHead(1))
-		if resp.StatusCode != StatusUnavailable {
-			t.Fatalf("the merge mint served a base whose bypass list could not be read: HTTP %d %s", resp.StatusCode, body)
-		}
-		if e := refusal(t, resp.StatusCode, body); !strings.Contains(e.Message, ErrMergeMintBypassActor.Error()) {
-			t.Errorf("the refusal is %q, want the bypass class (%s)", e.Message, ErrMergeMintBypassActor.Error())
-		}
-	})
-
-	for _, tc := range []struct {
-		name     string
-		rulesets []map[string]any
+	refusals := []struct {
+		name   string
+		rules  []map[string]any
+		apps   []map[string]any
+		status int
 	}{
-		{"a ruleset naming another App", []map[string]any{mergeRuleset([]string{"refs/heads/main"}, mergeAppActor("9999"))}},
+		{
+			name:  "a ruleset naming the App as a bypass actor",
+			rules: []map[string]any{mergeRuleset([]string{"refs/heads/main"}, mergeAppActor(testAppID))},
+		},
+		{
+			name:   "a bypass list that cannot be read",
+			status: http.StatusInternalServerError,
+		},
+		{
+			name:  "a ruleset whose include is a wildcard over the base",
+			rules: []map[string]any{mergeRuleset([]string{"refs/heads/ma*"}, mergeAppActor(testAppID))},
+		},
+		{
+			name:  "a ruleset whose include is a single-character wildcard",
+			rules: []map[string]any{mergeRuleset([]string{"refs/heads/mai?"}, mergeAppActor(testAppID))},
+		},
+		{
+			name:  "a ruleset whose include crosses a segment",
+			rules: []map[string]any{mergeRuleset([]string{"refs/**"}, mergeAppActor(testAppID))},
+		},
+		{
+			name:  "a ruleset whose exclude is a pattern this code cannot decide",
+			rules: []map[string]any{mergeRulesetExcluding([]string{"refs/heads/*"}, []string{"refs/heads/[abc]"}, mergeAppActor(testAppID))},
+		},
+		{
+			name: "a classic branch protection whose bypass list names the App",
+			apps: []map[string]any{{"id": json.Number(testAppID)}},
+		},
+		{
+			name:   "a classic branch protection that cannot be read",
+			status: http.StatusForbidden,
+			apps:   []map[string]any{{"id": json.Number("9999")}},
+		},
+	}
+	for _, tc := range refusals {
+		t.Run(tc.name, func(t *testing.T) {
+			s, gh := mergeMintSvc(t)
+			gh.rulesets, gh.protection = tc.rules, tc.apps
+			// The status is the rulesets read's when no classic bypass list is set
+			// and the protection read's when one is: the two cells that turn a read
+			// into a failure are about the read that carries the list the App is on.
+			if tc.apps == nil {
+				gh.rulesStatus = tc.status
+			} else {
+				gh.protectionStatus = tc.status
+			}
+			resp, body := s.mintMerge(t, 7, mergeHead(1))
+			if resp.StatusCode != StatusUnavailable {
+				t.Fatalf("the merge mint served a base the App may bypass: HTTP %d %s", resp.StatusCode, body)
+			}
+			e := refusal(t, resp.StatusCode, body)
+			if e.Error != ErrorStateUnavailable {
+				t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorStateUnavailable, e.Message)
+			}
+			if !strings.Contains(e.Message, ErrMergeMintBypassActor.Error()) {
+				t.Errorf("the refusal is %q, want it to name the bypass class (%s)", e.Message, ErrMergeMintBypassActor.Error())
+			}
+			if bodies := gh.mintBodies(t); len(bodies) != 1 {
+				t.Errorf("the service minted %d installation tokens for a call it refused, want the gate's read token alone", len(bodies))
+			}
+			if strings.Contains(string(body), gh.token) {
+				t.Errorf("the refusal carries the token GitHub minted: %s", body)
+			}
+		})
+	}
+
+	admitted := []struct {
+		name  string
+		rules []map[string]any
+		apps  []map[string]any
+	}{
+		{"a ruleset naming another App", []map[string]any{mergeRuleset([]string{"refs/heads/main"}, mergeAppActor("9999"))}, nil},
 		{"a disabled ruleset naming the App", []map[string]any{func() map[string]any {
 			rs := mergeRuleset([]string{"refs/heads/main"}, mergeAppActor(testAppID))
 			rs["enforcement"] = "disabled"
 			return rs
-		}()}},
-		{"a ruleset covering another branch", []map[string]any{mergeRuleset([]string{"refs/heads/release"}, mergeAppActor(testAppID))}},
-		{"a repository with no rulesets", nil},
-	} {
+		}()}, nil},
+		{"a ruleset covering another branch", []map[string]any{mergeRuleset([]string{"refs/heads/release"}, mergeAppActor(testAppID))}, nil},
+		{"a ruleset excluding the base", []map[string]any{mergeRulesetExcluding([]string{"refs/heads/*"}, []string{"refs/heads/main"}, mergeAppActor(testAppID))}, nil},
+		{"a repository with no rulesets", nil, nil},
+		{"a classic branch protection naming another App", nil, []map[string]any{{"id": json.Number("9999")}}},
+		{"a classic branch protection naming no App", nil, []map[string]any{{"id": json.Number("9999"), "slug": "other-app"}}},
+	}
+	for _, tc := range admitted {
 		t.Run(tc.name, func(t *testing.T) {
 			s, gh := mergeMintSvc(t)
-			gh.rulesets = tc.rulesets
+			gh.rulesets, gh.protection = tc.rules, tc.apps
 			resp, body := s.mintMerge(t, 7, mergeHead(1))
 			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("the merge mint refused a base no ruleset binds the App on: HTTP %d %s", resp.StatusCode, body)
+				t.Fatalf("the merge mint refused a base no bypass list binds the App on: HTTP %d %s", resp.StatusCode, body)
 			}
 		})
+	}
+}
+
+// TestMergeMintRefusesAFullRulesetPage: GitHub pages the rulesets list, and the
+// gate reads one page of GitHub's own maximum. A page that comes back full is
+// one this code cannot tell from a truncated one — the ruleset that names the
+// App may be the next one — so it is refused rather than read as the whole list.
+func TestMergeMintRefusesAFullRulesetPage(t *testing.T) {
+	s, gh := mergeMintSvc(t)
+	rulesets := make([]map[string]any, 0, mergeRulesetPage)
+	for i := 0; i < mergeRulesetPage; i++ {
+		rulesets = append(rulesets, mergeRuleset([]string{"refs/heads/release"}, mergeAppActor("9999")))
+	}
+	gh.rulesets = rulesets
+	resp, body := s.mintMerge(t, 7, mergeHead(1))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the merge mint read a full page as the whole list: HTTP %d %s", resp.StatusCode, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); !strings.Contains(e.Message, ErrMergeMintBypassActor.Error()) {
+		t.Errorf("the refusal is %q, want the bypass class (%s)", e.Message, ErrMergeMintBypassActor.Error())
 	}
 }
 
@@ -685,8 +844,9 @@ func TestMergeMintNeverReturnsABroaderToken(t *testing.T) {
 			t.Errorf("mint %d names repositories %v, want exactly [%s]", i, sent["repositories"], name)
 		}
 	}
-	// The gate's two reads are the pull request and the rulesets of that same
-	// repository, and the token that read them is the one that never leaves.
+	// The gate's three reads are the pull request, the rulesets of that same
+	// repository and the base's classic branch protection, and the token that
+	// read them is the one that never leaves.
 	var paths []string
 	for _, seen := range gh.requests() {
 		if seen.method == http.MethodGet && !strings.HasSuffix(seen.path, "/installation") {
@@ -696,6 +856,7 @@ func TestMergeMintNeverReturnsABroaderToken(t *testing.T) {
 	wantPaths := []string{
 		"/repos/" + owner + "/" + name + "/pulls/7",
 		"/repos/" + owner + "/" + name + "/rulesets",
+		"/repos/" + owner + "/" + name + "/branches/main/protection",
 	}
 	if strings.Join(paths, ",") != strings.Join(wantPaths, ",") {
 		t.Errorf("the gate read %v, want %v", paths, wantPaths)
@@ -791,8 +952,8 @@ func TestMergeMintUnauditedIssuesNothing(t *testing.T) {
 	if e := refusal(t, resp.StatusCode, body); !strings.Contains(e.Message, ErrMergeMintUnaudited.Error()) {
 		t.Errorf("the refusal is %q, want the unaudited class (%s)", e.Message, ErrMergeMintUnaudited.Error())
 	}
-	if n := gh.count(); n != 6 {
-		t.Errorf("GitHub was reached %d times, want six: the token was minted and then withheld", n)
+	if n := gh.count(); n != 7 {
+		t.Errorf("GitHub was reached %d times, want seven: the token was minted and then withheld", n)
 	}
 	for _, where := range []struct{ what, text string }{{"the answer", string(body)}, {"the service's log", s.logs.String()}} {
 		if strings.Contains(where.text, gh.token) {

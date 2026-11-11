@@ -449,9 +449,11 @@ type AuthConfig struct {
 	//
 	// An entry is the same shape every other list's is — one bare `email` claim
 	// as a Google ID token spells it, matched by the same ASCII fold — and it is
-	// held to the one rule that keeps the classes apart: it may not be a person
-	// or a launcher, because the daemon is an automation and an address on both
-	// would be a caller whose class is decided by which route it reached.
+	// held to the one rule that keeps the classes apart: it may not be a person,
+	// a launcher, a job, a shared job or a review job, because the daemon is an
+	// automation of its own and an address that is already a run's would admit
+	// that run's own ID token to the merge mint, which is the credential C2.2
+	// and F28 exist to keep out of it.
 	//
 	// It is empty by default, and an empty list is a statement rather than a
 	// missing gate: an installation that runs no orchestrator daemon admits
@@ -726,12 +728,20 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 	//
 	// The one rule it carries that the verifier list does not is the overlap
 	// rule, and it is one-directional on purpose: an account named here may not
-	// be one of the installation's people or its launchers, because the merge
-	// mint's caller is an automation and a human address on this list would be a
-	// class decided by the route rather than by the deployment. It may be a
+	// be one of the installation's people, its launchers, or any of the accounts
+	// that carry a run's identity — a job's, a shared job's or a review job's —
+	// because the merge mint's caller is an automation of its own and an address
+	// that is already a run's would admit that run's own ID token to a route
+	// whose whole point is that no run holds it (C2.2, F28). It may be a
 	// verifier or the coordinator: those are classes of OTHER routes, and one
 	// address admitted by two routes is not the overlap the class rule is about
 	// (G4).
+	//
+	// The person list makes the same three refusals a few lines above, for the
+	// same reason and with the same consequence: an overlap written into a
+	// deployment is read here, where the operator can see the refusal, rather
+	// than at the route, where the run's token would simply be admitted by a
+	// class it should never have been in.
 	orchestrators := make(map[string]string, len(cfg.OrchestratorAccounts))
 	for _, email := range cfg.OrchestratorAccounts {
 		folded, ok := foldEmail(email)
@@ -743,6 +753,15 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		if _, isLauncher := launchers[folded]; isLauncher {
 			return nil, errors.New("credsvc: an orchestrator account is also one of the launchers, and the daemon class is an automation")
+		}
+		if _, isJob := accounts[folded]; isJob {
+			return nil, errors.New("credsvc: an orchestrator account is also one of the installation's job service accounts, and the daemon class is not a run")
+		}
+		if shared[folded] {
+			return nil, errors.New("credsvc: an orchestrator account is also a shared project job's service account, which Global Constraint 6 refuses whole")
+		}
+		if _, isReview := review[folded]; isReview {
+			return nil, errors.New("credsvc: an orchestrator account is also one of the review job accounts, and the daemon class is not a review")
 		}
 		orchestrators[folded] = email
 	}
