@@ -360,7 +360,8 @@ type Digest struct {
 	// dearest of the rest (D325). A challenger arm is in no row (A4.5).
 	Runs []Run
 	// Stages covers every run that finished in the period, selected or not,
-	// the same set Total counts.
+	// the same set Total counts, and so a challenger arm is in no stage of it
+	// (A4.5).
 	Stages []Stage
 	// Total covers every run that finished in the period, selected or not:
 	// the header's figures, which no size cap changes. A challenger arm is in
@@ -403,9 +404,10 @@ type Digest struct {
 // repository's records, in any order. A record that did not finish in the
 // period, or whose run ID is not a run ID, is not one of the period's runs:
 // the first has no period, and the second is not a run this repository's
-// prefix names. Neither is a challenger arm: it is the shadow of an A/B pair
-// (A4.5, D568), so it is in none of this report's figures and is counted in
-// Challengers instead. The tier expectations are the one thing Build reads from
+// prefix names. A challenger arm is not one either, wherever it finished: it
+// is the shadow of an A/B pair (A4.5, D568), so it is in none of this report's
+// figures and is counted in Challengers instead. The tier expectations are the
+// one thing Build reads from
 // outside the period, and only backwards: a calibration's window is the days
 // ending with the period, so the records of the runs before it are read while
 // the report's own figures stay the period's (T8.3).
