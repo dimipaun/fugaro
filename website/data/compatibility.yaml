@@ -39,7 +39,7 @@
 #     exists today, and a claim with no path behind it is a claim the page cannot back.
 version: 1
 as_of:
-  cli: v0.22.0
+  cli: v0.23.0
   console: v0.121.0
 never_say:
   - "any model"
