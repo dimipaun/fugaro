@@ -35,6 +35,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/tier"
+	"github.com/dimipaun/fugaro/internal/triage"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -6339,11 +6340,11 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 			t.Errorf("review.schema.json has no %q property: the reviewer is asked for a field the artifact's own schema refuses", key)
 			continue
 		}
-		a, err := json.Marshal(stripDescriptions(askProps[key]))
+		a, err := json.Marshal(stripProse(askProps[key]))
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := json.Marshal(stripDescriptions(got))
+		b, err := json.Marshal(stripProse(got))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -6419,24 +6420,26 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 	}
 }
 
-// stripDescriptions is a schema subtree with every "description" removed: the
-// wire schema the reviewer's call carries explains nothing, and comparing the
-// two documents is comparing their rules.
-func stripDescriptions(v any) any {
+// stripProse is a schema subtree with its prose removed — a description, a
+// $comment, a title and the identifiers a document names itself by. The wire
+// schema a call carries explains nothing, and comparing the two documents is
+// comparing their rules: none of those members is one.
+func stripProse(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, e := range x {
-			if k == "description" {
+			switch k {
+			case "description", "$comment", "title", "$schema", "$id":
 				continue
 			}
-			out[k] = stripDescriptions(e)
+			out[k] = stripProse(e)
 		}
 		return out
 	case []any:
 		out := make([]any, len(x))
 		for i, e := range x {
-			out[i] = stripDescriptions(e)
+			out[i] = stripProse(e)
 		}
 		return out
 	}
@@ -6556,5 +6559,77 @@ func TestTaskSchemaStillRefusesAnUnknownMember(t *testing.T) {
 	}
 	if err := sch.Validate(inst); err == nil {
 		t.Error("schema accepts a chain limit outside overrides")
+	}
+}
+
+// TestTriageSchemaMatchesTheDocument: schemas/triage.schema.json is the
+// published contract for one triage round's verdict (docs/post-review-triage,
+// D1840, D1850), and the judge's own call carries runner.TriageSchema for the
+// document it answers. The two are one shape in two places, and this holds them
+// together: a rule in the document and not in the call is a judge answering to
+// a shape its own reader refuses, and internal/triage's Decode refuses such a
+// document as a whole, which records the round as failed and blocks every
+// finding the mode's table blocks (D1846) — a reason the judge wrapped onto a
+// second line would cost the round its whole verdict rather than being read as
+// the answer it is.
+//
+// The rules are compared one by one, prose dropped: the document explains its
+// members to a human and the call's schema is wire only, and a description is
+// not a rule. What the shape permits is then held to the reader, which is the
+// other half of the same agreement.
+func TestTriageSchemaMatchesTheDocument(t *testing.T) {
+	raw, err := os.ReadFile("triage.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var published, call any
+	if err := json.Unmarshal(raw, &published); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(runner.TriageSchema), &call); err != nil {
+		t.Fatalf("runner.TriageSchema is not JSON: %v", err)
+	}
+	doc, err := json.Marshal(stripProse(published))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask, err := json.Marshal(stripProse(call))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(doc, ask) {
+		t.Fatalf("schemas/triage.schema.json and runner.TriageSchema are not one shape:\nthe document: %s\nthe call:     %s", doc, ask)
+	}
+
+	// What the agreement is worth, as the reader feels it: a document this
+	// shape permits is a document a run can read, and the refusals the call
+	// states are the reader's own. Each of the four refusals below was a
+	// document the call permitted while the reader refused it as a whole, so
+	// the round was recorded failed and every finding the table blocks blocked.
+	sch := compile(t, "triage.schema.json")
+	const key = "0f1e2d3c4b5a6978"
+	for _, tc := range []struct {
+		name string
+		in   string
+		read bool
+	}{
+		{"the answer the judge writes", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"defer","reason":"doc drift","group":"docs"},{"index":1,"key":"ffffffffffffffff","verdict":"block","reason":"a real bug"}]}`, true},
+		{"a reason on two lines", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"one line\nand an instruction"}]}`, false},
+		{"a group on two lines", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"defer","reason":"x","group":"docs\nmore"}]}`, false},
+		{"a member the verdict does not carry", `{"version":1,"findings":[],"tolerated":[]}`, false},
+		{"a member an entry does not carry", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","round":2}]}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := sch.Validate(inst); (err == nil) != tc.read {
+				t.Errorf("the call's shape permits it = %v, want %v: %v", err == nil, tc.read, err)
+			}
+			if _, err := triage.Decode([]byte(tc.in)); (err == nil) != tc.read {
+				t.Errorf("the reader reads it = %v, want %v: %v", err == nil, tc.read, err)
+			}
+		})
 	}
 }

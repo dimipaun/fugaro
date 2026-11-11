@@ -184,12 +184,17 @@ func (r *run) changedPaths() []string {
 // review's own value, which is the one answer this must never give.
 func (r *run) baseRigor(ctx context.Context) (rigor.Config, string) {
 	if r.follow != nil || r.review {
+		// r.cfg is already the base's own file for these two: readBaseConfig
+		// fetched origin/<ref> and resolved it, so the whole configuration —
+		// the triage switch included — is what the base branch carries.
+		r.baseCfg = r.cfg
 		return r.cfg.RigorConfig(), "origin/" + r.cfg.Git.BaseBranch
 	}
 	rev, data, err := r.readBaseRigor(ctx)
 	if err != nil {
 		r.d.Log.Warn("the base branch's fugaro.yaml could not be read; the run resolves its rigor from the project layer alone",
 			"revision", rev, "err", r.redact(err.Error()))
+		r.baseCfg = nil
 		return r.cfg.ProjectRigor(), ""
 	}
 	out := ResolveConfig(data, r.spec.ProjectLayer, r.d.Project, r.spec.BaseBranch)
@@ -202,8 +207,10 @@ func (r *run) baseRigor(ctx context.Context) (rigor.Config, string) {
 	if err != nil {
 		r.d.Log.Warn("the base branch's fugaro.yaml does not resolve; the run resolves its rigor from the project layer alone",
 			"revision", rev, "err", r.redact(err.Error()))
+		r.baseCfg = nil
 		return r.cfg.ProjectRigor(), ""
 	}
+	r.baseCfg = out.Cfg
 	return out.Cfg.RigorConfig(), rev
 }
 

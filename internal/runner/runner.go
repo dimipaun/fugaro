@@ -469,6 +469,21 @@ type run struct {
 	// review, and the mode must not come from there.
 	rigorCfg rigor.Config
 	rigorRev string
+	// baseCfg is the whole resolved configuration the base branch's
+	// fugaro.yaml produced at bootstrap, of which rigorCfg is the mode's
+	// half: the triage stage's switch is the other key read from there and
+	// not from the checkout (D1854, triage_stage.go), and reading it from
+	// out.Cfg is what makes it the base's answer rather than a second read
+	// of the same file. It is nil exactly when the base could not be read or
+	// did not resolve — the run then has no base file to read a switch from
+	// and does not triage, which is the strict direction.
+	baseCfg *config.Config
+	// triageRounds is the triage rounds this run has recorded, in the order it
+	// ran them: the raw list the record's block is rebuilt from (triage_stage.go),
+	// kept here rather than appended to the block because runstore.NewTriage is
+	// what bounds and clips it and a second append would build on the bounded
+	// list.
+	triageRounds []runstore.TriageRound
 	// rigorRaise is the last raise the run's mode took during the run, set by
 	// the moment that took it (noteRigorRaise, rigor.go) and nil while the mode
 	// has never risen above the one bootstrap resolved. It is kept here because
@@ -3486,6 +3501,16 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		if r.capReached() {
 			return false
 		}
+		// The judge weighs this round's findings (T-TR7a, D1840): it is called
+		// after the round is recorded and before anything acts on it, and what
+		// it answers is logged and nothing else — the fix below, Decide above
+		// the loop and the pull request's body all read the round exactly as
+		// they did before it existed. A judge the run could not make is a
+		// stage failure like any other, and the loop stops on it: nothing of
+		// the round is acted on by a run that is already over.
+		if !r.triageRound(ctx, round, policy.LevelL2, v) {
+			return false
+		}
 		// OD1: a round that asks for changes and names nothing but decisions
 		// only the owner can make is where the loop stops. No fix round is
 		// dispatched — there is nothing a coder could change — and no further
@@ -3583,6 +3608,13 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
 		r.save(ctx)
 		if r.capReached() {
+			return false
+		}
+		// The judge, exactly as seniorLoop calls it and for this level's own
+		// rounds: level 3's findings are judged too (D1847), whichever level
+		// decides readiness. A judge that failed the run stops this loop the
+		// same way.
+		if !r.triageRound(ctx, round, policy.LevelL3, v) {
 			return false
 		}
 		// OD1, exactly as seniorLoop stops: level 3 is the deciding level of a
@@ -3873,13 +3905,17 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		model, effort := r.reviewFacts("review_first")
 		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Head: head, Model: model, Effort: effort, Bounce: r.bounce}
 		var v Verdict
+		// parsed is whether this round answered a verdict at all, read by the
+		// triage step below: a round with none has nothing for a judge to weigh,
+		// and a skipped or unparsed round is exactly the round the record's own
+		// verdict "none" says nothing was read from.
+		parsed := false
 		switch skipped := (skippedError{}); {
 		case errors.As(err, &skipped):
 			r.d.Log.Warn("the first-line review failed; skipping it", "round", round, "err", r.redact(skipped.err.Error()))
 		case !ok:
 			return sessionID, false
 		default:
-			var parsed bool
 			if v, parsed = TryVerdict(res); parsed {
 				sum.Verdict, sum.Findings = v.Verdict, len(v.Findings)
 			} else {
@@ -3897,6 +3933,15 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		r.rec.Reviews = append(r.rec.Reviews, sum)
 		r.save(ctx)
 		if r.capReached() {
+			return sessionID, false
+		}
+		// The judge weighs the cheap loop's round too (D1847): level 1 is a
+		// review level, its findings are what the level above is handed, and
+		// which level decided them does not change what the judge is asked. A
+		// round that answered no verdict has none to weigh, so it is skipped
+		// rather than judged on findings nothing named. A judge that failed
+		// the run ends this loop, which is the session's own return.
+		if parsed && !r.triageRound(ctx, round, policy.LevelL1, v) {
 			return sessionID, false
 		}
 		if sum.Verdict != "changes" {
@@ -4088,6 +4133,13 @@ type stageOpts struct {
 	// attempt that has none left, which is why this is a flag the caller
 	// sets per attempt and not a decision stageOnce makes on its own.
 	RetryTransient bool
+	// Dir is the working directory the stage's agent runs in, "" for the
+	// run's own checkout — which is every stage but one. The triage judge
+	// runs in a directory of its own that holds nothing of the run
+	// (triage_stage.go): the brief is text, and a stage with the artifact
+	// under review in reach is what the empty tool list and the empty
+	// setting sources are there to prevent (F25).
+	Dir string
 }
 
 // transientRetries is the run's own bound on the retry a closed model stream
@@ -4427,6 +4479,14 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secretList())
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, stageEnv, tw, sw
+	if opts.Dir != "" {
+		// The stage's own directory rather than the checkout: the one stage
+		// that asks for it is the triage judge, which must have nothing of the
+		// run in reach (F25). Everything the stage's own environment names —
+		// the state directory, the home it runs with, the git credentials — is
+		// an absolute path, so nothing else moves with the working directory.
+		req.Dir = opts.Dir
+	}
 	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.cfg.Agent.MaxBudgetUSD
 
 	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
