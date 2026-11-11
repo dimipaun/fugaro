@@ -453,7 +453,7 @@ const MCPServerStorePrefix = "fugaro-mcpauth-"
 // own account (MCPServerAccountID), for the same reason (toCoordinator,
 // toCatalogCheck, toMCP).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
+	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, WorkspaceReadRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -923,6 +923,14 @@ var RolePermissions = map[string][]string{
 	// installation's database. credentials.tf lists both permissions with their
 	// reasons; TestCredentialsDatabaseRoleIsTheTwoDataPermissions is the pin.
 	CredentialsDatabaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
+	// The workspace's read of the MEMBER's database (docs/workspaces/
+	// spec.md §5, W7; workspace_access.go): the ONE permission a member's own
+	// Fugaro installation binds, so the workspace's credentials service can
+	// read the member's ledger for the reconciliation alarm. It is the read
+	// half of the credentials role above and deliberately not that role:
+	// firebasedatabase.instances.update is not bound at all, so no later
+	// revision of the service can write a member's database.
+	WorkspaceReadRole: {"firebasedatabase.instances.get"},
 	// The deployer's eight roles (D75, Task 1.5, redesigned for 0.10.0). They
 	// are not installation roles: nothing a run does needs them, and their
 	// bound is the split between them — creation, reads and
@@ -1070,11 +1078,63 @@ func APITargets() []string {
 // the workdir never adopts something discovery did not check. An import is
 // otherwise checked as any other change (an import and update included).
 func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
+	all, _, _ := c.notCoveredSplit(p, imports)
+	return all
+}
+
+// NotCoveredSplit is NotCovered's answer in the two halves D1545 needs: the
+// reasons that REFUSE a plan (integrity, D1549) and the reasons that are
+// recorded and warned instead (content). The two together are NotCovered's
+// list, in its order and with its wording, so a reader that wants the whole
+// answer keeps calling NotCovered and one that judges a plan asks for the
+// halves.
+//
+// It exists on this cover and not only on tf.ManagedCover because this is the
+// cover `fugaro update`'s gate is handed (internal/cli's stepCover wraps it,
+// and it holds no delete list): a split the managed cover kept to itself left
+// every CONTENT refusal of the installation's own review looking like an
+// integrity one, which would have made D1545's whole point — record the two
+// cover tables and warn — inert for the command that applies the most.
+//
+// Which reasons are which is decided in notCoveredSplit below, on exactly
+// tf.ManagedCover's rule (managed_cover.go's coverFinding): the two tables that
+// judge WHAT a plan contains — the type table and the grant table — are content
+// while nothing is being removed, because D1545 leaves that judgement to
+// record-and-warn, and every other rule of the chain is D1549's and refuses.
+// The type table's content arm does not end the chain: the import rules and
+// attributes' own rules below it are read for a type the modules do not carry
+// as well, so an off-table resource in a project that is not this run's — or
+// one importing an object this run's discovery never found — is refused as well
+// as warned (notCoveredIntegrity).
+func (c Cover) NotCoveredSplit(p *Plan, imports []ImportKey) (integrity, content []string) {
+	_, integrity, content = c.notCoveredSplit(p, imports)
+	return integrity, content
+}
+
+// notCoveredSplit is the one walk both answers come from, so a plan cannot be
+// told two different things about one change depending on which half a caller
+// asked for.
+func (c Cover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integrity, content []string) {
 	if p == nil {
-		return []string{"no plan"}
+		return []string{"no plan"}, []string{"no plan"}, nil
 	}
-	var out []string
-	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
+	add := func(rc ResourceChange, why string) {
+		item := safetext.Field(rc.Address) + " (" + why + ")"
+		all = append(all, item)
+		integrity = append(integrity, item)
+	}
+	addContent := func(rc ResourceChange, why string) {
+		item := safetext.Field(rc.Address) + " (" + why + ")"
+		all = append(all, item)
+		content = append(content, item)
+	}
+	addFinding := func(rc ResourceChange, f coverFinding) {
+		if f.content {
+			addContent(rc, f.why)
+			return
+		}
+		add(rc, f.why)
+	}
 	creates := creates(p)
 	createdSAIDs, heldSAIDs := planAccounts(p)
 	creds := planCredentialsAccounts(p)
@@ -1086,8 +1146,28 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "no actions")
 			continue
 		case !allOf(acts, "create", "update", "no-op", "read"):
-			add(rc, "actions "+strings.Join(acts, ", "))
-			continue
+			if !removalContent(rc) {
+				add(rc, "actions "+strings.Join(acts, ", "))
+				continue
+			}
+			// A removal of a classified, non-data-bearing type: what D1545
+			// records and warns about. Its warning is not the whole answer
+			// either — the walk carries on to judge the resource underneath it,
+			// because a warning that ended the walk would make a removal a way
+			// past every rule below that D1549 keeps refusing: a replace of a
+			// scheduler pointed at another host, a custom role widened, an image
+			// from somewhere else, a resource moved to another project. A REPLACE
+			// is judged on what it creates; a plain DELETE creates nothing, so
+			// terraform writes the destroyed resource in before and null in
+			// after, and the same rules are handed the removed view instead
+			// (removed, managed_cover.go) — otherwise a name outside the
+			// projects, a resource of a type the modules dropped or an object
+			// whose removal is refused for good would be waved through on the
+			// removal's own warning.
+			addContent(rc, "actions "+strings.Join(acts, ", "))
+			if slices.Equal(acts, []string{"delete"}) {
+				rc = removed(rc)
+			}
 		}
 		if allOf(acts, "no-op", "read") && rc.Change.Importing == nil {
 			continue
@@ -1099,7 +1179,21 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 		case t == "google_service_account_key":
 			add(rc, "a service account key")
 		case !allowedTypes[t]:
-			add(rc, "a resource type outside the installation's modules")
+			f := coverFinding{why: "a resource type outside the installation's modules", content: !removalRefuses(rc)}
+			addFinding(rc, f)
+			// The type table is CONTENT — D1545 records it and warns — and it
+			// must not take the rules below it down with it: the imports and
+			// attributes' own rules judge the resource itself, where it lands
+			// and what it takes over, and they are D1549's whatever the type is.
+			// A type the modules do not carry is therefore warned about AND
+			// still refused for the deeper reason when there is one
+			// (notCoveredIntegrity), which is the shape tf.ManagedCover's own
+			// chain has.
+			if f.content {
+				if why := c.notCoveredIntegrity(rc, imports, creates, createdSAIDs, heldSAIDs, creds); why != "" {
+					add(rc, why)
+				}
+			}
 		case t == "google_project_iam_custom_role" && c.customRole(rc) != "":
 			add(rc, c.customRole(rc))
 		case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
@@ -1110,11 +1204,45 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, c.attributes(rc, creates, createdSAIDs, heldSAIDs, creds))
 		case strings.HasSuffix(t, "_iam_member"):
 			if why := c.grant(rc, creates, createdSAIDs, heldSAIDs, dep); why != "" {
-				add(rc, why)
+				addFinding(rc, coverFinding{why: why, content: !removalRefuses(rc)})
 			}
 		}
 	}
-	return out
+	return all, integrity, content
+}
+
+// notCoveredIntegrity is the part of the installation cover's chain below its
+// type table — the two import rules and attributes' own rules — in the order
+// the chain reads them. It is a function of its own for the reason
+// tf.ManagedCover's helper of the name is (managed_cover.go): the type table is
+// CONTENT for a type the modules do not carry, and its warning must not stop
+// the rules that judge the resource itself from answering. "" when the change
+// passes all of them.
+func (c Cover) notCoveredIntegrity(rc ResourceChange, imports []ImportKey, creates, createdSAIDs, heldSAIDs map[string]bool, creds credentialsPlan) string {
+	switch {
+	case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
+		return "imports " + rc.Change.Importing.ID + ", which is not in this run's projects"
+	case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
+		return "imports " + rc.Change.Importing.ID + ", which this run's discovery did not find"
+	case c.attributes(rc, creates, createdSAIDs, heldSAIDs, creds) != "":
+		return c.attributes(rc, creates, createdSAIDs, heldSAIDs, creds)
+	}
+	return ""
+}
+
+// removalContent is whether the arm this cover refuses a removal with — the one
+// it has instead of a delete list — is a CONTENT refusal D1545 records and
+// warns rather than an integrity one D1549 keeps. D1551's rule alone decides
+// it: a delete, or a replace in either of terraform's two orders, of a
+// data-bearing or unclassified type refuses for good (RefusesRemovalType), and
+// one of any other classified type is a removal the managed gate now takes with
+// a warning.
+//
+// A set terraform does not write, and forget, are not removals: nothing is
+// destroyed by them, and this cover reads them fail closed — integrity — as
+// tf.ManagedCover's managedActions reads the same sets (managed_cover.go).
+func removalContent(rc ResourceChange) bool {
+	return allOf(rc.Change.Actions, "create", "delete") && !RefusesRemovalType(rc.Type)
 }
 
 // creates is what a plan creates, by module and type: a computed member or
@@ -2880,4 +3008,109 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 		}
 	}
 	return ""
+}
+
+// dataBearingTypes and nonDataBearingTypes classify every entry of allowedTypes
+// under D1551 (docs/no-prompt-policy/reconciliation.md): whether the objects the
+// type holds are data a delete or a replace would destroy, and — by the type's
+// presence in one of the two — whether anybody has decided the question at all.
+//
+// D1545 makes the managed gate audit-only for CONTENT: a refusal about what a
+// plan contains becomes record-and-warn. D1551 is the exception it leaves, and
+// it is scoped to TYPES: a delete or a replace of a resource whose objects hold
+// data is a loss the record-and-warn rule was never meant to take, so its type
+// still refuses. Data-bearing here is exactly D1551's list of nine.
+//
+// The two tables are stated separately and neither is derived from the other by
+// subtraction, deliberately: a type added to allowedTypes by a later module is
+// in NEITHER table and is therefore UNCLASSIFIED, so DataBearingType answers
+// (false, false) for it and RefusesRemovalType refuses its removal — a type
+// refuses until somebody classifies it on purpose, which is D1551's fail-closed
+// direction (an unclassified type behaves like a data-bearing one rather than a
+// non-data-bearing one). TestEveryAllowedTypeIsClassifiedDataBearingOrNot holds
+// the split: every allowedTypes entry is in exactly one table, the two do not
+// overlap, and the nine data-bearing names are D1551's own.
+var dataBearingTypes = map[string]bool{
+	// The budget ledger's instance: D1551 names it by what it holds (the kill
+	// switches, the caps and the mode the whole installation is bounded by).
+	"google_firebase_database_instance": true,
+	// Artifact Registry holds the images a managed project's jobs run; the
+	// repository is the container the image lives in.
+	"google_artifact_registry_repository": true,
+	// The log bucket and the view over it are where a managed project's logs
+	// are kept — deleting the bucket destroys the records in it.
+	"google_logging_project_bucket_config": true,
+	"google_logging_log_view":              true,
+	// D1551 names the key's container: a secret's values live in its versions,
+	// and deleting the secret destroys them.
+	"google_secret_manager_secret": true,
+	// An identity whose keys and grants are lost with it (D1551).
+	"google_service_account": true,
+	// The bucket and the objects in it: the plan's own storage.
+	"google_storage_bucket":        true,
+	"google_storage_bucket_object": true,
+	// A key's own value is the credential an API call carries.
+	"google_apikeys_key": true,
+}
+
+// nonDataBearingTypes is the other half of D1551's classification: every entry
+// of allowedTypes whose removal destroys no data its objects hold. D1551 groups
+// them — the *_iam_member grant types, the Cloud Run job and service, the
+// scheduler, the compute network, the monitoring and logging plumbing, the
+// billing budget, a custom role, an enabled service and the Firebase project —
+// and each is named here one by one so that the classification of every type is
+// a decision rather than a default.
+var nonDataBearingTypes = map[string]bool{
+	"google_artifact_registry_repository_iam_member": true,
+	"google_billing_budget":                          true,
+	"google_cloud_run_v2_job":                        true,
+	"google_cloud_run_v2_job_iam_member":             true,
+	"google_cloud_run_v2_service":                    true,
+	"google_cloud_run_v2_service_iam_member":         true,
+	"google_cloud_scheduler_job":                     true,
+	"google_compute_firewall":                        true,
+	"google_compute_router":                          true,
+	"google_compute_router_nat":                      true,
+	"google_firebase_project":                        true,
+	"google_logging_log_view_iam_member":             true,
+	"google_logging_project_exclusion":               true,
+	"google_logging_project_sink":                    true,
+	"google_monitoring_alert_policy":                 true,
+	"google_monitoring_notification_channel":         true,
+	"google_project_iam_custom_role":                 true,
+	"google_project_iam_member":                      true,
+	"google_project_service":                         true,
+	"google_secret_manager_secret_iam_member":        true,
+	"google_service_account_iam_member":              true,
+	"google_storage_bucket_iam_member":               true,
+}
+
+// DataBearingType classifies a resource type for D1551: whether its objects
+// hold data a delete or a replace would destroy, and whether the type is
+// classified at all. A type in neither table — one added to allowedTypes by a
+// later module and not yet decided — is (false, false): not data-bearing as far
+// as anyone has said, and unclassified, which the caller reads as the
+// fail-closed direction (RefusesRemovalType refuses it).
+//
+// The question is asked of the TYPE and not of the change, because D1551's
+// ruling is about types: it is what makes a type's removal refuse wherever it
+// appears, whether or not the plan says anything else about it.
+func DataBearingType(t string) (dataBearing, classified bool) {
+	if dataBearingTypes[t] {
+		return true, true
+	}
+	if nonDataBearingTypes[t] {
+		return false, true
+	}
+	return false, false
+}
+
+// RefusesRemovalType is D1551's rule as the delete and replace rule reads it: a
+// removal of a data-bearing type refuses, and so does one of an unclassified
+// type — a type added to allowedTypes later refuses until somebody classifies
+// it on purpose. Every other classified, non-data-bearing type is one the
+// managed gate now takes with a warning (D1545).
+func RefusesRemovalType(t string) bool {
+	bearing, classified := DataBearingType(t)
+	return !classified || bearing
 }

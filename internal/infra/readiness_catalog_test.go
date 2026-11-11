@@ -10,7 +10,7 @@ import (
 )
 
 // catalogBlock is a project image catalog whose one entry is the default, so
-// the webapp's workflows name nothing of their own and PIC5's catalogJobImage
+// the webapp's workflows name nothing of their own and PIC5's jobImage
 // routes their jobs through the entry (reconciliation §3.1 step 3).
 const catalogBlock = `
 image_catalog:

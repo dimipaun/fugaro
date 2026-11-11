@@ -53,13 +53,107 @@ import (
 //     there is deliberately no second switch here: a process that declined to
 //     serve on a variable of its own would be a front door whose state two
 //     places disagree about, and the plan's operator note names `fugaro update`
-//     as the one thing that turns it on.
+//     as the one thing that turns it on. FrontDoor below is that rule as a
+//     function: what the installation module renders onto the revision is what
+//     the process mounts, and a revision with no entry serves exactly what this
+//     service served before M12 — a mux with nothing on it.
 type Service struct {
 	mux *http.ServeMux
 }
 
 // NewService is the front door's HTTP surface with nothing on it yet.
 func NewService() *Service { return &Service{mux: http.NewServeMux()} }
+
+// Door is the server whose routes a front door that is ON serves: M5's
+// authorization server, M7's resource server and M10's audit, as the one
+// object that mounts them on this service.
+//
+// It is an interface and not *mcpauth.Server because this package is what
+// mcpauth mounts ON: ee/coordinator/mcpauth imports ee/coordinator for exactly
+// that, so naming it here would be the cycle that makes the front door
+// unbuildable. What this type needs is the one method a door has, and M12 is
+// the caller that passes the real one.
+type Door interface {
+	// Mount adds this door's routes to the service. It is srv.Mount in
+	// mcpauth/server.go, and the pattern language underneath is net/http's
+	// own mux (Handle's comment).
+	Mount(*Service)
+}
+
+// FrontDoorSpec is what a front door is built out of: the installation's own
+// answer to whether this revision runs a door, the build's own answer to
+// whether it carries M12b's delivery, and the door itself.
+//
+// The three are one struct rather than three arguments because the switch has
+// two settings and two facts behind it, and a caller that transposed two
+// booleans would be a front door whose state nothing can read off the call
+// site. Every field is named where the door is built, which is the one place
+// the decision is made.
+type FrontDoorSpec struct {
+	// Enabled is D934's switch as this installation rendered it: true when the
+	// module wrote the front door's own configuration onto the revision, and
+	// that entry is written only under var.mcp_server.
+	Enabled bool
+	// Delivered is whether this binary carries M12b's delivery of a sign-in
+	// flow to the paired phone. The wiring passes mcpauth.DeviceDeliveryBuilt
+	// and never a variable of its own.
+	Delivered bool
+	// Door is the server whose routes the enabled front door serves. It is nil
+	// exactly when the door is off.
+	Door Door
+}
+
+// ErrDeviceDeliveryMissing refuses to enable a front door whose build carries
+// no delivery of a sign-in flow to the paired device (the coordinator plan's
+// D2126, answered 2026-11-11).
+//
+// It is a sentinel because the refusal is a fact about the installation rather
+// than about a request, and an operator reads it once, at start-up: the door is
+// served by a revision that never becomes ready, which is the fail-closed
+// direction the process's other refusals take. What it is not is a door that
+// serves and admits nobody: an enabled door without the delivery is a page a
+// person is asked to approve a flow on with nothing to type the number into,
+// and a half-built door on the public internet is the one thing D2126 forbids
+// switching on.
+var ErrDeviceDeliveryMissing = errors.New("the coordinator's front door cannot be enabled: this build carries no delivery of a sign-in flow to the paired device")
+
+// FrontDoor returns the service a `fugaro coordinator serve` revision runs:
+// the door's routes when the installation turned it on, and an empty mux when
+// it did not.
+//
+// **The off direction is the whole of this function.** D934's answer is that
+// an installation which never opted in acquires no front door, and that one
+// which asked for a front door still gets it off until a person turns it on
+// (the amended answer, of 2026-11-04: off is the absence of the allUsers
+// binding, and the module writes that binding under the same var.mcp_server
+// that puts this entry on the revision — one fact, two renderings, so the two
+// cannot disagree). A service whose mux is empty answers 404 on every path of
+// the front door, which is what this process served before M12 existed.
+//
+// The two refusals are about states that must not serve at all. A door that is
+// enabled with nothing to mount is a wiring mistake — the routes would be
+// missing while the revision looked healthy — and one enabled without M12b's
+// delivery is the state D2126 forbids (ErrDeviceDeliveryMissing). Both are
+// answered here rather than at the first request, because a front door that
+// serves a 404 where its own metadata should be is a client that cannot tell a
+// broken installation from one that never turned the door on.
+func FrontDoor(spec FrontDoorSpec) (*Service, error) {
+	if !spec.Enabled {
+		if spec.Door != nil {
+			return nil, errors.New("the coordinator's front door was handed a door and told it is off: the switch and the server have to agree about which of the two this revision is")
+		}
+		return NewService(), nil
+	}
+	if spec.Door == nil {
+		return nil, errors.New("the coordinator's front door is enabled with no server to mount: the installation turned it on and the process built no door, which is a revision that would serve a 404 where its own metadata document belongs")
+	}
+	if !spec.Delivered {
+		return nil, fmt.Errorf("%w (deploy/terraform/gcp/modules/installation/coordinator.tf, and the coordinator plan's D2126)", ErrDeviceDeliveryMissing)
+	}
+	svc := NewService()
+	spec.Door.Mount(svc)
+	return svc, nil
+}
 
 // Handle mounts a route. It is the seam M5's authorization server and M7's MCP
 // endpoint are added through, and it is net/http's own mux underneath: the

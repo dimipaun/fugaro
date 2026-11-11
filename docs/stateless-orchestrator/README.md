@@ -1,5 +1,13 @@
 # The stateless orchestrator
 
+**Status (2026-11-10): twelve of the [implementation plan](implementation-plan.md)'s twenty tasks are merged on `main`** (O0-O8, O10, O17, O18);
+O9 (#2193) and O12 (#2290) are open drafts; O11, O13 and O14 are not started. **This revision makes O16 and O19 tasks**: O16 splits into
+**O16a** (the MCP state scopes, catalogue rows and read handlers, dormant — **approved and launchable**, after the open #1994) and **O16b**
+(serving them — approved, waits on the MCP front door's wiring task) and **O19** (a workspace's refusal pauses the queue — approved, waits on
+W7, #2275). It writes the MCP amendments T3 and T4 into `docs/mcp-server` and puts **D2020-D2022** to the owner, **all answered as recommended
+on 2026-11-10** (reconciliation section 8; D2023-D2029 reserved). **The owner approved all tasks on 2026-11-10.** The status of 2026-11-08
+follows, kept.
+
 **Status (2026-11-08): six tasks of the [implementation plan](implementation-plan.md) are built, all merged on `main`.** Task **O0**, the state schema,
 the typed patch and the validator (#1823, `36abeffc`, 2026-11-07): `internal/orchestrator/state.go`, `patch.go`, `validate.go`, `summary.go`, their tests,
 `testdata/state-a.json` and the two `schemas/` documents. Task **O1**, the deterministic security-sensitive classifier (#1822, `405dae8b`, 2026-11-07), is its
@@ -15,8 +23,8 @@ subtree and its rules, **O3** (#1954, `70ec7800`), the state store and the audit
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec verbatim: the stateless orchestrator loop and its daemon addendum. Not edited |
-| [reconciliation.md](reconciliation.md) | The spec against the code (F1-F23), the hard questions, the decisions **D1220-D1247** with the owner's answers of 2026-11-04 and 2026-11-08 (BF2: D1244-D1247, the long-run triage rule), the UNVERIFIED list (U1-U10) and the tensions (T1-T7; T6 and T7 closed by the owner's answers, T7 not the recommendation) |
-| [implementation-plan.md](implementation-plan.md) | Tasks O0-O19 in three slices, the parallel levels, the shared-files table, the owner-run Checks 300-305 (300 **PASSED 2026-11-10**) and the owner questions Q1-Q4 |
+| [reconciliation.md](reconciliation.md) | The spec against the code (F1-F23), the hard questions, the decisions **D1220-D1247** with the owner's answers of 2026-11-04 and 2026-11-08 (BF2: D1244-D1247, the long-run triage rule), the pass of 2026-11-10 (section 8: F24-F29, R1-R3, **D2020-D2022 answered 2026-11-10, as recommended**), the UNVERIFIED list (U1-U12) and the tensions (T1-T7; T6 and T7 closed by the owner's answers, T7 not the recommendation) |
+| [implementation-plan.md](implementation-plan.md) | Tasks O0-O19 (O16 split into O16a and O16b on 2026-11-10) in three slices, the parallel levels, the shared-files table, the owner-run Checks 300-305 (300 **PASSED 2026-11-10**) and the owner questions Q1-Q4 |
 
 ## The owner's answers
 
@@ -47,7 +55,7 @@ All of D1220-D1243 were answered on 2026-11-04. Most are the recommendation; **t
   in a security path, stops the run and asks the owner (a `waiting_on: person` decision). Everything else **fails closed** into the fourth,
   **recommend-only** outcome — BF1's file absent, `CIUnknown`, a truncated path set, a severity the triage does not know — tried before the two that act, so it merges nothing, cancels
   nothing and restarts nothing, and prints what it could not read. Every triage is written to the orchestrator audit log under `<run>:triage` and printed read-only by
-  **`fugaro runs watch`**; until BF1 lands that is every long run (U10), and the threshold it fires on is the person's own local key (`orchestrator.triage_after`, default `2h`, refused when it is not under the run's budget).
+  **`fugaro runs watch`**; until BF1 lands that is every long run (U10), and what fires it is the per-mode ladder table of `docs/outer-loop-escalation` — local-only keys, one set per rigor mode (D2032) — rather than a single age threshold.
 
 D1241 (the person's own credential writes the `orchestrator/` node), D1242 (the terminal Typed confirmation now, a paired-device channel later) and
 D1243 (the session-start print reads a local cache the daemon writes) are all the recommendation, and the gates the plan had put on them are lifted.

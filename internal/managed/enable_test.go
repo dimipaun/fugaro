@@ -66,8 +66,11 @@ func TestClosedGateRefusalNamesNoWayThrough(t *testing.T) {
 	}
 }
 
-// And the gate a budget read opens is the one that refuses nothing: it is the
-// only way the value is ever open, and it is what Apply's own first step reads.
+// And the gate a budget read opens on a recorded amount is the one that refuses
+// nothing: Apply's own first step reads it, and it is what an apply runs behind
+// once its read has answered. The other way the value is open — the version-1
+// warning of D1545 — is budget_test.go's
+// TestApplyGateOpensWithAWarningOnAVersionOneMarker.
 func TestGateABudgetReadOpenedRefusesNothing(t *testing.T) {
 	gate, err := ApplyGate(BudgetRead{Project: project, Amount: 5000, Currency: "USD", OK: true})
 	if err != nil {

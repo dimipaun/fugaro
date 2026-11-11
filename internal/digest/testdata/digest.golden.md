@@ -14,7 +14,7 @@ Runs of this repository that finished in 2026-W43 (2026-10-19 to 2026-10-25): 7 
 
 ## Failures
 
-Why the period's runs did not succeed, over every run of the period, not only the rows above.
+Why the period's runs did not succeed, over every run of the period, not only the rows above. A challenger arm is not one of them: its own loss is its pair's (D568).
 
 | class | runs | billed | example |
 | --- | --- | --- | --- |
@@ -22,7 +22,7 @@ Why the period's runs did not succeed, over every run of the period, not only th
 
 ## Stages
 
-Model calls and sub-agents by stage, over every run of the period.
+Model calls and sub-agents by stage, over every run of the period. A challenger arm's are counted apart: it runs the pair's other model (D568).
 
 | stage | calls | agents |
 | --- | --- | --- |

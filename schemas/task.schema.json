@@ -217,7 +217,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["pair_id", "arm"],
-      "description": "The A/B pair block of a sampled launch (docs/model-ab-testing, decisions D550-D573; task.AB): which pair this run belongs to, which arm it is, and, for a challenger, the coder model it runs and the fact that it never publishes. Absent for every launch that was not sampled — which is every launch today, since nothing samples yet — so a spec without it is byte-identical to what the release before this field wrote. Both arms of one pair carry the same pair_id and differ in nothing but this block (D555): the challenger travels here and never in overrides.model, which a run with no per-role models applies to every stage and would move the reviewer both arms share, which is why an ab block and overrides.model never appear together. The vocabulary is closed, like rigor's and tier's: an unknown arm, publish or challenger_source is refused rather than read as something else. Needs a runner that knows the field: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running a challenger as a publishing run, and the launcher's own gate is what keeps a sampled launch off such a job.",
+      "description": "The A/B pair block of a sampled launch (docs/model-ab-testing, decisions D550-D573; task.AB): which pair this run belongs to, which arm it is, and, for a challenger, the coder model it runs and the fact that it never publishes. Absent for every launch that was not sampled — which is every launch today, since nothing samples yet — so a spec without it is byte-identical to what the release before this field wrote. Both arms of one pair carry the same pair_id and differ in nothing but this block (D555): the challenger travels here and never in overrides.model, which a run with no per-role models applies to every stage and would move the reviewer both arms share, which is why an ab block and overrides.model never appear together. The vocabulary is closed, like rigor's and tier's: an unknown arm, publish, challenger_source or slot is refused rather than read as something else. `slot` (D728, docs/review-levels-ab-jobmax B1.1) says which one thing the pair varies: a coder pair — the slot an absent key means — holds every reviewer fixed, and a pair at a review slot holds the coder fixed and carries its challenger's champion_run, the run whose recorded patch that challenger's reviewer replays (B1.2). Needs a runner that knows these fields: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running a challenger as a publishing run, and the launcher's own gates are what keep a sampled launch, or one at a review slot, off such a job (internal/cli/recipes_skew.go's slotSince).",
       "properties": {
         "pair_id": {
           "type": "string",
@@ -240,6 +240,15 @@
         "challenger_source": {
           "enum": ["owner"],
           "description": "Who named the challenger: the owner, in the project layer, never the repository's own file (D556, task.ABChallengerOwner). It is the seam D572 reserves for a later auto-flip writer; nothing reads it to pick a challenger."
+        },
+        "slot": {
+          "enum": ["coder", "l1", "l2", "l3"],
+          "description": "The one thing the pair varies (D728, task.ABSlot): coder is the pair A1.1 already writes — a second full run on another coder model, with every reviewer held fixed, which is D555 as it stands — and l1, l2 and l3 are the review slots, whose challenger replays that level's review over the champion's own recorded patch instead of running a coding loop (B1.2). Absent means coder (task.AB.EffectiveSlot): every block written before this key is a coder pair, so the empty spelling cannot be read as a pair nobody could score. Both arms of a pair carry the same slot — it says what the pair varies, not what this arm does — and a champion carries it as readily as a challenger."
+        },
+        "champion_run": {
+          "type": "string",
+          "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+          "description": "The champion's run ID, present only on a challenger whose slot is a review slot (task.AB.ChampionRun, D728, B1.2): it names the run whose recorded patch, runs/<repo-slug>/<run-id>/ab/patch.diff, this arm's reviewer reads, which is what makes the two arms of a review pair judge the same code. Absent on a champion — which is the run its own block names — and on a coder pair's challenger, which runs the whole task itself; task.Spec.Validate and the if/then below refuse it there rather than ignoring it, and the pattern is run_id's own form (task.ValidRunID), because a blank or invented ID would send the replay looking for an object nobody wrote."
         }
       },
       "not": {
@@ -249,7 +258,14 @@
         ]
       },
       "if": { "properties": { "arm": { "const": "challenger" } }, "required": ["arm"] },
-      "then": { "required": ["publish", "challenger"] }
+      "then": { "required": ["publish", "challenger"] },
+      "allOf": [
+        {
+          "if": { "properties": { "arm": { "const": "challenger" }, "slot": { "enum": ["l1", "l2", "l3"] } }, "required": ["arm", "slot"] },
+          "then": { "required": ["champion_run"] },
+          "else": { "not": { "required": ["champion_run"] } }
+        }
+      ]
     },
     "review_levels": {
       "type": "object",

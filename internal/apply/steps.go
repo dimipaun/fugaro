@@ -84,10 +84,14 @@ var resourceSteps = map[string][]string{
 	// from: its Terraform root is per repository, and so is the redeploy
 	// (F15, D1574).
 	ResourceRepo: []string{initflow.Repository},
-	// The workspace stage is the owner's own published record, built from the
-	// `workspace_members` and `workspace_cap` this installation declares
-	// (initflow.Workspace's own comment).
-	ResourceWorkspace: []string{initflow.Workspace},
+	// A workspace is both halves of the owner's own declaration, built from the
+	// `workspace_members` and `workspace_cap` this installation declares: the
+	// workspace's own project — its service account and the one grant that
+	// reaches its database (initflow.WorkspaceProject) — and the published
+	// record that service reads (initflow.Workspace's own comment). The project
+	// runs first; a record published over a project that was never applied
+	// names a service that does not exist.
+	ResourceWorkspace: []string{initflow.WorkspaceProject, initflow.Workspace},
 }
 
 // settingSteps is the setting-key half of the table. A key is matched against
@@ -116,13 +120,17 @@ var settingSteps = []struct {
 	// only writer of that file's cloud copy (D830).
 	{"layer.", false, []string{initflow.Layer}},
 	// The workspace OWNER's half of a membership: the member table and the cap
-	// are the whole of what the workspace stage publishes (D1292, and
-	// update_workspace.go's own comment: the record a run publishes is the one
-	// its own config declares, `workspace_members` and `workspace_cap`). They
-	// are the keys of the project the workspace is named after, and the stage
-	// does nothing on a member's run, where they are absent.
-	{"workspace_members.", false, []string{initflow.Workspace}},
-	{"workspace_cap.", false, []string{initflow.Workspace}},
+	// are the whole of what this installation declares about its workspace
+	// (D1292, and update_workspace.go's own comment: the record a run publishes
+	// is the one its own config declares, `workspace_members` and
+	// `workspace_cap`). Both stages read that declaration — the workspace's own
+	// project, whose stage is the one that creates its service account and
+	// grant, and the record's own publish — so a key written here owes both,
+	// in initflow's order. They are the keys of the project the workspace is
+	// named after, and both stages do nothing on a member's run, where they are
+	// absent.
+	{"workspace_members.", false, []string{initflow.WorkspaceProject, initflow.Workspace}},
+	{"workspace_cap.", false, []string{initflow.WorkspaceProject, initflow.Workspace}},
 	// The workspace MEMBER's half — the pin, and the membership key naming the
 	// workspace it trusts — owes no step: nothing publishes either. The
 	// workspace stage is the owner's and skips on a member, no other stage

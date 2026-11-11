@@ -778,6 +778,77 @@ func TestSpecStampsNoEntryOnAJobWithNoCatalogEntry(t *testing.T) {
 	}
 }
 
+// jobImageYAML is the webapp with both workflows carrying a repository-level
+// image definition: web an image: block, api a dockerfile: — the two are
+// mutually exclusive in a fugaro.yaml — and both a rebuild: that asks for
+// something the daily check would act on. D1900 keeps every one of them
+// decodable (the config is still the repository's own) and stops acting on
+// any: a project that builds its own images gives every workflow's job the
+// image of the entry the resolver names.
+const jobImageYAML = `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: vertex }
+workflows:
+  web:
+    image: { setup: ["apt-get install -y jq"], tools: { node: "24.19.0" }, key_files: [patches] }
+    rebuild: { check: "off" }
+    commands: { build: npm run build, test: npm test }
+  api:
+    dockerfile: api.Dockerfile
+    rebuild: { check: "off" }
+    commands: { build: ./gradlew assemble, test: ./gradlew test }
+`
+
+// TestSpecJobImageIgnoresRepoLevelConfig is D1900 at the job spec, which is
+// where the image is fixed (F7): a workflow with image.setup, a dockerfile:
+// and a rebuild: used to resolve to the per-repository derived tag —
+// gcp.ImageName(registry, slug, workflow) — and now resolves to the entry the
+// project's catalog gives it, the default here. A caller that still built the
+// per-repository name would deploy a job on an image nothing builds.
+//
+// The warning is the person's half of the same rule: one sentence per key
+// written, naming the entry whose image the job now runs, so a repository that
+// meant to keep its own image reads why it did not (D1900).
+//
+// Mutation (run, restore): return gcp.ImageName(...) instead of the resolver's
+// answer in workflow() — this test then fails on the derived tag for both
+// workflows, and carries no warning.
+func TestSpecJobImageIgnoresRepoLevelConfig(t *testing.T) {
+	in := budgetInputs(t, catalogBlock)
+	in.Cfg = parseCfg(t, []byte(jobImageYAML))
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Workflows) != 2 {
+		t.Fatalf("fixture bug: %d workflows, want 2", len(spec.Workflows))
+	}
+	wantWarnings := map[string]int{"web": 2, "api": 2}
+	for name, ws := range spec.Workflows {
+		if ws.CatalogEntry != "base" {
+			t.Errorf("workflow %s runs entry %q, want the catalog's default base: the repository's own keys decide nothing (D1900)", name, ws.CatalogEntry)
+		}
+		if !strings.Contains(ws.Image, "/"+catalogImagePrefix+"base:latest") {
+			t.Errorf("workflow %s's image is %s, want the default entry's; a per-repository tag is the image this reversal took away", name, ws.Image)
+		}
+		var ignored []string
+		for _, w := range ws.Warnings {
+			if strings.HasSuffix(w, "(D1900)") {
+				ignored = append(ignored, w)
+			}
+		}
+		if len(ignored) != wantWarnings[name] {
+			t.Errorf("workflow %s warns %d times about its own keys (%q), want %d: one sentence per key written", name, len(ignored), ignored, wantWarnings[name])
+		}
+		for _, w := range ignored {
+			if !strings.Contains(w, "the entry base") {
+				t.Errorf("workflow %s's warning %q does not name the entry whose image its job runs", name, w)
+			}
+		}
+	}
+}
+
 // sharedYAML is cloneYAML with web on checkout: shared (design
 // forge-authorship-images/shared-images.md §6, route A): a job that runs a
 // shared dependency-layer image and clones the repository's own source at
@@ -3809,9 +3880,9 @@ func TestSpecBakedWorkflowRunsTheCatalogsChoice(t *testing.T) {
 // that job carried (FUGARO_REMOTE and no FUGARO_CHECKOUT). R1 (#1698, D1191)
 // refuses a prebuilt entry on a baked workflow where the spec is built, and
 // the only two checkout kinds that leave the catalog inert — clone and shared
-// — make catalog.Applies false, so catalogJobImage returns an empty entry for
-// them and WorkflowSpec.CatalogPrebuilt is never set from this path: the
-// remote's `|| ws.CatalogPrebuilt` clause is unreachable, and no allowed
+// — are the resolver's base and shared layers, so jobImage returns an empty
+// entry for them and WorkflowSpec.CatalogPrebuilt is never set from this path:
+// the remote's `|| ws.CatalogPrebuilt` clause is unreachable, and no allowed
 // configuration exercises it. The behaviour those tests were about — the
 // remote on a job whose image holds no checkout, credential-free — stays
 // covered by TestSpecCloneSetsRemoteEnv and TestSpecSharedRemoteIsCredentialFree.
@@ -3926,19 +3997,34 @@ func TestSpecCatalogOnlyRepoNeedsNoBaseImage(t *testing.T) {
 }
 
 // TestSpecCheckCoversTheWorkflowsWithoutACatalogImage: the exclusion is per
-// workflow, not per repository. A workflow that keeps its own image
-// definition is not the catalog's (catalog.Applies), so the repository keeps
-// its daily check and the check covers that workflow alone.
+// workflow, not per repository. The project marks no default, which is the one
+// state a workflow that names no entry and needs no tag is not the selection's
+// (O4 b): its job keeps the image this project builds for it, so the repository
+// keeps its daily check and the check covers that workflow alone.
+//
+// The default is what it turns on: with one marked, every workflow of the file
+// runs it whatever its own keys say (D1900), and no workflow of the repository
+// is left for the check. That is why the entry standard is unmarked here and
+// bare — the workflow that names nothing — is pinned instead of left alone.
 //
 // Every entry here is one Fugaro builds, so that the one workflow the check
 // covers is not the catalog's for the reason this test is about: a prebuilt
 // entry on a baked workflow is refused before any of this is computed (D1191).
 func TestSpecCheckCoversTheWorkflowsWithoutACatalogImage(t *testing.T) {
-	in := catalogInputs(t, &config.Catalog{Entries: catalogEntries()})
+	entries := catalogEntries()
+	for i := range entries {
+		if entries[i].Name == "standard" {
+			entries[i].Default = false
+		}
+	}
+	in := catalogInputs(t, &config.Catalog{Entries: entries})
 	w := in.Cfg.Workflows["api"]
 	w.Needs = nil
 	w.Image = config.Image{Tools: config.MiseTools{"node": "24"}}
 	in.Cfg.Workflows["api"] = w
+	bare := in.Cfg.Workflows["bare"]
+	bare.ImageName = "standard"
+	in.Cfg.Workflows["bare"] = bare
 	rs, err := Repo(in)
 	if err != nil {
 		t.Fatal(err)
@@ -4009,6 +4095,49 @@ func TestBakedWorkflowRefusesAPrebuiltCatalogEntry(t *testing.T) {
 	}
 }
 
+// TestBakedWorkflowKeepsItsOwnImageBesideAPrebuiltDefault is the refusal
+// above read against this release's D1900, and the shape the HARD RULE on
+// `fugaro update` is about: the same prebuilt default and the same baked
+// workflow, with one difference — the workflow wrote a dockerfile: of its own.
+// On the release behind such a workflow was left out of the catalog entirely
+// and ran the image this project builds for it; D1900 routes it through the
+// catalog, so without the resolver's fallback this configuration would be
+// refused here and `fugaro update` would stop and ask for a manual config edit.
+//
+// What it asserts is that the workflow keeps its own image — the derived tag
+// this repository's build writes, with no catalog entry and no refusal — and
+// that the warning says which of the two answers the job's image is: the
+// person reading a run has to know that the catalog's default was set aside
+// for this workflow.
+func TestBakedWorkflowKeepsItsOwnImageBesideAPrebuiltDefault(t *testing.T) {
+	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
+	w := in.Cfg.Workflows["bare"]
+	w.Dockerfile = ".fugaro/bare.Dockerfile"
+	in.Cfg.Workflows = map[string]config.Workflow{"bare": w}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatalf("Repo = %v, want no error: a workflow that wrote a dockerfile: of its own keeps the image this project builds for it, while the project's prebuilt default is refused for a workflow that wrote none (D1191, D1900, the HARD RULE on update)", err)
+	}
+	ws := rs.Workflows["bare"]
+	if ws.CatalogEntry != "" {
+		t.Errorf("the workflow runs catalog entry %q, want none: the prebuilt default holds no checkout of this repository, so it is set aside for a job that wrote an image of its own", ws.CatalogEntry)
+	}
+	if !strings.Contains(ws.Image, "acme-webapp") || !strings.HasSuffix(ws.Image, ":latest") {
+		t.Errorf("the workflow's image = %q, want this repository's own derived tag", ws.Image)
+	}
+	if len(ws.Warnings) != 1 || !strings.Contains(ws.Warnings[0], "dockerfile:") || !strings.Contains(ws.Warnings[0], "standard") {
+		t.Errorf("the workflow's warnings = %q, want the one naming its dockerfile: and the default entry it set aside", ws.Warnings)
+	}
+	// The refusal above still holds for the same workflow with the key taken
+	// away: the fallback is a workflow's own image, not a relaxation of D1191.
+	without := in.Cfg.Workflows["bare"]
+	without.Dockerfile = ""
+	in.Cfg.Workflows = map[string]config.Workflow{"bare": without}
+	if _, err := Repo(in); err == nil {
+		t.Fatal("the same workflow without the dockerfile: was accepted, so the control above proves nothing about the fallback")
+	}
+}
+
 // TestCloneWorkflowAcceptsAPrebuiltCatalogEntry is the control for the refusal
 // above, and the reason it is not "prebuilt entries are refused": what the
 // refusal is about is the baked checkout kind. The workflow is `bare` — one
@@ -4018,8 +4147,8 @@ func TestBakedWorkflowRefusesAPrebuiltCatalogEntry(t *testing.T) {
 // before the catalog was asked. The check below holds that: the configuration
 // this control runs on is one a repository can write, and the same one with a
 // reference added is not. Its job runs the installation's base image and the
-// catalog does not speak for it at all (catalog.Applies), so the entry the test
-// above refuses is inert here and the spec is built.
+// catalog does not speak for it at all (the resolver's shared layer), so the
+// entry the test above refuses is inert here and the spec is built.
 func TestCloneWorkflowAcceptsAPrebuiltCatalogEntry(t *testing.T) {
 	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
 	w := in.Cfg.Workflows["bare"]
@@ -4044,29 +4173,6 @@ func TestCloneWorkflowAcceptsAPrebuiltCatalogEntry(t *testing.T) {
 	}
 	if got := rs.Workflows["bare"].CatalogEntry; got != "" {
 		t.Errorf("the clone workflow runs catalog entry %q, want none: the catalog does not speak for a clone workflow", got)
-	}
-}
-
-// TestBuiltSourceKindsClassifyEveryCatalogSourceKind holds the fail-closed
-// half of D1191's rule to the kinds that exist: builtSourceKinds is what a
-// build writes rather than what it does not, which is only safe while every
-// kind the catalog offers is decided somewhere, so a kind added to
-// config.SourceKinds has to be classified here in the same change. Without
-// this, the new kind would be refused as prebuilt on every baked workflow —
-// a false refusal of a configuration the rest of the tree builds — until
-// somebody noticed.
-func TestBuiltSourceKindsClassifyEveryCatalogSourceKind(t *testing.T) {
-	for _, k := range config.SourceKinds {
-		kind := config.SourceKind(k)
-		built := slices.Contains(builtSourceKinds, kind)
-		if want := kind != config.SourceImage; built != want {
-			t.Errorf("builtSourceKinds holds %s = %v, want %v: a kind the catalog gains is classified as built or as prebuilt in the same change, or every baked workflow on an entry of that kind is refused (D1191)", k, built, want)
-		}
-	}
-	for _, kind := range builtSourceKinds {
-		if !slices.ContainsFunc(config.SourceKinds, func(k string) bool { return config.SourceKind(k) == kind }) {
-			t.Errorf("builtSourceKinds holds %q, which is no kind of config.SourceKinds: the list is read as a classification of the kinds the catalog has", kind)
-		}
 	}
 }
 

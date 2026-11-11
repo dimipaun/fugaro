@@ -289,7 +289,7 @@ func NeedsBuild(ctx context.Context, c *Clients, spec RepoSpec, versions map[str
 		// The skips are clone's and the catalog's: clone runs the
 		// installation's base image and builds nothing, and a catalog
 		// entry's image is not this repository's own tag either (spec.go's
-		// catalogJobImage routes such a job through the installation's
+		// jobImage routes such a job through the installation's
 		// shared registry), so the record looked for below is one no build
 		// of this repository would ever write. A checkout: shared workflow
 		// does have an image to build — a dependency-layer one, shared with
