@@ -214,6 +214,11 @@ func (c *Config) Shared() *Config {
 	s.DefaultClaudeAccount = ""
 	s.ClaudeAccountStages = nil
 	s.ClaudeAccountAuto = false
+	// The subscription switch goes with them, for their reason and one of its
+	// own: it is the owner's own act about the terms his subscriptions are held
+	// under (D1622), and a launcher who could write it into the shared file
+	// could spread a project across subscriptions nobody agreed to spread.
+	s.SubscriptionSpread = nil
 	// The workspace keys are local-only, and the pin is the sharpest of them:
 	// the shared file is written into the runs bucket, which any launcher of
 	// the project can write, so a launcher who could put a workspace_pin there

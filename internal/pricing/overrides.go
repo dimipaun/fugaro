@@ -26,7 +26,23 @@ const (
 
 // Overrides are the owner's prices, keyed by model ID. Each replaces a
 // model's rates whole (see Table.With).
-type Overrides map[string]Rates
+type Overrides map[string]Override
+
+// Override is one model's owner-set prices: the rates, and the per-image
+// token ceiling an image block is reserved at (D2001).
+//
+// ImageTokens is a pointer for the reason the rates are: leaving it out is
+// not the same as writing it. A model the table already has keeps its own
+// ceiling — the six embedded Claude rows have one, and an owner who
+// re-prices a model's tokens is not asking for its images to be refused —
+// while an explicit 0 is the table's own "images refused", the value a row
+// with no ceiling carries. A model the table doesn't know is added with no
+// ceiling either way, so an unpriced image stays refused rather than
+// reserved at a number nobody chose.
+type Override struct {
+	Rates
+	ImageTokens *int64
+}
 
 // wireRates is one model's prices as the project config's model_prices
 // and FUGARO_MODEL_PRICES spell them.
@@ -37,6 +53,7 @@ type wireRates struct {
 	CacheWrite1h   *float64  `json:"cache_write_1h,omitempty"`
 	CacheRead      *float64  `json:"cache_read,omitempty"`
 	WebSearchPer1k *float64  `json:"web_search_per_1k,omitempty"`
+	ImageTokens    *int64    `json:"image_tokens,omitempty"`
 	LongContext    *wireTier `json:"long_context,omitempty"`
 }
 
@@ -89,9 +106,9 @@ func ParseOverrides(s string) (Overrides, error) {
 	return o, nil
 }
 
-func (w *wireRates) rates() (Rates, error) {
+func (w *wireRates) rates() (Override, error) {
 	if w.InputPerM == nil || w.OutputPerM == nil {
-		return Rates{}, errors.New("input_per_m and output_per_m are required")
+		return Override{}, errors.New("input_per_m and output_per_m are required")
 	}
 	or := func(p *float64, def float64) float64 {
 		if p == nil {
@@ -109,11 +126,11 @@ func (w *wireRates) rates() (Rates, error) {
 	}
 	if t := w.LongContext; t != nil {
 		if t.InputPerM == nil || t.OutputPerM == nil {
-			return Rates{}, errors.New("long_context needs input_per_m and output_per_m")
+			return Override{}, errors.New("long_context needs input_per_m and output_per_m")
 		}
 		r.LongContext = &Tier{AboveInputTokens: t.AboveInputTokens, InputPerM: *t.InputPerM, OutputPerM: *t.OutputPerM}
 	}
-	return r, nil
+	return Override{Rates: r, ImageTokens: w.ImageTokens}, nil
 }
 
 // Env is the overrides as FUGARO_MODEL_PRICES: compact JSON with every
@@ -131,6 +148,7 @@ func (o Overrides) Env() (string, error) {
 			InputPerM: ptr(r.InputPerM), OutputPerM: ptr(r.OutputPerM),
 			CacheWrite5m: ptr(r.CacheWrite5m), CacheWrite1h: ptr(r.CacheWrite1h),
 			CacheRead: ptr(r.CacheRead), WebSearchPer1k: ptr(r.WebSearchPer1k),
+			ImageTokens: r.ImageTokens,
 		}
 		if t := r.LongContext; t != nil {
 			wr.LongContext = &wireTier{AboveInputTokens: t.AboveInputTokens, InputPerM: ptr(t.InputPerM), OutputPerM: ptr(t.OutputPerM)}
@@ -153,7 +171,8 @@ func ptr(f float64) *float64 { return &f }
 // matched exactly (encoding/json alone matches them in any case).
 var (
 	rateFields = map[string]bool{"input_per_m": true, "output_per_m": true, "cache_write_5m": true,
-		"cache_write_1h": true, "cache_read": true, "web_search_per_1k": true, "long_context": true}
+		"cache_write_1h": true, "cache_read": true, "web_search_per_1k": true, "image_tokens": true,
+		"long_context": true}
 	tierFields = map[string]bool{"above_input_tokens": true, "input_per_m": true, "output_per_m": true}
 )
 
@@ -231,6 +250,17 @@ func strict(s string) error {
 		return nil
 	}
 	return object(0, "")
+}
+
+// Validate checks the rates and the image ceiling an override sets. The
+// ceiling's upper end is deliberately unbounded: a number too high
+// over-reserves, which is the direction the budget may err in, and the
+// reservation's arithmetic saturates rather than wrapping.
+func (o Override) Validate() error {
+	if o.ImageTokens != nil && *o.ImageTokens < 0 {
+		return fmt.Errorf("image_tokens is %d: it must be at least 0 (0 refuses an image)", *o.ImageTokens)
+	}
+	return o.Rates.Validate()
 }
 
 // validate checks every key is a model ID and every rate is in range.

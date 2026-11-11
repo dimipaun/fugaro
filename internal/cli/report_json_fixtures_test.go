@@ -189,6 +189,15 @@ var jsonCases = map[string]jsonCase{
 			return []string{"doctor"}
 		},
 	},
+	"followups": {
+		// The plan and not a launch: the fixture's parent is merged, so
+		// --launch here would file the tasks rather than print them.
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			launchable(t, f)
+			return []string{"followups", mergedParent(t, f, allDeferred(t))}
+		},
+	},
 	"image build": {
 		why: "the run's confirmation is typed at a terminal, and --json never gives one, so the command refuses before it prints any document",
 	},

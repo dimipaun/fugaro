@@ -145,6 +145,8 @@ type Provider struct {
 	FailComments    int
 	FailPullRequest int
 	FailRepository  int
+	// FailPullRequestByBranch makes that many PullRequestByBranch calls fail.
+	FailPullRequestByBranch int
 	// FailUpdatePR and FailApplyReady make that many calls fail without
 	// changing anything.
 	FailUpdatePR   int
@@ -536,17 +538,37 @@ func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo,
 	return info, nil
 }
 
-// pullRequest reads PR number from the state; branch is its source branch.
-func (p *Provider) pullRequest(number int) (info gitprov.PRInfo, branch string, err error) {
+// PullRequestByBranch implements gitprov.PRBranchReader: the pull request
+// whose spec's branch is branch, whatever its state, the latest one when a
+// branch was opened twice. found is false when no pull request names it.
+func (p *Provider) PullRequestByBranch(_ context.Context, branch string) (gitprov.PRInfo, bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err := p.load(); err != nil {
-		return gitprov.PRInfo{}, "", err
+		return gitprov.PRInfo{}, false, err
 	}
-	if p.FailPullRequest > 0 {
-		p.FailPullRequest--
-		return gitprov.PRInfo{}, "", errors.New("fake provider: injected PullRequest failure")
+	if p.FailPullRequestByBranch > 0 {
+		p.FailPullRequestByBranch--
+		return gitprov.PRInfo{}, false, errors.New("fake provider: injected PullRequestByBranch failure")
 	}
+	number := 0
+	for _, st := range p.State.PRs {
+		if st.Spec.Branch == branch && st.Number >= number {
+			number = st.Number
+		}
+	}
+	if number == 0 {
+		return gitprov.PRInfo{}, false, nil
+	}
+	info, _, err := p.pullRequestLocked(number)
+	if err != nil {
+		return gitprov.PRInfo{}, false, err
+	}
+	return info, true, nil
+}
+
+// pullRequestLocked is pullRequest's body with the lock already held.
+func (p *Provider) pullRequestLocked(number int) (info gitprov.PRInfo, branch string, err error) {
 	st, err := p.findLocked(number)
 	if err != nil {
 		return gitprov.PRInfo{}, "", err
@@ -559,11 +581,25 @@ func (p *Provider) pullRequest(number int) (info gitprov.PRInfo, branch string, 
 		Title:        p.titleOf(st),
 		Body:         p.bodyOf(st),
 		AuthorID:     cmp.Or(st.AuthorID, p.SelfID),
-		Base:         st.Spec.Base, // the base the PR was opened with; a test retargets it by editing the state
+		Base:         st.Spec.Base,
 		SourceBranch: st.Spec.Branch,
 		SourceRepo:   cmp.Or(st.Source, p.Repo),
 		HeadSHA:      st.Head,
 	}, st.Spec.Branch, nil
+}
+
+// pullRequest reads PR number from the state; branch is its source branch.
+func (p *Provider) pullRequest(number int) (info gitprov.PRInfo, branch string, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return gitprov.PRInfo{}, "", err
+	}
+	if p.FailPullRequest > 0 {
+		p.FailPullRequest--
+		return gitprov.PRInfo{}, "", errors.New("fake provider: injected PullRequest failure")
+	}
+	return p.pullRequestLocked(number)
 }
 
 // Comments implements gitprov.Provider: the injected foreign comments and

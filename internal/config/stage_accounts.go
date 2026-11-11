@@ -359,26 +359,145 @@ func CredentialServingPath(typ string) string {
 // reported by name, so a caller that must say which member it could not place
 // has the name to say it with.
 func PoolServingPaths(p Pool, creds []Credential) (paths, unplaced []string) {
+	seen := map[string]bool{}
+	for _, m := range PoolMembers(p, creds) {
+		switch {
+		case m.Path == "":
+			if !slices.Contains(unplaced, m.Name) {
+				unplaced = append(unplaced, m.Name)
+			}
+		case !seen[m.Path]:
+			seen[m.Path] = true
+			paths = append(paths, m.Path)
+		}
+	}
+	slices.Sort(paths)
+	return paths, unplaced
+}
+
+// PoolMember is one member of a pool as the reader that has to serve it needs
+// it: the credential's name, its type, and the path that serves it
+// (CredentialServingPath). The type is carried beside the path because the two
+// answer different questions — the path is which half of a run can reach the
+// member at all, the type is what that member says when it is spent (F5) and
+// which models it serves (F23).
+type PoolMember struct {
+	Name string
+	Type string
+	// Path is CredentialServingPath(Type), "" for a type neither path serves.
+	Path string
+}
+
+// PoolMembers are the pool's members, in the order the pool lists them, each
+// with its type and path. creds is the credentials block of the document the
+// pool is written in, and a member it does not define is the built-in vertex
+// (D1624) — the one name a pool may list without a layer defining it
+// (config.ValidatePools). The order is the order, not a set: it is what
+// failover walks (D1632).
+//
+// A member of a type nothing serves is carried with an empty Path rather than
+// dropped: a caller that has to refuse it, or to say which member it could not
+// place, has the name to say it with.
+func PoolMembers(p Pool, creds []Credential) []PoolMember {
 	types := map[string]string{}
 	for _, c := range creds {
 		types[c.Name] = c.Type
 	}
-	seen := map[string]bool{}
+	out := make([]PoolMember, 0, len(p.Members))
 	for _, m := range p.Members {
 		typ, ok := types[m]
 		if !ok {
 			typ = CredentialTypeVertex
 		}
-		switch path := CredentialServingPath(typ); {
-		case path == "":
-			if !slices.Contains(unplaced, m) {
-				unplaced = append(unplaced, m)
-			}
-		case !seen[path]:
-			seen[path] = true
-			paths = append(paths, path)
+		out = append(out, PoolMember{Name: m, Type: typ, Path: CredentialServingPath(typ)})
+	}
+	return out
+}
+
+// PoolHasVertexMember is the name of the pool's Vertex member, "" when it has
+// none: the built-in credential needs no secret and its calls are the
+// project's own GCP service, so a pool that lists it cannot be capped by the
+// gateway, and under budget.mode: enforce the pool is refused outright
+// (D1626, F8).
+func PoolHasVertexMember(p Pool, creds []Credential) string {
+	for _, m := range PoolMembers(p, creds) {
+		if m.Type == CredentialTypeVertex {
+			return m.Name
 		}
 	}
-	slices.Sort(paths)
-	return paths, unplaced
+	return ""
+}
+
+// PoolMemberServesModel reports whether THIS member serves the model ID as
+// written (F23, D1637). There is no per-member mapping: a craft names one model
+// string, the routes are resolved once per run (RoutingClaudeFor), and a pool is
+// admitted only if every member can be sent that same string. The member and not
+// its type is the subject, because for an OpenRouter member the answer is the
+// member's OWN provider's: a pool naming two providers, one whose models carry
+// the stage's ID and one whose models carry another, is a pool whose second
+// member cannot be sent the model at all — the run's routes send it to the first
+// (gateway.routeFor, one route per model), so admitting the pool on the
+// strength of a provider the member is not would be admitting a failover onto
+// a route that does not exist.
+//
+// The two spellings are the whole of the rule:
+//
+//   - the credentials that reach Anthropic itself — the OAuth subscription,
+//     the API key — and the Vertex credential, which serves Claude under the
+//     owner's own GCP project, take Claude's own ID (the "claude-*" shape). A
+//     routed model ID is not one of them: "anthropic/<id>" is the spelling a
+//     route claims (CheckClaudeClaim), and a run whose pins carry it has left
+//     the direct path.
+//   - an OpenRouter member takes the model ID its own provider's route claims,
+//     so the model must be one that member's provider serves (Providers is the
+//     run's own set, already narrowed to the repository's providers). Claude
+//     itself is never claimed there except through that one explicit spelling.
+//
+// A type neither path serves serves nothing.
+func PoolMemberServesModel(m PoolMember, model string, providers map[string]ModelProvider) bool {
+	switch m.Type {
+	case CredentialTypeClaudeOAuth, CredentialTypeAnthropic, CredentialTypeVertex:
+		return IsClaudeModel(model) && !routedSpelling(model)
+	case CredentialTypeOpenRouter:
+		p, ok := providers[m.Name]
+		return ok && p.Matches(model)
+	}
+	return false
+}
+
+// routedSpelling is whether the model is written as a provider route's own ID:
+// the one shape a route may claim, which is CheckClaudeClaim's own judgement and
+// never a second copy of it — that function is where the shape is written, and
+// the vendor prefix it is written with belongs to internal/pricing's map
+// (TestRoutingHasOneResolver refuses a file that spells it again). What it reads
+// for this caller is whether a pin has left the direct path at all, which is
+// what makes a route's spelling a model the credentials that reach Anthropic
+// cannot be sent.
+func routedSpelling(model string) bool {
+	return CheckClaudeClaim(model) == ""
+}
+
+// PoolModelProblems is F23's rule at config time (D1637): a pool is admitted
+// only if every member serves the model ID as written, and each member that
+// does not is reported by name. providers is the run's own route set — the one
+// ProvidersFor narrows to a repository — because a member that would serve the
+// model through a provider the repository is not admitted to is a member this
+// repository has no route for. path is where the caller spells the pool (a
+// pool's own name in a credentials block, or the craft's access key), so the
+// problem points at the key that names it.
+//
+// A member of a type neither path serves is not reported here: that is
+// ValidateCredentials' and the serving-path readers' own subject, and a pool
+// whose members cannot be placed is refused there rather than twice.
+func PoolModelProblems(p Pool, creds []Credential, model string, providers map[string]ModelProvider, path string) []Problem {
+	var ps []Problem
+	for _, m := range PoolMembers(p, creds) {
+		if m.Path == "" || PoolMemberServesModel(m, model, providers) {
+			continue
+		}
+		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(
+			"the pool lists %s, a %s credential, and a pool is admitted only if every member serves the model as written: %s does not serve %s. A craft names one model string and every member is sent it, so there is no per-member mapping — list members that all serve %s (Claude's own ID for the credentials that reach Anthropic and for %s, the provider's own ID for a route's)",
+			m.Name, m.Type, m.Name, model, model, CredentialVertex)})
+	}
+	return ps
 }

@@ -2070,6 +2070,62 @@ func checkCloneTriageImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Con
 	return checkCloneImageSince(lc, spec, triageSince, subject, triageKnows, "; or "+alt, warn)
 }
 
+// followUpSince names the release that carries the two fields `fugaro followups
+// --launch` writes into a task: the parent run and the finding keys it settles
+// (task.Spec.FollowUpOf) and the debt mark (task.Spec.Debt). A runner built
+// before it decodes the task with DisallowUnknownFields and refuses the whole
+// spec at bootstrap — bytes in the bucket under a run that never starts, after
+// the launch was paid for.
+//
+// It names 0.22.0, the release whose task reader carries both fields: they
+// landed with T-TR4 (#2057), a release before the command that writes them, so
+// the constant is the older of the two and not the release this work ships in.
+// A constant naming the newer one — 0.23.0, which is not tagged yet — would
+// refuse the job image every current installation runs, and `fugaro image
+// refresh` rebuilds from the same base and is refused again. docs/release.md's
+// Before-you-tag list verifies the number against the tag actually cut and
+// against internal/task at that tag, the way it does for every other *Since
+// constant.
+//
+// The gate fires on the fields themselves and not on the command, since the
+// bytes are what the older runner refuses: a hand-written or migrated task
+// carrying them is refused the same way, and `fugaro run --plan-task` on a
+// filed task is judged here too.
+const followUpSince = "0.22.0"
+
+// followUpKnows names, for the gates' messages, what the job image's runner has
+// to know. The message reads "needs a job image whose runner knows <this>".
+const followUpKnows = "the follow-up fields a filed task carries (follow_up_of, debt)"
+
+// followUpSubject names, for the gates' messages, where the fields come from.
+const followUpSubject = "a task filed for a run's deferred findings (fugaro followups --launch)"
+
+// followUpAsk reports whether spec carries the fields followUpSince gates: a
+// task filed for a run's deferrals. Either field is enough — the older runner
+// refuses the spec on the first key it does not know — and the two are written
+// together, so the check reads as the one intention it is.
+func followUpAsk(spec *task.Spec) bool {
+	return spec.FollowUpOf != nil || spec.Debt
+}
+
+// checkFollowUpImage refuses a launch whose job image runs a fugaro older than
+// followUpSince while the task carries the follow-up fields.
+func checkFollowUpImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	if !followUpAsk(spec) {
+		return nil
+	}
+	return checkImageSince(ctx, env, slug, spec, kind, followUpSince, followUpSubject, followUpKnows, "", warn)
+}
+
+// checkCloneFollowUpImage is checkFollowUpImage for a checkout: clone workflow:
+// see checkCloneImageSince.
+func checkCloneFollowUpImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
+	if !followUpAsk(spec) {
+		return nil
+	}
+	return checkCloneImageSince(lc, spec, followUpSince, followUpSubject, followUpKnows, "", warn)
+}
+
 // reviewJobKnows names, for this gate's messages, what the job image's runner
 // has to know: the review-only variant of the job it is in, the marker a
 // launch on it sets, which is the whole of what a review run branches on

@@ -345,7 +345,7 @@ func claimPrices(t *testing.T, ps map[string]ModelProvider) *pricing.Table {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tbl, err := PriceTable(ps, pricing.Overrides{claimID: pricing.Rates{InputPerM: 2, OutputPerM: 10}}, cat, checked.Add(24*time.Hour))
+	tbl, err := PriceTable(ps, pricing.Overrides{claimID: {Rates: pricing.Rates{InputPerM: 2, OutputPerM: 10}}}, cat, checked.Add(24*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
