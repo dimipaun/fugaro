@@ -179,6 +179,25 @@ func TestDocsForgeChecksWritten(t *testing.T) {
 		}
 	}
 
+	// Check 230's one reading that is easy to get wrong, and the one a review
+	// round caught: D602 leaves `Fugaro-Model` off every commit the runner makes
+	// itself (a runner-owned commit belongs to no stage) and off every commit of
+	// a stage that pins no model, so a section that asks the owner for the three
+	// trailers on every commit sends them to a false failure of A1's hook on a
+	// repository whose stages pin none. The carve-out has to be named, and the
+	// reading that produces the false reading must not be there.
+	c230 := strings.ToLower(flattenDoc(checkSection(t, register, "230")))
+	for _, want := range []string{"d602", "fugaro-model"} {
+		if !strings.Contains(c230, want) {
+			t.Errorf("Check 230's section does not say %q: the trailers a run's commits carry are not all three, and a section that leaves D602's carve-out out has the owner read an expected absence as a result", want)
+		}
+	}
+	for _, text := range []string{checkRow(register, "230"), c230} {
+		if strings.Contains(strings.ToLower(text), "three trailers") {
+			t.Errorf("Check 230 asks for \"three trailers\": D602 leaves `Fugaro-Model` off the runner's own commits and off every commit of a stage that pins no model, so the phrase is a reading the check cannot make on every repository it names")
+		}
+	}
+
 	// The plan's own census, read in the other direction: every number it marks
 	// X1 has both halves here, and this file's list is exactly the plan's. A
 	// number in one and not the other is a check nobody allocated.

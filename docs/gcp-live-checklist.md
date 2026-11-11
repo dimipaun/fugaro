@@ -856,7 +856,7 @@ probe account carries predefined grants only).
 | 370 | The security escalation ([`docs/security-classification/`](security-classification/implementation-plan.md) §6, its Check 370; the plan's task **SC6**; reconciliation **D1507**, **D1508**, **D1509** and **D1519**): a run whose own diff touches a path the list in force calls security-sensitive turns review level 3 on for the rest of the run — the adversarial step runs, and the run's record names the matched row's `name`, its `category` and the moment, while the rigor mode stays the mode it was (D1508) — and a run whose diff touches nothing on the list does neither, its record carrying no escalation member. Its reader's half is `fugaro security paths --json` (the same work's task **SC3**, in slice 1: it landed as `cb69f1754`, #1979, and is an ancestor of this checkout) on a project that has published no key: the floor's 43 rows, with `internal/creds/state.go` sensitive and `docs/recipes.md` not — the pair that shows the floor is a **positive list and not the classifier's complement** (F1, F22) — and the same command against a working tree whose `fugaro.yaml` carries a `security` row and a base that does not, which must print the **base's** list (D1518) | See "Check 370" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | Two sandbox runs and three reader commands: **the runs are model calls and real money** and the reader commands are free. Nothing is granted, nothing is written outside the runs' own prefixes, and there is nothing to restore. **USER-RUN, NOT RUN.** |
 | 510 | The name-prefix IAM condition, and the grants IAM may not be able to fence ([`docs/secrets-brokering/dynamic-delivery/`](secrets-brokering/dynamic-delivery/implementation-plan.md), its task **DS0.2** and its check; the reconciliation's **U3** and **F30**, which **DS2.2**'s Terraform is written against): whether an IAM condition on `resource.name` applies to `secretmanager.versions.add` and `secretmanager.secrets.delete` at all; whether **one** condition naming both prefixes (`fugaro_u_` and `fugaro_p_`) admits each of them and refuses a name of F6's collision class — `fugaro-<slug>-<logical>-<hash>`, a repository's own mounted secret, so the refusal is measured against that shape and not against one the check invented; **the create rows, where F30's create half was already contradicted once** — the owner's run of 2026-11-11 saw a conditioned `secrets.create` **admitted** for a `fugaro_u_` name, so the check **reports** its three create rows instead of grading them, and what is open is whether a create **outside** both prefixes is refused: refused beside an admitted create inside means create is fenced by name in both directions and **DS2.2** may condition the intake's create, admitted outside means there is no name fence and the unconditioned create stays as the plan has it (an unconditioned create of a name outside the prefixes succeeds either way); `secrets.list` is still the project-checked case F30 states; and the maximum secret ID length, read by bisection rather than assumed (R1). **A failed 510 stops DS2.2 and returns to the owner as a decision** | See "Check 510" below; `bash scripts/live-checks/check510.sh` is the whole of it, and its sibling test `scripts/live-checks/check510_test.sh` drives it against fake tools only — **you** run it, on the sandbox project only, never `belong` (the project and region are hard-coded in the script, and a project, region or account naming that installation is refused by name); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account (`chk510-<stamp>`), the project IAM bindings its rows need (the two conditioned grants, and the one **unconditioned** `roles/secretmanager.admin` grant the create rows' control is measured on), and the probe containers they are measured on — five under the `fugaro_u_`, `fugaro_p_` and `fugaro-<slug>-…` shapes, whatever the two conditioned create rows make if IAM admits the create, plus the bisection's own, about a dozen — every one of them deleted **and read back** as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. The IAM waits are the slow part (a fresh binding can take a minute to be seen). **OWNER-RUN, NOT RUN.** Written by **DS0.2** of [secrets-brokering/dynamic-delivery/implementation-plan.md](secrets-brokering/dynamic-delivery/implementation-plan.md), whose steps are [secrets-brokering/dynamic-delivery/check510-steps.md](secrets-brokering/dynamic-delivery/check510-steps.md). |
 | 511 | A request every N seconds keeps one service instance up ([`docs/secrets-brokering/dynamic-delivery/`](secrets-brokering/dynamic-delivery/implementation-plan.md), its task **DS0.2** and its check; the reconciliation's **U4**, which **DS1.5**'s keep-warm heartbeat rests on): the credentials service `fugaro-credentials` scaling to zero as the platform holds it (`min_instance_count` is the premise — an instance kept up by configuration says nothing about a heartbeat, and the row says so); then a request every 15 seconds (the beat `internal/budget/session.go` already keeps) for five minutes, each answered **by the container itself** on a route the service does not serve, so its own 404 is how an instance serving is told from the front end refusing; each read for its latency (a cold start inside the window is the instance having been reaped **despite** the beat) and, from Cloud Logging, for the instance that answered it — one id across the window is U4's reading rather than only its timing. **A failed 511 stops DS1.5 and returns to the owner as a decision.** | See "Check 511" below; `bash scripts/live-checks/check511.sh` is the whole of it, and its sibling test `scripts/live-checks/check511_test.sh` drives it against fake tools only — **you** run it, on the sandbox installation only, never `belong` (the project and region are hard-coded, and a project, region or account naming that installation is refused by name); **no agent runs any step of it** | Five minutes of wall clock and **nothing billable**: no job, no build, no container, no binding and no account. The requests go to a route the service does not serve, so no credential is read, no model is called and no budget is spent; every other call is a `describe` or a log listing, and the platform's own request log entries for them are not the check's to delete. **OWNER-RUN, NOT RUN.** Written by **DS0.2** of [secrets-brokering/dynamic-delivery/implementation-plan.md](secrets-brokering/dynamic-delivery/implementation-plan.md), whose steps are [secrets-brokering/dynamic-delivery/check511-steps.md](secrets-brokering/dynamic-delivery/check511-steps.md). |
-| 230 | The author, the committer and the trailers on GitHub and Bitbucket, and the default unchanged ([`docs/forge-authorship-images/`](forge-authorship-images/implementation-plan.md), its Check 230 and task **A5**; **D601**–**D606**, **D644**, **D645** and **D647**, and the reconciliation's **U9**): on a sandbox GitHub repository and a sandbox Bitbucket repository whose `fugaro.yaml` carries `git.author: launcher`, every commit a run makes is **authored** by the launcher — blame and the pull request's commit list show them — and **committed** by the run's identity, each with the `Fugaro-Run`, `Fugaro-Rigor` and `Fugaro-Model` trailers and no `Signed-off-by` (D644, R1); the author and the trailers are then read again on `main` after a **squash merge**, which is where **D648** and **U9** stop being an assumption; and a repository with no `git.author` key shows the run's identity as author, the default that must not change (D606, D645) | See "Check 230" below; **you** run it, on the two sandbox repositories only, **never `belong`**, from a release whose CLI and job image carry A1–A3, and **no agent runs any step of it** | Two sandbox runs, their two pull requests and one squash merge each: **the runs are model spend and billable executions**, the merges belong to the sandbox repositories, and nothing is granted. A reading in which the launcher or the trailers do not survive the squash returns to you as a decision (D648), not as a reason to edit this entry. **OWNER-RUN, NOT RUN.** |
+| 230 | The author, the committer and the trailers on GitHub and Bitbucket, and the default unchanged ([`docs/forge-authorship-images/`](forge-authorship-images/implementation-plan.md), its Check 230 and task **A5**; **D601**–**D606**, **D644**, **D645** and **D647**, and the reconciliation's **U9**): on a sandbox GitHub repository and a sandbox Bitbucket repository whose `fugaro.yaml` carries `git.author: launcher`, every commit a run makes is **authored** by the launcher — blame and the pull request's commit list show them — and **committed** by the run's identity, each carrying `Fugaro-Run` and `Fugaro-Rigor`, and `Fugaro-Model` only where the stage that made it pinned a model — no commit the runner makes itself does (D602) — and none of them carrying a `Signed-off-by` (D644, R1); the author and the trailers are then read again on `main` after a **squash merge**, which is where **D648** and **U9** stop being an assumption; and a repository with no `git.author` key shows the run's identity as author, the default that must not change (D606, D645) | See "Check 230" below; **you** run it, on the two sandbox repositories only, **never `belong`**, from a release whose CLI and job image carry A1–A3, and **no agent runs any step of it** | Two sandbox runs, their two pull requests and one squash merge each: **the runs are model spend and billable executions**, the merges belong to the sandbox repositories, and nothing is granted. A reading in which the launcher or the trailers do not survive the squash returns to you as a decision (D648), not as a reason to edit this entry. **OWNER-RUN, NOT RUN.** |
 | 231 | The App's **Checks: read** and **Commit statuses: read** permissions, accepted and working ([`docs/forge-authorship-images/`](forge-authorship-images/implementation-plan.md), its Check 231 and task **B2**; **D614** and **D615**, the gate B2 is written behind): whether GitHub accepts the two repository permissions on the sandbox App, whether the sandbox installation accepts them, and whether a commit's CI status then reads live through `gitprov.Provider.Checks` — B2's live test `TestLiveGitHubChecks` (`internal/gitprov/github/live_test.go`) — which is the reading the App's `RequiredPermissions` (`installcheck.go`) and `fugaro doctor` are written against | See "Check 231" below; **you** run it, against the sandbox App, its installation and a sandbox commit only, **never `belong`**, and **no agent runs any step of it** | Nothing billable and no model call: one permission change on the sandbox App's settings page, one acceptance on its installation, and reads. The permission change is the only write, and it is the sandbox App's. **OWNER-RUN, NOT RUN.** |
 | 232 | A two-repository read-only installation token, and the push with it refused ([`docs/forge-authorship-images/`](forge-authorship-images/implementation-plan.md), its Check 232 and tasks **C5a** and **C5b**; **D613**'s step 1, and the reconciliation's **U7**): a sandbox run launched with two context repositories, whose launcher-minted claim names exactly those two; the context token the credentials service mints carries **Contents: read** and **Metadata: read** only and names those two repositories; a push to either context repository with that token is **refused**; a request naming a repository outside the claim is refused and audited; and the run's ordinary write token still names its own repository alone. **U7** — whether one installation token naming several repositories keeps the per-repository narrowing a read-only context token needs — is what the first half settles | See "Check 232" below; **you** run it, on the sandbox installation and two of its sandbox GitHub repositories only, **never `belong`**, with the credentials service switched on for both repositories (DON8), and **no agent runs any step of it** | One sandbox run and two push attempts: the run is **model spend and a billable execution**, the refused push is free, and nothing is granted — the service keeps its one bundle grant. **OWNER-RUN, NOT RUN.** |
 | 234 | `fugaro project sync --check` against a Bitbucket workspace ([`docs/forge-authorship-images/`](forge-authorship-images/implementation-plan.md), its Check 234 and task **C1**; **D623** and **D625**): `fugaro project sync` lists the sandbox workspace's (or project's) repositories with the token read from stdin or a hidden prompt — never from argv — offers the ones `allow_repos` does not admit, and `--check` prints that difference and **writes nothing**, with the published allow-list read before and after and unchanged | See "Check 234" below; **you** run it, against the sandbox Bitbucket workspace from the sandbox checkout, **never `belong`**, and **no agent runs any step of it** | Free: Bitbucket listing calls and one policy read, `--check` writing nothing by design. The write that may follow it is yours to confirm (D625 proposes, you confirm). **OWNER-RUN, NOT RUN.** |
@@ -12988,37 +12988,48 @@ returns to the owner as a decision, because the interval is what that task would
 
 **NOT RUN.** Written by task **X1** of
 [docs/forge-authorship-images/implementation-plan.md](forge-authorship-images/implementation-plan.md)
-and **run by you, its A5** — nothing below is a claim about what either forge wrote into its history.
-What it measures is a live forge's own record of a commit, which nothing in this tree can answer, and
-**no agent runs any step of it**: the squash step is a click in a forge's UI.
+and **run by you, its A5** — nothing below is a claim about what either forge wrote into its
+history. What it measures is a live forge's own record of a commit, which nothing in this tree can
+answer, and **no agent runs any step of it**: the squash step is a click in a forge's UI.
 
 **What it settles, and what it gates.** The author, the committer and the trailers, on a real forge:
-**D601**–**D606** (the recorded launcher as a stated claim, the opt-in `git.author: launcher` key, and
-`fugaro` as the author when the key is absent), **D644** (Fugaro never adds a `Signed-off-by`),
-**D645** (the committer is the run's identity as `main` has it) and **D647** (the `Fugaro-Run`,
-`Fugaro-Rigor` and `Fugaro-Model` trailers on every run commit) — and then **D648**'s squash merge
-and the reconciliation's **U9**: whether GitHub's and Bitbucket's squash merge keep the branch
-commits' authors and their trailers in the squash message. Slice A is one squash reading short of
-done without it, because a repository that squash-merges is exactly where the spec's "shows up in
-blame" can fail silently.
+**D601**–**D606** (the recorded launcher as a stated claim, the opt-in `git.author: launcher` key,
+and `fugaro` as the author when the key is absent), **D644** (Fugaro never adds a `Signed-off-by`),
+**D645** (the committer is the run's identity as `main` has it) and **D647** (trailers on every run
+commit, with **D602**'s carve-outs: `Fugaro-Run` and `Fugaro-Rigor` on every one of them, and
+`Fugaro-Model` only where the stage that made the commit pinned a model) — and then **D648**'s
+squash merge and the reconciliation's **U9**: whether GitHub's and Bitbucket's squash merge keep the
+branch commits' authors and their trailers in the squash message. Slice A is one squash reading
+short of done without it, because a repository that squash-merges is exactly where the spec's "shows
+up in blame" can fail silently.
 
 - **The branch.** With the key committed, every commit the run makes — the agent's and the runner's
   own — carries the launcher as **author** (the launch's `requested_by`, whose commit address D649
   limits to the launcher's own or a forge noreply one) and the run's identity as **committer**, with
-  the three trailers and no `Signed-off-by`. Blame and the pull request's commit list show the
-  launcher; the trailers are a record of the run and not proof of anything.
-- **The squash.** The owner squash-merges each pull request in the forge's UI and reads `main` again.
-  A launcher and three trailers that survive answer U9 yes and leave D648 with nothing to add; a
-  squash message that drops them is the reading D648 was written for — the pull request body carries
-  them for that message — and it is a decision for the plan's owner, not an edit to this entry.
-- **The default.** The third repository has no `git.author` key, and its run's commits are authored by
-  the run's identity: today's behaviour, which D606 keeps and which must not change by accident.
+  no `Signed-off-by`, and with `Fugaro-Run` and `Fugaro-Rigor` on all of them. **`Fugaro-Model` is
+  not one of those two.** It holds the configured model of the stage that made the commit, so a
+  stage that pins no model leaves it out, and a commit the runner makes itself never carries one at
+  all — it belongs to no stage (D602). Expecting `Fugaro-Model` on every commit is the one reading
+  this entry must not invite: on a repository whose stages pin none, **no** commit carries it, and
+  no runner-owned commit ever does, and either absence is the expected reading rather than a failure
+  of A1's hook. Blame and the pull request's commit list show the launcher; the trailers are a
+  record of the run and not proof of anything.
+- **The squash.** The owner squash-merges each pull request in the forge's UI and reads `main`
+  again. The launcher and the trailers the branch carried surviving — the two standing ones, and a
+  `Fugaro-Model` where there was one to carry — answer U9 yes and leave D648 with nothing to add; a
+  squash message that drops them is the reading D648 was written for (the pull request body carries
+  them for that message) and it is a decision for the plan's owner, not an edit to this entry.
+- **The default.** The third repository has no `git.author` key, and its run's commits are authored
+  by the run's identity: today's behaviour, which D606 keeps and which must not change by accident.
 
 **What has to exist before it runs.** A release whose CLI and job image carry A1–A3 (the author, the
 trailer hook and the finalize logging); two sandbox repositories whose `fugaro.yaml` carries
 `git.author: launcher` — one on GitHub and one on Bitbucket — and a third sandbox repository with no
-such key; a launcher whose `commit_email` satisfies D649; and both forges' UIs, since the merge is
-not Fugaro's to make. Every repository here is a sandbox one, **never `belong`**.
+such key; a launcher whose `commit_email` satisfies D649; a stage configuration that pins a model,
+for the `Fugaro-Model` half of the reading to have anything to read (a repository whose stages pin
+none has none anywhere, and that absence is D602's other carve-out and a reading in its own right);
+and both forges' UIs, since the merge is not Fugaro's to make. Every repository here is a sandbox
+one, **never `belong`**.
 
 **The commands.** In each sandbox checkout:
 
@@ -13034,9 +13045,12 @@ git log -1 --format='%an <%ae>%n%B' origin/main
 ```
 
 Both `git log` calls are reads, so there is no exit reading to take; a call git refuses is a
-checkout that is not on the branch it was meant to read. Record each reading — the author, the
-committer, the three trailers, the absence of any `Signed-off-by`, and the squash result — under
-Check 230 here.
+checkout that is not on the branch it was meant to read. The first lists the whole branch, so it is
+read with D602 in hand: `Fugaro-Run` and `Fugaro-Rigor` on every commit a run made, `Fugaro-Model`
+on the ones whose stage pinned a model and on none of the runner's own, and no `Signed-off-by`
+anywhere. Record each of those under Check 230 here — the author, the committer, which trailers the
+branch carried, the absence of any `Signed-off-by`, and the squash result — and record a missing
+`Fugaro-Model` as D602's expected absence rather than a finding.
 
 **What a run costs.** Two sandbox runs with their pull requests and one squash merge each, plus the
 third repository's run if the default is checked as well. **The runs are model spend and billable
@@ -13051,16 +13065,16 @@ finding for this plan's owner and returns to them as a decision.
 
 **NOT RUN.** Written by task **X1** of
 [docs/forge-authorship-images/implementation-plan.md](forge-authorship-images/implementation-plan.md)
-and **run by you, its B2** — nothing below is a claim that GitHub accepted the two permissions or that
-a commit's status reads. **No agent runs any step of it**: two of the steps are clicks on the App's
-own settings page and on its installation, and the third drives a test carrying the `live` tag, which
-no job in this tree runs.
+and **run by you, its B2** — nothing below is a claim that GitHub accepted the two permissions or
+that a commit's status reads. **No agent runs any step of it**: two of the steps are clicks on the
+App's own settings page and on its installation, and the third drives a test carrying the `live`
+tag, which no job in this tree runs.
 
 **What it settles, and what it gates.** The App's Checks and Commit statuses — the two repository
 permissions B2 adds to `RequiredPermissions` (`internal/gitprov/github/installcheck.go`, so `fugaro
 doctor` reports an installation that has not accepted them) — and whether `gitprov.Provider.Checks`
-then reads a sandbox commit's CI status live (`TestLiveGitHubChecks`). The task sits behind a gate it
-was written with: **it ships only while D614 or D615 needs the read**. **D615** is answered — the
+then reads a sandbox commit's CI status live (`TestLiveGitHubChecks`). The task sits behind a gate
+it was written with: **it ships only while D614 or D615 needs the read**. **D615** is answered — the
 merge order is **advisory**, written in each pull request and shown by the coordinator, with no
 blocking status check and so no status read of its own — which leaves **D614**'s settle step as the
 only half that could need one. This run is what the owner answers that half with: whether the
@@ -13072,9 +13086,9 @@ plan's owner's decision, not a step of this check.
   widens.
 - **The read.** A commit of a sandbox repository whose CI has run: the test reads its combined state
   through the adapter, which is the shape the settle step would use.
-- **The doctor line.** `fugaro doctor` before the acceptance reports the installation missing the two
-  permissions and after it reports none; that reporting is B2's own claim and this run is where a live
-  installation confirms it.
+- **The doctor line.** `fugaro doctor` before the acceptance reports the installation missing the
+  two permissions and after it reports none; that reporting is B2's own claim and this run is where
+  a live installation confirms it.
 
 **What has to exist before it runs.** A release carrying B2 (its CLI, and the `live` test with it);
 the sandbox GitHub App's settings page and its sandbox installation; the live tests' sandbox
@@ -13108,15 +13122,17 @@ measures is what a live GitHub installation token does with a push, which nothin
 answer, and **no agent runs any step of it**.
 
 **What it settles, and what it gates.** The reconciliation's **U7** — whether a GitHub App
-installation token naming several repositories keeps the per-repository narrowing a read-only context
-token needs — and **D613**'s step 1: a run reads its context repositories and writes nothing in them.
-C5b's second mint carries **Contents: read** and **Metadata: read** only, names exactly the
+installation token naming several repositories keeps the per-repository narrowing a read-only
+context token needs — and **D613**'s step 1: a run reads its context repositories and writes nothing
+in them. C5b's second mint carries **Contents: read** and **Metadata: read** only, names exactly the
 repositories C5a's launcher-minted claim lists, re-admits each against the policy, and audits a
 request that names another repository; the write token is unchanged and still names the run's own
 repository alone. No Terraform and no new grant: the credentials service keeps its one bundle grant.
 
 - **The mint.** A sandbox run launched with two context repositories (`--context owner/name`,
-  repeatable) whose launcher-minted claim names exactly those two, with the credentials service switched on for those repositories: the context token the service mints names the same two repositories.
+  repeatable) whose launcher-minted claim names exactly those two, with the credentials service
+  switched on for those repositories: the context token the service mints names the same two
+  repositories.
 - **The refusal.** A push to either context repository with that token fails. What makes it U7's
   reading rather than a broken token is the second half: a push to the run's own repository with the
   ordinary write token still succeeds, and a request naming a third repository is refused and
@@ -13126,12 +13142,12 @@ repository alone. No Terraform and no new grant: the credentials service keeps i
   clone holds it for its context clones, and what is read here is that a push with it cannot land
   anywhere it names.
 
-**What has to exist before it runs.** C5a and C5b merged and released; the credentials service's per-repository switch on for both context repositories (DON8:
-`fugaro update` deploys the service on every installation, and what a run reads is that switch),
-because the in-job mint path is not extended and a run without it has
-no context repositories at all; the sandbox App installed on all three sandbox repositories with two
-of them admitted by `allow_repos`; and the context repositories' contents decided, since what the run
-reads is the point of the launch. Never `belong`.
+**What has to exist before it runs.** C5a and C5b merged and released; the credentials service's
+per-repository switch on for both context repositories (DON8: `fugaro update` deploys the service on
+every installation, and what a run reads is that switch), because the in-job mint path is not
+extended and a run without it has no context repositories at all; the sandbox App installed on all
+three sandbox repositories with two of them admitted by `allow_repos`; and the context repositories'
+contents decided, since what the run reads is the point of the launch. Never `belong`.
 
 **The commands.**
 
@@ -13146,9 +13162,9 @@ repositories); the pushes are made by hand with the two tokens, which is why no 
 Record the mint's repository list, the refusal, the successful push and the audited third-repository
 request under Check 232 here.
 
-**What a run costs.** One sandbox run and three push attempts: **the run is model spend and a billable
-execution**, each refused push is free, and nothing is granted — the service keeps its one bundle
-grant, pinned by `TestCredentialsServiceGrantsAreTheOneBundle`.
+**What a run costs.** One sandbox run and three push attempts: **the run is model spend and a
+billable execution**, each refused push is free, and nothing is granted — the service keeps its one
+bundle grant, pinned by `TestCredentialsServiceGrantsAreTheOneBundle`.
 
 **What waits on it.** C5c (the runner's read-only clone of context repositories) and, behind it,
 D613's step 2 — change sets — which assumes a context repository cannot be written by the run that
@@ -13158,10 +13174,10 @@ reads it.
 
 **NOT RUN.** Written by task **X1** of
 [docs/forge-authorship-images/implementation-plan.md](forge-authorship-images/implementation-plan.md)
-and **run by you, its C1** — nothing below is a claim that a workspace listing works. What it measures
-is a live Bitbucket workspace's answer to a listing call, which nothing in this tree can answer, and
-**no agent runs any step of it**: it reads a workspace credential from a hidden prompt, which a coding
-agent's session refuses.
+and **run by you, its C1** — nothing below is a claim that a workspace listing works. What it
+measures is a live Bitbucket workspace's answer to a listing call, which nothing in this tree can
+answer, and **no agent runs any step of it**: it reads a workspace credential from a hidden prompt,
+which a coding agent's session refuses.
 
 **What it settles, and what it gates.** **D623** (one allow-list: `fugaro project sync` is extended,
 and no `fugaro repo` family is added) and **D625** (propose, then confirm): the command lists the
@@ -13184,8 +13200,8 @@ listing of a real workspace.
 
 **What has to exist before it runs.** A release carrying C1, which depends on E1 for the regenerated
 `website/content/cli-reference.md`; the sandbox Bitbucket workspace and its sandbox installation; a
-workspace or project token to type at the prompt; at least one sandbox repository the allow-list does
-not admit; and the exact invocation read from the build's own `--help` or from the regenerated
+workspace or project token to type at the prompt; at least one sandbox repository the allow-list
+does not admit; and the exact invocation read from the build's own `--help` or from the regenerated
 reference, since `--check` is new with C1. Never `belong` — and never a token whose scopes reach
 beyond the sandbox workspace.
 
@@ -13196,17 +13212,17 @@ fugaro project sync --check
 fugaro project sync
 ```
 
-Record the difference the first printed, the second's proposal, the allow-list read before and after,
-and the token's provenance (which sandbox workspace it belongs to, never its value) under Check 234
-here.
+Record the difference the first printed, the second's proposal, the allow-list read before and
+after, and the token's provenance (which sandbox workspace it belongs to, never its value) under
+Check 234 here.
 
 **What a run costs.** Nothing: Bitbucket listing calls, one policy read and one terminal, with
 `--check` writing nothing by design. The write a plain `project sync` may follow with is the owner's
 to confirm, and D625 is why it waits.
 
-**What waits on it.** C1's release note (`### For operators`: the Bitbucket listing and the `--check`
-flag) and the setup flow that follows an accepted proposal, which is written as if a workspace can be
-listed at all.
+**What waits on it.** C1's release note (`### For operators`: the Bitbucket listing and the
+`--check` flag) and the setup flow that follows an accepted proposal, which is written as if a
+workspace can be listed at all.
 
 ## Check 235: a two-repository change set flips ready together (the sandbox installation and two of its sandbox GitHub repositories only, never `belong`; run by you; NOT RUN)
 
@@ -13220,17 +13236,17 @@ behind the `ee` build tag, and the settle step writes pull-request state on both
 **What it settles, and what it gates.** **D642** (membership fixed at launch: one launch creates
 every member run and writes the full member list into each member's task, so the settle step acts
 only when every member lists the same set), **D614** (the draft hold and the settle step that lifts
-it), **D616** (the whole slice is `ee/` behaviour: an untagged build refuses `--change-set`, and even
-a tagged one refuses it until the settle step has shipped, so no change set can be stuck in draft)
-and **D641** (a separate settle-only token, `pull_requests: write`, beside the coordinator's
+it), **D616** (the whole slice is `ee/` behaviour: an untagged build refuses `--change-set`, and
+even a tagged one refuses it until the settle step has shipped, so no change set can be stuck in
+draft) and **D641** (a separate settle-only token, `pull_requests: write`, beside the coordinator's
 read-only one, minted for this one act).
 
 - **The hold.** One launch creates the two member runs; each pull request carries the change set and
   lists its sibling, and both stay **draft** however each run finished. The hold binds the runner,
   not the agent: finalize records the member's verdict instead of flipping its own pull request
   ready.
-- **The settle.** Re-reading every member's record and every pull request's **live** state — head and
-  draft flag — the step flips **both** ready only when every listed member recorded `ship` and
+- **The settle.** Re-reading every member's record and every pull request's **live** state — head
+  and draft flag — the step flips **both** ready only when every listed member recorded `ship` and
   passing tests on its pull request's current head, and every member lists the same set. A member
   that did not ship, a head that moved, or two members listing different sets leaves both draft with
   a report; a partial flip is reported and the next settle finishes it, so a second run of the same
@@ -13240,12 +13256,12 @@ read-only one, minted for this one act).
   merged — Fugaro never merges — and D615's merge order is advisory text in the pull requests, not a
   status check.
 
-**What has to exist before it runs.** D1, D2 and D3 merged, with D3 waiting on ee-reorg's coordinator
-move (external to this plan); a build carrying the `ee` tag; the sandbox App installed on both
-sandbox repositories with both admitted by `allow_repos`; the settle-only token minted for the settle
-step; and the settle subcommand's exact spelling read from the `ee` CLI's own `--help`, since D3
-lands it in the package that carries `fugaro coordinator`'s `serve`, `show` and `sweep` today. Never
-`belong`.
+**What has to exist before it runs.** D1, D2 and D3 merged, with D3 waiting on ee-reorg's
+coordinator move (external to this plan); a build carrying the `ee` tag; the sandbox App installed
+on both sandbox repositories with both admitted by `allow_repos`; the settle-only token minted for
+the settle step; and the settle subcommand's exact spelling read from the `ee` CLI's own `--help`,
+since D3 lands it in the package that carries `fugaro coordinator`'s `serve`, `show` and `sweep`
+today. Never `belong`.
 
 **The commands.**
 
@@ -13259,12 +13275,12 @@ worth reading once); the second is the settle step, run twice to read the idempo
 pull requests' draft flags before and after, the reports each member wrote, and what a settle with
 one member's head moved did, under Check 235 here.
 
-**What a run costs.** Two sandbox runs with their pull requests, plus the settle step: **the runs are
-model spend and billable executions**; the settle writes pull-request state (the ready flips, and D3's
-`UpdatePR` on the two members) and costs nothing. Nothing is merged, so nothing lands on either
-repository's base branch, and no grant widens — the settle-only token names the members' repositories
-and carries `pull_requests: write` alone.
+**What a run costs.** Two sandbox runs with their pull requests, plus the settle step: **the runs
+are model spend and billable executions**; the settle writes pull-request state (the ready flips,
+and D3's `UpdatePR` on the two members) and costs nothing. Nothing is merged, so nothing lands on
+either repository's base branch, and no grant widens — the settle-only token names the members'
+repositories and carries `pull_requests: write` alone.
 
 **What waits on it.** D4 (the advisory merge order) and the change-set half of the spec's promise
-that a set is ready or not ready as a whole: this run is the only reading of it, and a set that flips
-one pull request and leaves the other draft is a finding for this plan's owner.
+that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
+flips one pull request and leaves the other draft is a finding for this plan's owner.
