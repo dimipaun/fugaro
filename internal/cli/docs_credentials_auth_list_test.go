@@ -407,6 +407,16 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 		"does **not** keep its own mount",
 		"shared project job",
 		"C3.9",
+		// Check 191 (2026-11-11): the account-choice keys are the operator's
+		// project-wide ones, so a cascade repository is skipped for them rather
+		// than refused, with the one note line an operator reads. The section
+		// that says it is this one, and the two claims it must not lose are
+		// what the exemption is *not*: a repository cannot write a stage
+		// account of its own, and vertex keeps its refusal.
+		"reads no stage account of the project's",
+		"project stage accounts do not apply to a cascade repository",
+		"a repository cannot write one",
+		"`agent.auth: vertex` keeps the refusal",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("%s's cascade section never says %q", path, want)
