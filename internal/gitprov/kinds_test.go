@@ -20,57 +20,80 @@ import (
 // D611). D610 keeps GitLab out of 0.14 until it has a named need and its own
 // reconciliation, and when it comes it is an L-sized change across config,
 // infra, the builds, the credentials service and the skills; these tables are
-// what says where every one of those switches is today.
+// what says where the switches on a forge kind are today.
 //
-// The Go table is checked for completeness by TestEveryKindSwitchIsInventoried
-// and the non-Go one for staleness, so neither a new switch on a forge kind nor
-// a site that stopped naming one can pass unnoticed.
+// The first table is Go, and TestEveryKindSwitchIsInventoried holds it complete:
+// it finds a kind wherever a non-test Go file names one, as an identifier or as
+// a string literal, and a file with no row fails. The second is hand-kept,
+// because a yaml, a .tf, a .ts or a .md has no identifiers to parse: its rows
+// name the sites outside Go, each with the line it must still carry, so a row
+// that goes stale fails. Neither table sees a site nobody has listed yet — what
+// makes the Go half complete is the scan, and the non-Go half is a list a
+// reader has to keep, which is why the switches a third forge must visit are
+// named here rather than left to be rediscovered.
 //
-// A file that names a kind is the unit, not a line: a file may switch on the
-// kinds in several places and one row covers them all, and what the row says is
-// what the file does with them, because that is what a third kind has to answer
-// again.
+// A file is the unit, not a line: a file may switch on the kinds in several
+// places and one row covers them all, and what the row says is what the file
+// does with them, because that is what a third kind has to answer again.
 var forgeKindGoSites = map[string]string{
-	"ee/ab/admit.go":                          "the A/B admission of a Bitbucket repository",
-	"ee/coordinator/cli/coordinator.go":       "the coordinator's read-only token source and the providers it opens",
-	"ee/coordinator/project.go":               "the project-wide view's read mint, and the kinds it reads",
-	"internal/backend/gcp/build.go":           "the image build's credential env, its secret env and the provider it is given",
-	"internal/backend/gcp/catalog.go":         "the catalog build's credential env, its secret env and the provider it is given",
-	"internal/catalog/fetch.go":               "the kinds whose catalog sources this build can read (Readable)",
-	"internal/cli/catalog_provider.go":        "the credential environment a catalog build reads a Dockerfile with",
-	"internal/cli/doctor.go":                  "doctor's GitHub App checks and its slug",
-	"internal/cli/doctor_brokering.go":        "the repositories the brokering report reads",
-	"internal/cli/exec.go":                    "--provider's admission of the two kinds beside fake",
-	"internal/cli/gitcred.go":                 "`fugaro image git-credential`'s credential per provider",
-	"internal/cli/image_build_catalog.go":     "the GitHub App ID a catalog build hands to infra",
-	"internal/cli/imagecheck.go":              "`fugaro image check`'s credential per provider",
-	"internal/cli/init.go":                    "the init flow's GitHub App check",
-	"internal/cli/init_firebase.go":           "the Firebase init's GitHub repositories",
-	"internal/cli/launch_budget.go":           "the proxied-Bitbucket read a launch makes",
-	"internal/cli/reviewverify.go":            "reading a pull request's head per provider",
-	"internal/credsvc/bitbucket.go":           "the credentials service's admission of a Bitbucket provider",
-	"internal/credsvc/github.go":              "the credentials service's admission of a GitHub provider",
-	"internal/credsvc/githubread.go":          "the credentials service's GitHub read mint",
-	"internal/gitprov/gitprov.go":             "KindForHost and KindForURL's host table",
-	"internal/gitprov/kinds.go":               "the declaration itself",
-	"internal/gitprov/providers/providers.go": "FromEnv and Proxied's admission of a kind, and the refusal's text",
-	"internal/infra/catalogcheck.go":          "the catalog check's credential per provider",
-	"internal/infra/spec.go":                  "GitSecret, the git user and the credential the spec mounts",
-	"internal/repourl/cloneurl.go":            "the host a clone URL is built on per kind",
-	"internal/runner/prflow.go":               "the PR flow's Bitbucket form",
-	"internal/runner/project.go":              "the runner's kind for a slug, and the list the refusal names",
-	"internal/runner/provision.go":            "the follow-up gate only the GitHub repositories pass",
-	"internal/runner/refused.go":              "the refusals only a GitHub repository reaches",
-	"internal/runner/reviewmode.go":           "review mode's Bitbucket form",
-	"internal/runner/runner.go":               "the run's provider kind, its host table and NoWorkflows",
+	"ee/ab/admit.go":                           "the A/B admission of a Bitbucket repository",
+	"ee/coordinator/cli/coordinator.go":        "the coordinator's read-only token source and the providers it opens",
+	"ee/coordinator/project.go":                "the project-wide view's read mint, and the kinds it reads",
+	"internal/backend/gcp/build.go":            "the image build's credential env, its secret env and the provider it is given",
+	"internal/backend/gcp/catalog.go":          "the catalog build's credential env, its secret env and the provider it is given",
+	"internal/catalog/fetch.go":                "the kinds whose catalog sources this build can read (Readable)",
+	"internal/claudeplugin/plan.go":            "NOT a forge kind: the plugin marketplace's source, which is GitHub whatever a repository's provider is",
+	"internal/cli/catalog_provider.go":         "the credential environment a catalog build reads a Dockerfile with",
+	"internal/cli/doctor.go":                   "doctor's GitHub App checks and its slug",
+	"internal/cli/doctor_brokering.go":         "the repositories the brokering report reads",
+	"internal/cli/exec.go":                     "--provider's admission of the two kinds beside fake",
+	"internal/cli/gitcred.go":                  "`fugaro image git-credential`'s credential per provider",
+	"internal/cli/image_build_catalog.go":      "the GitHub App ID a catalog build hands to infra",
+	"internal/cli/imagecheck.go":               "`fugaro image check`'s credential per provider",
+	"internal/cli/init.go":                     "the init flow's GitHub App check",
+	"internal/cli/init_firebase.go":            "the Firebase init's GitHub repositories",
+	"internal/cli/init_repo_target.go":         "init's GitHub App check on the provider a repository already names",
+	"internal/cli/launch_budget.go":            "the proxied-Bitbucket read a launch makes",
+	"internal/cli/reviewverify.go":             "reading a pull request's head per provider",
+	"internal/config/validate.go":              "config.Providers, the config-side list, and the per-provider identity checks — held to runner.jobProviderKinds by internal/cli's TestProviderKindsAgreeWithTheConfigsList",
+	"internal/credsvc/bitbucket.go":            "the credentials service's admission of a Bitbucket provider",
+	"internal/credsvc/bitbucketproxy.go":       "the proxied Bitbucket request's provider",
+	"internal/credsvc/github.go":               "the credentials service's admission of a GitHub provider",
+	"internal/credsvc/githubread.go":           "the credentials service's GitHub read mint",
+	"internal/gitprov/gitprov.go":              "KindForHost and KindForURL's host table",
+	"internal/gitprov/kinds.go":                "the declaration itself",
+	"internal/gitprov/providers/providers.go":  "FromEnv and Proxied's admission of a kind, and the refusal's text",
+	"internal/gitproxy/rules.go":               "the proxy's repository routes, whose canonical path is built from the kind",
+	"internal/imagesurvey/signals.go":          "NOT a forge kind: the bitbucket-pipelines.yml marker the survey looks for",
+	"internal/infra/catalogcheck.go":           "the catalog check's credential per provider",
+	"internal/infra/discover_github.go":        "the kind every repository the App answers with carries",
+	"internal/infra/projectjobs.go":            "githubProvider and sharedJobProviders, the shared jobs only GitHub has",
+	"internal/infra/spec.go":                   "GitSecret, the git user and the credential the spec mounts",
+	"internal/localcfg/select.go":              "ProviderHosts, the host each kind is reached at",
+	"internal/pluginwire/status.go":            "the plugin wire's GitHub-only status form",
+	"internal/pluginwire/wire.go":              "the plugin wire's GitHub form, and the marketplace source beside it",
+	"internal/projectpolicy/bitbucket.go":      "the published policy's Bitbucket block and its canonical slug",
+	"internal/projectpolicy/profiles.go":       "the profiles' Bitbucket-only validation",
+	"internal/repourl/cloneurl.go":             "the host a clone URL is built on per kind",
+	"internal/runner/prflow.go":                "the PR flow's Bitbucket form",
+	"internal/runner/project.go":               "the runner's kind for a slug, and the list the refusal names",
+	"internal/runner/provision.go":             "the follow-up gate only the GitHub repositories pass",
+	"internal/runner/refused.go":               "the refusals only a GitHub repository reaches",
+	"internal/runner/reviewmode.go":            "review mode's Bitbucket form",
+	"internal/runner/runner.go":                "the run's provider kind, its host table and NoWorkflows",
+	"internal/runner/runnertest/runnertest.go": "the slug the test runner fixtures a GitHub repository with",
 }
 
 // forgeKindNonGoSites are the places outside Go where a forge kind is written
-// down, each with a line it must still carry: the image build's credential
-// step, Terraform's validation and secret names, the plugin skills and the
-// schema. No scan finds these (a yaml or a .md has no identifiers to parse), so
+// down, each with a line it must still carry: the console and the plugin's
+// skills, the image build's credential step, Terraform's validation, its secret
+// name and the two conditions only GitHub satisfies, and the schema. No scan
+// finds these (a yaml, a .tf, a .ts or a .md has no Go identifiers to parse), so
 // this half is checked for staleness alone — each row's needle must still be
 // there, or the row is the to-do list pointing at nothing.
+//
+// A new non-Go site is not caught by anything: this list is a reader's to keep,
+// which is why it names every switch a third forge has to visit today.
 var forgeKindNonGoSites = []struct {
 	path   string
 	needle string
@@ -92,6 +115,21 @@ var forgeKindNonGoSites = []struct {
 		what:   "the coordinator's forge credential secret name",
 	},
 	{
+		path:   "deploy/terraform/gcp/modules/installation/variables.tf",
+		needle: `alltrue([for r in var.coordinator.repos : r.provider != "github"])`,
+		what:   "the coordinator's App ID, required exactly when it reconciles no GitHub repository",
+	},
+	{
+		path:   "deploy/terraform/gcp/modules/installation/coordinator.tf",
+		needle: `for r in var.coordinator.repos : r.provider == "github"`,
+		what:   "the repositories the coordinator mints an App token for",
+	},
+	{
+		path:   "deploy/terraform/gcp/modules/project/job.tf",
+		needle: `var.job.provider != "github" || can(regex(`,
+		what:   "the App ID a project job must carry when it is GitHub's",
+	},
+	{
 		path:   "plugin/skills/setup/reference/discovery.md",
 		needle: "`github.com` is `github`, `bitbucket.org` is `bitbucket`",
 		what:   "the setup skill's reading of git.provider off a remote",
@@ -105,6 +143,26 @@ var forgeKindNonGoSites = []struct {
 		path:   "schemas/fugaro.schema.json",
 		needle: `"provider": { "enum": ["github", "bitbucket"] }`,
 		what:   "fugaro.yaml's schema for git.provider",
+	},
+	{
+		path:   "console/src/main/launchrules.ts",
+		needle: `const LAUNCH_PROVIDERS: readonly string[] = Object.freeze(['github', 'bitbucket'])`,
+		what:   "the providers the console admits a launch for",
+	},
+	{
+		path:   "console/src/main/window.ts",
+		needle: `['bitbucket', { host: 'bitbucket.org', segment: 'pull-requests' }],`,
+		what:   "the web host and pull-request segment each provider's links open at",
+	},
+	{
+		path:   "console/src/renderer/screens/coordinator.ts",
+		needle: `export const PULL_PROVIDERS: readonly string[] = Object.freeze(['github', 'bitbucket'])`,
+		what:   "the providers the coordinator screen reads a pull request for",
+	},
+	{
+		path:   "console/src/renderer/screens/run.ts",
+		needle: `export type GitProvider = 'github' | 'bitbucket'`,
+		what:   "the console's own provider type, and the host and path it builds from one",
 	},
 }
 
@@ -137,20 +195,27 @@ func TestKindsListedOnce(t *testing.T) {
 }
 
 // TestEveryKindSwitchIsInventoried holds forgeKindGoSites to the module: every
-// non-test Go file that names a forge kind identifier is a row, and every row
-// is a file that still names one. It reads identifiers, not text, so a comment,
-// a doc string or a literal list that merely spells "github" is not a hit —
-// config.Providers and runner's jobProviderKinds are literal lists of their own,
-// held together by internal/cli's TestProviderKindsAgreeWithTheConfigsList.
+// non-test Go file that names a forge kind — as the identifier or as the string
+// — is a row, and every row is a file that still names one. It reads the syntax
+// tree, not the text, so a comment that mentions one is not a hit; it reads a
+// string literal, so a file that spells a kind out (config.Providers,
+// runner.jobProviderKinds, a `provider == "github"`) is one, which is what makes
+// the table complete for Go — a file whose only kind test is `k == "github"`
+// cannot pass this guard unlisted. Two rows record a literal that is not a forge
+// kind at all, because the scan cannot tell the difference and a reader can.
 //
 // A row pointing into a tree this checkout does not carry at all is skipped:
 // CI's core-without-ee job deletes ee/ and then builds and tests the untagged
 // core, and a guard that a licence-boundary workflow takes down is a guard that
 // gets weakened. See absentTree.
 func TestEveryKindSwitchIsInventoried(t *testing.T) {
-	names := map[string]bool{}
-	for _, c := range declaredKindConstants(t) {
-		names[c.name] = true
+	kinds := kindSet{}
+	declared := declaredKindConstants(t)
+	kinds.names = make(map[string]bool, len(declared))
+	kinds.values = make(map[string]bool, len(declared))
+	for _, c := range declared {
+		kinds.names[c.name] = true
+		kinds.values[c.value] = true
 	}
 	root := testutil.ModuleRoot()
 	found := map[string][]string{}
@@ -158,7 +223,7 @@ func TestEveryKindSwitchIsInventoried(t *testing.T) {
 		if strings.HasSuffix(rel, "_test.go") {
 			return nil
 		}
-		uses, err := kindUses(path, names)
+		uses, err := kindUses(path, kinds)
 		if err != nil {
 			return err
 		}
@@ -175,7 +240,7 @@ func TestEveryKindSwitchIsInventoried(t *testing.T) {
 	}
 	for rel, uses := range found {
 		if _, ok := forgeKindGoSites[rel]; !ok {
-			t.Errorf("%s names %s, and forgeKindGoSites has no row for it: add the row and say what the file does with the kinds, because a second forge has to visit it too",
+			t.Errorf("%s names %s, and forgeKindGoSites has no row for it: add the row and say what the file does with the kinds — or that the kind it spells is not a provider kind — because a second forge has to visit it too",
 				rel, strings.Join(uses, ", "))
 		}
 	}
@@ -191,7 +256,7 @@ func TestEveryKindSwitchIsInventoried(t *testing.T) {
 		if absentTree(root, rel) {
 			continue
 		}
-		t.Errorf("forgeKindGoSites lists %s, which names no forge kind any more: drop the row, or restore the file to %s", rel, strings.Join(namesIn(names), ", "))
+		t.Errorf("forgeKindGoSites lists %s, which names no forge kind any more: drop the row, or restore the file to %s", rel, strings.Join(namesIn(kinds.names), ", "))
 	}
 	for _, site := range forgeKindNonGoSites {
 		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(site.path)))
@@ -270,6 +335,16 @@ func declaredKindConstants(t *testing.T) []kindConst {
 	return out
 }
 
+// kindSet is the kinds as a scan has to look for them: by the identifier a
+// switch names them with, which is the spelling a constant gives, and by the
+// string a file that has no constant to name spells instead. Both are the kind
+// written down, and a file that writes either down is one a second forge has to
+// visit.
+type kindSet struct {
+	names  map[string]bool
+	values map[string]bool
+}
+
 // namesIn is a set of identifiers as a sorted list, for a message.
 func namesIn(set map[string]bool) []string {
 	out := make([]string, 0, len(set))
@@ -280,25 +355,48 @@ func namesIn(set map[string]bool) []string {
 	return out
 }
 
-// kindUses parses one Go file and answers, sorted, the kind identifiers it
-// names. Parsing rather than grepping is what keeps a comment or a string that
-// spells one out of the result, and reading every ast.Ident is what catches
-// both the qualified use (gitprov.KindGitHub, whose Sel is an Ident) and the
-// unqualified one inside this package.
-func kindUses(path string, names map[string]bool) ([]string, error) {
+// kindUses parses one Go file and answers, sorted, the kinds it writes down:
+// the identifiers it names them by, and the exact string literals that spell
+// one. Parsing rather than grepping is what keeps a comment out of the result,
+// and reading every ast.Ident is what catches both the qualified use
+// (gitprov.KindGitHub, whose Sel is an Ident) and the unqualified one inside
+// this package.
+//
+// The literals are matched on their unquoted value, so a file that writes
+// `kind == "github"` is a hit -- that is a switch on the kind like any other,
+// and B3 is told to work from this table. A literal that merely contains a kind
+// ("bitbucket-pipelines.yml", a URL) is not: matching whole values is what keeps
+// the table a list of switches rather than a list of every string that mentions
+// a forge. The literal comes back as Go source, quoted, so a message shows the
+// reader what the file actually says.
+func kindUses(path string, kinds kindSet) ([]string, error) {
 	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 	if err != nil {
 		return nil, err
 	}
 	var out []string
 	seen := map[string]bool{}
-	ast.Inspect(file, func(n ast.Node) bool {
-		ident, ok := n.(*ast.Ident)
-		if !ok || !names[ident.Name] || seen[ident.Name] {
-			return true
+	add := func(s string) {
+		if seen[s] {
+			return
 		}
-		seen[ident.Name] = true
-		out = append(out, ident.Name)
+		seen[s] = true
+		out = append(out, s)
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Ident:
+			if kinds.names[x.Name] {
+				add(x.Name)
+			}
+		case *ast.BasicLit:
+			if x.Kind != token.STRING {
+				return true
+			}
+			if v, err := strconv.Unquote(x.Value); err == nil && kinds.values[v] {
+				add(strconv.Quote(v))
+			}
+		}
 		return true
 	})
 	slices.Sort(out)
