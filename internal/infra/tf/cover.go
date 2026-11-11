@@ -373,6 +373,23 @@ type Cover struct {
 // and this one differ.
 const CloudAssetRole = "fugaroCloudAssetReader"
 
+// ViewerRole is the installation's read-only job role (RS4 of
+// docs/roles-scopes/implementation-plan.md, roles.md §4): the fugaroLauncher
+// role minus run.executions.cancel, so its holder reads a run, its execution
+// and its operations — and the project's secret list's metadata, which is the
+// launcher's too — and cannot cancel one. Its list is the one grant of the
+// viewer's that is a role of its own: everything else a viewer holds is a
+// predefined role on a resource the modules already grant to someone.
+//
+// The ID is a literal in the module and here, like the Cloud Asset reader's
+// and the history role's, and not a names.role_ids entry: nothing outside
+// installation/iam.tf names it, the pin in this package is by the same literal
+// (TestViewerRoleHasNoCancelPermission), and an installation with an empty
+// viewer list must plan exactly what it planned before this role existed —
+// which the tfvars plumbing of the four older roles would break, since role_ids
+// is a required key of the root's tfvars (TestInstallationVarsMatchModule).
+const ViewerRole = "fugaroViewer"
+
 // CredentialsAccountID is the credentials service's fixed service account ID
 // (internal/infra/tfvars.go's CredentialsAccountID, which
 // var.credentials_service.account_id carries) and CredentialsDatabaseRole the
