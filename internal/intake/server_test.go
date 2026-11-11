@@ -185,17 +185,27 @@ func (f *fakeStore) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-// fakeAdmins is DS2.0's derived list, as the intake reads it.
-type fakeAdmins struct{ list []access.Admin }
+// fakeAdmins is DS2.0's derived list, as the intake reads it. err is the read
+// failing, which is the state adminOnly's fail-closed rule is about and the
+// one a fixture slice cannot be in.
+type fakeAdmins struct {
+	list []access.Admin
+	err  error
+}
 
-func (f fakeAdmins) Admins(context.Context) ([]access.Admin, error) { return f.list, nil }
+func (f fakeAdmins) Admins(context.Context) ([]access.Admin, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.list, nil
+}
 
 // fixture is one intake under test: a real launcher class over the test's key
 // set, a store and a list the test can look at, and the audit lines as text.
 type fixture struct {
 	srv    *Server
 	store  *fakeStore
-	admins []access.Admin
+	admins AdminList
 	lines  *bytes.Buffer
 }
 
@@ -204,6 +214,13 @@ type fixture struct {
 // JSON text.
 func newFixture(t *testing.T, launchers []string, admins []access.Admin) *fixture {
 	t.Helper()
+	return newFixtureAdmins(t, launchers, fakeAdmins{list: admins})
+}
+
+// newFixtureAdmins is newFixture over the list's own implementation, for the
+// one state a slice cannot be in: a list whose read fails.
+func newFixtureAdmins(t *testing.T, launchers []string, admins AdminList) *fixture {
+	t.Helper()
 	lines := &bytes.Buffer{}
 	return newFixtureLogging(t, launchers, admins, slog.NewJSONHandler(lines, &slog.HandlerOptions{Level: slog.LevelInfo}), lines)
 }
@@ -211,7 +228,7 @@ func newFixture(t *testing.T, launchers []string, admins []access.Admin) *fixtur
 // newFixtureLogging is newFixture over a named log handler, for the one thing
 // a test cannot see through a bytes.Buffer: what the intake does when the log
 // itself cannot be written (TestACallThatCannotBeAuditedIsNotReportedAsDone).
-func newFixtureLogging(t *testing.T, launchers []string, admins []access.Admin, h slog.Handler, lines *bytes.Buffer) *fixture {
+func newFixtureLogging(t *testing.T, launchers []string, admins AdminList, h slog.Handler, lines *bytes.Buffer) *fixture {
 	t.Helper()
 	callers, err := credsvc.NewLaunchers(credsvc.LauncherConfig{
 		Audience: testAudience,
@@ -226,7 +243,7 @@ func newFixtureLogging(t *testing.T, launchers []string, admins []access.Admin, 
 		t.Fatalf("building the auditor: %v", err)
 	}
 	store := newFakeStore()
-	srv, err := New(Config{Callers: callers, Admins: fakeAdmins{list: admins}, Secrets: store, Audit: audit})
+	srv, err := New(Config{Callers: callers, Admins: admins, Secrets: store, Audit: audit})
 	if err != nil {
 		t.Fatalf("building the intake: %v", err)
 	}
@@ -564,6 +581,61 @@ func TestNonAdminCannotListTheSharedScope(t *testing.T) {
 	}
 	if len(answer.Secrets) != 1 || answer.Secrets[0].ID != shared || answer.Secrets[0].Scope != ScopeShared {
 		t.Fatalf("the admin's list answer is %+v, want %s in the shared scope", answer.Secrets, shared)
+	}
+}
+
+// TestAnUnreadableAdminListRefusesEveryCallItGates: the derived list is read
+// on every route that reads or writes the project-shared prefix, and on the
+// two that name a member's prefix — R10's offboarding read and its sweep — and
+// a read that fails is a refusal, not a leniency (D1935, D1940). The caller
+// here is the admin the list names: a failure says nothing about who is on it,
+// so it is refused like anyone else's. A leniency would hand the project's
+// shared prefix and the offboarding sweep to whoever asks at the moment the
+// list is unreadable, which is exactly the moment the intake cannot tell who
+// may write the prefix.
+func TestAnUnreadableAdminListRefusesEveryCallItGates(t *testing.T) {
+	f := newFixtureAdmins(t, []string{testOwnerEmail, testAdminEmail}, fakeAdmins{
+		list: []access.Admin{{Email: testAdminEmail, Sub: testAdminSub}},
+		err:  errors.New("the derived list could not be read"),
+	})
+	admin := f.token(t, testAdminEmail, testAdminSub)
+	shared := secretname.ProjectPrefix + "openrouter-key"
+	f.store.containers[shared] = Secret{ID: shared, Annotations: map[string]string{AnnotationCreatedBy: testAdminEmail}}
+	theirs := secretname.UserPrefix + testOtherSub + "_api-key"
+	f.store.containers[theirs] = Secret{ID: theirs, Annotations: map[string]string{
+		AnnotationOwnerSub: testOtherSub, AnnotationOwnerEmail: testOtherEmail, AnnotationCreatedBy: testOtherEmail,
+	}}
+
+	for _, c := range []struct{ what, path, body string }{
+		{"the shared scope's list", ListPath, `{"scope":"shared"}`},
+		{"a member's prefix read by address", ListPath, `{"scope":"user","owner":"` + testOtherEmail + `"}`},
+		{"a member's prefix swept", DeletePath, `{"scope":"user","owner":"` + testOtherEmail + `"}`},
+		{"a shared container created", CreatePath, createBody(ScopeShared, "another-key", testValue)},
+		{"a shared container's version added", VersionPath, createBody(ScopeShared, "openrouter-key", testValue)},
+		{"a shared container deleted", DeletePath, `{"scope":"shared","name":"openrouter-key"}`},
+	} {
+		w := f.post(t, c.path, admin, c.body)
+		if w.Code != http.StatusServiceUnavailable || errorType(t, w) != ErrorStateUnavailable {
+			t.Fatalf("an admin with the derived list unreadable, on %s: got %d %s, want 503 %s",
+				c.what, w.Code, errorType(t, w), ErrorStateUnavailable)
+		}
+	}
+	if len(f.store.created) != 0 || len(f.store.deleted) != 0 || len(f.store.values[shared]) != 0 {
+		t.Fatalf("a refused call wrote: created %v, deleted %v, versions %v", f.store.created, f.store.deleted, f.store.values[shared])
+	}
+	for _, id := range []string{shared, theirs} {
+		if _, ok := f.store.containers[id]; !ok {
+			t.Fatalf("a refused call removed %s", id)
+		}
+	}
+
+	// The list gates the project's prefix and an admin's read of a member's,
+	// and nothing else: the caller's own prefix is answered without it, which
+	// is what makes the refusals above the list's rather than a refusal of
+	// every call the intake serves.
+	w := f.post(t, ListPath, admin, `{"scope":"user"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("the admin's own list with the derived list unreadable: got %d %s", w.Code, w.Body.String())
 	}
 }
 
@@ -1232,7 +1304,7 @@ func TestACallThatCannotBeAuditedIsNotReportedAsDone(t *testing.T) {
 		{"a create that was refused", createBody(ScopeUser, "API-KEY", testValue), false},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
-			f := newFixtureLogging(t, []string{testOwnerEmail}, nil, brokenHandler{}, &bytes.Buffer{})
+			f := newFixtureLogging(t, []string{testOwnerEmail}, fakeAdmins{}, brokenHandler{}, &bytes.Buffer{})
 			w := f.post(t, CreatePath, f.token(t, testOwnerEmail, testOwnerSub), tc.body)
 			if got := errorType(t, w); w.Code != http.StatusServiceUnavailable || got != ErrorStateUnavailable {
 				t.Fatalf("got %d %s, want 503 %s", w.Code, got, ErrorStateUnavailable)
