@@ -136,7 +136,7 @@ note under the table says what moved.
 | **D924** | **The recommendation** — the token's limit travels in **a variable of its own** on the execution override, and the run's ceiling is the tighter of it and the job's own — and **spend is counted across the whole token family**, so a rotated refresh token is the same budget and not a new one | The override mechanism already exists (F19) and the gateway is already the place the real stop lives (F10, F27); a variable of its own is what makes "only narrows" structural rather than a launcher's arithmetic, and a per-family counter is what stops rotation from being a way to ask for the limit twice. | **Amended 2026-11-04** (M-b) — see §4a — and **amended on 2026-11-09 and restored the same day**: the fence ruling moved the limit's channel to **the run's own task**, and **the owner's later ruling of the same day declined the fence and gave the front door the launcher's permissions, so the channel is the execution override again** (§4a, "The owner's ruling of 2026-11-09, later the same day") — and the rule, the tighter of the token's limit and the job's cap, is unchanged |
 | **D925** | **The recommendation** — Hotfix is a **separate flag, off by default**, beside the window | `Rank()` gives Hotfix **0** deliberately (F9, F28), so folding it into a `min`/`max` window admits Hotfix at every minimum — the opposite of "off by default". |
 | **D926** | **The recommendation** — an optional `min` and an optional `max`, unset meaning the project's policy alone; a window that admits nothing is refused **at mint** | A token that could never start a run should not be mintable: the failure has to surface at the person's keyboard rather than in an agent's retry loop. |
-| **D927** | **The recommendation** — `tasks:read` and `tasks:write` only; `roadmap:write` is **not** in v1 | A scope is a wire contract: it exists the moment a token can hold it, and the console's own roadmap-write design — which does not exist yet — is what should decide its name and its permission (F30). |
+| **D927** | **The recommendation** — `tasks:read` and `tasks:write` only; `roadmap:write` is **not** in v1 | A scope is a wire contract: it exists the moment a token can hold it, and the console's own roadmap-write design — which does not exist yet — is what should decide its name and its permission (F30). **Amended by the stateless orchestrator's D1227 (answered 2026-11-04, recorded here 2026-11-10): `state:read` and `state:write` join the vocabulary — §4a, "D927 — amended by D1227".** |
 | **D928** | **The recommendation**, tightened by the owner: the redirect-URI allowlist is the **project's own configuration**, with loopback always allowed and validated at registration and at authorize, exact match — and **registration refuses a non-loopback URI that is not on the allowlist**, **the consent page shows the redirect host**, and **the flow is CSRF-bound** | A vendor's callback URL baked into a self-hosted product goes stale in somebody else's release cycle and refuses every client the owner has not heard of. The three tightenings are the owner's: refusing at registration is the earlier door, a person consents to a host they were shown rather than to a client id, and a flow with no CSRF binding lets an attacker's client finish a sign-in the person started for another. |
 | **D929** | **The recommendation** — a pre-registered confidential client using the client credentials grant, with **mandatory** limits | The owner's option B would make every stored API key an OAuth client by another name, and revocation would stop being one act — against the owner's own non-goal that the keys are not replaced. | **Amended 2026-11-04** (M-f) — see §4a |
 | **D930** | **The recommendation** — **short-lived access tokens and refresh tokens that rotate on every use**, with reuse detection, a replayed token revoking the family, and revocation as one delete | Rotation is what makes a theft detectable rather than merely survivable: a long-lived token that is stolen lives its whole life and nothing distinguishes theft from use. | **Amended 2026-11-04** (M-d) — see §4a |
@@ -917,6 +917,26 @@ plan's open items carry a **revisit** entry and §6's owner-checks list carries 
 - **What stays the owner's, and it is now the whole of it**: the live IAM — that the front door's
   account holds **both** permissions in a real project — which is check 2's shape for a grant rather
   than a live step, and the **revisit** itself.
+
+
+### D927 — amended by D1227 (the stateless orchestrator's state scopes), recorded 2026-11-10
+
+**D927's answer** kept v1 to `tasks:read` and `tasks:write` and said, of the stateless orchestrator's state group, that "a tool the two do
+not cover brings the scope question back as D927's" ([implementation-plan.md](implementation-plan.md) §7, [spec.md](spec.md) §11). It came
+back and was answered on the other design's side: **D1227** of
+[`docs/stateless-orchestrator/reconciliation.md`](../stateless-orchestrator/reconciliation.md) §4 — **new scopes `state:read` and
+`state:write`, write gated by D1225**, the recommendation, answered by the owner on **2026-11-04** — with D1224 naming the tools
+`get_state`, `get_events` and `apply_patch`. **This note records that answer here; it is not a new decision and it changes nothing D927
+refused**: `roadmap:write` stays out of v1, an unknown scope is still refused and never ignored, and the vocabulary is still closed — it
+is four names instead of two. What follows from D1227's own reason, and is stated rather than asked
+([`docs/stateless-orchestrator/reconciliation.md`](../stateless-orchestrator/reconciliation.md) §8, R1 and R2): an authorization that
+names no scope keeps getting the task pair only (today `requestedScopes` answers the whole vocabulary,
+`ee/coordinator/mcpauth/authorize.go:504-507`), a task-scope token reaches no state tool and a state-scope token no task tool, and a
+state-group call acts as a session and never as a person. [spec.md](spec.md) §5 carries the three rows, §8 the threat-model paragraph
+("A state-group token") and §11 the answer. **Two questions on that design's side were answered as recommended on 2026-11-10**: D2020
+(this front door reads the database, which its account holds no grant on today, through a read-only role) and D2021 (`apply_patch` is not
+served); the code is that design's
+task O16a, which edits `limits.go`, `authorize.go` and `tools.go` in `ee/coordinator/mcpauth/` and adds `tool_state.go`.
 
 ## 4b. The decision the amendment added
 
