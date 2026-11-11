@@ -306,43 +306,55 @@ func TestOutputTokenPinIsPassed(t *testing.T) {
 
 func TestTheDecisionAndItsReasoningAreWrittenToTheAuditLog(t *testing.T) {
 	ctx := context.Background()
-	log := &recorder{}
+	// The real log over a store that only records the write. A fake auditor
+	// standing in for the log would accept a transition the log refuses, which
+	// is the whole of what this test is for: the entry the runner makes is
+	// held against the code that owns the rule.
+	db := &patchDB{}
 	bin := testutil.FakeClaude(t, `{"calls":[{"structured":`+theAnswer+`}]}`)
-	r := &decide.Runner{Agent: decide.Claude{Bin: bin}, Now: testNow, Models: testModels(), Audit: log}
+	r := &decide.Runner{Agent: decide.Claude{Bin: bin}, Now: testNow, Models: testModels(), Audit: auditOver(t, db)}
 	d, err := r.Decide(ctx, decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}})
 	if err != nil {
 		t.Fatalf("the decision ended as %v", err)
 	}
-	if len(log.entries) != 1 {
-		t.Fatalf("the decision wrote %d audit entries, want 1", len(log.entries))
+	if d.AuditErr != nil {
+		t.Fatalf("the decision was not written to the log: %v", d.AuditErr)
 	}
-	e := log.entries[0]
-	if e.Subject != "wi-1" {
-		t.Errorf("the entry's subject is %q, want the item", e.Subject)
+	path, err := orchestrator.PathAudit("orchestrator-a")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if e.Transition != "decision-20261111T093000Z" {
-		t.Errorf("the entry's transition is %q, which is not the stamp the decision ran at", e.Transition)
+	if db.root != path {
+		t.Errorf("the entry was written under %q, want %q", db.root, path)
+	}
+	e, ok := db.updates["wi-1:decision-20261111-093000"].(orchestrator.Entry)
+	if !ok {
+		t.Fatalf("the log carries %v, want one entry keyed by the item and the stamp the decision ran at", db.updates)
 	}
 	if e.Text != d.Reasoning {
 		t.Errorf("the entry's text is %q, want the model's reasoning %q", e.Text, d.Reasoning)
 	}
-	if d.AuditErr != nil {
-		t.Errorf("a decision the log took reports %v", d.AuditErr)
+	if e.At != mustNow(t) {
+		t.Errorf("the entry is stamped %s, want the server time the decision ran at (%s)", e.At, mustNow(t))
 	}
 
 	// A refused answer is recorded with the refusal: a model that keeps
 	// reaching for a person's op is what a person reading the log is looking
 	// for.
-	refused := &recorder{}
+	refused := &patchDB{}
 	digest := orchestrator.SpecDigest(theState(t, nil).WorkItems[0])
 	bad := testutil.FakeClaude(t, `{"calls":[{"structured":{"reasoning":"approving it myself","ops":[`+
 		`{"op":"work_item_approve","approve":{"id":"wi-1","spec_digest":"`+string(digest)+`"}}]}}]}`)
-	r2 := &decide.Runner{Agent: decide.Claude{Bin: bad}, Now: testNow, Models: testModels(), Audit: refused}
+	r2 := &decide.Runner{Agent: decide.Claude{Bin: bad}, Now: testNow, Models: testModels(), Audit: auditOver(t, refused)}
 	if _, err := r2.Decide(ctx, decide.Request{State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"}}); err == nil {
 		t.Fatal("the agent approved its own item")
 	}
-	if len(refused.entries) != 1 || !strings.Contains(refused.entries[0].Text, "may not approve") {
-		t.Errorf("the refusal was recorded as %v, want the reason it was refused", refused.entries)
+	e2, ok := refused.updates["wi-1:decision-20261111-093000"].(orchestrator.Entry)
+	if !ok {
+		t.Fatalf("the refusal was recorded as %v, want the reason it was refused", refused.updates)
+	}
+	if !strings.Contains(e2.Text, "may not approve") {
+		t.Errorf("the refusal was recorded as %q, want the reason it was refused", e2.Text)
 	}
 
 	// A log that cannot be written does not fail the decision: the log is
@@ -401,6 +413,29 @@ func stripComments(v any) {
 			stripComments(child)
 		}
 	}
+}
+
+// auditOver is the real audit log over a store that only records the write.
+// The log's own validation is what the runner's entry has to meet, so the fake
+// sits below the log rather than in its place.
+func auditOver(t *testing.T, db *patchDB) *orchestrator.Audit {
+	t.Helper()
+	audit, err := orchestrator.NewAudit(db, "orchestrator-a", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return audit
+}
+
+// patchDB records the one atomic patch an append makes.
+type patchDB struct {
+	root    string
+	updates map[string]any
+}
+
+func (p *patchDB) Patch(_ context.Context, root string, updates map[string]any) error {
+	p.root, p.updates = root, updates
+	return nil
 }
 
 // recorder is the audit log the tests write to.

@@ -251,10 +251,13 @@ func (r *Runner) audit(ctx context.Context, d *Decision, text string) {
 	}
 	// The transition carries the stamp, because the log's id is the subject
 	// and the transition joined: one fixed transition would let an item have
-	// one decision in the life of the node and never a second.
+	// one decision in the life of the node and never a second. The stamp is
+	// spelled in the log's own alphabet — a transition is a name, lowercase
+	// (auditTransitionRE) — so it is not RFC 3339's own punctuation, which a
+	// name may not carry.
 	_, d.AuditErr = r.Audit.Append(ctx, orchestrator.Entry{
 		Subject:    d.ItemID,
-		Transition: "decision-" + d.At.UTC().Format("20060102T150405Z"),
+		Transition: "decision-" + d.At.UTC().Format("20060102-150405"),
 		Text:       text,
 	})
 }
