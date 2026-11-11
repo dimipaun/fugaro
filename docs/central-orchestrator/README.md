@@ -148,7 +148,8 @@ it claims no check number either way and takes the next free one at merge time (
   that work's D196 **(B)**, so it gets **its own** resident service and every orchestrator,
   this one included, reaches it **as a client**; this plan's P4/P5 no longer block it.
 - [docs/design/v1.md](../design/v1.md) §2 — the non-goal the spec's *"carries PRs through to
-  merge"* contradicts: *"Auto-merge. Fugaro never merges."* (§3 #22, **D18**).
+  merge"* contradicted: *"Auto-merge. Fugaro never merges."* (§3 #22, **D18**). **Amended
+  2026-11-10 by `docs/outer-loop-escalation`:** the non-goal now reads "No merge outside the orchestrator's gated rule".
 - [SECURITY.md](../../SECURITY.md) — the trust assumptions every credential question here
   inherits: the launcher's reach, that a run is the untrusted party, and the accepted
   blast-radius paragraphs of `docs/design/project-centric.md` §4.1 (§3 #20, #46, **D4**).

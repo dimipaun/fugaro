@@ -541,6 +541,33 @@ func TestDocsStatelessOrchestratorLadderAmendmentsAreRecorded(t *testing.T) {
 	if !strings.Contains(plan, "Amended by `docs/outer-loop-escalation`") {
 		t.Errorf("%s: O14 is not re-scoped to read the ladder", soPlan)
 	}
+	// The re-scope has to reach the merge call as well as the threshold: that
+	// plan's E8 owns MarkReady, Merge and Checks, so an O14 that still adds its
+	// own Merge reads as a second merge path with none of E8's guards (the
+	// expected head SHA, no bypass flag, E16's mint).
+	for _, want := range []string{
+		"**Nor does this task own the merge call:**",
+		"this task's, per the note above**)",
+		"**that plan's E8 adds the call**",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s: O14 is not reconciled with E8 owning the merge call (%q)", soPlan, want)
+		}
+	}
+	// The non-goal this task deletes from docs/design/v1.md was quoted verbatim
+	// as the tree's current rule in four pages outside this folder, none of them
+	// in E0's file list: the quote is historical now, so each site carries the
+	// amendment beside it rather than reading as the live rule.
+	for _, f := range []string{
+		"docs/central-orchestrator/reconciliation.md",
+		"docs/central-orchestrator/implementation-plan.md",
+		"docs/central-orchestrator/README.md",
+		"docs/forge-authorship-images/reconciliation.md",
+	} {
+		if !strings.Contains(soRead(t, f), "No merge outside the orchestrator's gated rule") {
+			t.Errorf("%s: still quotes the deleted non-goal as the tree's rule, with no amendment", f)
+		}
+	}
 	// The amendment is restated in three places that sit far from the row it
 	// changes — the plan's decisions-summary row and its section 6 owner-answers
 	// summary, and the reconciliation's "BF2's long-run triage rule" paragraph —
