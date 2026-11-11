@@ -202,15 +202,29 @@ type stepUpSpy struct {
 	accepts string
 	accept  bool
 	err     error
-	asked   []string
+
+	// mu is the spy's own, and not the fixture's: the factor is asked before
+	// the page takes its turn, so a burst of the page's actions reaches this at
+	// once. A deployment's factor is called that way and has to answer it.
+	mu    sync.Mutex
+	asked []string
 }
 
 func (p *stepUpSpy) Verified(_ context.Context, account, code string) (bool, error) {
+	p.mu.Lock()
 	p.asked = append(p.asked, account+" "+code)
+	p.mu.Unlock()
 	if p.err != nil {
 		return false, p.err
 	}
 	return p.accept && code == p.accepts, nil
+}
+
+// askedCodes is what the factor was asked, in order.
+func (p *stepUpSpy) askedCodes() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.asked...)
 }
 
 // notifierSpy records what the owner was told a request is waiting (§4.5). It

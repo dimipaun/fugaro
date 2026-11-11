@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -176,6 +177,19 @@ type Service struct {
 	auditor    Auditor
 	now        func() time.Time
 	limiter    *throttle
+	// pageMu is the page's actions one at a time. A minting action is a count,
+	// an audit line and a key, and the count reads the record the key writes:
+	// two of them in flight together would each count a record that does not
+	// hold the other's key yet, which is D454's cap minted past and one
+	// approval minted twice over a source the store was asked about too early
+	// (TestConcurrentMintsRespectTheCap, TestConcurrentApprovalsMintOnce).
+	//
+	// It is the page's and not the intake's: §5.1's events are idempotent by
+	// their own ids in the store, and the page is one person clicking. What a
+	// lock in one process cannot reach is a second process, whose record is its
+	// own until the store is a service — which is the store that reserves a
+	// source (mint's own comment, §5.2).
+	pageMu sync.Mutex
 }
 
 // New builds the intake. Everything it refuses here is a deployment that would

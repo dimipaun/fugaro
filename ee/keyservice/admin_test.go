@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -346,8 +347,8 @@ func TestAdminRefusesAMintTheFactorDidNotConfirm(t *testing.T) {
 
 	none := mint("", false)
 	refused("a mint with no code at all", none)
-	if got := len(f.stepUp.asked); got != 0 {
-		t.Errorf("a mint with no code asked the factor %d time(s): an empty field is refused before anything is checked against it", got)
+	if got := f.stepUp.askedCodes(); len(got) != 0 {
+		t.Errorf("a mint with no code asked the factor %d time(s): an empty field is refused before anything is checked against it", len(got))
 	}
 	if body := none.Body.String(); !strings.Contains(body, refuseNoStepUp) {
 		t.Errorf("the refusal says %q, want the sentence that names the missing code", body)
@@ -357,11 +358,12 @@ func TestAdminRefusesAMintTheFactorDidNotConfirm(t *testing.T) {
 	f.stepUp.accept = false
 	refused("a mint the factor refuses", mint(stepUpCode, true))
 	f.stepUp.accept = true
-	if got := len(f.stepUp.asked); got != 2 {
-		t.Errorf("the factor was asked %d time(s), want two: a code has to reach it to be refused by it (%v)", got, f.stepUp.asked)
+	asked := f.stepUp.askedCodes()
+	if len(asked) != 2 {
+		t.Errorf("the factor was asked %d time(s), want two: a code has to reach it to be refused by it (%v)", len(asked), asked)
 	}
-	if want := ownerAccount + " 000000"; f.stepUp.asked[0] != want {
-		t.Errorf("the factor was asked %q, want %q: the code the form carried, for the account it is a factor for", f.stepUp.asked[0], want)
+	if want := ownerAccount + " 000000"; len(asked) > 0 && asked[0] != want {
+		t.Errorf("the factor was asked %q, want %q: the code the form carried, for the account it is a factor for", asked[0], want)
 	}
 
 	// The factor's own service failing is not a confirmation either, and it is an
@@ -605,6 +607,166 @@ func TestAnOrderFormMintCanBeIssuedAgain(t *testing.T) {
 	if first.Organisation != second.Organisation || first.Seats != second.Seats {
 		t.Errorf("the two licences name %q/%d and %q/%d, want one order form and seat count issued twice",
 			first.Organisation, first.Seats, second.Organisation, second.Seats)
+	}
+}
+
+// burstGate is how long one mint waits for the burst it is part of. It is the
+// window a burst of the page's actions arrives inside, and a mint that arrives
+// alone waits it out rather than waiting for clicks that are not coming.
+const burstGate = 200 * time.Millisecond
+
+// burstMints is the minter with a burst of clicks at it: every mint that arrives
+// inside one window goes through together, and a mint that arrives alone waits
+// the window out and then goes through on its own.
+//
+// The two are the two answers a test reads — the mints the page let through and
+// the one it did before the window closed — so nothing about the service is
+// faked here: what decides which of them happens is the page's own lock.
+type burstMints struct {
+	inner Mints
+	want  int
+	gate  time.Duration
+	open  chan struct{}
+
+	mu   sync.Mutex
+	seen int
+}
+
+func (b *burstMints) Mint(ctx context.Context, req Request) (Minted, error) {
+	b.mu.Lock()
+	b.seen++
+	if b.seen == b.want {
+		close(b.open)
+	}
+	b.mu.Unlock()
+	select {
+	case <-b.open:
+	case <-time.After(b.gate):
+	}
+	return b.inner.Mint(ctx, req)
+}
+
+// together submits one form n times at once and answers the status code each
+// submission got, in submission order. They all wait on one channel, so the n
+// are in flight together rather than queued behind a loop.
+func together(n int, submit func(i int) *httptest.ResponseRecorder) []int {
+	start := make(chan struct{})
+	codes := make([]int, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			codes[i] = submit(i).Code
+		}()
+	}
+	close(start)
+	wg.Wait()
+	return codes
+}
+
+// answered is how many of the codes are one status.
+func answered(codes []int, want int) int {
+	n := 0
+	for _, code := range codes {
+		if code == want {
+			n++
+		}
+	}
+	return n
+}
+
+// TestConcurrentApprovalsMintOnce: §4.5's "an approval mints once" under the one
+// thing that can break it — the same form submitted many times at once. What
+// makes an approval idempotent is a read of the record before the mint and a
+// write of it after (§5.2), and a burst is the window between the two: eight
+// clicks must leave one key, one mail, one audit line and one record, and all
+// eight answered the way the mint was. Seven keys mailed and one record is the
+// failure this reads (§7.3: a key is never stored, so a key minted twice over
+// one source is a licence nothing accounts for).
+func TestConcurrentApprovalsMintOnce(t *testing.T) {
+	const clicks = 8
+	f := newFixture(t)
+	f.deps.Mints = &burstMints{inner: f.recording, want: clicks, gate: burstGate, open: make(chan struct{})}
+	f.start()
+
+	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a multi-seat trial"}}))
+	open := f.open()
+	if len(open) != 1 {
+		t.Fatalf("the manual form left %d open request(s), want one", len(open))
+	}
+	id := open[0].ID
+	form := f.mintForm(url.Values{
+		"application": {id}, "plan": {paidPlanName}, "seats": {"3"},
+		"term_days": {"365"}, "organisation": {"acme.example"},
+	})
+
+	codes := together(clicks, func(int) *httptest.ResponseRecorder { return f.adminPost(RouteAdminMint, form) })
+	if got := answered(codes, http.StatusSeeOther); got != clicks {
+		t.Errorf("%d of %d concurrent submissions were answered 303, want all of them: %v", got, clicks, codes)
+	}
+	records := f.records()
+	if got := len(f.recording.keys); got != 1 {
+		t.Errorf("the burst minted %d key(s), want one: %d of them would be keys mailed with nothing to account for them (§5.2, §7.3)", got, got-len(records))
+	}
+	if got := len(f.mail.sent); got != 1 {
+		t.Errorf("the burst mailed %d message(s), want one", got)
+	}
+	if got := len(f.auditor.lines); got != 1 {
+		t.Errorf("the burst wrote %d audit line(s), want one: the log is a list of keys", got)
+	}
+	if len(records) != 1 {
+		t.Fatalf("the burst wrote %d record(s), want one", len(records))
+	}
+	if got := records[0].Source; got != sourceApproval+id {
+		t.Errorf("the record's source is %q, want the request it answers (%q)", got, sourceApproval+id)
+	}
+	if got := f.open(); len(got) != 0 {
+		t.Errorf("the approved request is still in the queue: %+v", got)
+	}
+}
+
+// TestConcurrentMintsRespectTheCap: §6's limits row under the same burst. D454's
+// cap is a count of the record and §5.2 writes the record after the key, so a
+// burst of eight Order-Form mints — eight forms the page rendered, eight
+// sources, one tier — must mint the one the cap allows and answer the other
+// seven as the cap's, rather than counting a record none of them has written
+// yet.
+func TestConcurrentMintsRespectTheCap(t *testing.T) {
+	const clicks = 8
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.cfg.MintCaps[licence.TierEnterprise] = Limits{Requests: 1, Window: time.Hour}
+	})
+	f.deps.Mints = &burstMints{inner: f.recording, want: clicks, gate: burstGate, open: make(chan struct{})}
+	f.start()
+
+	forms := make([]url.Values, clicks)
+	for i := range forms {
+		forms[i] = f.mintForm(url.Values{
+			"plan": {enterprisePlanName}, "seats": {"40"}, "term_days": {"365"},
+			"organisation": {"order-2026-0041"}, "email": {"licensing@acme.example"},
+		})
+	}
+	codes := together(clicks, func(i int) *httptest.ResponseRecorder { return f.adminPost(RouteAdminMint, forms[i]) })
+
+	if got := answered(codes, http.StatusSeeOther); got != 1 {
+		t.Errorf("%d of %d concurrent mints were answered 303, want the cap's one: %v", got, clicks, codes)
+	}
+	if got := answered(codes, http.StatusTooManyRequests); got != clicks-1 {
+		t.Errorf("%d of %d concurrent mints were refused by the cap, want the other seven: %v", got, clicks, codes)
+	}
+	if got := len(f.recording.keys); got != 1 {
+		t.Errorf("a burst of %d mints under a cap of one minted %d key(s), want one (D454)", clicks, got)
+	}
+	if got := len(f.auditor.lines); got != 1 {
+		t.Errorf("the burst wrote %d audit line(s), want one: the keys that were not minted wrote none", got)
+	}
+	if got := len(f.mail.sent); got != 1 {
+		t.Errorf("the burst mailed %d message(s), want one", got)
+	}
+	if got := len(f.records()); got != 1 {
+		t.Errorf("the burst wrote %d record(s), want one", got)
 	}
 }
 

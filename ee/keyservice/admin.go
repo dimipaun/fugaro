@@ -95,6 +95,11 @@ type Owner interface {
 //
 // It is per action and not per session: the code the form carried is the whole
 // of what this is asked, so a stolen session has nothing to submit.
+//
+// Whether one code is spent by the action that used it is the implementation's
+// and not this contract's — a TOTP code is good for its window, which is what
+// D455(a) asks for — so a code is not what holds a burst of clicks at the page.
+// D454's cap and the page's actions one at a time are.
 type StepUp interface {
 	Verified(ctx context.Context, account, code string) (bool, error)
 }
@@ -314,6 +319,15 @@ func (s *Service) adminMint(w http.ResponseWriter, r *http.Request) {
 	// re-issue impossible and answer it as a success, which is the one thing a
 	// page that cannot tell the two apart must not do
 	// (TestAnOrderFormMintCanBeIssuedAgain).
+	//
+	// And it is checked and acted on one click at a time, from here to the
+	// record: both of the checks below read the record and §5.2 puts the write
+	// of it after the key, so a burst of this action would have every request in
+	// it read the same record and mint against it
+	// (TestConcurrentApprovalsMintOnce, TestConcurrentMintsRespectTheCap).
+	s.pageMu.Lock()
+	defer s.pageMu.Unlock()
+
 	source := sourceApproval + queued.ID
 	if queued.ID == "" {
 		source = sourceOrder + organisation + ":" + strconv.Itoa(seats) + ":" + pageNonce(form.Get("token"))
@@ -388,6 +402,12 @@ func (s *Service) adminDecide(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A decline reads the record too, so it is one of the page's actions and
+	// takes the same turn as a mint: a "no" that landed beside an approval would
+	// otherwise leave a request declined with a key out for it (§4.5).
+	s.pageMu.Lock()
+	defer s.pageMu.Unlock()
+
 	id := strings.TrimSpace(form.Get("application"))
 	held, found, err := s.application(ctx, id)
 	if err != nil {
