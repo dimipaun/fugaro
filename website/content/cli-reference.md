@@ -2189,13 +2189,17 @@ repository's slug is keyed by: a repository whose entry leaves provider
 out is refused with the sentence that says where to set it, rather than
 graphed from a guess.
 
---source selects the scope, and the set is closed: all (the default) is
-every scope that exists, which today is the coordinator's stored view;
-coordinator is that view alone; orchestrator:<id> and local:<id> name scopes
-this build has no reader for yet and are refused rather than answered with an
-empty graph. An id is one lower-case letter or digit, then up to 39 more of
-those or a hyphen, and nothing else: anything that does not match is refused
-before anything is read.
+--source selects the scope, and the set is closed. all (the default) is
+every scope that exists: the coordinator's stored view and one scope per
+orchestrator this installation has. coordinator is that view alone;
+orchestrator:<id> is one orchestrator's node under /orchestrator, its work
+items as nodes and their depends_on as edges; local:<id> is the same node
+read as one this machine's daemon drives, falling back to the daemon's
+cached brief when the node cannot be read. An id is one lower-case letter or
+digit, then up to 39 more of those or a hyphen, and nothing else: anything
+that does not match is refused before anything is read, and an id that is
+neither in the project's database nor in this machine's cache is refused
+with a sentence naming it and pointing at fugaro orchestrator ls.
 
 The coordinator's scope is every repository the local config lists, and a
 repository the sweep has never reconciled is read as its runs alone — the
@@ -2207,8 +2211,9 @@ records that may still be the runs half.
 
 With --json the document is printed as the console reads it: its version,
 when it was assembled, one entry per scope in sources, the nodes, the edges
-(the coordinator's view has none) and the warnings. Without it, a short
-table: each scope's state, then its nodes grouped by release.
+(the coordinator's view has none; an orchestrator's are its work items'
+depends_on) and the warnings. Without it, a short table: each scope's state,
+then its nodes grouped by release, then the edges.
 
 --watch --json prints a whole document per change instead of one and
 exits, one compact object per line: the first snapshot at once, then one
@@ -2216,8 +2221,11 @@ document for every change of the scopes it covers, at most one a second,
 and a document every 30 seconds while nothing changes. Every document
 carries the stream's own id and a sequence that rises within it, so a
 reader reads a new id as a whole new snapshot rather than comparing its
-sequence with the one before. It subscribes to each scope once, and a
-scope it cannot reach is a state in the document rather than an exit.
+sequence with the one before. It subscribes once per scope subtree — the
+coordinator's and the orchestrator's for all, or the one node a named
+orchestrator scope reads — and a scope it cannot reach is a state in the
+document rather than an exit. A local scope falls back to the daemon's
+cached brief, which the stream re-reads on every document it writes.
 --watch needs --json, which is the only shape a reader of the stream can
 consume.
 
