@@ -8,7 +8,10 @@
 // sentence, in one place. That makes the module's text an app-visible fact
 // rather than prose: it is what `mobile/src/app/root.js` renders as the shell's
 // third child, and part of the words a store reviewer reads on the app's only
-// surface.
+// surface -- and, because a second copy of a sentence is a second sentence, the
+// clauses are read out of the privacy page and refused when the page stops
+// carrying them, rather than retyped here where nothing would notice the page
+// moving.
 //
 // **Why the statement is the half both rulings leave standing.** D255 (always
 // on) was superseded by the owner's ruling of 2026-10-30 (D731): crash reports
