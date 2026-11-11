@@ -12756,10 +12756,12 @@ bash scripts/live-checks/check-410.sh
 `--dry-run` prints the plan and runs none of it: no project read, no update, no diagnosis, no model call.
 Every other run is idempotent, making up its own project name and its own scratch directory. Progress goes
 to stderr and one `CHECK 410 RESULT` block to stdout at the end: paste that whole block here and nothing
-else. **Exit `0`** is every criterion holding; **`1`** is a measured criterion that did not hold — a line
-naming no run, a diagnosis that did not answer, an evidence folder missing a file; **`2`** is the check not
-being able to measure: a tool missing, the made-up project turning out to exist, the probe not failing, or
-a row it could not read. A key the run never reached reads `FAIL — not reached`.
+else. **Exit `0`** is every criterion holding; **`1`** is a measured criterion that did not hold, or a guard
+that stopped the check — a line naming no run, a diagnosis that did not answer, an evidence folder missing
+a file, or a probe whose own `fugaro update` **succeeded** where a real failure is what this check reads;
+**`2`** is the check not being able to measure: a tool missing, the made-up project turning out to exist,
+the probe never finishing inside its timeout, or a row it could not read. A key the run never reached reads
+`FAIL — not reached`.
 
 **What waits on it.** Nothing gates on it and it gates nothing: it is the owner's reading of T-DG9's
 sentence and of the command end to end on a machine that is not the author's.
@@ -12806,9 +12808,10 @@ own credential unless the run takes the offline path.
 **The commands.** As 410's, with `check-411.sh`; the knobs are `CHECK411_DRY_RUN`, `CHECK411_KEEP_SCRATCH`,
 `CHECK411_STAMP`, `CHECK411_PROJECT`, `CHECK411_UPDATE_TIMEOUT_SECONDS` (300) and
 `CHECK411_DIAGNOSIS_TIMEOUT_SECONDS` (900). Exit `0` is every criterion holding, `1` a measured criterion
-that did not hold (a clone where the tarball was expected, a version that is not the build's, a tree with
-no `go.mod`), `2` the check not being able to measure — among them a `dev` build, which is D1611's case
-rather than a failure of the code.
+that did not hold or a guard that stopped the check (a clone where the tarball was expected, a version that
+is not the build's, a tree with no `go.mod`, or a probe whose own `fugaro update` succeeded where a real
+failure is what this check reads), `2` the check not being able to measure — among them a `dev` build, which
+is D1611's case rather than a failure of the code.
 
 **What waits on it.** Nothing gates on it: it is the reading T-DG4's own tests take against a fake
 transport, taken here against the real one, on a machine with no `git`.
@@ -12854,10 +12857,11 @@ itself is two lines in one log, inside a scratch directory removed at the end.
 **The commands.** As 410's, with `check-412.sh`; the knobs are `CHECK412_DRY_RUN`,
 `CHECK412_KEEP_SCRATCH`, `CHECK412_STAMP`, `CHECK412_PROJECT`, `CHECK412_UPDATE_TIMEOUT_SECONDS` (300) and
 `CHECK412_DIAGNOSIS_TIMEOUT_SECONDS` (900). Exit `0` is every criterion that was measured holding; `1` is a
-measured criterion that did not hold — a tool outside the three, the file the instruction named appearing,
-the token in the answer, an evidence log that kept the token or lost the instruction; `2` is the check not
-being able to measure (a tool missing, the made-up project turning out to exist, the child never starting,
-a row it could not read). A key the run never reached reads `FAIL — not reached`.
+measured criterion that did not hold, or a guard that stopped the check — a tool outside the three, the file
+the instruction named appearing, the token in the answer, an evidence log that kept the token or lost the
+instruction, or a probe whose own `fugaro update` succeeded where a real failure is what this check reads;
+`2` is the check not being able to measure (a tool missing, the made-up project turning out to exist, the
+child never starting, a row it could not read). A key the run never reached reads `FAIL — not reached`.
 
 **What waits on it.** Nothing gates on it: it is the outside reading of the two rules T-DG2 and T-DG7 are
 built from, and the one a person can take over the log that actually failed on their machine.

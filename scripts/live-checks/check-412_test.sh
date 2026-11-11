@@ -285,6 +285,11 @@ test_help() {
   expect_contains "$out" "bash scripts/live-checks/check-412.sh --dry-run" "--help: the dry run is offered"
   expect_absent "$out" "FACT " "--help: no block is printed"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "update" "--help: no update is run"
+  # The header is the whole of what a person reading a FAIL row has to decide
+  # with: a probe that succeeded exits 1 through stop(), and a header calling it
+  # something the check could not measure sends them looking for a missing tool.
+  expect_contains "$out" "a probe whose own \`fugaro update\` SUCCEEDED" "--help: the exit line reads a successful probe as a finding"
+  expect_absent "$out" "the probe did not fail" "--help: a successful probe is not filed under what the check could not measure"
 }
 
 test_dry_run() {

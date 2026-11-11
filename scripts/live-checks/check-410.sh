@@ -57,10 +57,12 @@
 #             even on a failed assertion or a Ctrl-C.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 410 RESULT,
 #             then CHECK 410 RESULT END (exit N). Exit 0: every criterion held.
-#             1: a criterion did not hold. 2: the check could not measure — a
-#             tool is missing, the project it made up turned out to exist, the
-#             probe did not fail, or the diagnosis did not run. A key the run
-#             never reached reads `FAIL — not reached`.
+#             1: a criterion did not hold, or a guard stopped the run — among
+#             them a probe whose own `fugaro update` SUCCEEDED, since a real
+#             failure is what this check reads. 2: the check could not measure —
+#             a tool is missing, the project it made up turned out to exist, the
+#             probe never finished inside its timeout, or the diagnosis did not
+#             run. A key the run never reached reads `FAIL — not reached`.
 #
 # A NOTE ON WHAT IS NEVER PRINTED: no credential value reaches this script's
 # stdout, stderr, the block or any file it writes. The diagnosis's own output is
