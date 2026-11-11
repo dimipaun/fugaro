@@ -77,9 +77,11 @@
 //     move while they do. What those windows forbid is applying something
 //     computed before them: a verdict reduced from a state the session has left,
 //     a screen started for a session that is already over, a microphone opened
-//     after the teardown that closed it, and a new session begun under a
-//     teardown that is still running. Each is guarded where it would be applied
-//     (`start`, `setMuted`), and each guard is tested.
+//     after the teardown that closed it or left open through a pause that
+//     arrived under the start, a new session begun under a teardown that is
+//     still running, and -- at the other end -- a call of a session that has
+//     been replaced driving the one that replaced it. Each is guarded where it
+//     would be applied (`start`, `setMuted`, `commit`), and each guard is tested.
 
 import { REMOTE_ACTIONS, SESSION_EVENTS } from './events.js';
 
