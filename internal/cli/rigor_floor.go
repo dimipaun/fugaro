@@ -117,7 +117,7 @@ reaches runs at the next ` + "`fugaro update`" + `.
 ` + "`fugaro rigor floor unset MODE`" + ` removes it. A removal and a lowering are the
 owner's own step — a floor is a minimum, so taking a level away is a whole
 project reviewing less — and they ask nothing: the write prints what it widens
-and what it writes, and no flag stands in for the owner's own session. Adding a
+and what it writes, and no flag stands in for the owner's own hand. Adding a
 mode the file does not carry, or a level a mode's floor does not carry, asks
 nothing either: it can only require more review.
 
@@ -145,7 +145,7 @@ stops being required of every run of that mode.
 Adding a mode the file does not carry, or a level the mode's floor does not
 carry, is the ordinary write and asks nothing. Dropping a level is a lowering —
 a whole project reviewing less — and it asks nothing either: ` + "`--yes`" + ` does
-not stand in for the owner's own session, and neither does anything else. The
+not stand in for the owner's own hand, and neither does anything else. The
 command refuses an empty LEVELS: a floor with no level in it says nothing, and
 removing the mode's entry is what ` + "`fugaro rigor floor unset`" + ` is for.
 
@@ -162,7 +162,7 @@ publishes it.`,
 	}
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
-	f.BoolVar(&o.yes, "yes", false, "accepted and of no effect: a lowering asks nothing, and no flag stands in for the owner's own session")
+	f.BoolVar(&o.yes, "yes", false, "accepted and of no effect: a lowering asks nothing, and no flag stands in for the owner's own hand")
 	return cmd
 }
 
@@ -177,7 +177,7 @@ to nothing the owner requires.
 
 A removal is the owner's own step — what it deletes is a floor, and taking it
 away is a whole project reviewing less — and it asks nothing: ` + "`--yes`" + ` does
-not stand in for the owner's own session, and neither does anything else. A
+not stand in for the owner's own hand, and neither does anything else. A
 coding agent's session is refused the removal outright, whatever the flags say,
 and is shown neither the diff nor the sentence.
 
@@ -190,7 +190,7 @@ the policy node at the next ` + "`fugaro update`" + `.`,
 	}
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
-	f.BoolVar(&o.yes, "yes", false, "accepted and of no effect: a removal asks nothing, and no flag stands in for the owner's own session")
+	f.BoolVar(&o.yes, "yes", false, "accepted and of no effect: a removal asks nothing, and no flag stands in for the owner's own hand")
 	return cmd
 }
 
