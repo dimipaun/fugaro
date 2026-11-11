@@ -171,3 +171,98 @@ func dailyWarnNotes(caps Caps, st State) []string {
 	}
 	return out
 }
+
+// DailyHeadroom is the day's remaining headroom: what a sampling margin is
+// measured against (D573), read without leasing anything. It is the same
+// arithmetic Precheck does, with the lease left out — no write, no
+// reservation, no claim — so a caller that only wants to know how much room
+// is left never spends any of it.
+type DailyHeadroom struct {
+	// Remaining is what the day has left: the least of the counters that
+	// exist, the repository's own day and the project's.
+	Remaining Micros
+	// PerRun is the per-run cap Remaining is measured against (Caps.PerRun):
+	// the smallest of the repository's, the defaults' and the project's.
+	PerRun Micros
+	// Capped is false when there is no figure to read: no per-run cap to
+	// measure a margin of, or no daily cap whose remainder one could be. It is
+	// the "no dollar cap" shape the margin rule excludes, and the answer for
+	// an oauth workflow too, whose dollars are never capped.
+	Capped bool
+}
+
+// ReadDailyHeadroom reads the day's remaining headroom (DailyHeadroom): the
+// caps and the day's two counters, and nothing else. No kill switch is read,
+// because a kill switch is a refusal of a launch rather than a figure, and
+// Precheck is what judges it; and the mode is not read either, because the
+// figures are the same in observe and enforce alike. An unreadable or
+// malformed node is an error, never a pass (fail closed).
+func ReadDailyHeadroom(ctx context.Context, r Reader, in PrecheckInput) (DailyHeadroom, error) {
+	if in.Slug == "" || in.Project == "" {
+		return DailyHeadroom{}, fmt.Errorf("budget headroom: no project or repository")
+	}
+	get := func(path string, out any) (bool, error) {
+		found, err := r.Get(ctx, path, out)
+		if err != nil {
+			return false, fmt.Errorf("reading /%s: %w", path, err)
+		}
+		return found, nil
+	}
+	var project string
+	if _, err := get(PathProject, &project); err != nil {
+		return DailyHeadroom{}, err
+	}
+	if project != in.Project {
+		return DailyHeadroom{}, fmt.Errorf("the budget database belongs to project %q, not %q (/fugaro/project)", project, in.Project)
+	}
+	if !in.Capped {
+		return DailyHeadroom{}, nil
+	}
+	var (
+		caps Caps
+		gc   GlobalCaps
+		dc   DefaultCaps
+		rc   RepoCaps
+		st   State
+	)
+	day := Day(in.Now)
+	for _, n := range []struct {
+		path string
+		out  any
+		set  func()
+	}{
+		{PathCapsGlobal, &gc, func() { caps.Global = &gc }},
+		{PathCapsDefaults, &dc, func() { caps.Defaults = &dc }},
+		{PathCapsRepo(in.Slug), &rc, func() { caps.Repo = &rc }},
+		{PathSpendGlobal(day), &st.Global, func() {}},
+		{PathSpendRepo(day, in.Slug), &st.Repo, func() {}},
+	} {
+		found, err := get(n.path, n.out)
+		if err != nil {
+			return DailyHeadroom{}, err
+		}
+		if found {
+			n.set()
+		}
+	}
+	perRun, ok := caps.PerRun()
+	if !ok {
+		return DailyHeadroom{}, nil
+	}
+	h := DailyHeadroom{PerRun: perRun, Capped: true}
+	bound := false
+	if cap, ok := caps.RepoDaily(); ok {
+		h.Remaining, bound = cap-st.Repo.Spent, true
+	}
+	if cap, ok := caps.GlobalDaily(); ok {
+		if room := cap - st.Global.Spent; !bound || room < h.Remaining {
+			h.Remaining = room
+		}
+		bound = true
+	}
+	if !bound {
+		// No daily cap at all: the day has no bound to be nearly out of.
+		return DailyHeadroom{}, nil
+	}
+	return h, nil
+}

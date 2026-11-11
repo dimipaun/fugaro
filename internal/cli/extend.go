@@ -10,6 +10,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -140,6 +143,102 @@ func declareLaunch(ctx context.Context, env *cloudEnv, slug string, spec *task.S
 		return nil
 	}
 	return d(ctx, &Cloud{env: env}, slug, spec)
+}
+
+// PlannedRun is a first run a planner is asked about, before its task is
+// written: the launch's own resolved facts, so the decision to sample a pair
+// is made on the same commit and the same task the run would start with
+// (D558, D571). Everything a planner needs that is not here is in the task it
+// is handed — the project layer the run reads among it, whose own ab block is
+// D556's challenger list — or behind Cloud.
+type PlannedRun struct {
+	// Cloud is the launch's own environment, for the reads only the planner
+	// knows how to make (today's challenger records, the published policy).
+	Cloud *Cloud
+	// Slug is the repository's storage slug, Repo the repository itself.
+	Slug string
+	Repo string
+	// Commit is the commit the run is cut from: the ref resolved in this
+	// machine's checkout of the repository, the ref itself when it is already
+	// a full commit SHA, and empty where this machine holds no checkout that
+	// has it. A launch from outside one names a branch the launcher cannot
+	// resolve, and a planner that needs the commit then resolves it itself.
+	Commit string
+	// Spec is the task as it would be launched, a copy: a planner that keeps
+	// or edits it changes nothing about the run.
+	Spec *task.Spec
+	// Chosen is whether the caller named the run id (--run-id). D558 samples
+	// the first runs of code tasks and never a launch whose id a person chose.
+	Chosen bool
+	// Config is the configuration the run will read, nil when the launcher
+	// could read none (a --repo launch from outside a checkout of the
+	// repository, with no project layer to stand in for the file).
+	Config *config.Config
+	// Policy is the run's own merged policy, which is what the runner
+	// re-reads at bootstrap; Providers and Prices are the routing table and
+	// the price table this launch resolves, both nil when there is none.
+	Policy    policy.Effective
+	Providers map[string]config.ModelProvider
+	Prices    *pricing.Table
+	// ServiceHeldKey is whether the credentials service holds this
+	// installation's provider key, so that the job it starts opens the
+	// provider keyless. It is the same switch that decides whether the job is
+	// handed the service's address (credentialsServiceLaunchEnv).
+	ServiceHeldKey bool
+}
+
+// Pair is what a planner returns for a launch it means to sample: the
+// champion's ab block and the challenger's task. The champion's block is
+// written onto the task the launch was already building; the challenger's
+// task is read for the arm's own two facts — its run id and its ab block —
+// and the launcher starts it from the champion's launched task, so the arms
+// cannot drift apart (D555, D571).
+type Pair struct {
+	Champion   task.AB
+	Challenger *task.Spec
+}
+
+// LaunchPlanner is the build's A/B planner: the one call a launch makes
+// before it samples a pair. An untagged build registers none, so its launches
+// sample nothing (D550): the model A/B feature is the Subscription Edition's,
+// and this hook is the MIT core's whole half of it. `ee/register/ab_launch.go`
+// is what installs the tagged build's planner.
+type LaunchPlanner func(ctx context.Context, run PlannedRun) (*Pair, error)
+
+// RegisterLaunchPlanner installs the build's launch planner. It refuses a
+// second call, so nothing can quietly replace what a tagged build installed
+// (§5.5), and it refuses nil: "sample nothing" is the absence of a
+// registration, not a planner that plans nothing.
+func RegisterLaunchPlanner(p LaunchPlanner) error {
+	if launchPlannerSet {
+		return errors.New("the launch planner is already set")
+	}
+	if p == nil {
+		return errors.New("the launch planner is nil")
+	}
+	launchPlanner, launchPlannerSet = p, true
+	return nil
+}
+
+// planLaunch asks the build's planner whether this launch samples a pair. The
+// launch path calls this rather than the planner itself, so a build whose
+// planner moved can register its own. With none registered it answers
+// (nil, nil) without a call: an untagged build samples nothing, prints
+// nothing and launches exactly what the core builds (D550).
+func planning() bool { return launchPlanner != nil }
+
+// planLaunch asks the build's planner whether this launch samples a pair. The
+// launch path calls this rather than the planner itself, so a build whose
+// planner moved can register its own. With none registered it answers
+// (nil, nil) without a call: an untagged build samples nothing, prints
+// nothing and launches exactly what the core builds (D550).
+func planLaunch(ctx context.Context, env *cloudEnv, run PlannedRun) (*Pair, error) {
+	p := launchPlanner
+	if p == nil {
+		return nil, nil
+	}
+	run.Cloud = &Cloud{env: env}
+	return p(ctx, run)
 }
 
 // paidCommandNames are the command names whose code this build does not carry:
@@ -287,4 +386,9 @@ var (
 	// record" (D535).
 	launchDeclarer    LaunchDeclarer
 	launchDeclarerSet bool
+	// launchPlanner is the build's A/B planner, and launchPlannerSet what
+	// makes RegisterLaunchPlanner refuse a second call. Nil is the untagged
+	// build's state, and it means "sample nothing" (D550).
+	launchPlanner    LaunchPlanner
+	launchPlannerSet bool
 )

@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -94,6 +95,18 @@ type launchResult struct {
 	// ProjectLayer is the project layer the stored task actually carries,
 	// nil when none applies (task.ProjectLayer, embedProjectLayer).
 	ProjectLayer *launchProjectLayer `json:"project_layer,omitempty"`
+	// Pair is the A/B pair this launch sampled (A3.0), nil for a launch that
+	// sampled none; Challenger is the challenger's run id, empty until that
+	// arm has started.
+	Pair *launchPair `json:"pair,omitempty"`
+}
+
+// launchPair is launchResult's --json view of the pair a launch sampled: the
+// pair's id, the one batch label both arms carry, and the challenger's run.
+type launchPair struct {
+	ID         string `json:"id"`
+	Batch      string `json:"batch,omitempty"`
+	Challenger string `json:"challenger,omitempty"`
 }
 
 // launchProjectLayer is launchResult's --json view of a task's project
@@ -583,9 +596,10 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 
 	var (
-		spec   *task.Spec
-		slug   string
-		reused bool // a stored follow-up, which the PR's checks never saw run
+		spec     *task.Spec
+		slug     string
+		reused   bool // a stored follow-up, which the PR's checks never saw run
+		firstRun bool // a new task's own launch: the one shape the A/B hook is asked about
 	)
 	switch {
 	case o.retry != "":
@@ -615,6 +629,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		slug, spec, reused, err = prSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
 	default:
 		slug, spec, err = newSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
+		firstRun = true
 	}
 	if err != nil {
 		return err
@@ -632,7 +647,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		noteRigorRequest(ctx, o, spec.Repo, cmd.ErrOrStderr())
 	}
 	step := rep.Step("launch")
-	res, err := finishLaunch(ctx, env, o, slug, spec, reused, cmd.ErrOrStderr(), false)
+	res, err := finishLaunch(ctx, env, o, slug, spec, reused, firstRun, cmd.ErrOrStderr(), false)
 	if err != nil {
 		return failStep(rep, step, err)
 	}
@@ -668,7 +683,11 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 // review, 2026-10-13), so a per-attempt re-check here would both re-judge
 // already-leased state and print its notes once per attempt instead of once
 // per batch.
-func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer, skipBudget bool) (launchResult, error) {
+//
+// plan is whether this launch is a first run's — the one shape the A/B hook
+// is asked about (D558): a follow-up, a review, a retry and every attempt of
+// a batch pass false, and the hook then does not run at all.
+func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused, plan bool, warn io.Writer, skipBudget bool) (launchResult, error) {
 	// The repository's own document for this whole launch, resolved once
 	// before any of it: where the working tree cannot give a fugaro.yaml, the
 	// gates below and the job the launch runs on are judged by the document at
@@ -808,6 +827,25 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			return launchResult{}, err
 		}
 	}
+	// The A/B hook (A3.0), last of what this launch decides and before its
+	// first gate writes anything: a first run's task is offered to the build's
+	// planner, which answers a pair to sample or nothing at all. The planner
+	// is asked here rather than where the task is built because the task it is
+	// handed carries the project layer the run reads (embedProjectLayer
+	// above), and because a run id whose earlier attempt already launched is
+	// no launch to sample beside (prior).
+	//
+	// A pair the launcher accepts leases both arms' headroom once, so the
+	// champion's own single-run pre-check is skipped below exactly as a
+	// batch's attempts skip it (skipBudget); a pair it refuses, or a planner
+	// that errs, leaves this launch exactly as it was — no ab block, no batch
+	// label, today's single pre-check — with one line saying why (D554).
+	var pair *Pair
+	if plan && prior == nil {
+		if pair = sampledPair(ctx, env, o, slug, spec, warn); pair != nil {
+			skipBudget = true
+		}
+	}
 	if prior == nil {
 		caps, err := freshLaunchGates(ctx, env, o, slug, s, spec, compressionGate, warn, skipBudget)
 		if err != nil {
@@ -850,7 +888,216 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if spec.ProjectLayer != nil {
 		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
 	}
+	// The second arm, once the champion has actually gone: the pair's own
+	// pre-check leased both arms, and a champion that turned out to be a run
+	// that already launched samples nothing beside itself.
+	if pair != nil && res.Status == "launched" {
+		res.Pair = &launchPair{ID: pair.Champion.PairID, Batch: spec.Batch}
+		res.Pair.Challenger = launchChallenger(ctx, env, slug, spec, pair, warn)
+	}
 	return res, nil
+}
+
+// sampledPair asks the build's planner whether this launch samples a pair,
+// and judges what it answers: the room for two runs, the pair's own budget
+// pre-check (D566) and D573's margin. It answers the pair to launch, or nil —
+// and a nil is never a refusal of the launch: the champion goes on alone,
+// unmarked, on the single pre-check every launch makes, with one line saying
+// why (D554).
+func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, warn io.Writer) *Pair {
+	if !planning() {
+		return nil // no planner registered: an untagged launch does none of this
+	}
+	run, why := plannedRun(ctx, env, o, slug, spec)
+	if why != "" {
+		pairSkip(warn, why)
+		return nil
+	}
+	pair, err := planLaunch(ctx, env, run)
+	if err != nil {
+		pairSkip(warn, "the planner failed: "+oneLineCLI(err.Error()))
+		return nil
+	}
+	if pair == nil {
+		// Not eligible, or the rate's own roll said no. Both are the ordinary
+		// answer of a launch that samples nothing, and neither is worth a line:
+		// most launches of a project with a challenger configured are one.
+		return nil
+	}
+	label, why := pairLabel(o.batch, pair)
+	if why != "" {
+		pairSkip(warn, why)
+		return nil
+	}
+	// Both arms' blocks are judged here, before either is written: the task
+	// codec refuses a block the runner would refuse at bootstrap
+	// (task.Validate), and a planner's own bug must cost a pair rather than
+	// the champion's run. The probe is the task as it would be written, with
+	// the block and the label this pair brings.
+	probe := *run.Spec
+	probe.Batch = label
+	for _, ab := range []*task.AB{&pair.Champion, pair.Challenger.AB} {
+		probe.AB = ab
+		if err := probe.Validate(); err != nil {
+			pairSkip(warn, "the pair is not a pair: "+oneLineCLI(err.Error()))
+			return nil
+		}
+	}
+	if _, err := runstore.RunTime(pair.Challenger.RunID); err != nil {
+		pairSkip(warn, fmt.Sprintf("the challenger's run id %q is not one: %v", oneLine(pair.Challenger.RunID), oneLineCLI(err.Error())))
+		return nil
+	}
+	if pair.Challenger.RunID == spec.RunID {
+		pairSkip(warn, "the challenger carries the champion's own run id")
+		return nil
+	}
+	// Room for two, before the money: a pair is two runs at once, and a launch
+	// that cannot hold both starts neither (the shape runAttempts checks for a
+	// batch). The champion's own gate below asks the same question for one run,
+	// so a pair this refuses still starts the champion if there is room for it.
+	if err := checkMaxParallelFor(ctx, env, 2); err != nil {
+		pairSkip(warn, oneLineCLI(err.Error()))
+		return nil
+	}
+	if why := env.pairBudgetPrecheck(ctx, slug, spec); why != "" {
+		pairSkip(warn, why)
+		return nil
+	}
+	spec.AB = &pair.Champion
+	spec.Batch = label
+	return pair
+}
+
+// plannedRun is what the planner is handed. It answers a reason instead of a
+// run when a figure a pair is judged on cannot be read at all: a pair is
+// never sampled on a number the launcher does not have.
+func plannedRun(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec) (PlannedRun, string) {
+	cfg := launchLevelsConfig(ctx, env, spec)
+	prices, _, err := priceTable(env.lc, time.Now())
+	if err != nil {
+		return PlannedRun{}, "the price table could not be read: " + oneLineCLI(err.Error())
+	}
+	copied, err := cloneSpec(spec)
+	if err != nil {
+		return PlannedRun{}, "the task could not be copied for the planner: " + oneLineCLI(err.Error())
+	}
+	// The switch that decides whether this job is handed the credentials
+	// service's address, asked of the one function that decides it
+	// (credentialsServiceLaunchEnv, proxiedRepo's last question too); its own
+	// warning is the launch's to word, later and once.
+	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
+	run := PlannedRun{
+		Slug: slug, Repo: spec.Repo, Commit: launchCommit(ctx, spec.Repo, spec.Ref),
+		Spec: copied, Chosen: o.runID != "", Config: cfg,
+		Providers:      mixRoutes(env, spec.Repo, cfg),
+		Prices:         prices,
+		ServiceHeldKey: len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, deployed)) > 0,
+	}
+	if cfg != nil {
+		eff, _ := chainLimitPolicyOf(ctx, env, spec, cfg).merge(o.limits.layer())
+		run.Policy = eff
+	}
+	return run, ""
+}
+
+// launchCommit is the commit a first run is cut from, for the planner (D571):
+// the ref resolved in this machine's checkout of the repository.
+func launchCommit(ctx context.Context, repo, ref string) string {
+	return commitAt(ctx, checkoutRoot(ctx, repo), ref)
+}
+
+// commitAt is launchCommit's own read: the ref itself when it is already a
+// full commit SHA, else the SHA a checkout has for it, read the way every
+// other read of a ref in a checkout is (the remote-tracking ref first, then
+// the ref itself). Empty where neither is true — a launch from outside a
+// checkout names a branch this machine cannot resolve, and a planner that
+// needs the commit then resolves it itself.
+func commitAt(ctx context.Context, root, ref string) string {
+	if gitops.IsFullSHA(ref) {
+		return ref
+	}
+	if root == "" || ref == "" {
+		return ""
+	}
+	for _, candidate := range []string{"refs/remotes/origin/" + ref, ref} {
+		sha, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", candidate+"^{commit}")
+		if err == nil && gitops.IsFullSHA(sha) {
+			return sha
+		}
+	}
+	return ""
+}
+
+// cloneSpec is a deep copy of a task, for a planner that may keep or edit what
+// it is handed: the launch writes its own spec, never the copy.
+func cloneSpec(spec *task.Spec) (*task.Spec, error) {
+	data, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
+	}
+	out := &task.Spec{}
+	if err := json.Unmarshal(data, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// pairLabel is the one batch label both arms of a pair carry, so a person
+// reads the pair out of `fugaro runs ls --batch`: the launch's own --batch
+// when it has one, else one derived from the pair's id, which has to be a
+// label a task may carry (task.BatchRE).
+func pairLabel(batch string, pair *Pair) (string, string) {
+	if batch != "" {
+		return batch, ""
+	}
+	label := "ab-" + pair.Champion.PairID
+	if !task.BatchRE.MatchString(label) {
+		return "", fmt.Sprintf("the pair's id %q makes no batch label (%s)", oneLine(pair.Champion.PairID), label)
+	}
+	return label, ""
+}
+
+// launchChallenger starts the second arm: the champion's own launched task
+// with the arm's two differences — its run id and its ab block (D555) — so
+// every other field of the two tasks, the project layer and the chain limits
+// among them, is the launch's own and the arms cannot drift apart (D571). It
+// answers the challenger's run id, or "" when the arm could not start: the
+// champion has already gone by then, so nothing about the second arm is
+// allowed to fail the developer's run.
+func launchChallenger(ctx context.Context, env *cloudEnv, slug string, champion *task.Spec, pair *Pair, warn io.Writer) string {
+	arm, err := cloneSpec(champion)
+	if err != nil {
+		pairWarn(warn, "the challenger's task could not be built: "+oneLineCLI(err.Error()))
+		return ""
+	}
+	arm.RunID, arm.AB = pair.Challenger.RunID, pair.Challenger.AB
+	if err := arm.Validate(); err != nil {
+		pairWarn(warn, "the challenger's task is not one: "+oneLineCLI(err.Error()))
+		return ""
+	}
+	s := runstore.Open(env.bucket.Bucket, slug, arm.RunID)
+	if err := createTask(ctx, s, arm); err != nil {
+		pairWarn(warn, "the challenger's task was not stored: "+oneLineCLI(err.Error()))
+		return ""
+	}
+	if _, err := launchRun(ctx, env, slug, arm, time.Now()); err != nil {
+		pairWarn(warn, "the challenger did not launch: "+oneLineCLI(err.Error()))
+		return ""
+	}
+	return arm.RunID
+}
+
+// pairSkip is the one line a launch prints when it meant to sample a pair and
+// did not: what was wrong, and what happened instead. The champion always
+// reaches the developer (D554).
+func pairSkip(warn io.Writer, why string) {
+	fmt.Fprintf(warn, "ab: no pair sampled: %s; launching the champion alone\n", oneLine(why))
+}
+
+// pairWarn is the one line a launch prints when the second arm alone could not
+// start, after the champion has gone.
+func pairWarn(warn io.Writer, why string) {
+	fmt.Fprintf(warn, "ab: the challenger did not start: %s; the champion is unaffected\n", oneLine(why))
 }
 
 // chainLimitsAsk reports whether the task carries any of the four chain limits.
@@ -2085,7 +2332,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 		// skipBudget: the batch's own budget pre-check above already leased
 		// n * MinLaunchHeadroom once; a per-attempt re-check here would both
 		// re-evaluate state it already judged and print its notes n times.
-		res, err := launchAttempt(ctx, env, o, slug, spec, false, warn, true)
+		res, err := launchAttempt(ctx, env, o, slug, spec, false, false, warn, true)
 		if err != nil {
 			failStep(rep, step, err)
 			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, err)
@@ -3590,6 +3837,14 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	}
 	if spec.RunID != runID {
 		return "", nil, userErr("run %s/%s holds the task of run %s; it can't be retried", slug, runID, spec.RunID)
+	}
+	// An arm is one half of a pair whose other half is a run of its own, and
+	// the pair is judged from both records (A3.0, D571): replaying one arm as
+	// a lone run would write a record that no pair explains and that the
+	// sampling rules never chose. Refused, like the report run below, rather
+	// than launched as it stands.
+	if spec.AB != nil {
+		return "", nil, userErr("run %s/%s is an A/B %s, and --retry launches the task of a first launch as it stands: a pair is judged from both arms' records, so an arm is never retried alone — launch a new run", slug, runID, spec.AB.Arm)
 	}
 	// A stored task this old may name no workflow at all, and the reader below
 	// is a reader of the launch's document like any other: the ref is this
