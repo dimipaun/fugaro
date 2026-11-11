@@ -319,6 +319,28 @@ func TestBelowMinimumNoConclusion(t *testing.T) {
 		t.Errorf("Recommend(%d wins, 0 losses, half price, rate 0) = %s/%s, want %s/%s: the twentieth decisive pair is a sample",
 			stats.MinRuns, rec.Decision, rec.Rule, DecisionChallenger, RuleBetterWithinRate)
 	}
+	// A tie is not a decisive pair (D561), so it cannot thicken a thin group:
+	// nineteen decisive pairs plus forty draws is still below the minimum, and
+	// a gate that counted the ties would hand a report a conclusion drawn from
+	// nineteen pairs while the sample read as fifty-nine. The count the
+	// recommendation reports is the decisive one for the same reason.
+	tied := Summary{Wins: stats.MinRuns - 1, Ties: 40, CostRatios: []float64{0.5}}
+	rec = Recommend(tied, 0)
+	if rec.Decision != DecisionNoConclusion || rec.Rule != RuleBelowMinimum {
+		t.Errorf("Recommend(%d decisive pairs and %d ties, half price, rate 0) = %s/%s, want %s/%s: ties are not decisive pairs and cannot carry a conclusion",
+			tied.Wins, tied.Ties, rec.Decision, rec.Rule, DecisionNoConclusion, RuleBelowMinimum)
+	}
+	if rec.Decisive != tied.Wins {
+		t.Errorf("Recommend(%d decisive pairs and %d ties).Decisive = %d, want %d: the count a recommendation reports is the decisive one",
+			tied.Wins, tied.Ties, rec.Decisive, tied.Wins)
+	}
+	// And the ties do not tip the group the other way either: at the minimum
+	// the same evidence is a sample, draws on top of it or not.
+	rec = Recommend(Summary{Wins: stats.MinRuns, Ties: 40, CostRatios: []float64{0.5}}, 0)
+	if rec.Decision != DecisionChallenger || rec.Rule != RuleBetterWithinRate || rec.Decisive != stats.MinRuns {
+		t.Errorf("Recommend(%d decisive pairs and 40 ties, half price, rate 0) = %s/%s with %d decisive, want %s/%s with %d",
+			stats.MinRuns, rec.Decision, rec.Rule, rec.Decisive, DecisionChallenger, RuleBetterWithinRate, stats.MinRuns)
+	}
 }
 
 // TestRecommendCheaperNotWorse pins D565's first region: the challenger is not
