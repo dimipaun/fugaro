@@ -455,18 +455,31 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 ### Slice 3 — the write (GD2) — blocked until the coordinator's record exists (ruling (a))
 
 #### GV3.1 — The roadmap write command
-- **Files:** designed with the coordinator's record. Option 2 (declined by ruling (a), kept for
-  reference): new `internal/plan/move.go`, `internal/plan/move_test.go`,
-  new `internal/cli/plan_move.go`. Option 3 (the route that comes with the record): `internal/coordinator/` (a move record written with
-  `GetETag` + `PutIfMatch`), new `internal/cli/roadmap.go`, `internal/cli/root.go`, and the rules or
-  front-door change the coordinator plan would have to take. Under ruling (a), nothing until the record exists.
-- **Interfaces:** `<command> MOVE <plan>/<task> --to <stream>/<release> [--expect <from>] --json`,
-  printing the before/after and refusing when `--expect` no longer matches.
-- **Tests:** stale `--expect` refused and nothing moves; under option 2, a move refused when the
+- **Files:** **amended 2026-11-11**: the move is a subcommand of the `roadmap` group coordinator
+  **P9d** creates — the roadmap file in `ee/coordinator/cli/` and its test (both P9d's, new there),
+  `ee/coordinator/cli/coordinator.go` only if the group's registration needs it,
+  `console/docs/json-contract.md` (the move's `--json` document, a new §6 section) and
+  `website/content/cli-reference.md` (regenerated). The compare-and-set itself is P9b's writer in
+  `ee/coordinator/`, not this task's. Option 2 (declined by ruling (a), kept for reference): new
+  `internal/plan/move.go`, `internal/plan/move_test.go`, new `internal/cli/plan_move.go`. The
+  earlier "option 3" file list (a move record in `internal/coordinator/` and a new
+  `internal/cli/roadmap.go`) is replaced by the line above: the coordinator moved to `ee/` (D435),
+  and a core file cannot import it.
+- **Interfaces:** `fugaro coordinator roadmap move <plan>/<task> --to <stream>/<release> [--expect
+  <from>] --json`, printing the before/after and refusing when `--expect` no longer matches (P9b's
+  `ErrMoveStale`; an unassigned task's `<from>` is the plan's own value, D2114).
+- **Tests:** stale `--expect` refused and nothing moves; a move that loses a race to another move is
+  refused, not applied over it; under option 2, a move refused when the
   artifact file has uncommitted changes (D30's "clobber uncommitted work"); a move that makes an edge backwards is
-  reported; the inverse move restores the document byte for byte.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/plan ./internal/coordinator ./internal/cli -run 'Move|Roadmap' -count=1 -timeout 300s`
-- **Depends on:** the coordinator's record on `main` (ruling (a): option 1 now, the write with the record); the write route into it (front door or grant) is designed with the coordinator then. The option-2 file list above is kept only as the declined alternative.
+  reported; the inverse move restores the document but for `by` and `at`; a caller without the
+  database role is refused with the role named (D2110).
+- **Command:** `GOFLAGS=-p=2 go test ./ee/coordinator/... -run 'Move|Roadmap' -count=1 -timeout 300s`
+- **Depends on:** **coordinator P9b** (the record's writers and their fence) and **P9d** (the
+  `roadmap` group and its file), in `docs/coordinator/implementation-plan.md`; that plan's open
+  **D2110** (who may write: recommended, the caller's own database role) and **D2113/D2114** (what
+  a release is, and a task's release before any move). This replaces "the coordinator's record on
+  `main`", which no task carried until 2026-11-11. Ruling (a) stands: option 1 now, the write with
+  the record. The option-2 file list above is kept only as the declined alternative.
 - **Commit:** `roadmap: move a task between releases, compare-and-set`
 - **Red step:** the stale-`--expect` test fails against a blind write.
 - **Reviewer:** **opus + mandatory independent review**. **OWNER-RUN:** no.
@@ -495,13 +508,23 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 ### Slice 4 — the whole project, task-level — blocked on GD1's record (ruling (d): release assignment later)
 
 #### GV4.1 — Cross-plan and cross-stream edges from the coordinator's record
-- **Files:** depend on the coordinator's record shape once it carries tasks, releases and
-  cross-plan edges; expected `internal/cli/plan_status.go`, `console/src/renderer/graph/model.ts`,
-  `console/src/renderer/screens/graph.ts`, and their tests.
+- **Files:** **amended 2026-11-11**, to coordinator **D2117**'s recommendation (open): the record's
+  tasks and edges reach the console through `fugaro graph`'s coordinator scope, so
+  `ee/graph/source_coordinator.go` and `ee/graph/source_coordinator_test.go` (task nodes and roadmap
+  edges from coordinator P9a's reader), `console/docs/json-contract.md` (§6.22's edge kinds),
+  `console/src/renderer/graph/model.ts`, `console/src/renderer/screens/graph.ts`, and their tests.
+  `internal/cli/plan_status.go` is no longer expected: a core command cannot import `ee/`. Under
+  D2117 (B) or (C) the list changes before the task starts.
 - **Interfaces:** qualified ids (`<plan>/<task>`), faint cross-release and cross-stream edges,
-  highlighted on selection or drag; in a single-stream tab the "needs CLI · Camel" marker.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'PlanStatus' -count=1 -timeout 300s && cd console && npx vitest run test/unit/graph-model.test.ts`
-- **Depends on:** the coordinator's record (0.11.0) carrying tasks; GV2.3.
+  highlighted on selection or drag; in a single-stream tab the "needs CLI · Camel" marker; a task
+  whose release the record does not hold shows the plan's own, marked "from the plan" (D2114); a
+  `dangling` endpoint is drawn as such (D2115).
+- **Command:** `GOFLAGS=-p=2 go test ./ee/graph/... -run 'Coordinator' -count=1 -timeout 300s && cd console && npx vitest run test/unit/graph-model.test.ts`
+- **Depends on:** **coordinator P9a** (the record's shape and reader) and **P9c** (the refresh that
+  fills it), with **P9d** for real cross-plan edges (fixtures suffice to build this task), in
+  `docs/coordinator/implementation-plan.md`; that plan's open **D2111**, **D2112** and **D2117**;
+  and GV2.3. This replaces "the coordinator's record (0.11.0) carrying tasks", which no task
+  carried until 2026-11-11.
 - **Commit:** `graph: cross-plan and cross-stream edges from the project record`
 - **Red step:** a fixture with a cross-plan edge renders no edge before the change.
 - **Reviewer:** standard. **OWNER-RUN:** no.
@@ -509,11 +532,13 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 ## 5. Parallel execution
 
 **External gates:** none on Slices 0–2 since the owner's rulings of 2026-10-22. GV3.1 and GV4.1
-wait on the coordinator's record (0.11.0).
+wait on the coordinator's record, which is **coordinator P9a–P9d** since 2026-11-11 (GV3.1 on P9b
+and P9d, GV4.1 on P9a and P9c), and on that plan's open D2110–D2117.
 
 **Edges** (from "Depends on"): GV1.1→GV1.6; GV1.2→GV1.6; GV1.3→GV1.6; GV1.4→GV1.6; GV1.3→GV1.7;
 GV1.4→GV1.5; GV0.1→GV2.2; GV1.6→GV2.1; GV2.1→GV2.3; GV2.2→GV2.3; GV1.6→GV2.5; GV2.1→GV2.5;
-GV2.3→GV2.4; GV0.1→GV2.4; GV2.4→GV2.6; GV3.1→GV3.2; GV2.4→GV3.2; GV2.3→GV4.1.
+GV2.3→GV2.4; GV0.1→GV2.4; GV2.4→GV2.6; GV3.1→GV3.2; GV2.4→GV3.2; GV2.3→GV4.1. Across plans
+(added 2026-11-11): coordinator P9b→GV3.1, P9d→GV3.1, P9a→GV4.1, P9c→GV4.1.
 
 **Levels** (tasks in one level run concurrently):
 
@@ -525,7 +550,7 @@ GV2.3→GV2.4; GV0.1→GV2.4; GV2.4→GV2.6; GV3.1→GV3.2; GV2.4→GV3.2; GV2.3
 | L3 | GV2.3, GV2.5 |
 | L4 | GV2.4 |
 | L5 | GV2.6 (OWNER-RUN) |
-| blocked | GV3.1 → GV3.2 and GV4.1 (the coordinator's record, rulings (a) and (d)) |
+| blocked | GV3.1 → GV3.2 and GV4.1 (the coordinator's record, rulings (a) and (d): coordinator P9a–P9d, and its D2110–D2117) |
 
 **Critical path:** GV1.1 → GV1.6 → GV2.1 → GV2.3 → GV2.4 → GV2.6 (six tasks). GV1.2, GV1.3 and
 GV1.4 start chains of the same length into GV1.6; the smallest id decides the tie (C8), so the
@@ -544,7 +569,7 @@ sits at L3 because `console/src/shared/schema.ts` is GV2.1's at L2.
 | `internal/watch/json.go`, `internal/watch/json_test.go` | GV1.2 (L0), GV2.5 (L3) |
 | `internal/cli/plan.go` | GV1.6 (L1) |
 | `internal/streams/` (package) | GV1.4 (L0: `streams.go`, `streams_test.go`), GV1.5 (L1: new `cmd/streams/main.go`) |
-| `internal/cli/plan_status.go` | GV1.6 (L1), GV4.1 (blocked) |
+| `internal/cli/plan_status.go` | GV1.6 (L1); coordinator P9c moves its plan-id rule into `internal/plan` (GV4.1 no longer writes it under D2117 (A), 2026-11-11) |
 | `console/src/shared/schema.ts`, `console/test/unit/schema.test.ts` | GV2.1 (L2), GV2.5 (L3) |
 | `console/src/main/ipc.ts`, `console/src/main/spawn.ts`, `console/src/preload/index.ts`, `console/src/source/cli.ts`, `console/test/unit/ipc.test.ts`, `console/test/unit/spawn.test.ts` | GV2.1 (L2), GV3.2 (blocked, after L4) |
 | `console/src/renderer/screens/graph.ts` | GV2.3 (L3), GV2.4 (L4), GV3.2 (blocked), GV4.1 (blocked) |
@@ -571,5 +596,6 @@ CLI with `plan status` (GV1.6): the console shows "not available" against an old
 ## 8. Not in this plan
 
 Independent console and mobile release workflows (the "Release Names" work, F6); the coordinator's
-record and its front door (coordinator P3–P8); any Markdown plan scraper (F3); cancel and retry
+record and its front door (coordinator P3–P8, and the record's tasks, releases and cross-plan edges,
+coordinator P9a–P9d); any Markdown plan scraper (F3); cancel and retry
 (D34, unchanged).

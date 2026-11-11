@@ -43,6 +43,15 @@ doing, owns project-level state, detects conflicts early and suggests sequencing
 never authoritative. The spec is the owner's own text; the reconciliation is what the
 repository actually has against it.
 
+**Added 2026-11-11: the roadmap record, parts P9a–P9d, written and not started.** At the owner's
+request the plan gained four parts that make the coordinator's record carry tasks, releases and
+cross-plan edges — what the console dependency graph's GV3.1, GV3.2 and GV4.1 wait on: **P9a** the
+record's shape and reader, **P9b** its compare-and-set writers and who may write them, **P9c** the
+sweep's refresh from the plans' graph artifacts, **P9d** the cross-plan edge command. They need the
+owner's go, by name, and the answers to **D2110–D2117** (written in the plan, open, each with its
+recommendation first); **D2110–D2129** is the block reserved for them, and D2118–D2129 are unused.
+With them the plan has 13 parts.
+
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | **The owner's spec, verbatim** — *"Fugaro Coordinator Agent — Design Spec"*, sections 1–11, exactly as received. Committed alone, in its own commit, before anything else in this directory. |

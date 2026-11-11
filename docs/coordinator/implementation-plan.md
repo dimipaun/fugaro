@@ -903,6 +903,278 @@ untagged build has none of them (E1.1, D522). Two things have moved since the se
   part is still the only place in this work that accepts a request from another process, so its
   reviewer tier and the independent review §7 asks for are unchanged by any of this.
 
+---
+
+### The roadmap record: P9a–P9d (added 2026-11-11, at the owner's request)
+
+**Why these parts exist.** The console dependency graph's **GV3.1** (the roadmap write), **GV3.2**
+(drag, preview, confirm, undo) and **GV4.1** (cross-plan and cross-stream edges) wait on *"the
+coordinator's record carrying tasks, releases and cross-plan edges"* — that plan's rulings (a) and
+(d) of 2026-10-22, and its **GD1**, which chose this record over a roadmap file
+(`docs/console-dependency-graph/reconciliation.md` §4). Nothing on `main` carries them:
+`ee/coordinator/state.go` holds one repository's view and its intent records (`RepoView`,
+`StoredProjectView`, `StoredIntent`, `RepoIntents`, `StoredProjectIntents`) and nothing else; no part
+P0–P8 adds them; and P7 and P8 were re-planned under `docs/mcp-server/implementation-plan.md`, whose
+§7 keeps the graph write out of the front door (D927). The owner asked on 2026-11-11 for the task
+that adds them. These four parts are it. **One consequence to read before approving them**: the record mirrors
+the plans' graph artifacts, and on 2026-11-11 `main` carries exactly one —
+`docs/console-dependency-graph/implementation-plan.graph.json` — because the other plans are
+Markdown and no scraper reads them (the console plan's F3). The record holds what planners write,
+so a whole-project graph needs the planning skill to write an artifact beside each plan.
+
+**Why here and not in another plan.** The record is this work's: D195's subtree, P3's `Store` and its
+compare-and-set, P4's deterministic-ID idiom and P5's sweep are what it extends, and the
+console's plan names "the coordinator's record" as the thing it waits for. The MCP plan does not own
+it (its §7, above). The parts are written in this plan's own part shape (Scope, Files, Red step,
+Verification, Depends on, Reviewer tier, Security-sensitive, Commit), with an **Interfaces** and a
+**Tests** line added because the console's tasks consume them by name. Like P6–P8 since the
+re-plan of 2026-11-07, they land under `ee/coordinator/` on `main`, reached only through
+`ee/register` (D435). **None of them is approved**: §11's gate passed for P0–P6 and each of these
+needs the owner's explicit go, by name.
+
+**The decisions they need: D2110–D2117, open.** They are taken from the block **D2110–D2129**,
+reserved by this change above **D2109**, the highest number written or reserved on `main` and in
+any open pull request on 2026-11-11 (`docs/account-aliases/README.md` reserves D2090–D2109);
+D2118–D2129 stay reserved and unused. Each is written recommendation first; the parts are written to
+the recommendations, and a part whose decision is answered the other way is rewritten before it
+starts.
+
+| Decision | The question | Recommendation | The alternative, and its cost | Blocks |
+| --- | --- | --- | --- | --- |
+| **D2110** | Who may write the roadmap record, and through what? | **(A) The caller's own database role, as P4's report path writes**: the CLI writes with the person's ADC, so only a holder of `roles/firebasedatabase.admin` (the installation's `terraform.budget_admins`, and the coordinator's own account) can; the rules stay `.write: false` on the whole subtree; the console spawns the CLI, which carries the person's credential; `by` is the principal the ADC authenticates, not a declared string. | **(B)** a rules write grant to the signed-in reader on the roadmap nodes, with `.validate`: any paired phone or signed-in reader could move tasks, and it reverses Q15(A)'s "no client writes the subtree". **(C)** the MCP front door with a `roadmap:write` scope: D927 kept the scope out of v1, the front door is off on every installation by default, and the write would wait on it. Cost of (A): a launcher who is not a database admin cannot move a task or add an edge. | P9b, P9d, GV3.1 |
+| **D2111** | Who populates the record's tasks from the plan files? | **(A) The sweep (P5)**, from each repository's default branch: one tree read per tick, the artifacts read only when that tree changed, through P2's read-only token with `contents: read` added to its set. GitHub is the spec's ground truth (§6), the mirrored plan is the merged and reviewed one, and nobody has a step to remember. | **(B)** a `fugaro coordinator roadmap refresh` a database admin runs from a clean checkout at the default branch's head: no credential change, but a step after every plan merge, and a record that silently ages when nobody runs it. Cost of (A): P2's credential widens by one read; an installation that has not opted into the sweep has no tasks in the record; Bitbucket repositories wait (UNVERIFIED, P9c). | P9c |
+| **D2112** | Where do cross-plan and cross-stream edges come from? | **(A) The record itself**, written by a command (P9d) through D2110's route, as GD1 chose the record over a file for exactly these. An edge inside one plan stays the artifact's and is refused here. | **(B)** a schema-4 artifact field naming qualified `needs` in other plans, mirrored by the refresh: reviewed in the plan's pull request, but it is the cross-plan half of the roadmap file GD1 declined, and it changes the planning skill's format. | P9a, P9b, P9d |
+| **D2113** | Does the record store releases and streams? | **(A) No document of their own.** An assignment names a `stream` and a `release` (`MAJOR.MINOR[.PATCH]`), validated at write time against `docs/release-streams.yaml`; names and "finished" are read from that catalogue by the reader's own arithmetic, as GV1.6 does (GD7 keeps one streams file). A move into a release the catalogue already calls finished is refused. | **(B)** mirror the catalogue into the record, so a reader with no checkout names releases: a second copy of GD7's file that drifts between refreshes. | P9a, P9b |
+| **D2114** | What is a task's release before anybody moves it? | **(A) The plan's own `version` and `stream`, read and marked "from the plan"**, never written into the record: the record holds an assignment only once a person moved the task, and from then on it wins. `--expect` against an unassigned task compares with the plan's value. | **(B)** the refresh seeds an assignment from the plan's `version` on first sight: every task gets a record entry, and a later edit of the plan's `version` is silently ignored. | P9a, P9b |
+| **D2115** | What happens to an assignment or an edge whose task leaves every plan? | **(A) Kept and shown `dangling`**, so a renamed task's move is visible rather than lost, and **pruned by the refresh 30 days** after no plan document carries the endpoint (P5's age for intent records). A plan document whose artifact is gone is deleted at the next refresh. | Keep forever (the record grows with every renamed task), or prune at once (a plan reorganised in one pull request loses every move in it). | P9a, P9c |
+| **D2116** | The record's size bounds. | **(A)** At most **200** plan documents per repository, **1,000** tasks and **256 KiB** per plan document (footprints are not mirrored), **2,000** cross-plan edges per project, a title of **200** characters and a reason of **500** after `internal/safetext/safetext.go`'s `Field`; a write past a bound is refused with the bound named, and a refresh past one skips the artifact and names it. | Larger or no bounds: a record every graph read fetches whole, written by anyone D2110 admits. | P9a, P9b, P9c |
+| **D2117** | Where does the console read the record (GV4.1's read)? | **(A) `fugaro graph`'s coordinator scope** (`ee/graph/source_coordinator.go`, contract §6.22) gains task nodes and the roadmap's edges: it needs no checkout and the console already reads it. `fugaro plan status` stays the per-plan read it is, because a core command cannot import `ee/` (`.claude/rules/ee.md`). | **(B)** `plan status` reads the node in the core through `internal/rtdb` with a core copy of the record's shape: two definitions of one record. **(C)** a new `fugaro coordinator roadmap --json` and a second console operation. | GV4.1 |
+
+---
+
+### P9a — The roadmap record: its shape, its nodes and its reader (D2112–D2116)
+
+**Scope.** The record's shape, **version 1**, and its reader; no writer and no refresh. Three kinds of
+document under `internal/coordpath/coordpath.go`'s `PathProject`, each keyed by
+`internal/coordpath/coordpath.go`'s `DocumentID` over what it describes, so the same thing described
+twice is one node:
+
+| Node | Key: `DocumentID` over | Holds | Written by |
+| --- | --- | --- | --- |
+| `coordinator/project/roadmap/plans/<id>` | `roadmap-plan`, the repository, the plan id | one plan artifact as mirrored: `schema` (1), `repo`, `plan` (GV1.6's plan id), `stream` (the artifact's own, a display input), `source` (`path`, `commit`, `graph_schema`), `tasks` (`id`, `title`, `kind`, `size`, and `version`, the artifact's own target), `edges` (`task`, `needs`, both inside the plan) | the refresh (P9c) |
+| `coordinator/project/roadmap/assign/<id>` | `roadmap-assign`, the repository, the qualified task id | where a task ships: `schema`, `repo`, `task` (`<plan>/<task>`), `stream`, `release`, `prev` (the assignment it replaced, or null — what an undo inverts), `by`, `at` | the move (GV3.1, over P9b) |
+| `coordinator/project/roadmap/edges/<id>` | `roadmap-edge`, both endpoints | one cross-plan or cross-stream dependency: `schema`, `task` and `needs` (each a repository and a qualified id), `reason`, `by`, `at` | the edge command (P9d, over P9b) |
+
+The node names match `internal/plan/document.go`'s `Document`, `Node` and `Edge` so a schema-3 graph
+(`kind`, `size`) is carried without renaming; `stubs`, `decoupling`, `contract_changes` and the
+gain stay in the artifact, where the planner reviews them. There is **no release document** (D2113)
+and **no run-derived state**: running, done and blocked are computed by the reader from runs, as
+`internal/plan/state.go`'s `State` already does, so the record holds no second answer that ages.
+What the record says of a task's life is whether a plan document still carries it: an assignment or
+an edge whose endpoint none does is `dangling` (D2115).
+
+**Interfaces.** `coordinator.Roadmap` (the plans, the assignments, the edges, an `unreadable` count and
+the `dangling` ids) and a `Store` method that reads it; a qualified-id helper that splits at the last
+slash, as `internal/plan/state.go`'s `splitPlanTask` does; node-path helpers beside `PathIntents`.
+Every document carries `schema: 1` and is decoded strictly; a document of a newer schema, or one
+that does not decode, is skipped and counted in `unreadable` rather than read as empty and rather
+than failing the whole read (the graph's `unreadable` source state, `console/docs/json-contract.md`
+§6.22). Every text field (titles, reasons, `by`) passes through `internal/safetext/safetext.go`'s
+`Field` on read as well as on write. A field never changes meaning: a later shape is `schema: 2`.
+
+**Files (at most 4).** A new roadmap.go and roadmap_test.go in `ee/coordinator/` (each with the
+two-line notice), and their fixtures under `ee/coordinator/testdata/` with the licence siblings the
+fixtures there carry.
+
+**Tests.** `TestRoadmapDocumentsRoundTripStrictly`, `TestRoadmapKeysAreDeterministic` (one
+description, one key; another repository or plan, another key), `TestRoadmapSkipsANewerSchemaAndCountsIt`,
+`TestRoadmapUndecodableDocumentIsCountedNotFatal`, `TestRoadmapDanglingEndpointIsNamed`,
+`TestRoadmapTextIsSanitisedOnRead`, `TestRoadmapPathsStayInTheSubtree`,
+`TestQualifiedIDSplitsAtTheLastSlash` (`plans/2026-10-15-desktop-console-v2/V2.5.3`).
+
+**Red step.** `TestRoadmapSkipsANewerSchemaAndCountsIt` fails against a reader that decodes
+leniently. Mutations, each must fail a test: drop the strict decoder's unknown-field refusal; put a
+clock into a key; return the whole read's error on one bad document.
+
+**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./ee/coordinator/ -run
+'Roadmap|Qualified' -count=1`; `go test ./internal/eeboundary/ -count=1`.
+
+**Depends on.** P3 (the subtree and `Store`) and P4 (the ID idiom), both built; **D2112–D2116**.
+
+**Reviewer tier.** Careful. **Security-sensitive.** No — it reads, and adds no writer, no grant and no
+rule; the review confirms the strict decode and the sanitising.
+
+**Commit.** `coordinator: the roadmap record's shape, its keys and its reader`
+
+---
+
+### P9b — The roadmap writers, compare-and-set, and who may write (D2110)
+
+**Scope.** Three writers over P9a's shape, and the fence around them.
+
+- **The plan document's replace** (the refresh's write): read, compare, and put on the document's
+  own ETag; an unchanged document writes nothing and moves no ETag (P5's idempotency).
+- **The move** (what GV3.1 calls): read the assignment and its ETag; refuse, writing nothing, when
+  the stored value is not the caller's `expect` (an unassigned task compares with the plan's own
+  value, D2114); refuse a task no plan document carries, a stream or a release
+  `docs/release-streams.yaml` does not know, and a finished release (D2113); then put on the ETag it
+  read, with `prev` set to the value it replaced. **A lost ETag race is re-read and re-compared
+  against `expect`, never retried blind** — which is why the move does not call
+  `ee/coordinator/state.go`'s `Write`, whose loop retries the put whatever the new value is.
+- **The edge add and remove** (what P9d calls): refuse a self-edge, an edge inside one plan (that is
+  the artifact's, D2112), an endpoint no plan document carries, an edge that closes a cycle across
+  the record and the plan documents (a cycle is a refusal, not a render), and a write past D2116's
+  bounds.
+
+**The fence (D2110 (A)): no rules change.** The writers use the caller's own database credential,
+exactly as P4's report path does: `.write: false` stays on the whole subtree, so what admits a write
+is `roles/firebasedatabase.admin`, and a person without it is refused by the database and told so in
+the sentence `ee/coordinator/cli/coordinator.go`'s `coordinatorReportErr` already gives. Three
+identities must be shown unable to write any roadmap node: the signed-in reader (the phone's and the
+console's claim), a project token, and a run's token. And the coordinator's own account, which
+holds the admin role, writes plan documents and the D2115 prune only — never a move or an edge —
+which P9c asserts on the sweep's dependency list.
+
+**Interfaces.** The three writers as `Store` methods; `ErrMoveStale`, `ErrUnknownTask`,
+`ErrUnknownRelease`, `ErrEdgeRefused` (with the reason) and `ErrRoadmapTooLarge`, each a sentence
+naming what to change.
+
+**Files (at most 6).** A new roadmap_write.go and roadmap_write_test.go in `ee/coordinator/`;
+`internal/budget/rules/coordinator_test.go` and `internal/budget/rules/emulator_coordinator_test.go`
+(the three identities at each roadmap node); `internal/infra/firebase_test.go` (the Firebase root's
+admin members are the budget admins, the history account and the coordinator's account, and never
+a job's account); `SECURITY.md` (one sentence: who may write the roadmap, and that it is a database
+role and not a rule).
+
+**Tests.** `TestMoveRefusesAStaleExpectAndMovesNothing`, `TestMoveLostRaceIsReComparedNotRetriedBlind`
+(a second writer between the read and the put), `TestMoveRecordsPrevSoTheInverseRestores` (a move and
+its inverse leave the document as it was but for `by` and `at`), `TestMoveRefusesAnUnknownTaskOrRelease`,
+`TestMoveRefusesAFinishedRelease`, `TestEdgeRefusesSelfInPlanAndCycle`, `TestRoadmapBoundsAreEnforced`,
+`TestReplacePlanUnchangedWritesNothing`, `TestRoadmapNodesAreWrittenByNoClient` (the generated rules),
+the emulator's three identities refused a write at each node, and `TestNoJobAccountHoldsTheDatabase`.
+
+**Red step.** `TestMoveLostRaceIsReComparedNotRetriedBlind` fails when the move is built on
+`Write` — the mutation that makes this a compare-and-set test rather than a round trip. Then, in a
+scratch tree: add `.write: "USER"` under the roadmap node of `internal/budget/rules/rules.json.tmpl`,
+and both rules tests must fail; grant a job's account the admin role in the Firebase root, and the
+IAM test must fail.
+
+**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./ee/coordinator/
+./internal/budget/rules/ ./internal/infra/ -run 'Roadmap|Move|Edge|ReplacePlan|Coordinator|NoJobAccount'
+-count=1`; the emulator half under the `firebase` tag (`go test -tags firebase
+./internal/budget/rules/ -run Coordinator -count=1`), which CI's firebase job runs.
+
+**Depends on.** P9a; **D2110**, **D2112**, **D2113**, **D2114**, **D2116**.
+
+**Reviewer tier.** **SECURITY-SENSITIVE** — **opus + mandatory independent review.**
+**Security-sensitive.** **Yes — the first write path into the subtree the rules keep every client
+out of, other than P4's.** The pull request body must state: which identities can write (a
+database role, not a rule) and which were shown unable to; that the rules are unchanged; why the
+move does not retry blind; the bounds; and that the coordinator's account writes no move and no edge.
+
+**Commit.** `coordinator: the roadmap writers, compare-and-set, and the identities kept out`
+
+---
+
+### P9c — The refresh: the plans' graph artifacts into the record (D2111)
+
+**Scope, written to D2111 (A).** The sweep (P5) refreshes each GitHub repository's plan documents on
+its tick: one read of the default branch's `docs/` tree; when the tree is the one the last refresh
+recorded, nothing more is read, so a quiet repository costs one call. Otherwise each artifact —
+named by `internal/plan/document.go`'s `ArtifactSuffix`, at most 200 per repository (D2116) — is read
+through `internal/gitprov/github/contents.go`'s `Contents` (which already refuses a directory, a
+symlink and anything over `gitprov.MaxContentsBytes`), parsed by `internal/plan/read.go`'s `Parse`
+(a refused artifact is skipped and named in the repository's row, never half-mirrored), trimmed to
+P9a's shape, given its plan id by the rule `internal/cli/plan_status.go`'s `planIDFromPath` holds —
+moved into `internal/plan` so the CLI and the sweep share one copy — and written through P9b's
+replace. A plan document whose artifact is gone is deleted, and assignments and edges dangling for
+30 days are pruned (D2115). The tree read and each artifact read count against
+`DefaultReadBudget`. The sweep's writes are those two and nothing else.
+
+**The credential.** `internal/gitprov/github/apptoken.go`'s `coordinatorTokenPermissions` gains
+`contents: read` — a read, the only change to P2's set, and inside what the App's installation
+already grants runs. **Bitbucket is UNVERIFIED**: whether the credentials-service path the sweep
+uses for Bitbucket can read a file is not settled here, so a Bitbucket repository's plans are not
+refreshed in this part and its row says so with a reason constant.
+
+**Under D2111 (B)** this part is instead `fugaro coordinator roadmap refresh`, run by a database
+admin from a clean checkout at the default branch's head, reading through GV1.6's confined walk,
+with no credential change; the Files line below changes accordingly.
+
+**Interfaces.** The sweep's row gains the refresh's counts (plans written, skipped, deleted;
+dangling pruned) — additive fields of the sweep's `--json`. The plan-id rule becomes an exported
+function of `internal/plan`.
+
+**Files (at most 8).** `ee/coordinator/sweep.go`, `ee/coordinator/sweep_test.go`,
+`ee/coordinator/project.go` (the tree and file reads on the reader), `internal/gitprov/github/apptoken.go`,
+`internal/gitprov/github/apptoken_test.go`, `internal/plan/read.go` and `internal/plan/read_test.go`
+(the moved plan-id rule), `internal/cli/plan_status.go` (calls it).
+
+**Tests.** `TestRefreshQuietRepositoryCostsOneRead`, `TestRefreshMirrorsAnArtifactTrimmed`,
+`TestRefreshSkipsARefusedArtifactAndNamesIt`, `TestRefreshDeletesAGonePlan`,
+`TestRefreshPrunesDanglingAfterThirtyDays`, `TestSweepWritesNoMoveAndNoEdge` (asserted on the
+sweep's writer dependency list), `TestRefreshCountsAgainstTheReadBudget`,
+`TestAppTokenCoordinatorPermissionsHoldNoWrite` (amended for `contents: read`), and `TestPlanIDFromPath` where the rule moved to.
+
+**Red step.** `TestRefreshQuietRepositoryCostsOneRead` fails against a refresh that reads every
+artifact on every tick. Mutations: ask for `contents: write` and the permission test must fail;
+let the sweep call the move and `TestSweepWritesNoMoveAndNoEdge` must fail.
+
+**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./ee/coordinator/
+./internal/gitprov/github/ ./internal/plan/ -count=1`; `go test ./internal/cli/ -run 'PlanStatus|PlanID'
+-count=1`.
+
+**Depends on.** P5 (the sweep, built), P9b; **D2111**, **D2115**, **D2116**.
+
+**Reviewer tier.** **SECURITY-SENSITIVE** — **opus + mandatory independent review.**
+**Security-sensitive.** **Yes — it widens P2's credential by one read, and adds to what the database-wide
+writer writes.** The pull request body must state: the permission set before and after; that the
+sweep writes plan documents and the prune and nothing else; the read budget's accounting; and what a
+Bitbucket repository shows.
+
+**For operators.** None beyond `fugaro update`: the token's permission set is minted on each tick,
+and nothing is deployed by this part. An installation that has not opted into the coordinator's
+sweep (P5's **For operators**) gets no tasks in the record, and the graph says so.
+
+**Commit.** `coordinator: the sweep mirrors the plans' graph artifacts into the roadmap record`
+
+---
+
+### P9d — `fugaro coordinator roadmap need` and `unneed`: the cross-plan edge command (D2112)
+
+**Scope.** The CLI transport over P9b's edge add and remove, beside `report` in
+`ee/coordinator/cli/`: `fugaro coordinator roadmap need <plan>/<task> --on <plan>/<task>
+[--on-repo <owner/name>] --reason <text> [--json]`, and `unneed` with the same endpoints. It prints
+what it wrote, refuses exactly as P9b refuses, and reads nothing back but the documents its checks
+need. It creates the `roadmap` command group GV3.1's `move` joins.
+
+**Interfaces.** The two subcommands, their `--json` document (the edge as written), and a new section
+of `console/docs/json-contract.md` only if the console reads it (it does not in GV4.1's
+recommendation, which reads the record through `fugaro graph`).
+
+**Files (at most 5).** A new roadmap.go and roadmap_test.go in `ee/coordinator/cli/`;
+`ee/coordinator/cli/coordinator.go` (the group's registration); `website/content/cli-reference.md`
+(regenerated); the expectations in `ee/clidoc/` if the generator asks.
+
+**Tests.** `TestRoadmapNeedWritesOneEdgeAndPrintsIt`, `TestRoadmapNeedRefusesWhatTheWriterRefuses`
+(self, in-plan, unknown endpoint, cycle, bound), `TestRoadmapUnneedOfAnAbsentEdgeIsAnAnswer`,
+`TestRoadmapNeedRefusalNamesTheDatabaseRole` (a caller without the role), and the CLI reference test.
+
+**Red step.** `TestRoadmapNeedRefusesWhatTheWriterRefuses` fails against a command that builds the
+document itself instead of calling P9b's writer. Mutation: let the command write with
+`ee/coordinator/state.go`'s `Write` and the cycle refusal is skipped — the test must fail.
+
+**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./ee/coordinator/cli/ -run
+Roadmap -count=1`; `go test ./ee/clidoc/ -run TestCliReferenceIsCurrent -count=1`.
+
+**Depends on.** P9b; **D2110**, **D2112**.
+
+**Reviewer tier.** **SECURITY-SENSITIVE** — **opus + mandatory independent review** (a write path's
+transport). **Security-sensitive.** **Yes, as P9b's caller** — the review confirms the command adds no
+write of its own and no credential.
+
+**Commit.** `coordinator: roadmap need and unneed, the cross-plan edges in the record`
+
 ## 6. The critical path, and the effort
 
 ```
@@ -935,6 +1207,38 @@ P7(was blocked: D196, answered) ── P8(was blocked: D197, answered)
   it. Nothing in it can block a merge, write to GitHub, or spend a cent on a model — which is the
   point (Q13 A), and it is the whole of v1 that this plan would ship without a service.
 
+**Added 2026-11-11: the roadmap record's parts, and the console tasks they unblock.** With P9a–P9d
+the plan has **13 parts**, **8 of them SECURITY-SENSITIVE** (P9b, P9c and P9d join §7's five).
+The edges, from each part's **Depends on**, with the console's two consumers
+(`docs/console-dependency-graph/implementation-plan.md`) beside them:
+
+```
+P3, P4 (built) ── P9a ── P9b ── P9c ─────────── GV4.1 (with GV2.3)
+P5 (built) ──────────────────── P9c
+                         P9b ── P9d ── GV3.1 ── GV3.2
+                                P9d ────────── GV4.1 (real edges; fixtures suffice to build it)
+```
+
+| Level | Parts | Why this level |
+| --- | --- | --- |
+| R0 | P9a | the shape and the reader; needs only P3/P4, which are built |
+| R1 | P9b | the writers write P9a's shape |
+| R2 | P9c, P9d | both call P9b's writers; their files are disjoint |
+| R3 | GV3.1, GV4.1 (console plan) | GV3.1 joins the `roadmap` group P9d creates; GV4.1 reads what P9c writes |
+
+**The critical path is P9a → P9b → P9d → GV3.1 → GV3.2** (five tasks, the write); GV4.1's chain
+P9a → P9b → P9c → GV4.1 is one shorter. The decisions are the longer wait: P9a needs D2112–D2116
+answered (or taken as recommended) before it starts.
+
+**Shared files** (every file more than one of these tasks writes):
+
+| File | Writers (level) |
+| --- | --- |
+| the new roadmap.go in `ee/coordinator/cli/`, and `ee/coordinator/cli/coordinator.go` | P9d (R2), GV3.1 (R3) |
+| `internal/cli/plan_status.go` | P9c (R2: the moved plan-id rule); GV4.1 no longer writes it under D2117 (A) |
+| `console/docs/json-contract.md` | GV3.1 (R3: the move's `--json`), GV4.1 (R3: §6.22) — one after the other |
+| `website/content/cli-reference.md` | P9d (R2), GV3.1 (R3) — regenerated by each |
+
 ## 7. Security-sensitive parts, and what an independent review must cover
 
 | Part | Why | The independent review must confirm |
@@ -944,6 +1248,9 @@ P7(was blocked: D196, answered) ── P8(was blocked: D197, answered)
 | **P5** | the job runs as that write identity | what its code writes against what its account may write; its GitHub credential is P2's set; no unbounded retry |
 | **P7** | the first request-serving type, and the front door's tenant | which types were added and which stayed refused; the typed confirmation still fires; the ID token's audience and its check; every invoker member is a person |
 | **P8** | the only inbound request, carrying text somebody else wrote | what authenticates a caller; which tools write; the data boundary and its test; the override cap; no answer is markup |
+| **P9b** | a write path into the subtree no client writes (added 2026-11-11) | the rules are unchanged; the signed-in reader, a project token and a run's token are each shown unable to write a roadmap node; no job account holds the database role; the move re-compares after a lost race; the bounds |
+| **P9c** | P2's credential gains a read, and the database-wide writer writes more | the permission set before and after, with no `write`; the sweep writes plan documents and the prune only; the read budget counts every read |
+| **P9d** | the transport of P9b's edge writes | it calls P9b's writer and builds no document of its own; it adds no credential |
 
 An independent review means **a reviewer who did not write the change, on a different model (this
 plan asks for Opus), with the diff in front of them and the part's own claim about what it does
@@ -1015,6 +1322,8 @@ Each check below is **owner-run, on a real project, by the owner** unless it is 
 | a per-person invoker grant, and its removal | P7 | owner | offboarding is the launcher-list edit finding #5 describes |
 | a non-Claude MCP client against the front door | P8 | owner | Q16(A)'s departure, from the outside, by a client this repository does not ship |
 | the console's project view with the CSP intact | P6 | **runner** | the console suite, not a live check |
+| the roadmap record refuses a person without the database role, and a run | P9b | owner | D2110's fence on the deployed rules and the real IAM: a signed-in reader's write and a run's write are refused, a budget admin's move lands (added 2026-11-11) |
+| the sweep mirrors a real repository's plan artifacts | P9c | owner | one tree read on a quiet tick, the artifacts read after a plan merge, and the read budget held (added 2026-11-11) |
 
 ## 10. The numbers this plan would hold
 
@@ -1028,6 +1337,10 @@ Each check below is **owner-run, on a real project, by the owner** unless it is 
   alternative and its cost, and each carries **the owner's answer of 2026-10-21** under it —
   four as recommended and **D196 against the recommendation**, which is what moved this work from
   admitting a type and minting a token to **building the service itself** (P7).
+- **Decision numbers, added 2026-11-11: D2110–D2129** are reserved for the roadmap record's parts
+  (P9a–P9d), above **D2109**, the highest written or reserved on `main` and in the open pull
+  requests that day; **D2110–D2117** are written in §5 (the table before P9a), each recommendation
+  first and **open**; **D2118–D2129** are reserved and unused.
 - **Check numbers: none claimed**, for the reason in §9. The part that ships a check takes the
   number free at its own merge, which is the register's rule and not this plan's.
 - **No Go code exists in this work yet.** The only Go it has added is the folder's own guard —

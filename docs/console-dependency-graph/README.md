@@ -41,5 +41,7 @@ proposed for coordinator P4 only.
 
 ## Waiting on the owner
 
-No decision or tension is open. Each task still needs the owner's explicit go; GV3.1, GV3.2 and
-GV4.1 also wait on the coordinator's record (0.11.0).
+No decision or tension of this folder is open. Each task still needs the owner's explicit go; GV3.1,
+GV3.2 and GV4.1 also wait on the coordinator's record, which since 2026-11-11 is the coordinator
+plan's parts **P9a–P9d** (`docs/coordinator/implementation-plan.md`) and its open decisions
+**D2110–D2117**.
