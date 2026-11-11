@@ -1248,10 +1248,10 @@ func validateBundleValue(raw []byte, kind credsvc.Kind) error {
 		// below are not theirs. Their SHAPE is not checked here either: it is
 		// readConsumerNode's and readProviderNode's, and each runs once, in
 		// credsSet, where the node it answers is the node the write stores.
-		// Checking them here as well would be a second parse
-		// of the same bytes for one write — this one's tree, every field's tag
-		// and style rewritten in it, thrown away and the bytes parsed again for
-		// the tree that is stored.
+		// Checking them here as well would parse the same bytes a second time
+		// for one write — the first tree, with every field's tag and style
+		// rewritten in it, thrown away, and the bytes parsed again for the
+		// tree that is stored.
 		//
 		// The bound above is this command's own, and the whole mapping is read
 		// and stored under it: one limit for every value, rather than three
