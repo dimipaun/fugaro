@@ -60,6 +60,9 @@ var Scopes = []ScopeRow{
 	{Key: "agent.models.coder", In: InProject | InRepo},
 	{Key: "agent.models.reviewer", In: InProject | InRepo},
 	{Key: "agent.models.background", In: InProject | InRepo},
+	// The vision slot (V1, D2003) is a model of the repository's own, as the
+	// three roles are, and a project sets it for every repository of it.
+	{Key: "agent.models.vision", In: InProject | InRepo},
 	// The four crafts (docs/model-crafts/spec.md §3): each craft's model and
 	// the credential or pool its calls go out on. A craft's model is a default
 	// the project sets for every repository of it, as agent.models.* is; its

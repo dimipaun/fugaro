@@ -2098,6 +2098,21 @@ var runAccountGrants = setOf(
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.project_secrets[var.coordinator.app_key_secret] | google_service_account.coordinator[0].member | for_each= | perms=`,
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.coordinator[0].member | for_each= | perms=`,
 
+	// The workspace's read of this member's ledger (W7,
+	// docs/workspaces/spec.md §5): the account the member's own workspace_pin
+	// names — another project's Fugaro installation, which this module cannot
+	// create, does not know and never derives — holding one permission on this
+	// project and nothing else. Reviewed for the write path this allowlist
+	// exists to stop: firebasedatabase.instances.get reads the instance and the
+	// role carries no firebasedatabase.instances.update, no storage permission
+	// of any kind, no IAM and no serviceAccount actAs, so it can neither write
+	// this bucket's root nor grant, mint or act as anything that could. It
+	// exists only on an installation whose pin names a workspace (the count)
+	// and a managed project's own plan gate refuses it, being a grant to a
+	// principal that is not this installation's — which is why it is bound here
+	// by the member's own `fugaro update` and not by a covered apply.
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroWorkspaceRead" | project=var.project | "serviceAccount:${var.workspace_service_account}" | for_each= | perms=firebasedatabase.instances.get`,
+
 	// The scheduler account's: starting the history and check jobs, and the
 	// coordinator's sweep (coordinator plan P5, the same custom role and the
 	// same member, on the coordinator job alone).
@@ -2147,6 +2162,27 @@ var runAccountGrants = setOf(
 	// repository, and G4's admission inside the service refuses every caller
 	// that is not one of these people.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | each.value | for_each=local.credentials_service_on ? toset(local.credentials_read_members) : toset([]) [local.credentials_read_members=[for m in var.operators : m if startswith(m, "user:")]] [local.credentials_service_on=var.credentials_service != null] | perms=`,
+
+	// Reviewed for W3 (the workspace's own project): the workspace root's own
+	// grant, the only resource the tree gives that project's service account.
+	// Its role is the custom role this same root creates, holding the
+	// instance's two DATA permissions and nothing else — get and update, which
+	// is what reading the record at workspaces/<name> and reserving and
+	// settling the meter take (the credentials service's database role is the
+	// same pair for the same reason, the row above).
+	//
+	// It is not a write path to the runs bucket's root or to the marker at
+	// fugaro/managed.json: firebasedatabase.instances.get and .update reach a
+	// Realtime Database instance and no Cloud Storage object, carry no
+	// permission to grant a role, no actAs, no token minting and no build or
+	// job execution, and the account holds nothing else anywhere in the tree
+	// (roots/workspace/main.tf declares the role, the account and this grant,
+	// and internal/infra/tf's WorkspaceNotCovered refuses any other resource or
+	// any other member in a plan of it). The role is deliberately not
+	// roles/firebasedatabase.admin: that adds the instance lifecycle, which
+	// this tree refuses outside the Firebase module
+	// (deploy/terraform/terraform_test.go's backendRoleRE).
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroWorkspaceDatabase" | project=var.project | google_service_account.workspace.member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
 )
 
 // setOf is a set of strings.

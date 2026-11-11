@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 const (
@@ -261,5 +263,118 @@ func TestParallelismSkillIsGeneric(t *testing.T) {
 	}
 	if trees == 0 {
 		t.Fatal("no tree of the checkout was read, so this check cannot report anything")
+	}
+}
+
+// TestSkillRigorTableMatchesInternalRigor: the reference's table is the pass's
+// behaviour per mode, so it speaks the vocabulary `internal/rigor` owns — the
+// five modes every layer that sets one resolves against (D1813, D1818). A mode
+// added there with no row here is a mode the pass has no behaviour for, and a
+// name spelled differently in one of the two is a row a run never reaches.
+//
+// The table is parsed rather than searched: a sentence carrying a mode's name is
+// not a row, and it is the rows a planner reads the pass's own behaviour off.
+func TestSkillRigorTableMatchesInternalRigor(t *testing.T) {
+	rows := rigorTableRows(t)
+	if len(rows) != len(rigor.Modes) {
+		t.Fatalf("the rigor table has %d row(s) and internal/rigor carries %d mode(s) (%s): every mode needs the pass's behaviour written down, and a row for a mode the vocabulary dropped is a row no run can resolve", len(rows), len(rigor.Modes), rigor.ModeList())
+	}
+	for i, mode := range rigor.Modes {
+		if rows[i].mode != string(mode) {
+			t.Errorf("the table's row %d is %q and internal/rigor's mode %d is %q: the table reads in the vocabulary's own order, so a reader matches one to the other by position", i+1, rows[i].mode, i+1, mode)
+		}
+	}
+	behaviour := make(map[string]string, len(rows))
+	for _, row := range rows {
+		if row.pass == "" {
+			t.Errorf("the table's row %q states nothing the pass does: a mode with no behaviour is one a planner decides by guess", row.mode)
+		}
+		behaviour[row.mode] = row.pass
+	}
+	// The two rows that decide whether the pass runs at all, and the ends of the
+	// axis between them: a row that smoothed one of these away would leave a
+	// planner breaking edges in a hotfix, or building on a contract that is still
+	// a guess.
+	for _, want := range []struct{ mode, pass string }{
+		{"poc", "aggressively"},
+		{"startup", "aggressively"},
+		{"pro", "where the contract is clear"},
+		{"critical", "fully specified contracts"},
+		{"hotfix", "skip the pass"},
+	} {
+		if !strings.Contains(behaviour[want.mode], want.pass) {
+			t.Errorf("the table's %s row does not say %q, which is the behaviour a run in that mode has: %q", want.mode, want.pass, behaviour[want.mode])
+		}
+	}
+}
+
+// rigorRow is one row of the reference's rigor table: the mode, and the pass's
+// behaviour the row states.
+type rigorRow struct{ mode, pass string }
+
+// rigorTableRows reads the reference's rigor table, in the order its rows are
+// written.
+func rigorTableRows(t *testing.T) []rigorRow {
+	t.Helper()
+	const header = "| Mode | The pass |"
+	lines := strings.Split(decouplingReferenceText(t), "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == header {
+			start = i + 1
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("the decoupling reference has no %q table: the pass's behaviour per mode is what a planner reads before running it", header)
+	}
+	var rows []rigorRow
+	for _, l := range lines[start:] {
+		line := strings.TrimSpace(l)
+		if !strings.HasPrefix(line, "|") {
+			break
+		}
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+		if len(cells) != 2 {
+			continue
+		}
+		mode := strings.Trim(strings.TrimSpace(cells[0]), "`")
+		if mode == "" || strings.HasPrefix(mode, "-") {
+			continue
+		}
+		rows = append(rows, rigorRow{mode: mode, pass: strings.TrimSpace(cells[1])})
+	}
+	if len(rows) == 0 {
+		t.Fatal("the rigor table carries no row: the header is there and nothing under it")
+	}
+	return rows
+}
+
+// TestSkillNamesPlanningSetting: one setting turns the pass off for a project or
+// a repository, and it is on everywhere else (D1813, CD6). The text has to name
+// the read and what off means, because a pass that quietly stopped running is a
+// plan whose reader cannot tell an off switch from a plan with nothing to break.
+//
+// The read names the repository for the same reason the rigor read does: one
+// that names none covers the installation's own scopes and never opens the
+// repository's `fugaro.yaml`, which is exactly where a repository's own value is
+// written.
+func TestSkillNamesPlanningSetting(t *testing.T) {
+	const read = "fugaro settings planning.decoupling --json"
+	text := decouplingText(t)
+	for _, want := range []string{
+		read,
+		"skip it and say so in the plan",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the decoupling text never says %q, so a plan whose pass is switched off reads exactly like one where no edge could be broken", want)
+		}
+	}
+
+	// The switch gates the whole pass, so it belongs in the section a planner
+	// reads first and not only in the reference the section points at.
+	section := decouplingSection(parallelismSkillFiles(t)[parallelismSkillPath])
+	if !strings.Contains(section, read) {
+		t.Errorf("%s's decoupling section never says %q: the section is what a planner who never opens the reference has, and a pass run with the switch off is work the user's configuration asked not to do", parallelismSkillPath, read)
 	}
 }

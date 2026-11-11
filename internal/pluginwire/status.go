@@ -43,9 +43,21 @@ func (s State) Severity() Severity {
 }
 
 // Fix is the one-line remedy for the state.
+//
+// NotWired and Unpinned have none: a repository with no pin is a repository
+// nothing writes one into any more — the merge was deleted outright (D949,
+// answered 2026-11-04; U2 of docs/plugin-user-scope/implementation-plan.md),
+// and fugaro update-skills installs the plugin on the machine instead — and a
+// marketplace that carries no ref simply follows the default branch. Outdated
+// keeps its line: the entry is there, and fugaro update is the door that takes
+// it out (D943) — U5's migration is the plugin stage offering the pin's
+// removal, so until U5 lands the line repeats at the end of the run it names.
+// U5 is ordered before the release that carries this work (E1), which is where
+// that closes, and the line stays as it is because it names the door the design
+// does send the reader to.
 func (s State) Fix() string {
 	switch s {
-	case Outdated, NotWired, Unpinned:
+	case Outdated:
 		return "run fugaro update"
 	case Newer:
 		return "upgrade fugaro (brew upgrade dimipaun/tap/fugaro); fugaro upgrade never moves a pin down"
@@ -61,7 +73,10 @@ func (s State) Fix() string {
 
 // Report is how the project's wiring compares with the binary. Pin compares
 // the settings file with the binary; Install, evaluated only when Pin is a
-// release tag, compares the plugin Claude Code installed with the pin.
+// release tag, compares the plugin install that applies to the checkout with
+// the pin. UserInstall and UserVersion answer the other question, the machine's
+// own install at user scope, and are read whether or not the checkout is wired
+// at all.
 type Report struct {
 	Pin     State  `json:"pin"`
 	Install State  `json:"install,omitempty"`
@@ -69,7 +84,17 @@ type Report struct {
 	Ref     string `json:"ref,omitempty"`       // the marketplace ref in settings
 	Repo    string `json:"repo,omitempty"`      // the marketplace repository in settings
 	Version string `json:"installed,omitempty"` // the installed plugin version, when readable
-	Detail  string `json:"detail,omitempty"`    // a sentence for the person
+	// UserInstall and UserVersion are the plugin installed at user scope on
+	// this machine, compared with this binary rather than with a pin, and read
+	// whatever the settings file says (userInstall): the install fugaro
+	// maintains, which is what the plugin step under --check has to answer about
+	// and what every command that writes one maintains (D949, U2 of
+	// docs/plugin-user-scope/implementation-plan.md). A checkout-carrying
+	// reader — doctor's plugin-install, the staleness warning — asks the
+	// checkout's own question instead, and reads Install and Version.
+	UserInstall State  `json:"userInstall,omitempty"`
+	UserVersion string `json:"userVersion,omitempty"`
+	Detail      string `json:"detail,omitempty"` // a sentence for the person
 }
 
 // States are the report's states that are not ok, in order.
@@ -107,11 +132,17 @@ func DefaultInstalledPlugins() string {
 // binary of the given version and, when installedPlugins is readable, with
 // the installed plugin. It reads two small files, never writes, never uses
 // the network and never fails: what it cannot read becomes a state.
+//
+// The machine's own install is read first and on its own: a checkout that
+// carries no wiring at all is what every fugaro leaves behind now (D949, U2),
+// and the readers that ask about the machine — the plugin step under --check —
+// have to answer on exactly that checkout.
 func Status(settingsPath, version, installedPlugins string) Report {
 	r := Report{Binary: version}
 	if r.Binary == "" {
 		r.Binary = "dev"
 	}
+	r.UserInstall, r.UserVersion = userInstall(installedPlugins, version)
 	pin, repo, wired, detail := readPin(settingsPath)
 	r.Ref, r.Repo = pin, repo
 	if !wired {
@@ -215,42 +246,62 @@ func readPin(path string) (ref, repo string, wired bool, detail string) {
 	return ref, repo, true, ""
 }
 
-// installState compares the installed plugin with the pin. The file's format
-// is observed, not documented: anything unexpected is cannot compare, and
-// never an error.
-func installState(path, root string, pin semver) (State, string) {
+// install is one plugin install as Claude Code records it.
+type install struct {
+	Scope       string `json:"scope"`
+	Version     string `json:"version"`
+	ProjectPath string `json:"projectPath"`
+}
+
+// installs reads Claude Code's record of installed plugins at path and returns
+// the installs it holds for PluginID. The state is "" when they were read, and
+// the answer to report otherwise: CannotCompare for a record that cannot be
+// read or parsed, NotInstalled for one that holds no install of the plugin —
+// and for no record at all. The file's format is observed, not documented:
+// anything unexpected is a state, never an error.
+func installs(path string) ([]install, State) {
 	if path == "" {
-		return CannotCompare, ""
+		return nil, CannotCompare
 	}
 	data, _, exists, err := readFile(path, 4<<20)
 	if err != nil {
-		return CannotCompare, ""
+		return nil, CannotCompare
 	}
 	if !exists {
-		return NotInstalled, ""
+		return nil, NotInstalled
 	}
 	var file struct {
 		Plugins map[string]json.RawMessage `json:"plugins"`
 	}
 	if json.Unmarshal(data, &file) != nil || file.Plugins == nil {
-		return CannotCompare, ""
+		return nil, CannotCompare
 	}
 	raw, ok := file.Plugins[PluginID]
 	if !ok {
-		return NotInstalled, ""
-	}
-	type install struct {
-		Scope       string `json:"scope"`
-		Version     string `json:"version"`
-		ProjectPath string `json:"projectPath"`
+		return nil, NotInstalled
 	}
 	var entries []install
 	if json.Unmarshal(raw, &entries) != nil {
 		var one install
 		if json.Unmarshal(raw, &one) != nil {
-			return CannotCompare, ""
+			return nil, CannotCompare
 		}
 		entries = []install{one}
+	}
+	return entries, ""
+}
+
+// installState compares the install that applies to the checkout with the pin:
+// a project or local install recorded for root over one at user scope, which is
+// what a session opened in this checkout gets (claudeplugin.Effective, D942),
+// and what doctor's plugin-install and the staleness warning answer about. It
+// is read only where the checkout carries a release-tag pin, because the pin is
+// what it compares with; the machine's own install is userInstall's question,
+// and is read whatever the checkout says.
+func installState(path, root string, pin semver) (State, string) {
+	entries, bad := installs(path)
+	if bad != "" {
+		return bad, ""
 	}
 	var got *install
 	for i, e := range entries {
@@ -273,4 +324,40 @@ func installState(path, root string, pin semver) (State, string) {
 		return InstalledDiffers, v.String()
 	}
 	return OK, v.String()
+}
+
+// userInstall compares the plugin installed at user scope on this machine with
+// this binary: the install fugaro maintains, which every command that writes
+// one writes (`fugaro update-skills`, the plugin step, and the init stage
+// behind it; claudeplugin.UserVersion, D949, U2 of
+// docs/plugin-user-scope/implementation-plan.md). It is read whatever the
+// checkout's wiring says, because the wiring no longer decides this question:
+// a checkout nobody pinned is what fugaro leaves behind now, and the plugin
+// step under --check still has to answer about the machine on it. The version
+// it compares with is this binary's own and not a pin, because the binary is
+// what the write path installs (claudeplugin.Decide's Want).
+func userInstall(path, version string) (State, string) {
+	tag, err := Tag(version)
+	if err != nil {
+		return CannotCompare, ""
+	}
+	bin, _ := parseSemver(tag)
+	entries, bad := installs(path)
+	if bad != "" {
+		return bad, ""
+	}
+	for _, e := range entries {
+		if e.Scope != "user" {
+			continue
+		}
+		v, ok := parseSemver(e.Version)
+		if !ok {
+			return CannotCompare, ""
+		}
+		if v != bin {
+			return InstalledDiffers, v.String()
+		}
+		return OK, v.String()
+	}
+	return NotInstalled, ""
 }
