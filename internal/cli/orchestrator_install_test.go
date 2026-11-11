@@ -401,6 +401,16 @@ func TestInstallUnitPointsAtTheStableBinaryPath(t *testing.T) {
 		{"/opt/homebrew/opt/fugaro/bin/fugaro", "/opt/homebrew/opt/fugaro/bin/fugaro"},
 		{"/usr/local/bin/fugaro", "/usr/local/bin/fugaro"},
 		{"/home/someone/go/bin/fugaro", "/home/someone/go/bin/fugaro"},
+		// A directory that merely carries the name is not a package manager's:
+		// rewriting it would name an opt link nobody wrote, and the unit's
+		// KeepAlive would restart a program that does not exist.
+		{"/home/someone/Cellar/fugaro/1.2.3/bin/fugaro", "/home/someone/Cellar/fugaro/1.2.3/bin/fugaro"},
+		{"/srv/builds/Cellar/fugaro/1.2.3/bin/fugaro", "/srv/builds/Cellar/fugaro/1.2.3/bin/fugaro"},
+		// And a Homebrew at some other prefix is that case too: nothing here
+		// can tell it from an ordinary directory, so its path is kept — the
+		// unit is re-rendered from the running binary on every `fugaro update`,
+		// which is what keeps it right.
+		{"/opt/brew/Cellar/fugaro/1.2.3/bin/fugaro", "/opt/brew/Cellar/fugaro/1.2.3/bin/fugaro"},
 		// A directory that merely carries the name is not a version: without
 		// the version segment there is nothing to strip.
 		{"/opt/homebrew/Cellar/fugaro/bin", "/opt/homebrew/Cellar/fugaro/bin"},

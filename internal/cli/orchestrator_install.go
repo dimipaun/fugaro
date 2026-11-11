@@ -74,17 +74,26 @@ func orchestratorUnit() (service.Unit, error) {
 // <prefix>/opt/fugaro, so a unit naming the Cellar path would name a file that
 // is gone after the first upgrade — the daemon's own version check (O8) would
 // fail forever and the unit's KeepAlive would restart a program that no longer
-// exists. Every other path is used as it is: a build from source and a
-// distribution's own /usr/bin already survive an upgrade, and inventing a link
-// for them would name a file nobody wrote.
+// exists. The prefixes are the three Homebrew installs this CLI ships through
+// and not the segment name "Cellar": a directory that merely carries that name
+// is not a package manager's, and rewriting it would name an opt link nobody
+// wrote — the same rule the last paragraph applies to every other path, which
+// is used as it is. A Homebrew at some other prefix is that case too: the path
+// is kept, because nothing here can tell it from an ordinary directory.
 func stableBinaryPath(exe string) string {
-	parts := strings.Split(filepath.ToSlash(exe), "/")
-	for i := 1; i+3 < len(parts); i++ {
-		if parts[i] != "Cellar" {
+	path := filepath.ToSlash(exe)
+	for _, prefix := range []string{"/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"} {
+		rest, ok := strings.CutPrefix(path, prefix+"/Cellar/")
+		if !ok {
 			continue
 		}
-		prefix := strings.Join(parts[:i], "/")
-		return prefix + "/opt/" + parts[i+1] + "/" + strings.Join(parts[i+3:], "/")
+		// <name>/<version>/<the rest>: without a version segment there is
+		// nothing to strip, and the link would be invented rather than found.
+		parts := strings.Split(rest, "/")
+		if len(parts) < 3 {
+			return exe
+		}
+		return prefix + "/opt/" + parts[0] + "/" + strings.Join(parts[2:], "/")
 	}
 	return exe
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -78,5 +79,35 @@ func TestDoctorReportsAnOutOfDateUnitTemplate(t *testing.T) {
 	}
 	if line := doctorItemLine(t, c); !strings.Contains(line, "orchestrator install") {
 		t.Errorf("the unread state's line is %q, want its own fix rather than the class's command", line)
+	}
+}
+
+// TestTheDoctorRigReadsNoUnitOfTheDeveloper: the check's path comes from $HOME
+// on macOS, and the rigs isolate the XDG directories, which is where Linux keeps
+// the unit — so a rig without HOME too reads this machine. That is the
+// difference between a suite that passes and one that fails on a developer who
+// has the daemon installed (doctor's clean installation is one line, and a unit
+// from an older build turns it into a warning), so the rig itself is pinned
+// here, on both platforms, rather than the two tests that would notice.
+func TestTheDoctorRigReadsNoUnitOfTheDeveloper(t *testing.T) {
+	real, err := os.UserHomeDir()
+	if err != nil {
+		real = ""
+	}
+	newDoctorRig(t)
+	old := orchestratorGOOS
+	t.Cleanup(func() { orchestratorGOOS = old })
+	for _, platform := range []string{"darwin", "linux"} {
+		orchestratorGOOS = platform
+		u, err := orchestratorUnit()
+		if err != nil {
+			t.Fatalf("the rig cannot render its own unit on %s: %v", platform, err)
+		}
+		if real != "" && strings.HasPrefix(u.Path, real+string(filepath.Separator)) {
+			t.Errorf("the doctor rig's %s unit is at %s, under the developer's own home: the check would read this machine", platform, u.Path)
+		}
+		if was, ok, err := unitTextOnDisk(u); err != nil || ok {
+			t.Errorf("the doctor rig has a login unit at %s on %s (err %v): %d bytes of this machine's own file", u.Path, platform, err, len(was))
+		}
 	}
 }
