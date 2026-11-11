@@ -172,7 +172,18 @@ func chainInherit(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// the figure a gap leaves behind. resolvePR's link is the launcher's own
 		// finding, not a caller's claim, so a gap in it degrades instead —
 		// loudly, and by what the previous run's stored task still holds.
-		if behind.chain, err = chainRead(ctx, env, slug, from); err != nil {
+		//
+		// A gap's read answers a chain as well as its error: the runs the link
+		// still reaches, with the hop charged the per-run cap and the dimensions a
+		// gap truncated left unmeasured (ResolveChain). What this launch carries
+		// below is the previous run's remaining instead, and that figure already
+		// counts every run of the chain up to that run — the runs after the hop
+		// among them — so charging the hop here as well would take its spend off
+		// twice and refuse launches the chain can still pay for. The read's
+		// figures are for a caller with nothing else to bound the chain by; this
+		// one has the stored task, or it has nothing and refuses.
+		c, err := chainRead(ctx, env, slug, from)
+		if err != nil {
 			if o.continues != "" {
 				return userErr("--continues %s: the chain cannot be read (%v), so what it has already spent cannot be established, and a link the records cannot confirm is refused rather than continued from the run named alone. Name a run whose chain is whole, or launch a run that is not part of it", task.ShortRun(o.continues), err)
 			}
@@ -187,10 +198,13 @@ func chainInherit(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			prev, perr := readTask(ctx, env, slug, from)
 			switch {
 			case errors.Is(perr, runstore.ErrNotFound):
-				// The whole chain has aged out — the run the read was named for
-				// has no task left either — so there is no figure anywhere to
-				// carry, and this run keeps the limits this launch wrote.
-				fmt.Fprintf(warn, "warning: the chain behind this launch has a gap (%v), and the run it is read from has no stored task left either; this run carries the limits this launch wrote and the per-run caps\n", err)
+				// Neither object of the run this chain is read from is left, so
+				// there is no figure anywhere — not the chain's own limit, which
+				// is behind the hop, and not the previous run's remaining, which
+				// went with its task — and a run launched with the limits this
+				// launch wrote would spend past a chain nothing bounded. Nothing
+				// was launched: this is the one gap a launcher has no answer for.
+				return userErr("%s: the chain behind this launch cannot be read (%v), and the run it is read from has no stored task left either, so no figure anywhere bounds what the chain has left. Nothing was launched: name a run whose chain is whole, or launch a run that is not part of this chain", chainFromWord(o, spec), err)
 			case perr != nil:
 				return perr
 			default:
@@ -199,6 +213,7 @@ func chainInherit(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			}
 			break
 		}
+		behind.chain = c
 		root, err := readTask(ctx, env, slug, behind.chain.Root)
 		switch {
 		case errors.Is(err, runstore.ErrNotFound):
@@ -568,9 +583,24 @@ func chainRemaining(b chainBehind, spec *task.Spec, o *runOptions, warn io.Write
 		}
 		u, measured := used[d], used[d].Measured
 		spent := runstore.Amount(0)
-		if measured {
+		switch {
+		case measured:
 			spent = u.Amount
-		} else if b.chain != nil {
+		case b.chain != nil && b.chain.Enforced:
+			// A chain-limited dimension whose figure the enforced read does not
+			// have, which can only be a run whose ledger could not be read where
+			// this installation sets no per-run cap for the dimension to charge it
+			// (D1049 leaves such a dimension unmeasured rather than charging a
+			// zero). Reading it as a zero here is the one figure it must not be:
+			// the chain's whole limit would be handed to this run, which is the
+			// hole F14 names, and it is the same shape chainRemaining's caller
+			// answers for a first run. So the launch stops, naming the run whose
+			// ledger could not be read — and the caller's own figure is the way
+			// out: --used-* may state it, and stating what a chain has used is
+			// what the knob is for where the engine cannot read it (D1048).
+			return task.Overrides{}, userErr("%s: the chain's %s spend cannot be established — %s, and this installation sets no per-run %s cap to charge it instead (D1049) — so how much of the chain's %s limit is left is unknown, and continuing would hand this run the whole of it again. State what the chain has already used with --used-%s, or set the per-run cap",
+				chainFromWord(o, spec), chainDimensionWord(d), chainMissText(b.chain), chainDimensionWord(d), chainDimensionWord(d), chainDimensionFlag(d))
+		case b.chain != nil:
 			// The chain does not measure this dimension: with the budget off
 			// there is no ledger, and no run record carries a whole-run token
 			// total (D1051, F8). Saying so is the report, and the chain's own
@@ -644,6 +674,28 @@ func chainRemaining(b chainBehind, spec *task.Spec, o *runOptions, warn io.Write
 		}
 	}
 	return next, nil
+}
+
+// chainMissText is the runs of a chain whose money could not be read, as a
+// refusal names them — the run and which of the three ways the read failed, so
+// a caller knows what to look at rather than only that a figure is missing
+// (L1, D1049). Charged is never empty where a refusal asks for it: a dimension
+// is unmeasured under an enforced chain only because a charge above left it
+// so (ResolveChain), and a budget-off chain reports the dimension in a note
+// instead.
+func chainMissText(c *runstore.Chain) string {
+	var parts []string
+	for _, m := range c.Charged {
+		switch {
+		case errors.Is(m.Err, runstore.ErrChainGap):
+			parts = append(parts, fmt.Sprintf("the record of run %s is gone, so the runs behind it cannot be read", m.Run))
+		case m.Err != nil:
+			parts = append(parts, fmt.Sprintf("the ledger of run %s could not be read (%v)", m.Run, m.Err))
+		default:
+			parts = append(parts, fmt.Sprintf("the budget database has no ledger node for run %s", m.Run))
+		}
+	}
+	return strings.Join(parts, ", and ")
 }
 
 // chainUsedRaised is the engine's figures with the caller's --used-* applied

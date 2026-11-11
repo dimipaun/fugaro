@@ -342,12 +342,13 @@ func TestChainRefusesALinkThatRunsInACircle(t *testing.T) {
 	}
 }
 
-// A record the link reaches that the bucket does not have ends the read: it
-// is the only thing that names the run before it, so the runs behind that
-// hop cannot be found, and answering with what was read would root the chain
-// at the hop and drop every run before it -- membership and spend both
-// (F21). The root's record and the middle one's are the two ways that hop
-// sits, and neither may read as a shorter chain that spent less.
+// A record the link reaches that the bucket does not have stops the walk
+// there: it is the only thing that names the run before it, so the runs behind
+// that hop cannot be found (F21). The root's record and the middle one's are
+// the two ways that hop sits, and neither may read as a shorter chain that
+// spent less — the read answers the runs it could still reach, with the hop
+// charged and the error, and never as a chain rooted at the hop with the runs
+// before it dropped from membership and spend alike.
 func TestChainRefusesALinkedRunWithNoRecord(t *testing.T) {
 	for _, gone := range []string{chainRoot, chainMid} {
 		t.Run(gone, func(t *testing.T) {
@@ -360,14 +361,124 @@ func TestChainRefusesALinkedRunWithNoRecord(t *testing.T) {
 				chainMid:  {Reserved: 2_000_000},
 				chainTip:  {Reserved: 3_000_000},
 			}}
-			_, err := ResolveChain(ctx, Open(b, "acme-app", chainTip), f, chainCaps, chainNow)
+			c, err := ResolveChain(ctx, Open(b, "acme-app", chainTip), f, chainCaps, chainNow)
 			if err == nil {
 				t.Fatalf("a chain whose link reaches %s with no record read as a chain (ledger reads: %v)", gone, f.asked)
+			}
+			if !errors.Is(err, ErrChainGap) {
+				t.Fatalf("err = %v, want the missing record's own error", err)
 			}
 			if !strings.Contains(err.Error(), gone) {
 				t.Fatalf("err = %v, want the run with no record (%s) named", err, gone)
 			}
+			if c == nil || c.Root != "" {
+				t.Fatalf("read = %+v, want the runs it could still reach and no root: the run that began the chain is behind the hop", c)
+			}
+			if slices.Contains(c.Runs, gone) {
+				t.Fatalf("Runs = %v, want the runs the link still reaches, without %s", c.Runs, gone)
+			}
 		})
+	}
+}
+
+// A chain whose link reaches a run the bucket no longer holds, with the budget
+// on: the walk stops there, and what it must not do is answer the runs it read
+// alone — the runs behind the hop cannot be found, so the sum over the runs
+// that could still be read is a lower bound of the chain's spend, and a lower
+// bound reported as the figure is what D1049 and F21 forbid (a chain never
+// reads cheaper than it may have). The hop is charged the per-run cap the way
+// a ledger that cannot be read is charged, the record-backed dimensions the
+// hop truncated are reported unmeasured, and the error rides with it.
+func TestChainGapChargesTheMissingRunAndKeepsTheRunsItRead(t *testing.T) {
+	b := chainBucket(t)
+	if err := b.Delete(ctx, "runs/acme-app/"+chainMid+"/result.json"); err != nil {
+		t.Fatal(err)
+	}
+	// The tip's ledger alone is readable: the runs behind the hop may hold
+	// anything, and 9_000_000 in the database under the root's name is never
+	// read — nothing the link still reaches names that run.
+	f := &fakeLedgers{found: map[string]Ledger{
+		chainRoot: {Reserved: 9_000_000},
+		chainTip:  {Reserved: 2_000_000, Released: 500_000, Tokens: 7_000},
+	}}
+	c, err := ResolveChain(ctx, Open(b, "acme-app", chainTip), f, chainCaps, chainNow)
+	if !errors.Is(err, ErrChainGap) {
+		t.Fatalf("err = %v, want the gap reported", err)
+	}
+	if c == nil {
+		t.Fatal("the read answered no chain at all, so nothing of what it did read is reported")
+	}
+	if want := []string{chainTip}; !slices.Equal(c.Runs, want) {
+		t.Fatalf("Runs = %v, want %v: the runs the link still reaches", c.Runs, want)
+	}
+	if c.Root != "" {
+		t.Fatalf("Root = %q, want none: the run that began the chain is behind the hop", c.Root)
+	}
+	if len(c.Charged) != 1 || c.Charged[0].Run != chainMid || !errors.Is(c.Charged[0].Err, ErrChainGap) {
+		t.Fatalf("Charged = %+v, want the hop the link reaches and its own error", c.Charged)
+	}
+	// The hop is charged the per-run cap -- the most it could have been
+	// holding (D1049) -- and the run that could be read what its ledger
+	// holds: 1_500_000 + the 5_000_000 cap, never the 1_500_000 alone.
+	if got := c.Used(USD); !got.Measured || got.Amount != 6_500_000 {
+		t.Fatalf("Used(usd) = %+v, want the readable run's held dollar and the hop's whole cap", got)
+	}
+	if got := c.Used(Tokens); !got.Measured || got.Amount != 107_000 {
+		t.Fatalf("Used(tokens) = %+v, want the readable run's tokens and the hop's whole cap", got)
+	}
+	// The time and the rounds come from the records, and the records behind
+	// the hop are gone with it: unmeasured, never the tip's own half hour and
+	// no rounds.
+	if got := c.Used(Time); got.Measured {
+		t.Fatalf("Used(time) = %+v, want it unmeasured: the records behind the hop are gone", got)
+	}
+	if got := c.Used(ReviewRounds); got.Measured {
+		t.Fatalf("Used(review_rounds) = %+v, want it unmeasured: the records behind the hop are gone", got)
+	}
+	if got := c.Remaining(9_000_000, USD); !got.Measured || got.Amount != 2_500_000 {
+		t.Fatalf("Remaining(9 USD) = %+v, want the held figure and the cap taken off it", got)
+	}
+	// The database is asked for the runs the link names and no others: the
+	// run behind the hop is not named by anything the read can reach.
+	if want := []string{"acme-app/" + chainTip}; !slices.Equal(f.asked, want) {
+		t.Fatalf("ledger reads = %v, want %v", f.asked, want)
+	}
+}
+
+// The same gap with a caller that bounds neither dimension: there is no cap to
+// charge the hop, and charging it a zero would read the runs behind it as free
+// (D1049), so both money dimensions are reported unmeasured and the hop is
+// named. With no ledger at all -- the budget off -- the read answers no chain:
+// its figures are the records, and a record sum over the runs that could still
+// be read is a lower bound rather than the chain's spend.
+func TestChainGapWithNoBoundIsUnmeasured(t *testing.T) {
+	b := chainBucket(t)
+	if err := b.Delete(ctx, "runs/acme-app/"+chainMid+"/result.json"); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeLedgers{found: map[string]Ledger{chainTip: {Reserved: 2_000_000}}}
+	c, err := ResolveChain(ctx, Open(b, "acme-app", chainTip), f, PerRunCaps{}, chainNow)
+	if !errors.Is(err, ErrChainGap) {
+		t.Fatalf("err = %v, want the gap reported", err)
+	}
+	if c == nil {
+		t.Fatal("the read answered no chain at all")
+	}
+	if got := c.Used(USD); got.Measured || got.Amount != 0 {
+		t.Fatalf("Used(usd) = %+v, want no figure: the runs behind the hop cannot be bounded in dollars", got)
+	}
+	if got := c.Used(Tokens); got.Measured {
+		t.Fatalf("Used(tokens) = %+v, want it unmeasured too", got)
+	}
+	if len(c.Charged) != 1 || c.Charged[0].Run != chainMid {
+		t.Fatalf("Charged = %+v, want the hop named for a reader that has to say why", c.Charged)
+	}
+
+	// The budget off: the records are the figures, so a read the records stop
+	// partway through has none to answer.
+	c, err = ResolveChain(ctx, Open(b, "acme-app", chainTip), nil, chainCaps, chainNow)
+	if !errors.Is(err, ErrChainGap) || c != nil {
+		t.Fatalf("a budget-off read of the same chain = %+v, %v, want no chain and the gap", c, err)
 	}
 }
 
