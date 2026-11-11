@@ -308,7 +308,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	// against what this repository's build account is actually granted
 	// (B1): a build submitted with an ID that account may not read fails
 	// its clone at the build's end, long after it was billed.
-	gitID, err := gitSecretID(ctx, lc, rs, "the image build of "+rs.Name)
+	gitID, err := gitSecretID(ctx, lc, rs, nodePolicy(ctx, &env.policy, lc), "the image build of "+rs.Name)
 	if err != nil {
 		return err
 	}
