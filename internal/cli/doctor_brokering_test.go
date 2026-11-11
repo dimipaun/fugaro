@@ -615,6 +615,31 @@ func TestDoctorCredentialsServiceDeployedCountsTheDeployedVariants(t *testing.T)
 			}
 		}
 	})
+
+	t.Run("a grant on a variant the repository does not deploy does not make the row clean", func(t *testing.T) {
+		r := newBrokeringVariantsRig(t, true)
+		// The account of a variant the cascade root deploys no job for holds
+		// the invoker grant on its own — a leftover of the apply before the
+		// switch, or a policy written by hand — and the account the run is
+		// actually launched under holds none. The row is about whether the
+		// jobs this repository runs can reach the service, so the row may not
+		// come out clean on a grant no job of its can use.
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app_team-a")}})
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("credentials-service-deployed = %+v, want one warning: the repository's own deployed job holds no grant, and one held by a variant it deploys no job for is not a grant its runs can use", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "workspace-a/repo-a (app)") {
+			t.Errorf("the warning does not name the repository's own deployed job: %q", cs[0].Problem)
+		}
+	})
 }
 
 // TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches: the live
