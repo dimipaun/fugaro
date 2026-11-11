@@ -642,6 +642,114 @@ func TestAnAuthorizationWithNoScopeGetsOnlyTheTaskScopes(t *testing.T) {
 	}
 }
 
+// TestTheScopeAClientReadsFromItsRegistrationIsTheDefault is R1 on the path a
+// client actually walks, and the one the default is really read from:
+// registration is the first thing an MCP client does, and the `scope` member of
+// that answer is the set the client then asks the authorization endpoint for.
+// The registration answers DefaultScopes, so a client that does what the server
+// told it asks for the task pair and never for a state scope.
+//
+// The flow below is driven with the string the registration itself answered —
+// not with one this test wrote — because a registration answer that were the
+// whole vocabulary would be read back here and put into the authorization
+// request verbatim. The installation grants the whole vocabulary, so the
+// narrowing at the exchange cannot be what keeps the state names out: what the
+// client asked for is the only thing left that decides.
+//
+// The door an installation is wired with narrows nothing at all
+// (coordinator_serve.go leaves Config.Limits at its zero value), so the two
+// paragraphs above are the whole of the control on this path.
+func TestTheScopeAClientReadsFromItsRegistrationIsTheDefault(t *testing.T) {
+	cfg := testConfig()
+	cfg.Limits = Limits{Scopes: slices.Clone(ScopeVocabulary)}
+	ts := newTestServerWith(t, cfg)
+
+	rec := ts.postJSON(t, RegisterPath, registrationRequest{
+		RedirectURIs: []string{testClientRedirect}, ClientName: "a reader",
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST %s answered %d (%s); want 201 with the registration", RegisterPath, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	var registration registrationResponse
+	decodeBody(t, rec, &registration)
+	want := strings.Join(DefaultScopes, " ")
+	if registration.Scope != want {
+		t.Fatalf("the registration answered the scope %q; want %q: a client reads this member as the set to ask for, so the whole vocabulary here is the server telling every client to ask for the scope that rewrites the orchestrator's state", registration.Scope, want)
+	}
+
+	q := authorizeQuery(registration.ClientID, testClientRedirect)
+	q.Set("scope", registration.Scope)
+	binding, number := ts.startFlow(t, q)
+	code := codeOf(t, ts.approve(t, binding, number))
+	rec, tokens := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {registration.ClientID},
+		"code_verifier": {testVerifier},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the exchange answered %d (%s); want a token pair: the scope this test asked for is the one the registration answered", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if tokens.Scope != want {
+		t.Errorf("the token came back with scope %q; want %q", tokens.Scope, want)
+	}
+	record, err := ts.store.LookupByHash(context.Background(), TokenHash(tokens.AccessToken))
+	if err != nil {
+		t.Fatalf("reading the access token's record: %v", err)
+	}
+	if got := strings.Join(record.Token.Limits.Scopes, " "); got != want {
+		t.Errorf("the record carries the scopes %q; want %q: a client that asked for exactly what its registration answered holds no state scope, on an installation whose own grant would have allowed one", got, want)
+	}
+}
+
+// TestAScopeAskedForByNameIsTheOnlyWayAStateScopeIsHeld is the other half of
+// R1's sentence, and the half that keeps the state group reachable at all: a
+// state scope is held only when it is asked for by name, and an authorization
+// that asks for one — by a client whose operator wants the state tools, or by a
+// person typing the consent URL — is answered.
+//
+// The installation here is the shape a `fugaro update` wires: no limits of its
+// own, so nothing is narrowed and what the request named is what the token
+// holds. That is what makes this the boundary rather than a second default: the
+// two tests together say that naming nothing gives the task pair, and naming a
+// state scope is the only way one is ever held.
+func TestAScopeAskedForByNameIsTheOnlyWayAStateScopeIsHeld(t *testing.T) {
+	cfg := testConfig()
+	cfg.Limits = Limits{}
+	ts := newTestServerWith(t, cfg)
+
+	clientID, _ := ts.register(t, "an operator's client", testClientRedirect)
+	q := authorizeQuery(clientID, testClientRedirect)
+	q.Set("scope", ScopeTasksRead+" "+ScopeStateRead)
+	binding, number := ts.startFlow(t, q)
+	code := codeOf(t, ts.approve(t, binding, number))
+	rec, tokens := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {clientID},
+		"code_verifier": {testVerifier},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the exchange answered %d (%s); want a token pair: an authorization that names two scopes this build mints is answerable", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	want := ScopeTasksRead + " " + ScopeStateRead
+	if tokens.Scope != want {
+		t.Errorf("the token came back with scope %q; want %q: a scope asked for by name is held, and one that was not asked for is not added", tokens.Scope, want)
+	}
+	record, err := ts.store.LookupByHash(context.Background(), TokenHash(tokens.AccessToken))
+	if err != nil {
+		t.Fatalf("reading the access token's record: %v", err)
+	}
+	if got := strings.Join(record.Token.Limits.Scopes, " "); got != want {
+		t.Errorf("the record carries the scopes %q; want %q", got, want)
+	}
+	if slices.Contains(record.Token.Limits.Scopes, ScopeStateWrite) {
+		t.Errorf("the record carries %q, which the request did not name: a scope is minted because it was asked for", ScopeStateWrite)
+	}
+}
+
 // TestTheInstallationsLimitsNarrowTheTokenTheFlowMints is the one place the
 // installation's own policy enters the flow: the code carries what the person
 // consented to, and the token it is exchanged for carries that narrowed against
