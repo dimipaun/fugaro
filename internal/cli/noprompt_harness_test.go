@@ -271,27 +271,36 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// answer, which is the whole of what a closed stdin can be shown here. The
 	// same reference in both is the point — neither leaf may ask a question of a
 	// missing issue.
-	"fugaro issue dismiss":        {args: []string{"local-update-20261107183012-1"}},
-	"fugaro issue show":           {args: []string{"local-update-20261107183012-1"}},
-	"fugaro logs":                 {args: []string{"run-1"}},
-	"fugaro managed apply":        {args: []string{"root"}},
-	"fugaro managed flag":         {args: []string{"proj-1234"}},
-	"fugaro managed unflag":       {args: []string{"proj-1234"}},
-	"fugaro models add":           {args: []string{"claude-x"}},
-	"fugaro models rm":            {args: []string{"claude-x"}},
-	"fugaro models search":        {args: []string{"x"}},
-	"fugaro models use":           {args: []string{"a", "b", "c"}},
-	"fugaro pair revoke":          {args: []string{"--uid", "uid-1"}},
-	"fugaro project repos add":    {args: []string{"acme/app"}},
-	"fugaro project repos rm":     {args: []string{"acme/app"}},
-	"fugaro recipes publish":      {args: []string{"slug"}},
-	"fugaro recipes show":         {args: []string{"slug"}},
-	"fugaro recipes validate":     {args: []string{"slug"}},
-	"fugaro restore":              {args: []string{"proj-2", "root"}},
-	"fugaro review show":          {args: []string{"run-1"}},
-	"fugaro run":                  {args: []string{"do something"}},
-	"fugaro secrets rm":           {args: []string{"NAME"}},
-	"fugaro secrets set":          {args: []string{"NAME"}},
+	"fugaro issue dismiss":     {args: []string{"local-update-20261107183012-1"}},
+	"fugaro issue show":        {args: []string{"local-update-20261107183012-1"}},
+	"fugaro logs":              {args: []string{"run-1"}},
+	"fugaro managed apply":     {args: []string{"root"}},
+	"fugaro managed flag":      {args: []string{"proj-1234"}},
+	"fugaro managed unflag":    {args: []string{"proj-1234"}},
+	"fugaro models add":        {args: []string{"claude-x"}},
+	"fugaro models rm":         {args: []string{"claude-x"}},
+	"fugaro models search":     {args: []string{"x"}},
+	"fugaro models use":        {args: []string{"a", "b", "c"}},
+	"fugaro pair revoke":       {args: []string{"--uid", "uid-1"}},
+	"fugaro project repos add": {args: []string{"acme/app"}},
+	"fugaro project repos rm":  {args: []string{"acme/app"}},
+	"fugaro recipes publish":   {args: []string{"slug"}},
+	"fugaro recipes show":      {args: []string{"slug"}},
+	"fugaro recipes validate":  {args: []string{"slug"}},
+	"fugaro restore":           {args: []string{"proj-2", "root"}},
+	"fugaro review show":       {args: []string{"run-1"}},
+	"fugaro run":               {args: []string{"do something"}},
+	"fugaro secrets rm":        {args: []string{"NAME"}},
+	"fugaro secrets set":       {args: []string{"NAME"}},
+	// The rigor write reaches its own edit through the layer file the seed writes:
+	// the mode it sets ranks above what the file resolves to, so the fixture is the
+	// ordinary write and not the sensitive one, and the sentence naming the key is
+	// the proof the run got past the vocabulary and the file.
+	"fugaro rigor set": {
+		args:    []string{"critical"},
+		reaches: "set defaults.rigor.default to critical in",
+		seed:    closedStdinRigorLayerSeed,
+	},
 	"fugaro settings get":         {args: []string{"a.b"}},
 	"fugaro stats runs":           {args: []string{"--project", "proj-1234"}},
 	"fugaro user add":             {args: []string{"someone@example.com"}},
@@ -635,6 +644,17 @@ func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\npools:\n  - name: claude-pool\n    members:\n      - team-a\n")
+}
+
+// closedStdinRigorLayerSeed gives the world the file `fugaro rigor set` edits:
+// this machine's own project layer file, carrying the world's own anchors
+// (project aurora, GCP project proj-1234, which is what the world's config
+// names) and the mode the fixture's raise is measured against. Without it the
+// command refuses the missing file — D830's step 4, naming `fugaro update` —
+// which is a refusal before the write and not the write this fixture is for.
+func closedStdinRigorLayerSeed(t *testing.T, _ *budgetFixture) {
+	t.Helper()
+	settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  rigor:\n    default: pro\n")
 }
 
 // closedStdinWorkflowSeed makes the world's own directory a checkout of a
