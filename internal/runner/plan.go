@@ -37,6 +37,13 @@ type planStep struct {
 	// FirstRounds == 0 behaves like a plain review step: there is no cheap
 	// loop to bounce back to.
 	FirstRounds int
+	// HandOver is review: {hand_over: true} (recipe.Step.HandOver), copied
+	// from the step: the senior loop ends the run at that review with the
+	// round's verdict recorded, and buys no fix round after it — the
+	// escalation's escalate recipe, which spends one coder pass and one
+	// review and leaves what the review found to whoever reads the verdict
+	// (E5). The parser admits the key on a review step alone.
+	HandOver bool
 }
 
 // resolveLevels decides the run's three review levels (config.ResolveLevels,
@@ -253,12 +260,28 @@ func recipeHasStep(rcp *recipe.Recipe, kind recipe.StepKind) bool {
 // step is the one such a recipe carries however the mode's own row reads, and
 // there is nowhere for level 1 or level 3 to join; dropping the review step
 // instead would leave the plan with no review at all, which checkPlan refuses.
+//
+// A rebase recipe is taken as written for the same reason, one step further:
+// its one step is the whole run (recipe.order refuses it beside any other), so
+// there is no loop for a level to join and no review step for one to be held
+// to — the branch it pushes is reviewed by a run of its own (G13, D2043).
+//
+// Neither level's step is inserted into a recipe whose review hands the run
+// over (recipe.Step.HandOver, E5). After that review level 3's step is one the
+// run would never walk — the recipe's own grammar refuses the pair outright
+// ("hand_over ends the run at the review: no adversarial step may follow it",
+// recipe.Parse), which an insert must not undo — and before it level 1's step
+// is the inner loop such a recipe is defined without: one coding pass, one
+// review pass of the model the recipe names, which is what the escalation's
+// `escalate` is for on every mode, Critical included (where level 3's step is
+// otherwise inserted by default) and with agent.first_line_review on (where
+// level 1's is).
 func planRecipe(rcp *recipe.Recipe, levels config.Levels) []recipe.Step {
-	if rcp.Mode != recipe.ModeImplement {
+	if rcp.Mode != recipe.ModeImplement || recipe.UsesRebase(rcp) {
 		return rcp.Steps
 	}
 	out := make([]recipe.Step, 0, len(rcp.Steps)+2)
-	if levelOn(levels, policy.LevelL1) && resolvedLevel(levels, policy.LevelL1).Inserted {
+	if levelOn(levels, policy.LevelL1) && resolvedLevel(levels, policy.LevelL1).Inserted && !recipe.UsesHandOver(rcp) {
 		out = append(out, recipe.Step{Kind: recipe.StepFirstLine})
 	}
 	for _, s := range rcp.Steps {
@@ -267,7 +290,7 @@ func planRecipe(rcp *recipe.Recipe, levels config.Levels) []recipe.Step {
 		}
 		out = append(out, s)
 	}
-	if levelOn(levels, policy.LevelL3) && resolvedLevel(levels, policy.LevelL3).Inserted {
+	if levelOn(levels, policy.LevelL3) && resolvedLevel(levels, policy.LevelL3).Inserted && !recipe.UsesHandOver(rcp) {
 		out = append(out, recipe.Step{Kind: recipe.StepAdversarial, Bounce: true})
 	}
 	return out
@@ -301,7 +324,7 @@ func planOf(rcp *recipe.Recipe, levels config.Levels, a config.Agent, reviewOver
 			if reviewOverride != nil {
 				set = *reviewOverride
 			}
-			out = append(out, planStep{Kind: s.Kind, Rounds: setRounds(set, defaults.Senior, recipe.MaxReviewRounds), Precedence: set, Bounce: s.Bounce, FirstRounds: firstRounds})
+			out = append(out, planStep{Kind: s.Kind, Rounds: setRounds(set, defaults.Senior, recipe.MaxReviewRounds), Precedence: set, Bounce: s.Bounce, FirstRounds: firstRounds, HandOver: s.HandOver})
 		case recipe.StepAdversarial:
 			// Level 3's number is its own knob and the mode's own default for
 			// the step (rigor.AdversarialDefault): the senior review's rounds
@@ -319,6 +342,13 @@ func planOf(rcp *recipe.Recipe, levels config.Levels, a config.Agent, reviewOver
 				set = s.MaxRounds
 			}
 			out = append(out, planStep{Kind: s.Kind, Rounds: setRounds(set, rigor.AdversarialDefault(mode), recipe.MaxReviewRounds), Precedence: set, Bounce: s.Bounce, FirstRounds: firstRounds})
+		case recipe.StepRebase:
+			// One round, and the round is the step: the conflicts are the only
+			// work a model is asked about, and the step either finishes the run
+			// or ends it refused (rebase.go). No knob reaches it — a rebase
+			// recipe carries no options (recipe.order) — so the plan's number is
+			// the one the runner runs, and what it bounds is a stage, not a loop.
+			out = append(out, planStep{Kind: s.Kind, Rounds: 1})
 		}
 	}
 	return out
@@ -380,6 +410,14 @@ func requiredSteps(rcp *recipe.Recipe, levels config.Levels) []recipe.StepKind {
 // run knows which step a level runs in: a resolution that stopped setting it
 // would corrupt the plan in silence.
 func checkLevelSteps(rcp *recipe.Recipe, levels config.Levels) error {
+	if recipe.UsesRebase(rcp) {
+		// A rebase recipe runs no level's step: the run puts a branch back on
+		// its base and reviews nothing, and the levels are resolved above it
+		// for the model configuration alone (a resolution is what writes the
+		// run's own agent.* block). Every level would otherwise read as one the
+		// plan dropped, which is the state this guard exists to refuse.
+		return nil
+	}
 	for _, l := range []policy.Level{policy.LevelL1, policy.LevelL2, policy.LevelL3} {
 		if !levelOn(levels, l) || resolvedLevel(levels, l).Inserted {
 			continue
@@ -410,6 +448,17 @@ func checkPlan(rcp *recipe.Recipe, levels config.Levels, plan []planStep) error 
 	}
 	required := requiredSteps(rcp, levels)
 	if len(required) == 0 {
+		// A rebase recipe's plan is the rebase step and nothing else
+		// (planRecipe takes such a recipe as written, and recipe.order leaves
+		// it one step): it reviews nothing, so no level has a step here and
+		// the review rule below does not apply to it. What is checked is that
+		// the plan is still the one step the recipe named.
+		if recipeHasStep(rcp, recipe.StepRebase) {
+			if len(plan) != 1 || plan[0].Kind != recipe.StepRebase || plan[0].Rounds < 1 {
+				return fmt.Errorf("a rebase recipe's plan is the rebase step alone and one round of it, got %d step(s): the run would put the branch on its base and do nothing more, or nothing at all", len(plan))
+			}
+			return nil
+		}
 		return errors.New("the plan has no review step at all: every review level the run resolved is off, so nothing would decide whether the pull request is ready")
 	}
 	if len(plan) == 0 {

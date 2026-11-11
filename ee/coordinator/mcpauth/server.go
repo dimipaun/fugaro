@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/zitadel/oidc/v3/pkg/oidc"
@@ -118,7 +119,41 @@ type Server struct {
 	audit    *Auditor
 	now      func() time.Time
 	logger   *slog.Logger
+	// registrations and authorizations are M12's per-source bounds, one for
+	// each of the two unauthenticated writes of the flow — the registration
+	// endpoint and the authorize GET — and they are values here rather than a
+	// caller's: each bound is its endpoint's own and there is nothing to
+	// configure either from.
+	registrations  *sourceLimiter
+	authorizations *sourceLimiter
+	// sweepMu and sweptAt are the sweep's own two fields (maybeSweep): when
+	// the last trigger ran, and the lock that makes one trigger's decision the
+	// one the next sees. The instant is read and written under the lock and
+	// the sweep itself runs outside it, so a slow sweep delays other triggers
+	// rather than the door.
+	sweepMu sync.Mutex
+	sweptAt time.Time
 }
+
+// DeviceDeliveryBuilt is the build's own answer to whether this binary carries
+// M12b's delivery of a sign-in flow to the paired phone, and in this tree the
+// answer is no: M12b is not built.
+//
+// The coordinator plan's D2126 (answered 2026-11-11) is that the delivery is a
+// task of its own and that the task which mounts this door refuses to enable
+// one whose installation has not got it — a person who reads the flow's number
+// off the page has nothing yet to type it into, so an enabled door without the
+// delivery is a half-built door on the public internet. This constant is how
+// that refusal is decided, and it is a build fact rather than a configuration
+// on purpose: an installation cannot have a delivery its binary does not carry,
+// and a variable an operator could set would be the second switch M4's
+// service.go refuses one file over.
+//
+// M12b flips it to true, and nothing else moves: coordinator.FrontDoor takes
+// the value as an argument, so the refusal and the enabled path are both
+// reachable by a test while the constant is false, and the command passes this
+// constant and nothing else.
+const DeviceDeliveryBuilt = false
 
 // ServerOption configures a Server.
 type ServerOption func(*Server)
@@ -143,6 +178,29 @@ func WithServerClock(now func() time.Time) ServerOption {
 // that is not about identity build a server without one.
 func WithRoster(roster Roster) ServerOption {
 	return func(s *Server) { s.roster = roster }
+}
+
+// WithTools sets the registry this server serves the MCP endpoint from, which
+// is how the task that mounts the front door on a binary registers the tools
+// its installation has (M12: M8's four read tools through RegisterReadTools,
+// and whatever a later group registers beside them).
+//
+// It is an option rather than a field a caller sets afterwards because a
+// registry is written before the server answers and read while it does: the
+// wiring that supplies the tools is the wiring that builds the server, and a
+// server that handed its registry out for a later caller to fill would be a
+// door whose served tools changed under the calls it was answering.
+//
+// A nil registry sets nothing, the way a nil auditor does: a caller that has no
+// registry does not get one that refuses every call, it gets the empty one
+// NewServer builds, whose answers are M7's own "no such tool" rather than a
+// crash in the middle of somebody's call.
+func WithTools(reg *Registry) ServerOption {
+	return func(s *Server) {
+		if reg != nil {
+			s.tools = reg
+		}
+	}
 }
 
 // WithLogger sets the logger the refusals of the MCP endpoint are written to
@@ -192,7 +250,12 @@ func NewServer(cfg Config, store Store, verifier *Verifier, opts ...ServerOption
 	if err := issuerURL(cfg.Issuer); err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, store: store, verifier: verifier, tools: NewRegistry(), now: time.Now, logger: slog.Default()}
+	s := &Server{
+		cfg: cfg, store: store, verifier: verifier, tools: NewRegistry(),
+		now: time.Now, logger: slog.Default(),
+		registrations:  newSourceLimiter(registerWindow, registerPerWindow),
+		authorizations: newSourceLimiter(authorizeWindow, authorizePerWindow),
+	}
 	for _, o := range opts {
 		o(s)
 	}

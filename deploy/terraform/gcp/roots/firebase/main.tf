@@ -50,4 +50,10 @@ module "firebase" {
   budget_admins       = var.budget_admins
   history_account     = var.history_account
   coordinator_account = var.coordinator_account
+
+  # The workspace service account this member's own workspace_pin names, when
+  # it names one: the Firebase module grants it a read-only role on this
+  # project's database (docs/workspaces/spec.md §5, W7). Internal to the pin:
+  # the workspace's published record names no service account.
+  workspace_service_account = var.workspace_service_account
 }

@@ -30,8 +30,10 @@
 # Needs:      bash, mktemp, python3 (the reader), curl, gcloud (authenticated as
 #             an owner of the installation: it reads the service's own lines
 #             through Cloud Logging (the audit's, and the refusal line that
-#             carries a refusal's class), the job list, the secrets carrying the
-#             Bitbucket token's label and their IAM policies, and mints the
+#             carries a refusal's class), the credentials service's OWN IAM
+#             policy, the job list, the credentials service's bundle (the
+#             container's name and its versions' state), the secrets carrying
+#             the Bitbucket token's label and their IAM policies, and mints the
 #             access token the outcome node is written with), fugaro (the
 #             release under test —
 #             the release that first carries the proxy, 0.21.0: the first tag
@@ -45,11 +47,38 @@
 #             repositories only: the project and the region are hard-coded in
 #             this file (never `gcloud config get-value project`), and a
 #             repository whose workspace is the owner's own is refused by name.
-#             The installation must have its credentials service on and the
-#             sandbox repository published with `proxy: true` — Check 191 stops
-#             if either is not so, because the fact it measures is a REFUSAL,
-#             and only the service can refuse a call it is answering. Check 192
-#             must be run from the proxied repository's own checkout (or with
+#             The installation must have its credentials service on, the sandbox
+#             repository must be on the credentials-service switch (agent.auth:
+#             cascade for it, with a model credential in the service's bundle,
+#             its root re-applied) and the sandbox repository must be published
+#             with `proxy: true`. Check 191 stops if any of the three is not so:
+#             the published half alone is INERT — a repository off the switch
+#             holds its own token and is served by nothing — because the fact it
+#             measures is a REFUSAL, and only the service can refuse a call it is
+#             answering. The switch is read from the credentials service's OWN
+#             IAM policy (`gcloud run services get-iam-policy
+#             fugaro-credentials --project fugaro-dev --region us-east5
+#             --format=json`) and the repository's REAL jobs (the jobs whose own
+#             `FUGARO_REMOTE` names it, from the job list the check already
+#             reads): it is ON when every one of those jobs runs as an account
+#             that policy grants `roles/run.invoker` to and at least one job
+#             exists, OFF when an existing job's account is not granted, and
+#             UNREAD — a row the check could not measure — otherwise. `fugaro
+#             doctor`'s `credentials-service-deployed` sentence is NOT the
+#             decision: the released doctor lists job accounts of workflow
+#             variants the repository does not deploy, so the doctor row is read
+#             only for the states where the service cannot serve a run at all —
+#             the installation has no credentials service, or it has one that
+#             admits every job account and holds nothing to serve a model
+#             credential out of — and its text is carried in the row for
+#             context. Those states are the ones doctor's own row can be trusted
+#             for; where the row is about the invoker grant, doctor answered it
+#             before it ever read the bundle, so the check reads the bundle
+#             itself (`gcloud secrets versions list`, of the container
+#             `gcloud secrets list` names as the service's own) and stops
+#             unmeasured when it holds no version Secret Manager will serve.
+#             Check 192 must be run from the proxied repository's own
+#             checkout (or with
 #             CHECK191_CHECKOUT naming it): doctor resolves the repository it is
 #             run in from the working directory, so the same command run
 #             anywhere else is never about this repository.
@@ -314,7 +343,8 @@ last_line() {
 write_reader() {
   cat >"$SCRATCH/reader.py" <<'PY'
 #!/usr/bin/env python3
-"""Check 191's reader: one file, five readings, no credential in any of them.
+"""Check 191's reader: one file, one reading per subcommand, no credential in
+any of them.
 
 policy   argv: the `project policy show --json` document, a repository. Prints
          whether the published block admits that repository and whether the
@@ -344,6 +374,24 @@ accessor argv: `gcloud secrets get-iam-policy`'s file. Prints `member=` for each
          member the bitbucket-token secret's policy binds.
 doctor   argv: `fugaro doctor --json`'s file. Prints the bitbucket-direct
          check's own verdict.
+invoker  argv: `gcloud run services get-iam-policy`'s file, `gcloud run jobs
+         list`'s file, a repository. Prints whether the credentials-service
+         switch is on for that repository — whether every ONE of its jobs runs
+         as an account the service's OWN IAM policy grants roles/run.invoker —
+         which is the grant itself rather than a sentence about it.
+switch   argv: `fugaro doctor --json`'s file. Prints the state of the
+         credentials service the doctor row still settles — an installation
+         with no service, a service with nothing to serve a run out of, an arm
+         about the invoker grant (which the check answers itself, from the
+         service's own policy and the repository's own jobs), a service that is
+         there, or a row this reading does not place — and the row's own text,
+         which the block carries for context.
+bundle-id argv: `gcloud secrets list --format=json`'s file. Prints the
+         credentials service's bundle container, matched by the name its
+         derivation gives it, and how many containers matched.
+bundle   argv: `gcloud secrets versions list`'s file, of that container.
+         Prints whether Secret Manager will serve the newest version of the
+         bundle — the one state a run can be launched in.
 """
 import json
 import re
@@ -429,6 +477,125 @@ def bitbucket_mount(e):
     here compares a name the deployment never writes."""
     src = (e.get("FUGARO_BITBUCKET_TOKEN") or {}).get("valueSource") or {}
     return (src.get("secretKeyRef") or {}).get("secret") or ""
+
+
+# INVOKE_ROLES are the roles whose name alone makes a member a caller of the
+# Cloud Run service: doctor's own list for the same grant
+# (internal/cli/doctor_brokering.go's runInvokeRoles, matched by name and never
+# expanded through the IAM API). The workflow module grants the first one
+# (deploy/terraform/gcp/modules/workflow/sa.tf); the rest are here for the same
+# reason they are there — an installation that granted one of them instead
+# would still be admitted by Cloud Run IAM, and a reading that called that
+# missing would stop a check on a repository that works.
+INVOKE_ROLES = ("roles/run.invoker", "roles/run.admin", "roles/run.developer",
+                "roles/owner", "roles/editor")
+
+
+def invoker_member(sa):
+    """The member an IAM policy spells a job's service account as — the form
+    doctor reads the same grant by (internal/cli/doctor_brokering.go builds
+    `"serviceAccount:" + ...@<project>.iam.gserviceaccount.com`), and never the
+    bare address, which no policy binding carries."""
+    return "serviceAccount:" + sa
+
+
+def invoker_verdict(bindings, member):
+    """Whether the service's own IAM policy admits member: "granted", "missing",
+    or "unread" for a binding this reading cannot interpret.
+
+    It mirrors doctor's invokerGranted — only a binding that NAMES the member is
+    a question about them, a custom role ("/roles/" in the name: this project's
+    or its organization's, whose permissions nobody here reads) is one it cannot
+    judge, and a plain name of INVOKE_ROLES is the grant the module writes —
+    with the one arm doctor has none of: a binding that carries a CONDITION
+    holds only while a CEL expression this reading cannot evaluate does, so it
+    is unread and never granted. A plain grant found beside an unreadable
+    binding still answers granted: doctor answers the same way, and one
+    roles/run.invoker binding naming the member is the whole question.
+    """
+    granted = unread = False
+    for b in bindings:
+        if member not in (b.get("members") or []):
+            continue
+        role = str(b.get("role") or "")
+        if role in INVOKE_ROLES:
+            if b.get("condition"):
+                unread = True
+            else:
+                granted = True
+        elif "/roles/" in role:
+            unread = True
+    if granted:
+        return "granted"
+    return "unread" if unread else "missing"
+
+
+# The needles below are the phrases this reading tells doctor's arms apart by.
+# Every one of them is pinned on the Go side
+# (internal/cli/doctor_brokering_test.go's
+# TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches), where a
+# reword of the sentence lands as a failing test rather than as an arm a live
+# check silently stops on. A needle that matched TWO arms would be worse than a
+# missing one, which is why the custom-role needle is the custom-role arm's own
+# sentence and not its "may invoke it could not be checked" tail: doctor's arm
+# for a read that failed altogether carries that tail too, in "whether its
+# callers may invoke it could not be checked", and reading that as a grant arm
+# would report a service nobody could read as one whose grants were the only
+# question. A grant arm means one thing only — doctor answered BEFORE it read
+# the bundle (doctorCredentialsServiceDeployed returns the missing-grant and the
+# custom-role arm; doctorCredentialsServiceServing, the read that sees the
+# bundle, runs only when every job account is admitted) — and the check then
+# reads the bundle itself, because in the very state this check exists for
+# (doctor naming the accounts of workflow variants a switched repository does
+# not deploy) doctor's row can never carry what the bundle holds.
+NOSERVICE = ("has no credentials service", "Cloud Run has no service")
+NOSERVE = ("it admits nobody: every job account may invoke it, and",)
+GRANT = ("grants no roles/run.invoker to",
+         "a custom role on its or the project's policy could not be read")
+SERVING = ("admits nobody on the verify route",)
+
+
+def switch_state(problem):
+    """What doctor's credentials-service-deployed row settles here, told apart by
+    its own words — the row's JSON carries nothing a reader outside the Go code
+    can branch on.
+
+    It settles the states where the service cannot serve a run AT ALL, because
+    those are the check's own prerequisite and no other read answers them: the
+    installation carries no service (doctor's info arm for the state DON1 turns
+    the opt-in into, and its warning arm for the block written with no service
+    behind it), and the service that admits every job account and has NOTHING TO
+    SERVE — the bundle holds no version, or the newest version of it is not
+    ENABLED — where every model call of every run is refused.
+
+    `grant` is the two arms doctor answers about the INVOKER GRANT, before it
+    reads the bundle: the sentence that names the accounts the service does not
+    admit, and the one for a custom role doctor could not judge. Neither decides
+    the switch here — that is the service's own IAM policy crossed with the
+    repository's own jobs, which is the grant itself rather than a sentence about
+    it, and the released doctor names accounts of workflow variants a switched
+    repository does not deploy — and neither says whether the service has
+    anything to serve, so the caller reads the bundle itself for those two.
+
+    `serving` is every other arm doctor answers while the service is there: the
+    healthy one (no problem line) and the one whose verify route was emptied (a
+    route no run of this check uses). Both are answered by an arm that has read
+    the bundle and found an ENABLED version in it.
+
+    Everything else is `other`: an arm this reading does not place — including
+    doctor's arms for a read that failed, which settle nothing — and a document
+    that carries no such row at all. A row the check may not read is one it stops
+    on rather than passes.
+    """
+    if any(n in problem for n in NOSERVICE):
+        return "noservice"
+    if any(n in problem for n in NOSERVE):
+        return "noserve"
+    if any(n in problem for n in GRANT):
+        return "grant"
+    if not problem or any(n in problem for n in SERVING):
+        return "serving"
+    return "other"
 
 
 cmd = sys.argv[1]
@@ -520,6 +687,131 @@ elif cmd == "doctor":
             break
     else:
         print("ok=missing")
+elif cmd == "invoker":
+    # The switch, read from the two facts a reader outside the Go code can
+    # read: the service's OWN IAM policy, and the account each job of the
+    # repository runs as (the same `jobs_of` the `jobs` reading uses, so a job
+    # counts here exactly when it counts there). One job of the repository whose
+    # account the policy does not admit makes the repository one the switch is
+    # off for: that job's runs cannot fetch a model credential, which is what
+    # the switch is. Nothing of the repository at all, an account no name can
+    # be read for, or a binding nobody here can interpret is `unread` — a row
+    # the check could NOT measure — never `on`.
+    policy = load(sys.argv[2]) or {}
+    repo = sys.argv[4]
+    bindings = [b for b in (policy.get("bindings") or []) if isinstance(b, dict)]
+    named, unnamed = [], 0
+    for _name, spec, _e in jobs_of(sys.argv[3], repo):
+        sa = spec.get("serviceAccountName") or ""
+        if sa:
+            named.append(sa)
+        else:
+            unnamed += 1
+    verdicts = [(m, invoker_verdict(bindings, invoker_member(m))) for m in sorted(set(named))]
+    missing = [m for m, v in verdicts if v == "missing"]
+    unread = [m for m, v in verdicts if v == "unread"]
+    if not verdicts and not unnamed:
+        state = "unread"
+        reason = "the installation's job list holds no job of %s (a job is the repository's when its own FUGARO_REMOTE names it), so there is no job account whose grant could be read" % repo
+    elif missing:
+        state = "off"
+        reason = "the service's own IAM policy grants no %s to %s" % (INVOKE_ROLES[0], ", ".join(missing))
+    elif unread:
+        state = "unread"
+        reason = "the service's own IAM policy binds %s in a way this reading cannot interpret (a custom role, or a grant that holds only while a condition does)" % ", ".join(unread)
+    elif unnamed:
+        state = "unread"
+        reason = "%d job(s) of %s run as no service account this reading can name" % (unnamed, repo)
+    else:
+        state = "on"
+        reason = "every job account of %s (%s) holds %s" % (repo, ", ".join(m for m, _ in verdicts), INVOKE_ROLES[0])
+    print("jobs=%d" % (len(verdicts) + unnamed))
+    for m, v in verdicts:
+        print("member=%s %s" % (word(m, 200), v))
+    print("missing=%s" % ", ".join(word(m, 200) for m in missing))
+    print("state=%s" % state)
+    print("reason=%s" % reason)
+elif cmd == "bundle-id":
+    # The credentials service's bundle container in a `gcloud secrets list`: the
+    # project-wide Secret Manager secret of the logical name creds-bundle, whose
+    # ID is gcp.ProjectSecretID's derivation
+    # (internal/backend/gcp/names.go): the readable stem
+    # fugaro-project-<installation>-creds-bundle, a 16-hex hash of the
+    # (installation, name) pair, and nothing else — the same shape `fugaro update`
+    # creates and the loader derives (`credsvc.BundleSecretID`). Why the STEM is
+    # what matches and the hash is not: the stem is the part the installation's
+    # own Terraform states ("the project-wide container of the logical name
+    # creds-bundle"), while the hash is a derivation this file would then hold a
+    # second copy of. The stem alone is not enough to match on — every other
+    # container of the installation carries the same "fugaro-project-<name>"
+    # prefix — so the 16-hex tail is required and the match is a whole name.
+    # Exactly one container may match: none or several is a reading that settles
+    # nothing, and the caller stops on it.
+    stem = "fugaro-project-fugaro-creds-bundle-"
+    ids = [seg for sec in (load(sys.argv[2]) or []) if isinstance(sec, dict)
+           for seg in [(sec.get("name") or "").rsplit("/", 1)[-1]]
+           if re.fullmatch(re.escape(stem) + r"[0-9a-f]{16}", seg)]
+    print("count=%d" % len(ids))
+    for i in ids[:1]:
+        print("id=%s" % word(i, 200))
+elif cmd == "bundle":
+    # The bundle container's newest version and whether Secret Manager will serve
+    # it, read from the container's own version list — the same two answers
+    # doctor's row carries when it gets that far (creds.go's bundleStore.newest,
+    # which is also where this newest-version rule comes from: the highest
+    # version NUMBER, compared as the decimal string it is, and the state of that
+    # one version). A container with no version at all and a newest version that
+    # is not ENABLED are the two states where the loader fails closed and every
+    # model call of a run against the service is refused: `serving` is the one
+    # state a run can be launched in.
+    listed = load(sys.argv[2])
+    vers = [v for v in listed if isinstance(v, dict)] if isinstance(listed, list) else None
+
+    def number(v):
+        return (v.get("name") or "").rsplit("/", 1)[-1]
+
+    if vers is None:
+        print("state=unread")
+        print("reason=the container's version list is not the document gcloud prints")
+    elif not vers:
+        print("state=empty")
+        print("reason=the bundle container holds no version at all")
+    else:
+        newest = max(vers, key=lambda v: (len(number(v)), number(v)))
+        if newest.get("state") == "ENABLED":
+            print("state=serving")
+            print("reason=its newest version (%s) is ENABLED" % word(number(newest), 40))
+        else:
+            print("state=disabled")
+            print("reason=its newest version (%s) is %s, which Secret Manager will not serve"
+                  % (word(number(newest), 40), word(newest.get("state") or "in no state this reading knows", 40)))
+elif cmd == "switch":
+    # Doctor's credentials-service-deployed row: whether the service can serve a
+    # run at all (the `switch_state` reading above), and the row's own text, which
+    # the block carries in every row it writes for context. The row is not the
+    # switch: that is the service's own IAM policy crossed with the repository's
+    # own jobs (the `invoker` reading), because doctor's sentence lists job
+    # accounts of workflow variants a switched repository does not deploy — so a
+    # reading that answered `off` from it would stop a check whose runs are served
+    # exactly as its other rows say.
+    doc = load(sys.argv[2])
+    checks = doc.get("checks") if isinstance(doc, dict) else None
+    if not isinstance(checks, list):
+        print("read=no")
+    else:
+        for c in checks:
+            if not isinstance(c, dict) or c.get("id") != "credentials-service-deployed":
+                continue
+            full = " ".join(str(c.get("problem") or "").split())
+            print("read=yes")
+            print("present=yes")
+            print("state=%s" % switch_state(full))
+            print("problem=%s" % (text(full) if full else ""))
+            break
+        else:
+            print("read=yes")
+            print("present=no")
+            print("state=other")
 else:
     sys.stderr.write("reader.py: unknown reading %r\n" % cmd)
     sys.exit(2)
@@ -791,22 +1083,182 @@ audit_class_need() { # audit_class_need CLASS
   printf '%s' "$n"
 }
 
+# switch_bundle: whether Secret Manager will serve the credentials service's
+# bundle — the one state a run of this check can be launched in. Returns 0 when
+# it will, and 1 with the reason printed on stdout when it will not or could not
+# be read. It is read HERE, by this check, in the one state where doctor's own
+# row cannot carry it: the arms about the INVOKER GRANT are returned by
+# doctorCredentialsServiceDeployed BEFORE doctorCredentialsServiceServing — the
+# read that sees the bundle — runs, so in the very state this check exists for
+# (the released doctor naming the accounts of workflow variants a switched
+# repository does not deploy) doctor never looks at the bundle, and a row read
+# as "doctor questioned nothing" would launch three runs against a service that
+# refuses every model call they make. The two answers are the loader's own: a
+# container with no version, and a newest version Secret Manager will not serve
+# (not ENABLED), are the states the loader fails closed in (credsvc's bundle
+# loader, and doctor's own reading of the same metadata), and a read that did
+# not answer is neither of them.
+switch_bundle() {
+  local sec=$SCRATCH/secrets-switch.json ver=$SCRATCH/bundle-versions.json id got
+  if ! gcloud secrets list --project="$P" --format=json >"$sec" 2>"$SCRATCH/bundle.err"; then
+    printf 'gcloud secrets list exited non-zero (%s), so the container the service serves from could not be named' "$(last_line "$(cat "$SCRATCH/bundle.err")")"
+    return 1
+  fi
+  got=$(reader bundle-id "$sec")
+  id=$(field_of id "$got")
+  if [ -z "$id" ]; then
+    printf 'no Secret Manager container of %s is the credentials service bundle (%s container(s) carry the name its derivation gives it), so there is no version to read' "$P" "$(field_of count "$got")"
+    return 1
+  fi
+  if ! gcloud secrets versions list "$id" --project="$P" --format=json >"$ver" 2>"$SCRATCH/bundle.err"; then
+    printf 'gcloud secrets versions list %s exited non-zero (%s), so whether the bundle holds a version Secret Manager will serve could not be read' "$id" "$(last_line "$(cat "$SCRATCH/bundle.err")")"
+    return 1
+  fi
+  got=$(reader bundle "$ver")
+  if [ "$(field_of state "$got")" = serving ]; then
+    return 0
+  fi
+  printf '%s (%s)' "$(field_of reason "$got")" "$id"
+  return 1
+}
+
+# step_policy_switch: whether the credentials-service switch is ON for $REPO,
+# which the published node does not answer. `proxy: true` is one half of the
+# flip and the inert half on its own: a repository is served only when the
+# installation has the service AND that repository's own auth is `cascade` AND
+# its record says the bundle holds a model credential (infra's
+# CredentialsServiceServes), and the repository's root is what writes its job
+# account the roles/run.invoker grant that follows (repoCredentialsService).
+#
+# The grant IS the reading: the Cloud Run service's own IAM policy, and the
+# account each of $REPO's real jobs runs as. The service is what Cloud Run
+# answers about a caller with, so its policy is the fact rather than a report
+# about it, and the jobs are the repository's own — a job is the repository's
+# when its FUGARO_REMOTE names it, the same rule the `jobs` step reads them by.
+# Doctor's `credentials-service-deployed` row is NOT the switch: the released
+# doctor crosses every workflow with every allowed named account
+# (infra.CredentialsJobAccounts), so it lists accounts of variants a switched
+# repository does not deploy, and a reading that answered `off` from that
+# sentence stops a check whose runs are served exactly as the rows below say.
+# The row is read for the states where the service cannot serve a run at all —
+# the installation has no credentials service, or it has one that admits every
+# job account and holds nothing to serve a model credential out of — and its
+# text is carried in the row for context.
+#
+# Returns 0 when the switch is on for $REPO, and 1 when the row was recorded —
+# the check then stops, because a run off the switch holds the Bitbucket token
+# on its own job and never reaches the service: every attempt below would be
+# answered about the direct path, and the block's thirteen FAILs would name the
+# proxy for a path this check never exercised.
+step_policy_switch() {
+  local doc=$SCRATCH/doctor-switch.json pol=$SCRATCH/service-policy.json jobs=$SCRATCH/jobs-switch.json
+  local got state said reason why jobs_n accounts missing
+  # --json prints the document and then exits non-zero for a warning, so the
+  # exit is not this read's answer: the reading is the document's own row.
+  fugaro doctor --project fugaro --json >"$doc" 2>"$SCRATCH/doctor-switch.err" || true
+  got=$(reader switch "$doc")
+  state=$(field_of state "$got")
+  said=$(field_of problem "$got")
+  [ -n "$said" ] || said="no problem line (the row is ok)"
+  case "$state" in
+  noservice)
+    fact proxied FAIL "the installation has no credentials service this check could read (doctor: ${said}), and proxy: true is INERT without one — nothing is served, a run of ${REPO} holds the Bitbucket token on its job, and every row below would measure the direct path instead of the proxy. Run 'fugaro update' — it deploys the service on every installation that can hold it — then make sure ${REPO} is on the switch (agent.auth: cascade, a model credential in the bundle, 'fugaro update --repo' for it) and run this check again"
+    return 1
+    ;;
+  # The service is there and admits every job account, and it has nothing to
+  # serve a run's model credential out of: doctor says every model call of a run
+  # against it is refused, so the three runs below would fail at their first call
+  # rather than measure the proxy. The switch itself is not what is wrong, so this
+  # is a row the check could NOT measure rather than one about ${REPO}.
+  noserve)
+    unmeasured proxied "the credentials service fugaro-credentials admits every job account and has NOTHING TO SERVE a run's model credential out of (doctor: ${said}), so every model call of a run against it is refused and whether ${REPO} is on the switch was NOT measured. Give the service a model credential ('fugaro creds set' is the bundle's only writer; a version Secret Manager will not serve has to be enabled first), make sure ${REPO} is on the switch, and run this check again"
+    return 1
+    ;;
+  # `grant`: doctor's row is about the INVOKER GRANT, which it answers before it
+  # reads the bundle — so the bundle is read here, by this check, and a service
+  # with nothing to serve a run's model credential out of stops the check the
+  # same way `noserve` does. It is the state the released doctor puts a switched
+  # repository in: its sentence names the job accounts of workflow variants the
+  # repository does not deploy, and in that state doctor never looked at the
+  # bundle at all.
+  grant)
+    if ! why=$(switch_bundle); then
+      unmeasured proxied "the credentials service fugaro-credentials cannot serve a run's model credential out of its bundle, read here by this check because doctor's own row does not carry it in this state: doctor answered its invoker-grant arm, which it returns BEFORE it reads the bundle (doctor: ${said}). The bundle reading says: ${why}. Every model call of a run against the service is refused while that holds, so whether ${REPO} is on the switch was NOT measured. Give the service a model credential ('fugaro creds set' is the bundle's only writer; a version Secret Manager will not serve has to be enabled first), make sure ${REPO} is on the switch, and run this check again"
+      return 1
+    fi
+    ;;
+  # `serving`: the service is there and can serve a run — doctor questions
+  # nothing about it, and its row is one answered by an arm that read the bundle
+  # and found a version in it.
+  serving) ;;
+  # `other` and anything else: doctor's row is one this reading does not place, or
+  # the document carries none, so whether the installation can serve a run at all
+  # was not settled. Fail closed: a state this file does not know is not a state
+  # it may read as on.
+  *)
+    unmeasured proxied "doctor's credentials-service-deployed row is one this check could not place, or the document carries none (state: ${state:-none}; doctor: ${said:-no line}), so whether this installation can serve a run at all was NOT measured and every row below would be read about a path this check never settled. Run 'fugaro doctor --project fugaro --json' yourself, read that row, and settle it before anything is launched"
+    return 1
+    ;;
+  esac
+  # The service's own policy, the same read doctor's row makes
+  # (doctorCredentialsServiceDeployed): the grant the module writes is one
+  # member — the job's account — with roles/run.invoker on that one service.
+  if ! gcloud run services get-iam-policy fugaro-credentials --project="$P" --region="$L" --format=json >"$pol" 2>"$SCRATCH/service-iam.err"; then
+    unmeasured proxied "the Cloud Run service fugaro-credentials' own IAM policy could not be read (gcloud run services get-iam-policy exited non-zero: $(last_line "$(cat "$SCRATCH/service-iam.err")")): whether the job accounts of ${REPO} hold roles/run.invoker on it was NOT measured, and every row below would be read about a path this check never settled. Read it yourself (gcloud run services get-iam-policy fugaro-credentials --project=${P} --region=${L} --format=json), settle it, and run this check again. doctor's credentials-service-deployed line, for context: ${said}"
+    return 1
+  fi
+  if ! gcloud run jobs list --project="$P" --region="$L" --format=json >"$jobs" 2>"$SCRATCH/jobs-switch.err"; then
+    unmeasured proxied "the installation's job list could not be read (gcloud run jobs list exited non-zero: $(last_line "$(cat "$SCRATCH/jobs-switch.err")")): the jobs of ${REPO} (the ones whose own FUGARO_REMOTE names it) are the other half of the switch, so whether it is on for ${REPO} was NOT measured and every row below would be read about a path this check never settled. Read it yourself (gcloud run jobs list --project=${P} --region=${L} --format=json), settle it, and run this check again"
+    return 1
+  fi
+  got=$(reader invoker "$pol" "$jobs" "$REPO")
+  state=$(field_of state "$got")
+  reason=$(field_of reason "$got")
+  jobs_n=$(field_of jobs "$got")
+  missing=$(field_of missing "$got")
+  accounts=$(printf '%s\n' "$got" | sed -n 's/^member=\([^ ]*\) .*/\1/p' | tr '\n' ' ')
+  case "$state" in
+  on)
+    fact proxied PASS "${REPO} is admitted by the published policy with proxy: true and is on the credentials-service switch: the Cloud Run service fugaro-credentials grants roles/run.invoker to every account its ${jobs_n} job(s) run as (${accounts}) on the service's own IAM policy, so its runs reach Bitbucket through the installation's credentials service and hold no token. doctor's credentials-service-deployed line, for context: ${said}"
+    return 0
+    ;;
+  off)
+    fact proxied FAIL "the credentials-service switch is OFF for ${REPO}: the published policy admits it with proxy: true, and that half is INERT — the Cloud Run service fugaro-credentials' own IAM policy does not grant roles/run.invoker to every account ${REPO}'s jobs run as (its ${jobs_n} job(s) run as ${accounts}; the policy grants nothing to: ${missing}), so the repository's own auth is not cascade (or its root was never re-applied with it): its job mounts the Bitbucket token and its runs push straight to Bitbucket, and not one of the rows below would be about the proxy. Set agent.auth: cascade for ${REPO} in its own fugaro.yaml, with a model credential in the service's bundle (fugaro creds set), run 'fugaro update --repo' for it, and run this check again. doctor's credentials-service-deployed line, for context: ${said}"
+    return 1
+    ;;
+  # `unread` and anything else: the reading did not settle the switch, so it is
+  # a row the check could NOT measure rather than a PASS. The default arm is the
+  # fail-closed one on purpose — a state this file does not know is not a state
+  # it may read as on.
+  *)
+    unmeasured proxied "the credentials-service switch for ${REPO} could NOT be read (state: ${state:-none}; ${reason:-no reason given}): whether every account its jobs run as holds roles/run.invoker on the Cloud Run service fugaro-credentials was NOT measured, and every row below would be read about a path this check never settled. Read the two facts yourself — gcloud run services get-iam-policy fugaro-credentials --project=${P} --region=${L} --format=json, and the jobs of ${REPO} in gcloud run jobs list — settle it, and run this check again. doctor's credentials-service-deployed line, for context: ${said}"
+    return 1
+    ;;
+  esac
+}
+
 step_policy() {
   local doc=$SCRATCH/policy.json got
   fugaro project policy show --project fugaro --json >"$doc" 2>"$SCRATCH/policy.err" || {
     fact proxied FAIL "fugaro project policy show --project fugaro --json exited non-zero: $(last_line "$(cat "$SCRATCH/policy.err")"). Nothing about the proxy switch is settled by it"
-    return 0
+    return 1
   }
   got=$(reader policy "$doc" "$REPO")
   if [ "$(field_of admitted "$got")" != yes ]; then
     fact proxied FAIL "the published policy's bitbucket_token.allow_repos does not admit ${REPO}, so a run in it is refused at its first call and none of the seven attempts below would be about the proxy: publish the sandbox repository (fugaro project policy publish, from project_secrets.bitbucket-token.allow_data_to) and run this check again"
-    return 0
+    return 1
   fi
   if [ "$(field_of proxy "$got")" != yes ]; then
     fact proxied FAIL "the published policy admits ${REPO} but its bitbucket_token block does not carry proxy: true, so this repository's runs get the token MOUNTED on the job instead of through the credentials service — that is the state Check 191 measures the way OUT of, and the flip (Check 192) is what turns it on. Turn the proxy on for the installation and run this check again"
-    return 0
+    return 1
   fi
-  fact proxied PASS "${REPO} is admitted by the published policy with proxy: true: its runs reach Bitbucket through the installation's credentials service and hold no token"
+  # The node's half is read and it is not the whole flip: a repository the node
+  # admits is served only while its own switch is on, so the row that says its
+  # runs reach Bitbucket through the service — the one step_policy_switch
+  # records, which is where the policy's half and the switch's are one reading —
+  # is not written until the service's own IAM policy says the repository's job
+  # accounts may invoke it.
+  step_policy_switch || return 1
 }
 
 step_work_run() {
@@ -1020,7 +1472,11 @@ TASK_EOF
 }
 
 run_191() {
-  step_policy
+  # step_policy stops the check when it FAILs: every row below is read from a
+  # run that goes through the credentials service, and a check whose premise —
+  # a repository the policy admits AND that is on the switch — does not hold
+  # would launch three real runs to measure a path they never take.
+  step_policy || return 0
   step_work_run
   run_log "work" "$(run_id work)"
   audit_read "$(run_id work)" "$SCRATCH/audit-work.json" "${#ATTEMPTS[@]}"
@@ -1197,6 +1653,8 @@ plan() {
     done
   else
     say "  [network, read] fugaro project policy show --project fugaro --json — whether ${REPO} is admitted with proxy: true"
+    say "  [network, read] gcloud run services get-iam-policy fugaro-credentials --project=${P} --region=${L} --format=json and gcloud run jobs list --project=${P} --region=${L} --format=json — whether every job account of ${REPO} holds roles/run.invoker on the credentials service (the switch, read from the service's own policy and the repository's own jobs)"
+    say "  [network, read] gcloud secrets list --project=${P} --format=json, then gcloud secrets versions list <the credentials service's bundle container> --project=${P} --format=json — whether the service has a model credential to serve a run out of, read here where doctor's own row answers about the invoker grant instead"
     say "  [network, runs] fugaro run --repo ${REPO} --run-id $(run_id work) — the throwaway run itself, whose task commits one line, pushes it and opens its pull request through the service, THEN makes the seven attempts and prints one line per attempt"
     say "  [network, read] gcloud logging read (service fugaro-credentials, jsonPayload.run) — the service's own lines for each run: its audit lines, and the refusal line that carries a refusal's class"
     say "  [network, runs] fugaro run --repo ${REPO} --recipe review-only --pr <the working run's own pull request> --run-id $(run_id review) — a review-only run (mode: review is launched with the pull request it reviews, and such a run has no branch of its own), whose push must be refused"

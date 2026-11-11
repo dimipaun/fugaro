@@ -43,6 +43,10 @@ func markdownCore(d Digest) []byte {
 	fmt.Fprintf(&b, "Runs of this repository that finished in %s (%s to %s): %d in all, %d shown, %d flagged. Billed %s, notional %s.\n\n",
 		d.Period.Key, d.Period.Start, d.Period.End, d.Total.Runs, len(d.Runs), d.Total.Flagged,
 		USD(d.Total.Billed), USD(d.Total.Notional))
+	if d.Challengers.Runs > 0 {
+		fmt.Fprintf(&b, "A/B challenger runs of this repository that finished in %s, counted apart from the figures above: %d in all, billed %s, notional %s.\n\n",
+			d.Period.Key, d.Challengers.Runs, USD(d.Challengers.Billed), USD(d.Challengers.Notional))
+	}
 
 	if len(d.Runs) == 0 {
 		b.WriteString("No run of this repository finished in this period.\n\n")
@@ -61,7 +65,7 @@ func markdownCore(d Digest) []byte {
 
 	if len(d.Failures) > 0 {
 		b.WriteString("## Failures\n\n")
-		b.WriteString("Why the period's runs did not succeed, over every run of the period, not only the rows above.\n\n")
+		b.WriteString("Why the period's runs did not succeed, over every run of the period, not only the rows above. A challenger arm is not one of them: its own loss is its pair's (D568).\n\n")
 		rows := make([]ClassCount, len(d.Failures))
 		for i, f := range d.Failures {
 			f.Example = ends[task.Ref{RunID: f.Example}]
@@ -72,7 +76,7 @@ func markdownCore(d Digest) []byte {
 
 	if len(d.Stages) > 0 {
 		b.WriteString("## Stages\n\n")
-		b.WriteString("Model calls and sub-agents by stage, over every run of the period.\n\n")
+		b.WriteString("Model calls and sub-agents by stage, over every run of the period. A challenger arm's are counted apart: it runs the pair's other model (D568).\n\n")
 		b.WriteString("| stage | calls | agents |\n")
 		b.WriteString("| --- | --- | --- |\n")
 		for _, s := range d.Stages {

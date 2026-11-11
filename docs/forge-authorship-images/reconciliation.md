@@ -226,7 +226,9 @@ the launcher-as-author and the trailers survive into `main`'s blame on a squash 
 (U9); the spec's "shows up in blame" may hold only for merge commits and rebases. (D648)
 
 **F18, Rule.** The coordinator is advisory: "It never blocks or reorders merges"
-(`docs/coordinator/spec.md`), and "Fugaro never merges" (`docs/design/v1.md`), with one qualification:
+(`docs/coordinator/spec.md`), and "Fugaro never merges" (`docs/design/v1.md` — **amended 2026-11-10 by
+`docs/outer-loop-escalation`: the non-goal now reads "No merge outside the orchestrator's gated rule", so
+only the orchestrator daemon merges, and only under that rule's gate**), with one qualification:
 the mobile mailbox's `merge` action has the consumer run `gh pr merge` on a person's command
 (`internal/mailbox/message.go`), with no knowledge of a merge order. The coordinator's GitHub token
 is `pull_requests: read` (`coordinatorTokenPermissions`, Q3(A)), and a writing coordinator was refused

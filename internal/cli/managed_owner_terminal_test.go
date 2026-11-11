@@ -710,20 +710,28 @@ func TestManagedOwnerTerminalUnverifiedFirebaseKeepsTheOwnersTerminal(t *testing
 
 // TestManagedOwnerTerminalRefusedPlanIsNotApplied is the same boundary driven
 // through the whole command instead of one call: the owner's own terminal, a
-// managed project, and a plan the gate refuses — a grant to a member the review
-// screen does not list, and a delete of a grant that is not one of the
-// launcher's own replacements. Nothing is applied, no OwnerProceeded sentence
+// managed project, and a plan the gate refuses on D1549's half — an
+// authoritative IAM resource, both created and removed, which is not a document
+// Fugaro's own tree writes (the modules grant per member, and a binding is the
+// whole policy of its object). Nothing is applied, no OwnerProceeded sentence
 // is printed, and the run stops on the gate's own refusal, which is what the
 // owner reads: the refusal is the gate's error (managed_gate.go's admit), so
 // the step never reaches a confirmation at all, and an arm that answered for
 // any plan at all would be applying one the gate refused.
+//
+// The fixtures are D1549's kind and not the grants this test used to carry:
+// since T9 a grant to a member the review did not list and a removal of a grant
+// that is not one of the launcher's own replacements are content findings the
+// gate records and warns about rather than refuses
+// (TestUpdateManagedOutOfTableGrantAppliesAndIsRecorded), so a plan of those is
+// applied and cannot witness the boundary this test exists for.
 func TestManagedOwnerTerminalRefusedPlanIsNotApplied(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		plan planChange
 	}{
-		{"a grant to a member the review did not list", grantChange("state", "user:not-listed@example.com", "roles/storage.objectViewer", "create")},
-		{"a delete of a grant that is not the launcher's", grantChange("state", "user:a@example.com", "roles/storage.objectAdmin", "delete")},
+		{"an authoritative grant created", change("module.installation.google_storage_bucket_iam_binding.runs", "create")},
+		{"an authoritative grant removed", change("module.installation.google_storage_bucket_iam_binding.state", "delete")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := updateRig(t)

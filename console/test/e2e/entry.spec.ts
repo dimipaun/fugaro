@@ -676,7 +676,7 @@ test.describe('the renderer entry, in the real window', () => {
     // console makes three kinds of spawn: the
     // handshake's own `version` probe, the Live screen's `watch --json`, and the
     // Live screen's rigor join, `runs ls --json` (the mode on a Live row is
-    // joined by run id, since `watch --json` carries no rigor block) -- each
+    // joined by run id, which is where the run's rigor block is read) -- each
     // planned by the bound source with the installation's `--project` and the
     // installation's binary. A `report`, a `budget`, any other `runs` read or a
     // `diagnose` here is a read some screen made that it should not have, and

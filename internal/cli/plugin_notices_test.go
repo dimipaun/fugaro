@@ -1,9 +1,12 @@
 package cli
 
 import (
-	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 const hookedSettings = `{
@@ -15,22 +18,32 @@ const hookedSettings = `{
 }
 `
 
-// Blessing the file shows what else is in it: update-skills (before it writes)
-// and the plugin stage's diff screen list hooks, permissions and the rest as
-// heads-up lines, and never the values.
+// Blessing a file went with the merge (U2, D949): the run reads nothing in the
+// checkout and shows nothing of it. --check is where the file is read, and it
+// lists hooks, permissions and the rest as heads-up lines — never the values.
 func TestUpdateSkillsShowsWhatElseTheSettingsFileCarries(t *testing.T) {
-	releaseBuild(t, "0.3.0") // a different pin: the file changes
-	wiringCheckout(t, hookedSettings)
+	withVersion(t, "0.2.0")
+	settings := wiringCheckout(t, hookedSettings)
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
 	out, _, err := executeStdin(t, "", "update-skills")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"heads-up: the file defines hooks", "heads-up: permissions.allow pre-approves tools without asking, Bash (commands) among them", "enableAllProjectMcpServers", "x@other"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("no %q in:\n%s", want, out)
+	if strings.Contains(out, "heads-up:") {
+		t.Errorf("the run reads the checkout's file, and nothing in it is this command's business (U2):\n%s", out)
+	}
+	if got, _ := os.ReadFile(settings); string(got) != hookedSettings {
+		t.Errorf("the file changed:\n%s", got)
+	}
+	txt, _, _ := executeStdin(t, "", "update-skills", "--check")
+	for _, want := range []string{"heads-up: the file defines hooks", "heads-up: permissions.allow pre-approves tools without asking, Bash (commands) among them", "enableAllProjectMcpServers", "x@other", "this list is not exhaustive: read the file yourself"} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("no %q in:\n%s", want, txt)
 		}
 	}
-	for _, l := range strings.Split(out, "\n") {
+	for _, l := range strings.Split(txt, "\n") {
 		if strings.HasPrefix(l, "heads-up:") && strings.Contains(l, "evil.example") {
 			t.Errorf("a notice echoes a value of the file: %s", l)
 		}
@@ -38,13 +51,6 @@ func TestUpdateSkillsShowsWhatElseTheSettingsFileCarries(t *testing.T) {
 	js, _, _ := executeStdin(t, "", "update-skills", "--check", "--json")
 	if !strings.Contains(js, `"notices"`) || !strings.Contains(js, "this list is not exhaustive: read the file yourself") {
 		t.Errorf("--json has no notices or no caveat:\n%s", js)
-	}
-	if !strings.Contains(out, "this list is not exhaustive: read the file yourself") {
-		t.Errorf("the diff screen has no caveat:\n%s", out)
-	}
-	// --check says it too, and a file with no notices is no exception.
-	if txt, _, _ := executeStdin(t, "", "update-skills", "--check"); !strings.Contains(txt, "this list is not exhaustive: read the file yourself") {
-		t.Errorf("--check has no caveat:\n%s", txt)
 	}
 }
 
@@ -81,24 +87,28 @@ func TestCleanSettingsStillCarryTheCaveat(t *testing.T) {
 	}
 }
 
-// Verified live (Claude Code 2.1.289): the plugin may need a manual install (observed 2026-10-07),
-// and a changed pin needs /plugin marketplace update fugaro. The outputs say
-// exactly that, and never that teammates are offered or prompted.
+// Verified live (Claude Code 2.1.289): an installed or updated plugin needs a
+// restart, and a machine whose record differs from a checkout's leftover pin is
+// told to run /plugin marketplace update fugaro. The step says both, and never
+// that a checkout's file was written: nothing writes one any more (U2, D949).
 func TestPluginOutputsSayWhatClaudeCodeDoes(t *testing.T) {
-	releaseBuild(t, "0.3.0")
-	wiringCheckout(t, hookedSettings) // pinned to v0.2.0: update-skills moves it
+	withVersion(t, "0.2.0")
+	settings := wiringCheckout(t, hookedSettings) // pinned to v0.2.0: a leftover an older fugaro left
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
 	out, _, err := executeStdin(t, "", "update-skills")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Claude Code run /plugin marketplace update fugaro", "Claude Code installs the plugin when you open", "the folder was already trusted", "fugaro update again", "only trust folders you trust"} {
+	for _, want := range []string{"using claude at " + f.Bin(), "installed 0.2.0", "restart running Claude Code sessions to apply it"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("update-skills lacks %q:\n%s", want, out)
 		}
 	}
-	for _, bad := range []string{"offered", "prompted", "restart Claude Code"} {
+	for _, bad := range []string{"offered", "prompted", "restart Claude Code", "git diff", settings} {
 		if strings.Contains(out, bad) {
-			t.Errorf("update-skills says %q:\n%s", bad, out)
+			t.Errorf("update-skills says %q, and the checkout is not its business any more:\n%s", bad, out)
 		}
 	}
 	if got := pluginwire.InstalledDiffers.Fix(); !strings.Contains(got, "run /plugin marketplace update fugaro") {

@@ -1185,3 +1185,99 @@ func TestInitRepoAcceptsAForkPinWithTheRecordedOwner(t *testing.T) {
 		t.Errorf("the cover trusts owner %q of repository %q; want acme of %s", c.Owner, c.Ghcr, infra.GhcrRegistry)
 	}
 }
+
+// TestFirebaseCoverSplitKeepsAnUnverifiedProjectIntegrity is the one step whose
+// split is not the cover's own: the Firebase root may be deployed into a
+// project that is not this installation's, and that is the step's own fact
+// about the project the root would write into rather than a rule of the cover
+// about an address. D1549 keeps it an INTEGRITY reason — a project nobody
+// verified as Fugaro's refuses the plan, which is not something a warning may
+// carry — so coverSplitFirebase answers the step's reason as the whole of the
+// integrity half and does not ask the cover at all. A branch that fell through
+// to the cover's own halves would leave the gate with a plan it only warns
+// about, which is the pre-D1545 behaviour for a plan nothing judged: the fixture
+// is therefore a plan the cover DOES have something to say about — a create of a
+// type the installation's modules never write, which D1545 makes a content
+// finding — and the two cases are read off one plan.
+func TestFirebaseCoverSplitKeepsAnUnverifiedProjectIntegrity(t *testing.T) {
+	plan := &tf.Plan{ResourceChanges: []tf.ResourceChange{{
+		Address: "module.firebase.google_something_else.this", Mode: "managed",
+		Type: "google_something_else", ProviderName: "registry.terraform.io/hashicorp/google",
+		Change: tf.Change{Actions: []string{"create"}, After: map[string]any{}},
+	}}}
+	r := &initRun{cmd: NewRootCmd(), o: &initOptions{}, w: &syncBuf{}, projectName: initProjectName, gcpProject: initProject,
+		review: &runReview{state: reviewTaken,
+			cover: func() tf.Cover { return tf.Cover{Projects: []string{initProject}, Region: "us-east5"} },
+			firebase: func(context.Context) (bool, string) {
+				return false, "another project than " + initProject + ", with no Fugaro mark"
+			},
+		}}
+	reason := r.firebaseReason()
+	if reason == "" {
+		t.Fatal("the rig's Firebase project is verified, so it is not the case this test is about")
+	}
+
+	// Unverified: the step's own reason is the integrity half, and the cover is
+	// not asked — the content half is empty although this plan has a finding in
+	// it. The two halves are still the step's whole answer, which is what the
+	// gate and the confirmation must not disagree about.
+	cover := r.coverOfFirebase()
+	integrity, content := cover.NotCoveredSplit(plan, nil)
+	if !reflect.DeepEqual(integrity, []string{reason}) {
+		t.Errorf("an unverified Firebase project's integrity half is %q, want the step's own reason %q", integrity, reason)
+	}
+	if len(content) != 0 {
+		t.Errorf("an unverified Firebase project warned about %q: a project nothing verified as Fugaro's is not a finding to record and apply past (D1549)", content)
+	}
+	if whole := cover.NotCovered(plan, nil); !reflect.DeepEqual(whole, append(append([]string{}, integrity...), content...)) {
+		t.Errorf("the step's whole answer %q is not its two halves %q + %q", whole, integrity, content)
+	}
+
+	// Verified: the cover's own answer, halves and all — the same plan now has a
+	// content finding and nothing refusing it.
+	r.review.firebase = func(context.Context) (bool, string) { return true, "verified as Fugaro's" }
+	cover = r.coverOfFirebase()
+	integrity, content = cover.NotCoveredSplit(plan, nil)
+	if len(integrity) != 0 {
+		t.Errorf("a verified Firebase project refused the plan: %q", integrity)
+	}
+	if len(content) != 1 || !strings.Contains(content[0], "outside the installation's modules") {
+		t.Errorf("a verified Firebase project's content half is %q, want the cover's own finding about the type", content)
+	}
+	if whole := cover.NotCovered(plan, nil); !reflect.DeepEqual(whole, append(append([]string{}, integrity...), content...)) {
+		t.Errorf("the step's whole answer %q is not its two halves %q + %q", whole, integrity, content)
+	}
+}
+
+// TestStepCoverWithNoSplitRefusesItsWholeAnswer is stepCover's other
+// fail-closed branch (D1545): a step cover built without a split — the shape
+// coverOf never makes, since it takes the reasons and the split together off
+// the same review, and the shape a constructor that took one without the other
+// would make — has no way to tell the two kinds apart, so the gate reads its
+// whole answer as the reasons that still refuse. The other direction, the whole
+// answer as CONTENT, is a plan every reason of this step's own cover is applied
+// past with only a warning kept (D1549), which is the one thing the split must
+// never do: it costs a rule. The missing cover is the same branch with both
+// fields nil, and its own sentence is refused the same way rather than read as
+// "nothing to refuse".
+// Mutation (run, restore): return nil, c.NotCovered(p, imports) in
+// stepCover.NotCoveredSplit and the integrity assertion below fails.
+func TestStepCoverWithNoSplitRefusesItsWholeAnswer(t *testing.T) {
+	const reason = "module.installation.google_cloud_run_v2_job.runner (create): the step's own rule"
+	for name, c := range map[string]stepCover{
+		"a cover that answers and cannot split": {notCovered: func(*tf.Plan, []tf.ImportKey) []string { return []string{reason} }},
+		"a cover the gate was never given":      {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			integrity, content := c.NotCoveredSplit(&tf.Plan{}, nil)
+			if len(content) != 0 {
+				t.Errorf("a step cover that cannot split warned about %q: a reason the gate cannot read as content is one it must refuse (D1549)", content)
+			}
+			if want := c.NotCovered(&tf.Plan{}, nil); len(want) == 0 {
+				t.Fatal("the cover answered nothing, so this test is not about the branch it means to pin")
+			} else if !reflect.DeepEqual(integrity, want) {
+				t.Errorf("integrity = %q, want the cover's whole answer %q", integrity, want)
+			}
+		})
+	}
+}

@@ -163,6 +163,10 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/modules/firebase/apis.tf",
 		"gcp/modules/firebase/firebase.tf",
 		"gcp/modules/firebase/iam.tf",
+		// The member's read of this project's database (W7): the one grant
+		// `fugaro update` makes to a workspace, in the file that holds the
+		// role, the binding and the variable the pin travels under.
+		"gcp/modules/firebase/workspace_access.tf",
 		"gcp/modules/firebase/outputs.tf",
 		"gcp/roots/firebase/main.tf",
 		"gcp/roots/firebase/variables.tf",
@@ -188,6 +192,15 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/compute/outputs.tf",
 		"gcp/roots/compute/.terraform.lock.hcl",
 		"gcp/roots/compute/tests/compute.tftest.hcl",
+		// The workspace root (workspaces plan W3): the workspace's own service
+		// and the one grant that reaches the workspace's own database, and
+		// nothing else — a job, a bucket or a repository here would be a
+		// workspace holding a member's work (spec §9).
+		"gcp/roots/workspace/main.tf",
+		"gcp/roots/workspace/variables.tf",
+		"gcp/roots/workspace/outputs.tf",
+		"gcp/roots/workspace/.terraform.lock.hcl",
+		"gcp/roots/workspace/tests/workspace.tftest.hcl",
 	} {
 		if _, err := fs.Stat(FS, p); err != nil {
 			t.Errorf("embedded tree lacks %s: %v", p, err)
@@ -617,7 +630,15 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 		for _, typ := range []string{"google_project_iam_member", "google_service_account_iam_member", "google_project_iam_custom_role"} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
 				for _, bad := range []string{"google_service_account.signer.member", "google_service_account.signer.email", "serviceAccount:", "roles/storage", "roles/run."} {
-					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_"))) {
+					// The three names whose blocks may name a serviceAccount:
+					// the history and coordinator accounts (the FP's own
+					// sweeper and its writer) and the member's pinned
+					// workspace account (workspace_access.tf, W7), which is
+					// the one principal from outside this installation. The
+					// workspace's exception is its exact address and not a
+					// name prefix, so no later block whose name merely
+					// contains workspace_ can borrow it.
+					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_") || blk.name == "google_project_iam_member.workspace_read")) {
 						t.Errorf("%s: %s mentions %s", path, blk.name, bad)
 					}
 				}
@@ -632,6 +653,54 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 	if n == 0 {
 		t.Error("no file under gcp/modules/firebase")
 	}
+}
+
+// The Firebase root's own half of W7's grant. What the binding IS — the one
+// read-only role and the one member — is pinned by the module's runs in
+// roots/firebase/tests/firebase.tftest.hcl, but a root run's assertions cannot
+// reach into a child module (that file says so), so the line that carries the
+// member's pinned workspace account from the root's variable to the module's is
+// pinned here. A root that dropped it would leave every one of those runs green
+// and the member in no workspace.
+func TestFirebaseRootPassesTheWorkspacePinToTheModule(t *testing.T) {
+	const path = "gcp/roots/firebase/main.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := moduleBody(path, stripComments(string(b)), "firebase")
+	if !ok {
+		t.Fatalf("%s: no module \"firebase\" block", path)
+	}
+	if !hasAttr(body, "workspace_service_account", "var.workspace_service_account") {
+		t.Errorf("%s: the module \"firebase\" block does not pass workspace_service_account, so the account a member's own config pins never reaches the read-only role (W7)", path)
+	}
+
+	// And the root declares the variable the pass-through reads: one without the
+	// other is a plan that fails, or a pin nothing acts on.
+	vb, err := fs.ReadFile(FS, "gcp/roots/firebase/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^variable\s+"workspace_service_account"\s*\{`).MatchString(stripComments(string(vb))) {
+		t.Error("gcp/roots/firebase/variables.tf does not declare workspace_service_account, which roots/firebase/main.tf passes to the module")
+	}
+}
+
+// moduleBody is the body of a `module "<name>" { ... }` block, or false when
+// the source declares none. It is the module-call twin of resourceBlocks: same
+// comment stripping, same brace matching.
+func moduleBody(path, code, name string) (string, bool) {
+	m := regexp.MustCompile(`(?m)^\s*module\s+"` + regexp.QuoteMeta(name) + `"\s*\{`).FindStringIndex(code)
+	if m == nil {
+		return "", false
+	}
+	open := m[1] - 1
+	end := matchBrace(code, open)
+	if end < 0 {
+		return "", false
+	}
+	return code[open+1 : end], true
 }
 
 // Nobody may act as the history account (it holds firebasedatabase.admin on
@@ -1553,12 +1622,37 @@ var (
 	// (M4): the account D920's public endpoint runs as, whose own grant list is
 	// one row long — the runs bucket's read (D932, modules/installation/
 	// coordinator.tf).
+	// google_service_account.workspace is the workspace root's own service
+	// (W3 of the workspaces plan): the workspace's own bundle's identity, the
+	// one member its one database grant names, and — unlike every account
+	// above — an account no module creates. The expression is admitted for
+	// what it IS rather than for a path: the attribute only resolves in a root
+	// that declares that account, and the grant itself is refused unless it is
+	// that root's (internal/infra/tf's WorkspaceNotCovered, which reads the
+	// member out of the plan, and the runAccountGrants row in
+	// internal/infra/managed, which pins the whole grant).
+	// CI's `terraform` job does not reach this root yet — its loop names
+	// `installation firebase repo compute`, and the `workspace` root is staged
+	// as docs/pending-workflows/ci.yml for the owner to copy in
+	// (docs/pending-workflows/README.md, `## ci.yml`) — so what holds the
+	// expression here is the plan-shaped half of the suite and
+	// internal/infra/tf/workspace_test.go, which reads main.tf's own grant,
+	// rather than a `terraform validate` of this root.
 	// google_service_account.fugaro_verifier[0] is the installation's verifier
 	// (CSR14, D1068): the one account the credentials service's verify route
 	// admits, and the only grant that names it is roles/run.invoker on that
 	// service (iam.tf). Its own reach is that row and the operators'
 	// token-creator grant on the account, which is what makes it a member
 	// expression worth admitting by name here rather than by shape.
+	// var.workspace_service_account is the member's own workspace_pin's
+	// account, and the Firebase root's one grant to it is the read-only
+	// database role (modules/firebase/workspace_access.tf, W7). It is the ONE
+	// member expression here that is a principal outside this installation:
+	// the pin names a workspace, which is another project's Fugaro
+	// installation, so it is admitted by name and readable in the plan rather
+	// than by shape. The binding itself is not covered — the managed cover
+	// admits no project-level IAM — so it is the member's own typed
+	// confirmation that admits it.
 	//
 	// "allUsers" is deliberately NOT on this list, and the absence is the
 	// point: D920's public invoker binding is one resource in one file, and a
@@ -1572,7 +1666,20 @@ var (
 	// The narrowing is not what makes the plan covered either:
 	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
 	// update whose plan carries this grant asks its own typed confirmation.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+
+	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
+	// tree no module creates: the workspace root's own (W3 of the workspaces
+	// plan), which is the workspace's own service's reach over the workspace's
+	// own database. It is named here by file AND id — the same shape
+	// publicMemberPath uses for allUsers — so neither copying the role under
+	// another name nor naming it from another file passes. Its permissions are
+	// pinned by TestWorkspaceDatabaseRoleIsTheTwoDataPermissions below and in
+	// the plan by internal/infra/tf's WorkspaceNotCovered, which is what keeps
+	// tf.FugaroRoles the installation's roles alone (RolePermissions, and
+	// cover.go's grantRules, are about an installation's plan).
+	workspaceRolePath = "gcp/roots/workspace/main.tf"
+	workspaceRoleType = "google_project_iam_custom_role"
 
 	// A custom role of one of this run's projects, spelled as the literal path
 	// "projects/${var.<project>}/roles/<id>" rather than read from the role
@@ -1651,8 +1758,8 @@ func TestIAMResourcesUseKnownExpressions(t *testing.T) {
 				t.Errorf("%s: %s has no role attribute the scan can read", path, blk.name)
 			case strings.HasPrefix(role, `"`):
 				if m := projectRoleLiteralRE.FindStringSubmatch(role); m != nil {
-					if !slices.Contains(tf.FugaroRoles, m[2]) {
-						t.Errorf("%s: %s: role %s names the custom role %s, which the modules do not create", path, blk.name, role, m[2])
+					if !slices.Contains(tf.FugaroRoles, m[2]) && !(path == workspaceRolePath && m[2] == tf.WorkspaceDatabaseRoleID) {
+						t.Errorf("%s: %s: role %s names the custom role %s, which the modules do not create (the one role outside them is the workspace root's own, %s in %s)", path, blk.name, role, m[2], tf.WorkspaceDatabaseRoleID, workspaceRolePath)
 					}
 					break
 				}
@@ -2090,6 +2197,50 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
 					if !slices.Contains(credentialsDatabasePermissions, p[1]) {
 						t.Errorf("%s: %s holds %s: the service's database role is its two data permissions and nothing else (no lifecycle, no list)", path, blk.name, p[1])
+					}
+				}
+				continue
+			}
+			// The member's workspace read role (modules/firebase/
+			// workspace_access.tf, W7): the one knowing exception that holds a
+			// firebasedatabase permission in the Firebase module, and it holds
+			// exactly ONE — the instance's read. It is the read half of the
+			// credentials service's own role, split out rather than reused so
+			// that the write (instances.update, a lifecycle-free but
+			// whole-database write) is not bound to the workspace's account at
+			// all. TestMemberUpdateBindsNoWriteOnTheMembersDatabase is the
+			// exact pin.
+			if blk.name == "google_project_iam_custom_role.workspace_read" {
+				if !strings.HasPrefix(path, "gcp/modules/firebase/") {
+					t.Errorf("%s: %s is not in the Firebase module", path, blk.name)
+				}
+				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+					if !slices.Contains(tf.WorkspaceReadPermissions, p[1]) {
+						t.Errorf("%s: %s holds %s: the member's workspace read role is the instance's read and nothing else", path, blk.name, p[1])
+					}
+				}
+				continue
+			}
+			// The workspace root's own database role (W3 of the workspaces
+			// plan): the second knowing exception to the firebasedatabase ban,
+			// for the credentials role's own reason and with the same two
+			// permissions. The workspace's own service reads the record at
+			// workspaces/<name>, keeps the admitted-token hashes and writes
+			// the meter, and Realtime Database IAM has no path-level scope, so
+			// the two instance DATA permissions are the narrowest grant that
+			// can — no lifecycle (create, delete, disable, reenable, undelete)
+			// and no list, which is what makes it narrower than the
+			// predefined admin role that was refused here before. It is bound
+			// to the workspace's own account alone (internal/infra/tf's
+			// WorkspaceNotCovered, over the plan). The exact list is pinned by
+			// TestWorkspaceDatabaseRoleIsTheTwoDataPermissions below.
+			if blk.name == "google_project_iam_custom_role.workspace_database" {
+				if path != workspaceRolePath {
+					t.Errorf("%s: %s is not the workspace root's own role: a database role belongs in %s", path, blk.name, workspaceRolePath)
+				}
+				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+					if !slices.Contains(tf.WorkspaceDatabasePermissions, p[1]) {
+						t.Errorf("%s: %s holds %s: the workspace's database role is its two data permissions and nothing else (no lifecycle, no list)", path, blk.name, p[1])
 					}
 				}
 				continue
@@ -4603,6 +4754,137 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	})
 	if n == 0 {
 		t.Errorf("no project grant naming the credentials service was found: this test is not reading the tree")
+	}
+}
+
+// The workspace root's database role (W3 of the workspaces plan): the two DATA
+// permissions of the instance, in the workspace's own project, named as the
+// literal path a plan can read, and bound to the workspace's own service
+// account alone.
+//
+// Why these two, and why a custom role at all. The workspace's own service
+// reads the record at workspaces/<name>, the admitted-token hashes (D1296) and
+// the member ledgers the alarm compares, and writes the meter (W7). Realtime
+// Database IAM has NO path-level scope — a grant is per instance and reaches
+// the whole database (spec §8) — so the only question a role can answer is
+// which OPERATIONS the account may make, and there are exactly two predefined
+// answers:
+//
+//   - roles/firebasedatabase.viewer is get+list: it cannot write the meter at
+//     all, so the workspace's own service could not settle a call.
+//   - roles/firebasedatabase.admin is all eight firebasedatabase.instances.*
+//     permissions (testdata/custom-role-permissions.txt): the two data
+//     permissions PLUS list and the instance lifecycle — create, delete,
+//     disable, reenable, undelete. Nothing in this design creates, deletes or
+//     disables a database, and the account that holds the workspace's record
+//     and the hashes of its admitted tokens must not be the one that can
+//     destroy the database they live in. It is also a role that reaches the
+//     budget backend, which this tree refuses outside the Firebase module
+//     (backendRoleRE), as the credentials service's database role found out.
+//
+// So the role is the intersection: get (the only read) and update (the only
+// write — a realtime-database node has no separate create or delete). A third
+// permission is a decision, and this test is where it is made.
+func TestWorkspaceDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
+	b, err := os.ReadFile(workspaceRolePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := resourceBlocks(t, workspaceRolePath, b, workspaceRoleType)
+	if len(roles) != 1 {
+		t.Fatalf("%s declares %d custom roles, want the one database role the workspace's own service holds", workspaceRolePath, len(roles))
+	}
+	role := squash(roles[0].body)
+	for _, want := range []string{
+		"project = var.project", // the workspace's own project, which is where its database is
+		`role_id = "` + tf.WorkspaceDatabaseRoleID + `"`,
+	} {
+		if !strings.Contains(role, want) {
+			t.Errorf("%s: the database role does not hold %q:\n%s", workspaceRolePath, want, role)
+		}
+	}
+	// Only the permissions list, so the role's title and role_id cannot stand
+	// in for a permission.
+	list := regexp.MustCompile(`(?s)permissions\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(roles[0].body)
+	if list == nil {
+		t.Fatalf("%s: the database role has no permissions list:\n%s", workspaceRolePath, role)
+	}
+	var got []string
+	for _, p := range quotedPerm.FindAllStringSubmatch(list[1], -1) {
+		got = append(got, p[1])
+	}
+	want := slices.Clone(tf.WorkspaceDatabasePermissions)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: the database role holds %v, want exactly %v: get is the only read and update the only write, and every other firebasedatabase permission is instance lifecycle the workspace's own service never uses", workspaceRolePath, got, want)
+	}
+	// The Go side, so a cover that accepted a third permission and a root that
+	// granted one cannot drift apart: WorkspaceDatabasePermissions is what the
+	// plan is judged by, and the role is deliberately NOT one of the
+	// installation's (tf.RolePermissions and cover.go's grantRules are about an
+	// installation's plan; this role is the workspace root's own).
+	if !slices.Equal(tf.WorkspaceDatabasePermissions, want) {
+		t.Errorf("tf.WorkspaceDatabasePermissions = %v, want exactly %v", tf.WorkspaceDatabasePermissions, want)
+	}
+	if tf.RolePermissions[tf.WorkspaceDatabaseRoleID] != nil {
+		t.Errorf("tf.RolePermissions pins %s: that table is the installation's modules' roles", tf.WorkspaceDatabaseRoleID)
+	}
+	if slices.Contains(tf.FugaroRoles, tf.WorkspaceDatabaseRoleID) {
+		t.Errorf("tf.FugaroRoles names %s: that table is the installation's modules' roles (each pinned in RolePermissions and covered by cover.go's grantRules), and the workspace root's role is covered by WorkspaceNotCovered instead — a row here would admit the role to an installation's plan", tf.WorkspaceDatabaseRoleID)
+	}
+
+	// The one grant: that role, on the workspace's own project, to the
+	// workspace's own account, with no condition and no second member.
+	grants := resourceBlocks(t, workspaceRolePath, b, "google_project_iam_member")
+	if len(grants) != 1 {
+		t.Fatalf("%s declares %d project grants, want exactly one — the database role, to the workspace's own account", workspaceRolePath, len(grants))
+	}
+	grant := squash(grants[0].body)
+	for _, want := range []string{
+		"project = var.project",
+		`role = "projects/${var.project}/roles/` + tf.WorkspaceDatabaseRoleID + `"`,
+		"member = google_service_account.workspace.member",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: the database grant does not hold %q:\n%s", workspaceRolePath, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: the database grant carries a condition (%s): Realtime Database IAM has no path-level scope, so a condition here narrows nothing a reviewer can read and only hides the grant from the cover", workspaceRolePath, grant)
+	}
+	// The role is named literally rather than read from the role resource:
+	// google_project_iam_custom_role's name is computed, so the reference
+	// reaches a plan as an unknown role and the cover could no longer say which
+	// role the grant is (tf's WorkspaceNotCovered, the unknown-role arm).
+	if roleAttr := firstAttr(grants[0].body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
+		t.Errorf("%s: the database grant reads its role from the role resource (%s), which a plan sees as unknown:\n%s", workspaceRolePath, roleAttr, grant)
+	}
+	// No predefined database role is granted to this account anywhere in the
+	// tree: the whole point of the custom role is that the two predefined ones
+	// are wrong for it, and a second binding of roles/firebasedatabase.admin
+	// would hand it the instance lifecycle.
+	seen := 0
+	walk(t, func(p string, fb []byte) {
+		if !strings.HasSuffix(p, ".tf") {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, p, fb) {
+			if !strings.HasPrefix(blk.typ, "google_project_iam_") || !strings.Contains(blk.body, "workspace") {
+				continue
+			}
+			if blk.typ != "google_project_iam_custom_role" {
+				seen++
+			}
+			for _, r := range quotedRoleRE.FindAllStringSubmatch(blk.body, -1) {
+				if strings.HasPrefix(r[1], "roles/firebasedatabase") {
+					t.Errorf("%s: %s grants the predefined %s to the workspace (spec §8: the workspace's own service holds the two data permissions and nothing else)", p, blk.name, r[1])
+				}
+			}
+		}
+	})
+	if seen == 0 {
+		t.Errorf("no grant naming the workspace was found: this test is not reading the tree")
 	}
 }
 
