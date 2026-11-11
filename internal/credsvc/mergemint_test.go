@@ -72,6 +72,14 @@ func mergeMintBody(repo string, number int, head, appID string) string {
 	return string(b)
 }
 
+// mergeMintLiteralBody is the same body spelled NAME BY NAME, the way the read
+// route's own helper spells its two (githubReadBody): the four field names are
+// the contract the daemon's client writes (internal/creds/mergemint.go), and a
+// body built from the struct would follow a renamed tag rather than hold it.
+func mergeMintLiteralBody(repo string, number int, head, appID string) string {
+	return `{"repository":"` + repo + `","number":` + fmt.Sprint(number) + `,"head_sha":"` + head + `","app_id":"` + appID + `"}`
+}
+
 // ---------------------------------------------------------------------------
 // The fake GitHub, with the gate's two reads
 // ---------------------------------------------------------------------------
@@ -1027,6 +1035,42 @@ func TestMergeMintUnauditedIssuesNothing(t *testing.T) {
 // ---------------------------------------------------------------------------
 // The call's shape, the route's own rules, and the installation behind it
 // ---------------------------------------------------------------------------
+
+// TestMergeMintBodyNamesTheFieldsTheDaemonWrites: the four field names are the
+// contract between this service and the client the daemon holds
+// (internal/creds/mergemint.go), and this test pins them ON THIS SIDE and
+// literally — the body below is spelled name by name (mergeMintLiteralBody)
+// rather than marshalled from MergeMintRequest, which is the read route's own
+// reason for spelling its body too (githubReadBody). A renamed tag would
+// otherwise compile, pass both packages, and make this service refuse every real
+// daemon call with a 400.
+//
+// The test below it cannot hold this: every body it sends carries a field this
+// contract does not have, so each is refused for that field before the four
+// names are reached.
+func TestMergeMintBodyNamesTheFieldsTheDaemonWrites(t *testing.T) {
+	s, gh := mergeMintSvc(t)
+	resp, body := s.callPerson(t, mergeMintPath, mergeMintLiteralBody(testRepoPath, 7, mergeHead(1), testAppID), s.orchestratorToken())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the merge mint refused the body its own client writes: HTTP %d %s", resp.StatusCode, body)
+	}
+	var answer struct {
+		Token      string `json:"token"`
+		Repository string `json:"repository"`
+	}
+	if err := json.Unmarshal(body, &answer); err != nil {
+		t.Fatalf("the answer is not JSON: %v (%s)", err, body)
+	}
+	if answer.Token != gh.token {
+		t.Errorf("the answer carries no token the fake minted: %s", body)
+	}
+	if answer.Repository != testRepoPath {
+		t.Errorf("the answer names repository %q, want the one the body named (%s)", answer.Repository, testRepoPath)
+	}
+	if bodies := gh.mintBodies(t); len(bodies) != 2 {
+		t.Errorf("the service minted %d installation tokens, want the gate's read token and the answer's", len(bodies))
+	}
+}
 
 // TestMergeMintBodyIsFourFieldsAndNoMore: the request's shape is the route's
 // widening guard. A body that names a permission set, a second repository or an
