@@ -72,7 +72,7 @@ func TransitionOf(body string) (runID, rung string, ok bool) {
 // the old not-ready note is Fugaro's with an unknown run (""). Whether the
 // comment is really Fugaro's is the caller's call: anyone can type a marker.
 func FugaroRun(body string) (runID string, ok bool) {
-	if id, _, found := lastMarkerRun(body); found {
+	if id, found := lastMarkerRun(body); found {
 		return id, true
 	}
 	start := strings.TrimLeft(body, " \t\r\n")
@@ -85,21 +85,21 @@ func FugaroRun(body string) (runID string, ok bool) {
 	return "", false
 }
 
-// lastMarkerRun finds the last marker of either kind in body and the index it
-// starts at. One search over both expressions rather than one after the
-// other, because "the last marker wins" is a rule about the body and not
-// about which kind is looked for first: a report quoting a transition marker
-// must not be read as the transition's.
-func lastMarkerRun(body string) (runID string, at int, found bool) {
-	at = -1
+// lastMarkerRun finds the run ID of the last marker of either kind in body.
+// One search over both expressions rather than one after the other, because
+// "the last marker wins" is a rule about the body and not about which kind is
+// looked for first: a report quoting a transition marker must not be read as
+// the transition's.
+func lastMarkerRun(body string) (runID string, found bool) {
+	at := -1
 	for _, re := range [...]*regexp.Regexp{markerRE, transitionRE} {
 		for _, loc := range re.FindAllStringSubmatchIndex(body, -1) {
 			if loc[0] >= at {
-				at, runID = loc[0], body[loc[2]:loc[3]]
+				at, runID, found = loc[0], body[loc[2]:loc[3]], true
 			}
 		}
 	}
-	return runID, at, at >= 0
+	return runID, found
 }
 
 // StripMarkers removes every marker and every line starting with the
