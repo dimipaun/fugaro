@@ -91,6 +91,15 @@ func TestVocabulary(t *testing.T) {
 	if want := []CeilingAction{"auto_merge", "auto_merge_notify", "wait_person"}; !reflect.DeepEqual(CeilingActions, want) {
 		t.Errorf("CeilingActions = %v; want %v", CeilingActions, want)
 	}
+	// The plan's seven reasons in its order, then the three transitions it
+	// describes without naming a code: the cheap step and what the one rung 2
+	// run left behind.
+	if want := []Reason{
+		"age", "attempts", "cost", "churn_new", "churn_same", "hotfix", "critical_path",
+		"rebase", "r2_clean", "r2_findings",
+	}; !reflect.DeepEqual(Reasons, want) {
+		t.Errorf("Reasons = %v; want %v", Reasons, want)
+	}
 
 	for _, r := range Rungs {
 		if !KnownRung(r) {
@@ -112,6 +121,11 @@ func TestVocabulary(t *testing.T) {
 			t.Errorf("KnownCeilingAction(%q) is false", a)
 		}
 	}
+	for _, r := range Reasons {
+		if !KnownReason(r) {
+			t.Errorf("KnownReason(%q) is false", r)
+		}
+	}
 
 	if KnownRung("") || KnownRung("R5") || KnownRung("r0") {
 		t.Error("KnownRung accepts a name outside the vocabulary")
@@ -124,6 +138,9 @@ func TestVocabulary(t *testing.T) {
 	}
 	if KnownCeilingAction("") || KnownCeilingAction("merge") {
 		t.Error("KnownCeilingAction accepts a name outside the vocabulary")
+	}
+	if KnownReason("") || KnownReason("escalated") {
+		t.Error("KnownReason accepts a name outside the vocabulary")
 	}
 }
 

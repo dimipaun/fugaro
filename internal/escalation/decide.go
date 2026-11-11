@@ -1,6 +1,8 @@
 package escalation
 
 import (
+	"math"
+	"slices"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -42,6 +44,8 @@ func KnownKind(k Kind) bool {
 // Reason is why the ladder entered the rung it answers with. It is a closed
 // code and not a sentence: the ledger records it verbatim and the digest
 // counts it (E7, E12, G8), so it holds no path, no finding text and no model.
+// Reasons is the whole vocabulary, and KnownReason is what a writer asks
+// before it stores one.
 type Reason string
 
 const (
@@ -67,10 +71,29 @@ const (
 	// not run at yet, and the cheap step comes before any escalation
 	// (spec.md "Tier 0").
 	ReasonRebase Reason = "rebase"
+	// ReasonR2Clean is the merge after the one rung 2 run, whose review left
+	// nothing blocking: the spec's "If the review is clean, merge"
+	// (spec.md "Tier 2", F17).
+	ReasonR2Clean Reason = "r2_clean"
 	// ReasonR2Findings is rung 3 straight after the one rung 2 run, whose
 	// review still leaves blocking findings (spec.md "Tier 3", D2036).
 	ReasonR2Findings Reason = "r2_findings"
 )
+
+// Reasons is the whole vocabulary: the seven the plan names, then the three
+// the plan describes without naming a code — the cheap step, and what the one
+// rung 2 run left behind. It is closed, and in the order above so the two
+// groups stay readable: a reason outside it is refused where it is written
+// (KnownReason), never stored as a string nothing can place (E7, G8).
+var Reasons = []Reason{
+	ReasonAge, ReasonAttempts, ReasonCost,
+	ReasonChurnNew, ReasonChurnSame, ReasonHotfix, ReasonCriticalPath,
+	ReasonRebase, ReasonR2Clean, ReasonR2Findings,
+}
+
+// KnownReason reports whether r is one of Reasons. The zero Reason — a
+// transition with no cause recorded — is not.
+func KnownReason(r Reason) bool { return slices.Contains(Reasons, r) }
 
 // Step is the ladder's answer: the rung to enter, and what that rung runs at.
 //
@@ -148,28 +171,32 @@ type Facts struct {
 //
 //   - A fact or a threshold this code cannot read refuses, and the item is
 //     left to a person (G5). Nothing here has a default: an unset grade, a
-//     mode with no row and a threshold of zero are all the fail-open direction
-//     if they are answered, so they are not answered.
+//     mode with no row, a threshold that is not a finite number and a
+//     threshold of zero are all the fail-open direction if they are answered,
+//     so they are not answered.
 //   - A split stands. Rung 4 is where D1246 leaves an item whose spec could
 //     not be salvaged, and the ladder never relaunches the same spec.
 //   - Churn comes before the clock, "whatever the clock says": new minor
 //     findings every round go straight to rung 3, and the same unresolved
-//     finding is one rung 2 and then the split (D2036).
-//   - The one rung 2 run, once spent, decides on what it left behind: a review
-//     that still blocks ends the escalation at once — the spec's "straight
-//     after a Tier 2 run that still has findings" — while a review that left
-//     nothing blocking is a converged item, which is not an escalation at all
-//     and falls through to the ceilings and then to today's behaviour.
-//   - The cost ceiling triggers rung 3 the way the hard ceiling does (D2038,
-//     G9). It is asked first of the two because it is the person's own stop,
-//     where the clock's is the mode's.
-//   - The hard ceiling is the mode's stop: at or past it comes rung 3 with
-//     the action the row names (D2030, D2037). It is what merges the item
-//     that converged long ago and was never merged (F17).
-//   - Hotfix's row is the mode's own rule: no runs before rung 2, and no stop
-//     for the cheap step on the way.
-//   - The cheap step is what an item below every threshold gets first, at a
-//     head it has not had it at, at most MaxRebases times (D2042, G4).
+//     finding is one rung 2 and then the split (D2036). It comes before the
+//     cheap step too, because a rebase does not answer a finding the reviewer
+//     keeps raising.
+//   - What the one rung 2 run left behind is read next, before the clock, the
+//     mode and the cheap step. A review that still blocks is the spec's
+//     "straight after a Tier 2 run that still has findings"; a review that
+//     left nothing blocking is the spec's merge, and it comes at once (F17)
+//     because the item has nothing left to escalate — a rebase instead would
+//     push a head the verdict no longer covers (G2, G13) and un-converge an
+//     item the ladder is done with.
+//   - The cost ceiling is the person's own stop on spend (D2038, G9), so it
+//     is read before the cheap step: a rung 0 run is a run. The hard ceiling
+//     is the mode's stop (D2030, D2037) and is read after it: the spec puts
+//     the cheap step "before any escalation", and an item already older than
+//     its ceiling when the daemon first ticks it is exactly the stalled pull
+//     request the rebase is for.
+//   - Hotfix's row is read whole, before the cheap step: the mode is
+//     production on fire, so it takes neither the rebase ("straight to Tier
+//     2") nor a wait past its own ceiling, the shortest of the table.
 //   - Rung 2's own thresholds: the count of normal runs first, then its hours
 //     — an item that has spent its runs is answering to what it did, not to
 //     the clock (spec.md "past a time or attempt threshold").
@@ -194,35 +221,30 @@ func Decide(f Facts, th Thresholds) (Step, Reason) {
 		return Step{Rung: R4}, ReasonChurnSame
 	}
 
-	if f.R2Runs > 0 && f.LastReviewBlocking {
-		return Step{Rung: R3, AtCeiling: row.AtCeiling}, ReasonR2Findings
+	if f.R2Runs > 0 {
+		if f.LastReviewBlocking {
+			return Step{Rung: R3, AtCeiling: row.AtCeiling}, ReasonR2Findings
+		}
+		return Step{Rung: R3, AtCeiling: row.AtCeiling}, ReasonR2Clean
 	}
 
 	if th.CostCeiling > 0 && f.CostUSD >= th.CostCeiling {
 		return Step{Rung: R3, AtCeiling: row.AtCeiling}, ReasonCost
 	}
 
-	if f.Elapsed >= clock(f, row.CeilingHours, th) {
-		return Step{Rung: R3, AtCeiling: row.AtCeiling}, timeReason(f, row.CeilingHours)
-	}
-
-	// The one escalation pass is spent and its review left nothing blocking:
-	// the item converged, so there is no rung above it to enter and no second
-	// pass to launch. It resumes on the normal path below, and is deliberately
-	// not read as "merge" here — the daemon asks the ladder about stalled
-	// items, and a clean review is not a stall; what does merge a converged
-	// item is the ceiling above, where it has waited long enough to be worth
-	// the judge.
-	if f.R2Runs > 0 {
-		return Step{Rung: R1}, ""
-	}
-
 	if f.Mode == rigor.Hotfix {
+		if f.Elapsed >= clock(f, row.CeilingHours, th) {
+			return Step{Rung: R3, AtCeiling: row.AtCeiling}, timeReason(f, row.CeilingHours)
+		}
 		return Step{Rung: R2, Grade: r2Grade(f, row)}, ReasonHotfix
 	}
 
 	if rebaseAvailable(f) {
 		return Step{Rung: R0}, ReasonRebase
+	}
+
+	if f.Elapsed >= clock(f, row.CeilingHours, th) {
+		return Step{Rung: R3, AtCeiling: row.AtCeiling}, timeReason(f, row.CeilingHours)
 	}
 
 	if f.Attempts >= row.RunsBeforeR2 {
@@ -235,6 +257,13 @@ func Decide(f Facts, th Thresholds) (Step, Reason) {
 	return Step{Rung: R1}, ""
 }
 
+// maxHours is the largest number of hours a row may name and still be read as
+// a time: clock multiplies by time.Hour, and past this the conversion
+// overflows into a negative duration, which would read every item as long past
+// its ceiling. It is about 292 years, so no threshold a person writes comes
+// near it, and a row that does is a row this code cannot read.
+const maxHours = float64(math.MaxInt64 / time.Hour)
+
 // readable reports whether the facts and the thresholds hold everything the
 // decision reads.
 //
@@ -246,21 +275,30 @@ func Decide(f Facts, th Thresholds) (Step, Reason) {
 // nobody set, above one lets a critical-path item wait longer than any other),
 // a kind or a rung outside the vocabulary, and a head the ladder cannot spend
 // the cheap step by.
+//
+// The two shapes a comparison would let through are the reason each numeric
+// guard is written the way it is: NaN fails every comparison, so a "factor <=
+// 0 || factor > 1" would read a NaN factor as a scale, and a NaN threshold
+// silently never fires. Non-finite and out-of-range values are refused
+// instead, because a threshold nobody can read is a threshold nobody set.
 func readable(f Facts, th Thresholds) bool {
 	row, ok := th.Rows[f.Mode]
 	if !rigor.Known(f.Mode) || !ok {
 		return false
 	}
-	if row.RunsBeforeR2 < 0 || row.R2Hours < 0 || row.CeilingHours <= 0 {
+	if !finite(row.R2Hours) || !finite(row.CeilingHours) || row.RunsBeforeR2 < 0 || row.R2Hours < 0 || row.CeilingHours <= 0 {
 		return false
 	}
-	if row.R2Hours >= row.CeilingHours {
+	if row.R2Hours >= row.CeilingHours || row.CeilingHours > maxHours {
 		return false
 	}
 	if !KnownGrade(row.Grade) || !KnownCeilingAction(row.AtCeiling) {
 		return false
 	}
-	if th.CriticalPathFactor <= 0 || th.CriticalPathFactor > 1 || th.CostCeiling < 0 {
+	if !(th.CriticalPathFactor > 0 && th.CriticalPathFactor <= 1) {
+		return false
+	}
+	if !finite(th.CostCeiling) || th.CostCeiling < 0 {
 		return false
 	}
 	if !KnownKind(f.Churn) {
@@ -274,6 +312,11 @@ func readable(f Facts, th Thresholds) bool {
 	}
 	return f.Elapsed >= 0 && f.Attempts >= 0 && f.CostUSD >= 0 && f.R2Runs >= 0
 }
+
+// finite reports whether a threshold is a number a person could have set: NaN
+// and the infinities are the shapes that pass a range test written the other
+// way round, and the shapes no JSON config can hold.
+func finite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }
 
 // clock is a threshold in hours read at the factor: an item that blocks other
 // work has every time halved, and every other item has none of them scaled

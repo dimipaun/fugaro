@@ -2,6 +2,7 @@ package escalation
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -83,14 +84,27 @@ func TestDecideTable(t *testing.T) {
 				}
 				return s, r
 			}
+			// AtCeilingRebasesFirst is the item the daemon first ticks when it
+			// is already older than its ceiling: the cheap step is still the
+			// ladder's first (spec.md "before any escalation"), and only
+			// Hotfix's row — read whole, and no stop for the rebase on the way
+			// — answers with its own ceiling.
+			ceilingFacts := on(mode, func(f *Facts) {
+				f.Elapsed = atHours(row.ceiling * scale)
+				f.HeadSHA = "head-2"
+			})
+			ceilingWant, ceilingReason, ceilingAnswers := Step{Rung: R0}, ReasonRebase, false
+			if hotfix {
+				ceilingWant, ceilingReason, ceilingAnswers = Step{Rung: R3, AtCeiling: row.action}, clockReason(cp), true
+			}
 			cases := []struct {
 				name       string
 				facts      Facts
 				want       Step
 				wantReason Reason
 				// atCeiling marks the case the mode's own ceiling answers:
-				// Hotfix's row is asked after it, so this one is not read
-				// through straight.
+				// Hotfix's row is asked before the ladder's later steps, so
+				// this one is not read through straight.
 				atCeiling bool
 			}{
 				{
@@ -122,13 +136,18 @@ func TestDecideTable(t *testing.T) {
 					wantReason: ReasonAttempts,
 				},
 				{
-					name: "AtCeiling",
-					facts: on(mode, func(f *Facts) {
-						f.Elapsed = atHours(row.ceiling * scale)
-					}),
+					name:       "AtCeiling",
+					facts:      on(mode, func(f *Facts) { f.Elapsed = atHours(row.ceiling * scale) }),
 					want:       Step{Rung: R3, AtCeiling: row.action},
 					wantReason: clockReason(cp),
 					atCeiling:  true,
+				},
+				{
+					name:       "AtCeilingRebasesFirst",
+					facts:      ceilingFacts,
+					want:       ceilingWant,
+					wantReason: ceilingReason,
+					atCeiling:  ceilingAnswers,
 				},
 			}
 			// Every case of the critical-path pass carries the flag: it is
@@ -172,6 +191,14 @@ func TestDecideCostCeiling(t *testing.T) {
 	expensive := on(rigor.Pro, func(f *Facts) { f.CostUSD = 40; f.BlocksOthers = true })
 	if _, reason := Decide(expensive, th); reason != ReasonCost {
 		t.Errorf("reason = %q; want %q", reason, ReasonCost)
+	}
+
+	// It is read before the cheap step: a rung 0 run is a run, and the
+	// ceiling is a person's refusal to pay for another one (D2038, G9).
+	spend := young(rigor.Pro)
+	spend.CostUSD = 40
+	if got, reason := Decide(spend, th); got.Rung != R3 || reason != ReasonCost {
+		t.Errorf("over the ceiling at an unrebased head = %+v, %q; want rung 3, %q", got, reason, ReasonCost)
 	}
 
 	th.CostCeiling = 0
@@ -249,23 +276,35 @@ func TestDecideAfterTheOnePass(t *testing.T) {
 		t.Errorf("blocked = %+v, %q; want rung 3, %q", got, reason, ReasonR2Findings)
 	}
 
+	// A clean review is the merge, and it comes at once (F17): the item has
+	// nothing left to escalate, so it is not sent through the cheap step,
+	// whose run would push a head the clean verdict no longer covers (G2,
+	// G13).
 	clean := pass(func(f *Facts) { f.Elapsed = time.Hour })
-	if got, reason := Decide(clean, th); got != (Step{Rung: R1}) || reason != "" {
-		t.Errorf("clean = %+v, %q; want rung 1", got, reason)
+	if got, reason := Decide(clean, th); got != (Step{Rung: R3, AtCeiling: CeilingAutoMergeNotify}) || reason != ReasonR2Clean {
+		t.Errorf("clean = %+v, %q; want rung 3, %q", got, reason, ReasonR2Clean)
 	}
-	// A converged item that has waited out the ceiling is the one rung 3
-	// exists for (F17), and the clock that says so is the mode's own.
-	waited := pass(func(f *Facts) { f.Elapsed = atHours(12) })
-	if got, reason := Decide(waited, th); got != (Step{Rung: R3, AtCeiling: CeilingAutoMergeNotify}) || reason != ReasonAge {
-		t.Errorf("waited = %+v, %q; want rung 3, %q", got, reason, ReasonAge)
+	unrebased := clean
+	unrebased.HeadSHA = "head-2"
+	if got, reason := Decide(unrebased, th); got.Rung != R3 || reason != ReasonR2Clean {
+		t.Errorf("clean at an unrebased head = %+v, %q; want rung 3, %q", got, reason, ReasonR2Clean)
 	}
-	path := pass(func(f *Facts) { f.Elapsed = atHours(6.5); f.BlocksOthers = true })
-	if got, reason := Decide(path, th); got != (Step{Rung: R3, AtCeiling: CeilingAutoMergeNotify}) || reason != ReasonCriticalPath {
-		t.Errorf("critical path = %+v, %q; want rung 3, %q", got, reason, ReasonCriticalPath)
+
+	// The outcome of the pass is the cause the ledger is told about, so it is
+	// named ahead of the ceilings that would otherwise answer: an item past
+	// its hard ceiling, and a critical-path item past the halved one, report
+	// the review rather than the clock.
+	waited := pass(func(f *Facts) { f.Elapsed = atHours(13) })
+	if got, reason := Decide(waited, th); got.Rung != R3 || reason != ReasonR2Clean {
+		t.Errorf("clean past the ceiling = %+v, %q; want rung 3, %q", got, reason, ReasonR2Clean)
+	}
+	path := pass(func(f *Facts) { f.Elapsed = atHours(7); f.BlocksOthers = true })
+	if got, reason := Decide(path, th); got.Rung != R3 || reason != ReasonR2Clean {
+		t.Errorf("clean past the halved ceiling = %+v, %q; want rung 3, %q", got, reason, ReasonR2Clean)
 	}
 
 	// Whatever it left behind, the pass is never launched a second time.
-	for _, f := range []Facts{blocked, clean, waited, path} {
+	for _, f := range []Facts{blocked, clean, unrebased, waited, path} {
 		for attempts := 0; attempts < 6; attempts++ {
 			f.Attempts = attempts
 			if got, _ := Decide(f, th); got.Rung == R2 {
@@ -324,9 +363,17 @@ func TestDecideUnknownModeRefuses(t *testing.T) {
 		{name: "HoursNegative", f: settled(rigor.Pro), th: editRow(rigor.Pro, func(r *Row) { r.R2Hours = -1 })},
 		{name: "R2AtTheCeiling", f: settled(rigor.Pro), th: editRow(rigor.Pro, func(r *Row) { r.R2Hours = r.CeilingHours })},
 		{name: "ActionUnknown", f: settled(rigor.Pro), th: editRow(rigor.Pro, func(r *Row) { r.AtCeiling = "merge" })},
+		{name: "CeilingNaN", f: settled(rigor.Pro), th: editRow(rigor.Pro, func(r *Row) { r.CeilingHours = math.NaN() })},
+		{name: "CeilingInfinite", f: settled(rigor.Pro), th: editRow(rigor.Pro, func(r *Row) { r.CeilingHours = math.Inf(1) })},
+		{name: "CeilingOverflows", f: settled(rigor.Pro), th: editRow(rigor.Pro, func(r *Row) { r.CeilingHours = 1e15 })},
+		{name: "HoursNaN", f: settled(rigor.Pro), th: editRow(rigor.Pro, func(r *Row) { r.R2Hours = math.NaN() })},
 		{name: "FactorZero", f: settled(rigor.Pro), th: edit(func(t *Thresholds) { t.CriticalPathFactor = 0 })},
 		{name: "FactorAboveOne", f: settled(rigor.Pro), th: edit(func(t *Thresholds) { t.CriticalPathFactor = 1.5 })},
+		{name: "FactorNaN", f: settled(rigor.Pro), th: edit(func(t *Thresholds) { t.CriticalPathFactor = math.NaN() })},
+		{name: "FactorInfinite", f: settled(rigor.Pro), th: edit(func(t *Thresholds) { t.CriticalPathFactor = math.Inf(1) })},
 		{name: "CostNegative", f: settled(rigor.Pro), th: edit(func(t *Thresholds) { t.CostCeiling = -1 })},
+		{name: "CostNaN", f: settled(rigor.Pro), th: edit(func(t *Thresholds) { t.CostCeiling = math.NaN() })},
+		{name: "CostInfinite", f: settled(rigor.Pro), th: edit(func(t *Thresholds) { t.CostCeiling = math.Inf(1) })},
 		{name: "ChurnUnset", f: func() Facts {
 			f := settled(rigor.Pro)
 			f.Churn = ""
