@@ -487,23 +487,33 @@ func TestUpdateManagedAskRefusesWhereNobodyCanAnswer(t *testing.T) {
 // the gate to judge less. The question the flag put back earlier in the run is
 // answered yes here, so what the run stops on is the gate's refusal and not the
 // flag's own unanswered question.
+//
+// The fixture is D1549's kind and not the grant this test used to carry: since
+// T9 a grant the review did not list is a content finding the gate records and
+// warns about rather than refuses, so a plan of those would be applied and
+// could not witness a refusal at all. An authoritative IAM resource still
+// refuses, which is what leaves the gate's sentence — and not the confirmation
+// --ask put back — the thing this run stops on.
 func TestUpdateManagedAskKeepsTheGatesOwnRefusalFirst(t *testing.T) {
-	const a = "user:a@example.com"
-	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
+	const address = "module.installation.google_storage_bucket_iam_binding.runs"
 	r := updateRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	isolateGateCredentials(t)
 	fakeTerminal(t)
 	noAgentSession(t)
 	updating(t, r)
-	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	r.setPlan(t, change(address, "create"))
 
 	got, err := askUpdateRun(t, r, "y\n", "update", "--ask")
 	if err == nil {
 		t.Fatalf("--ask applied a plan the managed gate refuses:\n%s", got)
 	}
-	if !strings.Contains(got, managedmode.NotConverged) || !strings.Contains(got, address) {
-		t.Errorf("the refusal is not the gate's own, naming what it refused:\n%s", got)
+	// The fact is read where the terminal says it is: the brief's three lines
+	// carry the rule's clause and the step's own line in the log carries the
+	// sentence that names the resource (the owner's feedback of 2026-11-09).
+	whole := got + namedLog(t, got)
+	if !strings.Contains(whole, managedmode.NotConverged) || !strings.Contains(whole, address) {
+		t.Errorf("the refusal is not the gate's own, naming what it refused:\n%s", whole)
 	}
 	if n := len(r.ran(t, "apply")); n != 0 {
 		t.Errorf("%d terraform apply(s) ran for a plan the gate refused", n)

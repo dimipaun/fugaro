@@ -2809,8 +2809,8 @@ parse of either.
 | --- | --- | --- | --- | --- |
 | `at` | string | never | never | when the command ran, in UTC, RFC 3339 to the second. It is the record's own time and never the listing's order |
 | `command` | string | never | never | the command as a person types it (`fugaro config publish`), which is the record's own name for it and not its argv. Bounded text |
-| `verdict` | string | never | never | the gate's own answer about the judged plan: `admitted` or `refused`. **A refusal is a record an owner reads most**, so it is drawn beside an admission and never instead of it |
-| `identity` | string | never | never | the account the write ran as: the deployer account for a managed apply, the operator's own elsewhere. Bounded text |
+| `verdict` | string | never | never | the gate's own answer about the judged plan: `admitted`, `warned` or `refused`. **A refusal is a record an owner reads most**, so it is drawn beside an admission and never instead of it. `warned` is D1545's middle answer — the gate recorded the plan's content findings and the write went through — and the findings themselves do not reach this document: the rules the gate fired are the record's own, and the bound below keeps them out, so a screen draws the verdict with no reason beside it |
+| `identity` | string | never | never | the account the write ran as: the command's own answer where it names one, and otherwise the credentials in force (the operator's own). Bounded text |
 | `plan_digest` | string | never | never | the sha256 of the exact document the gate judged, so a reader compares the record against a plan rather than believing a summary of it |
 
 **What is never in it, and it is the whole of the bound: the argv.** The record

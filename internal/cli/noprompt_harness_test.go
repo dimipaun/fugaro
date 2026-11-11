@@ -451,12 +451,6 @@ type closedStdinUnreachedAsk struct {
 // named removes the ask, and the commit that removes it has to delete this entry
 // too, or the marker check below fails.
 var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
-	// managed apply asks from inside an apply: the question carries a saved
-	// plan's hash and counts, so it takes a planned root this world has none of.
-	"fugaro managed apply": {
-		file: "managed_apply.go", marker: "func managedAsk(cmd *cobra.Command, lc *localcfg.Config)",
-		task: "T9", why: "asks inside an apply, which needs a saved plan this world does not build",
-	},
 	// The refresh's own two cloud steps — the base pin and the daily image check
 	// job's config — ask from inside the run, and reaching one needs the jobs and
 	// the registry this world does not fake. Its billable builds asked here too
