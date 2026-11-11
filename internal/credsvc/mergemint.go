@@ -783,15 +783,26 @@ func (s *Server) githubGetPage(ctx context.Context, token, path string, out any)
 
 // linkHasNext reports whether GitHub's Link header names a next page. The header
 // is a comma-separated list of `<url>; rel="name"` pairs and the gate needs the
-// one name; anything it cannot read is answered as a next page, because the
-// direction that refuses is the direction that fails closed.
+// one name.
 func linkHasNext(header string) bool {
+	if strings.TrimSpace(header) == "" {
+		return false
+	}
+	read := 0
 	for _, link := range strings.Split(header, ",") {
-		if _, params, ok := strings.Cut(link, ";"); ok && strings.Contains(params, `rel="next"`) {
+		_, params, ok := strings.Cut(link, ";")
+		if !ok {
+			continue
+		}
+		read++
+		if strings.Contains(params, `rel="next"`) {
 			return true
 		}
 	}
-	return false
+	// A header whose pairs this code read and which names no next page is one
+	// page. A header it could not read at all is not: the direction that refuses
+	// is the direction that fails closed.
+	return read == 0
 }
 
 // shortSHA is the first eight characters of a commit: what a refusal names, so

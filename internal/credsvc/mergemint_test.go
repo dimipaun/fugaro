@@ -705,6 +705,30 @@ func TestMergeMintRefusesBypassActor(t *testing.T) {
 	}
 }
 
+// TestMergeMintReadsGitHubsLinkHeader pins the reading the paged-list refusal
+// rests on, including the direction it fails in: a header this code cannot read
+// is answered as a next page, so a list whose paging it did not understand is
+// refused rather than read as complete.
+func TestMergeMintReadsGitHubsLinkHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		header string
+		want   bool
+	}{
+		{"no header at all", "", false},
+		{"a next page", `<https://api.github.com/repositories/1/rulesets?page=2>; rel="next"`, true},
+		{"a next page beside the last one", `<https://api.github.com/repositories/1/rulesets?page=2>; rel="next", <https://api.github.com/repositories/1/rulesets?page=4>; rel="last"`, true},
+		{"the last page of a list, with no next", `<https://api.github.com/repositories/1/rulesets?page=4>; rel="last", <https://api.github.com/repositories/1/rulesets?page=3>; rel="prev"`, false},
+		{"a header this code cannot read", `not a link header at all`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := linkHasNext(tc.header); got != tc.want {
+				t.Errorf("linkHasNext(%q) = %v, want %v", tc.header, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestMergeMintRefusesAFullRulesetPage: GitHub pages the rulesets list, and the
 // gate reads one page of GitHub's own maximum. A list that is longer than that
 // page — GitHub says so with a Link header naming the next one — is refused
