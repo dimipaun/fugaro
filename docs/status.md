@@ -25,7 +25,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | --- | --- | --- |
 | stateless-orchestrator | 10/19 | O8 (draft #2064), O9 to O14, O16, O19; owner Checks 301 to 304 (300 PASSED 2026-11-10); 305 reserved |
 | api-key-review | 6/11 | AK6b (draft #2172), AK7, AK9, AK10; owner Check 330 |
-| secrets-brokering | 18/30 | B1.13 flip (draft #2166, held on Check 191), B1.15, B1.16, B2.1 to B5.1; owner Checks 191 and 192. Dynamic-delivery subfolder: DS0.1, DS1.3 and DS2.0 merged, DS2.1 in a run |
+| secrets-brokering | 18/65 | B1.13 flip (draft #2166, held on Check 191), B1.15, B1.16; owner Checks 191 and 192; the later slices planned 2026-11-10 as B2.1–B2.9, B3.1–B3.10, B4.1–B4.11, B5.1–B5.9 (none approved; D2070–D2080 open; owner Checks 193–197). Dynamic-delivery subfolder: DS0.1, DS1.1, DS1.2, DS1.3, DS1.6, DS2.0 and DS3.3 merged; DS1.4 (#2250), DS2.1 (#2237), DS3.1 (#2162) and DS3.5 (#2288) open |
 | vision-model | plan only, 0/9 built (V0–V8); not started, nothing approved; owner Checks 520 and 521 not run |
 | subscriptions | about 17/51 | about 22 tasks; 10 owner-run |
 | workspaces | 6/10 | W3 and W6 (drafts), W7, W9 |
