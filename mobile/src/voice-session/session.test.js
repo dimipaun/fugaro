@@ -82,15 +82,20 @@ function gate() {
  * @param {boolean} [options.refuseStart] make `start` reject: Android 14's
  *   background restriction, and the path where nothing ever began
  * @param {boolean} [options.refuseEnd] make `end` reject
+ * @param {boolean} [options.refuseStatus] make `updateStatus` reject
  * @param {object} [options.holdStart] a `gate()` `start` waits on before it
  *   answers: the session's own events arriving while the port is starting
+ * @param {object} [options.holdEnd] a `gate()` `end` waits on: a teardown that
+ *   is still running when the next session asks to begin
  * @param {object} [options.holdSetMuted] a `gate()` `setMuted` waits on
  * @param {() => boolean} [options.microphoneOpen] what each call records
  */
 function nativeDouble({
   refuseStart = false,
   refuseEnd = false,
+  refuseStatus = false,
   holdStart = null,
+  holdEnd = null,
   holdSetMuted = null,
   microphoneOpen = null,
 } = {}) {
@@ -113,13 +118,17 @@ function nativeDouble({
       );
     },
     updateStatus(status) {
-      return record('updateStatus', [status], () => Promise.resolve());
+      return record('updateStatus', [status], () =>
+        refuseStatus ? Promise.reject(new Error('no')) : Promise.resolve(),
+      );
     },
     setMuted(muted) {
       return record('setMuted', [muted], () => holdSetMuted?.promise ?? Promise.resolve());
     },
     end(reason) {
-      return record('end', [reason], () => (refuseEnd ? Promise.reject(new Error('no')) : Promise.resolve()));
+      return record('end', [reason], () =>
+        refuseEnd ? Promise.reject(new Error('no')) : (holdEnd?.promise ?? Promise.resolve()),
+      );
     },
   };
 }
@@ -162,7 +171,17 @@ function lockedClient() {
  * on a lease that is already back is a no-op, so the *count* is the only way
  * "the lease goes back exactly once" can be seen.
  */
-function harness({ refuseStart = false, refuseEnd = false, holdStart = null, holdSetMuted = null, client = null } = {}) {
+function harness({
+  refuseStart = false,
+  refuseEnd = false,
+  refuseStatus = false,
+  refuseScreenStart = false,
+  holdStart = null,
+  holdEnd = null,
+  holdSetMuted = null,
+  holdScreenStart = null,
+  client = null,
+} = {}) {
   const audioIn = new FakeAudioIn();
   const stt = new FakeStt();
   const tts = new FakeTts();
@@ -191,8 +210,24 @@ function harness({ refuseStart = false, refuseEnd = false, holdStart = null, hol
       releases += 1;
       return built.releaseLease();
     },
+    // P3.4's pipeline opens the microphone behind this, so holding or refusing
+    // it is how the window between `native.start()` answering and the
+    // microphone being open is put in a test's hands.
+    start: async () => {
+      if (holdScreenStart !== null) await holdScreenStart.promise;
+      if (refuseScreenStart) throw new Error('the capture path would not start');
+      return built.start();
+    },
   };
-  const native = nativeDouble({ refuseStart, refuseEnd, holdStart, holdSetMuted, microphoneOpen: () => audioIn.running() });
+  const native = nativeDouble({
+    refuseStart,
+    refuseEnd,
+    refuseStatus,
+    holdStart,
+    holdEnd,
+    holdSetMuted,
+    microphoneOpen: () => audioIn.running(),
+  });
   const session = createVoiceSession({
     machine,
     screen,
@@ -330,6 +365,7 @@ test('the session holds the machine’s fields and the screen’s snapshot, and 
     'screen',
     'startedAt',
     'state',
+    'teardownFailure',
   ]);
   assert.equal(h.session.state().screen.speaking, h.pipeline.speaking());
   assert.equal(h.session.state().screen.turn, h.pipeline.turn());
@@ -482,6 +518,100 @@ test('a mute in flight keeps the pause §8’s timeout is measured from', async 
   assert.deepEqual(callsNamed(h.native, 'end').map((call) => call.args[0]), ['interruption_timeout']);
 });
 
+test('a capture path that rejects ends the session instead of stranding it', async () => {
+  // The pipeline answers D122's refusal rather than throwing, so this is the
+  // other kind of capture failure -- and it must not leave a session in
+  // `starting` with a port that began and nothing that ends it.
+  const h = harness({ refuseScreenStart: true });
+  const verdict = await h.session.start();
+
+  assert.deepEqual(verdict, { ok: false, code: SESSION_CODES.START_FAILED, field: null });
+  assert.equal(h.session.state().state, 'ended');
+  assert.deepEqual(h.session.state().error, {
+    code: SESSION_CODES.START_FAILED,
+    message: 'the voice session could not start',
+  });
+  assert.deepEqual(callsNamed(h.native, 'end').map((call) => call.args[0]), ['error'], 'the port that began is ended');
+});
+
+test('a session that ends while the microphone is opening closes it again', async () => {
+  // The window on the other side of `native.start()`: the port has answered, the
+  // screen is starting, and the session ends under it -- so the teardown stopped
+  // a screen that had not opened the microphone yet, and the microphone opens
+  // after it. It is closed again here, and the session did not start.
+  const opening = gate();
+  const h = harness({ holdScreenStart: opening });
+  const begun = h.session.start();
+  await settle();
+  assert.equal(h.audioIn.running(), false, 'nothing is capturing while the screen is starting');
+
+  await h.session.dispatch({ type: 'serviceStopped', reason: SERVICE_STOP_REASONS.SYSTEM });
+  assert.equal(h.session.state().state, 'ended');
+  assert.deepEqual(callsNamed(h.native, 'end').map((call) => call.args[0]), ['service_stopped']);
+
+  opening.open();
+  assert.deepEqual(await begun, { ok: false, code: SESSION_CODES.START_FAILED, field: null });
+  assert.equal(h.audioIn.running(), false, 'the microphone the raced start opened is closed again');
+  assert.equal(h.session.state().state, 'ended');
+});
+
+test('a new session waits for the last one’s teardown before it begins', async () => {
+  // §8's "Tap to resume" is a `start()` on a session that ended on its own, and
+  // that session's teardown may still be running: the transition that ends a
+  // session does not wait for the port's `end()`. A session begun under it would
+  // have the last one's `screen.stop()` and `native.end()` land on it.
+  const ending = gate();
+  const h = harness({ holdEnd: ending });
+  await h.session.start();
+  // Not awaited: the teardown it starts is held, which is the state a resume
+  // meets. The state has already moved by the time this call returns.
+  const stopped = h.session.dispatch({ type: 'serviceStopped', reason: SERVICE_STOP_REASONS.SYSTEM });
+  await settle();
+  assert.equal(h.session.state().state, 'ended');
+  assert.deepEqual(callsNamed(h.native, 'end').map((call) => call.args[0]), ['service_stopped']);
+
+  const again = h.session.start();
+  await settle();
+  assert.equal(h.session.state().state, 'ended', 'the new session has not begun under the last one’s teardown');
+  assert.equal(callsNamed(h.native, 'start').length, 1, 'and the port has not been asked for a second session');
+
+  ending.open();
+  assert.equal((await again).ok, true);
+  await stopped;
+  assert.equal(h.session.state().state, 'listening');
+  assert.equal(h.audioIn.running(), true, 'the microphone is the new session’s to open');
+  assert.equal(callsNamed(h.native, 'start').length, 2);
+});
+
+test('a teardown that fails is on the snapshot whichever way the session ended', async () => {
+  // §8's timeout reaches `ended` on its own, and the machine takes no event for a
+  // session that is already over -- so the teardown failure has to be this
+  // module's own field, or it is reported on a hang-up and nowhere else.
+  const h = harness({ refuseEnd: true });
+  await h.session.start();
+  await h.session.dispatch({ type: 'interruptionBegan', source: INTERRUPTION_SOURCES.CALL });
+  h.advance(RESUME_MS + 1);
+  await h.session.tick();
+
+  assert.equal(h.session.state().state, 'ended');
+  assert.equal(h.session.state().endReason, 'interruption_timeout');
+  assert.deepEqual(h.session.state().teardownFailure, {
+    code: SESSION_CODES.END_FAILED,
+    message: 'the voice session could not tear down',
+  });
+  assert.equal(h.session.state().error, null, 'the machine keeps its own `error` for §5’s error events');
+});
+
+test('a status the port would not take is not an unhandled rejection', async () => {
+  const h = harness({ refuseStatus: true });
+  await h.session.start();
+  // Two turns of the microtask queue: the port's rejection is this module's to
+  // handle, and an unhandled one fails the whole file rather than this test.
+  await settle();
+  await settle();
+  assert.equal(h.session.state().state, 'listening', 'a status a screen draws moves nothing');
+});
+
 test('a hang-up closes the microphone, then ends the port, and only then is the session over', async () => {
   const h = harness();
   await h.session.start();
@@ -550,13 +680,15 @@ test('a port that will not end is reported, and the session still ends', async (
 
   // The cause is kept and the failure is on top of it: "why did this end" is
   // still the hang-up, and the teardown that did not finish is what the screen
-  // shows beside it.
+  // shows beside it. It is the session's own field, not the machine's `error`,
+  // which is §5's error events -- this one happens after the session is over.
   assert.equal(h.session.state().state, 'ended');
   assert.equal(h.session.state().endReason, 'hangup');
-  assert.deepEqual(h.session.state().error, {
+  assert.deepEqual(h.session.state().teardownFailure, {
     code: SESSION_CODES.END_FAILED,
     message: 'the voice session could not tear down',
   });
+  assert.equal(h.session.state().error, null);
 });
 
 test('a session that has ended starts again, and the port is asked a second time', async () => {

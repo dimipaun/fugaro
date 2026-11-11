@@ -63,12 +63,14 @@
 //     rather than handed to a port that has none, and the audio is muted before
 //     the flag and the status that render it -- so a port that would not mute
 //     leaves the session saying what is true.
-//   * **A port call is not a transition.** `native.start()` and
-//     `native.setMuted()` answer when they answer, and the session can move
-//     while they do. What that window forbids is applying something computed
-//     before it: a verdict reduced from a state the session has left, or a
-//     screen started for a session that is already over. Both are guarded where
-//     they would be applied (`start`, `setMuted`), and both guards are tested.
+//   * **A port call is not a transition.** `native.start()`, `native.setMuted()`
+//     and the screen's own start answer when they answer, and the session can
+//     move while they do. What those windows forbid is applying something
+//     computed before them: a verdict reduced from a state the session has left,
+//     a screen started for a session that is already over, a microphone opened
+//     after the teardown that closed it, and a new session begun under a
+//     teardown that is still running. Each is guarded where it would be applied
+//     (`start`, `setMuted`), and each guard is tested.
 
 import { REMOTE_ACTIONS, SESSION_EVENTS } from './events.js';
 
@@ -104,6 +106,20 @@ export const SESSION_CODES = Object.freeze({
 const FAILURE_MESSAGES = Object.freeze({
   [SESSION_CODES.START_FAILED]: 'the voice session could not start',
   [SESSION_CODES.END_FAILED]: 'the voice session could not tear down',
+});
+
+/**
+ * The failure a teardown that did not finish reports, frozen once.
+ *
+ * It is the session's own field rather than §5's `error` event because the
+ * machine cannot carry it everywhere it happens: a session that has already
+ * reached `ended` takes no event, and the paths that reach `ended` on their own
+ * (§8's timeout, §10's error, §9's stopped service) are exactly the ones whose
+ * teardown failure would otherwise be reported nowhere.
+ */
+const TEARDOWN_FAILURE = Object.freeze({
+  code: SESSION_CODES.END_FAILED,
+  message: FAILURE_MESSAGES[SESSION_CODES.END_FAILED],
 });
 
 /**
@@ -213,6 +229,8 @@ export function createVoiceSession({
    * the paths that reach it from inside itself cannot start a second one. */
   let closing = false;
   let teardown = null;
+  /** The last teardown that did not finish, on the snapshot the caller reads. */
+  let teardownFailure = null;
 
   /**
    * Tell the port what the session is, if that is news (D217).
@@ -220,19 +238,23 @@ export function createVoiceSession({
    * The two silences are deliberate: nothing is pushed before the port answered
    * `start()` (there is no session on the other end to render), and nothing is
    * pushed for `ending` or `ended`, because `end(reason)` is that news with the
-   * cause on it. Not awaited: a status a screen draws is not worth blocking a
-   * transition on, and a push that failed is the port's own to report (§5's
-   * `error` event arrives from it, not from this call).
+   * cause on it. Not awaited, and a rejection is dropped on purpose: a status a
+   * screen draws is not worth blocking a transition on, and a port that could
+   * not be told reports it itself (§5's `error` event arrives from the port, not
+   * from this call). The handler is what keeps that silence from becoming an
+   * unhandled rejection.
    */
   function push() {
     if (!begun || OVER.includes(current.state)) return;
     if (pushed.state === current.state && pushed.muted === current.muted) return;
     pushed = Object.freeze({ state: current.state, muted: current.muted });
-    void native.updateStatus({
-      state: current.state,
-      muted: current.muted,
-      startedAt: current.startedAt,
-    });
+    native
+      .updateStatus({
+        state: current.state,
+        muted: current.muted,
+        startedAt: current.startedAt,
+      })
+      .catch(() => {});
   }
 
   /**
@@ -255,12 +277,14 @@ export function createVoiceSession({
    * The teardown the machine waits on: the microphone closes, the port ends,
    * and only then is the session over.
    *
-   * A failure anywhere in it is reported as §5's `error` event with this
-   * module's own code, and the session ends anyway: a teardown that failed and
-   * left the session in `ending` would be the live session §9 forbids, and the
-   * caller reads the failure off the snapshot instead of off a rejection --
-   * the state is the answer, and a second channel would only be a second
-   * version of it.
+   * A failure anywhere in it is recorded on this module's own snapshot field and
+   * the session ends anyway: a teardown that failed and left the session in
+   * `ending` would be the live session §9 forbids, and the caller reads the
+   * failure off the snapshot instead of off a rejection -- the state is the
+   * answer, and a second channel would only be a second version of it. It is
+   * recorded rather than sent as §5's `error` event because three of the four
+   * paths into this teardown are already in `ended` when it runs, and a session
+   * that is over takes no event (`TEARDOWN_FAILURE`).
    */
   function startTeardown(reason) {
     if (closing) return teardown;
@@ -270,8 +294,7 @@ export function createVoiceSession({
         await screen.stop();
         if (begun) await native.end(reason);
       } catch {
-        apply({ type: 'error', code: SESSION_CODES.END_FAILED, message: FAILURE_MESSAGES[SESSION_CODES.END_FAILED] });
-        return;
+        teardownFailure = TEARDOWN_FAILURE;
       }
       // Only a hang-up waits for this event; the paths that reach `ended` on
       // their own are already there, and the machine refuses an `end` they
@@ -312,6 +335,7 @@ export function createVoiceSession({
     teardown = null;
     released = false;
     pushed = UNPUSHED;
+    teardownFailure = null;
   }
 
   return {
@@ -320,6 +344,15 @@ export function createVoiceSession({
      * the one path to `pipeline.start()`.
      */
     async start() {
+      // The last session's teardown is waited for before anything is reset. A
+      // session that ends on its own (§8's timeout, §10's error, §9's stopped
+      // service) does not wait for the port's `end()`, so a resume can meet a
+      // teardown that is still running -- and a session begun under it would
+      // have the last one's `screen.stop()` and `native.end()` land on it:
+      // microphone closed, port ended, state still `listening`. `reset` clears
+      // the record of that teardown, which is the only thing that could have
+      // waited for it.
+      await settle();
       // A session that is over starts fresh; a live one is the machine's own
       // refusal, and resetting for it would silence the session it is in.
       if (current.state === 'idle' || current.state === 'ended') reset();
@@ -356,8 +389,35 @@ export function createVoiceSession({
       }
       push();
       // D122's degradation is the screen's (see the header): a microphone the
-      // OS refused is shown there, and the session goes on without it.
-      await screen.start();
+      // OS refused is shown there, and the session goes on without it. A capture
+      // path that *rejects* is not that refusal -- the session cannot listen at
+      // all -- so it ends the way §10's errors end one, with the port that began
+      // ended behind it, rather than leaving the session in `starting`.
+      try {
+        await screen.start();
+      } catch {
+        apply({
+          type: 'error',
+          code: SESSION_CODES.START_FAILED,
+          message: FAILURE_MESSAGES[SESSION_CODES.START_FAILED],
+        });
+        await settle();
+        return refuse(SESSION_CODES.START_FAILED);
+      }
+      // The other end of the window `native.start()` opened: the session can end
+      // while the microphone is being opened, and the teardown that ended it
+      // stopped a screen that had not finished starting -- so the microphone it
+      // went on to open is closed here, after the start it raced, and the caller
+      // is told the session did not start.
+      if (OVER.includes(current.state)) {
+        try {
+          await screen.stop();
+        } catch {
+          teardownFailure = TEARDOWN_FAILURE;
+        }
+        await settle();
+        return refuse(SESSION_CODES.START_FAILED);
+      }
       return apply({ type: 'started' });
     },
 
@@ -432,12 +492,13 @@ export function createVoiceSession({
 
     /**
      * Everything a render needs, in one frozen snapshot: the machine's fields,
-     * and P3.5's own -- which read the pipeline for `speaking` and `turn` at
-     * this call rather than caching them, so the pair a screen draws can never
-     * be one event old (D206, F3).
+     * P3.5's own -- which read the pipeline for `speaking` and `turn` at this
+     * call rather than caching them, so the pair a screen draws can never be one
+     * event old (D206, F3) -- and this module's own `teardownFailure`, which is
+     * where a teardown that did not finish is read, on every path into one.
      */
     state() {
-      return Object.freeze({ ...current, screen: screen.state() });
+      return Object.freeze({ ...current, screen: screen.state(), teardownFailure });
     },
   };
 }
