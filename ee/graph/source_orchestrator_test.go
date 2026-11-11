@@ -22,6 +22,10 @@ package graph
 //   - TestUnknownOrchestratorIsRefused: an id neither the database nor this
 //     machine has is ErrNoOrchestrator, the one failure of this source that is a
 //     refusal rather than a state (H3, §6.22).
+//   - TestListedOrchestratorWithoutAStateIsDown: an id the database lists whose
+//     state node is not written yet is a scope that is down — the shape a daemon
+//     that has beaten its lease and saved no state leaves behind, which `ls`
+//     lists and a screen sends back.
 //
 // The source is pure, so every one of these is a struct literal and a returned
 // value: no fake, no clock and no I/O.
@@ -351,6 +355,52 @@ func TestUnknownOrchestratorIsRefused(t *testing.T) {
 	src := OrchestratorSource{ID: "o1", Node: stateOf(t, "o1", item("wi-1", "a live item", "acme/app"))}
 	if _, _, st, err := src.Nodes(); err != nil || st.State != SourceUp {
 		t.Errorf("a scope with a node is %+v, %v, want it up", st, err)
+	}
+}
+
+// TestListedOrchestratorWithoutAStateIsDown: an id the project's database lists
+// with no state node yet is an orchestrator this installation has, so its scope
+// is down and never a scope that does not exist. That shape is reachable —
+// `orchestrator run` writes the lease node before the cycle that saves a state,
+// so a daemon whose cycles have all failed is listed by `fugaro orchestrator ls`
+// and has nothing to draw — and it is why the value a screen sends back is a
+// value this read must answer for (H1, F21, §6.22).
+//
+// The fact itself is the caller's, because this source reads nothing: `all`
+// knows it of every id it enumerated and a named scope is asked about it
+// (graphSources), and the command's own test is where that wiring is held. Here
+// it is the field and what the scope says with it.
+func TestListedOrchestratorWithoutAStateIsDown(t *testing.T) {
+	written := time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC)
+	for _, src := range []OrchestratorSource{
+		{ID: "o1", Listed: true},
+		{ID: "o1", Local: true, Listed: true},
+	} {
+		nodes, edges, st, err := src.Nodes()
+		if err != nil {
+			t.Fatalf("a listed orchestrator with no state node (%+v) answered with %v, want the scope down", src, err)
+		}
+		if st.State != SourceDown || st.Source != src.Scope().String() {
+			t.Errorf("the scope is %+v, want %s down", st, src.Scope())
+		}
+		if len(nodes) != 0 || len(edges) != 0 {
+			t.Errorf("the scope drew %d nodes and %d edges, want none: there is no state to draw", len(nodes), len(edges))
+		}
+		if !strings.Contains(st.Reason, "state node is not written yet") {
+			t.Errorf("the reason is %q, want it to say the state node is not written", st.Reason)
+		}
+	}
+
+	// A local scope with a cached brief keeps the brief's own stamp: the cache is
+	// the last thing written about the id, and a database that lists it does not
+	// change what the brief says (D1358, D1243).
+	src := OrchestratorSource{ID: "o1", Local: true, Listed: true, CachedAt: written}
+	_, _, st, err := src.Nodes()
+	if err != nil {
+		t.Fatalf("reading a listed local scope with a cached brief: %v", err)
+	}
+	if st.State != SourceDown || st.AsOf == nil || !st.AsOf.Equal(written) {
+		t.Errorf("the scope is %+v, want it down with the cached brief's stamp %s", st, written)
 	}
 }
 

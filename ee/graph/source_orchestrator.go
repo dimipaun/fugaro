@@ -35,9 +35,13 @@ import (
 //     connection and no clock of its own.
 
 // ErrNoOrchestrator is a scope that does not exist: an id the project's
-// database holds no node for and this machine holds no cached brief for. It is
-// the one failure of a read here that is a refusal — no document at all — and
-// it is wrapped rather than returned bare, so a caller tells it apart from a
+// database does not hold at all and this machine holds no cached brief for. The
+// question it is the answer to is the one `fugaro orchestrator ls` asks — is
+// there a key under `orchestrator/<id>` — and never whether a state node was
+// written: an id the database lists with no state node yet is an orchestrator
+// this installation has, and its scope is down (OrchestratorSource.Listed). It
+// is the one failure of a read here that is a refusal — no document at all —
+// and it is wrapped rather than returned bare, so a caller tells it apart from a
 // read that failed or an answer this build cannot read, which are states of the
 // scope (H3).
 //
@@ -67,6 +71,18 @@ type OrchestratorSource struct {
 	// scope of the `orchestrator:` kind is one only the database holds (CG4's
 	// rule, D1358), and it has no cache to fall back to.
 	Local bool
+	// Listed is that the project's database lists this id: a key under
+	// `orchestrator/<id>` is there, which is the read `fugaro orchestrator ls`
+	// answers with (orchestrator.NodeIDs, D1358). It is a fact of its own and
+	// not the same one as a state node: `orchestrator run` writes the lease node
+	// before the cycle that saves a state, so an id can be listed while there is
+	// nothing to draw for it. It is what tells that orchestrator, whose scope is
+	// down, from an id the database does not hold at all, whose scope does not
+	// exist (ErrNoOrchestrator). The caller answers it because this source reads
+	// nothing: `all` knows it of every id it enumerated, and a scope named on
+	// the command line is asked about — one shallow read, and only when its
+	// state node is not there (graphSources).
+	Listed bool
 	// Node is the state document the database answered with: nil when the
 	// database holds no node at this id.
 	Node json.RawMessage
@@ -130,12 +146,15 @@ func (s OrchestratorSource) Scope() Scope {
 //     is the same rule the coordinator's scope follows for an unreachable
 //     database (H3).
 //
-// The one failure that is not a state is a scope that does not exist: neither a
-// node nor a cached brief, which is a fact this read has rather than a failure
-// it met. It comes back as ErrNoOrchestrator, and the caller decides — a scope
-// named on the command line is refused (a screen must tell "nothing here" from
-// "not asked", §6.22), and one `all` enumerated is left out, because under `all`
-// an id that is gone is simply a scope that is gone.
+// The one failure that is not a state is a scope that does not exist: no node,
+// no cached brief and no id in the database's own listing, which is a fact this
+// read has rather than a failure it met. It comes back as ErrNoOrchestrator, and
+// the caller decides — a scope named on the command line is refused (a screen
+// must tell "nothing here" from "not asked", §6.22), while a scope `all`
+// enumerated is never refused: that enumeration is the database's own answer
+// about existence, so an id it named is one this read has something to say about,
+// and one it lost between the enumeration and the read is left out with the
+// sentence saying so rather than taking the document with it (readGraph).
 //
 // It never returns a read's own failure: the caller classifies that before it
 // gets here (a refusal is terminal and is returned by the caller without asking
@@ -161,23 +180,50 @@ func (s OrchestratorSource) Nodes() ([]Node, []Edge, SourceState, error) {
 	}
 }
 
+// Absent is a source with nothing to answer for itself: the database holds no
+// node at this id and nothing failed to read one. It is the one shape the caller
+// has a question about — whether the id exists at all — because answering that
+// is a read, and this source reads nothing: `all` knows it of every id it
+// enumerated, and a scope named on the command line is asked about, which is what
+// it then carries in Listed (graphSources).
+func (s OrchestratorSource) Absent() bool { return s.Node == nil && s.ReadErr == nil }
+
 // absent is the scope of a node this read does not have: a local scope with a
-// cached brief answers with the brief's own time, and every other shape of it is
-// a scope that does not exist.
+// cached brief answers with the brief's own time, an id the database's own
+// listing named is a scope that is down, and every other shape of it is a scope
+// that does not exist.
 func (s OrchestratorSource) absent(source string) ([]Node, []Edge, SourceState, error) {
-	if !s.Local || s.CachedAt.IsZero() {
-		noCache := ""
-		if s.Local {
-			noCache = ", and this machine holds no cached brief for it"
-		}
-		return nil, nil, SourceState{}, fmt.Errorf("%w: %s is not in the project's database%s: list the orchestrators this installation has with `fugaro orchestrator ls`", ErrNoOrchestrator, source, noCache)
+	if s.Local && !s.CachedAt.IsZero() {
+		// A local scope with a cache: the daemon that wrote the brief is the one
+		// thing left of the orchestrator here, and the age it carries is the cache's
+		// own stamp — the server time that daemon wrote at (D1243) and never this
+		// machine's clock, so a laptop whose clock is off still reports the age the
+		// daemon recorded.
+		return nil, nil, s.down(source, "the orchestrator's node is not in the project's database"), nil
 	}
-	// A local scope with a cache: the daemon that wrote the brief is the one
-	// thing left of the orchestrator here, and the age it carries is the cache's
-	// own stamp — the server time that daemon wrote at (D1243) and never this
-	// machine's clock, so a laptop whose clock is off still reports the age the
-	// daemon recorded.
-	return nil, nil, s.down(source, "the orchestrator's node is not in the project's database"), nil
+	if s.Listed {
+		// The database holds the id and its state node is not there yet. That is
+		// an orchestrator this installation has — `fugaro orchestrator ls` lists
+		// it, and the value reaches argv from a screen that read that listing
+		// (H1, F21) — so it is a scope whose graph cannot be read and never a
+		// scope that does not exist (H3, §6.22). `orchestrator run` writes the
+		// lease node before the cycle that saves a state, so a daemon whose
+		// cycles have all failed is exactly this shape.
+		return nil, nil, s.down(source, "the project's database lists this orchestrator and its state node is not written yet"), nil
+	}
+	// The two kinds are refused for different reasons, and the sentence has to
+	// say which one it is: a `local:<id>` is this machine's own reading of the
+	// node, a cached brief is what says this machine runs a daemon for the id,
+	// and the scope that asked for that daemon and has found neither is refused
+	// over the brief and the node and never over the database's listing (§6.22).
+	// An `orchestrator:<id>` is refused because the database does not hold the id
+	// at all — the question its caller asked before this scope was built
+	// (graphSources).
+	because := "is not in the project's database"
+	if s.Local {
+		because = "has no state node in the project's database, and this machine holds no cached brief for it"
+	}
+	return nil, nil, SourceState{}, fmt.Errorf("%w: %s %s: list the orchestrators this installation has with `fugaro orchestrator ls`", ErrNoOrchestrator, source, because)
 }
 
 // down is the scope of an orchestrator this read could not answer for: the

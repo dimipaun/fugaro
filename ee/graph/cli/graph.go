@@ -104,10 +104,13 @@ func NewGraphCmd() *cobra.Command {
 			"digit, then up to 39 more of those or a hyphen, and nothing else: anything\n" +
 			"that does not match is refused before anything is read, and so is an id the\n" +
 			"project's database does not hold, with a sentence naming it and pointing at\n" +
-			"fugaro orchestrator ls. A local:<id> is refused only when neither the\n" +
-			"database nor this machine's cache has it: the cache stands in for the local\n" +
-			"scope alone, so an orchestrator:<id> whose node is gone is refused even on a\n" +
-			"machine holding a brief for it.\n\n" +
+			"fugaro orchestrator ls. Which ids exist is what that listing asks — a key\n" +
+			"under /orchestrator — and not whether a state node was written, so an id it\n" +
+			"lists is a scope even with no state yet: a daemon that has beaten its lease\n" +
+			"and saved none is down rather than refused. A local:<id> is refused when this\n" +
+			"machine holds no cached brief for it and there is no node to read, because\n" +
+			"the cache stands in for the local scope alone: an orchestrator:<id> the\n" +
+			"database does not hold is refused even on a machine holding a brief for it.\n\n" +
 			"The coordinator's scope is every repository the local config lists, and a\n" +
 			"repository the sweep has never reconciled is read as its runs alone — the\n" +
 			"half of the view that needs no credential — rather than dropped. Which\n" +
@@ -270,13 +273,18 @@ func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, d
 	for _, src := range orchestrators {
 		ns, es, state, err := src.Nodes()
 		if err != nil {
-			// Under `all`, an id that is gone is simply a scope that is gone:
-			// the enumeration named it a moment ago and the node has been
-			// deleted since, which is not a reason to refuse the rest of the
-			// document. A scope named on the command line is the other case: it
-			// is refused, because a reader that asked for one scope and got a
-			// document without it could not tell that from an empty one (§6.22).
+			// Under `all`, every id this read enumerates has an answer of its
+			// own: the database's listing names it, or this machine's cache
+			// does. A source with none is therefore one the enumeration lost
+			// between itself and this read — a scope that is gone, and not a
+			// reason to refuse the rest of the document, which the console
+			// draws as "this CLI has no graph" (H3, T3). It is left out with
+			// the sentence saying so. A scope named on the command line is the
+			// other case: it is refused, because a reader that asked for one
+			// scope and got a document without it could not tell that from an
+			// empty one (§6.22).
 			if scope.Kind == graph.ScopeAll && errors.Is(err, graph.ErrNoOrchestrator) {
+				_, _ = fmt.Fprintf(warned, "the orchestrator %s is left out of this graph: %s\n", safetext.OneLine(src.Scope().String()), safetext.OneLine(err.Error()))
 				continue
 			}
 			return graph.Document{}, fcli.UserErr("%v", err)
@@ -314,6 +322,17 @@ func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, d
 // holds. That is why `ls` and this reader agree about the kind of an id without
 // asking each other: they read the same two things.
 //
+// Whether the database holds an id *at all* is the third read, and it is `ls`'s
+// own: the keys under `orchestrator/` with no values (orchestrator.NodeIDs). An
+// id it names is an orchestrator this installation has, whatever its state node
+// says — `orchestrator run` writes the lease node before the cycle that saves a
+// state — so one whose state is not written yet is a scope that is down and not
+// a scope that does not exist (H3, §6.22). `all` makes that read once, by
+// enumerating, and carries the answer into every source it builds; an
+// `orchestrator:<id>` named on the command line makes it only when its state
+// node is not there, because a node that was read has answered already
+// (databaseHolds).
+//
 // The read here is a failed read and not a refusal in the ordinary case: a
 // database that will not answer reaches the source as `ReadErr` and comes back
 // as a scope that is down (H3), while a read this CLI is *refused* is returned
@@ -335,6 +354,26 @@ func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope g
 		if err != nil {
 			return false, nil, err
 		}
+		// The one question this read cannot answer by itself. A scope named on
+		// the command line is asked whether the database holds the id at all
+		// when its state node is not there, and only then: a node that was read
+		// has already answered, and the question costs a shallow read of the ids
+		// under `orchestrator/` — the one `fugaro orchestrator ls` lists them
+		// with. It decides between a scope that is down — an orchestrator this
+		// installation has whose state is not written yet — and the refusal for
+		// an id nothing holds (§6.22).
+		//
+		// The local kind is asked nothing: `local:<id>` is a request for this
+		// machine's daemon, a cached brief is what says this machine runs one,
+		// and the cache stands in for that scope alone — so an id with no brief
+		// here is refused whatever the database holds (§6.22, D1358).
+		if src.Absent() && scope.Kind == graph.ScopeOrchestrator {
+			held, err := databaseHolds(ctx, env, db, scope.ID)
+			if err != nil {
+				return false, nil, err
+			}
+			src.Listed = held
+		}
 		return false, []graph.OrchestratorSource{src}, nil
 	}
 	// `all`: the ids the database holds and the ids this machine has a cached
@@ -355,8 +394,10 @@ func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope g
 	if err != nil {
 		return false, nil, env.DBErr(err, false)
 	}
+	held := make(map[string]bool, len(ids))
 	kind := make(map[string]bool, len(ids)+len(caches))
 	for _, id := range ids {
+		held[id] = true
 		kind[id] = false
 	}
 	for id := range caches {
@@ -369,9 +410,29 @@ func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope g
 		if err != nil {
 			return false, nil, err
 		}
+		// The enumeration has just answered this for every id: a key under
+		// `orchestrator/<id>` is there, whatever its state node says. It is
+		// what makes an id whose state is not written yet a scope that is down
+		// rather than a scope left out of the document.
+		src.Listed = held[id]
 		out = append(out, src)
 	}
 	return true, out, nil
+}
+
+// databaseHolds reports whether the project's database holds an id at all: one
+// shallow read of the ids under `orchestrator/`, which is the read `fugaro
+// orchestrator ls` lists them with (orchestrator.NodeIDs, D1358). An
+// `orchestrator:<id>` named on the command line is its only caller, and it asks
+// only when its state node is not there (graphSources); a read this CLI is
+// refused is classified the way the enumeration's own failure is, because it is
+// the same read (H3, T3).
+func databaseHolds(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, id string) (bool, error) {
+	ids, err := orchestrator.NodeIDs(ctx, db)
+	if err != nil {
+		return false, env.DBErr(err, false)
+	}
+	return slices.Contains(ids, id), nil
 }
 
 // orchestratorSource reads one id's node and builds its source: the state

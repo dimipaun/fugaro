@@ -25,6 +25,11 @@ package cli
 //     read is the warning of a read that still answers for every scope the
 //     database holds, and it refuses only the `local:<id>` that asked for that
 //     file — never a document-less exit for the console's default scope.
+//   - TestGraphAnswersAnOrchestratorWhoseStateIsNotWrittenYet: existence is the
+//     question `fugaro orchestrator ls` asks — a key under `orchestrator/` — so
+//     an id the database holds with no state node yet is a scope that is down in
+//     `all` and named on the command line alike, and never a scope dropped or
+//     refused (H3, §6.22).
 //   - TestGraphAllIsTheCoordinatorToday: `all` is the union of the scopes that
 //     exist, which today is the coordinator alone, and the document names it as
 //     itself — `coordinator` is the source half of every key it produced and the
@@ -289,6 +294,20 @@ func (f *graphFixture) writeOrchestratorState(t *testing.T, id, first, second st
 		t.Fatal(err)
 	}
 	f.db.Set(path, json.RawMessage(raw))
+}
+
+// writeOrchestratorLease leaves one orchestrator's lease node in the fixture's
+// database and no state node with it: the shape a daemon that is beating its
+// lease and whose cycles have all failed leaves behind — `orchestrator run`
+// writes the lease first and saves a state at the end of a successful cycle — so
+// the id is one `fugaro orchestrator ls` lists with nothing to draw for it.
+func (f *graphFixture) writeOrchestratorLease(t *testing.T, id, holder string, at time.Time) {
+	t.Helper()
+	path, err := orchestrator.PathLease(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(path, map[string]any{"holder": holder, "at": at.UTC().Format(time.RFC3339)})
 }
 
 // writeCachedBrief leaves one cached brief where the daemon writes it, placed
@@ -658,6 +677,77 @@ func TestGraphReadsTheOrchestratorAndLocalScopes(t *testing.T) {
 		t.Error("an orchestrator scope was answered from this machine's cached brief, want the refusal: only a local scope falls back to the cache")
 	} else if !strings.Contains(err.Error(), "fugaro orchestrator ls") {
 		t.Errorf("the refusal is %q, want it to say where the ids this installation has are listed", err)
+	}
+}
+
+// TestGraphAnswersAnOrchestratorWhoseStateIsNotWrittenYet: `all` enumerates ids
+// the way `fugaro orchestrator ls` does — the keys under `orchestrator/`, with no
+// values — and `orchestrator run` writes the lease node before the cycle that
+// saves a state, so an installation can list an id whose state node is not there
+// at all. That id is an orchestrator this installation has, and `all` is one
+// scope per orchestrator the database holds (CG4's union, §6.22), so its scope is
+// down: dropping it silently would draw a graph that disagrees with the listing
+// the console got its ids from, and refusing would take the whole document away
+// from a machine with one half-started daemon (H3, T3).
+//
+// The same id named by hand is asked the same question — does the database hold
+// it — and answers with the same scope, while an id no key is under is still the
+// refusal. The `local:` kind is the third answer and is its own: it names a daemon
+// on this machine, a cached brief is what says this machine runs one, and a scope
+// that asked for that daemon and has neither a brief nor a node is refused over
+// those and not over the database's listing (§6.22).
+func TestGraphAnswersAnOrchestratorWhoseStateIsNotWrittenYet(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	f.writeOrchestratorLease(t, "o1", "run-1", time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC))
+
+	all := graphDocument(t, "graph", "--json")
+	if len(all.Sources) != 2 || all.Sources[0].Source != "coordinator" || all.Sources[1].Source != "orchestrator:o1" {
+		t.Fatalf("`all` covers %+v, want the coordinator and the orchestrator the database lists", all.Sources)
+	}
+	if got := all.Sources[1]; got.State != graph.SourceDown || got.AsOf != nil {
+		t.Errorf("the orchestrator's scope is %+v, want it down and claiming no age: nothing has written a state", got)
+	}
+	if !strings.Contains(all.Sources[1].Reason, "state node is not written yet") {
+		t.Errorf("the reason is %q, want it to say the state node is not written", all.Sources[1].Reason)
+	}
+	if len(all.Nodes) != 1 {
+		t.Errorf("`all` drew %d nodes, want the stored record's one: an id with no state node has nothing to draw", len(all.Nodes))
+	}
+	if len(all.Warnings) != 0 {
+		t.Errorf("the document's warnings are %q, want none: nothing was left out of it", all.Warnings)
+	}
+
+	// Named by hand: the database is asked whether it holds the id at all, which
+	// is the read `ls` makes, and it does.
+	one := graphDocument(t, "graph", "--source", "orchestrator:o1", "--json")
+	if len(one.Sources) != 1 || one.Sources[0].State != graph.SourceDown {
+		t.Fatalf("the named scope is %+v, want orchestrator:o1 down", one.Sources)
+	}
+
+	// The control, and the half that keeps the two apart: an id no key is under
+	// is refused, not answered with a third kind of down, because a screen has to
+	// tell "nothing here" from "not asked" (§6.22).
+	if _, _, err := execute(t, "graph", "--source", "orchestrator:o2", "--json"); err == nil {
+		t.Error("an id the database does not hold was answered with a scope, want the refusal")
+	} else if fcli.ExitCode(err) != fcli.ExitUserError {
+		t.Errorf("the refusal is %v, want the user error the console reads", err)
+	}
+
+	// And the local kind of the same id: refused, because a brief on this machine
+	// is what makes an orchestrator local, and there is none — the database's
+	// listing does not stand in for it (D1358).
+	if _, _, err := execute(t, "graph", "--source", "local:o1", "--json"); err == nil {
+		t.Error("a local scope with no cached brief was answered, want the refusal")
+	} else if !strings.Contains(err.Error(), "cached brief") {
+		t.Errorf("the refusal is %q, want it to say this machine holds no cached brief for the id", err)
+	}
+
+	// The state node is what the scope is about: written, the same id reads up.
+	f.writeOrchestratorState(t, "o1", "land the state migration", "move the sweep onto the daemon")
+	live := graphDocument(t, "graph", "--source", "orchestrator:o1", "--json")
+	if len(live.Sources) != 1 || live.Sources[0].State != graph.SourceUp || len(live.Nodes) != 2 {
+		t.Errorf("the scope is %+v with %d nodes, want it up with the node's two work items", live.Sources, len(live.Nodes))
 	}
 }
 

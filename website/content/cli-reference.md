@@ -2199,10 +2199,13 @@ cached brief when the node cannot be read. An id is one lower-case letter or
 digit, then up to 39 more of those or a hyphen, and nothing else: anything
 that does not match is refused before anything is read, and so is an id the
 project's database does not hold, with a sentence naming it and pointing at
-fugaro orchestrator ls. A local:<id> is refused only when neither the
-database nor this machine's cache has it: the cache stands in for the local
-scope alone, so an orchestrator:<id> whose node is gone is refused even on a
-machine holding a brief for it.
+fugaro orchestrator ls. Which ids exist is what that listing asks — a key
+under /orchestrator — and not whether a state node was written, so an id it
+lists is a scope even with no state yet: a daemon that has beaten its lease
+and saved none is down rather than refused. A local:<id> is refused when this
+machine holds no cached brief for it and there is no node to read, because
+the cache stands in for the local scope alone: an orchestrator:<id> the
+database does not hold is refused even on a machine holding a brief for it.
 
 The coordinator's scope is every repository the local config lists, and a
 repository the sweep has never reconciled is read as its runs alone — the
