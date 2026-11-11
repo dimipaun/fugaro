@@ -399,7 +399,7 @@ func TestTextOnlyCoderWithNoGatewayKeepsItsImageReads(t *testing.T) {
 			t.Errorf("call %d ran under a managed settings file, in a run whose calls reach no gateway", i)
 		}
 	}
-	if sys := h.agent.calls[0].AppendSystemPrompt; strings.Contains(sys, "Never read a binary file") || strings.Contains(sys, "*.png") {
+	if sys := h.agent.calls[0].AppendSystemPrompt; strings.Contains(sys, "Never read an image") || strings.Contains(sys, "*.png") {
 		t.Errorf("the coder's brief claims an image read is denied:\n%s", sys)
 	}
 }

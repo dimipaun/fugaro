@@ -35,20 +35,26 @@ type PromptData struct {
 	// refuses outright when it isn't set, so the rule only names the
 	// command when the run's own fugaro.yaml configures one.
 	LintConfigured bool
-	// NoImageReads adds the rule that the coder must not read a binary file
-	// and says why: the stage's own model is priced without an image rate, so
-	// the gateway refuses a request carrying an image, and the stage's
-	// managed settings deny the read as well (agent.imageReadExtensions,
-	// D2014). A coder whose model has an image rate sends the image itself
-	// and gets the brief every run had before this rule existed.
+	// NoImageReads adds the rule that the coder must not read an image and
+	// says why: the stage's own model is priced without an image rate, so the
+	// gateway refuses a request carrying an image, and the stage's managed
+	// settings deny the read as well (agent.imageReadExtensions, D2014). The
+	// rule names the image kinds — the ones that refusal is about — and not
+	// the document kind the deny list also covers, which the gateway prices
+	// and serves (agent.documentReadExtensions). A coder whose model has an
+	// image rate sends the image itself and gets the brief every run had
+	// before this rule existed.
 	NoImageReads bool
 }
 
-// imageReadKinds is the kinds agent.ImageReadExtensions names, spelled as the
+// imageReadKinds is the kinds agent.ImageBlockExtensions names, spelled as the
 // brief names them: the extension with its star, so the coder reads a file
-// kind rather than a word.
+// kind rather than a word. Those are the kinds the gateway refuses for a model
+// priced without an image rate, which is the reason the brief gives — the deny
+// list covers a document kind as well, and naming it here would be a rule with
+// a "why" that is false for it.
 func imageReadKinds() string {
-	exts := agent.ImageReadExtensions()
+	exts := agent.ImageBlockExtensions()
 	kinds := make([]string, len(exts))
 	for i, ext := range exts {
 		kinds[i] = "*." + ext
@@ -79,7 +85,7 @@ func SystemPrompt(d PromptData, instructions string) string {
 		"- Never launch, cancel or retry a run from inside this job: you are the run it would act on, and nobody here can give the go-ahead such an action needs.",
 	}
 	if d.NoImageReads {
-		lines = append(lines, "- Never read a binary file ("+imageReadKinds()+"): the model serving this stage is priced without an image rate, so the gateway refuses a request that carries an image, and these reads are denied. If the work needs an image read, say so in "+explain+" instead: the owner can set `agent.models.vision`, and price that model's images with `model_prices`' `image_tokens`.")
+		lines = append(lines, "- Never read an image ("+imageReadKinds()+"): the model serving this stage is priced without an image rate, so the gateway refuses a request that carries an image, and these reads are denied. If the work needs an image read, say so in "+explain+" instead: the owner can set `agent.models.vision`, and price that model's images with `model_prices`' `image_tokens`.")
 	}
 	if d.NoWorkflows {
 		lines = append(lines, "- Never create, edit or delete files under .github/workflows/: GitHub refuses Fugaro's push of workflow changes, so the whole run could not be delivered. If the task needs one, describe the change in "+explain+" instead.")

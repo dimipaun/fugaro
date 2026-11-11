@@ -172,6 +172,13 @@ func TestManagedSettingsDenyWebTools(t *testing.T) {
 // an image block.
 var denyExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "pdf", "heic", "tiff"}
 
+// blockExtensions are the kinds among them a Read of which becomes an image
+// block, and so the kinds the gateway refuses for a model priced without an
+// image rate — the list the coder's brief names. The deny list is the wider
+// one: it carries the document kind (documentReadExtensions) as well, for the
+// review path's reason, and the gateway serves that one.
+var blockExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "heic", "tiff"}
+
 // TestDenyRulesPerStage: the two parts of the deny list are independent, and
 // a stage denied its image reads carries the web tools plus one Read rule per
 // kind. That list is what makes a stage's prompt rule enforced rather than
@@ -184,10 +191,12 @@ var denyExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
 // priced without an image rate), so the cases here are the two flags rather
 // than the stages' names.
 //
-// The list the rules are built from is the one list of image kinds this
-// program has: the runner's brief names it and the runner's own scan of a
-// task and a repository asks for it, so a kind added to the rules and not to
-// ImageReadExtensions, or the other way about, fails here.
+// The list the rules are built from is the one list of these kinds this
+// program has: the runner's own scan of a task and a repository asks for it,
+// so a kind added to the rules and not to ImageReadExtensions, or the other
+// way about, fails here. The coder's brief names the image kinds within it and
+// not the document kind (ImageBlockExtensions): this test holds the two apart
+// in both directions, and the runner's own brief test holds the sentence.
 //
 // D891(a)'s five tools are deliberately NOT part of it: a review stage is not
 // the independent review job, and a coding run's own review rounds keep their
@@ -202,13 +211,31 @@ var denyExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
 // stage): the web-tools-alone assertion fails. Mutation (drop one extension
 // from imageReadExtensions): the list assertion fails. Mutation (add a rule
 // the specifier of which is not a Read of a file kind, e.g. "Read(/etc/**)"):
-// the list assertion fails. Mutation (return deniedReviewTools from DenyRules
+// the list assertion fails. Mutation (return the whole list from
+// ImageBlockExtensions, or call a document kind an image): the block-list
+// assertions fail. Mutation (return deniedReviewTools from DenyRules
 // for every stage, which is where this list was before the review job was
 // told apart from a review stage): the web-tools-alone assertion and the row
 // below fail.
 func TestDenyRulesPerStage(t *testing.T) {
 	if got := ImageReadExtensions(); !slices.Equal(got, denyExtensions) {
 		t.Fatalf("ImageReadExtensions() = %v, want %v", got, denyExtensions)
+	}
+	if got := ImageBlockExtensions(); !slices.Equal(got, blockExtensions) {
+		t.Fatalf("ImageBlockExtensions() = %v, want %v", got, blockExtensions)
+	}
+	// The two lists differ by exactly the document kinds, which is the whole
+	// of why the brief spells the kinds its own way.
+	for _, ext := range denyExtensions {
+		want := !slices.Contains(documentReadExtensions, ext)
+		if got := slices.Contains(blockExtensions, ext); got != want {
+			t.Errorf("%s: ImageBlockExtensions carries it = %v, want %v", ext, got, want)
+		}
+	}
+	for _, ext := range documentReadExtensions {
+		if !slices.Contains(denyExtensions, ext) {
+			t.Errorf("%s is a document kind the deny rules do not cover", ext)
+		}
 	}
 	imageRules := denyExtensionsOf()
 	for _, c := range []struct {

@@ -3,6 +3,7 @@ package runner_test
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -165,30 +166,44 @@ var runCommandRE = regexp.MustCompile("`(?:fugaro )?(?:cancel|run --retry|--revi
 
 // TestTextOnlyCoderBriefNamesImageFilesAndTheFix: a coder whose stage cannot
 // send an image is told so and told what to do instead (D2014). The brief
-// names every kind the stage's managed settings deny a Read of, so what the
-// agent is told and what it is permitted are one list, and it names the fix
-// rather than leaving the coder to guess: the owner sets `agent.models.vision`
-// and prices that model's images with `model_prices`' `image_tokens`. The
-// rule is one line, and it is written once: a brief is a prompt, and a coder
-// that stopped to weigh a paragraph about images would spend the stage's
-// context on it.
+// names every kind the gateway refuses an image for (agent.ImageBlockExtensions),
+// so what the agent is told and the refusal it would meet are one list, and it
+// names the fix rather than leaving the coder to guess: the owner sets
+// `agent.models.vision` and prices that model's images with `model_prices`'
+// `image_tokens`. The rule is one line, and it is written once: a brief is a
+// prompt, and a coder that stopped to weigh a paragraph about images would
+// spend the stage's context on it.
 //
-// Mutation (build the kinds from a list of its own rather than from
-// agent.ImageReadExtensions): a kind the deny rules carry and this brief
-// forgets fails here, which is the drift the one list exists to prevent.
+// The kinds the deny list covers and the brief must not name are held here
+// too: the deny carries a document kind (agent.documentReadExtensions), which
+// the gateway prices at the model's whole context window and serves rather
+// than refusing, so a brief that listed it under "the gateway refuses a
+// request that carries an image" would state a reason that is false for it.
+//
+// Mutation (build the kinds from agent.ImageReadExtensions instead of
+// agent.ImageBlockExtensions): the document-kind assertion fails, the brief
+// naming a kind the gateway would have served.
 func TestTextOnlyCoderBriefNamesImageFilesAndTheFix(t *testing.T) {
 	got := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true}, "")
-	for _, ext := range agent.ImageReadExtensions() {
+	for _, ext := range agent.ImageBlockExtensions() {
 		if kind := "*." + ext; !strings.Contains(got, kind) {
 			t.Errorf("the brief does not name %s:\n%s", kind, got)
 		}
 	}
-	for _, want := range []string{"Never read a binary file", "priced without an image rate", "say so in the pull request description", "agent.models.vision", "`model_prices`' `image_tokens`"} {
+	for _, ext := range agent.ImageReadExtensions() {
+		if slices.Contains(agent.ImageBlockExtensions(), ext) {
+			continue
+		}
+		if kind := "*." + ext; strings.Contains(got, kind) {
+			t.Errorf("the brief names %s, a kind the gateway does not refuse an image for, under the refusal as its reason:\n%s", kind, got)
+		}
+	}
+	for _, want := range []string{"Never read an image", "priced without an image rate", "say so in the pull request description", "agent.models.vision", "`model_prices`' `image_tokens`"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the brief lacks %q:\n%s", want, got)
 		}
 	}
-	if n := strings.Count(got, "Never read a binary file"); n != 1 {
+	if n := strings.Count(got, "Never read an image"); n != 1 {
 		t.Errorf("the image rule is written %d times, want once:\n%s", n, got)
 	}
 	// The coder is told where to say it, which is the file the run's own

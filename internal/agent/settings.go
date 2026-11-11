@@ -31,12 +31,17 @@ func IsManagedSettingsTmp(name string) bool {
 var deniedWebTools = []string{"WebSearch", "WebFetch"}
 
 // imageReadExtensions are the file kinds whose reads a stage that cannot send
-// an image is denied, and the one list of image kinds this program has:
-// DenyRules spells them as Read rules, the coder's brief names them
-// (internal/runner's SystemPrompt), and the runner's own scan of a task and a
-// repository asks for them. One list, because a kind the deny rules cover and
-// the brief forgets is a Read the agent makes and a request the gateway
-// refuses.
+// an image is denied, and the one list of these kinds this program has:
+// DenyRules spells them as Read rules, and the runner's own scan of a task and
+// a repository asks for them. One list, because a kind the deny rules cover
+// and the scan forgets is a file a run with no image rate meets unprepared.
+//
+// The coder's brief (internal/runner's SystemPrompt) names ImageBlockExtensions
+// rather than the whole list: the reason it gives is the gateway's refusal, and
+// that reason is the image's alone — a PDF is not refused, it is priced at the
+// model's whole context window and served (documentReadExtensions). The deny
+// itself is unchanged: one list, and the review path's own reason for it
+// (reviewinput.go's binaryRule, below) covers every kind in it.
 //
 // Two stages are denied them. A REVIEW stage, whose prompt already says so —
 // reviewinput.go's binaryRule, carried by the built input and by PickPrompt —
@@ -53,7 +58,7 @@ var deniedWebTools = []string{"WebSearch", "WebFetch"}
 //
 // And every other stage whose OWN model has no image rate, whatever its role
 // (D2014): the same read, the same refused request, one stage earlier — at
-// `implement`, where the coder's brief names these kinds and says why, and
+// `implement`, where the coder's brief names the image kinds and says why, and
 // where a run that dies has already spent its plan and its implement. A coder
 // whose price row HAS an image rate sends the image itself and keeps its reads
 // (D2016). These kinds are the ones the rule is for; a text file either stage
@@ -63,6 +68,32 @@ var imageReadExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "
 // ImageReadExtensions is imageReadExtensions, as a copy: a caller that appends
 // to what it was given cannot change what the next stage is denied.
 func ImageReadExtensions() []string { return slices.Clone(imageReadExtensions) }
+
+// documentReadExtensions are the kinds in that list Claude Code reads as a
+// document rather than as an image. The gateway serves a request carrying one
+// whatever the model's image rate: it counts an image and a document apart and
+// refuses the image alone (internal/gateway's blocks and its refusal), and
+// reserves the model's whole context window for a document instead
+// (internal/pricing's HasPDF). The deny list carries them all the same — it is
+// one list, and the review path's reason for denying a binary is not the image
+// rate (reviewinput.go's binaryRule) — so a caller whose reason IS the refusal
+// asks for ImageBlockExtensions rather than for the list.
+var documentReadExtensions = []string{"pdf"}
+
+// ImageBlockExtensions are the kinds in imageReadExtensions a Read of which
+// Claude Code puts into the next request as an image block, and so the kinds
+// the gateway refuses for a model priced without an image rate: the list a
+// caller names when the refusal is the reason it gives (internal/runner's
+// brief). A copy, as ImageReadExtensions is.
+func ImageBlockExtensions() []string {
+	exts := make([]string, 0, len(imageReadExtensions))
+	for _, ext := range imageReadExtensions {
+		if !slices.Contains(documentReadExtensions, ext) {
+			exts = append(exts, ext)
+		}
+	}
+	return exts
+}
 
 // binaryReadRules is those kinds as deny rules: one rule per extension rather
 // than a brace pattern, since a rule's specifier is a path pattern Claude Code
