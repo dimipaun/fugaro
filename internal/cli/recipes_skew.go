@@ -542,6 +542,31 @@ const reviewJobSince = "0.20.0"
 // the class.
 const reviewAdmissionSince = "0.21.0"
 
+// providerEntrySince is the first fugaro release whose credentials service
+// reads the bundle's provider entry (config.ProviderKeySecret, AK6b of
+// docs/api-key-review): the project's provider credential, whose value is the
+// mapping of the key, the provider's base URL and how the key is sent
+// (credsvc's providerValue). The loader is strict about the document's KEYS —
+// an entry it does not know refuses the WHOLE document (ErrBundleUnknownKey),
+// which the service answers as a service-wide refusal and not as a refused
+// credential — so a bundle written with this entry by a CLI newer than the
+// service that reads it halts every caller of that service, coding runs
+// included, until `fugaro update` moves the service onto the image that reads
+// it.
+//
+// `fugaro creds set` is the bundle's only writer, so the guard is at that
+// write (creds.go, AK10 of the same folder), and it judges the release that
+// SERVES the document rather than the installation's pin: a pin ahead of a
+// service whose apply was declined or failed is exactly the state the guard
+// exists for. Unlike every other gate here, a record it cannot read refuses
+// the write instead of warning about it — the alternative is a write that
+// halts every caller of the service.
+//
+// It names 0.23.0 ("Tapir", the CLI minor after the tagged 0.22.0), which is
+// not tagged yet: docs/release.md's ("Before you tag") list verifies the
+// number against the release whose service was built with the entry's reader.
+const providerEntrySince = "0.23.0"
+
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
 // check job's own rebuild names the secret ID Readiness resolved, so a
