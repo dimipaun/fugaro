@@ -66,7 +66,6 @@ export {
   DEVICE_KEY_SIZE,
   DEVICE_SECRET_SIZE,
   KEY_CODES,
-  decodeDeviceKey,
   encodeDeviceKey,
   fingerprint,
   generateKeyPair,

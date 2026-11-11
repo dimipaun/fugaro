@@ -416,11 +416,15 @@ made for an app whose only cryptography was the platform's TLS. Two things
 changed, and both are standard, non-exempt primitives:
 
 * **Pairing** (`src/pairing/`) performs **X25519** key agreement and opens an
-  **AES-256-GCM** envelope with a key derived by **HKDF-SHA-256**. `key.js`
-  takes X25519 as an injected port (the entry supplies it), `hkdf.js` and
-  `aes.js` are the tree's own implementations, and `envelope.test.js` opens an
-  envelope the **Go command sealed**, so the two ends are checked against each
-  other and not only against vectors.
+  **AES-256-GCM** envelope with a key derived by **HKDF-SHA-256**. `hkdf.js`
+  and `aes.js` are the tree's own implementations, `key.js` and `envelope.js`
+  take X25519 as an injected port, and `envelope.test.js` opens an envelope the
+  **Go command sealed**, so the two ends are checked against each other and not
+  only against vectors. **Nothing supplies that port yet**: the app's
+  dependency is `@noble/curves` — whose `ed25519.js` subpath also exports
+  `x25519`, the line the entry has to write — and `index.js` still builds the
+  pairing seam as `pairingScreen: null`, so no code path in the app performs
+  X25519 today and the primitive arrives with that wiring.
 * **The licence verifier** (`src/licence/`) verifies an **Ed25519** signature,
   through `@noble/curves` — the app's one cryptographic dependency, pinned
   exact and MIT in the lockfile (`src/dependencies.test.js`).

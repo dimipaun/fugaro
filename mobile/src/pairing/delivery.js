@@ -116,7 +116,12 @@ export function readDelivery({ plaintext, scan }) {
   // refused here; that is a refusal a person can see and report, and it is the
   // trade this rule makes in both carriers.
   if (text.includes('\\')) return refuse(DELIVERY_CODES.BACKSLASH, 'delivery');
-  for (const field of [...DELIVERY_FIELDS, ...DEVICE_FIELDS]) {
+  // One field, one value, in every object the document carries -- the
+  // configuration's four as much as the outer three and the device's two. A
+  // field left out of this walk is a field `JSON.parse` resolves silently by
+  // letting the last of two equal keys win, which is the one thing the
+  // configuration may not do: it decides what the app stores (D199).
+  for (const field of [...DELIVERY_FIELDS, ...DEVICE_FIELDS, ...CONFIG_FIELDS]) {
     if (occurrences(text, `"${field}"`) > 1) return refuse(DELIVERY_CODES.DUPLICATE_FIELD, field);
   }
 

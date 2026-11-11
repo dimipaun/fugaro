@@ -65,7 +65,6 @@ const SURFACE = Object.freeze([
   'createPairingSession',
   'databaseHostsFor',
   'decodeBase64url',
-  'decodeDeviceKey',
   'decodeEnvelope',
   'deliveryAAD',
   'deliveryPath',

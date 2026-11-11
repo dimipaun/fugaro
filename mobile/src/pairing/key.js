@@ -31,8 +31,18 @@
 // app's X25519 and the CLI's `crypto/ecdh` are cross-checked by a vector
 // rather than by sharing code: `envelope.test.js` opens bytes the Go command
 // sealed.
+//
+// **The phone writes a key and never reads one, so there is no reader here.**
+// The only node carrying a key in this spelling is `pairing/$uid/request`, and
+// the merged rules put `.read: false` on it (§2 (a) 2): the CLI reads it with
+// database admin and no token may read it at all. A reader in this app would
+// therefore be unreachable code, and the one refusal such a reader would owe --
+// the key whose last byte has X25519's discarded top bit set, which
+// `crypto/ecdh` masks away rather than refuses, so sealing would bind bytes the
+// phone's own `getPublicKey` never spells -- lives where the reader is:
+// `token.DecodeDeviceKey`, with `TestDecodeDeviceKeyRefusesTopBitSet`.
 
-import { encodeBase64url, decodeBase64url, BASE64URL_CODES } from './base64url.js';
+import { encodeBase64url } from './base64url.js';
 import { sha256 } from '../mailbox/sha256.js';
 
 /** The phone's public key: 32 raw bytes. `token.DeviceKeySize` on the CLI. */
@@ -57,57 +67,12 @@ export const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 /** How this module refuses. */
 export const KEY_CODES = Object.freeze({
-  NOT_AN_OBJECT: 'not-an-object',
-  NOT_A_STRING: 'not-a-string',
-  NOT_TEXT: 'not-text',
-  BAD_LENGTH: 'bad-length',
-  BAD_ALPHABET: 'bad-alphabet',
-  NOT_CANONICAL: 'not-canonical',
-  NOT_CANONICAL_POINT: 'not-canonical-point',
   BAD_SECRET: 'bad-secret',
   BAD_PORT: 'bad-port',
 });
 
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, field });
-}
-
-/**
- * Read a device key from the one spelling a request node may carry: unpadded
- * base64url of `DEVICE_KEY_SIZE` bytes, 43 characters (§2 (e)).
- *
- * **Why the bytes and not the text.** Everything downstream hashes or binds
- * the *decoded* key -- `fingerprint` here, the envelope's AAD in
- * `envelope.js` -- so a caller can never accidentally bind the spelling.
- *
- * The top bit of the last byte is refused, and that refusal is load-bearing
- * rather than pedantic: it is X25519's discarded bit, so `crypto/ecdh` masks
- * it away and a key with it set combines to the same secret -- which means the
- * CLI would seal a payload whose AAD carries bytes the phone's own
- * `getPublicKey` never spells, and the phone could never open it. The CLI
- * refuses the same byte for the same reason (`DecodeDeviceKey`), so a request
- * node carrying one fails at both ends.
- */
-export function decodeDeviceKey(text) {
-  if (typeof text !== 'string') return refuse(KEY_CODES.NOT_A_STRING, 'key');
-  const decoded = decodeBase64url(text, DEVICE_KEY_SIZE);
-  if (!decoded.ok) {
-    // The base64 refusals are this module's refusals, renamed once so a caller
-    // switching on `KEY_CODES` never has to know about `BASE64URL_CODES`.
-    switch (decoded.code) {
-      case BASE64URL_CODES.BAD_LENGTH:
-      case BASE64URL_CODES.EMPTY:
-        return refuse(KEY_CODES.BAD_LENGTH, 'key');
-      case BASE64URL_CODES.NOT_CANONICAL:
-        return refuse(KEY_CODES.NOT_CANONICAL, 'key');
-      default:
-        return refuse(KEY_CODES.BAD_ALPHABET, 'key');
-    }
-  }
-  if ((decoded.bytes[DEVICE_KEY_SIZE - 1] & 0x80) !== 0) {
-    return refuse(KEY_CODES.NOT_CANONICAL_POINT, 'key');
-  }
-  return Object.freeze({ ok: true, key: decoded.bytes });
 }
 
 /** Write a public key in the one spelling the request node uses. Only the
@@ -121,7 +86,8 @@ export function encodeDeviceKey(key) {
 
 /**
  * The code the operator and the phone compare: decision 3's fingerprint of the
- * **decoded** key.
+ * key's **bytes** and not of its base64url spelling -- which is the same value
+ * the CLI reaches by decoding the request node's `key` (`Fingerprint`).
  *
  * The arithmetic is Crockford's, not a taste: the first five bytes of the
  * digest are one big-endian 40-bit integer, which is exactly eight five-bit
