@@ -303,6 +303,13 @@ func splitKeyV1(raw []byte) (payload, signature []byte, err error) {
 // after the object are the claim decode's to refuse, which is where the older
 // format refuses them too; catching them here instead would answer a different
 // refusal for the same payload depending on which format it was written in.
+//
+// `v` is read as the JSON integer the format writes it as. A payload spelling
+// it any other way -- a string, a fraction -- names no version this verifier
+// can compare, and the text is refused as malformed rather than read as a
+// version it might be. That is still a refusal and never a fall back to Free:
+// what it is not is the upgrade message, which is reserved for a key that says
+// which version it is.
 func peekV1(payload []byte) (kid string, version int, ok bool) {
 	var head struct {
 		KID string `json:"kid"`
@@ -349,7 +356,10 @@ func decodeClaimsV1(payload []byte) (ClaimsV1, error) {
 // ceiling of the bare term would refuse the very renewal the overlap exists
 // for. It bounds one key's length from that key's own `issued_at`, which is the
 // minter's to choose and is therefore not a bound on a leaked signing key --
-// the accepted limit the old format states as well.
+// the accepted limit the old format states as well. A term that runs backwards
+// is left to the state it produces rather than refused for its length: a
+// `paid_through` before its own `issued_at` is a key already past, and reading
+// it as expired is what the format's own terms say.
 func validateV1(claims ClaimsV1, firebaseProjectID string) error {
 	if claims.WorkspaceID == "" {
 		return fmt.Errorf("%w: the key carries no workspace id", ErrClaims)
