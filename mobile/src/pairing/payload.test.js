@@ -186,16 +186,17 @@ test('the uid is a pairing uid, in the one spelling the AAD binds', () => {
   assert.equal(codeOf(scanned({ uid: PAIRING_UID + '=' })), PAYLOAD_CODES.BAD_UID, 'padded');
 });
 
-test('the expiry is an instant, and a payload that has one is not re-judged by the clock', () => {
+test('the expiry is an instant, and a payload whose instant has gone is still read', () => {
   const result = readScannedPayload(scanned({ expires_at: '2026-11-11T17:50:00Z' }));
   assert.equal(result.ok, true);
   assert.equal(result.payload.expiresAt, Date.parse('2026-11-11T17:50:00Z'));
   assert.equal(codeOf(scanned({ expires_at: 'yesterday' })), PAYLOAD_CODES.BAD_EXPIRY);
   assert.equal(codeOf(scanned({ expires_at: '' })), PAYLOAD_CODES.BAD_EXPIRY);
-  // An expired payload is *read*, because the phone's clock is not the
-  // authority on the pairing token's life: the token exchange fails loudly and
-  // immediately if it really has expired, and a phone whose clock runs fast
-  // must not refuse a pairing the CLI would complete.
+  // A payload whose instant has gone is *read* and not refused: this file
+  // judges the shape of the QR and hands the instant on, and what the deadline
+  // means is `session.js`'s (`start` ends a scan past it, `tick` ends a watch
+  // past it) -- on a clock that is the phone's, which is why the QR's instant
+  // is the pairing token's own `exp` and not the CLI's wait.
   const past = readScannedPayload(scanned({ expires_at: '2000-01-01T00:00:00Z' }));
   assert.equal(past.ok, true);
   assert.equal(past.payload.expiresAt, Date.parse('2000-01-01T00:00:00Z'));

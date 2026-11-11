@@ -108,10 +108,20 @@ export const SESSION_STATES = Object.freeze({
   IDLE: 'idle',
   STARTING: 'starting',
   WATCHING: 'watching',
+  STORING: 'storing',
   DELIVERED: 'delivered',
   REFUSED: 'refused',
   EXPIRED: 'expired',
 });
+
+/** Whether an attempt is in flight: from the moment `begin` is entered until
+ * the attempt is refused, expired or delivered. Nothing else may start, cancel
+ * or end a session in one of these states, because everything the attempt is
+ * made of -- the scan, the key pair, the account id -- is this object's, and a
+ * second caller in the window would be writing one attempt's material with
+ * another's. Each of the three is a place where the session is suspended on an
+ * await: the exchange, the listener, and the two store writes. */
+const IN_FLIGHT = Object.freeze([SESSION_STATES.STARTING, SESSION_STATES.WATCHING, SESSION_STATES.STORING]);
 
 /** How this module refuses, on top of the payload's and the delivery's codes:
  * a `scan` refusal is `payload.js`'s, a delivery refusal is `delivery.js`'s or
@@ -234,21 +244,20 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     // delivered session may be started again -- a second QR, a re-pair -- and
     // every attempt begins from nothing: a new key, a new code, a new watch.
     //
-    // **In flight includes the exchange and the write**, and that is the whole
-    // point of the `starting` state: the steps below are one `begin`'s, over
-    // this object's own variables, and two of them at once interleave rather
-    // than queue. The second `begin` would reset the first's key and draw its
-    // own, the first would write the *second* one's public key to the request
-    // node, and the second's write would be denied by that node's own rule
-    // (`!data.exists()`) -- so the loser's refusal would stop the winner's
-    // listener and leave a request node behind that nothing can pair against
-    // again, because the request is written exactly once. A second press is a
-    // real event and not a hypothetical: the Pair button is drawn for every
-    // state but `watching` (`screen.js`), so a double-tap arrives while the
-    // first attempt is suspended on the exchange.
-    if (state === SESSION_STATES.STARTING || state === SESSION_STATES.WATCHING) {
-      return refuse(SESSION_CODES.ALREADY_STARTED);
-    }
+    // **In flight includes every await of the attempt** -- the exchange and the
+    // write (`starting`), the listener (`watching`), and the store (`storing`)
+    // -- and that is the whole point of the states: the steps below are one
+    // `begin`'s, over this object's own variables, and two of them at once
+    // interleave rather than queue. The second `begin` would reset the first's
+    // key and draw its own, the first would write the *second* one's public key
+    // to the request node, and the second's write would be denied by that
+    // node's own rule (`!data.exists()`) -- so the loser's refusal would stop
+    // the winner's listener and leave a request node behind that nothing can
+    // pair against again, because the request is written exactly once. A second
+    // press is a real event and not a hypothetical: the Pair button is drawn
+    // for every state but `watching` (`screen.js`), so a double-tap arrives
+    // while the first attempt is suspended on the exchange.
+    if (IN_FLIGHT.includes(state)) return refuse(SESSION_CODES.ALREADY_STARTED);
     reset();
     // The attempt is in flight from here, before the first await, so a press
     // that arrives during it is refused above rather than racing it. Nothing
@@ -333,7 +342,14 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     try {
       await delivered(envelope.bytes);
     } catch {
-      onError();
+      // A port that threw rather than refusing -- the store, above all, whose
+      // two writes are the only awaits left inside `delivered`. `onError` is the
+      // listener's own error path and answers a watch alone, so it cannot answer
+      // this one, and the attempt would otherwise sit in `storing` forever with
+      // nothing able to end it (a second `start` is refused, and `cancel` will
+      // not touch it). Only an attempt still in flight is ended here: a throw
+      // after the delivery landed must not rewrite a session that is over.
+      if (IN_FLIGHT.includes(state)) refusedWith(refuse(SESSION_CODES.PORT_FAILED));
     }
   }
 
@@ -352,9 +368,21 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
       stop();
       stop = null;
     }
-    const opened = openDelivery({ envelope, secret, publicKey, uid: scan.uid, x25519 });
+    // **The delivery is the attempt's, and the attempt is frozen from here.**
+    // The two writes below are awaits, and everything they name -- the account
+    // id, the scan -- is this object's, so the state says the session is in
+    // flight and the two names are taken into locals that nothing can change.
+    // Cancel is drawn while a session is `watching` (`screen.js`), so the
+    // window is a real one: a press there would reset the account id, a new
+    // scan would set a new one, and this delivery's token and MAC key would
+    // land under the *new* account -- a credential under the wrong owner, with
+    // the first account's tuple left behind with no secret.
+    state = SESSION_STATES.STORING;
+    const id = accountId;
+    const scanned = scan;
+    const opened = openDelivery({ envelope, secret, publicKey, uid: scanned.uid, x25519 });
     if (!opened.ok) return refusedWith(opened);
-    const judged = readDelivery({ plaintext: opened.plaintext, scan });
+    const judged = readDelivery({ plaintext: opened.plaintext, scan: scanned });
     if (!judged.ok) return refusedWith(judged);
     const { config, device, macKey } = judged.delivery;
     // 7. The account's address, then its two items -- and only these. The
@@ -362,7 +390,7 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     //    the items are D111's two, written through the store's own door so the
     //    value never exists outside a `Secret`.
     const added = await store.add({
-      id: accountId,
+      id,
       firebaseProjectId: config.gcpProject,
       authUid: device.uid,
       fugaroProject: config.project,
@@ -374,7 +402,7 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     ]) {
       const made = makeSecret(item, value);
       if (!made.ok) return refusedWith(refuse(SESSION_CODES.STORE_REFUSED, item));
-      const written = await store.setSecret(accountId, item, made.secret);
+      const written = await store.setSecret(id, item, made.secret);
       if (!written.ok) {
         // The tuple exists and an item did not land. That is the state
         // `account.js` calls the safe one -- an account whose secret is missing
@@ -404,8 +432,9 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
    * and a watch whose deadline has gone ends here: §7.2's answer to a pairing
    * the operator never completed, and the one ending the delivery child cannot
    * report (the module header's paragraph). Nothing else changes state: a
-   * session that is idle, delivered or refused is already over, and a watch
-   * inside its deadline is still waiting.
+   * session that is idle, delivered or refused is already over, a watch inside
+   * its deadline is still waiting, and a session that is `storing` has its
+   * delivery -- the deadline cannot end an attempt that already arrived.
    */
   function tick() {
     if (state !== SESSION_STATES.WATCHING) return snapshot();
@@ -417,8 +446,17 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
   /**
    * Give up: stop the listener and forget the key. The pairing node is the
    * CLI's to delete, and the phone has nothing to write.
+   *
+   * A session that is `storing` is not cancellable, and the answer is the
+   * snapshot as it stands: the delivery has arrived and its two items are
+   * already landing, so there is nothing here to take back -- and resetting the
+   * account id mid-write is what would put this account's token and MAC key
+   * under the next one. The screen draws no Cancel button in that state
+   * (`screen.js`), and a caller that asks anyway is told the truth by the
+   * snapshot rather than by a refusal that would read as a failed pairing.
    */
   function cancel() {
+    if (state === SESSION_STATES.STORING) return snapshot();
     if (stop !== null) {
       stop();
       stop = null;

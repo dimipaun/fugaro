@@ -218,12 +218,22 @@ export function readScannedPayload(text) {
   // named as the QR names them.
   const judged = judgeConfig({ project, gcpProject, databaseUrl, apiKey }, '');
   if (!judged.ok) return judged;
-  // **The expiry is read, not enforced.** This is not the authority on the
-  // pairing token's life: the token exchange is, and it fails loudly and at
-  // once if the token really has expired. A phone whose clock runs fast would
-  // otherwise refuse a pairing the operator's CLI would have completed, and
-  // §7.2's own rule for a late delivery is "say the pairing expired", not
-  // "refuse the scan".
+  // **The expiry is read here and judged in `session.js`.** This file's job is
+  // the shape of the QR, and the instant is parsed -- a scan is refused for
+  // `expires_at` being a number, not being an RFC3339 instant, or not parsing
+  // -- and handed on. What the deadline *means* is the session's, and it is not
+  // a judgement about the token: `expires_at` is the pairing token's own `exp`
+  // (`token.PairingLifetime` mints it as the CLI's wait plus `PairingSlack`),
+  // so the session ends the wait on the phone's clock at the instant the token
+  // itself dies, and the exchange stays the authority on the token's real life
+  // -- it fails loudly and at once if the token has expired.
+  //
+  // The phone's clock is therefore the one that could be wrong, and the slack
+  // is what absorbs it: a clock running fast by less than `PairingSlack` (30 s)
+  // gives up that much before the token dies and still after the CLI's own wait
+  // has ended, so it refuses nothing the CLI would have completed. A clock
+  // wrong by more than the slack loses the pairing, and the repair is §7.2's
+  // for any pairing that did not complete: start a new one.
 
   return Object.freeze({
     ok: true,

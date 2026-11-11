@@ -486,6 +486,81 @@ test('a second Pair before the first finishes is refused, not interleaved', asyn
   assert.deepEqual(draws, [0x22], 'the second press never reached the key pair');
 });
 
+test('a Cancel or a new scan cannot land between the delivery and its store', async () => {
+  // The delivery's two writes are awaits, and Cancel is drawn while a session
+  // is `watching` (`screen.js`), so the window is a real one. Without a state
+  // of its own for it, a Cancel there resets the account id and a new scan sets
+  // a new one -- and this delivery's token and MAC key land under the *new*
+  // account, which is a credential under the wrong owner, with the first
+  // account's tuple left behind and no secret in it.
+  const stores = makeStores();
+  // A store that does not answer in the same turn, so the window can be
+  // entered: every other port here is a promise already resolved.
+  const slow = {
+    add: (account) => Promise.resolve().then(() => stores.store.add(account)),
+    setSecret: (id, item, secret) => Promise.resolve().then(() => stores.store.setSecret(id, item, secret)),
+    list: () => stores.store.list(),
+    secret: (id, item) => stores.store.secret(id, item),
+  };
+  const { session, database } = makeSession({ stores: { ...stores, store: slow }, random: randomPort(0x11) });
+  await session.start(scanned(), { id: 'laptop' });
+  const phonePublic = nodeX25519.getPublicKey(new Uint8Array(32).fill(0x11));
+  const payload = payloadOf();
+  const delivered = database.push(
+    deliveryNode(seal({ phonePublic, uid: UID, payload, ephemeralSecret: new Uint8Array(32).fill(5) })),
+  );
+
+  // The delivery is in and the store has not answered: this is the window.
+  assert.equal(session.snapshot().state, SESSION_STATES.STORING);
+  assert.equal(session.cancel().state, SESSION_STATES.STORING, 'a session that is storing is not cancellable');
+  const again = await session.start(scanned(), { id: 'tablet' });
+  assert.equal(again.ok, false);
+  assert.equal(again.code, SESSION_CODES.ALREADY_STARTED);
+  assert.deepEqual(database.writes, [database.writes[0]], 'and the second scan wrote nothing');
+
+  await delivered;
+  assert.equal(session.snapshot().state, SESSION_STATES.DELIVERED);
+  // Everything landed under the account the delivery was for, and nothing
+  // landed under the second label.
+  assert.deepEqual(
+    [...(await stores.store.list()).accounts].map((account) => account.id),
+    ['laptop'],
+  );
+  const token = await stores.store.secret('laptop', 'idToken');
+  const mac = await stores.store.secret('laptop', 'macKey');
+  assert.equal(token.ok, true);
+  assert.equal(mac.ok, true);
+  assert.equal(token.secret.reveal(), payload.device.token);
+  assert.equal(mac.secret.reveal(), payload.mac_key);
+  assert.equal((await stores.store.secret('tablet', 'idToken')).ok, false, 'nothing under the second label');
+});
+
+test('a store that throws ends the attempt rather than leaving it storing', async () => {
+  // The store's writes are the only awaits inside the delivery, and a Keychain
+  // that throws rather than refusing must not leave the session `storing`
+  // forever: a second `start` is refused there and `cancel` will not touch it,
+  // so a throw would be a pairing with no way out.
+  const stores = makeStores();
+  const throwing = {
+    add() {
+      throw new Error('the keychain is unavailable');
+    },
+    setSecret: (id, item, secret) => stores.store.setSecret(id, item, secret),
+    list: () => stores.store.list(),
+    secret: (id, item) => stores.store.secret(id, item),
+  };
+  const { session, database } = makeSession({ stores: { ...stores, store: throwing }, random: randomPort(0x12) });
+  await session.start(scanned(), { id: 'laptop' });
+  const phonePublic = nodeX25519.getPublicKey(new Uint8Array(32).fill(0x12));
+  await database.push(deliveryNode(seal({ phonePublic, uid: UID, payload: payloadOf(), ephemeralSecret: new Uint8Array(32).fill(4) })));
+  const shown = session.snapshot();
+  assert.equal(shown.state, SESSION_STATES.REFUSED);
+  assert.equal(shown.refusal.code, SESSION_CODES.PORT_FAILED);
+  assert.equal(database.stopped, 1, 'the listener goes with the attempt');
+  // A refused attempt leaves the object usable: a re-pair is §7.2's repair.
+  assert.equal((await session.start(scanned(), { id: 'laptop' })).ok, true);
+});
+
 test('a port that fails ends the attempt with a refusal, and stores nothing', async () => {
   // The request write failing is the case the ordering is for: no code is
   // shown to the operator for a pairing that cannot proceed.
