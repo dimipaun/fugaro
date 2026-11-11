@@ -132,10 +132,15 @@ func runAccountsAllowList(cmd *cobra.Command, name string, repos []string, allow
 	}
 	if !allow {
 		if _, declared := lc.ClaudeAccounts[name]; !declared {
-			return userErr("claude_accounts.%s is not declared, so it has no allow-list to remove %s from: declare it with '%s accounts add %s --repos %s' (which stores its token), or add the repositories with '%s accounts allow %s %s'",
+			// The remedy is the one command builder this pair has
+			// (accountsAllowCommand): a list joined with spaces and quoted once
+			// is a single word to the shell, and this program's own validator
+			// would refuse the paste — a repository is owner/name, and the
+			// joined list is not.
+			return userErr("claude_accounts.%s is not declared, so it has no allow-list to remove %s from: declare it with '%s accounts add %s --repos %s' (which stores its token), or add the repositories with '%s'",
 				pluginwire.Printable(name), pluginwire.Printable(strings.Join(repos, ", ")),
 				selfCommand(), quoteWord(name), quoteWord(strings.Join(repos, ",")),
-				selfCommand(), quoteWord(name), quoteWord(strings.Join(repos, " ")))
+				accountsAllowCommand(name, repos, true))
 		}
 	}
 	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: sel.Path})
@@ -271,9 +276,18 @@ func accountsDenySubsetRule(after *localcfg.Config, name string, repos []string)
 		if len(missing) == 0 {
 			continue
 		}
-		return userErr("profiles.%s.allow_repos lists %s and claude_accounts.%s.allow_data_to would no longer cover %s: an account a profile lists covers every repository that profile admits, and the profile's repositories are the intersection of the two and never their union — leave %s on the account's list with '%s accounts allow %s %s', or take it out of profiles.%s.allow_repos; nothing was written",
+		// The remedy writes the account's own list, which is the repository as
+		// owner/name, and a profile's allow_repos is the canonical spelling the
+		// profile's provider qualifies ("github/acme/app"): printing the
+		// pattern it was read from would name a command this program's own
+		// validator refuses, and quoting the list whole would make it one word.
+		keep := make([]string, 0, len(missing))
+		for _, r := range missing {
+			keep = append(keep, strings.TrimPrefix(r, p.Provider+"/"))
+		}
+		return userErr("profiles.%s.allow_repos lists %s and claude_accounts.%s.allow_data_to would no longer cover %s: an account a profile lists covers every repository that profile admits, and the profile's repositories are the intersection of the two and never their union — leave %s on the account's list with '%s', or take it out of profiles.%s.allow_repos; nothing was written",
 			pluginwire.Printable(profile), strings.Join(missing, ", "), pluginwire.Printable(name), strings.Join(missing, ", "),
-			strings.Join(missing, ", "), selfCommand(), quoteWord(name), quoteWord(strings.Join(missing, " ")), pluginwire.Printable(profile))
+			strings.Join(missing, ", "), accountsAllowCommand(name, keep, true), pluginwire.Printable(profile))
 	}
 	return nil
 }

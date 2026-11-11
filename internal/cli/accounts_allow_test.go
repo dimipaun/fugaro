@@ -326,3 +326,61 @@ func TestAccountsAllowRefusesAnEntryTheFlowBlockCannotHold(t *testing.T) {
 		})
 	}
 }
+
+// TestAccountsDenyRemedyNamesEachRepositoryAsItsOwnWord: the two refusals that
+// hand the owner a command to paste — a name the config does not declare, and a
+// removal the subset rule refuses — spell that command the way this program's
+// own validator reads it. A list joined with spaces and quoted once is a single
+// word to the shell, so the paste is refused for a repository that is not
+// owner/name; and a profile's allow_repos is the canonical spelling
+// ("github/owner/repo-a"), which the account's own list is not and `accounts
+// allow` does not accept. Both refusals are read here through the command they
+// name, run on a config of their own: the remedy has to be a command that lands.
+func TestAccountsDenyRemedyNamesEachRepositoryAsItsOwnWord(t *testing.T) {
+	both := `claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
+      - owner/repo-b
+profiles:
+  standard:
+    provider: github
+    cpu: 2
+    memory: 8Gi
+    timeout_class: 6h
+    allow_repos:
+      - github/owner/repo-a
+      - github/owner/repo-b
+    claude_accounts:
+      - team-a
+`
+	cases := []struct {
+		name  string
+		local string
+		args  []string
+		repos []string
+	}{
+		{name: "a name the config does not declare", local: accountsAllowLocal, args: []string{"accounts", "deny", "team-b", "owner/repo-a", "owner/repo-b"}, repos: []string{"owner/repo-a", "owner/repo-b"}},
+		{name: "a removal the subset rule refuses", local: both, args: []string{"accounts", "deny", "team-a", "owner/repo-a", "owner/repo-b"}, repos: []string{"owner/repo-a", "owner/repo-b"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			settingsWriteHomeWith(t, tc.local)
+
+			_, _, err := execute(t, tc.args...)
+			if err == nil {
+				t.Fatal("the removal was accepted")
+			}
+			name := tc.args[2]
+			if want := "accounts allow " + name + " " + strings.Join(tc.repos, " "); !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name the remedy as one word per repository (want %q):\n%v", want, err)
+			}
+			// The remedy is a command this program has to accept, so it is run:
+			// the same validator that judged the removal judges it.
+			args := append([]string{"accounts", "allow", name}, tc.repos...)
+			if _, _, err := execute(t, args...); err != nil {
+				t.Errorf("the remedy the refusal names is refused by this program:\n%v", err)
+			}
+		})
+	}
+}
