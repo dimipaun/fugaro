@@ -33,10 +33,23 @@ package tf
 // answer rather than a limitation: the member hands read access to a principal
 // that is not this installation's own, which is a loosening, and the managed
 // cover admits no project-level IAM at all (managed_cover.go's
-// google_project_iam_member row). So the stage does not run under the cover's
-// admission; it asks its own typed confirmation, which the member's owner
-// gives at their own terminal, once per member, at the moment they join the
-// workspace.
+// google_project_iam_member row).
+//
+// What actually happens is one step short of that refusal: this binding is
+// planned by the Firebase root, and the Firebase root is planned only by
+// `fugaro update --firebase-project` (the Firebase stage's own skip: without the
+// flag the stage does not run). That flag is an installation-shaping one
+// (init.go's installationFlags), and a shaped run keeps no gate at all
+// (initRun.gateable), so the managed cover is never handed this plan in the
+// first place — a run that plans the binding writes no audit record for it and
+// the gate's refusal is not what stops it
+// (TestUpdateFirebaseProjectKeepsItsOwnConfirmationOnAManagedProject drives the
+// run and holds both facts). The cover's refusal is what would answer if a
+// later shape of this grant were ever judged by the gate; meanwhile the stage's
+// own confirmation is what applies it, which the member's owner gives at their
+// own terminal on `fugaro update --firebase-project <its own project>` — once
+// per member, at the moment they join the workspace — and a coding agent's
+// session is left the step rather than applying it.
 
 const (
 	// WorkspaceReadRole is the custom role modules/firebase/workspace_access.tf

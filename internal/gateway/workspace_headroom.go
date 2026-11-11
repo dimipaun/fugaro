@@ -13,10 +13,18 @@ import (
 // proxies (docs/workspaces/spec.md §5, reconciliation.md §8's O1).
 //
 // It is the wire between two binaries: the workspace's credentials service
-// writes it (internal/credsvc imports this package and uses this constant) and
-// a member's gateway reads it here. It is never a node of a member's database —
-// the service holds no write on a member at all, and a number delivered on the
-// answer it is already sending needs no write to deliver.
+// writes it (internal/credsvc imports this package and uses this constant, in
+// SetWorkspaceHeadroom) and a member's gateway reads it here. It is never a node
+// of a member's database — the service holds no write on a member at all, and a
+// number delivered on the answer it is already sending needs no write to
+// deliver.
+//
+// Nothing writes it on an answer yet: the service's paid-call path takes no
+// headroom and copies the answer's headers through as they are, so today no
+// answer carries this header and every reader below answers "none"
+// (internal/credsvc/workspace_cap.go's header states the deferral and the task
+// it needs). The constant, the writer and the reader are all here, which is
+// what makes the delivery a wiring and not a design.
 //
 // The value is micro-dollars, decimal: what the workspace's own ceiling still
 // leaves, this month, across all of its members — budget.WorkspaceRoom, read
@@ -27,7 +35,10 @@ import (
 //
 // It is ADVISORY. The workspace service refuses the call at the ceiling
 // whatever a member's gateway believes: a member that never read a header is
-// still cut off there.
+// still cut off there. That refusal is the meter's — taken before the call is
+// made, internal/credsvc/workspace_cap.go — and it is not wired to the
+// service's paid-call path yet either, so until it is, the only ceiling that
+// cuts a call off is the member's own.
 const WorkspaceHeadroomHeader = "X-Fugaro-Workspace-Headroom"
 
 // WorkspaceHeadroom reads the advisory headroom off an answer: what the

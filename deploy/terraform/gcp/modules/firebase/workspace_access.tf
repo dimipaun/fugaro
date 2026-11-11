@@ -38,9 +38,14 @@
 # answer rather than a limitation: the member hands read access to a principal
 # that is not this installation's own, which is a loosening, and the managed
 # cover admits no project-level IAM at all (internal/infra/tf/managed_cover.go,
-# "google_project_iam_member"). So the stage does not run under the cover's
-# admission: it falls back to its own typed confirmation, which the member's
-# owner gives at their own terminal, once per member, at the moment they join
+# "google_project_iam_member"). What the gate is never handed is this plan: the
+# root this file belongs to is planned only by `fugaro update
+# --firebase-project`, that flag shapes the installation rather than converging
+# it, and a shaped run keeps no gate at all (internal/cli/init.go's
+# installationFlags, initRun.gateable) — so the binding is applied by the
+# stage's own typed confirmation and the cover's refusal is what would answer if
+# a later shape of this grant were ever judged. The confirmation is the member's
+# owner's, given at their own terminal, once per member, at the moment they join
 # the workspace.
 #
 # The account must already exist, exactly as coordinator_account's must: IAM

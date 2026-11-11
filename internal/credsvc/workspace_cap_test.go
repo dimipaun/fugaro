@@ -5,18 +5,21 @@ package credsvc
 // the response's usage (docs/workspaces/spec.md §5, D1301 as amended
 // 2026-11-04).
 //
-// The meter is what the service's forwarding path calls, and it is deliberately
-// the whole of the interface these tests need: the figure lives in the
-// workspace's OWN database, one conditional write per reserve and per settle,
-// and what a member is told is the advisory headroom the answer carries. The
-// tests below hold the four properties the cap rests on — the room is taken
-// before the call and released into the figure by the settle, a call that would
-// pass the ceiling is refused before it is made, a settle that cannot be written
-// refuses the call, and the figure is the workspace's own and no member's — plus
-// the two the spec states about the delivery of the number (it arrives on the
-// service's answer, and it is written into no member's database) and the front
-// door (a member that cannot be resolved as a caller is refused before anything
-// is counted).
+// The meter is the whole of the interface these tests need — the figure lives in
+// the workspace's OWN database, one conditional write per reserve and per settle,
+// and what a member is told is the advisory headroom the answer carries — and it
+// is NOT what the service's forwarding path calls: nothing in this package calls
+// this meter yet, so the tests here are the meter's own and reach it directly
+// rather than through a call the service serves (workspace_cap.go's header states
+// the deferral, names the file the wiring belongs in, and says that no task of
+// the plan owns it). The tests below hold
+// the four properties the cap rests on — the room is taken before the call and
+// released into the figure by the settle, a call that would pass the ceiling is
+// refused before it is made, a settle that cannot be written refuses the call,
+// and the figure is the workspace's own and no member's — plus the two the spec
+// states about the delivery of the number (it arrives on the service's answer,
+// and it is written into no member's database) and the front door (a member that
+// cannot be resolved as a caller is refused before anything is counted).
 //
 // Every value here is a name or a dollar amount; no literal is, or looks like,
 // a credential.

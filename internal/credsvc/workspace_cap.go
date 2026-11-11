@@ -21,6 +21,25 @@ import (
 // (internal/budget/workspace.go holds the transaction), and it answers each
 // member with the advisory headroom the ceiling still leaves.
 //
+// THE METER IS NOT WIRED TO THE CALL YET, and that is this task's own open
+// piece rather than something these comments hide: nothing in this package
+// calls NewWorkspaceMeter, Reserve, Settle, Room or SetWorkspaceHeadroom, and
+// internal/credsvc/forward.go's paid-call path (send, and the answer
+// copyAnswerHeaders builds) takes no reservation, settles nothing and carries
+// no headroom header. So a deployment of this service today serves every call
+// it pays for unmetered, refuses nothing at the ceiling and tells no member
+// what room is left: the cap binds nothing until the wiring lands. The wiring
+// is the interface the task is written to, and it is NOT among W7's files
+// (docs/workspaces/implementation-plan.md names eleven, and the service's
+// forwarding path is none of them), nor does any other task of that plan own
+// it — W6 builds the workspace's second deployment and its identity, W8 the
+// stop and `fugaro workspace cap`, W9 the docs. It needs a task of its own,
+// because what it adds is behavior and not a correction: the caller's identity
+// resolved to a member, the per-call worst case reserved before the call, the
+// settle on the response's usage with the call refused when that write fails,
+// and the header written on an answer that is already going out. It is
+// reported on this task's pull request rather than half-landed here.
+//
 // Three things about the shape are the design and not an accident:
 //
 //   - the figure is the WORKSPACE's, and no member's. The member's own ledger

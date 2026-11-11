@@ -207,8 +207,14 @@ func TestMemberUpdateBindsNoWriteOnTheMembersDatabase(t *testing.T) {
 // A managed project's plan gate refuses this binding, and that is the correct
 // answer rather than a limitation: the member hands read access to a principal
 // that is not this installation's own, which is a loosening, and the cover
-// admits no such grant. The stage therefore asks its own typed confirmation,
-// which the member's owner gives at their own terminal once per member.
+// admits no such grant. The refusal is not, however, what the member meets: the
+// only run that plans this binding is `fugaro update --firebase-project`, whose
+// flag makes the run ungated, so this plan is never handed to the gate at all
+// and the stage asks its own typed confirmation instead — the member's owner's,
+// at their own terminal, once per member
+// (TestUpdateFirebaseProjectKeepsItsOwnConfirmationOnAManagedProject drives that
+// run; workspace_access.go's header has the mechanism). What this test pins is
+// the cover's own answer, which is what a later shape of the grant would meet.
 func TestTheWorkspaceBindingIsNotCovered(t *testing.T) {
 	account := "fugaro-credentials@ws-1234.iam.gserviceaccount.com"
 	role := "projects/fp-2/roles/" + WorkspaceReadRole
