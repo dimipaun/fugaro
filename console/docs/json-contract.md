@@ -2993,11 +2993,14 @@ scope per orchestrator the project's database holds or this machine has a cached
 brief for (CG4's rule, D1358) — `coordinator` is the stored view alone,
 `orchestrator:<id>` is one orchestrator's state node, and `local:<id>` is the
 same node read as one this machine's daemon drives, falling back to its cached
-brief when there is none (CG5). **An id neither the database nor this machine
-knows is refused**, naming the scope and `fugaro orchestrator ls`, because a
-screen must be able to tell "nothing here" from "not asked" — and never answered
-with an empty document, which is the same shape a scope with no work in it
-prints. The value reaches argv from the renderer, so the CLI refuses everything
+brief when there is none (CG5). **An id the project's database does not hold is
+refused**, naming the scope and `fugaro orchestrator ls` — and so is a
+`local:<id>` this machine has no cached brief for — because a screen must be
+able to tell "nothing here" from "not asked", and never answered with an empty
+document, which is the same shape a scope with no work in it prints. The cache
+is `local:`'s own fallback and never the orchestrator scope's: `orchestrator:<id>`
+reads the node through the caller's credential, and a machine that happened to
+have a brief for that id cannot answer the scope that asks the project (D1358). The value reaches argv from the renderer, so the CLI refuses everything
 but the closed set below **before it reads anything** (H1), and the console sends
 only a value a previous read listed (F21):
 
@@ -3072,9 +3075,8 @@ exit** (H3): the read answered, and this entry is its answer.
   in both cases: a screen draws the state and the reason, never a partial graph.
 
 **A refused read is the other case, and it is terminal.** An invalid `--source`
-(H1), or a scope this build does not have (`orchestrator:` and `local:` before
-CG4 and CG5), is an error with a non-zero exit and **no document at all**, naming
-the command — which is what the console reads as "this CLI has no graph" and
+(H1), or an id no scope of that name exists for (above), is an error with a
+non-zero exit and **no document at all**, naming the command — which is what the console reads as "this CLI has no graph" and
 answers by keeping the plan scope and a refusal sentence (T3, CG10). A repository
 whose `repos` entry names no provider is refused the same way (above), and so is
 a database the scope's read could not reach — an IAM refusal, a connection that

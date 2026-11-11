@@ -101,9 +101,12 @@ func NewGraphCmd() *cobra.Command {
 			"read as one this machine's daemon drives, falling back to the daemon's\n" +
 			"cached brief when the node cannot be read. An id is one lower-case letter or\n" +
 			"digit, then up to 39 more of those or a hyphen, and nothing else: anything\n" +
-			"that does not match is refused before anything is read, and an id that is\n" +
-			"neither in the project's database nor in this machine's cache is refused\n" +
-			"with a sentence naming it and pointing at fugaro orchestrator ls.\n\n" +
+			"that does not match is refused before anything is read, and so is an id the\n" +
+			"project's database does not hold, with a sentence naming it and pointing at\n" +
+			"fugaro orchestrator ls. A local:<id> is refused only when neither the\n" +
+			"database nor this machine's cache has it: the cache stands in for the local\n" +
+			"scope alone, so an orchestrator:<id> whose node is gone is refused even on a\n" +
+			"machine holding a brief for it.\n\n" +
 			"The coordinator's scope is every repository the local config lists, and a\n" +
 			"repository the sweep has never reconciled is read as its runs alone — the\n" +
 			"half of the view that needs no credential — rather than dropped. Which\n" +
