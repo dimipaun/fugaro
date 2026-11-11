@@ -499,21 +499,38 @@ func TestPairRefusesRepoScopedOnlyUser(t *testing.T) {
 		pairGrant(t, "person-4@example.com", accesslib.RoleAdmin, "github/acme/*"),
 		pairGrant(t, "person-4@example.com", accesslib.RoleViewer, "all-repos"))
 	out, _, err := pairRun(t, "--json")
-	pairAssertUnplaced(t, f, out, err, "user:person-4@example.com")
+	pairAssertUnplaced(t, f, out, err, "user:person-4@example.com", "project scope")
 
 	// The same answer for a caller the installation's IAM lists still name: the
 	// node places a caller now, and the lists are only the migration's source.
 	f = newPairFixture(t, pairMe)
 	f.pairSeedGrants(t, pairGrant(t, pairMe, accesslib.RoleAdmin, "github/acme/*"))
 	out, _, err = pairRun(t, "--json")
-	pairAssertUnplaced(t, f, out, err, "user:"+pairMe)
+	pairAssertUnplaced(t, f, out, err, "user:"+pairMe, "project scope")
+}
+
+// TestPairRefusesInstallationWithoutGrantsNode is the other half of the same
+// refusal: the grants node itself is absent, which is an installation that has
+// not run the release that migrates the two IAM lists into it (RS3). A device
+// paired here would inherit nothing, so the refusal names the absent node and
+// the one command that writes it — `fugaro update` — rather than a grant to ask
+// an admin for, and it still mints and writes nothing.
+func TestPairRefusesInstallationWithoutGrantsNode(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.db.Set(accesslib.PathNode, nil)
+	out, _, err := pairRun(t, "--json")
+	reason := pairAssertUnplaced(t, f, out, err, accesslib.PathNode, selfCommand()+" update")
+	if strings.Contains(reason, "update --operator") {
+		t.Fatalf("an absent node reads as a missing grant: %q", reason)
+	}
 }
 
 // pairAssertUnplaced holds a caller the grants place outside the project to
-// RS8's rule: the wire code a console switches on, the member and the scope the
-// sentence names, and no pairing token, device node or pairing subtree behind
-// the refusal.
-func pairAssertUnplaced(t *testing.T, f *pairFixture, out string, err error, member string) {
+// RS8's rule: the wire code a console switches on, the facts the sentence names
+// and no pairing token, device node or pairing subtree behind the refusal. It
+// returns the reason so a caller can hold it to more than the words every
+// unplaced refusal shares.
+func pairAssertUnplaced(t *testing.T, f *pairFixture, out string, err error, wants ...string) string {
 	t.Helper()
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want exit 1", err)
@@ -522,7 +539,7 @@ func pairAssertUnplaced(t *testing.T, f *pairFixture, out string, err error, mem
 	if len(events) != 1 || events[0].Code != pairRefusedUnplaced {
 		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedUnplaced)
 	}
-	for _, want := range []string{member, "project scope"} {
+	for _, want := range wants {
 		if !strings.Contains(events[0].Reason, want) {
 			t.Fatalf("refusal %q does not name %q", events[0].Reason, want)
 		}
@@ -535,6 +552,7 @@ func pairAssertUnplaced(t *testing.T, f *pairFixture, out string, err error, mem
 			t.Fatalf("a refused caller wrote %v", w)
 		}
 	}
+	return events[0].Reason
 }
 
 func TestPairRoleAboveCallerRefused(t *testing.T) {
