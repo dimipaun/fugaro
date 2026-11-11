@@ -907,12 +907,12 @@ func checkProviderURL(s string) error {
 }
 
 // CheckProviderAuth is the auth rule for models routed to a provider: the
-// coder, the reviewer, the background model and the vision model that a
-// provider claims need agent.auth api-key. oauth is a subscription credential
-// that cannot leave
-// Anthropic, and vertex is Claude on Vertex; neither can carry a provider
-// key, so a provider-claimed model is refused under either of them. The
-// owner's ruling of 2026-11-04 (task B0) permits exactly one mix of
+// coder, the reviewer, the background model and — when it is set — the vision
+// model that a provider claims need agent.auth api-key. oauth is a subscription
+// credential that cannot leave Anthropic, and vertex is Claude on Vertex;
+// neither can carry a provider key, so a provider-claimed model is refused
+// under either of them. The owner's ruling of 2026-11-04 (task B0) permits
+// exactly one mix of
 // credentials and leaves this function's answer unchanged: an api-key run
 // may declare one stage-scoped Claude OAuth account for its review and
 // adversarial stages, beside the provider key its coder runs on
