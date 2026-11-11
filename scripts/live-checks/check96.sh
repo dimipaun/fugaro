@@ -1290,6 +1290,20 @@ def load(path=None):
     return parse_json(raw)
 
 
+def yaml_bool(text):
+    """A YAML boolean, or None for a value that is not one: `true`/`false` and
+    the 1.1 words yaml.v3 resolves too (yes/no/on/off), in any case, quoted or
+    not. The two config fields this check reads as booleans are written by
+    yaml.Marshal as `true`/`false`, and a reader that knows only that one
+    spelling reads `True` -- which is the same boolean -- as `no`."""
+    value = text.strip().strip("\"'").lower()
+    if value in ("true", "yes", "on"):
+        return True
+    if value in ("false", "no", "off"):
+        return False
+    return None
+
+
 def env_of(container):
     """One container's environment as a dict. A value_source entry (a mounted
     secret) reads as the empty string, which is what makes `present` mean a
@@ -1388,10 +1402,28 @@ def cmd_config(path, repo):
             # An entry of the mapping: the value is a block, so it never carries
             # one here, and a nested key that does (`workflows:`) must not be
             # mistaken for one.
+            if rest.startswith("{"):
+                # yaml's flow style, which fugaro's own writer never emits
+                # (yaml.Marshal writes one key per line). Read as an entry with
+                # no keys under it, it reports `unset` for a repository the
+                # config does record, and `unset` is what makes the row this
+                # feeds pass a job whose root is switched on -- so the document
+                # is refused instead: a config this check cannot read is a fact
+                # it cannot tell, which is what the caller's `stop` says.
+                fail("the config's repos mapping writes %s on one line (%s), and this check reads the repository's credentials_service_ready from the entry: fugaro writes this file with yaml.Marshal, one key per line. Write the entry the way fugaro writes it, or point FUGARO_CONFIG at a config fugaro wrote" % (key, rest))
             current = key
             continue
         if current == repo and key == "credentials_service_ready":
-            ready = "yes" if rest.strip("\"'") == "true" else "no"
+            # The field is a *bool (localcfg.Repo.CredentialsServiceReady), so
+            # what is read here is a boolean and not the one spelling this
+            # check's own fixture happens to use: `True` is as true as `true`,
+            # and reading it as `no` would pass a job whose root is switched
+            # on. A value that is no boolean at all is neither, and it stops
+            # the read rather than being read as the fail-safe direction.
+            on = yaml_bool(rest)
+            if on is None:
+                fail("the config records %s's credentials_service_ready as %r, which is not a boolean (yaml's true/false, or yes/no/on/off): a value this check cannot read is a switch it cannot judge, and reading it as off would pass a job whose root is switched on" % (repo, rest))
+            ready = "yes" if on else "no"
     if repo == "":
         ready = "unset"
     print("service_url=%s" % url)
