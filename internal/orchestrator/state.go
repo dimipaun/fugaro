@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/tier"
 )
@@ -38,7 +39,7 @@ import (
 // SchemaVersion is the state schema this release writes. A node carrying an
 // older one is raised by Migrate before it is used; one carrying a newer one
 // is refused, because this release cannot know what a later one meant by it.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // ApprovalAttempts is what one approval covers: the attempt the person
 // approved and at most one automatic retry of that same spec (the owner's
@@ -76,6 +77,16 @@ const (
 	MaxIntents   = 64
 	MaxArchived  = 64
 	MaxDependsOn = 32
+
+	// MaxEscalationTransitions bounds the ladder's ledger on one item. The
+	// transitions are append-only, so the bound is what keeps the ledger from
+	// growing without end on an item the ladder keeps acting on: the rungs it
+	// may enter are a handful (D2042's list is six runs at most), and this is
+	// the ceiling a bug cannot walk past.
+	MaxEscalationTransitions = 16
+	// MaxOuterAttempts bounds the ladder runs one item may spend, counted
+	// apart from ApprovalAttempts (D2042, G15).
+	MaxOuterAttempts = 16
 
 	MaxGoalRunes      = 600
 	MaxTitleRunes     = 200
@@ -260,6 +271,59 @@ type Approval struct {
 	Attempts   int       `json:"attempts"`
 }
 
+// Escalation is the ladder's ledger on one work item: the rung the item is at,
+// when it entered it, how many ladder runs it has spent, and every transition
+// that got it there (docs/outer-loop-escalation, E7).
+//
+// It is bookkeeping (bookkeepingFields), and that is what makes the ladder
+// usable: the ledger changes on every rung, and an approval that fell off at
+// each change would have the daemon asking a person for a go on work they
+// already approved (D2042). Only the daemon writes it, and the patch appends
+// to it rather than replacing it.
+//
+// Nothing here is free text (G8). A rung, a reason code, a count, times and a
+// head: every string is a value of a closed vocabulary or a git object name,
+// so a prompt, a finding or a diff has nowhere to sit.
+type Escalation struct {
+	// Rung is the rung the item is at, and it is the highest it has entered:
+	// the ladder does not walk back down, and Apply refuses a patch that tries.
+	Rung escalation.Rung `json:"rung"`
+	// EnteredAt is when the item entered that rung, on the server clock. It is
+	// the last transition's own time, so the two cannot disagree.
+	EnteredAt time.Time `json:"entered_at"`
+	// OuterAttempts is how many of the ladder's own runs the item has spent —
+	// rung 0, the one rung 2, the judge and the review of a rebased head — and
+	// never a normal run of the item's recipe, which ApprovalAttempts counts
+	// (D2042, G15).
+	OuterAttempts int `json:"outer_attempts"`
+	// Transitions is the ladder's history, oldest first and append-only. The
+	// first one leaves the zero Rung, which is how this document spells an item
+	// that had entered none.
+	Transitions []Transition `json:"transitions"`
+}
+
+// Transition is one move on the ladder: the rung the item left, the one it
+// entered, why, when, and the head it was looking at.
+type Transition struct {
+	// From is the rung the item was at. Absent on the first transition, which
+	// is an item entering the ladder: the zero Rung means "none" here as it
+	// does in escalation.Facts.Reached.
+	From escalation.Rung `json:"from,omitempty"`
+	// To is the rung it entered. It is never empty: a transition to nowhere
+	// records nothing.
+	To escalation.Rung `json:"to"`
+	// Reason is why, as one of escalation.Reasons: a code, never a sentence, so
+	// the ledger holds no finding text and no model (G8).
+	Reason escalation.Reason `json:"reason"`
+	// At is when it happened, on the server clock.
+	At time.Time `json:"at"`
+	// HeadSHA is the head the ladder was looking at, and it is what rung 0 is
+	// spent by: a head already in the ledger has had its rebase, so the ladder
+	// does not rebase it again (escalation.Facts.RebasedHeads). Absent when the
+	// rung has no head of its own.
+	HeadSHA string `json:"head_sha,omitempty"`
+}
+
 // WorkItem is one piece of work the orchestrator is carrying: what it is,
 // where it goes, and the bookkeeping the daemon keeps about the attempts at
 // it.
@@ -285,6 +349,10 @@ type WorkItem struct {
 	// (AttemptsUnder), which the caps count from too.
 	Attempts int    `json:"attempts"`
 	Note     string `json:"note,omitempty"`
+	// Escalation is the ladder's ledger, absent until the ladder first acts on
+	// the item. It is the daemon's alone to write (applyUpsert) and it is
+	// bookkeeping, so a rung change leaves a standing approval where it is.
+	Escalation *Escalation `json:"escalation,omitempty"`
 }
 
 // Intent is a committed attempt: the launch is recorded before it is started,
@@ -404,6 +472,11 @@ func (w WorkItem) clone() WorkItem {
 	if w.SpentApprovalAt != nil {
 		at := *w.SpentApprovalAt
 		w.SpentApprovalAt = &at
+	}
+	if w.Escalation != nil {
+		e := *w.Escalation
+		e.Transitions = copyOf(w.Escalation.Transitions)
+		w.Escalation = &e
 	}
 	w.DependsOn = copyOf(w.DependsOn)
 	return w
@@ -531,8 +604,13 @@ func DecisionCalls(s State, now time.Time) Counters {
 // daemon records about the attempts at an item rather than what the person
 // approves. It is a skip list and not an include list on purpose, so a field
 // added to WorkItem later is digested without anyone remembering to add it
-// here (TestSpecDigestCoversEveryFieldButTheBookkeepingList pins the six).
-var bookkeepingFields = []string{"phase", "run_id", "spent_approval_at", "attempts", "note", "approved"}
+// here (TestSpecDigestCoversEveryFieldButTheBookkeepingList pins the seven).
+//
+// The ledger is one of them, and it is the one whose absence would stop the
+// ladder: the daemon writes a transition every time it moves an item, and a
+// digested ledger would revoke the approval at each move, so an item would
+// have to be approved again for every rung it climbed (D2042, G12).
+var bookkeepingFields = []string{"phase", "run_id", "spent_approval_at", "attempts", "note", "approved", "escalation"}
 
 // SpecDigest is the digest of everything a person approves when they approve
 // a work item: every field but the bookkeeping list, hashed in declaration
@@ -595,19 +673,36 @@ var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // already carries a later field is stamped, not rewritten, and nothing here
 // clears a field.
 //
+// The steps are one version at a time, each with its own reason:
+//
+//   - 0 is the node from before the schema carried a version, so the stamp is
+//     the whole step.
+//   - 1 is the node from before the ladder kept its ledger. The ledger is
+//     optional — an item the ladder has not acted on carries none, and a rung
+//     is what a ledger is for — so the stamp is the whole step here too, and
+//     the daemon's next tick writes the first transition of an item it acts on.
+//
 // A state newer than this release is left exactly as it is and reported as
 // unchanged: the caller's validator refuses it, which is the fail-closed
 // answer for a document a later release wrote.
 func Migrate(s State) (State, bool) {
-	if s.SchemaVersion != 0 {
-		// This release's version, a later one, or a number that is not a
-		// version at all: either there is nothing to raise or the number is
-		// one this release must refuse rather than guess at, and the validator
-		// is what refuses it.
-		return s, false
+	changed := false
+	for s.SchemaVersion >= 0 && s.SchemaVersion < SchemaVersion {
+		switch s.SchemaVersion {
+		case 0:
+			s.SchemaVersion = 1
+		case 1:
+			s.SchemaVersion = 2
+		default:
+			// A version with no step of its own is one this release cannot
+			// place — the chain has a hole in it, which is a bug here rather
+			// than in the document. Stop, and let the validator refuse the
+			// number rather than stamp it forward as something it is not.
+			return s, changed
+		}
+		changed = true
 	}
-	s.SchemaVersion = SchemaVersion
-	return s, true
+	return s, changed
 }
 
 // OverCap reports whether the node is over its size target. The daemon fails

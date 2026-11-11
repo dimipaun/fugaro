@@ -36,8 +36,15 @@
 //     `registerConsoleHandlers`, or moving it after the channels are registered,
 //     fails "checks the surface before it registers anything"; dropping the
 //     allowed-flags half of that guard fails the test with a flag the never
-//     table does not list (`--mine`); and a payload wider than
-//     `MAX_PAYLOAD_WIDTH` fails the width test;
+//     table does not list (`--mine`); dropping the lapse's half of it -- the rule
+//     that the column marking an operation refused after a lapse stays off the
+//     rows that spawn no command -- fails the test with a console-owned row in
+//     the refused class; dropping the lapse's other half -- the rule that the
+//     column naming a refused row's target installation points at a required
+//     `installationName` argument of that same row -- fails the tests that point
+//     it at an argument the row does not carry, at a free-text one, and at an
+//     optional one; and a payload wider than `MAX_PAYLOAD_WIDTH` fails the
+//     width test;
 //   - a preload method that is not on `CONSOLE_OPERATIONS`, or an operation
 //     with no method, fails the two-way surface test; a method that lands on a
 //     channel other than `channelForOperation(name)` fails the routing test;
@@ -1331,6 +1338,140 @@ describe('the never-reachable table', () => {
         },
       ]),
     ).toThrow(/--check-github-app/)
+  })
+
+  it('refuses the lapse\'s column on a row that spawns nothing', () => {
+    // The lapse's refused class is a column of the row (`refusedAfterLapse`,
+    // subscriptions plan S6.2, design §3.2): the two operations a lapsed
+    // installation loses are the launch and the settings write, and both spawn a
+    // command. A row that spawns **nothing** answers out of this process, and
+    // those answers are the design's kept set -- the reads, the console's own
+    // surface, and the key screen, which §5.6 keeps ungated as the way out of
+    // the lapse -- so a table that refused one of them fails closed here, at
+    // registration, rather than at the operator.
+    const withheldScreen: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'licence.forget',
+        method: 'forgetLicence',
+        command: null,
+        flags: [],
+        summary: 'a console-owned write nobody ruled on, in the lapse\'s class',
+        args: [],
+        refusedAfterLapse: true,
+      },
+    ]
+    expect(() => assertReachableSurface(withheldScreen)).toThrow(/licence\.forget/)
+    expect(() => assertReachableSurface(withheldScreen)).toThrow(/spawns no command/)
+  })
+
+  it('admits the column on a row that does spawn a command', () => {
+    // The other half, and the one that keeps the check above from being a ban on
+    // the column: an operation that spawns a command and belongs to the refused
+    // class is admitted by the same guard. The command here is one the surface
+    // already drives, so what the case measures is the column and not the
+    // never-table.
+    const spawner: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'settings.retire',
+        method: 'retireSetting',
+        command: 'settings',
+        flags: [],
+        summary: 'a command-spawning operation a later ruling could refuse',
+        args: [],
+        refusedAfterLapse: true,
+      },
+    ]
+    expect(() => assertReachableSurface(spawner)).not.toThrow()
+  })
+
+  it('refuses a target installation the row\'s own payload does not carry', () => {
+    // The lapse gate asks about the installation a refused row acts on, and it
+    // reads that installation out of the row's own payload
+    // (`installationArgument`, subscriptions plan S6.2). The column therefore has
+    // to name a **required `installationName` argument of the same row**, and
+    // this guard is why it fails closed at registration: a column pointing at a
+    // free-text field would ask the licence store about a string no installation
+    // answers for -- the no-key state, which refuses nothing -- so the operation
+    // would be *admitted* while the installation it acts on had lapsed, and a
+    // column naming no argument of the row at all would hand the gate `undefined`
+    // and silently fall back to the active binding, which is the bug the column
+    // exists to close.
+    const absent: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'settings.retire',
+        method: 'retireSetting',
+        command: 'settings',
+        flags: [],
+        summary: 'a refused row naming a target installation it does not take',
+        args: [],
+        refusedAfterLapse: true,
+        installationArgument: 'installation',
+      },
+    ]
+    expect(() => assertReachableSurface(absent)).toThrow(/settings\.retire/)
+    expect(() => assertReachableSurface(absent)).toThrow(/installationName/)
+    // And the column pointed at an argument that *is* there but is not one: the
+    // launch's own task text is the case that matters, because it is free text a
+    // renderer chooses and no installation answers for it.
+    const mistyped: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'settings.retire',
+        method: 'retireSetting',
+        command: 'settings',
+        flags: [],
+        summary: 'a refused row whose target installation is a free-text argument',
+        args: [{ key: 'installation', kind: 'launchTask', required: true, why: 'a string, and not a name' }],
+        refusedAfterLapse: true,
+        installationArgument: 'installation',
+      },
+    ]
+    expect(() => assertReachableSurface(mistyped)).toThrow(/installationName/)
+    // An optional argument is the third failure: a payload may leave it out, so
+    // the gate would be handed no installation to ask about.
+    const optional: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'settings.retire',
+        method: 'retireSetting',
+        command: 'settings',
+        flags: [],
+        summary: 'a refused row whose target installation may be left out',
+        args: [
+          { key: 'installation', kind: 'installationName', required: false, why: 'the installation, when sent' },
+        ],
+        refusedAfterLapse: true,
+        installationArgument: 'installation',
+      },
+    ]
+    expect(() => assertReachableSurface(optional)).toThrow(/installationName/)
+  })
+
+  it('admits the target installation on a row that does carry one', () => {
+    // The other direction, so the guard above is not a ban on the column: a
+    // refused row whose target installation is a required `installationName`
+    // argument of its own is admitted by the same check. The console's real row
+    // is the launch, and `licence-state.test.ts` pins that it is the only refused
+    // row with the column.
+    const named: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'settings.retire',
+        method: 'retireSetting',
+        command: 'settings',
+        flags: [],
+        summary: 'a refused row that names its target installation properly',
+        args: [
+          { key: 'installation', kind: 'installationName', required: true, why: 'the installation this row acts on' },
+        ],
+        refusedAfterLapse: true,
+        installationArgument: 'installation',
+      },
+    ]
+    expect(() => assertReachableSurface(named)).not.toThrow()
   })
 
   it('refuses a table with two operations of one name', () => {

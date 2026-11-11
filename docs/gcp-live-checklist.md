@@ -826,6 +826,7 @@ probe account carries predefined grants only).
 | 139 | What an agent ID distinguishes in a gateway run's log ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 139, task T3.5, and the reconciliation's **U4**): read-only, in an **existing** sandbox gateway run's logs, the `model call` lines' `agent_id` — the main session's lines carry **an empty one**, each sub-agent a **distinct** non-empty one, and the background model's calls carry **none** — so the distinct-agent count **T7.2**'s fan-out stop spends is a sub-agent count. **It gates T7.2:** that task does not merge until this check has run | See "Check 139" below; **you** run it, read-only, on the sandbox installation only — **never `belong`** — at your own terminal, over a run that already exists, reading the gateway's `model call` entries where they are (`gcloud logging read` with the filter the CLI's own log reader builds, scoped to the run's execution) — **not** `fugaro logs`, which prints the time, severity, stage and message only and would answer nothing; **no agent runs any step of it**, and it launches nothing | Nothing: one read of one run's log entries and one `fugaro diagnose <run-id> --json`. No model call, no run, no object and no policy. **USER-RUN, NOT RUN.** |
 | 145 | The Bitbucket read consumer's facts ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 145, task T2.8 and the script T2.7 writes; the reconciliation's U1–U5, U8, U11, U12, U14 and U15): the sandbox consumer read from a file **you** name and never printed — the token's lifetime (U1); whether the `client_credentials` grant returns a refresh token and whether a single minted token can be revoked (U2); whether the token reaches a second workspace you belong to (U3); whether the sandbox's plan admits consumers (U4); the workspace's seat count before and after (U5); whether IP allowlisting applies to OAuth tokens, and U8 stays **UNVERIFIED** if the plan offers none (U8); whether the token response lists the granted scopes (U11); whether two grants return distinct tokens (U12); whether creating a consumer needs workspace-admin rights and whether the token then reaches admin endpoints (U14); and whether the consumer must be marked private (U15). **It gates the read mint (O4):** tasks T2.3 and T3.1 do not merge before this check passes, and if U3 shows reach beyond the workspace, D360 and D361 go back to the owner before T2.3 merges. It also shows that a write with the read token is refused | See "Check 145" below; **you** run it at your own terminal, on sandbox workspaces only, never `belong`, with the consumer file you name and the script never printing it, and **no agent runs any step of it**. The script lands with task **T2.7**; this section is task **T0.2**'s and carries no steps of its own until then | A sandbox workspace and a second one you belong to, one read consumer created as the installing person, and two `client_credentials` grants; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 146 | The coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 146, task T2.10 and the script T2.9 writes; D361 and D362): on a sandbox installation with the credentials service on, the sweep's stored view for a Bitbucket repository is **read** rather than `StaleUnsupported`, and the installation's GitHub views — the ones the sweep already writes — are unchanged | See "Check 146" below; **you** run it on a sandbox installation, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check146.sh --installation <sandbox>`. The script lands with task **T2.9**; this section is task **T0.2**'s and carries no steps of its own until then | One sandbox installation with the service on and one sweep; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
+| 148 | The Bitbucket read consumer's stop, rotation and ownership transfer ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 148, task T3.8 and the script this task writes; U13, and D1961): on a sandbox installation with the read mint deployed, the consumer is taken **out** of the bundle and a read mint is then **refused**; its secret is regenerated and the mint serves the **new** one while the **old** secret's own `client_credentials` grant is **refused**; and ownership moves to a successor consumer under a second sandbox account, against which a read mint **succeeds** — with **U13** recording whether a token minted **before** the rotation still reads | See "Check 148" below; **you** run it at your own terminal, on `https` or a loopback `http` endpoint, on sandbox workspaces only, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check148.sh --installation <sandbox> --repo <owner/name> --consumer-file <path> --rotated-consumer-file <path> --successor-consumer-file <path>`. The row and the section are **T0.2**'s | Three sandbox consumer files **you** name and the script never prints (the bundle's own consumer, a successor created under a second sandbox account, and the same consumer after Bitbucket regenerated its secret — the last written **by you during the run**, at the rotation step that asks for it and then holds it to the consumer file's own key and workspace), one sandbox installation with the credentials service on and its coordinator job deployed, and `gcloud`, `fugaro`, `python3` and `curl` on PATH; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 149 | The console shows the stored view on the owner's own machine ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 149 and task T1.3; D364, and U9 end to end): `fugaro coordinator status --from-store --all --json --project <name>` reads the stored view as the signed-in person with **no key**, and the console's project view renders it — the read the console could not make while it had to run `coordinator status` itself | See "Check 149" below; **you** run it at your own terminal, on your own machine, read-only, and **no agent runs any step of it** | Nothing: two reads and one window. No project is written, no run is launched and no credential is minted. **USER-RUN, NOT RUN.** |
 | 170 | A key verifies offline in the CLI, the console and the app ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 170, written by task **S3.6** and run by you in task **S3.7**; **R2**, and [design/key-signing-service.md](design/key-signing-service.md) §1–§2): one key the service issued — or the owner minted by hand with S2.10's tool — is installed where each product keeps it (the CLI's `licence.key` at mode 0600, the console's key screen, the app's settings screen), the network is off on the machine and on the phone, and all three read the same tier, seats and expiry with no call made to answer. It is the reading no hermetic test can produce: each verifier's own tests hold a signature vector, and this holds a key the owner's key ring signed | See "Check 170" below; **you** run it, at your own terminal and on a sandbox installation, read-only, with the network off, and **no agent runs any step of it** | Nothing: one key installed in three places, no mint and no deploy. **USER-RUN, NOT RUN.** |
 | 171 | The free seat's three outcomes ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 171, written by task **S3.6** and run by you in task **S3.7**; the design's §4.1–§4.3 and UNVERIFIED **U11**): against the intake that mints with the staging key id, an address at a free email provider and a second application for a domain that already holds a free key are each **queued**, with the same uniform answer and nothing said about an existing key, and a domain the service's event store knows holds a paid subscription is **refused**. Whether an email domain, a free-mail list and the code host's API are enough to enforce "one per organisation" has never been measured | See "Check 171" below; **you** run it, against the intake that mints with the staging key id (D459 is where that intake lives), and **no agent runs any step of it** | Two applications, each declined in the admin page, so no key is minted for either; the third is refused at submission and never queued. **USER-RUN, NOT RUN.** |
@@ -848,12 +849,12 @@ probe account carries predefined grants only).
 | 302 | The cutover to the daemon, and the manual rollback that is the whole of going back ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O11** and its Check 302 — the text O2 wrote; **T1**, ruled, and **D1242**, which gates nothing; **D1235**, no shadow week): the cutover run by hand on the owner's own installation, with the spend caps and the kill switch tested **first** and the scripts' **launching stopped** (their watching may stay, because the two share no launch key and both launching the same work would double-launch) — the daemon started, one finished run, one dependency-driven launch and one notification; then, at any point inside the **14 days the scripts stay on disk**, the second half: the manual rollback — `fugaro orchestrator uninstall`, the sweep, the watcher and the queue scripts re-armed, and one launch seen through them. **No rollback command is built**, so those steps are the whole rollback | See "Check 302" below; **you** run it, on your own installation, **never** the sandbox from an agent's session, and **no agent runs any step of it** | One finished run, one dependency-driven launch and one notification, plus the rollback's own launch through the scripts: the run's model spend, and nothing else. The Restore is the check's second half and not an undo of it — the scripts stay on disk for their 14 days, and the owner decides when they are removed. **USER-RUN, NOT RUN.** |
 | 303 | The bounded decision agent, and the cost of one cycle ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O12** and its Check 303 — the text O2 wrote; reconciliation **U4**, whose cost is a target until this check measures it; **Q4**, answered 2026-11-04, which makes this check the gate on slice 2): with the owner's own Claude login, one real decision call through the bounded agent — the model that answered it being the classifier's and not the output's — the count caps (6 calls an hour, 40 a day) and the breaker at 3 **proved by spending them**, and the cost of one cycle measured end to end. It runs **before O12 is started, not after**: Q4 approves slice 2 (O12, O13) only once slice 1 has run 14 days **and** this number is in | See "Check 303" below; **you** run it, with your own login, and **no agent runs any step of it** | The one thing here that is genuinely billable: one decision call, plus the calls the caps and the breaker spend proving themselves. Its whole point is the number it produces, which replaces U4's target and Q4's proposed bounds. **USER-RUN, NOT RUN.** |
 | 304 | The handoff between two people ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O17** and its Check 304 — the text O2 wrote, the `ee/` command O17 builds): an agent handed from one developer to another by an owner or an admin, on a real installation, with the two people in different sessions — the receiving person holding the agent, the giving person no longer able to act as it, and the project-owned agent that belongs to no person at all behaving as the registered extension it is | See "Check 304" below; **you** run it, on a real installation with a second person, and **no agent runs any step of it** | Two sessions and one handoff: no model call unless the agent is asked to work, and nothing billable in the handoff itself. **USER-RUN, NOT RUN.** |
-| 305 | The MCP state group and its scopes ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O16** and its Check 305 — **the text is written when O16's files are named**, and this row and the section below reserve the number, which is never renumbered): `get_state`, `get_events` and `apply_patch` over the state store, behind `state:read` and `state:write`, with `apply_patch` also gated by **D1225**, and with no `spawn_task` anywhere in it (T2) | Not written yet: O16 writes "Check 305" when the MCP registry and its scope files exist (M7, T3, T4), and the register's number is held for it | Nothing to run and nothing to expect until the files are named: the number is reserved so that a later task writes the check into the register rather than renumbering it. **USER-RUN, NOT RUN.** |
+| 305 | The MCP state group and its scopes ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O16** and its Check 305 — **the text is written when O16's files are named**, and this row and the section below reserve the number, which is never renumbered): `get_state`, `get_events` and `apply_patch` over the state store, behind `state:read` and `state:write`, with `apply_patch` also gated by **D1225**, and with no `spawn_task` anywhere in it (T2) | Not written yet: the registry and the scope files exist (M7 on `main`; T3 and T4 written 2026-11-10), and O16 split in two — **O16a** builds the group dormant and serves nothing, so it has nothing to check, and **O16b**, which serves it once D2020 is answered and the front door is wired, writes "Check 305"; the register's number is held for it | Nothing to run and nothing to expect until the files are named: the number is reserved so that a later task writes the check into the register rather than renumbering it. **USER-RUN, NOT RUN.** |
 | 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which form the `storage.googleapis.com/objectListPrefix` request attribute carries — the request's own prefix (`runs/`, `reports/`) or the bucket's object path (`projects/_/buckets/<bucket>/objects/runs/`) — read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists `runs/<slug>/` and `reports/`, reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. The design records the attribute as unverified and no code in this tree reads it, so this is the one reading no test can make: **the wrong form is a grant that lists nothing, and if neither form lists, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds four objects of its own, reads **both** candidate forms (fourteen rows, the `reports/` row covering the bare prefix and the slug level under it as two calls) and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, four small objects under `runs/`, `reports/`, `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** Two attempts have been made, both on 2026-11-07 and both exit `2`, aborted — the first with an unreadable block, the second by a `tokens/` listing whose refusal named `storage.objects.get` where the script then accepted only `storage.objects.list`, which stopped the run before the full-path form was ever tried — so **nothing is settled about the attribute and no `PASS` for `list-prefix`** is recorded; the section below records what each run did and did not measure. |
 | 360 | The managed screens show what the CLI says, on a managed project ([`docs/console-managed-screens/`](console-managed-screens/implementation-plan.md), its Check 360 and task **CM12**; **F3** and **D1489**, the owner's ask of 2026-11-07): the Project tab's five later sections — the managed state, the retirements, the account keys, the credentials service and the policy panel — drawn on a real managed project, each within its own read and from the document that read answers with, agreeing with `fugaro managed status --json`, `fugaro settings --json`, `fugaro project policy show --json` and `fugaro doctor`'s policy lines; **no section offers a control that changes anything**, and no token appears anywhere (**D1471**). Its hermetic half is `console/test/e2e/managed.spec.ts`, which walks the same tab against the stub — and the live reading is the one a stub cannot take | See "Check 360" below; there is **no script** — the check is three steps you do by hand in the console and the reading you take from them — and **you** run it, on your own machine, with an installation and a managed project; **no agent runs any step of it** | One `fugaro update` — the same run you would make anyway — plus two reads and one window: no model call, no run and nothing billable. Nothing is created or written by the check itself, so there is nothing to restore. **USER-RUN, NOT RUN.** |
 | 361 | The workspace's own Firebase's sign-in providers ([`docs/workspaces/`](workspaces/spec.md) spec §3's provider pin, and that plan's **W3**): the Identity Platform configuration of the workspace's **own** project, read once over REST and judged against the pin — `google.com` and `password` enabled, `anonymous` and phone-number sign-in off, no other provider enabled, and public sign-up **not** disabled. It is the check W3's design says no hermetic test can hold: the project and its rules come from the installation path, but `fugaro setup`'s Identity Platform step initializes with **no provider** (`IdentityPlatformStep`, `internal/infra/identityplatform.go`) — right for a member's project and wrong for the workspace's — and `refusePublicSignUp` (`internal/cli/init_firebase.go`) refuses an off-pin provider on a workspace's own project by name while never *requiring* the pinned pair, so the providers are enabled by you and this is the read-back. A workspace whose project carries no provider has nobody who can sign in, and one that carries a provider the pin refuses is a sign-in path the exchange never sees | See "Check 361" below; `bash scripts/live-checks/check361.sh --project <the workspace's own project>` is the whole of it — ONE read-only GET, nothing created and nothing deleted, so it is safe to run repeatedly — and **you** run it: a project whose name contains `belong` is refused before any call, and **no agent runs any step of it** | Nothing billable and no model call: one GET of the project's Identity Platform configuration with your own credentials. **USER-RUN, NOT RUN.** |
 | 370 | The security escalation ([`docs/security-classification/`](security-classification/implementation-plan.md) §6, its Check 370; the plan's task **SC6**; reconciliation **D1507**, **D1508**, **D1509** and **D1519**): a run whose own diff touches a path the list in force calls security-sensitive turns review level 3 on for the rest of the run — the adversarial step runs, and the run's record names the matched row's `name`, its `category` and the moment, while the rigor mode stays the mode it was (D1508) — and a run whose diff touches nothing on the list does neither, its record carrying no escalation member. Its reader's half is `fugaro security paths --json` (the same work's task **SC3**, in slice 1: it landed as `cb69f1754`, #1979, and is an ancestor of this checkout) on a project that has published no key: the floor's 43 rows, with `internal/creds/state.go` sensitive and `docs/recipes.md` not — the pair that shows the floor is a **positive list and not the classifier's complement** (F1, F22) — and the same command against a working tree whose `fugaro.yaml` carries a `security` row and a base that does not, which must print the **base's** list (D1518) | See "Check 370" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | Two sandbox runs and three reader commands: **the runs are model calls and real money** and the reader commands are free. Nothing is granted, nothing is written outside the runs' own prefixes, and there is nothing to restore. **USER-RUN, NOT RUN.** |
-| 510 | The name-prefix IAM condition, and the two grants IAM cannot fence ([`docs/secrets-brokering/dynamic-delivery/`](secrets-brokering/dynamic-delivery/implementation-plan.md), its task **DS0.2** and its check; the reconciliation's **U3** and **F30**, which **DS2.2**'s Terraform is written against): whether an IAM condition on `resource.name` applies to `secretmanager.versions.add` and `secretmanager.secrets.delete` at all; whether **one** condition naming both prefixes (`fugaro_u_` and `fugaro_p_`) admits each of them and refuses a name of F6's collision class — `fugaro-<slug>-<logical>-<hash>`, a repository's own mounted secret, so the refusal is measured against that shape and not against one the check invented; that a conditioned `secrets.create` and `secrets.list` admit **nothing at all**, because both are checked on the project (F30 — and the reason the intake grants them unconditioned, while an unconditioned create of a name outside the prefixes then succeeds); and the maximum secret ID length, read by bisection rather than assumed (R1). **A failed 510 stops DS2.2 and returns to the owner as a decision** | See "Check 510" below; `bash scripts/live-checks/check510.sh` is the whole of it, and its sibling test `scripts/live-checks/check510_test.sh` drives it against fake tools only — **you** run it, on the sandbox project only, never `belong` (the project and region are hard-coded in the script, and a project, region or account naming that installation is refused by name); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account (`chk510-<stamp>`), the project IAM bindings its rows need (the two conditioned grants, and the one **unconditioned** `roles/secretmanager.admin` grant the F30 create row is measured on), and the probe containers they are measured on — five under the `fugaro_u_`, `fugaro_p_` and `fugaro-<slug>-…` shapes plus the bisection's own, about a dozen — every one of them deleted **and read back** as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. The IAM waits are the slow part (a fresh binding can take a minute to be seen). **OWNER-RUN, NOT RUN.** Written by **DS0.2** of [secrets-brokering/dynamic-delivery/implementation-plan.md](secrets-brokering/dynamic-delivery/implementation-plan.md), whose steps are [secrets-brokering/dynamic-delivery/check510-steps.md](secrets-brokering/dynamic-delivery/check510-steps.md). |
+| 510 | The name-prefix IAM condition, and the grants IAM may not be able to fence ([`docs/secrets-brokering/dynamic-delivery/`](secrets-brokering/dynamic-delivery/implementation-plan.md), its task **DS0.2** and its check; the reconciliation's **U3** and **F30**, which **DS2.2**'s Terraform is written against): whether an IAM condition on `resource.name` applies to `secretmanager.versions.add` and `secretmanager.secrets.delete` at all; whether **one** condition naming both prefixes (`fugaro_u_` and `fugaro_p_`) admits each of them and refuses a name of F6's collision class — `fugaro-<slug>-<logical>-<hash>`, a repository's own mounted secret, so the refusal is measured against that shape and not against one the check invented; **the create rows, where F30's create half was already contradicted once** — the owner's run of 2026-11-11 saw a conditioned `secrets.create` **admitted** for a `fugaro_u_` name, so the check **reports** its three create rows instead of grading them, and what is open is whether a create **outside** both prefixes is refused: refused beside an admitted create inside means create is fenced by name in both directions and **DS2.2** may condition the intake's create, admitted outside means there is no name fence and the unconditioned create stays as the plan has it (an unconditioned create of a name outside the prefixes succeeds either way); `secrets.list` is still the project-checked case F30 states; and the maximum secret ID length, read by bisection rather than assumed (R1). **A failed 510 stops DS2.2 and returns to the owner as a decision** | See "Check 510" below; `bash scripts/live-checks/check510.sh` is the whole of it, and its sibling test `scripts/live-checks/check510_test.sh` drives it against fake tools only — **you** run it, on the sandbox project only, never `belong` (the project and region are hard-coded in the script, and a project, region or account naming that installation is refused by name); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account (`chk510-<stamp>`), the project IAM bindings its rows need (the two conditioned grants, and the one **unconditioned** `roles/secretmanager.admin` grant the create rows' control is measured on), and the probe containers they are measured on — five under the `fugaro_u_`, `fugaro_p_` and `fugaro-<slug>-…` shapes, whatever the two conditioned create rows make if IAM admits the create, plus the bisection's own, about a dozen — every one of them deleted **and read back** as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. The IAM waits are the slow part (a fresh binding can take a minute to be seen). **OWNER-RUN, NOT RUN.** Written by **DS0.2** of [secrets-brokering/dynamic-delivery/implementation-plan.md](secrets-brokering/dynamic-delivery/implementation-plan.md), whose steps are [secrets-brokering/dynamic-delivery/check510-steps.md](secrets-brokering/dynamic-delivery/check510-steps.md). |
 | 511 | A request every N seconds keeps one service instance up ([`docs/secrets-brokering/dynamic-delivery/`](secrets-brokering/dynamic-delivery/implementation-plan.md), its task **DS0.2** and its check; the reconciliation's **U4**, which **DS1.5**'s keep-warm heartbeat rests on): the credentials service `fugaro-credentials` scaling to zero as the platform holds it (`min_instance_count` is the premise — an instance kept up by configuration says nothing about a heartbeat, and the row says so); then a request every 15 seconds (the beat `internal/budget/session.go` already keeps) for five minutes, each answered **by the container itself** on a route the service does not serve, so its own 404 is how an instance serving is told from the front end refusing; each read for its latency (a cold start inside the window is the instance having been reaped **despite** the beat) and, from Cloud Logging, for the instance that answered it — one id across the window is U4's reading rather than only its timing. **A failed 511 stops DS1.5 and returns to the owner as a decision.** | See "Check 511" below; `bash scripts/live-checks/check511.sh` is the whole of it, and its sibling test `scripts/live-checks/check511_test.sh` drives it against fake tools only — **you** run it, on the sandbox installation only, never `belong` (the project and region are hard-coded, and a project, region or account naming that installation is refused by name); **no agent runs any step of it** | Five minutes of wall clock and **nothing billable**: no job, no build, no container, no binding and no account. The requests go to a route the service does not serve, so no credential is read, no model is called and no budget is spent; every other call is a `describe` or a log listing, and the platform's own request log entries for them are not the check's to delete. **OWNER-RUN, NOT RUN.** Written by **DS0.2** of [secrets-brokering/dynamic-delivery/implementation-plan.md](secrets-brokering/dynamic-delivery/implementation-plan.md), whose steps are [secrets-brokering/dynamic-delivery/check511-steps.md](secrets-brokering/dynamic-delivery/check511-steps.md). |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -11220,6 +11221,121 @@ the row are **T0.2**'s.
 reads a sandbox installation and writes nothing to the repository it reads. **Never run any step
 against `belong`**, and **no agent runs any step of it**.
 
+## Check 148: the read consumer's stop, rotation and ownership transfer (a sandbox installation with the read mint deployed, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0.2** of the Bitbucket-credentials plan
+([bitbucket-credentials/implementation-plan.md](bitbucket-credentials/implementation-plan.md), its
+"Checks this plan takes (Checks 145–154)" and its task **T3.8**; D367, and **D1961**). The plan's
+verdict for T3.8 is **superseded in part, kept in part**: the run-mint half goes with S3, and the
+**read half** — the read consumer's own stop, rotation and ownership transfer, with **U13** — is
+kept, because the read consumer is merged and shipped and nothing else exercises its rotation. What
+this row and section register is that half, which the folder's own reconciliation already carries as
+live (**148** "in S2 with only its read half live",
+[bitbucket-credentials/reconciliation-secrets-brokering.md](bitbucket-credentials/reconciliation-secrets-brokering.md),
+its "Numbers this work holds"; D1961's own cell reads **2026-11-10: recommended**, and the plan's
+checks table carries the verdict in place). The script that runs it is this task's —
+`scripts/live-checks/check148.sh`, with its own test `check148_test.sh` — and the owner runs it
+beside **T2.6**, whose runbook section (**§12**, "The Bitbucket read consumer: creating it, and
+stopping, rotating and transferring it") it executes step by step.
+
+**What the check measures.** Three changes to the bundle entry `bitbucket-read-consumer`
+(`key`, `secret`, `workspace`), each confirmed against the read mint at
+`POST <service>/v1/bitbucket/read-token` with a body of `{"repository":"<owner/name>"}`, and each
+read through the credential-carrying checks the drill makes:
+
+- **the stop** — the entry is taken out of the bundle and a read mint is then **refused**, and the
+  refusal is the service's own: **503** with `error: state_unavailable` **carrying
+  `ErrReadNoConsumer`'s own sentence** — `internal/credsvc`'s `ErrReadNoConsumer` through
+  `refuseRead` and `internal/credsvc/wire.go`'s statuses. All three readings are needed, because the
+  status and the type are not the missing consumer's alone: `internal/credsvc/bitbucket.go` answers
+  the operator's stop switches it cannot read, the kill switch, a bundle that fails to load, a
+  failed Bitbucket exchange, a token whose scopes this route will not hand on
+  (`ErrReadUnexpectedScopes`) and a failed audit with the same `503 state_unavailable` — an example
+  rather than the whole of the list, since an answer it could not build is another — so only the
+  message tells them apart. That is the only answer the row counts as a stop: a curl timeout, a
+  Cloud Run 429 or 5xx, a `503 state_unavailable` whose message is another state's, or an answer
+  that is not a document is the run **not knowing**, so the script keeps waiting and then fails the
+  row with the answer it got, rather than reporting a stop that may never have happened. No Fugaro command
+  removes a bundle entry (`fugaro creds set` is the bundle's only writer and only ever adds or
+  replaces), so the drill makes this version **by hand** — `gcloud secrets versions add`, with the
+  version it replaced **disabled** — and that is what the row says it does;
+- **the rotation** — the consumer's secret regenerated at Bitbucket **at the step that asks for it**,
+  the bundle written again with `fugaro creds set`, and the mint **served** from the new one while the
+  **old** secret's own `client_credentials` grant at the OAuth endpoint is **refused**: a rotation
+  that leaves the old secret alive is a **FAIL**. The ask is the order the drill turns on: Bitbucket's
+  regeneration is what kills the secret the bundle holds, so a run that started with the rotated
+  document already written would be minting a dead secret from its baseline row — the drill asks, waits
+  for the answer, holds what was written to the consumer file's own key and workspace, and only then
+  writes it;
+- **the ownership transfer** — a successor consumer created under a **second** sandbox account,
+  written into the bundle, and a read mint confirmed against it. What the transfer leaves behind is
+  the bundle holding the **successor**, which is what the transfer is, and **one** consumer to delete
+  at Bitbucket: the one the drill replaced — the consumer whose secret the rotation regenerated,
+  which is also the consumer the transfer replaced, since the rotation and the transfer are about the
+  same one — while the successor is the bundle's entry now and stays;
+- **U13**, the open question this check exists for: whether a token minted **before** the rotation
+  still reads. The drill replays the pre-rotation token against the API root after the rotation and
+  records the answer either way — it is an **INFO** line, not a pass or a fail, because the
+  reconciliation carries U13 as **UNVERIFIED** and this check is what settles it. If it shows the
+  token still reads, the runbook's rotation clause and `SECURITY.md`'s custody paragraph
+  (**T2.11**) are corrected in the same sweep, not worked around.
+
+The service serves the **parsed** bundle for 30 seconds (`credsvc.BundleCacheTTL`), so every write
+is followed by a bounded wait before the mint is read: a mint read too soon after a write is the old
+document's answer, and a check that took it as the new one's would report a stop that had not
+happened. The wait cuts both ways, and the served direction is the one a bound alone cannot settle:
+the document a write **replaced** answers a 200 too, so a reading taken while that document is still
+cacheable cannot tell the write being served from the write not having landed.
+`CHECK148_MINT_WAIT` is that bound in seconds (default 90, 0 meaning one attempt), and
+`CHECK148_CACHE_WAIT` is the lifetime a reading has to be taken after before it is read as the
+write's own document (default 40; the row says the wait it took).
+
+**What you type** (task T3.8's read half, beside T2.6):
+
+```bash
+scripts/live-checks/check148.sh \
+  --installation <sandbox> --repo <owner/name> \
+  --consumer-file <path> --rotated-consumer-file <path> --successor-consumer-file <path>
+```
+
+Two of the three files exist before the run: the consumer document the bundle holds today, and the
+successor created under the second sandbox account. The third — the same consumer with the secret
+Bitbucket regenerates — is **written by you during the run**, at the rotation step that asks for it,
+and naming its path here is saying where you will write it. Each is the mapping the entry holds —
+`key`, `secret`, `workspace`, one per line — and the script **never
+prints, echoes or passes one on a command line**: they reach `fugaro creds set` on stdin and the
+shell never holds a value. Its own test (`bash scripts/live-checks/check148_test.sh`, run against
+fake tools on PATH and a fake Bitbucket Cloud on a loopback port, with no network and no cloud
+project) fails if a secret or a minted token is ever written to the output or left in the scratch
+directory, and its fake Bitbucket answers a mint only for a consumer its OAuth state **would
+exchange**, not for one the bundle merely holds — which is what makes a drill that wrote the rotated
+document before asking for the regeneration fail rather than pass.
+
+The script asks for **two** things, and the second cannot be answered by a flag. One line is the
+confirmation: it says what it will write and asks you to type the **project ID**, unless you passed
+`--yes`. The other is at the rotation, where it tells you to regenerate the consumer's secret at
+Bitbucket **now**, write that document to `--rotated-consumer-file` and type `ROTATED`, and it waits
+for you. `--yes` stands for the confirmation alone. Anything else at either prompt stops without
+writing.
+
+**What it depends on.** The deployed read mint — **T2.4** (the service's Terraform) and **T2.5**
+(the read path) — and **T2.6**'s runbook section, which this check executes; the row and the section
+are **T0.2**'s. It is a **sandbox** check: `belong` is refused before any write **by every name it
+arrives under** — the one you typed as `--installation`, and the name **and** the project ID the
+config in force answers with, which is what catches it, since the owner's installation is named
+`belong` in the project `fugaro-belong` and a guard reading only the project ID would pass. Nothing
+runs in CI, and **no agent runs any step of it**.
+
+**Restore.** The script cleans up after itself, including on a Ctrl-C: the scratch directory — which
+holds the whole bundle document while the stop is being made, and every token the drill mints — is
+removed, and its `restore` row says whether it really went. **The bundle is not put back the way it
+was**: it ends holding the successor consumer, which is the transfer, and the `restore` row names
+**one** consumer to delete at Bitbucket once you have pasted the block back — the consumer the drill
+replaced, which is the rotation's and the transfer's same one — while the successor is the bundle's
+entry now and stays. A run that stopped before the transfer confirms nothing about the bundle's
+entry, and the row says so and sends you to `fugaro creds ls` instead of naming a consumer. **Never
+run any step against `belong`**, and **no agent runs any step of it**.
+
 ## Check 149: the console shows the stored view on the owner's own machine (your own machine, read-only; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **T0.2** of the Bitbucket-credentials plan
@@ -12318,7 +12434,9 @@ built.** It is **OWNER-RUN**, with **two people**: no agent runs any step of it.
 ([`docs/stateless-orchestrator/implementation-plan.md`](stateless-orchestrator/implementation-plan.md)) names **Check 305** and leaves
 its text to the task that names the files: O16 builds `get_state`, `get_events` and `apply_patch` over the state store behind the
 `state:read` and `state:write` scopes, with `apply_patch` also gated by **D1225** and with **no `spawn_task`** anywhere in it (T2), and
-it cannot start until the MCP registry (M7) and its two amendments (T3, the scopes; T4, the threat model) land. This row and this
+it cannot start until the MCP registry (M7) and its two amendments (T3, the scopes; T4, the threat model) land. **Re-read 2026-11-10:** all three
+have landed, and O16 split — **O16a** builds the scopes and the read tools dormant (nothing served, nothing to check) and **O16b**, which serves
+them once the stateless design's D2020 is answered and the front door is wired, is the task that writes this section. This row and this
 section **reserve the number** — a check's number is allocated once and is never renumbered — so that O16 writes its section into the
 register rather than picking a new one. Nothing is run here until then, and **no agent runs any step of it**.
 
@@ -12703,7 +12821,7 @@ beyond the policy read a `fugaro` command already makes.
 work rests on — that the list in force changes what a run spends, and that a person can read out of the
 record why it did.
 
-## Check 510: the name-prefix IAM condition, and the two grants IAM cannot fence (sandbox project only, never `belong`; run by you; NOT RUN)
+## Check 510: the name-prefix IAM condition, and the grants IAM may not be able to fence (sandbox project only, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **DS0.2** of
 [secrets-brokering/dynamic-delivery/implementation-plan.md](secrets-brokering/dynamic-delivery/implementation-plan.md)
@@ -12712,6 +12830,12 @@ claim that anything holds. The check is `scripts/live-checks/check510.sh` (its s
 `scripts/live-checks/check510_test.sh` drives it against fake tools only, and never a real project),
 the steps are [secrets-brokering/dynamic-delivery/check510-steps.md](secrets-brokering/dynamic-delivery/check510-steps.md),
 and **no agent runs any step of it**: what it measures is a live project's IAM and Secret Manager.
+
+**The owner ran it once, on 2026-11-11**, and its `create-conditioned` row came back ADMITTED — a
+conditioned `secrets.create` **was** admitted for a `fugaro_u_` name, contradicting the create half of
+**F30** — and that run probed only a name inside the prefix, so whether a create outside both prefixes
+is refused is unmeasured. The re-run that asks it is what this section's block will be, which is why
+the row above still reads NOT RUN.
 
 **What it settles, and what it gates.** The reconciliation's **U3** and **F30**, which **DS2.2**'s
 Terraform is written against:
@@ -12723,21 +12847,29 @@ Terraform is written against:
   refuses a name outside them. The refusal is measured against **F6**'s collision class — a
   repository's own mounted secret, `fugaro-<slug>-<logical>-<hash>` — and not against a name the check
   invented: a refusal measured on the wrong shape settles nothing;
-- that a conditioned `secretmanager.secrets.create` admits nothing, not even the prefix it names,
-  because the permission is checked on the **project** (F30). That is why the intake grants create
-  unconditioned, and why an unconditioned create of a name **outside** the prefixes then succeeds:
-  the row records that as the reading it is, not as a surprise. `secretmanager.secrets.list` is the
-  same case, and the check reads it the same way;
+- **the create rows, where F30's create half is already known to be wrong.** F30 said a conditioned
+  `secretmanager.secrets.create` admits nothing, not even the prefix it names, because the permission
+  is checked on the **project** — which is why the intake grants create unconditioned. The 2026-11-11
+  reading is the opposite for a `fugaro_u_` name, so the check **reports** its three create rows
+  (`create-conditioned`, `create-conditioned-outside`, `create-unconditioned`) rather than passing or
+  failing them, and what is open is the pair: a create **outside** both prefixes under the same
+  conditioned grant. Refused beside an admitted create inside means create is fenced by name in both
+  directions, so **DS2.2** may condition the intake's create; admitted outside means there is no name
+  fence and the unconditioned create stays as the plan has it. An unconditioned create of a name
+  outside the prefixes succeeds either way, and the row records that as the reading it is.
+  `secretmanager.secrets.list` is still the project-checked case F30 states, and the check reads it
+  the same way;
 - the **maximum secret ID length** (R1), read by bisection — a name over the limit is refused with a
   sentence naming the limit — rather than a number assumed from the plan.
 
 **What a run costs.** Nothing billable and no model call: no job, no build and no container of the
 installation's. It creates one throwaway service account (`chk510-<stamp>`), the project IAM bindings
 its own rows need — the two conditioned grants, and the one **unconditioned**
-`roles/secretmanager.admin` grant the F30 create row is measured on, which is what makes that row and
-the conditioned one beside it a pair: the same role, refused under the condition and admitted without
-it — and the probe containers they are measured on — five under the `fugaro_u_`, `fugaro_p_` and
-`fugaro-<slug>-…` shapes, plus the containers the length bisection makes, about a dozen. The slow part
+`roles/secretmanager.admin` grant the create rows' control is measured on — the same role with no
+condition on it, which is what the conditioned create rows are read against — and the probe containers
+they are measured on — five under the `fugaro_u_`, `fugaro_p_` and `fugaro-<slug>-…` shapes, whatever
+the two conditioned create rows make if IAM
+admits the create, plus the containers the length bisection makes, about a dozen. The slow part
 is IAM propagation: a fresh binding can take a minute to be seen, and the rows that depend on it are
 read only once it is.
 
@@ -12754,15 +12886,20 @@ bash scripts/live-checks/check510.sh
 ```
 
 Progress goes to stderr and one `CHECK 510 RESULT` block goes to stdout at the end: paste that whole
-block here and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a
-measured criterion that did not hold; **`2`** is the check not being able to measure (a tool missing, a
-probe of its own that could not be set up, a length probe refused for a reason that is not the ID
-limit — a name already taken, say, which must never be read as the limit itself — or a fresh binding
-that never became visible). A key the run never reached reads `FAIL — not reached`.
+block here and nothing else. **Exit `0`** is every criterion that was measured holding **and every
+reading taken — a create reading that contradicts F30 is one of these, printed and reported rather
+than failed**; **`1`** is a measured criterion that did not hold; **`2`** is the check not being able
+to measure (a tool missing, a probe of its own that could not be set up, a create answered something
+other than `200` or `403`, a length probe refused for a reason that is not the ID limit — a name
+already taken, say, which must never be read as the limit itself — or a fresh binding that never
+became visible). A key the run never reached reads `FAIL — not reached`.
 
 **What waits on it.** **DS2.2** (the intake and the prefix-conditioned reader in Terraform): a failed
 510 stops it and returns to the owner as a decision, because the condition shape is that task's whole
-content.
+content. Its **create** grant is the one thing that waits on the re-run rather than on a verdict:
+`create-conditioned-outside` refused means create is fenced by name and DS2.2 may condition it, admitted
+means the unconditioned create stays as the plan has it — and the grant itself does not change until
+that reading is in.
 
 ## Check 511: a request every N seconds keeps one service instance up (sandbox installation only, never `belong`; run by you; NOT RUN)
 

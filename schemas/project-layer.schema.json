@@ -42,7 +42,8 @@
               "properties": {
                 "coder": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
                 "reviewer": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
-                "background": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" }
+                "background": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
+                "vision": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" }
               }
             },
             "crafts": {

@@ -150,7 +150,10 @@ One document set, six files:
 on `main` when this was written) gives the coordinator a **state tool group**, and **this MCP server
 is what hosts it** — D931 already serves the coordinator's own tools on the same endpoint under their
 existing names, so the state group reaches MCP clients through the front door rather than through a
-second surface ([spec.md](spec.md) §11 says which part stays that design's to decide). The
+second surface ([spec.md](spec.md) §11 says which part stays that design's to decide; **that design
+answered it on 2026-11-04 with D1224's three names and D1227's two scopes, recorded here on 2026-11-10
+as an amendment of D927** in [reconciliation.md](reconciliation.md) §4a, with the group's rows in
+[spec.md](spec.md) §5 and its threat-model paragraph in §8). The
 **coordinator's own P7/P8** is the second: [reconciliation.md](reconciliation.md) F1, F24 and the
 plan's
 §7 keep the front door's home in the coordinator's service, and this folder builds the MCP half of it

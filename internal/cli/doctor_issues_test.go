@@ -74,6 +74,11 @@ func TestDoctorIssuesLineOnlyWhenUnsynced(t *testing.T) {
 		{"nothing saved", false, "", false, false},
 		{"pending", true, issues.StatusPending, false, true},
 		{"dismissed but never uploaded", true, issues.StatusDismissed, false, true},
+		// `issue submit` records the `submitted` status and the URL before
+		// anything is uploaded, so a filed issue is the one state that is
+		// finished without ever passing through the shared store (F28): the
+		// line would otherwise count it and its own fix refuse it as filed.
+		{"submitted but never uploaded", true, issues.StatusSubmitted, false, false},
 		{"submitted and uploaded", true, issues.StatusSubmitted, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

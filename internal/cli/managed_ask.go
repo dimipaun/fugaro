@@ -105,9 +105,26 @@ func askConfirm(cmd *cobra.Command, question string) (bool, error) {
 	if !f.ask {
 		return true, nil
 	}
+	return askAtTerminal(cmd, question, initflow.AskRefusal)
+}
+
+// askAtTerminal is the package's one read of a y/N confirmation: the session
+// check that refuses before stdin is touched, the question, and the yes. It is
+// what askConfirm is built on rather than a body of its own, so the flag's
+// helper and `fugaro issue submit --ask` share one read (T1: the --ask logic is
+// extended, not duplicated) and the policy's single exemption is a single site.
+//
+// refusal is the caller's own sentence for a session that cannot answer it, and
+// it is a parameter because the two callers' sessions are different questions:
+// the managed confirmations pass initflow.AskRefusal, which is about the gate
+// that stood in for them, and `issue submit` passes its own line (F24) because
+// it has no gate and refuses on what the filing needs instead. The rule the
+// sentence is read by is initflow's in both cases — a prompt nobody can answer
+// is a refusal and never a silent proceed — and the read stays here either way.
+func askAtTerminal(cmd *cobra.Command, question string, refusal func(initflow.Conditions) string) (bool, error) {
 	c := askConditions(cmd, boolFlag(cmd, "json"), boolFlag(cmd, "non-interactive"))
 	if c.Agent != "" || c.NonInteractive || c.JSON || !c.Terminal {
-		return false, userErr("%s", initflow.AskRefusal(c))
+		return false, userErr("%s", refusal(c))
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "%s [y/N]: ", question)

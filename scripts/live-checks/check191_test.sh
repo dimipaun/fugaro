@@ -745,6 +745,38 @@ DOCTOR_EOF
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "the switch off: no run launched"
 }
 
+test_a_named_variant_is_still_this_repositorys_own_entry() {
+  local dir=$work/switchvariant
+  prepare "$dir"
+  # Doctor names the job accounts the service does not admit, and the list is
+  # the installation's WHOLE account table — one entry per repository, workflow
+  # and Claude account its allow_data_to names — while the grants are one per
+  # job a repository's own root deploys. A repository on the switch deploys the
+  # default variant of each workflow and no other (its root runs under
+  # agent.auth: cascade), so doctor's row for it names that variant alone and
+  # never a named account's variant, which is why `names_account` needs no
+  # narrowing to the deployed variant to be exact. This case is the sentence
+  # that proves the reader agrees with that rule: the repository is named ONLY
+  # by its retired named variant web_belong while its own deployed entry
+  # (workspace-a/repo-a (web)) is clean — an entry only a repository the switch
+  # is held OFF for can carry — and the row reads off, which is doctor's own
+  # answer for the repository it names.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","class":"actionable","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-a (web_belong), workspace-a/plain (web): a run of workspace-a/repo-a (web_belong), workspace-a/plain (web) that is on the switch would fail to fetch a model credential. The grant follows the switch, and the switch follows the repository's own agent.auth, so a repository of that list that does not run with agent.auth: cascade has the service held off for it: the published policy's proxy: true is inert there — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "a variant of the repository named while its deployed entry is clean"
+  expect_contains "$out" "FACT proxied: FAIL" "a named variant: the row does not pass"
+  expect_contains "$out" "the credentials-service switch is OFF for workspace-a/repo-a" "a named variant: the repository named by it is off"
+  expect_contains "$out" "grants no roles/run.invoker to workspace-a/repo-a (web_belong)" "a named variant: doctor's own problem is carried into the detail"
+  # The deployed variant's entry is the one entry of this repository that is
+  # nowhere in the sentence, and that is what makes the reading this case pins:
+  # `off` here comes from web_belong alone.
+  expect_absent "$out" "workspace-a/repo-a (web)," "a named variant: the repository's own deployed entry is clean"
+  expect_contains "$out" "FACT run-launch: FAIL — not reached" "a named variant: the rows below are not reached"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a named variant: no run launched"
+}
+
 test_a_switch_the_check_cannot_read_is_unmeasured() {
   local dir=$work/switchunread
   prepare "$dir"
@@ -1252,6 +1284,7 @@ t test_the_run_id_must_name_today
 t test_the_run_id_base_must_be_todays_date_and_a_time
 t test_the_fake_run_refuses_an_id_the_cli_would_refuse
 t test_the_switch_being_off_stops_the_check
+t test_a_named_variant_is_still_this_repositorys_own_entry
 t test_the_switch_is_read_from_doctor_s_whole_sentence
 t test_another_repositorys_missing_grant_is_not_this_repositorys_switch
 t test_a_switch_the_check_cannot_read_is_unmeasured
