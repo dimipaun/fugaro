@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -1004,6 +1005,51 @@ func TestPinsInvalidForBudgetIsInfraError(t *testing.T) {
 				t.Fatal("the agent ran")
 			}
 		})
+	}
+}
+
+// postImage sends one Messages request carrying a base64 image block, as
+// Claude Code does after a Read of a picture.
+func postImage(t *testing.T, req agent.Request, model string) (int, string) {
+	t.Helper()
+	base, key := gwEnv(req)
+	body := fmt.Sprintf(`{"model":%q,"max_tokens":1000,"messages":[{"role":"user","content":[{"type":"text","text":"look at this"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aGk="}}]}]}`, model)
+	return postBody(t, base+"/v1/messages", key, body)
+}
+
+// readsAnImage is the stage the issue's run died in: Claude Code Reads a
+// picture, puts it into the next request as a base64 image block, and the
+// gateway refuses the whole call -- which fails the stage, not the read.
+func readsAnImage(inner step) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		status, body := postImage(t, req, deepseek)
+		if status != 200 {
+			return agent.Result{}, fmt.Errorf("the model call was refused (%d): %s", status, body)
+		}
+		return inner(t, ctx, req)
+	}
+}
+
+// TestBootstrapRefusesATextOnlyCoderWithImagesAndNoVisionModel (V5, D2005,
+// D2006): a task whose text names an image file, a coder model priced without
+// an image rate and no agent.models.vision is refused at bootstrap, before any
+// stage spends -- the run otherwise reaches implement, reads the picture and
+// dies on the gateway's image refusal, which is the failure the issue reports.
+func TestBootstrapRefusesATextOnlyCoderWithImagesAndNoVisionModel(t *testing.T) {
+	g := providerRun(t, providerPinned(t), "enforce", "50", nil, "acme/app")
+	g.setTask(t, "Fix the console golden: docs/shot.png is out of date")
+	rec, err := g.run(t, readsAnImage(implement("feature")), review("ship", 0))
+	if err == nil {
+		t.Fatalf("a run whose task names an image and whose coder cannot read one was not refused: %+v", rec)
+	}
+	if rec.FailureClass != failure.ConfigInvalid {
+		t.Errorf("failure_class = %q, want %q: the coder's price row and the task's own text are the resolved configuration, and changing them is the remedy", rec.FailureClass, failure.ConfigInvalid)
+	}
+	if len(g.agent.calls) != 0 {
+		t.Fatalf("the run reached %d stage(s): the check exists to refuse before the first one spends", len(g.agent.calls))
+	}
+	if !strings.Contains(rec.Reason, "agent.models.vision") || !strings.Contains(rec.Reason, "image_tokens") {
+		t.Errorf("reason = %q, want one naming agent.models.vision and the price member that prices a vision model", rec.Reason)
 	}
 }
 
