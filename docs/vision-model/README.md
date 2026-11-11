@@ -37,14 +37,13 @@ is that it "never rewrites a body" (`internal/gateway/gateway.go:7`), and the mo
 that body — so a per-request substitution is a change to the one thing the budget's whole design
 rests on: the request the agent wrote is the request that is priced and sent. The reconciliation
 recommends the narrower mechanism instead — the stage that can see images **runs** the vision model
-(D2002) — and prices the literal reading in that row. That recommendation is not the owner's answer
-yet; the plan is written for it and says which tasks change if the owner answers the other way.
+(D2002) — and prices the literal reading in that row. The owner answered as recommended on 2026-11-10; the plan says which tasks would have changed the other way.
 
 ## Numbers this work holds
 
 | Block | Use |
 | --- | --- |
-| **D2000–D2019** | this work's block: **D2000–D2016** written, with a recommendation, the alternative's cost and an empty answer cell; **D2017–D2019** reserved and unused. Taken above every decision on `main` (the highest is **D1959**, the top of `docs/secrets-brokering/dynamic-delivery`'s reserved block D1930–D1959, used to D1946) and above every open pull request's docs on 2026-11-10: the highest used in any of them is **D1999** (the workspace-token reconciliation in #2259), whose block and #2259's own D1960–D1979 sit below this one |
+| **D2000–D2019** | this work's block: **D2000–D2016** written, with a recommendation, the alternative's cost and the owner's answer (all recommended, 2026-11-10); **D2017–D2019** reserved and unused. Taken above every decision on `main` (the highest is **D1959**, the top of `docs/secrets-brokering/dynamic-delivery`'s reserved block D1930–D1959, used to D1946) and above every open pull request's docs on 2026-11-10: the highest used in any of them is **D1999** (the workspace-token reconciliation in #2259), whose block and #2259's own D1960–D1979 sit below this one |
 | **Checks 520–529** | **520** and **521** are proposed by the plan, owner-run and **NOT RUN**; **522–529** are reserved and unused. Taken above every check on `main` (the highest **used** is **Check 511**, and the highest **held** is **519**: `docs/secrets-brokering/dynamic-delivery` registers 510 and 511 and reserves 512–519) and above every open pull request's (the same 510–519; #2258's 230–249 and image-setup's 500–509 sit below) |
 
 ## Siblings

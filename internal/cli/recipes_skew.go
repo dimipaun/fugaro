@@ -1106,9 +1106,11 @@ func releaseOf(ref string) (string, bool) {
 // installation's base image itself (checkCloneImageSince's judge, the ref
 // base_images.base names), and a derived image runs the binary of the base its
 // build record was built FROM (checkImageSince's). clone is that workflow's
-// checkout mode, nil when the launch could not read it — a launch for another
-// repository from a checkout that is not its own, where checkoutConfig answers
-// nil. Neither judge is then known to be the job's, so both are asked and
+// checkout mode, nil when the launch read no workflow at all — a repository no
+// shared job serves, a project that published no profile, a ref whose tree
+// carries no document, or a launch for another repository from a checkout that
+// is not its own. Neither judge is then known to be the job's, so both are
+// asked and
 // either one predating drops the field: a clone workflow has no build record
 // at all (it is never built, so the other judge would find nothing and keep a
 // field the image cannot read), while a derived one is refused by
