@@ -528,8 +528,8 @@ func TestSettingsOfflineReadsNoCloudLayer(t *testing.T) {
 // TestSettingsOfflineLeavesTheTableShape: --offline is not a narrower read of
 // the registry — it is the same table with the cloud layers marked `unread:
 // offline` (spec §2.6) — so a consumer that reads offline sees every key, in the
-// same order, and a cloud row reads the word rather than a default a database
-// nobody asked is supposed to hold.
+// same order, and a cloud row says in its state that the database was not asked
+// rather than printing a value a database nobody asked is supposed to hold.
 //
 // The same fixture is read both ways, so the two documents are the same read:
 // a shape that differed by a flag would be a second table, and the rows a
@@ -550,12 +550,12 @@ func TestSettingsOfflineLeavesTheTableShape(t *testing.T) {
 		}
 	}
 
-	// The database is there and --offline did not ask it: the value column says
-	// so, and the state carries the reason the flag is.
+	// The database is there and --offline did not ask it: the row keeps what a
+	// key no layer decided prints, and the state is the one column that says so.
 	for _, key := range settingsCloudRowKeys {
-		row := rowOf(t, offline, key, "project")
-		if row.State != "unread: offline" || deref(row.Value) != "unread" || row.Wins != "caps" {
-			t.Errorf("%s offline = %q/%q/%q, want the word and the reason", key, deref(row.Value), row.Wins, row.State)
+		settingsCloudRowUnread(t, offline, key)
+		if row := rowOf(t, offline, key, "project"); row.State != "unread: offline" {
+			t.Errorf("%s offline state = %q, want the flag's own reason", key, row.State)
 		}
 	}
 	if row := rowOf(t, online, "caps.mode", "project"); deref(row.Value) != "enforce" {

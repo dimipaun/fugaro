@@ -291,12 +291,17 @@ func (r *settingsRead) cloudProjectRow(s setting, row settings.Row) setting {
 
 // capsRow is a row whose only store is the database. The three answers are the
 // layer's own: it was read and holds the value, it was read and holds none, or
-// it was not read at all — and the third prints the word `unread` rather than a
-// default, because a default is a claim about a database nobody asked (spec
-// §2.5).
+// it was not read at all. The third is the STATE and nothing else: a row whose
+// layer was never read keeps what a key no layer decided prints — the default,
+// with WINS default (spec §2.3), the shape the repository scope's `unknown`
+// already has — and `unread: <reason>` is the one column that says the read
+// which would have answered it did not happen (D850). Putting the word in the
+// VALUE column instead would be a non-value where a consumer reads a value, and
+// claiming the caps layer for it would list these rows under --changed on every
+// installation whose cloud is out of reach: seven changes nobody made.
 func (r *settingsRead) capsRow(s setting, row settings.Row) setting {
 	if r.caps.status != stateOK {
-		s.Value, s.Wins, s.State = "unread", settings.LayerCaps, r.caps.status
+		s.State = r.caps.status
 		return s
 	}
 	v, ok := r.caps.values[row.Key]

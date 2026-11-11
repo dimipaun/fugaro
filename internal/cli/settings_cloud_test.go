@@ -49,26 +49,85 @@ func settingsCloudPolicyNode(mode string, perRunUSD float64) map[string]any {
 	}
 }
 
-// settingsCloudRowUnread asserts a cloud row says it was not read: the STATE
-// column carries the reason, and the VALUE column is neither a default nor a
-// value. `unread` is never a default in its place (spec §2.5) — a project with
-// no Firebase backend reads as one with the default caps, which is the one
-// thing the state exists to prevent.
+// settingsCloudRowUnread asserts a cloud row says the database was not read:
+// the STATE column carries the reason, and nothing else about the row claims a
+// value. The row keeps the shape a key no layer decided has — the default value
+// with WINS default (spec §2.3), which is the shape the repository scope's
+// `unknown` prints — because `unread` is a state and not a value: a word in the
+// VALUE column is a non-value where a consumer reads one, and the caps layer
+// claimed for it would put seven rows under --changed on every installation
+// whose cloud is out of reach.
 func settingsCloudRowUnread(t *testing.T, doc settingsTestDoc, key string) {
 	t.Helper()
 	row := rowOf(t, doc, key, "project")
 	if !strings.HasPrefix(row.State, "unread: ") {
 		t.Errorf("%s: state = %q, want a reason", key, row.State)
 	}
-	if row.Wins != "caps" {
-		t.Errorf("%s: wins = %q, want caps: the database is the row's only store", key, row.Wins)
+	if row.Wins != "default" {
+		t.Errorf("%s: wins = %q, want default: no layer was read to decide it", key, row.Wins)
 	}
-	if deref(row.Value) != "unread" {
-		t.Errorf("%s: value = %q, want the word that says the row was not read", key, deref(row.Value))
+	want := row.Default.Value
+	if want == "" {
+		want = row.Default.Unset
 	}
-	for _, def := range []string{row.Default.Value, row.Default.Unset} {
-		if def != "" && strings.Contains(deref(row.Value), def) {
-			t.Errorf("%s: value = %q prints the default (%q) in place of a read that did not happen", key, deref(row.Value), def)
+	if deref(row.Value) != want {
+		t.Errorf("%s: value = %q, want the default (%q): a row nobody read is not guessed", key, deref(row.Value), want)
+	}
+}
+
+// TestSettingsUnreadIsNeverADefault: a cloud layer that was not read says so,
+// in the STATE column, with the reason — and a row that says `unread` is never
+// the same row as one whose layer was read and holds nothing, which is `ok`.
+// Two reasons, because they are answered by different code: a project with no
+// budget backend at all, which must not reach for a database, and a database
+// that refuses the read.
+func TestSettingsUnreadIsNeverADefault(t *testing.T) {
+	settingsFixture(t, "")
+	none := readSettingsJSON(t)
+	for _, key := range settingsCloudRowKeys {
+		settingsCloudRowUnread(t, none, key)
+	}
+	row := rowOf(t, none, "caps.mode", "project")
+	if !strings.Contains(row.State, "budget.rtdb_url") {
+		t.Errorf("state = %q, want the reason to name the key that is not set", row.State)
+	}
+	// The other half of the word: an installation whose database is reachable
+	// and holds no cap reads `ok` on the same rows, so `unread` is a fact about
+	// this read and not the way these rows always look.
+	settingsCloudFixture(t)
+	empty := readSettingsJSON(t)
+	for _, key := range settingsCloudRowKeys {
+		if got := rowOf(t, empty, key, "project").State; got != "ok" {
+			t.Errorf("%s: state = %q on a database that holds no cap, want ok", key, got)
+		}
+	}
+
+	f := settingsCloudFixture(t)
+	f.db.DenyRead(budget.PathCapsGlobal)
+	refused := readSettingsJSON(t)
+	for _, key := range settingsCloudRowKeys {
+		settingsCloudRowUnread(t, refused, key)
+	}
+	row = rowOf(t, refused, "caps.mode", "project")
+	if !strings.Contains(row.State, "refused the read") {
+		t.Errorf("state = %q, want the refusal dbErr words for a denied read", row.State)
+	}
+}
+
+// TestSettingsUnreadRowsAreNotChanges: --changed is the one-screen answer to
+// "what have I changed on this installation", and it lists the rows a layer
+// decided (its own help text). A row whose layer could not be read was decided
+// by no layer, so it is not in that answer: every installation with no budget
+// backend, and every read with --offline, would otherwise open with seven
+// changes nobody made.
+func TestSettingsUnreadRowsAreNotChanges(t *testing.T) {
+	settingsFixture(t, "")
+	for _, args := range [][]string{{"--changed"}, {"--changed", "--offline"}} {
+		doc := readSettingsJSON(t, args...)
+		for _, row := range doc.Settings {
+			if settingsCapsKey(row.Key) {
+				t.Errorf("%s: --changed lists %s (state %q, wins %q)", strings.Join(args, " "), row.Key, row.State, row.Wins)
+			}
 		}
 	}
 }
@@ -107,34 +166,6 @@ func TestSettingsMarksAnUnpublishedLocalValue(t *testing.T) {
 	}
 	if deref(row.Value) != "5" || row.Wins != "policy" {
 		t.Errorf("value/wins = %q/%q, want 5/policy: the node is the level a run is admitted by", deref(row.Value), row.Wins)
-	}
-}
-
-// TestSettingsUnreadIsNeverADefault: a cloud layer that was not read says so,
-// with the reason, and never prints a default in the value's place (spec
-// §2.5). Two reasons, because they are answered by different code: a project
-// with no budget backend at all, which must not reach for a database, and a
-// database that refuses the read.
-func TestSettingsUnreadIsNeverADefault(t *testing.T) {
-	settingsFixture(t, "")
-	none := readSettingsJSON(t)
-	for _, key := range settingsCloudRowKeys {
-		settingsCloudRowUnread(t, none, key)
-	}
-	row := rowOf(t, none, "caps.mode", "project")
-	if !strings.Contains(row.State, "budget.rtdb_url") {
-		t.Errorf("state = %q, want the reason to name the key that is not set", row.State)
-	}
-
-	f := settingsCloudFixture(t)
-	f.db.DenyRead(budget.PathCapsGlobal)
-	refused := readSettingsJSON(t)
-	for _, key := range settingsCloudRowKeys {
-		settingsCloudRowUnread(t, refused, key)
-	}
-	row = rowOf(t, refused, "caps.mode", "project")
-	if !strings.Contains(row.State, "refused the read") {
-		t.Errorf("state = %q, want the refusal dbErr words for a denied read", row.State)
 	}
 }
 
