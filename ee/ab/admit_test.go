@@ -90,6 +90,10 @@ func TestAdmitRefusesUnroutedChallenger(t *testing.T) {
 	}{
 		{"no provider claims it", "openai/gpt-9", admitProviders()},
 		{"the route does not name the repository", admitChallenger, admitProvidersClosed()},
+		// A variant of a model the route does not serve this repository is
+		// unrouted, not a variant: the reason is asked in the policy's own
+		// order, and where the code may go is the sharper truth about it.
+		{"a variant of a model the route does not serve here", admitChallenger + ":free", admitProvidersClosed()},
 	} {
 		model, ok, why := Admit(admitConfig(), admitLayer(tc.model), admitRepo, tc.providers, admitPrices())
 		if ok || model != "" || why != ReasonUnrouted {

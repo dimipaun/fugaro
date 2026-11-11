@@ -4,7 +4,8 @@
 // Package ab is the policy half of model A/B testing (docs/model-ab-testing,
 // D550): the sampler, the challenger admission and the pair launch. The wire,
 // the project layer's ab: keys and the runner's shadow behaviour are the
-// core's, so an untagged build decodes a pair and publishes nothing of it.
+// core's, so a build that links no ee/ code still decodes a pair, runs the one
+// arm it is given and samples nothing.
 package ab
 
 import (
