@@ -18,8 +18,9 @@ spec, the reconciliation wins.
 - **2026-11-10: the later slices S2–S5 are planned** ("Later slices, planned 2026-11-10" below):
   B2.1–B2.9, B3.1–B3.10, B4.1–B4.11 and B5.1–B5.9, read against the tree in reconciliation §10. All
   four of the old bullets are kept; the OpenRouter upstream (dynamic-delivery's DS3.5) and pool
-  selection in the service (model-crafts' MC6) are other plans' tasks. **D2070–D2080 are OPEN**, and
-  the tasks that name one wait for its answer. Since the census, B1.7 (`bdf845e9f`, #1987), B1.10
+  selection in the service (model-crafts' MC6) are other plans' tasks. The owner answered
+  **D2070–D2080 on 2026-11-10, all as recommended**, and the owner's 2026-11-10 "approve all tasks"
+  ruling approves B2.1–B5.9, each keeping its own gate. Since the census, B1.7 (`bdf845e9f`, #1987), B1.10
   (`b6e53acd0`, #2091) and B1.11 (`efbe928c8`, #2096) have merged; B1.13 part two is #2166, held on
   Check 191, whose first run on 2026-11-10 found the sandbox repository off the switch (`6e319b650`,
   #2284; reconciliation F29).
@@ -135,10 +136,10 @@ not one whose branch fails `task.BranchRE` (G6).
 | --- | --- | --- | --- |
 | **S0** | **0.13.0** | The secret-reader audit as a tested doc, the guard, doctor's Secret Manager sweep and deployer read, Check 190 written and run | Yes: no behaviour change except doctor findings |
 | **S1** | **0.15.0**, then the flip after it (O7) | The Bitbucket proxy for per-repository jobs of opted-in installations and the re-planned Bitbucket S2 tasks ship in 0.15.0 (owner, 2026-10-30); 0.14.0 ships only the inert and data-only pieces — policy v4 with the block and the `proxy` switch (BW-T2.1, BW-T2.3), the API-root pin (BW-T2.8), the bundle's Bitbucket token (B1.2), the proxy's parser and rules (B1.3, B1.4), the empty flip list (B1.8) and the operator draft (B1.13 part one); Check 191 runs against the released 0.15.0; the flip (B1.13 part two) and Check 192 follow in the next release | Inert on upgrade: a repository is proxied only when the owner publishes `proxy: true` (B1.7); the mount stays until the flip list is filled (B1.13); in 0.14.0 no run is proxied at all, whatever the node says. The policy v4 bump itself is a lockstep upgrade (D477) |
-| **S2** | unscheduled | Every `agent.auth` mode through the service (D498): `api-key` and `oauth` on the switch, then their mounts dropped (B2.1–B2.9; D2070–D2072 open) | Until B2.7's flip: every mount stays |
-| **S3** | unscheduled | Workflow `secrets:` through a vault fetch (D491, D1267): the record, the route, the grant, the runner's fetch, then the flip (B3.1–B3.10; D2073–D2075 open) | Until B3.8's flip: a mounted value always wins |
-| **S4** | unscheduled | The build exception's exit: builds and the image check through the service (D491, U4), gated on Check 195 (B4.1–B4.11; D2076, D2077 open) | Until B4.9's flip |
-| **S5** | unscheduled | Shared project jobs at the service (the credentials plan's C3.9 general half), then Bitbucket shared jobs (D505) (B5.1–B5.9; D2078, D2079 open) | Until B5.7's flip |
+| **S2** | unscheduled | Every `agent.auth` mode through the service (D498): `api-key` and `oauth` on the switch, then their mounts dropped (B2.1–B2.9; D2070–D2072 answered) | Until B2.7's flip: every mount stays |
+| **S3** | unscheduled | Workflow `secrets:` through a vault fetch (D491, D1267): the record, the route, the grant, the runner's fetch, then the flip (B3.1–B3.10; D2073–D2075 answered) | Until B3.8's flip: a mounted value always wins |
+| **S4** | unscheduled | The build exception's exit: builds and the image check through the service (D491, U4), gated on Check 195 (B4.1–B4.11; D2076, D2077 answered) | Until B4.9's flip |
+| **S5** | unscheduled | Shared project jobs at the service (the credentials plan's C3.9 general half), then Bitbucket shared jobs (D505) (B5.1–B5.9; D2078, D2079 answered) | Until B5.7's flip |
 
 Considered and not planned: the spec's RTDB token store (D494), GitHub through the proxy (D497b),
 an HTTP health route and minimum instances (D501), an agent sandbox (O1), a launcher skew constant
@@ -652,17 +653,20 @@ plan; this table says what happens to each task, and the levels below include th
 As written in [../bitbucket-workspace-token/implementation-plan.md](../bitbucket-workspace-token/implementation-plan.md),
 moved to 0.14.0 and, for T2.1 and T2.3, amended as the re-planned table above says (O2).
 
-### Later slices, planned 2026-11-10 (S2–S5; no task approved)
+### Later slices, planned 2026-11-10 (S2–S5; approved 2026-11-10)
 
 The four bullets this heading carried (B2.1, B3.1, B4.1, B5.1) are planned below as tasks. The reading
 behind them is [reconciliation.md](reconciliation.md) §10: every one is **kept**, none is superseded or
 merged whole, and two pieces are other plans' tasks and are **not** re-planned here — the OpenRouter
 upstream in the service is dynamic-delivery's **DS3.5** (#2288, in a run), and pool selection inside the
-service is model-crafts' **MC6** (not started). **Nothing here is approved**, and the decisions that
-shape it, **D2070–D2080, are OPEN**: a task that names one is written to its recommendation and
-**waits for the owner's answer**; an answer that differs rewrites that task before it launches. No
-release is assigned (the 2026-11-07 census, "It assigns no release"); D2080 recommends the order
-S2 → S5 → S3 → S4. **An independent review (round 1, 2026-11-10)** made B2.1 decide from an
+service is model-crafts' **MC6** (not started). The decisions that shape it, **D2070–D2080, were
+answered by the owner on 2026-11-10, all as recommended**, so every task that names one stands as
+written to its recommendation. **Tasks B2.1–B5.9 are approved** by the owner's 2026-11-10 "approve all
+tasks" ruling, and each keeps its own gate: its "Depends on" and "Serialize after" lines (the open
+pull requests listed below), Check 195 before S4's code tasks (B4.2's gate), and every owner-run check
+and the owner's go before each flip (R8). No release is assigned (the 2026-11-07 census, "It assigns
+no release"); the order is D2080's, S2 → S5 → S3 → S4. **Tension T7 (reconciliation §10.4) is
+accepted with D2070–D2080: DS3.5 stays as built**, and S2's drop keeps to R6. **An independent review (round 1, 2026-11-10)** made B2.1 decide from an
 `update`-written record rather than the caller's header (D2070 amended before any answer, R7), took
 B3.2's workflow from the verified job account, said what B2.3's URL already moves (git, signing),
 added B2.7's publish refusal under D2071, narrowed B4.3's GitHub token to `contents: read`, and put
@@ -804,7 +808,7 @@ name any repository its identity names (G21 binds it to the profile; D475 is the
 
 ##### B2.7: The S2 flip (D2072, G17) — SECURITY-SENSITIVE, owner-gated
 
-- **Files:** `internal/config/providers.go` (`ServiceServedAuths = []string{"api-key", "oauth"}`), `deploy/terraform/terraform_test.go` (the mirror on the real list), `internal/cli/recipes_skew.go` (`serviceAuthSince`: the launcher refuses a switched `api-key` or `oauth` repository's run on an image below it, as `proxySince` does at `recipes_skew.go:130`), `internal/cli/launch_budget.go` (the refusal's call), `internal/cli/launch_budget_test.go`, `internal/cli/project_cmd.go` and its test (under D2071 (a): `fugaro project policy publish` refuses to lower the budget mode to `off` while a repository of an auth in `ServiceServedAuths` is switched, because the mode is read at `update` and its jobs then hold no mount; the answer to D2071 may change this), `docs/secrets-brokering/secret-readers.md` (E1's model credentials leave for switched repositories), `.claude/rules/credentials-service.md` (a rule: `ServiceServedAuths` changes only with the owner's go), `internal/infra/tf/testdata/golden/*`, and the release's `### For operators` ("run `fugaro update`").
+- **Files:** `internal/config/providers.go` (`ServiceServedAuths = []string{"api-key", "oauth"}`), `deploy/terraform/terraform_test.go` (the mirror on the real list), `internal/cli/recipes_skew.go` (`serviceAuthSince`: the launcher refuses a switched `api-key` or `oauth` repository's run on an image below it, as `proxySince` does at `recipes_skew.go:130`), `internal/cli/launch_budget.go` (the refusal's call), `internal/cli/launch_budget_test.go`, `internal/cli/project_cmd.go` and its test (under D2071 (a): `fugaro project policy publish` refuses to lower the budget mode to `off` while a repository of an auth in `ServiceServedAuths` is switched, because the mode is read at `update` and its jobs then hold no mount; D2071 answered as recommended), `docs/secrets-brokering/secret-readers.md` (E1's model credentials leave for switched repositories), `.claude/rules/credentials-service.md` (a rule: `ServiceServedAuths` changes only with the owner's go), `internal/infra/tf/testdata/golden/*`, and the release's `### For operators` ("run `fugaro update`").
 - **Tests:** `TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly`, `TestFilledServiceServedAuthsKeepsProviderKeys` (R6), `TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage`, `TestPolicyPublishRefusesModeOffWhileARepositoryIsSwitched`, `TestModelSecretsServedValidationMatchesGo`; `TestUpdateLeavesARunInFlightRunning`.
 - **Command:** B2.3's command, plus `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestLaunchRefusesASwitched|TestPolicyPublishRefusesModeOff' -count=1`
 - **Red step:** a copy of `TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly` on the real list fails while it is empty.
@@ -1163,7 +1167,7 @@ rules file), **#2274** (MC5: `internal/runner/gateway.go`, `routing.go`, `runner
 `bitbucketproxy_test.go`, `docs/gcp-live-checklist.md`), **#2170** (IS1: `spec.go`, `readiness.go`,
 `run.go`), **#2282** and **#1994** (`spec.go`), **#2256** (`runner.go`), **#2250**, **#2246**, **#2240**
 (`run.go`), **#2270** and **#2183** (`SECURITY.md`, `docs/gcp-live-checklist.md`), **#2288** (DS3.5:
-T7). None of them is a dependency of meaning except #2166 (the flip pattern R8 copies) and #2274 (MC5,
+T7, accepted with D2070–D2080: DS3.5 stays as built). None of them is a dependency of meaning except #2166 (the flip pattern R8 copies) and #2274 (MC5,
 which MC6 needs); the rest are one-file serializations.
 
 **Checks 193–197** (owner-run; 198–199 reserved and unused):

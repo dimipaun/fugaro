@@ -20,7 +20,10 @@ owner's own explicit go.
 The **later slices S2–S5 are now planned** as launchable tasks — B2.1–B2.9, B3.1–B3.10, B4.1–B4.11
 and B5.1–B5.9 — from [reconciliation.md](reconciliation.md) §10, which keeps all four old bullets and
 leaves the OpenRouter upstream to dynamic-delivery's DS3.5 and pool selection to model-crafts' MC6.
-**D2070–D2080 are OPEN** for the owner, and **no task is approved**.
+The owner answered **D2070–D2080 on 2026-11-10, all as recommended**, and the owner's 2026-11-10
+"approve all tasks" ruling approves **B2.1–B5.9**, each keeping its own gate (its serialization after
+the open pull requests the plan lists, Check 195 before S4's code tasks, and the owner-run checks and
+the owner's go before every flip). Tension T7 is accepted with them: DS3.5 stays as built.
 
 **Spec owner:** the Fugaro owner. **Date:** 2026-10-27. **Base:** `main` at `db4c5f390`, merged
 forward before the PR.
