@@ -38,10 +38,10 @@ import (
 // layer as ab.rate and never above config.ABMaxRate.
 //
 // The draw is a hash of the run ID and never a random number, so the same ID
-// answers the same way for every reader, at every moment: a launch that is
-// read twice — by the launcher, by an auditor, by a later reader of the
-// records — is sampled the same way both times, and a person auditing one
-// recomputes the answer from the ID alone: sha256 of the run ID, its first
+// answers the same way for every reader, at every moment: a launch read again
+// — by the launcher, by an auditor, by a later reader of the records — is
+// sampled the same way every time, and a person auditing one recomputes the
+// answer from the ID alone: sha256 of the run ID, its first
 // eight bytes read big-endian as a fraction of 2^64, sampled when that
 // fraction is below the rate.
 //
@@ -105,9 +105,7 @@ type LaunchFlags struct {
 // launcher knows, and the fields the task carries. The second half is not
 // redundant — a task is bucket data, and a replayed or hand-edited one is
 // judged by what it says about itself, the way the runner re-checks a
-// challenger at bootstrap rather than trusting the task (A2.1) — and it is
-// the only half that reads for a launch whose task was written by something
-// else.
+// challenger at bootstrap rather than trusting the task (A2.1).
 func Eligible(spec task.Spec, recipeMode string, mode rigor.Mode, flags LaunchFlags) bool {
 	if flags.ChosenRunID || flags.Retry || flags.Attempts > 1 {
 		return false
