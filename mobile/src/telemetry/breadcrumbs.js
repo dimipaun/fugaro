@@ -4,14 +4,14 @@
 // shared redactor (mobile plan, Task P7.3; D256, D118; the telemetry plan's
 // §7.3).
 //
-// **The rule, in one sentence.** `crashlytics().log(...)` is called with a
-// constant string from the list below, and **anything built from a runtime
-// value passes through `shared/digest`'s `redact` first** -- the same function
-// the mailbox client redacts an utterance with before it is written or spoken
-// (D118). The app therefore has **one** redaction rule and not two, which is
-// D119's reason for putting the redactor in a shared package in the first
-// place: two implementations of "what is safe to say" are two answers to that
-// question.
+// **The rule, in two halves.** The call site passes a **constant from the list
+// below** -- the scan refuses every other argument at `crashlytics().log(` --
+// and a value built at run time becomes a breadcrumb only through `breadcrumb`
+// below, which is `shared/digest`'s `redact`: the same function the mailbox
+// client redacts an utterance with before it is written or spoken (D118). The
+// app therefore has **one** redaction rule and not two, which is D119's reason
+// for putting the redactor in a shared package in the first place: two
+// implementations of "what is safe to say" are two answers to that question.
 //
 // **Why the constants are the screens' own names.** A breadcrumb exists to say
 // where a crash happened, and the only vocabulary the app has for "where" is
