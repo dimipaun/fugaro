@@ -78,6 +78,12 @@ const (
 	// StepRender is the deterministic render: always the last step of a
 	// mode: artifact recipe, and never a step of the other two modes.
 	StepRender StepKind = "render"
+	// StepRebase is rung 0's whole run (D2035): the runner puts the branch
+	// on its base, the conflicts are the one stage, the workflow's tests are
+	// run again and the branch is pushed. It is a step of its own and never
+	// part of the loop: a recipe carrying it holds it alone, runs no
+	// implement stage and reviews nothing.
+	StepRebase StepKind = "rebase"
 )
 
 // CheckCommand is the commands.* key a check step runs.
@@ -112,6 +118,12 @@ type Step struct {
 	// Autofix is a check step's autofix: true (lint only): commands.fix runs
 	// before commands.lint.
 	Autofix bool
+	// HandOver is a review step's hand_over: true, and it is only a review
+	// step's: the run ends at that review with the verdict recorded and no
+	// fix round after it (F9). The review still runs and still decides what
+	// the record and the pull request carry — what it does not do is buy
+	// another round with its findings.
+	HandOver bool
 }
 
 // The ceilings and defaults of a mode: artifact recipe's outputs: block
@@ -275,6 +287,30 @@ func UsesDigest(r *Recipe) bool {
 // else to judge a recipe the launcher cannot read (a repository-sourced one).
 func UsesAdversarial(r *Recipe) bool {
 	return slices.ContainsFunc(r.Steps, func(s Step) bool { return s.Kind == StepAdversarial })
+}
+
+// UsesRebase reports whether r holds the rebase step, rung 0's whole run. It
+// reads the parsed steps rather than a parse-time flag, for the same reason
+// UsesDigest does: a parser that predates the step refuses the whole recipe
+// ("is not a step type") instead of dropping it.
+//
+// It is read by the launch gate: recipeSinceFor chooses rebaseSince when a
+// recipe holds the step (internal/cli/recipes_skew.go), so a rebase launch
+// against a job image whose runner predates the release that executes it is
+// refused before it starts, naming fugaro image refresh, rather than
+// reaching the runner's own refusal at bootstrap.
+func UsesRebase(r *Recipe) bool {
+	return slices.ContainsFunc(r.Steps, func(s Step) bool { return s.Kind == StepRebase })
+}
+
+// UsesHandOver reports whether r's review step hands the run over: it ends
+// there with the verdict recorded and no fix round (Step.HandOver). Like
+// UsesRebase it reads the parsed steps, and it is read for the same gate
+// reason: a parser that predates the flag refuses the key outright
+// ("is not a recipe key"), so no recipe that parses without it can have
+// carried one.
+func UsesHandOver(r *Recipe) bool {
+	return slices.ContainsFunc(r.Steps, func(s Step) bool { return s.HandOver })
 }
 
 // Renamed are catalog names removed in 0.7.0 and what replaced them.
@@ -656,7 +692,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 	for i, item := range v.Content {
 		path := fmt.Sprintf("steps[%d]", i)
 		if item.Kind != yaml.MappingNode || len(item.Content) != 2 {
-			p.add(path, item.Line, "must be one step: first_line: {...}, review: {...}, adversarial: {...}, check: {...}, digest: {...}, plan: {...} or render: {...}")
+			p.add(path, item.Line, "must be one step: first_line: {...}, review: {...}, adversarial: {...}, check: {...}, digest: {...}, plan: {...}, render: {...} or rebase: {...}")
 			continue
 		}
 		k, body := item.Content[0], item.Content[1]
@@ -680,6 +716,8 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			r.newKeysV08 = true
 		case string(StepDigest):
 			kind = StepDigest
+		case string(StepRebase):
+			kind = StepRebase
 		case "checks":
 			p.add(kpath, k.Line, "the step type is check, not checks")
 			continue
@@ -687,7 +725,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			if msg, ok := reserved[k.Value]; ok {
 				p.add(kpath, k.Line, "%s", msg)
 			} else {
-				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan and render)")
+				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render and rebase)")
 			}
 			continue
 		}
@@ -698,7 +736,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			idx = append(idx, i)
 			continue
 		}
-		if kind == StepPlan || kind == StepRender || kind == StepDigest {
+		if kind == StepPlan || kind == StepRender || kind == StepDigest || kind == StepRebase {
 			p.emptyStepBody(kpath, body)
 			out = append(out, s)
 			idx = append(idx, i)
@@ -733,6 +771,15 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 							p.add(bp, bv.Line, "bounce can only be first_line")
 						} else {
 							s.Bounce = true
+						}
+					}
+				case kind == StepReview && bk.Value == "hand_over":
+					bp := kpath + ".hand_over"
+					if b, ok := p.bool(bp, bv); ok {
+						if !b {
+							p.add(bp, bv.Line, "hand_over can only be true: a review step that hands the run over, or no key at all")
+						} else {
+							s.HandOver = b
 						}
 					}
 				default:
@@ -957,9 +1004,10 @@ func (p *parser) order(r *Recipe, src []int) {
 		return
 	}
 	steps := r.Steps
-	checks, firsts, reviews, adversarials := 0, 0, 0, 0
+	checks, firsts, reviews, adversarials, rebases := 0, 0, 0, 0, 0
 	sawOther, firstSeen := false, false
 	digests, digestAt := 0, -1
+	handOverAt := -1
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
 		switch s.Kind {
@@ -1003,6 +1051,15 @@ func (p *parser) order(r *Recipe, src []int) {
 			if s.Bounce && !firstSeen {
 				p.add(path, 0, "bounce: first_line needs a first_line step before the review")
 			}
+			// A bounce is the loop's other way round: the review that hands
+			// the run over has no round after it for a bounce to start, so
+			// the two keys on one step contradict each other.
+			if s.HandOver {
+				handOverAt = i
+				if s.Bounce {
+					p.add(path, 0, "hand_over and bounce: first_line exclude each other: a review that bounces asks for the fix hand_over refuses")
+				}
+			}
 		case StepAdversarial:
 			sawOther = true
 			adversarials++
@@ -1014,6 +1071,27 @@ func (p *parser) order(r *Recipe, src []int) {
 			}
 			if s.Bounce && !firstSeen {
 				p.add(path, 0, "bounce: first_line needs a first_line step before the adversarial step")
+			}
+			// hand_over ends the run at the review: the adversarial step
+			// after it is a level that would never run, which is the silent
+			// drop checkPlan refuses a plan for, one layer up.
+			if handOverAt >= 0 {
+				p.add(path, 0, "hand_over ends the run at the review: no adversarial step may follow it")
+			}
+		case StepRebase:
+			sawOther = true
+			rebases++
+			if rebases > 1 {
+				p.add(path, 0, "rebase may appear at most once")
+			}
+			// The rebase step replaces the whole loop rather than joining
+			// it: there is no implement for it to follow and no review to
+			// hand what it pushed to, so the recipe holds it alone.
+			if i != 0 || len(steps) != 1 {
+				p.add(path, 0, "a recipe with the rebase step holds it alone: the step is the whole run")
+			}
+			if r.Mode != ModeImplement {
+				p.add(path, 0, "rebase is only for mode: implement")
 			}
 		case StepPlan, StepRender:
 			// Refused here rather than in steps(), which reads a step
@@ -1028,6 +1106,11 @@ func (p *parser) order(r *Recipe, src []int) {
 		p.add(fmt.Sprintf("steps[%d]", src[digestAt]), 0, "digest must be followed by one review step")
 	}
 	switch {
+	case rebases > 0:
+		// The rebase step is the whole run (its own case above refuses it
+		// beside anything else): it reviews nothing, because what it pushes
+		// is a branch put back on its base, and the head it leaves is
+		// reviewed by a run of its own (G13).
 	case reviews == 0:
 		p.add("steps", 0, "must end with a review step: readiness needs the senior review's ship verdict")
 	case steps[len(steps)-1].Kind != StepReview && steps[len(steps)-1].Kind != StepAdversarial:
@@ -1045,6 +1128,8 @@ func (p *parser) order(r *Recipe, src []int) {
 			p.add("roles", 0, "mode: review has no coder step to map roles onto: remove roles")
 		case steps[len(steps)-1].MaxRounds > 1:
 			p.add("steps", 0, "mode: review reviews once: max_rounds must be 1")
+		case steps[len(steps)-1].HandOver:
+			p.add("steps", 0, "mode: review has no fix round to skip: remove hand_over")
 		}
 	}
 }
@@ -1055,7 +1140,7 @@ func (p *parser) orderArtifact(steps []Step, src []int) {
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
 		switch s.Kind {
-		case StepCheck, StepFirstLine, StepDigest, StepReview, StepAdversarial:
+		case StepCheck, StepFirstLine, StepDigest, StepReview, StepAdversarial, StepRebase:
 			// check included: an artifact recipe has no implement for a
 			// gate to judge, no report to write and no review to give a
 			// ship verdict.
