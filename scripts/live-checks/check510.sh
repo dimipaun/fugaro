@@ -14,12 +14,20 @@
 #     is a repository's own mounted secret, whose name is fugaro-<slug>-..., so
 #     the refusal that matters is measured against that shape and not against a
 #     name this check invented;
-#   * that secretmanager.secrets.create cannot be gained under the same
-#     condition — F30 says the check is made on the project, so a conditioned
-#     create admits nothing, not even the prefix it names, which is why the
-#     intake holds create unconditioned (and why an unconditioned create of a
-#     name outside the prefixes then SUCCEEDS: the permission is project-wide
-#     and no name fence exists);
+#   * what a conditioned grant does with secretmanager.secrets.create, asked in
+#     the two places it can be asked. F30 said the check is made on the project,
+#     so a conditioned create admits nothing, not even the prefix it names. The
+#     owner's run of 2026-11-11 measured the opposite: a conditioned create WAS
+#     ADMITTED for a fugaro_u_ name. Both create readings are therefore REPORTED
+#     to the owner rather than passed or failed against F30 (see the verdicts
+#     below). What is still open, and what DS2.2's create grant waits on, is a
+#     create of a name OUTSIDE both prefixes under that same conditioned grant:
+#     refused means create IS fenced by name in both directions and DS2.2 may
+#     condition the intake's create; admitted means create is not fenced outside
+#     the prefix either, so the unconditioned create stays as the plan has it.
+#     An unconditioned create of a name outside the prefixes SUCCEEDS either way
+#     — that permission is project-wide and no name fence exists — which is what
+#     the create-unconditioned row shows;
 #   * that secretmanager.secrets.list is the same case, so the intake's list is
 #     granted unconditioned too;
 #   * the maximum secret ID length (R1): a name over the limit is refused, with
@@ -44,11 +52,12 @@
 #             same role, because Secret Manager has no create-only role), which
 #             is what the unconditioned create row is measured on — and the probe
 #             containers the rest of its rows are read on: five under the fugaro_u_,
-#             fugaro_p_ and fugaro-<slug>-... shapes, plus the containers the
-#             length bisection creates (about a dozen). Every one of them is
-#             deleted again by the restore, which reads its own writing back:
-#             the owner's own credentials do the deleting, never the conditioned
-#             account's.
+#             fugaro_p_ and fugaro-<slug>-... shapes, plus whatever the two
+#             conditioned create rows make (a container each, if IAM admits the
+#             create) and the containers the length bisection creates (about a
+#             dozen). Every one of them is deleted again by the restore, which
+#             reads its own writing back: the owner's own credentials do the
+#             deleting, never the conditioned account's.
 # Costs:      nothing but wall clock and a few API calls: no job, no build and
 #             no model call. The IAM waits are the slow part (a fresh binding
 #             can take a minute to be seen).
@@ -56,14 +65,26 @@
 #             (check510_test.sh) drives it against fake tools only.
 # Cleanup:    always, including on a Ctrl-C: the bindings, the service account
 #             and every container this check made, each read back rather than
-#             assumed. A restore row that FAILs names what to delete by hand.
+#             assumed — and the service account's removal is waited for, because
+#             deleting one is not the same as it being gone (the 2026-11-11 run's
+#             read-back found it still describable a moment after the delete). A
+#             restore row that FAILs names what to delete by hand.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 510 RESULT,
 #             then CHECK 510 RESULT END (exit N). Exit 0: every criterion that
-#             was measured held. 1: a measured criterion did not hold. 2: the
-#             check could not measure — a tool is missing, a probe of its own
-#             could not be set up, or the fresh binding never became visible. In
-#             the block, a key the run never reached reads `FAIL — not reached`,
-#             which is a row that was NOT measured.
+#             was measured held, and every reading was taken. 1: a measured
+#             criterion did not hold. 2: the check could not measure — a tool is
+#             missing, a probe of its own could not be set up, or the fresh
+#             binding never became visible. In the block, a key the run never
+#             reached reads `FAIL — not reached`, which is a row that was NOT
+#             measured.
+#
+# VERDICTS: PASS, FAIL and INFO (a dry-run row that was planned, never measured)
+# as in the other checks, plus REPORT: a row whose content is a MEASUREMENT of
+# Secret Manager's own answer that the owner decides on — the three create rows,
+# since the 2026-11-11 run showed F30's create half to be wrong — which is
+# printed and reported rather than passed or failed. A reading that contradicts
+# F30 is exit 0 with the reading printed; only a probe that could not be made is
+# a not-measured (exit 2).
 #
 # A NOTE ON WHAT IS NEVER PRINTED: no credential value and no access token
 # reaches this script's stdout, its stderr, the block or any file it writes. The
@@ -74,7 +95,10 @@
 # Knobs (all CHECK510_*): DRY_RUN, KEEP_SCRATCH, STAMP (the suffix every name
 # this run makes carries; the clock by default), IAM_WAIT_SECONDS and
 # IAM_POLL_SECONDS (how long a fresh binding is waited for before its rows are
-# read), LENGTH_MAX_PROBE (the highest secret ID length the bisection will try).
+# read), RESTORE_WAIT_SECONDS and RESTORE_POLL_SECONDS (how long the restore
+# waits for the throwaway account's deletion to become visible before it calls
+# what it finds a leftover), LENGTH_MAX_PROBE (the highest secret ID length the
+# bisection will try).
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: the commands below
@@ -151,6 +175,7 @@ TOKEN=""
 API_STATUS=""
 API_BODY_FILE=""
 CONDITION_LIVE=no
+CREATE_CONDITIONED=""
 LENGTH_STATUS=""
 LENGTH_DETAIL=""
 
@@ -243,8 +268,10 @@ restore() {
   done < <(each_secret)
   if [ -n "$SA_EMAIL" ]; then
     gcloud_admin iam service-accounts delete "$SA_EMAIL" >/dev/null 2>&1 || true
-    if service_account_exists "$SA_EMAIL"; then leftover="$leftover service-account($SA_EMAIL)"; fi
-    if member_present "serviceAccount:$SA_EMAIL"; then leftover="$leftover member(serviceAccount:$SA_EMAIL)"; fi
+    if ! wait_service_account_gone; then
+      if service_account_exists "$SA_EMAIL"; then leftover="$leftover service-account($SA_EMAIL)"; fi
+      if member_present "serviceAccount:$SA_EMAIL"; then leftover="$leftover member(serviceAccount:$SA_EMAIL)"; fi
+    fi
   fi
   if [ -n "$leftover" ]; then
     RESTORE_VERDICT=FAIL
@@ -253,6 +280,32 @@ restore() {
   fi
   RESTORE_VERDICT=PASS
   RESTORE_NOTE="every binding this run wrote, the service account ${SA_EMAIL:-none made} and every container it created ($(each_secret | grep -c . || true)) were deleted and read back: nothing of this check's is left in ${P}"
+}
+
+# wait_service_account_gone: the throwaway account's removal, waited for. The
+# owner's run of 2026-11-11 reported `service-account(...)` as a leftover its
+# restore "could not confirm what it deleted" — and the command is not the
+# suspect: the read-back could describe the account by the email the run
+# recorded, and found it still there, which is what a deletion still propagating
+# looks like. Deleting a service account is not the same as it being gone: for a
+# short while after the delete returns, the API can still answer a describe and
+# the project policy can still name the member, so a single read-back taken
+# immediately after the delete reports a leftover that no longer exists. Every
+# other IAM-dependent read in this check waits for exactly this reason; the
+# read-back that says what was deleted was the one that did not.
+wait_service_account_gone() {
+  local waited=0
+  while :; do
+    if ! service_account_exists "$SA_EMAIL" && ! member_present "serviceAccount:$SA_EMAIL"; then
+      if [ "$waited" -gt 0 ]; then
+        say "the deletion of ${SA_EMAIL} became visible after ${waited}s of waiting (CHECK510_RESTORE_POLL_SECONDS=${RESTORE_POLL_SECONDS} between attempts)"
+      fi
+      return 0
+    fi
+    [ "$waited" -lt "$RESTORE_WAIT_SECONDS" ] || return 1
+    sleep "$RESTORE_POLL_SECONDS"
+    waited=$((waited + RESTORE_POLL_SECONDS))
+  done
 }
 
 cleanup() {
@@ -583,33 +636,72 @@ step_delete() {
 
 step_create() {
   local name="${PROBE_U_PREFIX}maked-${STAMP}"
-  # The conditioned create, aimed at the prefix the condition itself names: were
-  # IAM to evaluate the condition against the new secret, this would be
-  # admitted, and F30 says it cannot (the check is made on the project, where
-  # the secret does not exist yet). That is why the row is aimed at the prefix
-  # rather than at a name outside it — a refusal of a name the condition does
-  # not name would say nothing.
+  # The conditioned create, aimed at the prefix the condition itself names. It is
+  # a REPORT and not a criterion, because the answer is not this check's to grade:
+  # F30 said the check is made on the project, where the secret does not exist
+  # yet, so a conditioned create admits nothing — and the owner's run of
+  # 2026-11-11 measured the opposite, an ADMITTED create for this fugaro_u_ name.
+  # What DS2.2's create grant turns on is the row below this one, which asks the
+  # same grant about a name it does not name; this row is the control it is read
+  # against. A status that is neither 200 nor 403 is a probe that could not be
+  # made, and stays a not-measured.
   if [ "$CONDITION_LIVE" != yes ]; then
     not_live create-conditioned "whether a conditioned grant admits a create of the prefix its condition names"
+    not_live create-conditioned-outside "whether a conditioned grant admits a create of a name outside both prefixes"
   else
     create_secret "$name"
-    if [ "$API_STATUS" = 200 ]; then
+    case "$API_STATUS" in
+    200)
       record_secret "$name"
-      fact create-conditioned FAIL "secretmanager.secrets.create WAS ADMITTED for ${name} — a fugaro_u_ name, the prefix the condition names — under the conditioned grant: create IS fenceable by name here, so DS2.2's unconditioned create is unnecessary and the intake could be fenced after all. Report this reading to the owner before DS2.2"
-    elif [ "$API_STATUS" = 403 ]; then
-      fact create-conditioned PASS "secretmanager.secrets.create was REFUSED with 403 even for a name the condition names ($(api_detail)): IAM checks create on the project, where the secret does not exist yet — F30's reading, and why the intake's create is gained UNCONDITIONED"
-    else
-      fact create-conditioned FAIL "secretmanager.secrets.create on a fugaro_u_ name answered ${API_STATUS} and not 200 or 403: $(api_detail) — the row did NOT measure what F30 claims"
-    fi
+      CREATE_CONDITIONED=admitted
+      fact create-conditioned REPORT "secretmanager.secrets.create WAS ADMITTED for ${name} — a fugaro_u_ name, the prefix the condition names — under the conditioned grant: $(api_detail). F30's reading was that create is checked on the project, where the secret does not exist yet, so a conditioned create admits nothing; this reading contradicts it, and it is the reading the owner's 2026-11-11 run reported. A reading for the owner, not a criterion: what DS2.2's create grant turns on is create-conditioned-outside, the same grant asked for a name it does not name"
+      ;;
+    403)
+      CREATE_CONDITIONED=refused
+      fact create-conditioned REPORT "secretmanager.secrets.create was REFUSED with 403 even for a name the condition names (${api_detail:-the refusal carried no message in its body}): F30's reading — create is checked on the project, so a conditioned create admits nothing — held in this run, which is not what the owner's 2026-11-11 run measured. A reading for the owner, not a criterion: it is what create-conditioned-outside below is read against"
+      ;;
+    *)
+      unmeasured create-conditioned "secretmanager.secrets.create on a fugaro_u_ name answered ${API_STATUS} and not 200 or 403: $(api_detail) — the row did NOT measure what a conditioned grant does with a create"
+      ;;
+    esac
+
+    # Then a create of a name OUTSIDE both prefixes, under the SAME conditioned
+    # grant and in the shape F6 collides with — the fugaro-<slug>-... name a
+    # repository's own mounted secret has. This is the row DS2.2 waits on, and
+    # its two answers mean the two things the plan can be written as: a 403
+    # beside an ADMITTED named create is create fenced by name in both
+    # directions, so DS2.2 may condition the intake's create; an admitted create
+    # is no name fence at all, so the unconditioned create stays. Both are
+    # readings (the 403 PASSes when the pair says the fence holds), and neither
+    # makes the run fail — the owner decides which grant DS2.2 writes.
+    name="fugaro-chk510-${STAMP}-made-outside"
+    create_secret "$name"
+    case "$API_STATUS" in
+    403)
+      if [ "$CREATE_CONDITIONED" = admitted ]; then
+        fact create-conditioned-outside PASS "secretmanager.secrets.create on ${name} — a name outside both prefixes, the fugaro-<slug>-... shape a repository's own mounted secret has — was REFUSED with 403 under the very grant that ADMITTED the prefixed name above: $(api_detail). Create IS fenced by name under the condition in both directions, so DS2.2 MAY condition the intake's create instead of holding it unconditioned — report this reading to the owner before that grant is written"
+      else
+        fact create-conditioned-outside REPORT "secretmanager.secrets.create on ${name} (a name outside both prefixes) was REFUSED with 403, as was the name inside the prefix above (${CREATE_CONDITIONED:-not measured}): in this run the conditioned grant admits no create at all, so there is no name fence to write and the unconditioned create stays as DS2.2 has it. A reading for the owner, not a criterion"
+      fi
+      ;;
+    200)
+      record_secret "$name"
+      fact create-conditioned-outside REPORT "secretmanager.secrets.create on ${name} — a name outside both prefixes — was ADMITTED under the conditioned grant: create is NOT fenced by name outside the prefix either, so a conditioned create would let the intake create anything and the unconditioned create stays as DS2.2 has it (the name the condition names above was ${CREATE_CONDITIONED:-not measured}). Report this reading to the owner"
+      ;;
+    *)
+      unmeasured create-conditioned-outside "secretmanager.secrets.create on ${name} (a name outside both prefixes) answered ${API_STATUS} and not 200 or 403: $(api_detail) — the row did NOT measure whether create is fenced by name outside the prefix"
+      ;;
+    esac
   fi
 
-  # Then the unconditioned grant, which is what the intake will hold: F30 says
-  # the create check is made on the project, so there is no name to condition
-  # against and the intake holds the permission project-wide. It is added AFTER
-  # the row above, so that row measured the conditioned grant alone — and the
-  # SAME role is used, which is what makes the pair a reading: the one call
-  # answered 403 under the condition and 200 without it, so the condition is the
-  # only thing that differs between the two rows.
+  # Then the unconditioned grant: it is the control the two rows above are read
+  # against — the same role, with no condition — and it is what the intake holds
+  # today. It is added AFTER them, so they measured the conditioned grant alone.
+  # Whether the intake's create must stay unconditioned is what
+  # create-conditioned-outside decides (F30's "a conditioned create admits
+  # nothing" was contradicted inside the prefix on 2026-11-11), so this row is a
+  # REPORT too; that an unconditioned create of a name outside both prefixes is
+  # admitted at all stays a measurement the check has to make.
   #
   # roles/secretmanager.admin rather than a role of its own because it has to be
   # a role that exists — Secret Manager has six predefined roles and none of them
@@ -623,14 +715,14 @@ step_create() {
 # wait_for_unconditioned_create NAME: the unconditioned create, retried until it
 # is seen. The same call is the row, so there is nothing to read twice: a 200 is
 # an unconditioned create of a name OUTSIDE both prefixes being admitted, which
-# is F30's other half and the power DS2.2 grants the intake.
+# is the power DS2.2 grants the intake, measured rather than assumed.
 wait_for_unconditioned_create() {
   local name=$1 waited=0
   while :; do
     create_secret "$name"
     if [ "$API_STATUS" = 200 ]; then
       record_secret "$name"
-      fact create-unconditioned PASS "with roles/secretmanager.admin and NO condition — the same role the create-conditioned row was REFUSED under — secretmanager.secrets.create was ADMITTED for ${name} — a name outside both prefixes — after ${waited}s: an unconditioned create is project-wide, which is the power the intake holds and the reason its fence is the code that derives the prefix from the verified sub (R3)"
+      fact create-unconditioned REPORT "with roles/secretmanager.admin and NO condition — the same role the conditioned create rows above were read under — secretmanager.secrets.create was ADMITTED for ${name} — a name outside both prefixes — after ${waited}s: an unconditioned create is project-wide. This is the control reading for the pair above, not a criterion of its own: the owner reads the three create rows together before DS2.2's grant is written"
       return 0
     fi
     [ "$waited" -lt "$IAM_WAIT_SECONDS" ] || break
@@ -648,8 +740,8 @@ record_secret() { if secret_exists "$1"; then MADE_SECRETS+=("$1"); fi; }
 # the two step_bindings wrote. It cannot run after step_create, because no
 # predefined Secret Manager role carries secrets.create without secrets.list —
 # roles/secretmanager.admin and roles/secretmanager.editor both carry both — so
-# the unconditioned create grant this check writes (F30's other half, a role that
-# exists) would also admit this listing, which would then read this check's own
+# the unconditioned create grant this check writes (the create rows' control, a
+# role that exists) would also admit this listing, which would then read this check's own
 # containers and fail the row on an artifact of the check's own grants rather
 # than on anything about IAM.
 step_list() {
@@ -826,14 +918,15 @@ plan() {
   say "CHECK 510 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [network, read] the guards: fugaro doctor --project fugaro --all (it reads the installation's config, policy and billing, and the update check, so this is the dry run's one network read) and fugaro version"
   say "  [network, write] gcloud iam service-accounts create ${SA_NAME} (throwaway), then roles/iam.serviceAccountTokenCreator for $ACCOUNT on it"
-  say "  [network, write] gcloud secrets create for five probes: ${PROBE_U}, ${PROBE_P}, ${PROBE_N}, ${PROBE_U2}, ${PROBE_N2}"
-  say "  [network, write] gcloud projects add-iam-policy-binding ${P} --role=roles/secretmanager.admin|viewer under the condition: $(condition_expression), then roles/secretmanager.admin again with --condition=None (the create row's grant: Secret Manager has no create-only role, and gcloud refuses an unconditional add on a policy that already carries a condition unless None is said out loud)"
+  say "  [network, write] gcloud secrets create for five probes: ${PROBE_U}, ${PROBE_P}, ${PROBE_N}, ${PROBE_U2}, ${PROBE_N2} (a create row that IAM admits makes one container of its own)"
+  say "  [network, write] gcloud projects add-iam-policy-binding ${P} --role=roles/secretmanager.admin|viewer under the condition: $(condition_expression), then roles/secretmanager.admin again with --condition=None (the create rows' control grant: Secret Manager has no create-only role, and gcloud refuses an unconditional add on a policy that already carries a condition unless None is said out loud)"
   say "  [network, read] POST .../secrets/<name>:addVersion, DELETE .../secrets/<name>, POST .../secrets?secretId=<name>, GET .../secrets — as ${SA_NAME}, one call per row"
   say "  [network, write] the length bisection's creates (up to ${LENGTH_MAX_PROBE} characters, about 11 calls)"
   say "  [network, write] the restore: the bindings, the account and every container this check made, deleted and read back"
   for key in fugaro-version project-region xtrace test-account bindings \
     condition-version-add-allow condition-prefix-allow condition-version-add-deny \
-    condition-delete-allow condition-delete-deny create-conditioned create-unconditioned \
+    condition-delete-allow condition-delete-deny \
+    create-conditioned create-conditioned-outside create-unconditioned \
     list-condition-admits-nothing secret-id-length; do
     fact "$key" INFO "planned: a real run measures this row; --dry-run did not"
   done
@@ -847,7 +940,7 @@ plan() {
 BLOCK_KEYS=(fugaro-version project-region xtrace dry-run test-account bindings
   condition-version-add-allow condition-prefix-allow condition-version-add-deny
   condition-delete-allow condition-delete-deny
-  create-conditioned create-unconditioned list-condition-admits-nothing
+  create-conditioned create-conditioned-outside create-unconditioned list-condition-admits-nothing
   secret-id-length restore scratch-removed)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
@@ -922,6 +1015,12 @@ PROBE_PAYLOAD="chk510-probe-payload"
 PAYLOAD_B64=$(printf '%s' "$PROBE_PAYLOAD" | base64 | tr -d '\n')
 IAM_WAIT_SECONDS=${CHECK510_IAM_WAIT_SECONDS:-90}
 IAM_POLL_SECONDS=${CHECK510_IAM_POLL_SECONDS:-10}
+# The restore's own wait, for the one read-back that is not about a fresh
+# binding becoming visible but about a fresh deletion becoming invisible (see
+# wait_service_account_gone): deleting the throwaway account is not the same as
+# it being gone, so the read-back polls before it calls what it finds a leftover.
+RESTORE_WAIT_SECONDS=${CHECK510_RESTORE_WAIT_SECONDS:-30}
+RESTORE_POLL_SECONDS=${CHECK510_RESTORE_POLL_SECONDS:-5}
 LENGTH_MAX_PROBE=${CHECK510_LENGTH_MAX_PROBE:-1024}
 # The bisection's names: a legal ID is [A-Za-z0-9_-]+, and every probe carries
 # the stamp. `guard_names_free` cannot list them — their lengths are computed from
