@@ -653,11 +653,12 @@ const (
 // exactly the one none of the three rules above reaches, and it is not one
 // retention may leave without its run.
 //
-// A resolved decision younger than the same window is never evicted either,
-// and for the same reason: the decision-agent call counts are derived from
-// the decisions the document carries, so dropping one inside the window a cap
-// counts over would lower the count — the cap moving the other way, which is
-// the one direction it must never move.
+// A resolved decision the call count reads is never evicted either, and for
+// the same reason: the decision-agent call counts are derived from the
+// decisions the document carries, so dropping one inside the window
+// DecisionCalls reads — the day now falls in, and not the rolling one the
+// spawn caps use — would lower the count, the cap moving the other way, which
+// is the one direction it must never move (countedDecision).
 //
 // An item that has left the work list protects nothing: nothing relaunches
 // under its approval, so its intents age out with the window like any other.
