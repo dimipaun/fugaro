@@ -95,6 +95,8 @@
 // owner's, it is supplied to `start` (the pairing screen's text field), and
 // this module only holds it to `account.js`'s own rule.
 
+import { foldSpokenName } from '../../../shared/command/index.js';
+
 import { STORE_CODES, isAccountId, secret as makeSecret } from '../accounts/index.js';
 
 import { encodeBase64url } from './base64url.js';
@@ -142,6 +144,18 @@ export const SESSION_CODES = Object.freeze({
   // each of them a sentence (see `storeRefusal`).
   DUPLICATE_ID: 'duplicate-id',
   DUPLICATE_INSTALLATION: 'duplicate-installation',
+  // The two refusals of the label as a **spoken name**. The account id is the
+  // owner's label (D114) and `switcher.js` hands it to the voice router as the
+  // name to say, so the router's own rule applies to it: a name folds to the key
+  // it is matched by, and a list carrying an entry whose key is empty, or two
+  // entries sharing one, is refused **whole** (`shared/command`'s
+  // `checkEntries`). `Laptop` beside `laptop`, or a label of `_`, would
+  // therefore take voice switching -- and the `where-am-i` route with it -- away
+  // from every installation on the phone, and nothing under `mobile/src/`
+  // removes an account, so it is refused where the owner is still choosing the
+  // label.
+  UNSPEAKABLE_LABEL: 'unspeakable-label',
+  SPOKEN_NAME_TAKEN: 'spoken-name-taken',
   EXPIRED: 'expired',
 });
 
@@ -248,6 +262,39 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
   }
 
   /**
+   * The label's refusal as a **spoken name**, or `null`.
+   *
+   * D114's account id is the label the owner typed, and `switcher.js` hands the
+   * voice router exactly that string as the name to say. The router's rule is
+   * `shared/command`'s and this module asks it rather than restating it: a name
+   * folds (lowercased, edge punctuation dropped) to the key it is matched by,
+   * and a list carrying an entry whose key is empty, or two entries sharing one,
+   * is refused whole. A label of `_` or `--` folds to nothing -- there is
+   * nothing for the owner to say -- and `Laptop` beside a stored `laptop` is one
+   * spoken name for two installations. Either would leave every installation on
+   * the phone unreachable by voice, and the `where-am-i` route with it, with no
+   * way in the app to remove the entry that caused it (`AccountStore.remove` has
+   * no caller under `mobile/src/`), so it is refused while the owner is still
+   * choosing the label.
+   *
+   * A list that cannot be read is the store failing rather than the list
+   * disagreeing, and it is `storeRefusal`'s (`store-refused`).
+   *
+   * The **same id** is deliberately not this check's: a re-pair under a label
+   * the phone holds is `store.add`'s own refusal (`duplicate-id`), which the
+   * screen has always had a sentence for, and a check here that answered first
+   * would leave that code and that sentence unreachable.
+   */
+  async function spokenRefusal(id) {
+    const key = foldSpokenName(id);
+    if (key === '') return refuse(SESSION_CODES.UNSPEAKABLE_LABEL, 'id');
+    const listed = await store.list();
+    if (!listed.ok) return storeRefusal(listed);
+    const taken = listed.accounts.some((account) => account.id !== id && foldSpokenName(account.id) === key);
+    return taken ? refuse(SESSION_CODES.SPOKEN_NAME_TAKEN, 'id') : null;
+  }
+
+  /**
    * Scan `text` and pair with the installation it names, under the owner's
    * label `id`.
    *
@@ -321,6 +368,15 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     //    CLI derives it from the key it read off the request node, and the two
     //    matching is the whole of M3.
     code = fingerprint(publicKey);
+    // ... and the label's *spoken* half, which is the voice router's rule and
+    // not the store's (`spokenRefusal`). It is checked before the sign-in and
+    // before the request node, so a label the owner cannot say costs nothing but
+    // a key pair this object drops (`refusedWith`): nothing reaches the tree,
+    // and the screen shows the code it was going to show either way. It is
+    // checked again at the write, because the list can change while the phone
+    // waits for the delivery.
+    const spoken = await spokenRefusal(id);
+    if (spoken !== null) return refusedWith(spoken);
     // 4. Sign in with the pairing token from the QR -- **before the write**,
     //    because the request node's rule is the pairing claim (§2 (a)). The
     //    token reaches two nodes and nothing else (§4.4), and the uid it
@@ -418,6 +474,16 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
     //    tuple is D114's ("the app stores the tuples, never a credential") and
     //    the items are D111's two, written through the store's own door so the
     //    value never exists outside a `Secret`.
+    //
+    //    The label's spoken half is judged once more here, at the write: the
+    //    list the owner holds is the store's, the CLI's wait is minutes long,
+    //    and `store.add` refuses only the id it already holds -- so a second
+    //    pairing that landed a name this one sounds like, while this one waited,
+    //    would be a list the voice router refuses whole. The refusal is the
+    //    session's own and leaves nothing behind: the tuple below is the first
+    //    write of the attempt.
+    const spoken = await spokenRefusal(id);
+    if (spoken !== null) return refusedWith(spoken);
     const added = await store.add({
       id,
       firebaseProjectId: config.gcpProject,

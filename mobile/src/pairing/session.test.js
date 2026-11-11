@@ -441,6 +441,111 @@ test('a delivery for an installation already paired under another name is refuse
   assert.deepEqual(stores.secretPort.keys(), []);
 });
 
+test('a label the voice cannot say is refused before anything is written', async () => {
+  // `switcher.js` hands the voice router an account's id as the name to say, and
+  // the router folds a name to the key it matches on: `_`, `--` and `-_-` fold
+  // to nothing, so one such label in the list would make `routeUtterance` refuse
+  // **every** installation on the phone -- and the `where-am-i` route with it --
+  // and nothing under `mobile/src/` removes an account, so the owner would have
+  // no repair. It is refused while they are still looking at the field.
+  for (const id of ['_', '--', '-_-']) {
+    const { session, database, stores, signedIn } = makeSession({ random: randomPort(0x16) });
+    const refused = await session.start(scanned(), { id });
+    assert.equal(refused.ok, false, id);
+    assert.equal(refused.code, SESSION_CODES.UNSPEAKABLE_LABEL, id);
+    assert.equal(refused.field, 'id', id);
+    assert.equal(session.snapshot().state, SESSION_STATES.REFUSED, id);
+    // Nothing of the attempt happened: no node was written, nobody signed in
+    // and no account was stored. The code is drawn -- the key pair is made
+    // before this check, so the code is on screen for the whole of an exchange
+    // that does happen (§7.2's order) -- but it is a key nothing carries: no
+    // request node names it, so the operator's CLI has nothing to read and the
+    // refusal above it on screen is the whole story.
+    assert.deepEqual(database.writes, [], id);
+    assert.deepEqual(signedIn, [], id);
+    assert.deepEqual(stores.secretPort.keys(), [], id);
+    assert.deepEqual([...(await stores.store.list()).accounts], [], id);
+  }
+});
+
+test('a label that sounds like one the phone holds is refused, not stored beside it', async () => {
+  // The router folds `Laptop`, `LAPTOP`, `-laptop` and `laptop-` to the one key
+  // `laptop`, so a second such label is not a second name: it is an ambiguity
+  // the router refuses the whole list for. `AccountStore.add` would take it --
+  // the ids are different strings -- so the rule is this module's, and it is
+  // applied at the start, before a key exists.
+  const stores = makeStores();
+  assert.equal(
+    (
+      await stores.store.add({
+        id: 'laptop',
+        firebaseProjectId: 'fp-0000',
+        authUid: 'm~' + 'B'.repeat(22),
+        fugaroProject: 'old-project',
+      })
+    ).ok,
+    true,
+  );
+  for (const id of ['Laptop', 'LAPTOP', '-laptop', 'laptop-']) {
+    const { session, database, signedIn } = makeSession({ stores, random: randomPort(0x17) });
+    const refused = await session.start(scanned(), { id });
+    assert.equal(refused.code, SESSION_CODES.SPOKEN_NAME_TAKEN, id);
+    assert.equal(refused.field, 'id', id);
+    assert.deepEqual(database.writes, [], id);
+    assert.deepEqual(signedIn, [], id);
+  }
+  // A label that folds to something else is not taken, and the pairing runs --
+  // so the refusals above are the folding and not "any label at all".
+  const { session, database } = makeSession({ stores, random: randomPort(0x18) });
+  const started = await session.start(scanned(), { id: 'tablet' });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  assert.equal(started.session.state, SESSION_STATES.WATCHING);
+  assert.equal(database.writes.length, 1);
+  // ... and the *exact* label is still the store's own refusal rather than this
+  // one: `duplicate-id` is what a re-pair under a held name has always said, and
+  // the screen has a sentence for it (`storeRefusal`).
+  const again = await makeSession({ stores, random: randomPort(0x19) });
+  await again.session.start(scanned(), { id: 'laptop' });
+  await again.database.push(
+    deliveryNode(seal({ phonePublic: nodeX25519.getPublicKey(new Uint8Array(32).fill(0x19)), uid: UID, payload: payloadOf(), ephemeralSecret: new Uint8Array(32).fill(4) })),
+  );
+  assert.equal(again.session.snapshot().refusal.code, SESSION_CODES.DUPLICATE_ID);
+});
+
+test('a name that lands while the phone waits is refused at the write', async () => {
+  // The CLI's wait is minutes long, and the list the owner holds is the store's,
+  // so the spoken-name rule is checked again at the write: a pairing that
+  // landed `Tablet` while this one waited for `tablet` would leave a list the
+  // voice router refuses whole. `store.add` refuses only the id it already
+  // holds, which is why this check is here and not left to it.
+  const stores = makeStores();
+  const { session, database } = makeSession({ stores, random: randomPort(0x1a) });
+  const started = await session.start(scanned(), { id: 'tablet' });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  // The other pairing, while this one watches.
+  assert.equal(
+    (
+      await stores.store.add({
+        id: 'Tablet',
+        firebaseProjectId: 'fp-0000',
+        authUid: 'm~' + 'B'.repeat(22),
+        fugaroProject: 'old-project',
+      })
+    ).ok,
+    true,
+  );
+  await database.push(
+    deliveryNode(seal({ phonePublic: nodeX25519.getPublicKey(new Uint8Array(32).fill(0x1a)), uid: UID, payload: payloadOf(), ephemeralSecret: new Uint8Array(32).fill(6) })),
+  );
+  const shown = session.snapshot();
+  assert.equal(shown.state, SESSION_STATES.REFUSED);
+  assert.equal(shown.refusal.code, SESSION_CODES.SPOKEN_NAME_TAKEN);
+  // Nothing of this delivery landed: no item, and the list is the other
+  // pairing's own entry and nothing else.
+  assert.deepEqual(stores.secretPort.keys(), []);
+  assert.deepEqual((await stores.store.list()).accounts.map((account) => account.id), ['Tablet']);
+});
+
 test('a store that refuses for its own reasons is not reported as a bad payload', async () => {
   // The screen has one sentence per session code and a payload sentence for
   // anything else, so a raw store code passed through would tell the owner their

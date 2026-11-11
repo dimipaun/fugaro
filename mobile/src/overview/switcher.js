@@ -44,7 +44,7 @@
 // and there is no second name to keep in step. `projects()` is the one place
 // that mapping is written.
 
-import { COMMAND, ROUTE, routeUtterance } from '../../../shared/command/index.js';
+import { COMMAND, ROUTE, foldSpokenName, routeUtterance } from '../../../shared/command/index.js';
 
 /** How this module refuses. Every code here is about the *switcher's* own
  * inputs: the router's refusals and the store's are carried unchanged, because
@@ -54,6 +54,10 @@ export const SWITCH_CODES = Object.freeze({
   NOT_A_ROUTE: 'not-a-route',
   NOT_A_SWITCH: 'not-a-switch',
   NO_SUCH_ACCOUNT: 'no-such-account',
+  /** Two held labels that the voice router folds into one name. It is the
+   * router's own code string for the same condition, so a caller reading either
+   * vocabulary sees one word for one thing. */
+  AMBIGUOUS_SPOKEN_NAME: 'ambiguous-spoken-name',
 });
 
 function refuse(code, field) {
@@ -81,14 +85,38 @@ export function createSwitcher({ store } = {}) {
    * distinction is the security property: an empty list would make every
    * spoken name "not configured", which is the right answer for the wrong
    * reason and hides an unreadable store behind a router sentence.
+   *
+   * **And the names are the ones the router can match.** The router folds a
+   * name (lowercased, edge punctuation dropped) to the key it is matched by and
+   * refuses a **whole list** for one entry whose key is empty, or for two
+   * entries sharing one (`shared/command`'s `checkEntries`) -- so one such label
+   * in the store would leave every installation unreachable by voice, and the
+   * `where-am-i` route with it. `session.js` refuses to store one
+   * (`spokenRefusal`), and this is the same rule at the reading end, for a list
+   * written before that check existed:
+   *
+   *   * an id whose key is empty (`_`, `--`) is left out, because it can
+   *     neither be spoken nor matched -- nothing that could have been routed is
+   *     lost, and the installation is still in the overview and still
+   *     switchable by press;
+   *   * two ids with one key are a refusal rather than a choice, which is the
+   *     router's own rule: an ambiguity is not this module's to resolve, and
+   *     the entry that loses would be unreachable by voice for ever with no
+   *     sign that it was ever there.
    */
   async function projects() {
     const listed = await store.list();
     if (!listed.ok) return listed;
-    return Object.freeze({
-      ok: true,
-      projects: Object.freeze(listed.accounts.map((account) => Object.freeze({ id: account.id, spokenName: account.id }))),
-    });
+    const projects = [];
+    const byName = new Set();
+    for (const account of listed.accounts) {
+      const key = foldSpokenName(account.id);
+      if (key === '') continue;
+      if (byName.has(key)) return refuse(SWITCH_CODES.AMBIGUOUS_SPOKEN_NAME, 'projects');
+      byName.add(key);
+      projects.push(Object.freeze({ id: account.id, spokenName: account.id }));
+    }
+    return Object.freeze({ ok: true, projects: Object.freeze(projects) });
   }
 
   /**

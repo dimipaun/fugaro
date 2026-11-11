@@ -67,6 +67,67 @@ test('the router’s list is the store’s own, and an installation is its label
   assert.deepEqual(await fresh.projects(), { ok: true, projects: [] });
 });
 
+test('a label the voice cannot address is left out rather than poisoning the list', async () => {
+  // The router refuses a **whole** list for one entry it cannot match
+  // (`checkEntries`), and nothing under `mobile/src/` removes an account -- so a
+  // store written before `session.js` judged labels (a `_`, or a `--`) would
+  // leave every installation on the phone unreachable by voice, the `where-am-i`
+  // route with them, and no in-app way back. This is the reading end of the same
+  // rule: an id that folds to nothing can neither be spoken nor matched, so
+  // leaving it out loses nothing that could have been routed, and the
+  // installation is still in the overview and still switchable by press.
+  const { store } = makeStore();
+  await store.add(LAPTOP);
+  await store.add({ id: '_', firebaseProjectId: 'fp-underscore', authUid: 'uid-underscore', fugaroProject: 'aurora' });
+  const switcher = createSwitcher({ store });
+  const listed = await switcher.projects();
+  assert.equal(listed.ok, true);
+  assert.deepEqual(listed.projects, [{ id: 'laptop', spokenName: 'laptop' }]);
+  // **Not poisoned**, which is the whole point: the router still resolves a
+  // name against this list, and the switch it routes still happens.
+  const result = await route(switcher, 'Fugaro, switch to laptop');
+  assert.equal(result.command, COMMAND.SWITCH_PROJECT);
+  assert.equal((await switcher.switchTo(result)).ok, true);
+  assert.equal(store.current(), 'laptop');
+  // ... and the route that has no name in it is answered too.
+  const where = routeUtterance({ utterance: 'Fugaro, what project am I on', projects: listed.projects });
+  assert.equal(where.command, COMMAND.WHERE_AM_I);
+  // What was left out is only the voice: the account is still held, and a press
+  // still switches to it.
+  assert.equal((await store.list()).accounts.length, 2);
+  assert.equal((await store.switchTo('_')).ok, true);
+  assert.equal(store.current(), '_');
+});
+
+test('two labels the voice folds into one name are refused, not chosen between', async () => {
+  // `Laptop` beside `laptop` is one spoken name, and which of the two "Fugaro,
+  // switch to laptop" meant is not this module's to decide -- so it refuses
+  // rather than picking, with the router's own word for the condition. The
+  // router would refuse the same list as a whole (`ambiguous-spoken-name`); this
+  // module is where the owner can still see why.
+  const { store } = makeStore();
+  await store.add(LAPTOP);
+  await store.add({ id: 'Laptop', firebaseProjectId: 'fp-laptop-2', authUid: 'uid-laptop-2', fugaroProject: 'aurora' });
+  const switcher = createSwitcher({ store });
+  const listed = await switcher.projects();
+  assert.equal(listed.ok, false);
+  assert.equal(listed.code, SWITCH_CODES.AMBIGUOUS_SPOKEN_NAME);
+  assert.equal(listed.field, 'projects');
+  // The code is the router's own, so a caller that acts on either vocabulary
+  // sees one word for one thing -- and `routeUtterance` refuses the same two
+  // entries with it.
+  const folded = routeUtterance({
+    utterance: 'Fugaro, switch to laptop',
+    projects: [
+      { id: 'Laptop', spokenName: 'Laptop' },
+      { id: 'laptop', spokenName: 'laptop' },
+    ],
+  });
+  assert.equal(folded.ok, false);
+  assert.equal(folded.code, SWITCH_CODES.AMBIGUOUS_SPOKEN_NAME);
+  assert.equal(folded.field, 'projects');
+});
+
 test('“Fugaro, switch to phone” tears the previous account down before it opens the next', async () => {
   const trace = [];
   const { store, registry } = makeStore({ trace });

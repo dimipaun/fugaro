@@ -130,6 +130,8 @@ export {
   PAIRING_TITLE,
   PAYLOAD_HINT,
   SCREEN,
+  TAKEN_LABEL_SENTENCE,
+  UNSPEAKABLE_LABEL_SENTENCE,
   WATCHING_SENTENCE,
   createPairingScreen,
   refusalSentence,

@@ -81,6 +81,17 @@ export const DELIVERED_SENTENCE = 'Paired.';
  * (§7.2: say the pairing expired, and show the code path again). */
 export const EXPIRED_SENTENCE = 'The pairing expired. Start a new one on your computer.';
 
+/** What the screen says when the label the owner typed is one the phone cannot
+ * say out loud. It names the fix rather than the rule: the label field takes
+ * letters, digits, `-` and `_`, and a name of only `-`/`_` is one nobody can
+ * speak (`session.js`'s `spokenRefusal`). */
+export const UNSPEAKABLE_LABEL_SENTENCE = 'That name cannot be said out loud. Use a name with a letter or a digit in it.';
+
+/** What the screen says when the label is one the phone already holds -- under
+ * any spelling the voice router folds together, so `Laptop` and `laptop` are one
+ * name here. */
+export const TAKEN_LABEL_SENTENCE = 'This phone already has an installation with that name. Start a new pairing and use a different name.';
+
 /** One sentence per refusal this screen can be handed, so a refusal the user
  * cannot read is not a refusal. The two that a person can act on name the
  * action; the rest say the payload was not one this app accepts, which is the
@@ -88,6 +99,7 @@ export const EXPIRED_SENTENCE = 'The pairing expired. Start a new one on your co
 const REFUSAL_SENTENCES = Object.freeze({
   [SESSION_CODES.EXPIRED]: EXPIRED_SENTENCE,
   [SESSION_CODES.BAD_ACCOUNT]: 'Give this installation a name first: letters, digits, "-" and "_".',
+  [SESSION_CODES.UNSPEAKABLE_LABEL]: UNSPEAKABLE_LABEL_SENTENCE,
   [SESSION_CODES.REQUEST_REFUSED]: 'The phone could not reach the installation. Check the connection and try again.',
   [SESSION_CODES.SIGN_IN_REFUSED]: 'The pairing token was not accepted. Start a new pairing on your computer.',
   [SESSION_CODES.IDENTITY_MISMATCH]: 'The installation answered as something else. Start a new pairing on your computer.',
@@ -105,8 +117,11 @@ const REFUSAL_SENTENCES = Object.freeze({
   // a sentence of their own they would fall into the payload's, which tells the
   // owner a QR the CLI generated correctly is one this app cannot use -- and
   // the pairing that failed was the *re*-pairing of a device they already have
-  // (`session.js`'s `storeRefusal`).
-  [SESSION_CODES.DUPLICATE_ID]: 'This phone already has an installation with that name. Start a new pairing and use a different name.',
+  // (`session.js`'s `storeRefusal`). The label taken *by voice* says the same
+  // thing as the label taken exactly, because to the owner it is the same fact:
+  // the name they typed is already in their list.
+  [SESSION_CODES.DUPLICATE_ID]: TAKEN_LABEL_SENTENCE,
+  [SESSION_CODES.SPOKEN_NAME_TAKEN]: TAKEN_LABEL_SENTENCE,
   [SESSION_CODES.DUPLICATE_INSTALLATION]: 'This installation is already paired on this phone, under another name.',
   [SESSION_CODES.PORT_FAILED]: 'Something on the phone failed. This pairing is not complete.',
   [SESSION_CODES.ALREADY_STARTED]: 'A pairing is already in progress.',
