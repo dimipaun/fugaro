@@ -281,6 +281,56 @@ func readEvent(t *testing.T, r *bufio.Reader) (id, data string) {
 	}
 }
 
+// TestStartRejectsBadOptions is the guards' case, and it is the gateway's own
+// (internal/gateway's TestStartRejectsBadOptions), because the plan names that
+// package as this one's model: what an endpoint cannot be built without is
+// refused at Start, with an error and no server, rather than a running listener
+// whose first request panics or answers nothing.
+//
+// The two are not equally visible. An id-less endpoint is a handshake nothing
+// can match a registry file against; a server with no snapshot is one that panics
+// in the request goroutine the first time a reader connects -- inside the daemon,
+// at the moment a console asks it something -- which is the failure mode a guard
+// here exists to make impossible.
+func TestStartRejectsBadOptions(t *testing.T) {
+	f := newFixture(t)
+	ok := Options{ID: endpointID, Snapshot: f.snapshot, Log: f.logf}
+	for name, edit := range map[string]func(*Options){
+		"no snapshot": func(o *Options) { o.Snapshot = nil },
+		"no id":       func(o *Options) { o.ID = "" },
+	} {
+		o := ok
+		edit(&o)
+		srv, err := Start(context.Background(), o)
+		if err == nil {
+			_ = srv.Close(context.Background())
+			t.Errorf("%s: Start built an endpoint, and a caller that trusted the guard gets one that cannot serve", name)
+			continue
+		}
+		if srv != nil {
+			// A server beside an error is a listener a caller that checked the
+			// error never learns to close.
+			_ = srv.Close(context.Background())
+			t.Errorf("%s: Start answered with an error and an endpoint", name)
+		}
+	}
+	// The contrast, which is what makes the guards guards and not a Start that
+	// refuses anything unfamiliar: a nil Log is allowed (Options says so -- it is
+	// a server that reports nothing), and an endpoint built without one is one a
+	// refusal cannot break.
+	bare := ok
+	bare.Log = nil
+	srv, err := Start(context.Background(), bare)
+	if err != nil {
+		t.Fatalf("no log: %v, and a server that reports nothing is a supported one", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), closeDeadline)
+	defer cancel()
+	if err := srv.Close(ctx); err != nil {
+		t.Errorf("closing an endpoint built without a log: %v", err)
+	}
+}
+
 func TestEndpointBindsLoopbackPortZero(t *testing.T) {
 	first := newFixture(t)
 	second := newFixture(t)

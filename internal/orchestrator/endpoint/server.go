@@ -296,8 +296,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The query is refused whole, and before the token: the routes take no
 	// parameters, so a query string is never a parameter -- it is a credential
 	// in a URL, which is the one place a credential reaches a log (a shell's
-	// history, a proxy's access log, this refusal's own text). The reason below
-	// is built from the path for exactly that sentence.
+	// history, a proxy's access log). What this one writes is its fixed reason
+	// (reportBeforeToken), and the path is not in it either.
 	if r.URL.RawQuery != "" {
 		s.refuse(w, http.StatusBadRequest, "this endpoint takes no query string: pass the token in the "+authorizationHeader+" header")
 		s.reportBeforeToken("a query string was refused")
