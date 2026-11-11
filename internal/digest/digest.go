@@ -1,7 +1,15 @@
 // Package digest builds one period's report over a repository's run records
 // and renders it as Markdown.
 //
-// Two rules shape everything here:
+// Three rules shape everything here:
+//
+//   - A challenger arm is counted apart. A run whose task carried
+//     ab.arm: challenger is the shadow of an A/B pair: it pushes nothing,
+//     opens nothing and reaches no developer (D554; A2.1 is the runner's half
+//     of that boundary), so no figure this report takes over the repository's
+//     runs holds it, and the period's challengers are counted in one line of
+//     their own (A4.5, D568). A report whose figures an experiment moved is a
+//     report a reader cannot take for the repository's own.
 //
 //   - No person, and no text a record wrote. A record is untrusted input --
 //     any run of the repository can write one -- and a report is committed
@@ -11,6 +19,7 @@
 //     vocabulary checked against its known set (an unknown value renders
 //     "other"), a bounded number, a date, or a run ID or pull-request number
 //     checked by shape.
+//
 //   - Deterministic figures. The same records give byte-identical Markdown
 //     (G3): nothing here reads a clock, and every map is walked in sorted key
 //     order. The one byte this package does not write is the tail a registered
@@ -307,6 +316,21 @@ type Figures struct {
 	Review budget.Micros
 }
 
+// Challengers is the period's challenger arms added up (A4.5, D568): the
+// records a sampled launch marked ab.arm: challenger, which are in none of the
+// report's own figures and are the one line of its own the report adds for
+// them.
+//
+// It carries the run count and the two dollars, which is what that line
+// prints: a challenger's flags, halts and review rounds are read per pair
+// (A4.1), and a report of the repository's own runs has nothing to say about
+// them.
+type Challengers struct {
+	Runs     int
+	Billed   budget.Micros
+	Notional budget.Micros
+}
+
 // FlagCount is how many runs of the period raised one flag.
 type FlagCount struct {
 	Name  string
@@ -333,25 +357,32 @@ type ClassCount struct {
 type Digest struct {
 	Period Period
 	// Runs are the rows the report shows: the flagged ones first, then the
-	// dearest of the rest (D325).
+	// dearest of the rest (D325). A challenger arm is in no row (A4.5).
 	Runs []Run
 	// Stages covers every run that finished in the period, selected or not,
 	// the same set Total counts.
 	Stages []Stage
 	// Total covers every run that finished in the period, selected or not:
-	// the header's figures, which no size cap changes.
+	// the header's figures, which no size cap changes. A challenger arm is in
+	// none of them: it is counted in Challengers instead (A4.5, D568).
 	Total Figures
+	// Challengers is the period's challenger arms, counted apart from every
+	// other figure here (A4.5, D568).
+	Challengers Challengers
 	// Flags counts the period's flags by name, in FlagNames order.
 	Flags []FlagCount
 	// Failures is why the period's runs did not succeed, one row per class
 	// that holds any of them, in failure.Classes() order. A run that did not
 	// fail is in no row: a class is a record's own ending, never a derivation
-	// (design §3, D1464).
+	// (design §3, D1464). A challenger arm is in no row either: a halt or a
+	// failure of its own is the arm's loss in a pair and not the repository's
+	// (A4.5).
 	Failures []ClassCount
 	// Recipes is each recipe's median cost over the period's runs, by the
 	// name the report writes: a catalog recipe's own, "other" for every other
 	// name. It is the per-recipe figure D326's third rule reads month over
-	// month.
+	// month. A challenger arm's cost is in no median: it runs another model,
+	// and its dollars are the arm's (A4.5).
 	Recipes map[string]budget.Micros
 	// Expectations is every run the digest was handed that carries a tier and
 	// finished at or before the period closed, ordered by its finish time: the
@@ -360,7 +391,9 @@ type Digest struct {
 	// them, and the order is the runs' own so that a hook reading the window is
 	// a pure function of this digest (G3). A run that finished after the period
 	// closed is not here, whatever the caller handed over: a closed period's
-	// report is the same report as later runs land.
+	// report is the same report as later runs land. A challenger arm is not
+	// here either: a shadow runs on another model, and its figures must not
+	// calibrate a tier a champion will be dispatched at (A4.5, D568).
 	Expectations []Expectation
 	// Dropped is how many selected rows the size cap left out.
 	Dropped int
@@ -370,7 +403,9 @@ type Digest struct {
 // repository's records, in any order. A record that did not finish in the
 // period, or whose run ID is not a run ID, is not one of the period's runs:
 // the first has no period, and the second is not a run this repository's
-// prefix names. The tier expectations are the one thing Build reads from
+// prefix names. Neither is a challenger arm: it is the shadow of an A/B pair
+// (A4.5, D568), so it is in none of this report's figures and is counted in
+// Challengers instead. The tier expectations are the one thing Build reads from
 // outside the period, and only backwards: a calibration's window is the days
 // ending with the period, so the records of the runs before it are read while
 // the report's own figures stay the period's (T8.3).
@@ -379,6 +414,7 @@ func Build(recs []runstore.Record, p Period) Digest {
 	byRecipe := map[string][]budget.Micros{}
 	byClass := map[failure.Class]*ClassCount{}
 	var expectations []Expectation
+	var challengers Challengers
 	total := Figures{}
 	// end is when the period closed. carried says whether a run that finished
 	// at t is one the calibration may read: the runs of the period and of the
@@ -396,6 +432,14 @@ func Build(recs []runstore.Record, p Period) Digest {
 	for i := range recs {
 		rec := &recs[i]
 		if rec.FinishedAt == nil || !task.ValidRunID(rec.RunID) {
+			continue
+		}
+		if challengerArm(rec) {
+			if p.Holds(*rec.FinishedAt) {
+				challengers.Runs++
+				challengers.Billed = satAdd(challengers.Billed, billed(rec))
+				challengers.Notional = satAdd(challengers.Notional, notional(rec))
+			}
 			continue
 		}
 		if exp, ok := expectation(rec); ok && carried(exp.Finished) {
@@ -460,12 +504,29 @@ func Build(recs []runstore.Record, p Period) Digest {
 		Runs:         append(flagged, rest...),
 		Stages:       stages(recs, p),
 		Total:        total,
+		Challengers:  challengers,
 		Flags:        flagCounts(all),
 		Failures:     classCounts(byClass),
 		Recipes:      recipeMedians(byRecipe),
 		Expectations: byFinished(expectations),
 	}
 	return capTo(d, MaxBytes)
+}
+
+// challengerArm reports whether a record is a challenger arm: the shadow a
+// sampled launch started beside its champion, which pushes nothing and opens
+// nothing (A2.1, D554). Such a record is counted apart from every figure this
+// report takes over the repository's runs (A4.5, D568).
+//
+// The arm is read against the wire's own vocabulary (task.ABArmChallenger) and
+// never trusted as a word of its own: a record is input this job's service
+// account can write, so a value outside the set is a block no launcher of this
+// build wrote, and such a run is a run of the period like any other rather than
+// a shadow counted apart. The champion is one of them: it is the run the
+// developer gets, it publishes exactly as an unsampled run, and its block
+// changes nothing here.
+func challengerArm(rec *runstore.Record) bool {
+	return rec.AB != nil && rec.AB.Arm == task.ABArmChallenger
 }
 
 // expectation is one record as a calibration reads it, and whether it is one
@@ -805,12 +866,13 @@ func matchesAny(scope []string, path string) bool {
 }
 
 // stages is every stage name's figures over the period's runs, in name order
-// with the unknown names last.
+// with the unknown names last. A challenger arm is in none of them: it runs
+// another model, and its calls are the arm's (A4.5).
 func stages(recs []runstore.Record, p Period) []Stage {
 	byName := map[string]*Stage{}
 	for i := range recs {
 		rec := &recs[i]
-		if rec.FinishedAt == nil || !p.Holds(*rec.FinishedAt) || !task.ValidRunID(rec.RunID) {
+		if rec.FinishedAt == nil || !p.Holds(*rec.FinishedAt) || !task.ValidRunID(rec.RunID) || challengerArm(rec) {
 			continue
 		}
 		for _, s := range rec.Stages {
