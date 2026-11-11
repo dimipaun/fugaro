@@ -8,12 +8,14 @@ the endpoint's half: the authorize POST takes the device's act as a shape of its
 is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's
 first requirement is not met — the endpoint cannot tell a paired device from any other holder of
 one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of
-the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no
-task of this plan; M7 is built except the reading of the installation's published state its lists
-come from, which no task of this plan carries; M8 is built except the wiring that would serve its
-four read tools, which no binary has and no task of this plan carries; M9 is not started, and the
-launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of
-2026-11-09); this folder approves no task.** The owner's
+the flow's binding rendered and no launcher reading the page, is built nowhere and carried by M12b,
+which M12 waits on; M12 is built — the front door mounted on the service, the reading of the
+installation's published state its lists come from, M8's four read tools served from a binary and the
+two bounds the open registration endpoint is accepted under are all its — and the door stays dormant
+until an installation turns it on, which no release writes the flag for yet (D934), because a build
+without M12b's delivery refuses to enable it (D2126); M9 is not started, and the launch-override
+fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09);
+this folder approves no task.** The owner's
 spec of 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled against the code
 here; [reconciliation.md](reconciliation.md) §4 puts fifteen decisions (D920–D934) in front of the
 owner, each with the recommendation first and the cost of the alternative — and **all fifteen were

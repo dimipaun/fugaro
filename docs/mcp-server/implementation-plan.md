@@ -8,12 +8,14 @@ the endpoint's half: the authorize POST takes the device's act as a shape of its
 is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's
 first requirement is not met — the endpoint cannot tell a paired device from any other holder of
 one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of
-the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no
-task of this plan; M7 is built except the reading of the installation's published state its lists
-come from, which no task of this plan carries; M8 is built except the wiring that would serve its
-four read tools, which no binary has and no task of this plan carries; M9 is not started, and the
-launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of
-2026-11-09); this folder approves no task.**
+the flow's binding rendered and no launcher reading the page, is built nowhere and carried by M12b,
+which M12 waits on; M12 is built — the front door mounted on the service, the reading of the
+installation's published state its lists come from, M8's four read tools served from a binary and the
+two bounds the open registration endpoint is accepted under are all its — and the door stays dormant
+until an installation turns it on, which no release writes the flag for yet (D934), because a build
+without M12b's delivery refuses to enable it (D2126); M9 is not started, and the launch-override
+fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09);
+this folder approves no task.**
 
 The design is [spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
@@ -176,12 +178,12 @@ this amended plan, because M4's draft predates the D934 and M-e answers and M6's
 merged on `main`** — M4's first half (#1716) being the account, the front door service and its
 public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`, `:388`,
 `:536`), and its store half being the bucket the records live in and the one binding that names the
-front door's account (`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **M5 is built
+front door's account (`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **M5 is built**
 and M5b below is built with it, as the endpoint's half -- the approve POST takes the act as a shape
 of its own, and what proves that act is the ID token and no key a device holds, so M-a's first
-requirement is not met -- M7 is built apart from the reading of the installation's published state
-its lists come from, which no task below carries, **M8 is built apart from the wiring that would
-serve its four read tools**, which is the wiring no task below carries, **and M9 is not started**.
+requirement is not met -- **M7 is built**, and the reading of the installation's published state its
+lists come from is **M12 below, which is built**; **M8 is built**, and M12 below is the wiring that
+serves its four read tools; **and M9 is not started**.
 **The front door M4 builds is OFF on every installation**: the flag that turns it on, `fugaro update
 --mcp-server`, is the release's own and no released command writes it yet, which is D934's answer
 and not a half-built task. **What each built task
@@ -785,11 +787,14 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   the allowlist is refused **at registration**, not at a person's sign-in),
   `TestConsentNamesTheRedirectHost` (the page a person consents on carries the redirect URI's host),
   `TestConsentIsCSRFBound` (a consent that does not carry the flow's own binding is refused, and the
-  `state` returns on the redirect unaltered), and **`TestNoBinaryLinksTheFrontDoorYet`** (no file a
-  binary builds names this package, because the open registration endpoint ships without the rate
-  limit and the sweep spec.md §8 relies on: the exposure stays latent until a task deliberately wires
-  the front door and carries the bounds with it, rather than becoming reachable by accident —
-  [reconciliation.md](reconciliation.md) §4a, the two bounds no task carries).
+  `state` returns on the redirect unaltered), and **`TestNoBinaryLinksTheFrontDoorYet`**, which this
+  row built as the tripwire for the rate limit and the sweep spec.md §8 relies on: no file a binary
+  builds named this package, so the exposure stayed latent until a task deliberately wired the front
+  door and carried the bounds with it, rather than becoming reachable by accident. **M12 carried
+  them and deleted the guard**, replacing it with `TestTheFrontDoorIsServedOnlyWhenEnabled` — a door
+  that is off serves a 404 on every path, which is what the guard's absence had to keep true once
+  the wiring existed ([reconciliation.md](reconciliation.md) §4a, the two bounds, and the task that
+  carries them).
 - **SEC:** **yes, mandatory** — this is the endpoint the threat model's redirect-URI, CSRF and open-
   registration paragraphs are about.
 - **Depends on:** M2, M4, D921, D928 — **and on D921's licence, which the owner cleared on
@@ -838,16 +843,18 @@ prerequisite before anything wires the front door**.
 **`TestNoBinaryLinksTheFrontDoorYet` is the tripwire, and M5b must land before it may be relaxed**;
 the test's own message names what the guard waits on for that reason, so the guard is relaxed by
 building the approval and not by deleting a sentence. **M5b has landed**, on the files below, and
-**the guard is not relaxed here**: relaxing it belongs to the wiring task, which is
-still carried by no task of this plan. **What landed is the part of the first requirement the
+**the guard was not relaxed here**: relaxing it belonged to the wiring task, which no task of this
+plan carried until the owner wrote one on 2026-11-11 (**M12** below, which carried the two bounds
+beside the wiring and deleted the guard). **What landed is the part of the first requirement the
 endpoint can perform and not the requirement itself**: the endpoint takes an act that already carries
 the flow's id and the number, and what proves that act is the ID token rather than a device's key, so
 the page that rendered the flow can produce it too (**M-a's first requirement is not met**; the
 requirement's own item below). **Nor is the delivery landed**: nothing hands the flow's id and its
 number to the paired device — no QR of the flow's binding, no launcher reading the page — so no
 client produces that act yet. **Both are owed, and named as owed** in
-[spec.md](spec.md) §11, [reconciliation.md](reconciliation.md) §4a and the wiring sections under M7
-and M8 below.
+[spec.md](spec.md) §11 and [reconciliation.md](reconciliation.md) §4a, and M12 below carries the
+second of them rather than either of the halves above: **M12b** delivers the flow to the paired
+phone, and M12 refuses to enable a door without it (D2126).
 
 **Four things, and no fifth.** Each is a requirement M-a or the review of this branch raised and the
 tree did not carry:
@@ -922,7 +929,8 @@ tree did not carry:
   called from the approve step M5 builds, so what M6 still owes is its own rerun and no part of this
   task's order. **It gates the wiring rather than a task**: no task of this plan waits on M5b, and
   **the task that wires the front door into a binary waits on it and on the two bounds spec.md §8
-  relies on** ([reconciliation.md](reconciliation.md) §4a, the two bounds no task carries).
+  relies on** ([reconciliation.md](reconciliation.md) §4a, the two bounds, and the task that carries
+  them), and **that task is M12 below, which is built**.
 - **What this task does not change.** It adds no bound to the open registration endpoint and no
   sweep of its own (those travel with the wiring task), it does not touch D921's licence gate, and
   **it does not build H1's device-held signing key**: that residual risk is accepted and documented
@@ -1045,18 +1053,21 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
   a log line, an echoed environment, a command it ran. The front door serves **the progress record
   redacted through `internal/safetext`** (`internal/safetext/safetext.go:17`) and **never the raw
   file**: `TestLogsAreRedactedAndTheRawTranscriptIsNeverServed`.
-- **What this task leaves unserved, and it is the wiring's, not M8's.** The four tools are registered
-  on M7's registry and **no binary registers them**: nothing outside this package's own tests calls
-  `RegisterReadTools` or constructs `NewProjectRuns`, so the read reach this task adds is reach no
-  process has while the door is dormant (D936), and `TestNoBinaryLinksTheFrontDoorYet` still holds. **The task
-  that mounts this package on a binary, which owes M7's reading of the published
+- **What this task left unserved, and what the wiring built.** The four tools were registered
+  on M7's registry and **no binary registered them**: **the only callers of `RegisterReadTools` and
+  `NewProjectRuns` are this package's own tests and the front door's own wiring**
+  (`ee/coordinator/cli/coordinator_serve.go`, M12), so the read reach this task added was reach no
+  process had while the door was dormant (D936), and `TestNoBinaryLinksTheFrontDoorYet` held it. **The task
+  that mounts this package on a binary, which owed M7's reading of the published
   state, the two bounds the open registration endpoint is accepted under and M5b's delivery of a flow
-  to the paired device, owes this wiring beside them**: it is where the project's own repository slugs are read, from the
+  to the paired device, owed this wiring beside them — and it is M12, the owner's ruling of
+  2026-11-11,** which is built**: it registers the four tools over the project's own repository slugs, read from the
   `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service
-  (`deploy/terraform/gcp/modules/installation/coordinator.tf:500`, "the repositories the front door
-  may answer about"), and where a token's own repository filter is applied on top of that list
-  rather than instead of it. spec.md §11 carried it as an open item until the owner assigned it:
-  **the owner's ruling of 2026-11-11 makes it M12's**, and M8's serving depends on M12.
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:509`, "the repositories the front door
+  may answer about"), and a token's own repository filter is applied on top of that list
+  rather than instead of it (`TestReadToolsServeOnlyTheProjectsRepositories`). The delivery M12 owed
+  beside it is M12b's, and **M12 refuses to enable a door without it (D2126)**, so what M12 serves is
+  served only once M12b has landed.
 
 ### M9 — `spawn_task`, `cancel_task`, and the narrowed ceiling — **DEFERRED (D936), PARKED: no release schedules it**
 **Out of the first slice (D936).** The first slice is **the authorization server plus the read

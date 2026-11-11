@@ -634,8 +634,9 @@ tasks on 2026-11-10** (the answer cells below).
 **F24. Exists. The registry O16 waited for is on `main`, and so is the review T4 waited for.** The catalogue is
 `ee/coordinator/mcpauth/tools.go:74-96`: `Register` refuses a name it does not map, and `Call` (`tools.go:303`) checks the token's scope
 before a handler runs. The read tools M8 built are registered by `RegisterReadTools` (`ee/coordinator/mcpauth/tool_status.go:112`), which
-**no binary calls** — `docs/mcp-server/README.md` says M8 is built "except the wiring that would serve its four read tools, which no binary
-has and no task of this plan carries". The threat-model amendment T4 named is `docs/mcp-server/reconciliation.md` §4a. *Consequence:* F9's
+**no binary called** until the owner assigned the wiring on 2026-11-11 and **M12** built it
+(`ee/coordinator/cli/coordinator_serve.go`, registering the four tools on the front door's own
+registry). The threat-model amendment T4 named is `docs/mcp-server/reconciliation.md` §4a. *Consequence:* F9's
 "no registry" is overtaken; O16's files can be named, and it lands the way M8 did, built and registered by a function nothing calls yet
 (the plan's O16a), with the serving half (O16b) waiting.
 

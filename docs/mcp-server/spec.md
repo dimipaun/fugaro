@@ -8,12 +8,14 @@ the endpoint's half: the authorize POST takes the device's act as a shape of its
 is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's
 first requirement is not met — the endpoint cannot tell a paired device from any other holder of
 one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of
-the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no
-task of this plan; M7 is built except the reading of the installation's published state its lists
-come from, which no task of this plan carries; M8 is built except the wiring that would serve its
-four read tools, which no binary has and no task of this plan carries; M9 is not started, and the
-launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of
-2026-11-09); this folder approves no task.**
+the flow's binding rendered and no launcher reading the page, is built nowhere and carried by M12b,
+which M12 waits on; M12 is built — the front door mounted on the service, the reading of the
+installation's published state its lists come from, M8's four read tools served from a binary and the
+two bounds the open registration endpoint is accepted under are all its — and the door stays dormant
+until an installation turns it on, which no release writes the flag for yet (D934), because a build
+without M12b's delivery refuses to enable it (D2126); M9 is not started, and the launch-override
+fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09);
+this folder approves no task.**
 
 The owner's spec of 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is
 written to the **answers the owner gave on 2026-11-04** to the fifteen decisions in
@@ -191,7 +193,7 @@ that kept M5 dormant was M5b**, the paired-device approval (§3, §8), **which i
 server's side only**: M-a's first requirement, that the approval is the paired device's, **is not
 met** — the act is proved by a Firebase ID token and this endpoint cannot tell a paired device from
 any other holder of one, which is **H1's accepted residual risk** (§8) — and what is left between
-this package and a binary is the wiring, which no task of this plan carries.
+this package and a binary is the wiring, which no task of this plan carried until M12 (§11).
 
 ## 2. The front door: transport, endpoint, and who may reach it
 
@@ -419,9 +421,7 @@ of them the endpoints, all of them what happens at them):
    **device-held key registered at pairing** H1 records as not built and in no task. **And what is
    not built is how a flow reaches a device at all** — no QR of the flow's binding is rendered and no
    launcher reads the page — so the act the endpoint accepts is one no client produces yet, and a
-   person who reads the number off the page has nothing to type it into. **Both halves are owed and
-   named in §11**: no task of this plan carries either, and the wiring task carries them beside the
-   two bounds the registration endpoint is accepted under (`approval.go`'s own header states the same
+   person who reads the number off the page has nothing to type it into. **Both halves are owed and named in §11**: the device-held key that would close the first is in no task, the delivery of a flow is **M12b**'s, and the wiring task that carried them — **M12**, built — carried them beside the two bounds the registration endpoint is accepted under (`approval.go`'s own header states the same
    gap where it is read).
 6. The coordinator issues the authorization code, and the exchange at `POST /oauth/token` mints a
    short-lived access token and a refresh token, scoped to the MCP resource URL, carrying the
@@ -901,8 +901,7 @@ own key**, so the browser that answered the page produces it exactly as a paired
 first requirement is not met on the server's side**, which is **H1's accepted residual risk** stated
 above, and the one change that would close it is the device-held key registered at pairing that H1
 records as not built and in no task. **And what is not built is the delivery**: nothing renders a QR
-of the flow's binding and no launcher reads the page, so the act the endpoint takes is one no client
-produces yet and no task of this plan carries the half that would (§11).
+of the flow's binding and no launcher reads the page, so the act the endpoint takes is one no client produces yet and the half that would is **M12b**'s (§11).
 
 **The coordinator mints no Firebase token of its own** either: it holds no
 signer role, so a compromised coordinator cannot answer "this person signed in" for somebody who
@@ -1240,46 +1239,55 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   when it lands, or the one walkable hash in the store is the one the amendment's own answer does
   not cover. What is wrong either way until the keyed hash and the MAC land is a security
   document promising an integrity control the code does not perform.
-- **Who owns the two bounds the open registration endpoint is accepted under** (§3, §8): the
-  **per-source rate limit** and the **sweep that makes a registration, a pending authorize request
-  and a code expire**. **Neither is built**, M10's `store.go` row is revocation and nothing else, and
-  **no task of the plan carries them** ([reconciliation.md](reconciliation.md) §4a, "The two bounds
-  no task carries"). **What is owed is the owner's assignment** — them inside M10's entry, or a task
-  of their own — and **until it comes the bound is the wiring task's**: the task that mounts this
-  package on a binary carries both bounds and deletes `TestNoBinaryLinksTheFrontDoorYet`, so the
-  growth §8 accepts is accepted only while nothing mounts the routes. **M5b was owed beside them**
+- **The two bounds the open registration endpoint is accepted under** (§3, §8), and where they
+  landed: the **per-source rate limit** and the **sweep that makes a registration, a pending
+  authorize request and a code expire**. **Neither was built for most of this plan's life**, M10's
+  `store.go` row is revocation and nothing else, and
+  **no task of the plan carried them** ([reconciliation.md](reconciliation.md) §4a, "The two bounds,
+  and the task that carries them") — so **the owner was owed the assignment of them**, inside M10's
+  entry or as a task of their own, and **until it came the bound was the wiring task's**: the task
+  that mounts this package on a binary was to carry both bounds and delete
+  `TestNoBinaryLinksTheFrontDoorYet`, so the growth §8 accepts was accepted only while nothing
+  mounted the routes. **That task is M12** (the owner's ruling of 2026-11-11), and **it carried
+  both**: the endpoint refuses a source past its own window
+  (`ee/coordinator/mcpauth/register.go`, `TestRegistrationIsRateLimitedPerSource`), and the
+  registrations, the pending requests and the codes the open shapes leave behind are removed once
+  their own lifetime has passed (`SweepExpired`, `RegistrationTTL`, the sweep triggered by the two
+  unauthenticated writes; `TestRegistrationsExpireAndAreSwept`), with the guard deleted and replaced
+  by `TestTheFrontDoorIsServedOnlyWhenEnabled`. **M5b was owed beside them**
   (the owner's ruling of 2026-11-07) **and is built**, and **what it left owed is more than the
   delivery**: **M-a's first requirement, that the approval is the paired device's, is not met on the
   server's side and no task of this plan meets it** — the act is proved by a Firebase ID token and
   the endpoint cannot tell a paired device from any other holder of one, so what closes it is the
   **device-held key registered at pairing** that H1 records as an accepted residual risk and as not
   built (§8) — **and neither is the delivery of a flow to the paired device**, no QR of the flow's
-  binding rendered and no launcher reading the page. **Neither is carried by any task of this plan**,
-  so both are the wiring task's beside the two bounds and the guard, and until they land the act the
-  endpoint accepts is one no client produces: the approval is decided exactly as M5b built it, and a
-  person who reads the number off the page has nothing yet to type it into.
+  binding rendered and no launcher reading the page. **The delivery is M12b's** (the owner's ruling
+  of 2026-11-11, D2126) **and M12 refuses to enable a door without it**, so until M12b lands the act
+  the endpoint accepts is one no client produces: the approval is decided exactly as M5b built it,
+  and a person who reads the number off the page has nothing yet to type it into.
 - **Where the front door's own two lists are read from** (§4, D933, the amendment's finding M-f):
-  **the design says the installation's published state, and the tree reads nothing there.** §8's
+  **the design says the installation's published state, and the reading is M12's.** §8's
   claim that the lists bound what a token buys turns on it: `ee/coordinator/mcpauth/identity.go`
   holds the `Roster` interface the door resolves an identity through and a server with none set
-  refuses every token (fail-closed, `WithRoster`), but **no implementation of that interface over the
-  published state is in the tree and no task of this plan carries one** — so what is built is the
-  rule the reading must keep (the lists as the source rather than a machine's config, and exact
-  `user:` entries only) rather than the reading. **The door is dormant with the rest of the front
-  door (D936)**, so no local file is read either, and **the wiring task that mounts this package on a
-  binary owes this reading beside the two bounds above**; until it lands, a
-  front door wired up without one admits nobody rather than everybody, which is the direction the
-  gap fails in ([reconciliation.md](reconciliation.md) §4a, D933's amendment).
-- **The four read tools M8 builds are registered on no binary** (D936): nothing outside this
-  package's own tests calls `RegisterReadTools` or constructs `NewProjectRuns`, so
-  `get_task_status`, `stream_logs`, `get_result` and `list_tasks` are reachable by no client while
-  the door is dormant, and `TestNoBinaryLinksTheFrontDoorYet` still holds. **The wiring task that mounts this package on a
-  binary owes this beside the two bounds above and M7's reading of the
-  published state**, and it is where the project's own repository slugs come from: the
+  refuses every token (fail-closed, `WithRoster`), and **no implementation of that interface over the
+  published state was in the tree and no task of this plan carried one** until the owner wrote M12:
+  `ee/coordinator/mcpauth/roster.go` reads the entry the installation's own module renders onto the
+  front door's revision (`DoorConfigFromEnv`), and answers the lists as D933's identity rule reads
+  them — exact `user:` entries only, deduplicated and sorted
+  (`TestTheRosterIsReadFromThePublishedState`, `TestOnlyExactUserEntriesAdmit`) — so a front door
+  wired up without one still admits nobody rather than everybody, which is the direction the gap
+  fails in. **The door stays dormant until an installation turns it on (D934)**
+  ([reconciliation.md](reconciliation.md) §4a, D933's amendment).
+- **The four read tools M8 builds** (D936): **the only callers of `RegisterReadTools` and
+  `NewProjectRuns` are this package's own tests and the front door's own wiring**
+  (`ee/coordinator/cli/coordinator_serve.go`, M12), so until M12 `get_task_status`, `stream_logs`,
+  `get_result` and `list_tasks` were reachable by no client while
+  the door was dormant, and `TestNoBinaryLinksTheFrontDoorYet` held them that way. **M12 is that wiring, and it serves them** beside the two bounds above and M7's reading of the
+  published state, and it is where the project's own repository slugs come from: the
   `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service
-  (`deploy/terraform/gcp/modules/installation/coordinator.tf:500`), with a token's own repository
-  filter applied on top of it rather than instead of it.
-  [reconciliation.md](reconciliation.md) §4a carries what M8 still owes.
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:509`), with a token's own repository
+  filter applied on top of it rather than instead of it
+  (`TestReadToolsServeOnlyTheProjectsRepositories`).
 - **The library's citations, and the version they were read at.** The review read `zitadel/oidc`
   3.51.17 **outside this container**, so §3's constraint layer rests on findings this folder could
   not re-check; M5 re-reads them against the version it pins.

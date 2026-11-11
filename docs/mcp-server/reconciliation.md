@@ -8,12 +8,14 @@ the endpoint's half: the authorize POST takes the device's act as a shape of its
 is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's
 first requirement is not met — the endpoint cannot tell a paired device from any other holder of
 one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of
-the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no
-task of this plan; M7 is built except the reading of the installation's published state its lists
-come from, which no task of this plan carries; M8 is built except the wiring that would serve its
-four read tools, which no binary has and no task of this plan carries; M9 is not started, and the
-launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of
-2026-11-09); this folder approves no task.**
+the flow's binding rendered and no launcher reading the page, is built nowhere and carried by M12b,
+which M12 waits on; M12 is built — the front door mounted on the service, the reading of the
+installation's published state its lists come from, M8's four read tools served from a binary and the
+two bounds the open registration endpoint is accepted under are all its — and the door stays dormant
+until an installation turns it on, which no release writes the flag for yet (D934), because a build
+without M12b's delivery refuses to enable it (D2126); M9 is not started, and the launch-override
+fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09);
+this folder approves no task.**
 
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
@@ -225,15 +227,18 @@ the device's act as a shape of its own, the ID token is spent once and a family 
 proved by the ID token and by no device key, so M-a's first requirement is not met — the endpoint
 cannot tell a paired device from any other holder of one, which is H1's accepted residual risk — and
 the delivery of a flow to that device, with no QR of the flow's binding rendered and no launcher
-reading the page, is built nowhere and carried by no task of this plan; M7 is built except the
-reading of the installation's published state its lists come from, which no task of this plan
-carries; M8 is built except the wiring that would serve its four read tools, which no binary has and
-no task of this plan carries; M9 is not started, and the launch-override fence it was to wait on is
-declined for v1 and left unbuilt (the owner's ruling of 2026-11-09)" — **the clauses moving as each
-task lands** (§4a), each exception added with its own landing because the task builds the seam and
-not the half behind it, and removed the same way once the half behind it is there: M7's reading of
-the published state and M8's four read tools registered on no binary, which the wiring task would
-serve, are open still, and **M10's exception is the one that has closed** — the store's own bucket
+reading the page, is built nowhere and carried by M12b, which M12 waits on; M12 is built — the front
+door mounted on the service, the reading of the installation's published state its lists come from,
+M8's four read tools served from a binary and the two bounds the open registration endpoint is
+accepted under are all its — and the door stays dormant until an installation turns it on, which no
+release writes the flag for yet (D934), because a build without M12b's delivery refuses to enable it
+(D2126); M9 is not started, and the launch-override fence it was to wait on is declined for v1 and
+left unbuilt (the owner's ruling of 2026-11-09)" — **the clauses moving as each task lands** (§4a),
+each exception added with its own landing because the task builds the seam and not the half behind
+it, and removed the same way once the half behind it is there: **M12 closed three of them at once**
+— M7's reading of the published state, M8's four read tools served from no binary and the two bounds
+the open registration endpoint is accepted under — because it is the wiring task those three were
+owed to, and **M10's exception is the one that had closed before it** — the store's own bucket
 and its one grant are M4's store half, merged since, and M4's own clause is the newest: the front
 door is built whole and stays OFF until a release writes the flag that turns it on.
 
@@ -589,7 +594,8 @@ the installation's own published state, reachable through the coordinator's acco
 anything a caller or a run can reach, which [spec.md](spec.md) §4 states. **M7 builds the seam that
 reading goes through and not the reading**: `ee/coordinator/mcpauth/identity.go` holds the `Roster`
 interface the door resolves an identity through, **no implementation of it over the published state
-is in the tree, and no task of this plan carries one** (spec.md §11). The rest of
+was in the tree, and no task of this plan carried one** — the owner wrote one on 2026-11-11 and it is
+built: **M12** (spec.md §11). The rest of
 the answer is unchanged: exact `user:` entries only, and `group:`, `domain:` and `serviceAccount:`
 refused.
 
@@ -664,13 +670,13 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   first requirement is not met (the status line above) — **M7 is built** (the resource server and the tool
   registry, dormant with the rest of the door) **except the reading of the installation's published
   state its lists come from**: `identity.go` holds the `Roster` seam D933's answer goes through and
-  **nothing in the tree implements it over that state, because no task of the plan carries the
-  reading** — **M10 is built whole**: the audit line, the bounded per-identity record it comes to
+  **nothing in the tree implemented it over that state, because no task of the plan carried the
+  reading — the owner wrote one on 2026-11-11 and it is built: M12 below (`roster.go`)** — **M10 is built whole**: the audit line, the bounded per-identity record it comes to
   and revocation from a person's own surface, and **the store its records are at rest in**, whose
   bucket and one grant M4's store half added — **M8 is built** (the
   four read tools, over the project's own runs and redacted through `internal/safetext`) **except the
-  wiring that would serve them**: no binary registers them, which is the wiring no task of this plan
-  carries — **and the rest is not**: M9; **M3's node is in with its parity test while the comment D935 asks
+  wiring that would serve them**: no binary registered them, which was the wiring no task of this plan
+  carried — **M12 is that wiring, and it is built** (`ee/coordinator/cli/coordinator_serve.go`) — **and the rest is not**: M9; **M3's node is in with its parity test while the comment D935 asks
   for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
   POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, was
   built after M6 rather than with it. **And one row of an already-merged task
@@ -681,7 +687,7 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   by a mark. That barrier is M2's own row, it is on `main` already and not in this branch, and it is
   raised as a finding rather than closed by an edit here.
 
-### The two bounds no task carries (raised 2026-11-07)
+### The two bounds, and the task that carries them (raised 2026-11-07)
 
 **spec.md §3 and §8 bound the open registration endpoint by two things that are built nowhere**, and
 M5's endpoint and the record it writes say so in their own words: **a per-source rate limit** and
@@ -702,11 +708,29 @@ behaviour**: `TestNoBinaryLinksTheFrontDoorYet` fails if any file a binary build
 so the task that wires the front door is the task that carries the two bounds and deletes the guard,
 and no release mounts an open registration endpoint because a wiring arrived unnoticed. **M5b was the
 other thing that task was to carry** (the owner's ruling of 2026-11-07) **and is built on the
-server's side only**, except the half that delivers a flow to the paired device, which nothing builds
-and no task of this plan carries — and except the device binding itself, which the endpoint cannot
-perform: **M-a's first requirement is not met**, so the task that relaxes the guard carries the two
-bounds **and the delivery** with them, and must not read the built half as that requirement met.
-**Until it does, the guard is what holds the door** (spec.md §11).
+server's side only**, except the half that delivers a flow to the paired device, which **the owner
+made a task of its own on 2026-11-11 (M12b)** — and except the device binding itself, which the
+endpoint cannot perform: **M-a's first requirement is not met**, so the task that relaxes the guard
+carries the two bounds **and the delivery** with them, and must not read the built half as that
+requirement met. **Until it did, the guard was what held the door** (spec.md §11).
+
+**The owner answered it on 2026-11-11 — the task that carries both bounds is M12, and it is built.**
+He wrote it as a task of the MCP plan ([implementation-plan.md](implementation-plan.md) §3, D2119)
+rather than placing the bounds inside M10's entry, and what it built is what this section said was
+owed: the endpoint refuses a source past its own window (`ee/coordinator/mcpauth/register.go`,
+`TestRegistrationIsRateLimitedPerSource`), and the registrations, the pending authorize requests and
+the codes the unauthenticated shapes leave behind are removed once their own lifetime has passed
+(`SweepExpired`, `RegistrationTTL`, the sweep the two open writes trigger,
+`TestRegistrationsExpireAndAreSwept` — the red step named above as
+`TestARegisteredClientIsExpiredAndSwept`, which is that test under the name M12 gave it). **The guard
+is gone with them**: `TestNoBinaryLinksTheFrontDoorYet` is deleted, and what stands where it stood is
+`TestTheFrontDoorIsServedOnlyWhenEnabled`, so what holds the door now is the switch rather than a
+test — the door mounts nothing without the entry the module writes under `var.mcp_server`, no release
+writes that entry (D934), and a build without M12b's device delivery refuses to enable a door at all
+(D2126, spec.md §11). **M12 carried the two things this section's M7 and M8 clauses left open beside
+the bounds**: the reading of the installation's published state (`ee/coordinator/mcpauth/roster.go`,
+`TestTheRosterIsReadFromThePublishedState`, `TestOnlyExactUserEntriesAdmit`) and the wiring that
+serves M8's four read tools (`TestReadToolsServeOnlyTheProjectsRepositories`).
 
 ### The owner's ruling of 2026-11-07: M5b, and the licence table
 

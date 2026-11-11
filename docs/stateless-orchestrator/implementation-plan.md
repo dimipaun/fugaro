@@ -768,9 +768,10 @@ either half (D2021, answered (a) on 2026-11-10).
 #### O16b. The state group served: the front door's reach into the node (`ee/` + Terraform; approved 2026-11-10; WAITS on the wiring)
 
 - **Waits on, and the trigger for each:** (1) **D2020** answered — **done 2026-11-10, (a), a read-only role** (how the front door reads the node);
-  (2) **an MCP-folder task that serves M8's read tools from a binary** — `docs/mcp-server/README.md` says M8 is built "except the wiring
-  that would serve its four read tools, which no binary has and no task of this plan carries"; the trigger is the owner assigning that
-  wiring task, and O16b registers `RegisterStateTools` beside `RegisterReadTools` in whatever file that task names; (3) O16a merged.
+  (2) **an MCP-folder task that serves M8's read tools from a binary** — **the owner assigned it on 2026-11-11 and it is built: the MCP
+  plan's M12**, whose `ee/coordinator/cli/coordinator_serve.go` registers M8's four read tools on the
+  front door's own registry; O16b registers `RegisterStateTools` beside `RegisterReadTools` in that
+  file; (3) O16a merged.
   `apply_patch` stays out: **D2021** was answered (a) on 2026-11-10, so O16b serves the two read tools only.
 - **What can be named now (D2020 (a), the answer):** `ee/coordinator/mcpauth/state_reach.go` (new: `StateReach` over `internal/rtdb`, read-only,
   as the front door's own account) and its test; a custom role holding **`firebasedatabase.instances.get` and nothing else**, bound to the
