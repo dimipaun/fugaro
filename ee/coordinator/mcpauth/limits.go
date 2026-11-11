@@ -57,11 +57,10 @@ type Limits struct {
 	Scopes []string
 }
 
-// The v1 scope vocabulary, exactly the four names the owner's two answers
-// list: D927's task pair, and the state pair D1227 adds to it to keep a
-// spawn-capable token from being a state editor. roadmap:write is deliberately
-// not here: it is a real name for a surface that does not exist yet, and the
-// console's roadmap-write design is what should decide its scope.
+// The v1 scope vocabulary, exactly the five names the owner's answers list:
+// D927's task pair, the state pair D1227 adds to it to keep a spawn-capable
+// token from being a state editor, and D2121's roadmap write, which is the
+// scope the coordinator's roadmap tools are served under.
 const (
 	// ScopeTasksRead is the status, logs, results and listing half of the
 	// tools.
@@ -76,22 +75,45 @@ const (
 	// catalogued under this scope and served by nothing (D2021), so that
 	// nothing can register it under another one.
 	ScopeStateWrite = "state:write"
+	// ScopeRoadmapWrite is the coordinator's roadmap write (D2121): the six
+	// tools that queue a change to the project's record — a plan published or
+	// unpublished, a task moved, an edge added or removed, a release written.
+	//
+	// It is a name of its own rather than a reading of the task pair, because
+	// what it reaches is not a run: a token that may start work in one
+	// repository must not be one that may rewrite the project's roadmap, and
+	// the write is the whole of what the scope grants — the record's tools
+	// read the record to refuse a stale `expect` and queue nothing else.
+	ScopeRoadmapWrite = "roadmap:write"
 )
 
 // ScopeVocabulary is the closed set v1 mints, in the order a refusal names
 // it.
-var ScopeVocabulary = []string{ScopeTasksRead, ScopeTasksWrite, ScopeStateRead, ScopeStateWrite}
+var ScopeVocabulary = []string{ScopeTasksRead, ScopeTasksWrite, ScopeStateRead, ScopeStateWrite, ScopeRoadmapWrite}
+
+// OperatorOnlyScope reports whether s is a scope only an operator of the
+// installation may hold (D2121).
+//
+// It is one rule in one place because it is read in two, and the two answers
+// have to agree: the authorize endpoint refuses the scope to a person who is
+// not an operator before a code is issued, and the registry refuses every tool
+// that maps to it to a token whose identity is not one — so a record that
+// somehow carries the scope is still served to nobody but an operator. A scope
+// named here is a scope whose holder can change the project for everybody, and
+// the list is the installation's own.
+func OperatorOnlyScope(s string) bool { return s == ScopeRoadmapWrite }
 
 // DefaultScopes is what an authorization that names no scope is given: the task
-// pair, and never a state scope (R1).
+// pair, and never a state scope or the roadmap write (R1, D2121).
 //
 // It is a list of its own rather than the whole vocabulary, and that is the
 // point of it: `requestedScopes` answers an unnamed scope out of this, so a
 // vocabulary that grew would otherwise hand every default sign-in a state
 // scope — the silent widening D1227's own reason refuses, read one step
 // further ("a tasks:write token must not silently become a state editor"). A
-// state scope is held only when a client asks for it by name, which is the
-// same rule the console's roadmap write is held to.
+// state scope is held only when a client asks for it by name, and the roadmap
+// write is held only by an operator who asked for it by name and was given it
+// (D2121), which is why this list is the one it was before the name existed.
 var DefaultScopes = []string{ScopeTasksRead, ScopeTasksWrite}
 
 // KnownScope reports whether s is a scope v1 mints. It is the only test a
@@ -137,7 +159,7 @@ var (
 	// token that would hold it and for the project policy that would grant it.
 	// The message names every scope v1 mints, because the reader of it is an
 	// operator whose next act is to mint the name it should have carried.
-	ErrUnknownScope = errors.New("unknown scope: v1 mints tasks:read, tasks:write, state:read and state:write")
+	ErrUnknownScope = errors.New("unknown scope: v1 mints tasks:read, tasks:write, state:read, state:write and roadmap:write")
 
 	// ErrNoScope refuses limits that reach no tool at all: the token carries
 	// no scope, or the project's policy grants none of the ones it asked
