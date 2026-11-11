@@ -2569,8 +2569,9 @@ func TestTriageSinceIsTheReleaseTheDocsName(t *testing.T) {
 // other recipe construct and refuses both outright, so the whole recipe would
 // die at bootstrap with the launch already paid for: the gate turns that into a
 // refusal at the launcher's terminal, for a derived image (checkRecipeImage), a
-// checkout: clone workflow's base image (checkCloneRecipeImage) and a
-// repository recipe (repoRecipeForGate) alike.
+// checkout: clone workflow's base image (checkCloneRecipeImage), a repository
+// recipe (repoRecipeForGate) and a project recipe (the embedded text,
+// embeddedRecipeOf) alike.
 func TestRecipesSkewRefusesEscalationOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
@@ -2662,6 +2663,30 @@ func TestRecipesSkewRefusesEscalationOnOldImage(t *testing.T) {
 	spec.Recipe.Name = "plain"
 	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err != nil {
 		t.Fatalf("a repository recipe with no escalation construct: %v", err)
+	}
+	// A project recipe is neither the catalog's name nor a file in the
+	// checkout: it reaches the task as embedded text, and that text is the
+	// only place its constructs can be read — escalationRecipeNamed requires
+	// the catalog source, and repoRecipeForGate reads a file this task never
+	// named — so the embedded-text arm is what holds such a recipe to
+	// escalationSince. Both constructs, since either one of them is what the
+	// job image must know.
+	for _, tc := range []struct{ name, yaml string }{
+		{"project-hand-over", "version: 1\nname: project-hand-over\nsteps:\n  - review: { max_rounds: 1, hand_over: true }\n"},
+		{"project-rebase", "version: 1\nname: project-rebase\nsteps:\n  - rebase: {}\n"},
+	} {
+		spec.Recipe = &task.Recipe{Name: tc.name, Source: string(recipe.SourceProject), YAML: tc.yaml}
+		err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "recipe "+tc.name+" needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") {
+			t.Fatalf("a project recipe with %s on 0.22.0: %v", tc.name, err)
+		}
+	}
+	// The control, as for the repository recipes above: the same source with
+	// no escalation construct is judged at recipesSince, which 0.22.0 knows.
+	spec.Recipe = &task.Recipe{Name: "project-plain", Source: string(recipe.SourceProject),
+		YAML: "version: 1\nname: project-plain\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n"}
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a project recipe with no escalation construct: %v", err)
 	}
 }
 
