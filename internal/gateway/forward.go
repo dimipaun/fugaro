@@ -718,7 +718,6 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 type outcome struct {
 	charge
 	settled, pricedAs, servingModel, errorType string
-	usage                                      pricing.Usage // reported
 }
 
 func zeroOutcome(model string, sent bool) outcome {
@@ -1213,12 +1212,19 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 		floor = min(pricing.WithFee(t.acc.reported, fee), w)
 	}
 	o.usage = u
+	// The model this call is priced under, which is the one the request named
+	// and not the serving model the response's own message_start carried: the
+	// per-model token counts the run's record keeps hang off this one (G1.2).
+	// The serving model is the claim the dollars follow (ByModel), and a
+	// response naming a snapshot of the pin, or a model the table doesn't
+	// know at all, must not key the run's own counts.
+	o.pricedModel = p.model
 	o.model = serving
 	o.sent = true
 	o.tokens = u.Input + u.CacheWrite5m + u.CacheWrite1h + u.CacheRead + u.Output
 	// What this call had cached is what a switch after it re-reads (F24), and
 	// it is known because this call's usage was read.
-	o.cacheRead, o.cacheWrite, o.usageRead = u.CacheRead, u.CacheWrite5m+u.CacheWrite1h, true
+	o.usageRead = true
 	if !partial {
 		o.amount, o.settled = max(reported, floor), settledUsage
 		if pr != nil && t.acc.hasReported {

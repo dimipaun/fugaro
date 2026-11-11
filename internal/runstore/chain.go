@@ -181,6 +181,17 @@ func figure(a Amount, measured bool) Figure {
 	return Figure{Amount: a, Measured: true}
 }
 
+// ErrChainGap is a chain read that stopped at a link whose record the bucket no
+// longer holds. It is told apart from every other failed read because it is the
+// one a caller may answer for rather than refuse: a run's objects age out
+// together — its record and its stored task — so a chain older than the window
+// the bucket keeps has a hop with nothing under it, and a caller holding the
+// previous run's stored task holds what the chain left that run, a bound on
+// what is left now. Every other failed read is a figure unknown for a reason no
+// other object answers, and a caller that carried on without it would run past
+// a limit nothing established.
+var ErrChainGap = errors.New("the chain's records stop at a link the bucket no longer holds")
+
 // ResolveChain reads the chain the run of s belongs to: the runs its records
 // link back to the root, and what each of them has already spent.
 //
@@ -199,7 +210,10 @@ func figure(a Amount, measured bool) Figure {
 // and drop every run before it from both the membership and the spend — the
 // same reason a record that cannot be read for any other reason and a link
 // that runs in a circle end the read (F21, T5: a launcher can delete a
-// record, and a chain's figure is never the one a deletion leaves behind).
+// record, and a chain's figure is never the one a deletion leaves behind). The
+// missing record's own error is ErrChainGap, the one of the three a caller may
+// answer for where it holds the previous run's stored task; the other two it
+// refuses.
 //
 // ledgers is the budget database, nil when the budget is off — where the
 // records are the figures and the chain is UNENFORCED (D1046) — perRun is
@@ -237,7 +251,7 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 		rec, err := s.Sibling(id).ReadRecord(ctx)
 		switch {
 		case errors.Is(err, ErrNotFound) && linked:
-			return nil, fmt.Errorf("the chain of run %s/%s links to run %s, whose record runs/%s/%s/result.json does not have, so the runs behind it cannot be found", s.Slug(), from, id, s.Slug(), id)
+			return nil, fmt.Errorf("the chain of run %s/%s links to run %s, whose record runs/%s/%s/result.json does not have, so the runs behind it cannot be found: %w", s.Slug(), from, id, s.Slug(), id, ErrChainGap)
 		case errors.Is(err, ErrNotFound):
 			// The run the read was named for never started, so the chain is
 			// it alone and it holds nothing (D1045).

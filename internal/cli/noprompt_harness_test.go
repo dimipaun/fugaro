@@ -194,6 +194,34 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// block; it asks nothing now (D1540) and the diff of that block is the proof
 	// this fixture reaches it.
 	"fugaro accounts add": {args: []string{"team-a", "--repos", "acme/app"}, reaches: "claude_accounts"},
+	// The two allow-list pairs are the field that block holds, and the sentence
+	// each one prints is the only proof that the run reached its write rather
+	// than a refusal: what these commands edit is which repository may spend a
+	// credential, so a fixture that stopped short of the write for this reason
+	// would be silent exactly where it matters. allow declares an account the
+	// world does not have — the first form of that pair — so it needs no seed;
+	// deny removes a repository the seed gives the account; and both secrets
+	// fixtures need the entry, the allow one with a repository it does not name
+	// so the addition is a change and not the "no change" answer.
+	"fugaro accounts allow": {
+		args:    []string{"team-a", "acme/web"},
+		reaches: "add acme/web to claude_accounts.team-a.allow_data_to",
+	},
+	"fugaro accounts deny": {
+		args:    []string{"team-a", "acme/web"},
+		reaches: "remove acme/web from claude_accounts.team-a.allow_data_to",
+		seed:    closedStdinAccountAllowListSeed,
+	},
+	"fugaro secrets allow": {
+		args:    []string{"bitbucket-token", "acme/web"},
+		reaches: "add acme/web to project_secrets.bitbucket-token.allow_data_to",
+		seed:    closedStdinProjectSecretAllowListSeed("acme/other"),
+	},
+	"fugaro secrets deny": {
+		args:    []string{"bitbucket-token", "acme/web"},
+		reaches: "remove acme/web from project_secrets.bitbucket-token.allow_data_to",
+		seed:    closedStdinProjectSecretAllowListSeed("acme/web"),
+	},
 	// The pool writes are the same kind of edit, and they reach it the same
 	// way: the seed gives the world a credential to list and a pool to remove,
 	// so each runs to its own sentence rather than stopping at the block's own
@@ -233,6 +261,20 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "remove workflows.docs from",
 		seed:    closedStdinWorkflowSeed(workflowDocs),
 	},
+	// The two clone_urls writes are the settings group's kind: each reaches a
+	// block of the world's own project config, and the sentence naming the
+	// entry it changes is the proof the run reached the write rather than the
+	// refusal a project with no config file of its own meets. rm takes an entry
+	// away, so its seed writes one first.
+	"fugaro project clone-url set": {
+		args:    []string{"github/acme/app", "https://github.com/acme/app"},
+		reaches: "write clone_urls[github/acme/app] = https://github.com/acme/app in",
+	},
+	"fugaro project clone-url rm": {
+		args:    []string{"github/acme/app"},
+		reaches: "remove clone_urls[github/acme/app] from",
+		seed:    closedStdinCloneURLSeed,
+	},
 	// watch is the one leaf whose contract is not to return: it follows the
 	// project until it is interrupted. --once is its own one snapshot, which is
 	// the run this harness can hold to a deadline.
@@ -259,6 +301,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro diagnose":             {args: []string{"run-1"}},
 	"fugaro estimate":             {args: []string{"--run", "run-1", "--model", "claude-opus-5-5"}},
 	"fugaro exec":                 {args: []string{"--bucket", "file:///nonexistent"}},
+	"fugaro followups":            {args: []string{"run-1"}},
 	"fugaro image add":            {args: []string{"base"}},
 	"fugaro image gate":           {args: []string{"--record", "r", "--slug", "s", "--bucket", "file:///nonexistent"}},
 	"fugaro image git-credential": {args: []string{"--out", "git-cred"}},
@@ -272,27 +315,35 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// answer, which is the whole of what a closed stdin can be shown here. The
 	// same reference in both is the point — neither leaf may ask a question of a
 	// missing issue.
-	"fugaro issue dismiss":     {args: []string{"local-update-20261107183012-1"}},
-	"fugaro issue show":        {args: []string{"local-update-20261107183012-1"}},
-	"fugaro logs":              {args: []string{"run-1"}},
-	"fugaro managed apply":     {args: []string{"root"}},
-	"fugaro managed flag":      {args: []string{"proj-1234"}},
-	"fugaro managed unflag":    {args: []string{"proj-1234"}},
-	"fugaro models add":        {args: []string{"claude-x"}},
-	"fugaro models rm":         {args: []string{"claude-x"}},
-	"fugaro models search":     {args: []string{"x"}},
-	"fugaro models use":        {args: []string{"a", "b", "c"}},
-	"fugaro pair revoke":       {args: []string{"--uid", "uid-1"}},
-	"fugaro project repos add": {args: []string{"acme/app"}},
-	"fugaro project repos rm":  {args: []string{"acme/app"}},
-	"fugaro recipes publish":   {args: []string{"slug"}},
-	"fugaro recipes show":      {args: []string{"slug"}},
-	"fugaro recipes validate":  {args: []string{"slug"}},
-	"fugaro restore":           {args: []string{"proj-2", "root"}},
-	"fugaro review show":       {args: []string{"run-1"}},
-	"fugaro run":               {args: []string{"do something"}},
-	"fugaro secrets rm":        {args: []string{"NAME"}},
-	"fugaro secrets set":       {args: []string{"NAME"}},
+	"fugaro issue dismiss":  {args: []string{"local-update-20261107183012-1"}},
+	"fugaro issue show":     {args: []string{"local-update-20261107183012-1"}},
+	"fugaro logs":           {args: []string{"run-1"}},
+	"fugaro managed apply":  {args: []string{"root"}},
+	"fugaro managed flag":   {args: []string{"proj-1234"}},
+	"fugaro managed unflag": {args: []string{"proj-1234"}},
+	"fugaro models add":     {args: []string{"claude-x"}},
+	"fugaro models rm":      {args: []string{"claude-x"}},
+	"fugaro models search":  {args: []string{"x"}},
+	"fugaro models use":     {args: []string{"a", "b", "c"}},
+	"fugaro pair revoke":    {args: []string{"--uid", "uid-1"}},
+	"fugaro project profile add": {args: []string{"standard", "--provider", "github", "--cpu", "2",
+		"--memory", "4Gi", "--timeout-class", "6h"}},
+	"fugaro project profile rm": {args: []string{"standard"}},
+	// The world's config defines no profiles, so this fixture stops at the
+	// command's own refusal — which is still its body, and the whole of what a
+	// bare run cannot reach.
+	"fugaro project profile set": {args: []string{"standard", "cpu", "4"}},
+	"fugaro project repos add":   {args: []string{"acme/app"}},
+	"fugaro project repos rm":    {args: []string{"acme/app"}},
+	"fugaro project routing set": {args: []string{"claude", "--via", "direct"}},
+	"fugaro recipes publish":     {args: []string{"slug"}},
+	"fugaro recipes show":        {args: []string{"slug"}},
+	"fugaro recipes validate":    {args: []string{"slug"}},
+	"fugaro restore":             {args: []string{"proj-2", "root"}},
+	"fugaro review show":         {args: []string{"run-1"}},
+	"fugaro run":                 {args: []string{"do something"}},
+	"fugaro secrets rm":          {args: []string{"NAME"}},
+	"fugaro secrets set":         {args: []string{"NAME"}},
 	// The rigor write reaches its own edit through the layer file the seed writes:
 	// the mode it sets ranks above what the file resolves to, so the fixture is the
 	// ordinary write and not the sensitive one, and the sentence naming the key is
@@ -302,6 +353,14 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "set defaults.rigor.default to critical in",
 		seed:    closedStdinRigorLayerSeed,
 	},
+	// The floor's two leaves, driven to the directions that take a level away — a
+	// removal and a lowering, which are the plan's SEC step and the direction a
+	// confirmation used to stand in front of — and the seed is what puts a floor
+	// in the world for them to take one out of. Neither may print a question
+	// here: no command waits on stdin any more (D1540, D1552, D1555), and the
+	// sentence naming the change is the proof this fixture reaches the write.
+	"fugaro rigor floor set":      {args: []string{"pro", "l2"}, reaches: "set review_floor.pro from l2, l3 to l2 in", seed: closedStdinRigorFloorSeed},
+	"fugaro rigor floor unset":    {args: []string{"pro"}, reaches: "remove review_floor.pro (l2, l3) in", seed: closedStdinRigorFloorSeed},
 	"fugaro settings get":         {args: []string{"a.b"}},
 	"fugaro stats runs":           {args: []string{"--project", "proj-1234"}},
 	"fugaro user add":             {args: []string{"someone@example.com"}},
@@ -338,6 +397,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 // that would do more. `fugaro review` and `fugaro pair` refuse from inside
 // their bodies, in sentences of their own, which the run's own error carries.
 var closedStdinNoFixture = map[string]string{
+	"fugaro ab":                "refuses: the edition is not in this build",
 	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
 	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
@@ -370,9 +430,11 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro image selftest":    "reads its spec from the closed stdin and returns on the EOF",
 	"fugaro image status":      "prints the no-project-config refusal",
 	"fugaro image survey":      "prints the no-project-config refusal",
+	"fugaro intake serve":      "refuses without FUGARO_GCP_PROJECT in its own environment",
 	"fugaro issue list":        "reads this machine's issue folder, which holds nothing in this world, and prints no row",
 	"fugaro issue submit":      "sweeps the issues that are waiting, and this world's issue folder holds none: it prints that nothing is pending",
 	"fugaro issue mine":        "reads no store here: this world's credential lookup is refused before the bucket is opened, so it prints the notes of a machine whose shared state could not be read and no row",
+	"fugaro issue sync":        "uploads this machine's issue folder, which holds nothing in this world: the store it uploads to opens, and the run prints that nothing is pending",
 	"fugaro managed status":    "prints the no-project-config refusal",
 	"fugaro models ls":         "prints the built-in list with no project selected",
 	// The orchestrator family reads and writes the state its project's daemon
@@ -383,23 +445,38 @@ var closedStdinNoFixture = map[string]string{
 	// takes no argument and its bare run is the whole command: it lists the
 	// node the fixture's database holds (none) and the cached briefs of the
 	// machine it runs on, which this harness does not fixture.
-	"fugaro orchestrator ls":        "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
-	"fugaro orchestrator state":     "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
-	"fugaro orchestrator events":    "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
-	"fugaro orchestrator patch":     "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
+	"fugaro orchestrator ls":     "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
+	"fugaro orchestrator state":  "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
+	"fugaro orchestrator events": "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
+	"fugaro orchestrator patch":  "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
+	// The login unit's three commands read this machine's own home and nothing
+	// else, and this world's home has no unit: install is refused before its
+	// typed confirmation (a unit runs code at every login, and the word install
+	// is not something a closed pipe can type), and uninstall and status answer
+	// about a machine that has none.
+	"fugaro orchestrator install":   "refuses before its ask: the typed confirmation of a unit that runs code at every login needs a real terminal",
+	"fugaro orchestrator status":    "reports this machine's login unit, and this world's home has none: it says so and returns",
+	"fugaro orchestrator uninstall": "says there is nothing to remove: this world's home has no login unit",
 	"fugaro pair":                   "refuses from inside its body: the world's project has no budget.firebase_api_key for the phone to exchange the token with",
 	"fugaro pair ls":                "prints the no-project-config refusal",
 	"fugaro plan graph":             "refuses with no graph artifact under docs/plans",
 	"fugaro plan status":            "reads the repository's plan and stream files and reports what is missing",
+	"fugaro project clone-url ls":   "reads the selected project's own config, which this world's gives no repository a URL in, and prints that it gives none",
 	"fugaro project policy publish": "refuses before its ask: the deployed rules here carry no policy marker",
 	"fugaro project policy show":    "prints that this installation has published no policy",
+	"fugaro project profile ls":     "lists this world's config, which sets no profiles block, and says that it defines none",
+	"fugaro project profile show":   "refuses from inside its body: this world's config defines no standard profile for it to show",
 	"fugaro project repos ls":       "prints the no-project-config refusal",
+	"fugaro project repos set":      "prints the no-project-config refusal: this world selects no project, and the selection is read before either of the command's two shapes is",
+	"fugaro project routing show":   "prints this world's config's routing line: no switch is written there, which reads as the direct route",
+	"fugaro project routing unset":  "finds no routing block in this world's config, so the remove has nothing to remove and prints that there is no change",
 	"fugaro project show":           "prints the no-project-config refusal",
 	"fugaro project sync":           "refuses before its write: the deployed rules this world serves carry no policy marker",
 	"fugaro reaper":                 "prints the no-project-config refusal",
 	"fugaro recipes ls":             "prints the no-project-config refusal",
 	"fugaro report":                 "refuses: the edition is not in this build",
 	"fugaro review":                 "refuses from inside its body: --pr is required, and a bare run names it rather than launching a review",
+	"fugaro rigor floor show":       "reads the selected project's own config and prints the floor it carries, which is the whole of what a bare run does",
 	"fugaro runs digest":            "prints the no-project-config refusal",
 	"fugaro runs ls":                "prints the no-project-config refusal",
 	"fugaro runs stats":             "prints the no-project-config refusal",
@@ -410,13 +487,21 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro settings":               "prints the registry's every row with no project selected, which is the whole of what a bare run does",
 	"fugaro seats":                  "reads the selected project's records for an advisory estimate, and this world selects no project",
 	"fugaro setup":                  "refuses on this world's runs bucket name before the wizard's first step",
-	"fugaro update":                 "refuses on this world's runs bucket name before its first stage",
-	"fugaro update-skills":          "reports that a development build has no release to pin the plugin to",
-	"fugaro upgrade":                "skips every step: a development build has no release to pin or install",
-	"fugaro user ls":                "prints the no-project-config refusal",
-	"fugaro validate":               "refuses with no fugaro.yaml in the world",
-	"fugaro version":                "prints the version",
-	"fugaro workspace ls":           "prints that no config on this machine names a workspace",
+	// The diagnosis takes the newest logged command that failed when it is
+	// given no run ID, and this world's machine has logged none: the bare run
+	// reaches the command's own "nothing to explain" refusal. Any other run
+	// would need a log and a source tree, which are fixtures of their own
+	// (troubleshoot_test.go); what this harness asks of the leaf is the
+	// policy's own question, and a bare run answers it as well as a fixtured
+	// one, because the command reads no stdin on any path.
+	"fugaro troubleshoot":  "refuses from inside its body: this world's machine has logged no failed command, and a bare run takes the newest one",
+	"fugaro update":        "refuses on this world's runs bucket name before its first stage",
+	"fugaro update-skills": "reports that a development build has no release to pin the plugin to",
+	"fugaro upgrade":       "skips every step: a development build has no release to pin or install",
+	"fugaro user ls":       "prints the no-project-config refusal",
+	"fugaro validate":      "refuses with no fugaro.yaml in the world",
+	"fugaro version":       "prints the version",
+	"fugaro workspace ls":  "prints that no config on this machine names a workspace",
 }
 
 // closedStdinPrompts is the allow-list: the leaves that still print a question
@@ -451,12 +536,6 @@ type closedStdinUnreachedAsk struct {
 // named removes the ask, and the commit that removes it has to delete this entry
 // too, or the marker check below fails.
 var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
-	// managed apply asks from inside an apply: the question carries a saved
-	// plan's hash and counts, so it takes a planned root this world has none of.
-	"fugaro managed apply": {
-		file: "managed_apply.go", marker: "func managedAsk(cmd *cobra.Command, lc *localcfg.Config)",
-		task: "T9", why: "asks inside an apply, which needs a saved plan this world does not build",
-	},
 	// The refresh's own two cloud steps — the base pin and the daily image check
 	// job's config — ask from inside the run, and reaching one needs the jobs and
 	// the registry this world does not fake. Its billable builds asked here too
@@ -639,12 +718,49 @@ func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 	f.appendConfig(t, "base_branch: main\n")
 }
 
+// closedStdinCloneURLSeed gives the world's own project config the entry the
+// clone_urls removal takes away, beside one it leaves. Without the first the
+// leaf would stop at "this project gives no clone URL for it" and would say
+// nothing about the write; without the second the removal would be the last
+// entry's, which the command refuses for the reason its own refusal gives.
+func closedStdinCloneURLSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n  github/acme/other: https://github.com/acme/other.git\n")
+}
+
 // closedStdinPoolSeed gives the world the two things a pool write needs to
 // reach its own edit: a credential a member may name (two of them, so the
 // declaration the fixture asks for is a change) and a pool to remove.
 func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\npools:\n  - name: claude-pool\n    members:\n      - team-a\n")
+}
+
+// closedStdinAccountAllowListSeed gives the world the account the deny's
+// fixture narrows: a removal from an account the config does not declare is
+// refused before the write, which would leave the fixture's sentence unproven.
+// The allow's own fixture needs no seed — declaring the account is that form's
+// work.
+func closedStdinAccountAllowListSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "claude_accounts:\n  team-a:\n    allow_data_to:\n      - acme/web\n")
+}
+
+// closedStdinProjectSecretAllowListSeed is the same for the project secret's
+// own list, and it is also the fixture's repository: the deny removes the one
+// it names, and the allow adds to a list that does not already hold it, so
+// neither run is the "no change" answer for a state the seed had already
+// reached. Only the names the project stores project-wide may appear here — the
+// loader refuses any other — and bitbucket-token is the one this list is for.
+func closedStdinProjectSecretAllowListSeed(repos ...string) func(*testing.T, *budgetFixture) {
+	return func(t *testing.T, f *budgetFixture) {
+		t.Helper()
+		body := "project_secrets:\n  bitbucket-token:\n    allow_data_to:\n"
+		for _, repo := range repos {
+			body += "      - " + repo + "\n"
+		}
+		f.appendConfig(t, body)
+	}
 }
 
 // closedStdinRigorLayerSeed gives the world the file `fugaro rigor set` edits:
@@ -656,6 +772,17 @@ func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
 func closedStdinRigorLayerSeed(t *testing.T, _ *budgetFixture) {
 	t.Helper()
 	settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  rigor:\n    default: pro\n")
+}
+
+// closedStdinRigorFloorSeed gives the world's own project config the review
+// floor the two floor leaves take a level out of: the removal and the lowering
+// are the directions that used to ask for the project's name typed at a
+// terminal, and the seed is what puts them within the fixture's reach. Without
+// it both runs would report the floor that is not there, which is a no-op before
+// the write rather than the write this fixture is for.
+func closedStdinRigorFloorSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "review_floor:\n  pro: [l2, l3]\n")
 }
 
 // closedStdinWorkflowSeed makes the world's own directory a checkout of a
@@ -700,6 +827,13 @@ func closedStdinWorld(t *testing.T) *budgetFixture {
 	// build command and take minutes, and the harness would be measuring the
 	// machine rather than the command.
 	t.Setenv("FUGARO_STATE_DIR", "")
+	// The login unit's file belongs under the person's own home on macOS —
+	// launchd reads $HOME, where Linux reads the XDG directories the fixture
+	// already isolates — and this harness drives the uninstall leaf. Without
+	// this, a developer who has the daemon installed would have their own unit
+	// deleted by a test run, and the leaf would fail on the file it found
+	// rather than on the machine having none.
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
 	// Which machine this is must not decide what a run does: a coding agent's
 	// session refuses writes the closed-stdin case would otherwise reach, and a
 	// real terminal is what this harness is the opposite of.

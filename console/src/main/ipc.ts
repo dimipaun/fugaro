@@ -823,9 +823,9 @@ export const CONSOLE_OPERATIONS = [
   //
   // What is deliberately absent is the point. `--all-users` is a flag of
   // `newRunsStatsCmd` that shows every user's row, and it is not a key of this
-  // schema: the command resolves the view itself -- an operator of the
+  // schema: the command resolves the view itself -- an admin of the
   // installation (the identity named in the local config's `user:`/git, listed
-  // in its `terraform.operators`) sees every user's rows, and everyone else sees
+  // in its `terraform.admins`) sees every user's rows, and everyone else sees
   // their own row alone (`internal/cli/runs_stats.go`, `userStatsViewOwn`) --
   // and a console that could pass the flag could widen a private view to
   // everyone's with one click. `--by` is fixed to `user` by the command's own
@@ -963,7 +963,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'source',
         kind: 'graphSource',
         required: false,
-        why: '`newGraphCmd` has this flag and its set is closed: `all` (the command’s own default, the union of the scopes that exist), `coordinator` (the stored view), and `orchestrator:<id>` / `local:<id>` for the scopes a later release adds -- both of which today answer "no orchestrator is installed in this build", which is a refusal and not an empty graph. The pattern is the CLI’s own (`graph.ParseScope`), so a value this surface admits is a value that command reads. It is optional because the command has a default of its own (`all`), so a caller that names no scope is answered rather than refused.',
+        why: '`newGraphCmd` has this flag and its set is closed: `all` (the command’s own default, the union of the scopes that exist), `coordinator` (the stored view), and `orchestrator:<id>` / `local:<id>`, which read one orchestrator’s own state node (CG4 and CG5). An id no scope of that name exists for is a refusal and not an empty graph: the database holds no node for it, and for `local:` this machine holds no cached brief either. The pattern is the CLI’s own (`graph.ParseScope`), so a value this surface admits is a value that command reads. It is optional because the command has a default of its own (`all`), so a caller that names no scope is answered rather than refused.',
       },
     ],
   },
@@ -994,7 +994,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'source',
         kind: 'graphSource',
         required: false,
-        why: 'the scope the stream is about, on `graph.read`’s own terms: `all` (the command’s default, the union of the scopes that exist), `coordinator`, or `orchestrator:<id>` / `local:<id>` for the scopes a later release adds. It is the same closed grammar the read above is held to (`GRAPH_SCOPE_RE`) and, at the source, the same membership rule: a scope no previous document of this installation listed is refused before a child exists (F21), so a renderer cannot hold a stream open on a scope that exists nowhere. It is optional because the command has a default of its own, exactly as the read’s is.',
+        why: 'the scope the stream is about, on `graph.read`’s own terms: `all` (the command’s default, the union of the scopes that exist), `coordinator`, or `orchestrator:<id>` / `local:<id>`, which read one orchestrator’s own state node (CG4 and CG5). It is the same closed grammar the read above is held to (`GRAPH_SCOPE_RE`) and, at the source, the same membership rule: a scope no previous document of this installation listed is refused before a child exists (F21), so a renderer cannot hold a stream open on a scope that exists nowhere. It is optional because the command has a default of its own, exactly as the read’s is.',
       },
       {
         key: 'visible',
@@ -2438,7 +2438,7 @@ const MAX_SETTING_KEY_LENGTH = 120
  * **`*` is admitted anywhere a letter is, on purpose.** A standalone segment is
  * the spelling the registry uses, but `stages.rev*iew.x` passes this grammar
  * too, and that is the honest shape of the claim: this expression bounds the
- * **word** a key can be, and `internal/cli/settings_set.go:331` refuses any key
+ * **word** a key can be, and `internal/cli/settings_set.go:537` refuses any key
  * carrying a `*` with its own sentence -- "varies with a name this command does
  * not take" -- before the allow-list is consulted. Tightening the segment here
  * would move that refusal from the CLI's words to a schema refusal of this
@@ -2446,7 +2446,7 @@ const MAX_SETTING_KEY_LENGTH = 120
  *
  * **It is a shape and not the allow-list.** Whether the generic write path owns
  * a key is `settingsGenericKeys`/`settingsGenericPrefixes`
- * (`internal/cli/settings_set.go:75`, `:99`) -- the CLI's own list, which the
+ * (`internal/cli/settings_set.go:96`, `:251`) -- the CLI's own list, which the
  * console keeps no copy of (D1102). What this grammar does is keep the argv
  * word a key can be: no space, no dash, no `=`, nothing that could be read as a
  * flag or quoted by a shell, so the key never needs the terminator the value

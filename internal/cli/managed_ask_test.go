@@ -487,23 +487,33 @@ func TestUpdateManagedAskRefusesWhereNobodyCanAnswer(t *testing.T) {
 // the gate to judge less. The question the flag put back earlier in the run is
 // answered yes here, so what the run stops on is the gate's refusal and not the
 // flag's own unanswered question.
+//
+// The fixture is D1549's kind and not the grant this test used to carry: since
+// T9 a grant the review did not list is a content finding the gate records and
+// warns about rather than refuses, so a plan of those would be applied and
+// could not witness a refusal at all. An authoritative IAM resource still
+// refuses, which is what leaves the gate's sentence — and not the confirmation
+// --ask put back — the thing this run stops on.
 func TestUpdateManagedAskKeepsTheGatesOwnRefusalFirst(t *testing.T) {
-	const a = "user:a@example.com"
-	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
+	const address = "module.installation.google_storage_bucket_iam_binding.runs"
 	r := updateRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	isolateGateCredentials(t)
 	fakeTerminal(t)
 	noAgentSession(t)
 	updating(t, r)
-	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	r.setPlan(t, change(address, "create"))
 
 	got, err := askUpdateRun(t, r, "y\n", "update", "--ask")
 	if err == nil {
 		t.Fatalf("--ask applied a plan the managed gate refuses:\n%s", got)
 	}
-	if !strings.Contains(got, managedmode.NotConverged) || !strings.Contains(got, address) {
-		t.Errorf("the refusal is not the gate's own, naming what it refused:\n%s", got)
+	// The fact is read where the terminal says it is: the brief's three lines
+	// carry the rule's clause and the step's own line in the log carries the
+	// sentence that names the resource (the owner's feedback of 2026-11-09).
+	whole := got + namedLog(t, got)
+	if !strings.Contains(whole, managedmode.NotConverged) || !strings.Contains(whole, address) {
+		t.Errorf("the refusal is not the gate's own, naming what it refused:\n%s", whole)
 	}
 	if n := len(r.ran(t, "apply")); n != 0 {
 		t.Errorf("%d terraform apply(s) ran for a plan the gate refused", n)
@@ -621,13 +631,14 @@ func TestUpdateAskAndYesAreRefused(t *testing.T) {
 	}
 }
 
-// The plugin wiring's y/N is one of the questions a managed project takes no
-// confirmation for today (the stage's own Apply, driven here under the gate),
-// and it is the flag's most ordinary surface: with --ask the y/N is asked, and
-// with an empty stdin the answer is no and the file is not written. The control
-// is the same call without the flag, which writes and prints the gate's
-// sentence instead.
-func TestManagedAskGivesThePluginWiringItsYOrNBack(t *testing.T) {
+// The plugin stage's y/N went with the wiring (U2, D949): the settings write it
+// confirmed is gone, and the step left is the install in Claude Code, which no
+// gate stands in for and --ask is not the flag to put a question back on. The
+// two runs — the flag, and the control without it — are driven the same way
+// (the gate open, a terminal, the stage's Apply called directly), and what is
+// read off them is that they are the same: no prompt, no diff of a file, and
+// the checkout's settings byte for byte.
+func TestManagedAskGivesThePluginStageNoQuestion(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	for _, ask := range []bool{false, true} {
 		name := "the flag"
@@ -638,7 +649,7 @@ func TestManagedAskGivesThePluginWiringItsYOrNBack(t *testing.T) {
 			settings := wiringCheckout(t, settingsWithOthers)
 			withTerminal(t, true)
 			e, out := stageEngine(t, "", &initOptions{ask: ask})
-			// --ask reaches the step's confirmation through the command's own
+			// --ask reaches a step's confirmation through the command's own
 			// flags — askConfirm reads it there, and boolFlag answers false for
 			// a flag its command does not carry — so a rig that left it off the
 			// command would be a --ask run in which nothing is ever asked. And
@@ -647,26 +658,16 @@ func TestManagedAskGivesThePluginWiringItsYOrNBack(t *testing.T) {
 			e.r.cmd.SetOut(out)
 			e.r.gate = &initGate{managed: true}
 
-			_, err := newPluginStage(e).Apply(t.Context(), initflow.Env{Interactive: true})
-			got, _ := os.ReadFile(settings)
-			written := string(got) != settingsWithOthers
-			if !strings.Contains(out.String(), "extraKnownMarketplaces") {
-				t.Fatalf("the step printed no diff of what it would write:\n%s", out.String())
+			if _, err := newPluginStage(e).Apply(t.Context(), initflow.Env{Interactive: true}); err != nil {
+				t.Fatalf("the plugin stage was stopped (err %v): it has nothing to ask:\n%s", err, out.String())
 			}
-			if !ask {
-				if err != nil || !written || !strings.Contains(out.String(), initflow.GateOrdinary()) {
-					t.Fatalf("the control did not take the gate's verdict (err %v, written %v):\n%s", err, written, out.String())
+			if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
+				t.Errorf("the stage wrote the checkout's settings:\n%s", got)
+			}
+			for _, bad := range []string{"[y/N]", "extraKnownMarketplaces", initflow.GateOrdinary(), initflow.GateProceeded()} {
+				if strings.Contains(out.String(), bad) {
+					t.Errorf("the stage says %q, and it neither asks nor writes:\n%s", bad, out.String())
 				}
-				return
-			}
-			if err == nil || written {
-				t.Fatalf("--ask wrote the settings with nothing typed (err %v, written %v):\n%s", err, written, out.String())
-			}
-			if !strings.Contains(out.String(), "write this to "+settings+"? [y/N]: ") {
-				t.Errorf("--ask did not ask the y/N the gate stood in for:\n%s", out.String())
-			}
-			if strings.Contains(out.String(), initflow.GateOrdinary()) || strings.Contains(out.String(), initflow.GateProceeded()) {
-				t.Errorf("--ask printed the gate's sentence instead of asking:\n%s", out.String())
 			}
 		})
 	}

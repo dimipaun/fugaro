@@ -4,69 +4,55 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/dimipaun/fugaro/internal/config"
 	"os"
 	"path/filepath"
-	"strings"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// The plugin-wiring stage (stage 8, design §4.3): merges the Fugaro
-// marketplace and enabledPlugins entries into the checkout's
-// .claude/settings.json, pinned to the binary's release tag, after showing the
-// diff and a confirmation of its own (--yes confirms it). Only those two
-// entries change; a file that is not valid JSON, a marketplace named fugaro
-// that is not Fugaro's, and a fork are left alone and handed to the user. A
-// dev build has no tag to pin to and the stage is skipped saying so; outside a
-// checkout it prints the settings to add. It never commits.
+// The plugin stage (stage 8): the plugin installed, or updated, in the user's
+// own Claude Code through the claude CLI, at user scope, and the pin an older
+// fugaro left in the checkout taken out (U5). The merge that wrote the pin was
+// deleted outright (D949, answered 2026-11-04; U2 of
+// docs/plugin-user-scope/implementation-plan.md), so nothing writes one any
+// more and the removal is the only thing in the tree that touches one at all
+// (F26): the checkout is written once, to take the two entries the merge left
+// out, and every other write of this stage is on this machine, in the user's
+// own plugin installation.
 //
-// The stage's second half is fugaro upgrade's plugin step, and it is this
-// stage's own since D941 (U1 of docs/plugin-user-scope/implementation-plan.md):
-// the plugin installed or updated in the user's own Claude Code through the
-// claude CLI. It is here and not in the checkout stage because this stage runs
-// before the repository stage (initflow's order, F3): a session whose
-// repository stage returns needs-you — a repository not enrolled, a GitHub App
-// ID that is missing, an invalid fugaro.yaml — never reaches the checkout, and
-// the install is the step that clears the staleness line every command prints
-// ("run fugaro update"), so a run that leaves it behind leaves that reader in a
-// loop with no way out (reconciliation.md F13, #1836). Both halves are writes
-// on this machine, which is why the stage is LocalUnderAgent.
-
-// pluginFirstRun ends the wiring. Observed live 2026-10-07 (cause not
-// verified): after init wired the settings, opening Claude Code in the folder
-// did not make the skills available and the plugin had to be installed by
-// hand. fugaro update's plugin step (the same one fugaro upgrade runs, Task 6,
-// docs/design/upgrade.md) does that same work, including its own claude-less
-// fallback (noClaudeHint), so this text points there instead of repeating the
-// manual commands (code review of upgrade task 9, 2026-10-09).
-const pluginFirstRun = "Run fugaro update to install the plugin for you.\n" +
-	"Once this is committed, Claude Code installs the plugin when you open this folder in a new session and trust it.\n" +
-	"If the /fugaro: skills are not listed (for example the folder was already trusted), run fugaro update again; without claude on your PATH it prints the slash commands to type in Claude Code instead. fugaro doctor then shows the plugin as installed.\n" +
-	"A repository's settings can install a plugin from the marketplace they name, so only trust folders you trust.\n"
-
-// pluginRefresh follows a changed pin: Claude Code reports the new version but
-// shows the plugin as "not cached" and its skills disappear until the
-// marketplace is updated (verified live, V2); no restart is needed. See
-// pluginFirstRun: fugaro update's plugin step runs the manual command too.
-const pluginRefresh = "Run fugaro update to refresh it for you, or in Claude Code run /plugin marketplace update fugaro (until then the plugin shows \"not cached\" and its skills are gone).\n"
+// The stage is here and not in the checkout stage because it runs before the
+// repository stage (initflow's order, F3): a session whose repository stage
+// returns needs-you — a repository not enrolled, a GitHub App ID that is
+// missing, an invalid fugaro.yaml — never reaches the checkout, and the install
+// is the step that clears the staleness line every command prints ("run fugaro
+// update"), so a run that leaves it behind leaves that reader in a loop with no
+// way out (reconciliation.md F13, #1836). It is LocalUnderAgent because what it
+// writes is on this machine: the user's own Claude Code, on files its session
+// reads anyway. Nothing here reaches the cloud, which is what the marker's
+// refusal is about, and it is the step that clears the line every command
+// prints.
+//
+// The gates below (the checkout's origin, its fugaro.yaml, and the machine
+// config's answer about the repository) are the checkout write's: they are what
+// authorises taking the pin out of somebody's checkout, and the install half
+// drops them with the rest of the pin's machinery (F24, D955, U8). Until then a
+// checkout that is not the project's is still left for the user, and nothing is
+// installed from it.
 
 type pluginStage struct {
-	e       *initEngine
-	printed bool // the outside-a-checkout snippet, said once
-	// ask: the checkout's repository is not the project's yet and has to be
-	// typed in before anything is written (set by plan); repo and root name it.
-	ask    bool
-	origin originInfo
-	root   string
+	e *initEngine
 	// loc and found are the checkout the plan read, and whether there is one
-	// at all: the settings file the wiring half writes, and the directory the
-	// install half runs claude in. Outside a checkout the install has nowhere
-	// to run (the stage prints the settings to add and skips), which is the
-	// only case found is false in.
+	// at all: the directory the install half runs claude in. Without one there
+	// is no repository for the gates below to read, and the stage skips.
 	loc   pluginwire.Location
 	found bool
+	// installStep is whether the stage's own something-to-do is the install
+	// half's, and not the pin's removal alone (Check). The two are Todo alike
+	// and only one of them is this run taking the machine's plugin — and the
+	// checkout — to this release.
+	installStep bool
 }
 
 func newPluginStage(e *initEngine) *pluginStage { return &pluginStage{e: e} }
@@ -75,70 +61,46 @@ func (*pluginStage) Name() string { return initflow.Plugin }
 
 // LocalUnderAgent: in a coding agent's session the loop applies this stage
 // instead of leaving it for the user (initflow.LocalUnderAgent), because every
-// write it makes is on this machine — the checkout's .claude/settings.json and
-// the plugin in the user's own Claude Code through the claude CLI — and those
-// are the writes the user's own session makes with fugaro upgrade, on files it
-// reads anyway. Nothing here reaches the cloud, which is what the marker's
-// refusal is about: the pin and the plugin are the step it may not take with
-// it, and it is the step that clears the line every command prints.
+// write it makes is on this machine — the plugin in the user's own Claude Code
+// through the claude CLI — and that is the write the user's own session makes
+// with fugaro upgrade, on files it reads anyway.
 func (*pluginStage) LocalUnderAgent() {}
 
 func (s *pluginStage) Left() initflow.Left {
 	return initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftCommand, Text: selfCommand() + " update-skills"}
 }
 
-// forkLeft is the one line that moves a fork's marketplace pin.
-func forkLeft() initflow.Left {
-	return initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftCommand, Text: selfCommand() + " update-skills --allow-fork"}
-}
-
-// plan is the read-only merge for the working directory's checkout: the
-// change, or the status that says why there is none.
-func (s *pluginStage) plan(ctx context.Context) (*pluginwire.Change, *initflow.Status, error) {
-	ch, st, err := s.plan1(ctx)
-	if st != nil && st.State == initflow.NeedsYou && !strings.Contains(st.Detail, "repository stage was not reached") {
-		st.Detail += "; the repository stage was not reached"
+// plan is the read-only half: the gates that say whether this checkout is one
+// to install the machine's plugin from, or the status that says why not.
+func (s *pluginStage) plan(ctx context.Context) (*initflow.Status, error) {
+	s.loc, s.found = pluginwire.Locate(".")
+	status := func(st initflow.State, detail string, left *initflow.Left) (*initflow.Status, error) {
+		return &initflow.Status{State: st, Detail: detail, Left: left}, nil
 	}
-	return ch, st, err
-}
-
-func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.Status, error) {
-	s.ask = false
-	status := func(st initflow.State, detail string, left *initflow.Left) (*pluginwire.Change, *initflow.Status, error) {
-		return nil, &initflow.Status{State: st, Detail: detail, Left: left}, nil
-	}
-	loc, ok := pluginwire.Locate(".")
-	s.loc, s.found = loc, ok
-	if !ok {
-		if !s.printed {
-			s.printed = true
-			fmt.Fprintf(s.e.r.w, "not in a checkout, so nothing is wired. To use the Fugaro plugin, merge this into the repository's .claude/settings.json:\n\n%s\n", pluginwire.Snippet(Version))
-		}
-		return status(initflow.Skipped, "not in a checkout: the settings to add are printed above", nil)
-	}
-	if _, err := pluginwire.Tag(Version); err != nil {
-		return status(initflow.Skipped, "this fugaro build has no release tag to pin the plugin to, so nothing is wired (a release build adds it)", nil)
+	loc := s.loc
+	if !s.found {
+		return status(initflow.Skipped, "not in a checkout: this stage installs the plugin from the checkout's repository", nil)
 	}
 	// Only the checkout the project's own repository stage would target.
 	e := s.e
 	repo, ok := readOrigin(ctx, loc.Root)
 	if !ok {
-		return status(initflow.Skipped, "this checkout has no origin repository, so it is not one to wire", nil)
+		return status(initflow.Skipped, "this checkout has no origin repository, so it is not one to install the plugin from", nil)
 	}
 	switch data, rerr := readFugaroYAML(filepath.Join(loc.Root, "fugaro.yaml")); {
 	case rerr == nil:
 		if p, perr := config.ProjectOf(data); perr != nil || p != e.lc.Name {
-			return status(initflow.Skipped, "this checkout's fugaro.yaml names another project (or none), not "+pluginwire.Printable(e.lc.Name)+": the plugin is not wired here", nil)
+			return status(initflow.Skipped, "this checkout's fugaro.yaml names another project (or none), not "+pluginwire.Printable(e.lc.Name)+": the plugin is not installed from here", nil)
 		}
 	case !errors.Is(rerr, os.ErrNotExist):
 		// Unknown is not a pass: a file that cannot be read (a symlink, a
 		// device, an oversize file) could name any project.
 		lf := initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftConsole, Text: "make fugaro.yaml a regular file of at most 1 MiB (or remove it), then rerun " + e.r.o.doorProgram()}
-		return status(initflow.NeedsYou, "this checkout's fugaro.yaml cannot be read, so which project it names is unknown and the plugin is not wired: "+pluginwire.Printable(oneLineCLI(rerr.Error())), &lf)
+		return status(initflow.NeedsYou, "this checkout's fugaro.yaml cannot be read, so which project it names is unknown and the plugin is not installed: "+pluginwire.Printable(oneLineCLI(rerr.Error())), &lf)
 	}
 	switch a, err := e.authState(repo); {
 	case err != nil:
-		return nil, nil, err
+		return nil, err
 	case a == authNeeded && !e.r.o.enrolling():
 		// A door that does not enrol a repository: one line naming the door
 		// that does, and never the typed question or --onboard-repo, which
@@ -148,112 +110,160 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 	case a == authNeeded:
 		lf := onboardLeft(repo, e.r.o.doorName())
 		return status(initflow.NeedsYou, unknownDetail(e.lc.Name, repo, convergeOptIn(e.lc, repo)), &lf)
-	case a == authAsk:
-		s.origin, s.root, s.ask = repo, loc.Root, true
 	}
-	ch, err := pluginwire.Plan(loc.Settings, Version, s.e.r.o.allowFork)
-	var fe *pluginwire.ForeignError
-	var fk *pluginwire.ForkError
-	switch {
-	case errors.As(err, &fk):
-		lf := forkLeft()
-		return status(initflow.NeedsYou, fmt.Sprintf("the %q marketplace in %s names %s, not %s: not moved without --allow-fork", pluginwire.Marketplace, loc.Settings, pluginwire.Printable(fk.Repo), pluginwire.Repo), &lf)
-	case errors.As(err, &fe), pluginwire.IsInvalid(err):
-		lf := initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftConsole, Text: "fix " + loc.Settings + " (or merge the settings by hand: " + selfCommand() + " update-skills prints them), then rerun " + e.r.o.doorProgram()}
-		return status(initflow.NeedsYou, pluginwire.Printable(oneLineCLI(err.Error())), &lf)
-	case err != nil:
-		return nil, &initflow.Status{State: initflow.NeedsYou, Detail: pluginwire.Printable(oneLineCLI(err.Error())), Left: nil}, nil
-	}
-	return ch, nil, nil
+	return nil, nil
 }
 
 // Check is status plus the one fact a later stage reads off this stage: a
-// plugin stage with something to do is this run taking the checkout — and this
-// machine's plugin — to this release, and the checkout's own cloud half, the
-// job images built FROM the base the images stage pins in this same run, is
-// what moves with it (init_checkout_upgrade.go's Check reads
+// plugin stage whose install half has something to do is this run taking this
+// machine's plugin — and the checkout — to this release, and the checkout's own
+// cloud half, the job images built FROM the base the images stage pins in this
+// same run, is what moves with it (init_checkout_upgrade.go's Check reads
 // initEngine.checkoutBehind). Set and never cleared, which is why the flag is
-// not simply assigned: the run's own writes move what it was read from — this
-// stage's pin write and the install that clears the version behind it — and
-// the execution pass checks this stage again after the apply that changed both.
+// not simply assigned: the run's own write moves what it was read from — the
+// install that clears the version behind it — and the execution pass checks
+// this stage again after the apply that changed it.
+//
+// The pin's removal alone is not that fact: a checkout that carries a pin and
+// the plugin this release already installs has nothing of the run's to move but
+// the two entries, and a billable image rebuild is not what taking them out
+// asks for (U5).
 func (s *pluginStage) Check(ctx context.Context) (initflow.Status, error) {
-	_, st, err := s.status(ctx)
-	if err == nil && st.State == initflow.Todo {
+	st, err := s.status(ctx)
+	if err == nil && s.installStep {
 		s.e.checkoutBehind = true
 	}
 	return st, err
 }
 
 // status is the stage's whole answer, and it is one function because Check and
-// Plan have to read the same thing: the wiring half's change and its skip line,
-// and the install half's state, which has been a step of this stage since U1
-// (the plugin in the user's own Claude Code). The change comes back with it for
-// the plan, which is what prints the diff of a wiring half about to change.
-func (s *pluginStage) status(ctx context.Context) (*pluginwire.Change, initflow.Status, error) {
-	ch, st, err := s.plan(ctx)
+// Plan have to read the same thing: the checkout's gates, then the install's
+// own state (the plugin in the user's own Claude Code, which has been a step of
+// this stage since U1), then the pin an older fugaro left, which U5 takes out.
+// Deleting the pin's writer did not narrow the gates — what they guard now is
+// the removal (F24, D955) — and it did not make the install the checkout's
+// either: the machine's plugin is the same one for every checkout, so a
+// checkout this run may not take the write into is not a machine with nothing
+// to install (U1, F13).
+//
+// The removal is read only where the gates passed: a checkout this run may not
+// write into is not one to take the pin out of either. The two sources of work
+// are then one line: the install's own, with the removal's beside it, so a
+// reader sees both, and the removal alone is something to do in its own right.
+func (s *pluginStage) status(ctx context.Context) (initflow.Status, error) {
+	st, err := s.plan(ctx)
 	switch {
 	case err != nil:
-		return nil, initflow.Status{}, err
+		return initflow.Status{}, err
 	case st != nil && st.State == initflow.NeedsYou:
-		// The wiring half cannot be read at all: the stage stops there, as it
-		// did before the install half was its own, and nothing is installed.
-		return ch, *st, nil
+		// The gates cannot read the checkout at all: the stage stops there, as
+		// it did before the install half was its own, and nothing is installed.
+		return *st, nil
 	}
 	inst := s.install(ctx, initflow.Env{}, true)
+	if inst.state == stepFailed {
+		return initflow.Status{}, errors.New(inst.reason)
+	}
+	var rem *pluginwire.Removal
+	var note string
+	if st == nil {
+		rem, note = s.removal()
+	}
+	var out initflow.Status
 	switch {
-	case inst.state == stepFailed:
-		return nil, initflow.Status{}, errors.New(inst.reason)
 	case inst.state == stepStale:
 		// The plugin in Claude Code is a release behind what this fugaro
-		// installs: something to do, whatever the pin says — a pin already at
-		// this release and an install that never happened is exactly the state
-		// both halves have to read the same way (#1836c).
-		return ch, initflow.Status{State: initflow.Todo, Detail: behindLine(ch, inst)}, nil
-	case ch != nil && ch.Changed:
-		// The wiring half has work of its own here, and its line is the more
-		// telling of the two: the install half's own line is printed by the
-		// apply either way.
-		d := "adds the Fugaro plugin to " + ch.Path + ", pinned to " + ch.Tag
-		if s.ask {
-			d += "; asks you to type the repository's name first (it is not the project's yet)"
-		}
-		return ch, initflow.Status{State: initflow.Todo, Detail: d}, nil
-	case s.found && s.installs() && inst.state != stepCurrent:
-		// The install half is a step of this stage and it is not up to date:
-		// nothing installed on this machine, or a record this fugaro cannot
+		// installs: something to do, whatever the gates say (#1836c).
+		s.installStep = true
+		out = initflow.Status{State: initflow.Todo, Detail: behindLine(inst)}
+	case !s.installs():
+		// A development build has no release plugin to install: the install
+		// half's own skip, and not something to do.
+		out = initflow.Status{State: initflow.Skipped, Detail: inst.reason}
+	case s.found && inst.state != stepCurrent:
+		// Nothing installed on this machine, or a record this fugaro cannot
 		// compare — neither reads as current, which is what --check's own
 		// answer words as a skip because it is about the plugin the machine
-		// already has, where this stage has the install itself to make. The
-		// plugin in Claude Code is the same one for every checkout, so a
-		// checkout this run may not wire is not a machine that needs nothing
-		// (U1, F13).
-		return ch, initflow.Status{State: initflow.Todo, Detail: "installs the plugin in Claude Code: " + inst.reason}, nil
+		// already has, where this stage has the install itself to make.
+		s.installStep = true
+		out = initflow.Status{State: initflow.Todo, Detail: "installs the plugin in Claude Code: " + inst.reason}
 	case st != nil:
-		// This checkout is not one to wire (or this build has no release tag to
-		// pin to), and the install half is current or is not a step here: the
-		// wiring half's own skip line is the stage's answer.
-		return ch, *st, nil
+		// This checkout is not one to take the write into: the gate's own skip
+		// line is the stage's answer, and the install half is current or is not
+		// a step here.
+		out = *st
+	default:
+		out = initflow.Status{State: initflow.Done, Detail: "No changes: " + inst.reason}
 	}
-	d := "No changes: " + ch.Path + " pins the plugin to " + ch.Tag
-	if ch.Disabled {
-		d += " (the repository disables it)"
+	if rem != nil {
+		line := removalLine(rem)
+		if out.State == initflow.Todo {
+			out.Detail = beside(out.Detail, line)
+		} else {
+			// The install half is current (or is not a step of this build) and
+			// the pin is the whole of what is left to do.
+			out = initflow.Status{State: initflow.Todo, Detail: line}
+		}
 	}
-	return ch, initflow.Status{State: initflow.Done, Detail: d + "; " + inst.reason}, nil
+	out.Detail = beside(out.Detail, note)
+	return out, nil
 }
 
-// behindLine is the stage's line when the two halves disagree: the pin is not
-// the whole truth, because Claude Code's own record of the installed plugin is
-// another version, and "No changes: ... pins the plugin to vX" alone would read
+// beside appends a sentence to a stage's line, or is the line when there is
+// none: a pin the removal refused goes beside whatever the stage was going to
+// say, so the reader learns both and the run goes on to the next stage (spec
+// §8).
+func beside(line, note string) string {
+	switch {
+	case note == "":
+		return line
+	case line == "":
+		return note
+	}
+	return line + "; " + note
+}
+
+// removal plans the pin's removal, and is the sentence for a pin that is not
+// this package's to take out. A file that is not usable settings, a
+// marketplace that is not Fugaro's own repository at a release tag, a plugin
+// the repository disabled: each is left exactly as it is — that is not a
+// failure, and the run continues (spec §8) — and the sentence is the one the
+// read side already has for the same file (pluginwire's refusal errors, and
+// readPin's own text).
+//
+// It reads only where there is a checkout this run may write into, and only on
+// a release build: a development build installs no release plugin and migrates
+// nothing, which is the install half's own skip.
+func (s *pluginStage) removal() (*pluginwire.Removal, string) {
+	if !s.found || !s.installs() {
+		return nil, ""
+	}
+	rem, err := pluginwire.PlanRemoval(s.loc.Settings)
+	if err != nil {
+		return nil, "the pin is left as it is: " + oneLineCLI(err.Error())
+	}
+	if !rem.Changed {
+		// Nothing is removed twice (spec §8): the offer fires while the entries
+		// are there and stops when they are gone.
+		return nil, ""
+	}
+	return rem, ""
+}
+
+// removalLine is the stage's line for a pin it will take out, and the whole of
+// what a plan-only run is told about it: what the entries are and where.
+func removalLine(rem *pluginwire.Removal) string {
+	return "removes the " + pluginwire.PluginID + " pin an older fugaro left in " + pluginwire.Printable(rem.Path)
+}
+
+// behindLine is the stage's line when Claude Code's own record of the installed
+// plugin is another version than this release's: "No changes" alone would read
 // as current while the staleness line every command prints — and doctor's
 // plugin-install check — say the opposite about the same run (#1836). The
 // install half's own words carry the version that is behind, and the version
-// this release installs is the pin's tag.
-func behindLine(ch *pluginwire.Change, inst stepResult) string {
-	pin := ""
-	if ch != nil && !ch.Changed {
-		pin = "No changes: " + ch.Path + " pins the plugin to " + ch.Tag + "; "
-	}
-	return pin + "Claude Code's own plugin is behind: " + inst.reason + ", and this stage installs " + pluginTag()
+// this release installs is its own tag.
+func behindLine(inst stepResult) string {
+	return "Claude Code's own plugin is behind: " + inst.reason + ", and this stage installs " + pluginTag()
 }
 
 // installs: this build has a release to install, so the install half is a step
@@ -275,16 +285,16 @@ func pluginTag() string {
 	return tag
 }
 
-// install is the stage's second half: fugaro upgrade's own plugin step
-// (upgrade_plugin.go), in check mode when the caller is only reading. It is
-// the same function fugaro upgrade runs — the stage added a caller, not a copy
-// — and it is skipped where there is no checkout to run claude in, the one
-// place the wiring half's own skip is not enough (it is a skip of the wiring,
-// and outside a checkout there is no settings file to write either way).
+// install is the stage's one write, and it is fugaro upgrade's own plugin step
+// (upgrade_plugin.go), in check mode when the caller is only reading: the
+// plugin installed or updated in the user's own Claude Code at user scope. It
+// is the same function fugaro upgrade runs — the stage added a caller, not a
+// copy — and it is skipped where there is no checkout, which is the only place
+// the gates below it cannot read the repository.
 func (s *pluginStage) install(ctx context.Context, env initflow.Env, check bool) stepResult {
 	if !s.found {
 		return stepResult{name: "plugin", state: stepSkipped,
-			reason: "not in a checkout: the plugin in Claude Code is installed where the checkout is"}
+			reason: "not in a checkout: this stage installs the plugin from the checkout's repository"}
 	}
 	u := s.e.upgradeCtx(env, s.loc)
 	u.o.check = check
@@ -295,94 +305,38 @@ func (s *pluginStage) install(ctx context.Context, env initflow.Env, check bool)
 
 // Plan words the stage's own answer (status), the same one Check decides on and
 // in the same words: the plan-only view is what a run would do, and a plan that
-// read the wiring half alone said "No changes" in the states where this stage
-// installs the plugin into Claude Code — the pin already this release's and the
-// install behind it, or a wiring half skipped where the install half is not
-// (init_plugin_stage.go's status, and TestPluginStagePlanOnlySaysTheInstallRuns).
+// read the install half alone said "No changes" in the states where this stage
+// installs the plugin into Claude Code (init_plugin_stage.go's status, and
+// TestPluginStagePlanOnlySaysTheInstallRuns).
 func (s *pluginStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
-	ch, st, err := s.status(ctx)
+	st, err := s.status(ctx)
 	if err != nil {
 		return initflow.Plan{}, err
-	}
-	if ch != nil && ch.Changed {
-		// The diff is the plan's own half of this stage's output: the apply
-		// prints it too, and a plan-only run is where it is read before
-		// anything is written.
-		fmt.Fprintf(s.e.r.w, "%s\n%s%s", ch.Path, ch.Diff(), ch.NoticeText())
 	}
 	return initflow.Plan{Detail: st.Detail, NothingToDo: st.State != initflow.Todo && st.State != initflow.NeedsYou}, nil
 }
 
 func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	s.ask = false
-	ch, st, err := s.plan(ctx)
+	st, err := s.plan(ctx)
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
 	if st != nil && st.State == initflow.NeedsYou {
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.leftFor(st)}
 	}
-	changed, detail := false, ""
-	if ch != nil && ch.Changed {
-		r := s.e.r
-		if s.ask { // not the project's repository yet: its own typed confirmation, which --yes never gives
-			if !env.Interactive {
-				return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.origin, s.e.r.o.doorName())}
-			}
-			ok, err := s.e.confirmRepo(s.root, s.origin)
-			if err != nil {
-				return initflow.Outcome{}, err
-			}
-			if !ok {
-				return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.origin, s.e.r.o.doorName())}
-			}
-		}
-		fmt.Fprintf(r.w, "%s\n%s%s", ch.Path, ch.Diff(), ch.NoticeText())
-		if ch.Note != "" {
-			fmt.Fprintf(r.w, "note: %s\n", ch.Note)
-		}
-		switch {
-		case r.gateStandsIn() && agentMarker(os.Getenv, r.stdinTerminal()) == "":
-			// A managed project asks nothing here (the ruling of 2026-11-01): the
-			// diff above is the whole of what the owner reads, and the write is
-			// made. The marker is asked for beside the gate because the two
-			// answers are about different things — the gate is a fact about the
-			// project, and this branch is a fact about the session. A coding
-			// agent's session confirms nothing, which is the arm below; the loop
-			// reaches this Apply in one because the stage is LocalUnderAgent.
-			fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
-		case env.Yes:
-			fmt.Fprintln(r.w, "  confirmed by --yes")
-		case agentMarker(os.Getenv, r.stdinTerminal()) != "":
-			// A coding agent's session is not the no-terminal case the default
-			// arm below is about: the write is on this machine's own file, which
-			// is what LocalUnderAgent says the stage does there, and nobody is
-			// here to be asked — the arm the checkout stage's own gate takes,
-			// and the pin it wrote before this stage ran the step (U1). The
-			// line says which session wrote it, so the diff above is not read as
-			// one a person confirmed.
-			fmt.Fprintln(r.w, "  written by this coding agent's session, where there is no prompt to answer")
-		default:
-			// A person at the terminal is asked nothing (T7): the y/N they used
-			// to type is gone, and --ask is the flag that puts the question back.
-			// A run nobody is at keeps leaving the step for the user, which is the
-			// arm this default always was.
-			if !env.Interactive {
-				return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
-			}
-			ok, err := r.confirmNow("write this to " + ch.Path + "?")
-			if err != nil {
-				return initflow.Outcome{}, err
-			}
-			if !ok {
-				return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
-			}
-		}
-		if err := ch.Apply(); err != nil {
+	// The removal first: it is the checkout's write, it prints what it takes
+	// out, and where the session may not make it there is a line to run, which
+	// is not a reason to leave the machine's own plugin as it is.
+	var rem *pluginwire.Removal
+	if st == nil {
+		rem, _ = s.removal()
+	}
+	removed := false
+	var left *initflow.Left
+	if rem != nil {
+		if removed, left, err = s.remove(rem, env); err != nil {
 			return initflow.Outcome{}, err
 		}
-		fmt.Fprintf(r.w, "Updated %s to pin the Fugaro plugin at %s. Review it with git diff and commit it like any change.\n%s%s", ch.Path, ch.Tag, pluginRefresh, pluginFirstRun)
-		changed, detail = true, "wired "+ch.Path+" to "+ch.Tag
 	}
 	// The install half, in upgrade's own words: the step prints its line under
 	// this stage (`plugin: done: installed vX, ...`), which is the line the
@@ -391,23 +345,107 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	if s.found {
 		printStep(s.e.r.w, inst)
 	}
-	switch inst.state {
-	case stepFailed:
+	if inst.state == stepFailed {
 		return initflow.Outcome{}, errors.New(inst.reason)
-	case stepDone:
-		changed = true
 	}
-	if inst.reason != "" && inst.state != stepSkipped {
-		if detail == "" {
-			detail = inst.reason
-		} else {
-			detail += "; " + inst.reason
+	out := initflow.Outcome{Detail: "No changes"}
+	switch {
+	case removed && inst.state == stepDone:
+		out = initflow.Outcome{Changed: true, Detail: removedLine(rem) + "; " + inst.reason}
+	case removed:
+		out = initflow.Outcome{Changed: true, Detail: removedLine(rem)}
+	case inst.state == stepDone:
+		out = initflow.Outcome{Changed: true, Detail: inst.reason}
+	}
+	out.Left = left
+	return out, nil
+}
+
+// remove is the removal's own apply, and its arms are the other checkout
+// writes' (writeAnchor): the diff, then one sentence about what the repository
+// loses, then --yes writes, a person at the terminal writes having read the
+// diff, and a session that may not write it leaves the file alone and prints
+// the line to run instead. It reports whether the file was written, and the
+// step left where it was not.
+//
+// The coding agent's arm comes first, and before --yes: the removal is a change
+// to a file the repository commits, and an agent does not decide that, --yes
+// included (spec §8). Nothing unsets the marker, and no flag, environment
+// variable or non-interactive mode gets around this: the refusal is the one
+// fugaro update already makes for the writes that reach outside the machine.
+func (s *pluginStage) remove(rem *pluginwire.Removal, env initflow.Env) (bool, *initflow.Left, error) {
+	w := s.e.r.w
+	fmt.Fprintf(w, "%s\n%s", rem.Path, removalDiff(rem))
+	fmt.Fprintln(w, "  "+removalLoss())
+	switch {
+	case s.e.options().Agent != "":
+		fmt.Fprintf(w, "  %s\n", initflow.AgentRefusal(s.e.options().Agent))
+		return false, removalLeft(rem), nil
+	case env.Yes:
+		fmt.Fprintln(w, "  confirmed by --yes")
+	default:
+		ok, err := s.e.r.confirmNow("remove the " + pluginwire.PluginID + " pin from " + rem.Path + "?")
+		if err != nil {
+			return false, nil, err
+		}
+		if !ok {
+			fmt.Fprintln(w, "  "+removalByHand(rem))
+			return false, nil, nil
 		}
 	}
-	if !changed {
-		return initflow.Outcome{Detail: "No changes"}, nil
+	if err := rem.Apply(); err != nil {
+		return false, nil, err
 	}
-	return initflow.Outcome{Changed: true, Detail: detail}, nil
+	fmt.Fprintln(w, "removed the "+pluginwire.PluginID+" pin from "+pluginwire.Printable(rem.Path)+
+		". Review it with git diff and commit it like any change, or discard it.")
+	return true, nil, nil
+}
+
+// removalDiff is the removal as the two entries going, the way every settings
+// write shows its edit (settingsEditDiff). The table lineDiff builds is capped
+// off the same way a layer's diff is: a settings file is a few lines, and one
+// that is not is not worth gigabytes of table to print.
+func removalDiff(rem *pluginwire.Removal) string {
+	x, y := splitLines(string(rem.Before)), splitLines(string(rem.After))
+	if n := len(x) * len(y); n > diffMaxCells {
+		return fmt.Sprintf("  (the diff is skipped: %d and %d lines would need a table of %d cells)\n", len(x), len(y), n)
+	}
+	return printableLines(lineDiff(string(rem.Before), string(rem.After)))
+}
+
+// removalLoss is the one sentence about what the repository loses, and it is
+// the cost D943 accepted: the pin was how a checkout gave every teammate the
+// skills without any of them running anything, and the machine's own install is
+// what replaces it there (spec §8).
+func removalLoss() string {
+	return "the repository loses the pin, so a teammate who clones it takes the skills from their own machine's install instead of from the checkout: nothing here is committed, and the skills are already installed at user scope on this machine"
+}
+
+// removalByHand is what is printed where the removal is not made and nobody was
+// asked — the entry to delete, and the command that takes it out.
+func removalByHand(rem *pluginwire.Removal) string {
+	return "nothing was written: to take the pin out yourself, delete the fugaro entry from extraKnownMarketplaces and the " +
+		pluginwire.PluginID + " entry from enabledPlugins in " + pluginwire.Printable(rem.Path) + ", or run " + selfCommand() + " update at your own terminal"
+}
+
+// removalLeft is the checkout's write as a step only the user can run: the pin
+// is a committed file's, so a coding agent's session prints what it would take
+// out and leaves it. The command is the door the removal is in — `fugaro
+// update` — and not `update-skills`, which is the install's own route and
+// writes the machine (pluginStage.Left): what is left here is a write into the
+// checkout, and an owner sent to the machine-side command would find no pin
+// taken out.
+func removalLeft(rem *pluginwire.Removal) *initflow.Left {
+	return &initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftCommand,
+		Text: "in your own terminal window, not through a coding agent or a pipe, remove the " + pluginwire.PluginID +
+			" pin an older fugaro left in " + pluginwire.Printable(rem.Path) + " — the diff above is the two entries — by running",
+		Commands: []string{selfCommand() + " update"}}
+}
+
+// removedLine is the stage's line after the removal was written: what it was,
+// and that it is the working tree's.
+func removedLine(rem *pluginwire.Removal) string {
+	return "removed the " + pluginwire.PluginID + " pin from " + pluginwire.Printable(rem.Path) + "; review it with git diff and commit it like any change, or discard it"
 }
 
 func (s *pluginStage) leftFor(st *initflow.Status) initflow.Left {
@@ -417,21 +455,8 @@ func (s *pluginStage) leftFor(st *initflow.Status) initflow.Left {
 	return s.Left()
 }
 
-// Verify re-reads the wiring: the merge is in, and a second merge changes
-// nothing. The install half needs no read-back of its own — the step re-reads
-// Claude Code's own record after its calls and fails there — and a wiring half
-// that is not this checkout's (st != nil, a skip) has nothing to verify.
-func (s *pluginStage) Verify(ctx context.Context) error {
-	ch, st, err := s.plan(ctx)
-	switch {
-	case err != nil:
-		return err
-	case st != nil && st.State == initflow.NeedsYou:
-		return fmt.Errorf("the plugin wiring cannot be read back: %s", st.Detail)
-	case st != nil:
-		return nil
-	case ch.Changed:
-		return fmt.Errorf("%s still lacks the Fugaro plugin after the write", ch.Path)
-	}
-	return nil
-}
+// Verify has nothing to read back: the stage writes nothing in the checkout,
+// and the install step re-reads Claude Code's own record after its calls and
+// fails there when the machine did not come out of them with this release's
+// plugin.
+func (s *pluginStage) Verify(context.Context) error { return nil }

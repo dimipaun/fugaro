@@ -263,7 +263,7 @@ func TestDocsConsoleSettingsEditCitationsResolve(t *testing.T) {
 // TestDocsConsoleSettingsEditRelativeCitationsResolve: every `:NNN` reference
 // resolves against the nearest citation before it in its own paragraph, to a
 // line that is in that file. The findings lean on this shape -- a paragraph
-// cites `settings_set.go:692` and then `:516` -- and a reference whose anchor
+// cites `settings_set.go:701` and then `:525` -- and a reference whose anchor
 // moved sends a reader to a line of the wrong file while the paragraph still
 // reads as checked.
 func TestDocsConsoleSettingsEditRelativeCitationsResolve(t *testing.T) {

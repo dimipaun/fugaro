@@ -1,0 +1,11 @@
+[Unit]
+Description=Fugaro orchestrator daemon
+
+[Service]
+Type=simple
+ExecStart="/home/linuxbrew/.linuxbrew/opt/fugaro/bin/fugaro" orchestrator run --binary "/home/linuxbrew/.linuxbrew/opt/fugaro/bin/fugaro"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

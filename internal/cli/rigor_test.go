@@ -209,9 +209,9 @@ func TestRigorSetRefusesARaisingWriteInAnAgentSession(t *testing.T) {
 // command ends with `next: fugaro update`, the stage that publishes it (D831),
 // and it prints the review floor beside the write: the floor is outside every
 // layer and this command cannot lower it. SD10 names `fugaro rigor floor` as the
-// command that changes one, and that command is G7's and not in this tree yet,
-// so the line names no command rather than sending a person to one that prints
-// this group's help.
+// command that changes one, and G7 built it (D1170), so the line names it: a
+// person who has just read the floor they cannot lower is one command from the
+// one that can.
 //
 // The plan's name for this test says "the local project config": the document is
 // this machine's own layer file, and the name is the plan's shorthand for it.
@@ -233,8 +233,8 @@ func TestRigorSetWritesTheLocalProjectConfig(t *testing.T) {
 	if !strings.Contains(out, "cannot lower it") {
 		t.Errorf("the write does not say the floor is outside this command's reach:\n%s", out)
 	}
-	if strings.Contains(out, "fugaro rigor floor") {
-		t.Errorf("the write points at a command this tree does not have:\n%s", out)
+	if !strings.Contains(out, "fugaro rigor floor") {
+		t.Errorf("the write does not point at the command that changes a floor:\n%s", out)
 	}
 	if lines := strings.Split(strings.TrimRight(out, "\n"), "\n"); lines[len(lines)-1] != "next: fugaro update" {
 		t.Errorf("the last line is %q, want the one hand-off line", lines[len(lines)-1])

@@ -560,3 +560,20 @@ func sortedProfileNames(entries map[string]json.RawMessage) []string {
 func CheckProfiles(profiles map[string]Profile, accounts map[string]Account) error {
 	return validProfiles(profiles, accounts)
 }
+
+// CheckBitbucketProfileRepos is validBitbucketProfileRepos for the same kind of
+// caller: the half of a profile's rules that is a property of the two blocks
+// together — a profile mounting the token admits only what the token block
+// admits — and therefore the half CheckProfiles cannot apply, because the
+// token is not one of its arguments. Decode applies both to every published
+// node; a caller that builds the node from a local config derives the two
+// blocks the same way publish does (DeriveAccounts, DeriveBitbucketToken) and
+// asks both halves here, so what it refuses and what a publish refuses are one
+// rule rather than two that can drift.
+//
+// token is the block as DeriveBitbucketToken answers it, nil when the project's
+// config derives none: a profile mounting the token with no block at all is
+// refused, which is the state that rule is written for.
+func CheckBitbucketProfileRepos(profiles map[string]Profile, token *BitbucketToken) error {
+	return validBitbucketProfileRepos(profiles, token)
+}

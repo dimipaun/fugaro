@@ -1,11 +1,10 @@
 # Pending workflow changes
 
-**Two files are pending: `images.yml`** (the images workflow with
-the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745;
-see `## images.yml` — staged again below) **and `ci.yml`** (the Terraform job's
-root loop with the workspaces work's `workspace` root added, 2026-11-08 — the
-real workflow plus one word, so the root is validated and tested in CI rather
-than only where a person runs it; see `## ci.yml` below).
+**No files are pending.** `images.yml` (the images workflow with
+the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745)
+and `ci.yml` (the Terraform job's root loop with `workspace` added and the
+longer test timeout) were copied in on 2026-11-11 and their staged copies
+removed; see `## images.yml` and `## ci.yml` below.
 The console's Windows installer pack,
 `console-windows.yml`, was copied in on **2026-11-10** and its staged copy
 removed; it was a release-time job rather than a pull-request check (see
@@ -3002,7 +3001,7 @@ Two honest limits of this diff, both deliberate:
 
 ## `ci.yml`
 
-**Status: staged and pending (2026-11-08, the workspaces work's task W3).** The staged file is the real
+**Status: applied 2026-11-11 (staged copy removed; the loop now names `workspace` and the `test` job runs `-timeout 40m` with `timeout-minutes: 60`).** Below is what was staged on 2026-11-08 (the workspaces work's task W3). The staged file is the real
 `.github/workflows/ci.yml` plus one word, so the copy-in diff is that one line and nothing else.
 `.github/workflows/ci.yml`'s `terraform` job loops over `installation firebase repo compute`, and `deploy/terraform/gcp/roots/workspace` — the workspace's own project, added by the workspaces work's task **W3** (`docs/workspaces/implementation-plan.md`) — is not in that loop: `init -backend=false`, `validate` and `terraform test` reach it only where a person runs them, so the next edit to that root's account, its two-permission database role or the one grant that is the whole of the workspace service's reach lands unvalidated and surfaces as a failed `fugaro update` on a user's machine. The staged copy adds the word `workspace` to the loop and changes nothing else.
 

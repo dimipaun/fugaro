@@ -183,7 +183,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 		counts := infra.CountPlan(plan)
 		// The managed gate first, and the guard and the confirmation only when it
 		// does not admit this plan (D1016, update_managed.go).
-		gated, err := r.gateStep(ctx, t, imports, r.coverOf(r.coverReasonsFirebase), nil)
+		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil)
 		if err != nil {
 			return plan, err
 		}
@@ -196,7 +196,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 				stop = true
 				return plan, nil
 			}
-			if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
+			if err := r.confirmPlanned("applies "+counts.String()+" "+what, "nothing was applied", plan, r.notCoveredFirebase(plan, imports)); err != nil {
 				return plan, err
 			}
 		}

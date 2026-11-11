@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 )
@@ -151,6 +153,29 @@ const refusalPage = `<!doctype html>
 // prevent. Everything after that point is redirected back with the `state` the
 // client sent (RFC 6749 §4.1.2.1).
 func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
+	// The bound first, exactly as the registration endpoint's is first there,
+	// and for the same reason: a source past its window is refused for the
+	// cost of one map lookup, before anything else this endpoint does.
+	//
+	// **This is the endpoint that needed it most**, and the review of this
+	// branch is why it has it: the GET records one pending request per call, a
+	// caller needs a single registered client to loop it, and a loop that is
+	// written but never swept is the store growing at whatever rate the
+	// caller's script runs at. The sweep removes what the window admits, so
+	// without the window the sweep is the only thing between this endpoint and
+	// the store, and the sweep has a page (sweepPage) where the loop has no
+	// ceiling.
+	if !s.authorizations.allow(registerSource(r), s.now()) {
+		tooManyAuthorizations(w)
+		return
+	}
+	// The second trigger of the store's sweep (M12). This is the other
+	// unauthenticated write of the flow — one pending request per request,
+	// written by anybody for a client this installation knows — so it is where
+	// a loop that registers one client and then asks for flows would leave its
+	// records, and the sweep is triggered by the traffic that writes them
+	// rather than by the registration endpoint alone (register.go, maybeSweep).
+	s.maybeSweep(r.Context())
 	q := r.URL.Query()
 	clientID, redirectURI, state := q.Get("client_id"), q.Get("redirect_uri"), q.Get("state")
 
@@ -445,7 +470,7 @@ func (s *Server) servePageAnswer(w http.ResponseWriter, r *http.Request, form ur
 // ASCII lower case, and the fold is this endpoint's own: it is not the rule the
 // project's own lists are read by, and nothing here claims the CLI agrees with
 // it. `internal/cli/roles.go` places and compares a member exactly
-// (`operatorMember` and `launcherMember` are a `slices.Contains` over the text),
+// (`adminMember` and `operatorMember` are a `slices.Contains` over the text),
 // `internal/cli/user.go`'s `userMember` writes the member it was handed without
 // folding it, and the one comparison over these members that folds at all is the
 // local self-removal guard's `strings.EqualFold` — a Unicode fold, which is what
@@ -620,6 +645,18 @@ func (s *Server) redirectWith(w http.ResponseWriter, r *http.Request, redirectUR
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	http.Redirect(w, r, u.String(), http.StatusFound)
+}
+
+// tooManyAuthorizations is the refusal of a source past its window on this
+// endpoint's write, and it is the registration endpoint's refusal in this
+// endpoint's shape: the same 429, the same Retry-After, and a page rather than
+// RFC 6749 §5.2's JSON document, because the caller here is a person's browser
+// being sent to a sign-in. Like that one, the sentence is fixed and names
+// nothing about the caller — no address, and nothing that would tell a caller
+// what this door counted it as.
+func tooManyAuthorizations(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(authorizeWindow/time.Second)))
+	refusePage(w, http.StatusTooManyRequests, "Too many sign-in requests from this address. This endpoint records one flow per request, so it is bounded the same way the registration endpoint is: wait a moment and start the sign-in again.")
 }
 
 // refusePage is a refusal a person reads, and it is deliberately terse: the

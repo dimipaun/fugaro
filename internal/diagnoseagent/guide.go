@@ -49,3 +49,10 @@ var guide string
 // may have failed to fetch. It is part of the prompt (Prompt appends it) and
 // the offline path prints where the document lives.
 func Guide() string { return guide }
+
+// GuidePath is where the guide sits in the source tree of the installed
+// version: the offline path prints it (D1608), so a person who is handed a
+// diagnosis file rather than a diagnosis can read the same document the agent
+// was given, beside the code it is about. It is a path inside the tree
+// srctree.Ensure returns, not one this process can open.
+func GuidePath() string { return guideSource }

@@ -29,9 +29,11 @@ import (
 // upgrade, and an offer to retry something is not worth an installation that
 // stops half way.
 
-// retryOfferPrefix is the offer's line, the one a person reads and copies
-// from. The command follows it, printed as data.
-const retryOfferPrefix = "You can retry: "
+// The offer's line is resolvedFixedLine's (update_resolved.go), built there
+// and not here because the resolved-issues step says the same thing about the
+// issues it fixes: the spec's sentence for an issue a release fixed and the
+// command it failed on, which is one sentence about one issue and may not
+// drift into two.
 
 // updateRetryBucket opens the runs bucket the shared store is read from: the
 // selected project's own bucket, which is where the issues prefix lives
@@ -91,6 +93,15 @@ var updateRetryBucket = func(ctx context.Context, o cloudOptions, p retryProject
 // bucket_url that is not it are two answers to one question. Every error is an
 // offer not printed, never a failed update.
 //
+// A config whose endpoints are fakes has no bucket either, for the reason
+// every sibling reader of this installation's own bucket gives: the gs:// URL
+// is not the bucket those endpoints stand for, so opening it would
+// reach the real network with the machine's credentials (publishSharedWarn,
+// the project layer's read, the admin list's write). It is the refusal this
+// function's own callers need rather than a line they print: an offer that
+// cannot read the store prints nothing, and updateResolved's step leaves the
+// document's field empty.
+//
 // It is a function of its own because the answer is what a test can check
 // without a bucket: the seam it is called from opens a gs:// URL, which no
 // hermetic test can reach.
@@ -104,7 +115,11 @@ func retryBucketURL(lc *localcfg.Config, runsBucket string) (string, error) {
 	if lc.Bucket == "" && lc.RunsBucket == "" {
 		return "", errors.New("no project with a runs bucket is selected")
 	}
-	return lc.BucketURL(), nil
+	url := lc.BucketURL()
+	if fakeEndpointsOnGS(lc, url) {
+		return "", fmt.Errorf("the runs bucket %s is a fake endpoint in this installation, so the shared store is not read for real", url)
+	}
+	return url, nil
 }
 
 // retryProject is the project the run this offer follows converged, as the
@@ -171,6 +186,12 @@ func updateRetryHint(cmd *cobra.Command, o *initOptions, args []string) {
 	if err != nil {
 		return
 	}
+	// What this run has already printed about its own issues is not the offer's
+	// to print again: T-RU5's step above prints the same sentence, and dropping
+	// the issues here rather than in retryHintLines is what keeps a run that
+	// printed the line from opening a bucket for the issues the person has
+	// already been told about.
+	local = retryUnprinted(local, o.resolvedPrinted)
 	// Nothing of this machine's is waiting for a release that fixed it: the
 	// shared store is not read at all, so an ordinary update — the
 	// overwhelmingly common one, a machine that filed nothing — opens no
@@ -239,6 +260,28 @@ func updateRetryOffers(o *initOptions) bool {
 	return true
 }
 
+// retryUnprinted is local without the issues this run has already printed the
+// offer's own line for: the resolved-issues step above the offer says the same
+// sentence (resolvedFixedLine) about an issue whose command came from this
+// machine's own file, and one run says it once.
+//
+// The file's "offered" mark says the same thing across runs, and the scan below
+// reads it; this is the statement inside one run, where that mark is not there
+// to read — a coding agent's session writes none (F16d), and a store that
+// cannot be written leaves it unwritten in a person's run.
+func retryUnprinted(local []issues.Issue, printed map[resolvedKey]bool) []issues.Issue {
+	if len(printed) == 0 {
+		return local
+	}
+	kept := make([]issues.Issue, 0, len(local))
+	for _, i := range local {
+		if !printed[resolvedKey{i.Number, i.Fingerprint}] {
+			kept = append(kept, i)
+		}
+	}
+	return kept
+}
+
 // retryHintLines is the offer's whole decision over the two stores: the lines
 // to print, and the records to mark as offered.
 //
@@ -283,7 +326,10 @@ func retryHintLines(local []issues.Issue, rows []issues.SharedRow, version strin
 		if !ok {
 			continue
 		}
-		lines = append(lines, retryOfferPrefix+command)
+		// The offer is this machine's own command, so it is the wording that
+		// suggests trying it again (O4): the offer exists for the person who
+		// ran it.
+		lines = append(lines, resolvedFixedLine(i.Number, command, true))
 		mark = append(mark, i)
 	}
 	return lines, mark
@@ -306,8 +352,8 @@ func retryHintLines(local []issues.Issue, rows []issues.SharedRow, version strin
 // the user can write it — internal/issues says as much of the store it reads —
 // so the text is not the person's own until it is checked. `fugaro update
 // --yes; curl … | sh` is a stored command a shell runs as two, and an offer
-// that printed it would hand the reader the injection with `You can retry: `
-// in front of it, on a line whose whole purpose is to be pasted.
+// that printed it would hand the reader the injection with resolvedFixedLead's
+// sentence in front of it, on a line whose whole purpose is to be pasted.
 //
 // Every word after the name is read by this build's own tree (root.Find),
 // which is what makes the check agree with the line: cobra strips the flags the

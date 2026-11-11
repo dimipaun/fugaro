@@ -539,6 +539,33 @@ func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo,
 	return info, err
 }
 
+// PullRequestByBranch implements gitprov.PRBranchReader: the pull request
+// opened from branch, whatever its state, so `fugaro followups` can tell a
+// merged parent from an open one without trusting a number a job wrote
+// (D1843, F30).
+//
+// state=all rather than find's state=open, because the caller's whole
+// question is whether the parent merged. The list reply has no merged flag —
+// GitHub reports that only on the pull request itself — so the number the
+// list answers with is read back through getPull, which is what decides
+// PRMerged from PRClosed. Two requests either way, and the number the second
+// one names came from the host, never from the record.
+func (p *Provider) PullRequestByBranch(ctx context.Context, branch string) (gitprov.PRInfo, bool, error) {
+	q := url.Values{"head": {p.owner + ":" + branch}, "state": {"all"}, "per_page": {"1"}, "sort": {"created"}, "direction": {"desc"}}
+	var pulls []pull
+	if err := p.api.Do(ctx, "GET", p.repoPath("/pulls?"+q.Encode()), nil, &pulls); err != nil {
+		return gitprov.PRInfo{}, false, fmt.Errorf("finding the pull request for %s: %w", branch, err)
+	}
+	if len(pulls) == 0 {
+		return gitprov.PRInfo{}, false, nil
+	}
+	_, info, err := p.getPull(ctx, pulls[0].Number)
+	if err != nil {
+		return gitprov.PRInfo{}, false, err
+	}
+	return info, true, nil
+}
+
 // FetchPRHead implements gitprov.Provider (design generic-tool §3.6, G12).
 // The head commit is reachable from origin through the PR's own ref
 // (refs/pull/<number>/head), which GitHub keeps on the base repository

@@ -710,7 +710,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["pair_id", "arm"],
-      "description": "The A/B pair block the run's task carried (docs/model-ab-testing, decisions D550-D573; runstore.Record.AB, task.AB): the pair both arms belong to, which arm this run is, and, for a challenger, the coder model it ran. It is the task's own block echoed onto the record, so a pair can be scored from records alone, without a bucket listing (D559). Absent — never a block with an empty arm — for a run that was not sampled, which is every record written before this field existed, so an old reader sees the record it always saw and version stays 1 (the field is additive). The enums are internal/task's own closed vocabulary, spelled exactly as it spells it, and they are the same ones task.schema.json carries: a task and the record it produces state one block the same way.",
+      "description": "The A/B pair block the run's task carried (docs/model-ab-testing, decisions D550-D573; runstore.Record.AB, task.AB): the pair both arms belong to, which arm this run is, and, for a challenger, the coder model it ran. It is the task's own block echoed onto the record, so a pair can be scored from records alone, without a bucket listing (D559). Absent — never a block with an empty arm — for a run that was not sampled, which is every record written before this field existed, so an old reader sees the record it always saw and version stays 1 (the field is additive). The enums are internal/task's own closed vocabulary, spelled exactly as it spells it, and they are the same ones task.schema.json carries: a task and the record it produces state one block the same way — slot and champion_run included, which docs/review-levels-ab-jobmax B1.1 added to both (D728): the slot the pair varies, with an absent one meaning coder, and, on a challenger at a review slot, the champion's run ID whose patch the replay reads (B1.2).",
       "properties": {
         "pair_id": {
           "type": "string",
@@ -733,6 +733,15 @@
         "challenger_source": {
           "enum": ["owner"],
           "description": "Who named the challenger: the owner, in the project layer, never the repository's own file (D556, task.ABChallengerOwner)."
+        },
+        "slot": {
+          "enum": ["coder", "l1", "l2", "l3"],
+          "description": "The one thing the pair varied (D728, task.ABSlot): coder — the value an absent key means (task.AB.EffectiveSlot) — is a second full run on another coder model with every reviewer held fixed, and l1, l2 and l3 are the review slots, whose challenger replayed that level over the champion's own patch. A record written before this key was added is a coder pair, which is what D555 fixed and what A1.1 launched."
+        },
+        "champion_run": {
+          "type": "string",
+          "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+          "description": "The champion's run ID, present only on a challenger whose slot is a review slot (task.AB.ChampionRun, D728): the run whose recorded patch this arm's reviewer read. Absent on a champion and on a coder pair's challenger, and absent from every record written before the key, which is why the field is additive and the format's version stays 1."
         }
       },
       "not": {
@@ -742,7 +751,14 @@
         ]
       },
       "if": { "properties": { "arm": { "const": "challenger" } }, "required": ["arm"] },
-      "then": { "required": ["publish", "challenger"] }
+      "then": { "required": ["publish", "challenger"] },
+      "allOf": [
+        {
+          "if": { "properties": { "arm": { "const": "challenger" }, "slot": { "enum": ["l1", "l2", "l3"] } }, "required": ["arm", "slot"] },
+          "then": { "required": ["champion_run"] },
+          "else": { "not": { "required": ["champion_run"] } }
+        }
+      ]
     },
     "patch_object": {
       "type": "string",

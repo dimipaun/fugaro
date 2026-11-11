@@ -1360,7 +1360,7 @@ export const SETTINGS_EDIT_PHASE_WORDS: Readonly<Record<SettingsEditPhase, reado
 })
 
 /** SETTINGS_EDIT_LAYERS is the whole of the layer vocabulary
- * (`settingsWriteLayers`, `internal/cli/settings_set.go:37`): the three
+ * (`settingsWriteLayers`, `internal/cli/settings_set.go:41`): the three
  * documents one edit can land in. It is the console's own copy because the
  * layer reaches an argv, and a word that is not one of the three has no
  * business in one -- the read's `target_layer` is held to this set before the

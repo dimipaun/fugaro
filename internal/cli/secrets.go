@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
@@ -51,7 +52,7 @@ func newSecretsCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return userErr("unknown secrets subcommand; want set, ls or rm (see fugaro secrets --help)")
+			return userErr("unknown secrets subcommand; want set, allow, deny, ls or rm (see fugaro secrets --help)")
 		},
 	}
 	// pflag quotes an unknown flag, and a value pasted in the wrong place
@@ -59,7 +60,7 @@ func newSecretsCmd() *cobra.Command {
 	cmd.SetFlagErrorFunc(func(*cobra.Command, error) error {
 		return userErr("unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy, --yes and --dry-run, and never the value")
 	})
-	cmd.AddCommand(newSecretsSetCmd(), newSecretsLsCmd(), newSecretsRmCmd())
+	cmd.AddCommand(newSecretsSetCmd(), newSecretsAllowCmd(), newSecretsDenyCmd(), newSecretsLsCmd(), newSecretsRmCmd())
 	return cmd
 }
 
@@ -76,6 +77,19 @@ type secretsOptions struct {
 	// reads no value.
 	allowDataTo []string
 	proxy       bool
+	// denyDataTo is the same list's other direction, and it is not a member of
+	// its own: `secrets deny` takes repositories out of allow_data_to, which is
+	// the one edit of this family that narrows (secrets_allow.go). It is a
+	// field here rather than a second path so both directions write through
+	// secretsSetPolicy and its sentences are the same sentences.
+	denyDataTo []string
+	// form is the command this run was reached through when it is not `secrets
+	// set`: `secrets allow` and `secrets deny` write the same entry through this
+	// same path, and it is what makes the coding agent's refusal print the form
+	// the person actually reached for (secretsSetPolicyCommand) and the write end
+	// on the one line every settings write ends on (secretsSetPolicy). Empty is
+	// `secrets set`, whose output has never carried that line.
+	form string
 	// yes answers the typed confirmation outside a coding agent's session
 	// (D1107), and dryRun is the policy write's own document.
 	yes    bool
@@ -85,7 +99,9 @@ type secretsOptions struct {
 // policyWrite reports whether the run is the family's policy write (D1171)
 // rather than a value store. A flag that names a policy key is the whole
 // difference: a value is not a setting, so the two are never the same run, and
-// the flags that carry one are never read as the other.
+// the flags that carry one are never read as the other. `secrets deny` is the
+// policy write with no flag of `secrets set` at all: it sets denyDataTo, which
+// this never reads, and it reaches secretsSetPolicy directly.
 func (o *secretsOptions) policyWrite(cmd *cobra.Command) bool {
 	return len(o.allowDataTo) > 0 || cmd.Flags().Changed("proxy")
 }
@@ -168,7 +184,8 @@ var optionalRepoVerbs = map[string]map[string]bool{
 // a NoOptDefVal of "true", so none takes the token after it as a value, and a
 // scan that reads one as taking a value disagrees with cobra about which token
 // is the subcommand. The set is the command family's own — the flags
-// newSecretsCmd, newSecretsSetCmd, newSecretsLsCmd and newSecretsRmCmd declare,
+// newSecretsCmd, newSecretsSetCmd, newSecretsAllowCmd, newSecretsDenyCmd,
+// newSecretsLsCmd and newSecretsRmCmd declare,
 // plus the --help cobra adds to each of them at Execute time — and it is
 // exactly the set the commands' FlagErrorFunc names (newSecretsCmd).
 //
@@ -810,7 +827,10 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 		return err
 	}
 	proxy := cmd.Flags().Changed("proxy")
-	if len(o.allowDataTo) > 0 && proxy {
+	if len(o.allowDataTo) > 0 && len(o.denyDataTo) > 0 {
+		return userErr("--allow-data-to adds repositories and `secrets deny` takes them out: name one direction")
+	}
+	if (len(o.allowDataTo) > 0 || len(o.denyDataTo) > 0) && proxy {
 		return userErr("--allow-data-to and --proxy are two different edits: name one, and repeat the command for the other")
 	}
 	sel, lc, err := settingsSelection()
@@ -836,7 +856,7 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 			pluginwire.Printable("proxy"), block, pluginwire.Printable(name), secretsBlockProject, config.BitbucketSecret)
 	}
 	key := block + "." + name + ".proxy"
-	if len(o.allowDataTo) > 0 {
+	if len(o.allowDataTo) > 0 || len(o.denyDataTo) > 0 {
 		key = block + "." + name + ".allow_data_to"
 	}
 	command := secretsSetPolicyCommand(o, name, proxy)
@@ -853,6 +873,10 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	switch {
 	case len(o.allowDataTo) > 0:
 		if next, err = secretsPolicyAddRepos(old, block, name, o.allowDataTo); err != nil {
+			return userErr("%s: %v", pluginwire.Printable(key), err)
+		}
+	case len(o.denyDataTo) > 0:
+		if next, err = secretsPolicyRemoveRepos(old, block, name, o.denyDataTo); err != nil {
 			return userErr("%s: %v", pluginwire.Printable(key), err)
 		}
 	case o.proxy:
@@ -900,6 +924,17 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	}); err != nil {
 		return err
 	}
+	// `secrets allow` and `secrets deny` end on the one line every settings
+	// write ends on, and only when the write happened: a run that named a
+	// pattern the entry already holds, or one it does not hold, is the "no
+	// change" secretsPolicyAddRepos and secretsPolicyRemoveRepos answer with the
+	// unchanged bytes, and `next: fugaro update` beside a `no change` would be a
+	// promise about a write that did not happen (workspaceHandoff's own rule).
+	// `secrets set` carries no such line and is left exactly as it was, which is
+	// what form separates.
+	if o.form != "" && yamledit.Changed(old, next) {
+		fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
+	}
 	return nil
 }
 
@@ -946,30 +981,62 @@ func secretsPolicyAddRepos(old []byte, block, name string, repos []string) ([]by
 		if yamledit.ReasonOf(err) != yamledit.ReasonFlowCollection {
 			return nil, err
 		}
-		return secretsPolicyRewriteEntry(old, block, name, entry, add)
+		return settingsRewriteList(old, block, name, append(slices.Clone(entry.AllowDataTo), add...), entry.Proxy)
 	}
 	return next, nil
 }
 
-// secretsPolicyRewriteEntry writes project_secrets.NAME again with add added to
-// its allow_data_to: the entry's own repositories first, in the order the file
-// had them, then the flag's, and proxy written back only when the entry carried
-// it. The entry is taken away and written whole because a member cannot be
-// spliced into a flow sequence — the one edit yamledit refuses — and the values
-// come from the parsed entry rather than from the flag, so a repository the
-// entry already named is not lost with the shape it was spelled in.
-func secretsPolicyRewriteEntry(old []byte, block, name string, entry config.ProjectSecret, add []string) ([]byte, error) {
-	next, err := yamledit.RemoveKeyWithOptions(old, []string{block, name}, yamledit.RemoveOptions{DropEmptyParents: true})
+// secretsPolicyRemoveRepos takes each repository out of the entry's
+// allow_data_to and returns the bytes that would hold the rest, which is the
+// same edit secretsPolicyAddRepos makes in the other direction and is spelled
+// the same way: RemoveListItem is tried first, so the file's comments and the
+// order the operator gave the list survive, and a repository the list does not
+// name is left alone (the command says "no change" rather than rewriting).
+//
+// A flow sequence is the one shape it refuses — the item of one is not a splice
+// this package makes, in either direction, which is why the addition above
+// carries the same second half — and it is the shape docs/git-providers.md
+// teaches for this entry. The entry is then written again in the block style
+// this program writes a list in, with the repositories the file already names
+// and its switch, and the removals are made there: the reformatting is not the
+// edit, it is what makes the edit possible, and the diff shows both. An entry
+// whose last repository goes is left with an empty allow_data_to, which is the
+// state the operator asked for: the value is mounted nowhere, and the entry
+// stays for the day they name a repository again.
+func secretsPolicyRemoveRepos(old []byte, block, name string, repos []string) ([]byte, error) {
+	lc, err := localcfg.Parse(old)
+	if err != nil {
+		return nil, fmt.Errorf("the local config does not read back: %w", err)
+	}
+	entry := secretsPolicyEntryOf(lc, block, name)
+	var drop []string
+	for _, repo := range repos {
+		if slices.Contains(entry.AllowDataTo, repo) {
+			drop = append(drop, repo)
+		}
+	}
+	if len(drop) == 0 {
+		return old, nil
+	}
+	next, err := secretsPolicyRemoveList(old, block, name, drop)
+	if yamledit.ReasonOf(err) != yamledit.ReasonFlowCollection {
+		return next, err
+	}
+	shaped, err := settingsRewriteList(old, block, name, entry.AllowDataTo, entry.Proxy)
 	if err != nil {
 		return nil, err
 	}
-	for _, repo := range append(slices.Clone(entry.AllowDataTo), add...) {
-		if next, err = yamledit.AddListItem(next, []string{block, name, "allow_data_to"}, repo); err != nil {
-			return nil, err
-		}
-	}
-	if entry.Proxy {
-		if next, err = yamledit.SetScalar(next, []string{block, name, "proxy"}, "true"); err != nil {
+	return secretsPolicyRemoveList(shaped, block, name, drop)
+}
+
+// secretsPolicyRemoveList is the removal itself, one repository at a time, and
+// is run twice by secretsPolicyRemoveRepos: once on the bytes as they are, and,
+// where those hold a flow list, once on the same entry written in block style.
+func secretsPolicyRemoveList(old []byte, block, name string, repos []string) ([]byte, error) {
+	next := old
+	var err error
+	for _, repo := range repos {
+		if next, err = yamledit.RemoveListItem(next, []string{block, name, "allow_data_to"}, repo); err != nil {
 			return nil, err
 		}
 	}
@@ -1023,9 +1090,14 @@ func secretsPolicyBlock(lc *localcfg.Config, name string) (string, error) {
 // secretsPolicyTyped classifies the policy write (D1165, D1171): naming one
 // more repository in allow_data_to is a widening — it is one more repository
 // the value is mounted in — and so is turning proxy on, which is the
-// credentials service being handed the token instead of the job. Neither has a
-// narrowing direction here: there is no --remove-data-to, and --proxy=false is
-// the narrowing one and is not typed.
+// credentials service being handed the token instead of the job.
+//
+// The narrowing directions are neither, and both are here: --proxy=false takes
+// the switch off, and `secrets deny` takes a repository out of the list. A
+// narrowing is not the owner's own step in the sense this classification
+// means — it loosens nothing — so it prints no widening sentence; it is still
+// refused in a coding agent's session, which is the family's rule and not this
+// one's (secretsSetPolicy's fence).
 func secretsPolicyTyped(o secretsOptions, block, name string, proxy bool) (bool, string) {
 	key := block + "." + pluginwire.Printable(name)
 	var parts []string
@@ -1046,6 +1118,11 @@ func secretsPolicyTyped(o secretsOptions, block, name string, proxy bool) (bool,
 // the flag's values: an entry that already names a repository keeps it, and a
 // sentence built from the flag would print a shorter list than the file it asks
 // to write.
+//
+// A removal is the one case where the list the run named is not what the
+// sentence may print: `secrets deny acme/app` names a repository that is
+// deliberately NOT in the list it ends with, so the sentence says what is
+// removed and then, like every other form, the list that is left.
 func secretsPolicyWhat(o secretsOptions, block, name string, entry config.ProjectSecret, proxy bool) string {
 	key := block + "." + pluginwire.Printable(name)
 	var parts []string
@@ -1053,6 +1130,10 @@ func secretsPolicyWhat(o secretsOptions, block, name string, entry config.Projec
 	case len(o.allowDataTo) > 0:
 		parts = append(parts, fmt.Sprintf("add %s to %s.allow_data_to, so the repositories it names are [%s]",
 			pluginwire.Printable(strings.Join(o.allowDataTo, ", ")), key,
+			pluginwire.Printable(strings.Join(entry.AllowDataTo, ", "))))
+	case len(o.denyDataTo) > 0:
+		parts = append(parts, fmt.Sprintf("remove %s from %s.allow_data_to, so the repositories it names are [%s]",
+			pluginwire.Printable(strings.Join(o.denyDataTo, ", ")), key,
 			pluginwire.Printable(strings.Join(entry.AllowDataTo, ", "))))
 	case proxy:
 		parts = append(parts, "set "+key+".proxy, the credentials service's switch for this token")
@@ -1072,7 +1153,7 @@ func secretsPolicyDryRun(o secretsOptions, block, name string, old, next []byte,
 		return nil
 	}
 	key := block + "." + name + ".proxy"
-	if len(o.allowDataTo) > 0 {
+	if len(o.allowDataTo) > 0 || len(o.denyDataTo) > 0 {
 		key = block + "." + name + ".allow_data_to"
 	}
 	return &settingsDryRun{
@@ -1109,7 +1190,31 @@ func secretsPolicyValue(data []byte, block, name string, proxy bool) string {
 // prints for the person to run at their own terminal: this same write, spelled
 // whole, with the flag's values quoted so a name from the command line cannot
 // become a second token of the command the person pastes.
+//
+// A removal is spelled as `secrets deny`, the form that makes it, and not as a
+// `secrets set` flag: there is no flag for taking a repository out, and a
+// refusal that printed one would send the person to a command that does not
+// exist. A run that came in through `secrets allow` is spelled in that form
+// too, so the person pastes the command they reached for rather than its
+// `secrets set` equivalent.
 func secretsSetPolicyCommand(o secretsOptions, name string, proxy bool) string {
+	switch o.form {
+	case "allow":
+		parts := []string{selfCommand(), "secrets", "allow", quoteWord(name)}
+		for _, repo := range o.allowDataTo {
+			parts = append(parts, quoteWord(repo))
+		}
+		if proxy {
+			parts = append(parts, "--proxy="+strconv.FormatBool(o.proxy))
+		}
+		return strings.Join(parts, " ")
+	case "deny":
+		parts := []string{selfCommand(), "secrets", "deny", quoteWord(name)}
+		for _, repo := range o.denyDataTo {
+			parts = append(parts, quoteWord(repo))
+		}
+		return strings.Join(parts, " ")
+	}
 	parts := []string{selfCommand(), "secrets", "set", quoteWord(name)}
 	if len(o.allowDataTo) > 0 {
 		parts = append(parts, "--allow-data-to", quoteWord(strings.Join(o.allowDataTo, ",")))
@@ -1391,7 +1496,7 @@ func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, env *cloudEnv, o se
 	// provider's key has no such entry and nothing to read in the sentence
 	// (code review, nit).
 	note := fmt.Sprintf("note: %s is stored project-wide for %s, where %s. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary.",
-		pluginwire.Printable(name), pluginwire.Printable(env.lc.Name), projectReach(env.lc, name))
+		pluginwire.Printable(name), pluginwire.Printable(env.lc.Name), projectReach(env.lc, name, nil))
 	if _, workflow := env.lc.WorkflowSecrets[name]; workflow {
 		note += " A workflow's own secret (workflows.<n>.secrets) is shared this way only through its workflow_secrets entry, and that entry's allow_data_to is what decides which repositories mount the copy: with no entry, or with an entry that lists nothing, the name stays a repository copy instead."
 	}
@@ -1412,12 +1517,27 @@ func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, env *cloudEnv, o se
 // the one case the list alone understates: it reaches the repositories it
 // matches, present and future, so the sentence says that too rather than
 // leaving the reader to read a pattern as a list.
-func projectReach(lc *localcfg.Config, logical string) string {
+//
+// p is the project's published policy, and it is a third source for the one
+// name the node carries a project_secrets-derived block for (SD17): a machine
+// whose local config holds no project_secrets.bitbucket-token entry reads the
+// allow-list the owner published, which is what admitted the repository to the
+// project copy in the first place -- so the sentence says where that list came
+// from rather than telling a person storing the shared copy that no repository
+// can mount it. nil is a caller that read no node, and the local config's
+// answer is then the only one, exactly as before. `secrets set`'s own note
+// passes nil and is right to: that path reaches the project container only
+// through a local entry (projectWideAccepted), so its reach is never the
+// node's.
+func projectReach(lc *localcfg.Config, logical string, p *projectpolicy.Policy) string {
 	repos := projectSecretAllowed(lc, logical)
 	switch {
 	case slices.Contains(repos, "any repository") || slices.Contains(repos, "*"):
 		return "every enrolled repository can mount it -- every repository a published policy admits, or, with no policy published, every repository this local config knows"
 	case len(repos) == 0:
+		if node := nodeReach(logical, p); node != "" {
+			return node
+		}
 		return "no repository can mount it: its allow_data_to lists none, and absent or empty means nobody"
 	default:
 		reach := fmt.Sprintf("only the repositories its allow_data_to lists can mount it (%s), whatever a published policy admits",
@@ -1434,6 +1554,24 @@ func projectReach(lc *localcfg.Config, logical string) string {
 		}
 		return reach
 	}
+}
+
+// nodeReach is projectReach's third source: the reach the project's published
+// policy states for the one name it carries a project_secrets-derived block
+// for, read where this machine's local config names nobody -- which is the
+// machine SD17 is about, and the one where "no repository can mount it" would
+// be false of the list that admitted the repository. "" is every other case,
+// and the local answer then stands.
+func nodeReach(logical string, p *projectpolicy.Policy) string {
+	if logical != config.BitbucketSecret || p == nil || p.BitbucketToken == nil || len(p.BitbucketToken.AllowRepos) == 0 {
+		return ""
+	}
+	reach := fmt.Sprintf("only the repositories the project's published policy admits can mount it (%s, the list %s carries for project_secrets.%s, which this machine's local config does not)",
+		pluginwire.Printable(strings.Join(p.BitbucketToken.AllowRepos, ", ")), projectpolicy.PathShared(), pluginwire.Printable(logical))
+	if slices.ContainsFunc(p.BitbucketToken.AllowRepos, func(r string) bool { return strings.Contains(r, "*") }) {
+		reach += ", and a `*` in an entry reaches every repository it matches now and later, so one onboarded afterwards mounts the copy with nothing else to do"
+	}
+	return reach
 }
 
 // repoCopiesWithVersions are the local config's repositories whose own copy

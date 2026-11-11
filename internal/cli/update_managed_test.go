@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // update_managed_test.go: `fugaro update`'s steps under the managed gate (M1,
@@ -149,79 +150,77 @@ func stepLineInLog(t *testing.T, got, head string) string {
 	return ""
 }
 
-// M1's red step. A managed project, a coding agent's session, and a plan that
-// removes an address the owner's list does not name: today the run is refused
-// before the stage is reached — the session reads the coding agent's own
-// refusal, and nothing about the plan — and after this task the refusal is the
-// GATE's, with the gate's own sentence, because the plan is what refused it.
+// T9's red step (D1545), and the one that says what this gate is now: a
+// managed project, a coding agent's session, and plans whose only rules are the
+// cover tables' — a delete of a grant no list holds, and a replace whose create
+// half grants the world. D1551 classifies both types as not data-bearing, so
+// the delete rule does not keep them either, and D1545 turns what is left into
+// a record-and-warn: the step APPLIES, and the rules that fired reach the
+// session and the record instead of the refusal they used to be.
 //
-// The three assertions are the three halves of that: the gate's sentence is
-// what the session reads, the guard's own managed advice is not (a session
-// that read that one would be told to hand the step over rather than what
-// about the plan was refused), and nothing was applied.
+// What this pins is the pair the ruling is a bet on. A gate that kept refusing
+// fails here, and so does one that applied the plan without recording what the
+// tables did not announce: the warning an owner reads afterwards is the whole
+// of the control the tables still are (the second half of the ruling, "harden
+// the record", is TestDoctorFlagsAnOutOfTableGrant's).
 //
-// And the left-for-you is the owner's own command rather than the plan
-// refusal's (gateDeleteLeft, spec §4.3's "For the owner"): this plan removes an
-// object --allow-delete admits, so the refusal leaves the command the owner has
-// always run, with the address the gate refused, and neither "a person files an
-// issue" nor a prompt — the first sends them to work that does not close the
-// loop the refusal opened, and the second asks for a typing no refusal reaches
-// past.
-func TestUpdateManagedStageRefusesARemoval(t *testing.T) {
+// The two arms are the two shapes content arrives in: a change whose delete
+// half the classification does not protect, and one whose create half the grant
+// table does not hold. Neither is refused, so there is no left-for-you and no
+// command here: what the owner has is the record.
+func TestUpdateManagedOutOfTableGrantAppliesAndIsRecorded(t *testing.T) {
 	const a = "user:a@example.com"
-	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
-	r := updateManagedRig(t)
-	updating(t, r)
-	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	for _, tc := range []struct {
+		name string
+		plan planChange
+	}{
+		{"a delete of a grant no list holds", grantChange("state", a, "roles/storage.objectAdmin", "delete")},
+		{"a replace whose create half grants the world", outsiderReplace()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			address := tc.plan["address"].(string)
+			r := updateManagedRig(t)
+			updating(t, r)
+			r.setPlan(t, tc.plan)
 
-	got, err := updateRun(t, r, "update", "--yes")
-	if err == nil {
-		t.Fatalf("the run applied a plan a managed project refuses:\n%s", got)
-	}
-	if !strings.Contains(got, managedmode.NotConverged) {
-		t.Errorf("the session does not read the gate's own sentence:\n%s", got)
-	}
-	if !strings.Contains(got, address) {
-		t.Errorf("the gate's refusal does not name the address it refused:\n%s", got)
-	}
-	if strings.Contains(got, initManagedDeleteAdvice) {
-		t.Errorf("the session reads the guard's managed advice, which is not this refusal:\n%s", got)
-	}
-	if n := len(r.ran(t, "apply")); n != 0 {
-		t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
-	}
-	if code := ExitCode(err); code != ExitUserError {
-		t.Errorf("exit %d, want %d: a refusal is the user's and not a failure", code, ExitUserError)
-	}
-	// And the refusal is on the record (D1014, M6): the gate judged a document
-	// and refused it, and a refusal nobody can read afterwards is half of the
-	// audit this design exists for.
-	recs := audits(t, r)
-	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
-		t.Fatalf("%d record(s) after a refused step, want one refused: %+v", len(recs), recs)
-	}
-	if !strings.Contains(strings.Join(recs[0].Rules, "\n"), address) {
-		t.Errorf("the record does not name the rule that refused, so an owner cannot audit it: %+v", recs[0])
-	}
-
-	left := leftFor(got, initflow.Installation, initflow.LeftCommand)
-	if left == "" {
-		t.Fatalf("a removal the owner's own --allow-delete admits left them no command:\n%s", got)
-	}
-	want := "fugaro update --allow-delete '" + address + "'"
-	if !strings.Contains(left, want) {
-		t.Errorf("the left-for-you is not the owner's own command (%q):\n%s", want, left)
-	}
-	for _, never := range []string{"a person files an issue", "type the project's name"} {
-		if strings.Contains(left, never) {
-			t.Errorf("the removal's left-for-you says %q, which is not what a removal the owner can approve leaves them:\n%s", never, left)
-		}
-	}
-	// This fixture's before view names no object of its own (an IAM member's
-	// view is role, member and bucket), and the identity is printed with that
-	// said rather than with a cut or an invented one.
-	if !strings.Contains(left, "does not identify") {
-		t.Errorf("the left-for-you does not say what the plan's before view identifies:\n%s", left)
+			got, err := updateRun(t, r, "update", "--yes")
+			if err != nil {
+				t.Fatalf("a plan whose rules are the cover tables' was refused, and D1545 records and warns them instead: %v\n%s", err, got)
+			}
+			if strings.Contains(got, managedmode.NotConverged) {
+				t.Errorf("the session reads the gate's refusal for a plan it admitted:\n%s", got)
+			}
+			if n := len(r.ran(t, "apply")); n != 1 {
+				t.Fatalf("%d terraform apply(s) ran, want the one the gate admitted:\n%s", n, got)
+			}
+			// The warning is what the session that applied the plan reads. It
+			// is not decoration: D1545's accepted price is that the tables warn
+			// instead of refusing, and a warning nobody reads is the refusal
+			// removed with nothing in its place.
+			if !strings.Contains(got, gateContentWarning) {
+				t.Errorf("the session does not read the warning line:\n%s", got)
+			}
+			if !strings.Contains(got, address) {
+				t.Errorf("the warning lines do not name the change they are about (%q):\n%s", address, got)
+			}
+			// And the rule is on the record, which is where it outlives the
+			// session that read it.
+			recs := audits(t, r)
+			if len(recs) != 1 || recs[0].Verdict != managedmode.AuditWarned {
+				t.Fatalf("%d record(s) after an applied step, want one warned: %+v", len(recs), recs)
+			}
+			if !strings.Contains(strings.Join(recs[0].Warnings, "\n"), address) {
+				t.Errorf("the record does not carry the rule that fired, so an owner cannot audit it: %+v", recs[0])
+			}
+			if len(recs[0].Rules) == 0 {
+				t.Errorf("the record states no rule at all, so what admitted the plan is unreadable: %+v", recs[0])
+			}
+			// Nothing was refused, so nothing is left for the owner: D1012's
+			// delete question is asked of a refusal, and this step had none.
+			if left := leftFor(got, initflow.Installation, initflow.LeftCommand); left != "" {
+				t.Errorf("an applied step left the owner a command (%q), and no refusal sent them there:\n%s", left, got)
+			}
+		})
 	}
 }
 
@@ -347,22 +346,20 @@ func outsiderReplace() planChange {
 // rule, and --allow-delete shapes the installation, so the run that passes it
 // stands the WHOLE gate down (initRun.gateUnderway) and nothing reads the plan
 // again. That is right while the delete rule is the only thing that refused, and
-// it is how a plan the cover or the cost list refused as well would be applied
-// with no rule left to read it — an outsider's grant, a GPU the cost list
-// blocks — with the owner told the removal was theirs alone.
+// it is how a plan another rule refused as well would be applied with no rule
+// left to read it — an authoritative IAM resource beside it, a grant the cover
+// tables do not hold — with the owner told the removal was theirs alone.
 //
-// The four plans are that one shape from four sides: a bucket this installation
-// removes (the guard's refusal, which --allow-delete does reach) beside a change
-// no list reaches at all, one address that is both — the job below replaced,
-// where the guard refuses the removal and the cost list the GPU its create half
-// states, so the address is on the list the flag clears and the flag would still
-// apply what the cost list blocked — and a replace whose CREATE half no rule
-// read, which the flag would apply as it stands (a grant to allUsers). The
-// left-for-you has to be the plan refusal's, with no command, and nothing may be
-// applied. The mutation this is for is a gateDeleteLeft that asks what the
-// plan's addresses are and never which rule refused, and one that treats a
-// replace as the pure removal its address looks like: every arm hands the owner
-// a command that applies the other refusal.
+// The two arms are that one shape from the two sides the gate still has refusals
+// on: a bucket this installation removes (the guard's refusal, which
+// --allow-delete does reach) beside a change D1549 keeps refusing, and beside a
+// change D1545 only WARNS about. The second is the arm T9 adds, and it is the
+// harder one to keep: nothing in the verdict is false for it, because the
+// warning is not a refusal, and the command offered would apply a grant no rule
+// of this gate ever recorded. The left-for-you has to be the plan refusal's,
+// with no command, and nothing may be applied. The mutation this is for is a
+// gateDeleteLeft that asks what the plan's addresses are and never which rule
+// refused: every arm hands the owner a command that applies the other change.
 func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -376,11 +373,10 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 		plan  []planChange
 		names string
 	}{
-		{"a grant the cover refuses beside the removal",
+		{"a grant the cover does not announce beside the removal",
 			[]planChange{uploadsBucketRemoval(), grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create")}, "user:a@example.com"},
-		{"a job the cost list blocks beside the removal", []planChange{uploadsBucketRemoval(), gpuJobPlan()}, "nvidia-l4"},
-		{"a replace the cost list blocks at the removal's own address", []planChange{gpuJobReplace()}, "nvidia-l4"},
-		{"a replace whose create half grants the world", []planChange{outsiderReplace()}, "allUsers"},
+		{"an authoritative IAM resource beside the removal",
+			[]planChange{uploadsBucketRemoval(), change("module.installation.google_storage_bucket_iam_binding.runs", "create")}, "google_storage_bucket_iam_binding.runs"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := updateManagedRig(t)
@@ -408,38 +404,50 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 				t.Errorf("the refusal is not the plan's own:\n%s", refused)
 			}
 			if strings.Contains(got, "--allow-delete") {
-				t.Errorf("the run offers --allow-delete for a plan another rule refused as well:\n%s", got)
+				t.Errorf("the run offers --allow-delete for a plan another rule refused or warned about as well:\n%s", got)
 			}
 		})
 	}
 }
 
-// The other side of the create-half question, so that it is not read as "a
-// replace is never the owner's": a replace whose create half the cover admits
-// is a removal --allow-delete clears like any other, and the command stays. The
-// mutation this is for is the check answering too much — refusing the command
-// for every change carrying a create, which is what asking the cover about the
-// whole change rather than about what it creates would do (the cover refuses
-// that change for its delete half, which is the half the flag clears).
-func TestUpdateManagedCoveredReplaceLeavesTheCommand(t *testing.T) {
+// The create half of a replace under T9, and the arm that moved: a replace
+// whose create half the cover admits used to be a removal --allow-delete
+// cleared, with the command left for the owner. D1551 classifies a Cloud Run job
+// as not data-bearing, so the replace's delete half is a WARNING now and the
+// plan is admitted whole — the create half the cover admits beside it is why
+// this arm has no refusal in it at all, which is what makes it the pin on the
+// guard's own half of D1551 rather than on the cover's (the two of them name the
+// one address, and the record holds both lines).
+//
+// A gate that kept refusing the replace fails here, and so does one that applied
+// it without the warning: the record is the whole of what an owner can read
+// afterwards about a change no list announced.
+func TestUpdateManagedJobReplaceAppliesWithAWarning(t *testing.T) {
 	ch := coveredJobReplace()
+	address := ch["address"].(string)
 	r := updateManagedRig(t)
 	updating(t, r)
 	r.setPlan(t, ch)
 
 	got, err := updateRun(t, r, "update", "--yes")
-	if err == nil {
-		t.Fatalf("the run applied a plan that replaces a job:\n%s", got)
+	if err != nil {
+		t.Fatalf("a replace D1551 does not protect was refused, and D1545 applies it with a warning: %v\n%s", err, got)
 	}
-	if n := len(r.ran(t, "apply")); n != 0 {
-		t.Errorf("%d terraform apply(s) ran: the gate refused the plan", n)
+	if n := len(r.ran(t, "apply")); n != 1 {
+		t.Fatalf("%d terraform apply(s) ran, want the one the gate admitted:\n%s", n, got)
 	}
-	left := leftFor(got, initflow.Installation, initflow.LeftCommand)
-	if left == "" {
-		t.Fatalf("a replace whose create half the cover admits left the owner no command:\n%s", got)
+	if !strings.Contains(got, gateContentWarning) || !strings.Contains(got, address) {
+		t.Errorf("the session does not read the guard's warning about %s, which is the only thing that says the replace happened:\n%s", address, got)
 	}
-	if want := "fugaro update --allow-delete " + ch["address"].(string); !strings.Contains(left, want) {
-		t.Errorf("the left-for-you does not carry the owner's command (%q):\n%s", want, left)
+	recs := audits(t, r)
+	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditWarned {
+		t.Fatalf("%d record(s) after an applied replace, want one warned: %+v", len(recs), recs)
+	}
+	if !strings.Contains(strings.Join(recs[0].Warnings, "\n"), address) {
+		t.Errorf("the record does not carry the delete rule's warning, so an owner cannot audit the replace: %+v", recs[0])
+	}
+	if left := leftFor(got, initflow.Installation, initflow.LeftCommand); left != "" {
+		t.Errorf("an applied step left the owner a command (%q), and no refusal sent them there:\n%s", left, got)
 	}
 }
 
@@ -654,18 +662,24 @@ func TestGateRefusalOfTellsAPlanRefusalFromAnUnjudgedStep(t *testing.T) {
 // admits and the COVER refuses is refused all the same, and refused by the
 // gate. The guard is only one of the two gates a managed plan is read by
 // (managed.Spec hands the same document to both), and a step wired to the
-// guard alone would apply a plan the review's own cover would have stopped —
-// a grant to a member the review never listed, which is what this plan is.
+// guard alone would apply a plan the review's own cover would have stopped.
+//
+// The fixture is an authoritative IAM resource and not the grant this test used
+// to carry: an IAM member outside the grant table is one of the cover's CONTENT
+// rules now (D1545 applies it with a warning, TestUpdateManagedOutOfTableGrant-
+// AppliesAndIsRecorded), so it can no longer witness a cover refusal at all.
+// What still refuses whatever the change is — and so what this half of the pair
+// is: the class D1549 keeps.
 //
 // M1's SEC shape is the same one from the other side: the gate's refusal is
 // what the session reads (never the confirmation the step would have asked),
 // nothing is applied, and the rule that fired is on the record, so an owner
 // can read which rule stopped an unattended run.
 func TestUpdateManagedStageRefusesAPlanTheCoverDoesNotCover(t *testing.T) {
-	const outsider = "user:not-listed@example.com"
+	const binding = "module.installation.google_storage_bucket_iam_binding.runs"
 	r := updateManagedRig(t)
 	updating(t, r)
-	r.setPlan(t, grantChange("state", outsider, "roles/storage.objectViewer", "create"))
+	r.setPlan(t, change(binding, "create"))
 
 	got, err := updateRun(t, r, "update", "--yes")
 	if err == nil {
@@ -691,7 +705,7 @@ func TestUpdateManagedStageRefusesAPlanTheCoverDoesNotCover(t *testing.T) {
 	// "cover" is the word internal/managed's own verdict uses for this half of
 	// the gate (its coverGate); it is a literal here because the constant is
 	// that package's.
-	if !strings.Contains(rules, "cover: ") || !strings.Contains(rules, outsider) {
+	if !strings.Contains(rules, "cover: ") || !strings.Contains(rules, binding) {
 		t.Errorf("the record does not name the cover as the rule that refused, so an owner cannot audit it: %+v", recs[0])
 	}
 }
@@ -809,24 +823,34 @@ func TestUpdateManagedConvergesTheLauncherGrantUpgrade(t *testing.T) {
 		}
 	})
 
-	// The narrow half: the gate admits the replaces this binary's own upgrade
-	// makes and nothing else. A replace from a condition no release of Fugaro
-	// wrote is refused as it always was — this is the same world with one field
-	// of the before view moved, and a matcher that had stopped reading the
-	// condition would apply it.
-	t.Run("a replace from another condition is still refused", func(t *testing.T) {
+	// And the half T9 moved. The matcher's narrowness used to be why a replace
+	// from a condition no release of Fugaro wrote was refused, and D1551 takes
+	// that job away from it: an IAM member is not data-bearing, so the replace
+	// is admitted with a warning whatever its condition says. What the matcher
+	// still decides is what the RECORD claims — a plan it did not match must
+	// not read as one this binary's own upgrade made, which is the line an
+	// owner checks the upgrade against the plan they kept.
+	t.Run("a replace from another condition applies without the upgrade's rule", func(t *testing.T) {
 		r := updateManagedRig(t)
 		launcherGrant(t, r, "someone-else", `resource.name.startsWith("projects/_/buckets/`+bucket+`/objects/")`)
 
 		got, err := updateRun(t, r, "update", "--yes")
-		if err == nil {
-			t.Fatalf("the run applied a replace from a condition no release wrote:\n%s", got)
+		if err != nil {
+			t.Fatalf("a replace D1551 does not protect was refused, and D1545 applies it with a warning: %v\n%s", err, got)
 		}
-		if !strings.Contains(got, managedmode.NotConverged) {
-			t.Errorf("the refusal is not the gate's own:\n%s", got)
+		if n := len(r.ran(t, "apply")); n != 1 {
+			t.Fatalf("%d terraform apply(s) ran, want the one the gate admitted:\n%s", n, got)
 		}
-		if n := len(r.ran(t, "apply")); n != 0 {
-			t.Errorf("%d terraform apply(s) ran for a replace the gate refused", n)
+		recs := audits(t, r)
+		if len(recs) != 1 || recs[0].Verdict != managedmode.AuditWarned {
+			t.Fatalf("%d record(s) after an applied replace, want one warned: %+v", len(recs), recs)
+		}
+		rules := strings.Join(recs[0].Rules, "\n")
+		if strings.Contains(rules, "matched out of this plan") {
+			t.Errorf("the record claims this binary's own upgrade made a replace it did not match:\n%s", rules)
+		}
+		if !strings.Contains(strings.Join(recs[0].Warnings, "\n"), `runs_launcher["`+a+`"]`) {
+			t.Errorf("the record does not carry the rule that fired, so an owner cannot audit the replace: %+v", recs[0])
 		}
 	})
 }
@@ -1110,38 +1134,62 @@ func coveredJobReplace() planChange {
 	return ch
 }
 
-// The gate's refusals are refusals in the owner's own terminal too, and the two
-// a person's run can reach are the two halves of what it judges: a plan the
-// cover refuses (a grant to somebody the review did not list) and a plan the
-// cost list blocks. Neither falls back to the confirmation the step would have
-// had: the run stops in the gate's own sentence and nothing is applied.
-//
-// Why the cost arm is the one that has to be here. It is the arm whose plan is
-// INSIDE the run's cover — the control below runs the same plan in a project
-// that is not managed, where the person at the terminal answers it with nothing
-// typed (T7) and the step is "covered by the run confirmation", with no
-// question of its own — so a gateStep that swallowed a refusal (returning
-// false, nil where the gate said no) would hand this step to a confirmation
-// that says yes, and the plan would be applied. And it is the arm a gate that
-// judged only the cover would pass: the outsider's grant is the cover's own
-// refusal, and this one is the cost list's.
-func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
-	costPlan := gpuJobPlan()
-	outsiderGrant := grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create")
+// iamBindingCreate is one of D1549's two shapes a plan reaches the gate with: an
+// authoritative IAM resource, which no release of Fugaro's own tree writes — a
+// binding is the whole policy of the object it is on, so the module writes
+// per-member grants instead, and a plan carrying one is not a document this
+// binary produced.
+func iamBindingCreate() planChange {
+	return change("module.installation.google_storage_bucket_iam_binding.runs", "create")
+}
 
+// The other: an ordinary installation type pointed at a project that is not
+// this run's. Nothing about the plan is destructive and nothing about it is
+// data — the object is simply not this installation's, and the modules never
+// write a project other than the one the run is for.
+func anotherProject() planChange {
+	return planChange{
+		"address": uploadsBucket,
+		"type":    "google_storage_bucket",
+		"change": map[string]any{"actions": []string{"create"}, "before": map[string]any{},
+			"after": map[string]any{"project": "somebody-elses-project"}},
+	}
+}
+
+// The gate's refusals are refusals in the owner's own terminal too: a plan the
+// cover refuses never falls back to the confirmation the step would have had —
+// the run stops in the gate's own sentence, nothing is applied, and what the
+// step leaves is the refusal in place of the prompt it would have printed.
+//
+// Both arms are D1549's kind, the half T9 left refusing: an authoritative IAM
+// resource, which no release of Fugaro's own tree writes, and an ordinary
+// installation type pointed at another project. What a person at a terminal
+// reaches here is a plan no confirmation reaches, so the refusal names an issue
+// rather than a command. The other half — a grant to somebody the review did
+// not list, a plan the cost list blocks — is D1545's, and it is recorded and
+// warned instead of refused
+// (TestUpdateManagedOutOfTableGrantAppliesAndIsRecorded).
+//
+// Why the projection arm is the one that has to be here. It is the arm whose
+// plan is otherwise ordinary — the control below runs the same plan in a
+// project that is not managed and it is applied there — so a gateStep that
+// swallowed a refusal (returning false, nil where the gate said no) would hand
+// this step to a confirmation that says yes, and the plan would be applied. And
+// it is the arm a gate that judged only the IAM rule would pass.
+func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		plan planChange
 		// names is the fact the refusal has to be about, in the refusal's own
-		// words: the member neither list holds, and the accelerator the cost
-		// list's GPU entry read. A run that stopped for any other reason — a
+		// words: the authoritative resource's address, and the project the
+		// plan pointed a bucket at. A run that stopped for any other reason — a
 		// missing grant, an unreadable plan — would stop without it. It is read
 		// in the log the refused step's line names, where the gate's sentence is
 		// whole (the owner's feedback of 2026-11-09).
 		names string
 	}{
-		{"an outsider's grant", outsiderGrant, "user:a@example.com"},
-		{"a plan the cost list blocks", costPlan, "nvidia-l4"},
+		{"an authoritative IAM resource", iamBindingCreate(), "google_storage_bucket_iam_binding.runs"},
+		{"a resource of another project", anotherProject(), "somebody-elses-project"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := updateManagedRig(t) // a coding agent's session is unset below: this is a terminal's
@@ -1215,7 +1263,7 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 			// text says nothing about an issue, which is the promise this arm
 			// makes).
 			if !strings.Contains(refused, "a person files an issue with this line") {
-				t.Errorf("the refusal is not the plan's own, which is what a cover or a cost refusal leaves:\n%s", refused)
+				t.Errorf("the refusal is not the plan's own, which is what a cover's refusal leaves:\n%s", refused)
 			}
 			if !strings.Contains(refused, "refused by ") {
 				t.Errorf("the refusal does not name the rule that refused, in the gate's own words:\n%s", refused)
@@ -1241,10 +1289,11 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 		})
 	}
 
-	// The control for the cost arm: the same plan, the same terminal, a project
-	// that is not managed — the person at the terminal answers it with nothing
-	// typed (T7), no question about the step, and it is applied. That is what
-	// the gate's refusal holds back.
+	// The control for the projection arm: the same plan, the same terminal, a
+	// project that is not managed. No gate stands there, so nothing refuses the
+	// plan: the step asks its own confirmation, the person at the terminal is
+	// the answer to it (T7), and the plan is applied. That is what the refusal
+	// above holds back.
 	r := updateRig(t)
 	// A project of Fugaro's own that is not managed: the marker names it, so
 	// the review is a run confirmation a person answers by being there
@@ -1256,13 +1305,16 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 	fakeTerminal(t)
 	noAgentSession(t)
 	updating(t, r)
-	r.setPlan(t, costPlan)
+	r.setPlan(t, anotherProject())
 	got, _, err := executeStdin(t, "", "update")
 	if err != nil {
-		t.Fatalf("the cost-blocked plan was not applied in a project that is not managed: %v\n%s", err, got)
+		t.Fatalf("the plan the gate refuses was not applied in a project that is not managed: %v\n%s", err, got)
 	}
-	if !strings.Contains(got, "covered by the run confirmation") {
-		t.Errorf("the control's step was not covered by the run's one confirmation, so it does not witness what the gate's refusal holds back:\n%s", got)
+	if strings.Contains(got, managedmode.NotConverged) {
+		t.Errorf("a project that is not managed stopped in the managed gate's sentence, so the control does not witness what the refusal above holds back:\n%s", got)
+	}
+	if !strings.Contains(got, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+"): applies") {
+		t.Errorf("the control's step did not ask its own confirmation, so it does not witness what the gate's refusal holds back:\n%s", got)
 	}
 	if n := len(r.ran(t, "apply")); n != 1 {
 		t.Errorf("%d terraform apply(s) in the control run, want the one:\n%s", n, got)
@@ -1432,24 +1484,14 @@ func TestUpdateManagedTerminalControlKeepsTheRefusal(t *testing.T) {
 	}
 }
 
-// The plugin pin's write is a step `fugaro update` makes on a managed project
-// with nothing asked: "Write this to .claude/settings.json? [y/N]" is the
-// question it used to be, and the gate being underway is the whole of what
-// admits it now, with the diff still printed and nothing typed. The stage is
-// called directly, which is the call the loop makes for a step that is not
-// SelfConfirming, and the stdin is EMPTY: a stage that asked would get no
-// answer and write nothing, so the file being wired at all is the assertion
-// about the question.
-//
-// The two worlds a project that is NOT managed has (T7): a person at the
-// terminal answers the write by being there, with nothing typed and nothing
-// read, and a session with nobody at it is left the step, refused without a
-// read. Those are the control that keeps the gate's branch from being a stage
-// that simply stopped asking, and the mutation they catch: the wiring's
-// managed branch taken on anything but the project's own marks (gateUnderway
-// answering true for every project) — the pipe arm would then write the file
-// under the gate's own sentence with nobody there at all.
-func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
+// The plugin stage asks nothing and reads nothing, in every world it can run
+// in — managed or not, a person at the terminal or nobody. The question it used
+// to ask was the settings write's ("Write this to .claude/settings.json?
+// [y/N]"), and that write went with the merge (U2, D949): what is left is the
+// install in Claude Code, which no terminal and no --yes decides, and the file
+// an older fugaro left comes out of all four worlds byte for byte. The stage is
+// called directly, which is the call the loop makes, and the stdin is EMPTY.
+func TestUpdateManagedPluginStageAsksNothing(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	for _, tc := range []struct {
 		name     string
@@ -1462,6 +1504,8 @@ func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
 		{"not managed, nobody at the terminal", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			f := testutil.NewClaudePluginFake(t, "[]", "[]")
+			f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 			settings := wiringCheckout(t, settingsWithOthers)
 			withTerminal(t, tc.terminal)
 			e, out := stageEngine(t, "", &initOptions{})
@@ -1471,45 +1515,24 @@ func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
 			if tc.managed {
 				e.r.gate = &initGate{managed: true}
 			}
+			useFakeClaude(t, f)
 			s := newPluginStage(e)
-			_, err := s.Apply(t.Context(), initflow.Env{Interactive: tc.terminal})
-			got, _ := os.ReadFile(settings)
-			written := string(got) != settingsWithOthers
-			if !strings.Contains(out.String(), "extraKnownMarketplaces") {
-				t.Fatalf("the step printed no diff of what it would write:\n%s", out.String())
+			if _, err := s.Apply(t.Context(), initflow.Env{Interactive: tc.terminal}); err != nil {
+				t.Fatalf("the plugin step was stopped (%v), and it has nothing to ask:\n%s", err, out.String())
+			}
+			if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
+				t.Errorf("the step wrote the checkout's settings:\n%s", got)
 			}
 			if spy.read {
-				t.Errorf("the step read the input: nothing is typed at this write any more (T7):\n%s", out.String())
+				t.Errorf("the step read the input: nothing is typed at this step any more (U2, D949):\n%s", out.String())
 			}
-			if strings.Contains(out.String(), "[y/N]") || strings.Contains(out.String(), "confirmed by --yes") {
-				t.Errorf("the step was asked for what neither the terminal nor --yes gives:\n%s", out.String())
+			for _, bad := range []string{"[y/N]", "extraKnownMarketplaces", initflow.GateOrdinary()} {
+				if strings.Contains(out.String(), bad) {
+					t.Errorf("the step says %q, and it writes nothing in the checkout:\n%s", bad, out.String())
+				}
 			}
-			if tc.managed {
-				if err != nil {
-					t.Fatalf("a managed project was stopped: %v\n%s", err, out.String())
-				}
-				if !written {
-					t.Errorf("the settings were not wired, so the gate's verdict did not stand in for the y/N:\n%s", out.String())
-				}
-				if !strings.Contains(out.String(), initflow.GateOrdinary()) {
-					t.Errorf("the write does not say what decided it:\n%s", out.String())
-				}
-				return
-			}
-			if strings.Contains(out.String(), initflow.GateOrdinary()) {
-				t.Errorf("a project that is not managed printed the managed gate's sentence:\n%s", out.String())
-			}
-			if tc.terminal {
-				if err != nil {
-					t.Fatalf("a person's own terminal was stopped: %v\n%s", err, out.String())
-				}
-				if !written {
-					t.Errorf("the settings were not wired at the person's own terminal:\n%s", out.String())
-				}
-				return
-			}
-			if err == nil || written {
-				t.Fatalf("the settings were wired with nobody at the terminal (err %v):\n%s", err, out.String())
+			if calls := callArgs(f.Calls(t)); !slices.ContainsFunc(calls, func(a []string) bool { return slices.Equal(a, argsInstall) }) {
+				t.Errorf("the machine's own install did not happen: %q\n%s", calls, out.String())
 			}
 		})
 	}
@@ -1591,7 +1614,7 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // is refused it for the reason §3.2 gives those arguments: the cover's Listed
 // members are read from THIS run's options (accessLists reads spec.Launchers,
 // spec.Operators and the budget admins into tf.Cover.Listed), so a session that
-// passed --launcher, --operator or --budget-admin would have the gate judge a
+// passed --operator, --admin or --budget-admin would have the gate judge a
 // plan against the list it just wrote — §4.1's rules 4 and 5 refuse exactly the
 // grant such a plan makes, and the flag would walk around both by making it
 // covered. --budget with --billing-account sets the cover's Billing the same
@@ -1603,7 +1626,7 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // widening flag would have had admitted is refused in the session's own words,
 // nothing is applied, and — the property a flag asked beside the door has — the
 // gate read nothing and no record exists, because no verdict was ever made. The
-// plan grants a member the run's own --launcher would have listed, which is the
+// plan grants a member the run's own --operator would have listed, which is the
 // exact shape the hole was found with.
 func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 	const outsider = "user:not-listed@example.com"
@@ -1619,8 +1642,8 @@ func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 		// config names its shared budget backend.
 		rig func(t *testing.T) *initRig
 	}{
-		{"launcher", []string{"--launcher", outsider}, nil},
 		{"operator", []string{"--operator", outsider}, nil},
+		{"admin", []string{"--admin", outsider}, nil},
 		{"budget-admin", []string{"--firebase-project", fpID, "--budget-admin", outsider}, func(t *testing.T) *initRig {
 			r := newFBRig(t)
 			r.managedRuns(t, initProjectName, initProject)

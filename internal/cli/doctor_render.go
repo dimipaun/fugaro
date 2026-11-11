@@ -118,6 +118,7 @@ var doctorShownSecurityIDs = map[string]bool{
 var doctorUpdatePrefixes = []string{
 	"cli-version",
 	"plugin-pin",
+	"orchestrator-unit",
 	"base-image",
 	"image-config-",
 	"policy-rules-skew",
@@ -159,12 +160,12 @@ var doctorSecurityPrefixes = []string{
 	// reach is a fact the reader acts on now rather than reviews later.
 	"model-key-in-agent",
 	// security-list is D1513's line: the security list in force for a
-	// checkout, which in slice 1 is the engine's floor alone and so is only
-	// measured — the default view does not print it and --security does. Its
-	// sibling ID, security-list-unused, is the finding the same check makes
-	// when a row a person wrote matches nothing in the base: that one is a
-	// warning, so the class is doctorClassActionable and the default view
-	// prints it whatever this list says.
+	// checkout — the floor, the project layer's rows and the repository's own —
+	// which is only measured: the default view does not print it and --security
+	// does. Its sibling ID, security-list-unused, is the finding the same check
+	// makes when a row this repository wrote matches nothing in the base: that
+	// one is a warning, so the class is doctorClassActionable and the default
+	// view prints it whatever this list says.
 	"security-list",
 }
 
@@ -794,6 +795,12 @@ type doctorShort struct {
 var doctorShorts = map[string]doctorShort{
 	"cli-version": {"a newer Fugaro release is available.", ""},
 	"plugin-pin":  {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
+	// The login unit the daemon runs under was written from an older template,
+	// and `fugaro update` re-renders it in place (init_stages.go's unit stage),
+	// so the entry carries no fix of its own: the class's command is the whole
+	// fix, and `fugaro orchestrator install` is the by-hand form the check's own
+	// text keeps for --all and --json.
+	"orchestrator-unit": {"the login unit that runs the orchestrator daemon was written from an older template.", ""},
 	// The plugin Claude Code installed is not the checkout's pin, and the
 	// converge's plugin stage writes the pin: `fugaro update` is the command
 	// the line names (CLAUDE.md's hard rule), and the install that follows the

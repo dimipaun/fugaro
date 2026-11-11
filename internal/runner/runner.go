@@ -202,6 +202,12 @@ type run struct {
 	// model call and no implement stage (digest.go, T3.2). Set once at
 	// bootstrap, from the recipe the run resolved.
 	digest bool
+	// rebase is whether the resolved recipe's one step is the rebase step
+	// (recipe.UsesRebase, E5): the run puts its branch on its base, resolves
+	// the conflicts, runs the workflow's tests again and pushes — with no
+	// coder pass and no review (rebase.go). Set once at bootstrap, from the
+	// recipe the run resolved.
+	rebase bool
 	// review is whether this run is mode: review (reviewmode.go, Task 12
 	// of the generic-tool plan): set from spec.ReviewPRs at bootstrap,
 	// before the recipe is resolved, the same way follow is set from
@@ -285,6 +291,10 @@ type run struct {
 	// for this run (accountchoice.go, D874): off unless the owner's published
 	// policy turns it on, and the account each stage has reached.
 	accounts accountChoice
+	// pools is the ordered failover the stage-start pool choice keeps for this
+	// run (poolchoice.go, MC5): off unless a craft's access names a pool, and
+	// the member each stage has reached.
+	pools poolChoice
 	// mu guards halt, cancelled, failReason, failClass, tokens, gatewayTokens
 	// and haltStage: the cancel watcher and, with the gateway, its halt
 	// callback record into them from other goroutines. Whichever of a halt
@@ -364,6 +374,15 @@ type run struct {
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
 	routeBy      map[string]pricing.Micros
+	// modelTokens is the run's token counts by model, from whichever path
+	// filled them: the gateway's per-call usage under the model it priced
+	// each call for, taken from its ledger when it closes, or, with no
+	// gateway, the agent's own per-model usage, taken stage by stage (G1.2,
+	// F8). The record carries them so `fugaro estimate` can price the run's
+	// own usage again on another model. Empty until one of the two fills it,
+	// which for a gateway run is its last step, as the cache totals beside
+	// them are.
+	modelTokens  map[string]runstore.ModelTokenCounts
 	routed       bool // the gateway has provider routes, so route_by exists
 	reported     pricing.Micros
 	unreconciled pricing.Micros
@@ -469,6 +488,21 @@ type run struct {
 	// review, and the mode must not come from there.
 	rigorCfg rigor.Config
 	rigorRev string
+	// baseCfg is the whole resolved configuration the base branch's
+	// fugaro.yaml produced at bootstrap, of which rigorCfg is the mode's
+	// half: the triage stage's switch is the other key read from there and
+	// not from the checkout (D1854, triage_stage.go), and reading it from
+	// out.Cfg is what makes it the base's answer rather than a second read
+	// of the same file. It is nil exactly when the base could not be read or
+	// did not resolve — the run then has no base file to read a switch from
+	// and does not triage, which is the strict direction.
+	baseCfg *config.Config
+	// triageRounds is the triage rounds this run has recorded, in the order it
+	// ran them: the raw list the record's block is rebuilt from (triage_stage.go),
+	// kept here rather than appended to the block because runstore.NewTriage is
+	// what bounds and clips it and a second append would build on the bounded
+	// list.
+	triageRounds []runstore.TriageRound
 	// rigorRaise is the last raise the run's mode took during the run, set by
 	// the moment that took it (noteRigorRaise, rigor.go) and nil while the mode
 	// has never risen above the one bootstrap resolved. It is kept here because
@@ -2458,6 +2492,17 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// gate refuses a digest launch against a release image that predates the
 	// step (digestSince, internal/cli/recipes_skew.go).
 	r.digest = recipe.UsesDigest(rcp)
+	// The rebase step is the runner's own work plus one model stage for the
+	// conflicts (rebase.go, E5): its run's step is the whole plan, it reviews
+	// nothing and it opens no pull request — what it delivers is a branch put
+	// back on its base, and the head it leaves is reviewed by a run of its own
+	// (G13, D2043). Marked here, right after the recipe is resolved, and
+	// dispatched in agentLoop in place of implement for the same reason the
+	// digest step is: the loop below walks review levels, and this run has
+	// none. The launcher's image gate refuses a rebase launch against a
+	// release image that predates the step (escalationSince, internal/cli/
+	// recipes_skew.go).
+	r.rebase = recipe.UsesRebase(rcp)
 	// A follow-up cannot run one whatever this image executes: a report run
 	// is launched on its own, because it lists the records it may read and
 	// refuses while another report run of the repository is going
@@ -2469,6 +2514,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// (refuseFollowUpReportMode, internal/cli/recipes_resolve.go).
 	if r.follow != nil && recipe.UsesDigest(rcp) {
 		return fmt.Errorf("recipe %s holds the digest step, which writes this repository's run reports; this task continues pull request #%d, and a report run is launched on its own — it lists the records it may read and refuses while another report run of the repository is going — so it cannot continue one", rrec.Name, spec.PR)
+	}
+	// A rebase recipe puts an existing branch back on its base (E5): a first
+	// run has none — it cuts its own branch from the task's ref, whose base
+	// is the commit it came from — so the step would rebase nothing, re-run
+	// the tests for a branch nobody asked about and then find no branch on
+	// origin to push to, which reads as a branch someone deleted rather than
+	// as the launch that was wrong. Rung 0 is launched on the pull request
+	// whose branch it rebases (--pr N, E10a).
+	if r.follow == nil && recipe.UsesRebase(rcp) {
+		return fmt.Errorf("recipe %s puts the branch of an existing pull request back on its base, and this task continues no pull request, so there is no branch to rebase: launch it on the pull request it rebases (--pr N)", rrec.Name)
 	}
 	switch {
 	case r.review && rcp.Mode != recipe.ModeReview:
@@ -2641,7 +2696,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.startBudgetBackend(ctx); err != nil {
 		return err
 	}
-	if err := r.checkBudget(); err != nil {
+	if err := r.checkBudget(ctx); err != nil {
 		// These checks judged the challenger as this run's coder
 		// (applyChallenger), so the policy refusing *that* pin is the arm's
 		// own refusal and is recorded as one (D556) rather than as
@@ -2995,7 +3050,7 @@ func ResolveConfig(data []byte, pl *task.ProjectLayer, project, base string) Con
 		out.Layer = l
 		p, _ := config.ProjectOf(data)
 		gcp, _ := config.GCPProjectOf(data)
-		out.Applied = p == l.Project && gcp == l.GCPProject
+		out.Applied = l.Applies(p, gcp)
 		if out.Applied {
 			layer = l
 		}
@@ -3136,7 +3191,11 @@ func (r *run) readRepoFile(rel string) (string, error) {
 func (r *run) systemPromptData() PromptData {
 	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
 		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
-		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != ""}
+		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != "",
+		// The brief is the coder's, and "implement" is one of its stages: the
+		// answer is the coder's own model, never a review stage's, which is
+		// why denyBinaryReads' review half cannot reach it (D2014).
+		NoImageReads: r.denyBinaryReads("implement")}
 	if r.follow != nil {
 		pd.FollowUp = followup.SystemPromptLines(r.promptData())
 	}
@@ -3144,6 +3203,13 @@ func (r *run) systemPromptData() PromptData {
 }
 
 func (r *run) agentLoop(ctx context.Context) {
+	// A rebase run's whole work is one step, and it is not a step of this
+	// loop: no implement stage, no review level, no plan walk (rebase.go,
+	// E5). It ends the run itself, either way it goes.
+	if r.rebase {
+		r.rebaseStep(ctx)
+		return
+	}
 	sys := SystemPrompt(r.systemPromptData(), r.instructions)
 	req := agent.Request{Prompt: r.spec.Task, SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
 	var opts stageOpts
@@ -3486,6 +3552,16 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		if r.capReached() {
 			return false
 		}
+		// The judge weighs this round's findings (T-TR7a, D1840): it is called
+		// after the round is recorded and before anything acts on it, and what
+		// it answers is logged and nothing else — the fix below, Decide above
+		// the loop and the pull request's body all read the round exactly as
+		// they did before it existed. A judge the run could not make is a
+		// stage failure like any other, and the loop stops on it: nothing of
+		// the round is acted on by a run that is already over.
+		if !r.triageRound(ctx, round, policy.LevelL2, v) {
+			return false
+		}
 		// OD1: a round that asks for changes and names nothing but decisions
 		// only the owner can make is where the loop stops. No fix round is
 		// dispatched — there is nothing a coder could change — and no further
@@ -3495,6 +3571,20 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		if v.Verdict != "ship" && allOwner(v.Findings) {
 			r.ownerStop(ctx, v.Findings)
 			return false
+		}
+		// hand_over: this review is where the run ends (recipe.Step.HandOver,
+		// E5). The round's verdict and findings are recorded above and nothing
+		// follows them — no fix, and no further round — which is what the
+		// escalation's escalate recipe asks for: one coder pass and one review,
+		// with what the review found left for whoever reads the verdict rather
+		// than handed back to the coder. The plan has nothing after this step
+		// (recipe.Parse refuses an adversarial step after a hand_over review),
+		// so the loop's answer only decides that it walks no step it does not
+		// have; finalize then decides readiness on the round the run recorded,
+		// exactly as it does for any other run whose last review asked for
+		// changes.
+		if st.HandOver {
+			return true
 		}
 		if v.Verdict == "ship" || round >= r.reviewRounds(st) {
 			if v.Verdict != "ship" && r.endsThePlan(st.Kind) {
@@ -3583,6 +3673,13 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
 		r.save(ctx)
 		if r.capReached() {
+			return false
+		}
+		// The judge, exactly as seniorLoop calls it and for this level's own
+		// rounds: level 3's findings are judged too (D1847), whichever level
+		// decides readiness. A judge that failed the run stops this loop the
+		// same way.
+		if !r.triageRound(ctx, round, policy.LevelL3, v) {
 			return false
 		}
 		// OD1, exactly as seniorLoop stops: level 3 is the deciding level of a
@@ -3873,13 +3970,17 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		model, effort := r.reviewFacts("review_first")
 		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Head: head, Model: model, Effort: effort, Bounce: r.bounce}
 		var v Verdict
+		// parsed is whether this round answered a verdict at all, read by the
+		// triage step below: a round with none has nothing for a judge to weigh,
+		// and a skipped or unparsed round is exactly the round the record's own
+		// verdict "none" says nothing was read from.
+		parsed := false
 		switch skipped := (skippedError{}); {
 		case errors.As(err, &skipped):
 			r.d.Log.Warn("the first-line review failed; skipping it", "round", round, "err", r.redact(skipped.err.Error()))
 		case !ok:
 			return sessionID, false
 		default:
-			var parsed bool
 			if v, parsed = TryVerdict(res); parsed {
 				sum.Verdict, sum.Findings = v.Verdict, len(v.Findings)
 			} else {
@@ -3897,6 +3998,15 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		r.rec.Reviews = append(r.rec.Reviews, sum)
 		r.save(ctx)
 		if r.capReached() {
+			return sessionID, false
+		}
+		// The judge weighs the cheap loop's round too (D1847): level 1 is a
+		// review level, its findings are what the level above is handed, and
+		// which level decided them does not change what the judge is asked. A
+		// round that answered no verdict has none to weigh, so it is skipped
+		// rather than judged on findings nothing named. A judge that failed
+		// the run ends this loop, which is the session's own return.
+		if parsed && !r.triageRound(ctx, round, policy.LevelL1, v) {
 			return sessionID, false
 		}
 		if sum.Verdict != "changes" {
@@ -4088,6 +4198,13 @@ type stageOpts struct {
 	// attempt that has none left, which is why this is a flag the caller
 	// sets per attempt and not a decision stageOnce makes on its own.
 	RetryTransient bool
+	// Dir is the working directory the stage's agent runs in, "" for the
+	// run's own checkout — which is every stage but one. The triage judge
+	// runs in a directory of its own that holds nothing of the run
+	// (triage_stage.go): the brief is text, and a stage with the artifact
+	// under review in reach is what the empty tool list and the empty
+	// setting sources are there to prevent (F25).
+	Dir string
 }
 
 // transientRetries is the run's own bound on the retry a closed model stream
@@ -4360,6 +4477,16 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.fail("stage " + name + ": " + reason)
 		return agent.Result{}, false, errors.New(reason)
 	}
+	// The stage's own credential or pool (poolchoice.go, MC5): the craft this
+	// stage's calls go out on, the pool member that serves it, and a stage
+	// whose pool serves nothing yet or names a member this job does not hold
+	// refused here rather than run as another credential. The member is the one
+	// the run's own route for the stage's model already carries; the check
+	// decides whether the pool lets it serve at all.
+	if _, reason := r.checkStagePool(ctx, name); reason != "" {
+		r.fail("stage " + name + ": " + reason)
+		return agent.Result{}, false, errors.New(reason)
+	}
 	// With the gateway on, nothing the agent or the repository wrote since
 	// the last stage may send Claude Code around it.
 	if r.gatewayOn() {
@@ -4427,6 +4554,14 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secretList())
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, stageEnv, tw, sw
+	if opts.Dir != "" {
+		// The stage's own directory rather than the checkout: the one stage
+		// that asks for it is the triage judge, which must have nothing of the
+		// run in reach (F25). Everything the stage's own environment names —
+		// the state directory, the home it runs with, the git credentials — is
+		// an absolute path, so nothing else moves with the working directory.
+		req.Dir = opts.Dir
+	}
 	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.cfg.Agent.MaxBudgetUSD
 
 	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
@@ -4581,6 +4716,10 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	} else {
 		r.rec.CostUSD += res.CostUSD
 	}
+	// The stage's own per-model tokens, which a run with no gateway has no
+	// other account of (G1.2, F8): it ignores the report of a gateway run,
+	// whose counts are the gateway's per-call sums.
+	r.recordAgentModelTokens(res)
 	r.updateCost()
 	// The relay has seen the whole stream by now, so its counts of the
 	// stage's sub-agent tool calls and of the most times one identical shell
@@ -4826,7 +4965,12 @@ func (r *run) stageErrorText(text string) string {
 // agent's own text -- which the skill's own loose "usage limit" match reads
 // there anyway -- while naming an allowance a run never spent is a claim the
 // reason has no business making.
-var oauthLimitPhrases = []string{"claude ai usage limit", "hit your limit", `"type":"rate_limit_error"`}
+//
+// It is the claude-oauth row of exhaustionSignals (F5), which is where those
+// shapes are recorded and where every other credential type's are: the name is
+// kept because this is what the allowance's own readers cite, and it is a view
+// of that one table rather than a second list to keep in step.
+var oauthLimitPhrases = signalPhrases(config.CredentialTypeClaudeOAuth)
 
 // subscriptionUsageLimit reports whether a stage's own text says it stopped on
 // the OAuth account's subscription usage limit rather than on anything about

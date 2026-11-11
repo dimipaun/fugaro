@@ -74,8 +74,11 @@ type nodeGrant struct {
 }
 
 // Decode reads the node's document. It is strict in every direction the node
-// can be wrong: an unknown field is refused (DisallowUnknownFields, so an older
-// CLI refuses a node carrying a member it does not know — F27) and a field it
+// can be wrong: an unknown field is refused (DisallowUnknownFields, so a node
+// carrying a member this reader does not know is refused rather than half-read,
+// which is F27's fail-closed half; the floor F27 asked for besides it — an older
+// CLI refusing the node — is not this one, because an older CLI has no reader for
+// the node at all, and RS3 does not ship that floor) and a field it
 // does know is read only in the one spelling this file writes
 // (refuseOtherSpellings, because encoding/json is lax about a name in two ways
 // no stored document may rely on), a second JSON value after the first is

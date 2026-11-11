@@ -19,6 +19,13 @@ package recipe
 // The loop's fix stays counted: whether the review of a report ever asks for
 // one is for that run to decide, and a bound errs high rather than low.
 //
+// A review step with hand_over buys no fix round, so each of its rounds is
+// the review alone (per below): the run ends at that review with its verdict
+// recorded, and the escalation's `escalate` recipe is one pass and one
+// verdict by construction. A recipe holding the rebase step is a single model
+// stage at most, whatever n says, because the step is the whole run: the
+// conflicts are the only work a model is asked about (see the arm below).
+//
 // An adversarial step (review level 3) adds n3*(2 + 2*f) when it bounces and
 // n3*2 when it does not: each of its n3 rounds is one adversarial review and
 // its fix, and a bounce inserts the same cheap first-line loop a bouncing
@@ -37,11 +44,18 @@ func StageBound(r *Recipe, f, n, n3Default int) int {
 	if r.Mode == ModeReview || r.Mode == ModeArtifact {
 		return 1
 	}
+	// A rebase recipe is one model stage at most: the conflicts are the only
+	// thing in it a model is asked about, and a rebase that resolves them
+	// without one -- or refuses before the stage at all -- costs fewer
+	// stages still.
+	if UsesRebase(r) {
+		return 1
+	}
 	implement := 1
 	if UsesDigest(r) {
 		implement = 0
 	}
-	first, bounce, rounds := 0, false, n
+	first, bounce, rounds, handOver := 0, false, n, false
 	adversarial, adversarialBounce := 0, false
 	for _, s := range r.Steps {
 		switch s.Kind {
@@ -51,7 +65,7 @@ func StageBound(r *Recipe, f, n, n3Default int) int {
 				first = s.MaxRounds
 			}
 		case StepReview:
-			bounce = s.Bounce
+			bounce, handOver = s.Bounce, s.HandOver
 			if s.MaxRounds > 0 {
 				rounds = s.MaxRounds
 			}
@@ -64,7 +78,14 @@ func StageBound(r *Recipe, f, n, n3Default int) int {
 		}
 	}
 	per := 2 // a senior review and its fix
-	if bounce {
+	switch {
+	case handOver:
+		// The review that hands the run over buys no fix round: the round
+		// after it is the one the flag refuses, so each of its rounds is the
+		// review alone. A hand_over review cannot bounce (the parser refuses
+		// the pair), so there is no cheap loop to add here either.
+		per = 1
+	case bounce:
 		per += 2 * first
 	}
 	total := implement + 2*first + rounds*per

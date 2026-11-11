@@ -300,7 +300,7 @@ func parseImagesWorkflow(t *testing.T, data []byte) imagesWorkflow {
 // mutation test below can restate them without drifting from the checks.
 const (
 	signPushOnly   = "github.event_name == 'push'"
-	cosignPin      = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6"
+	cosignPin      = "sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532"
 	signIdentity   = "https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION"
 	signIssuer     = "https://token.actions.githubusercontent.com"
 	indexDigestRef = "${{ steps.index.outputs.digest }}" // the digest the sign step must use
