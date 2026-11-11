@@ -2948,9 +2948,9 @@ filed or set aside are skipped.
 The post is built once and printed as it is: the title, the body, and
 the sha256 of the exact bytes. A run without --ask files nothing. --ask
 asks at your own terminal after showing the preview and files exactly
-those bytes; a coding agent's session, --json and a pipe never file,
-because a confirmation nobody can answer is a refusal and never a
-silent proceed.
+those bytes; a coding agent's session and a pipe never file, because
+a confirmation nobody can answer is a refusal and never a silent
+proceed.
 
 Filing needs GitHub's own `gh` with an account on github.com. Where it
 is missing, or has no account there, the install command or `gh auth

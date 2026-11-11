@@ -29,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/issues"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // issueGH is the person's own `gh`, as the three questions submitting asks it
@@ -65,9 +66,9 @@ func newIssueSubmitCmd() *cobra.Command {
 			"The post is built once and printed as it is: the title, the body, and\n" +
 			"the sha256 of the exact bytes. A run without --ask files nothing. --ask\n" +
 			"asks at your own terminal after showing the preview and files exactly\n" +
-			"those bytes; a coding agent's session, --json and a pipe never file,\n" +
-			"because a confirmation nobody can answer is a refusal and never a\n" +
-			"silent proceed.\n\n" +
+			"those bytes; a coding agent's session and a pipe never file, because\n" +
+			"a confirmation nobody can answer is a refusal and never a silent\n" +
+			"proceed.\n\n" +
 			"Filing needs GitHub's own `gh` with an account on github.com. Where it\n" +
 			"is missing, or has no account there, the install command or `gh auth\n" +
 			"login` is printed with the new-issue link holding the same title and\n" +
@@ -90,7 +91,20 @@ func runIssueSubmit(cmd *cobra.Command, ref string, ask bool) error {
 	if err != nil {
 		return err
 	}
-	todo, err := issueSubmittable(store, ref)
+	// The project this run files for, resolved once: its names are what the post
+	// is scrubbed of (F4), and the digest of its runs bucket is the installation
+	// that says which of the records in this machine's one issues folder are
+	// this project's own (F8b).
+	lc := selectedProjectConfig(cmd.Context())
+	installation := ""
+	if lc != nil {
+		installation = issues.Digest(lc.BucketURL())
+		// A record this run writes is stamped with the project that wrote it, so
+		// an issue filed here is never carried by another project's commands and
+		// never filed a second time into another project's repository.
+		store.Installation = installation
+	}
+	todo, err := issueSubmittable(store, ref, installation)
 	if err != nil {
 		return err
 	}
@@ -102,7 +116,7 @@ func runIssueSubmit(cmd *cobra.Command, ref string, ask bool) error {
 		_, err := fmt.Fprintln(out, "Nothing is pending: no issue is waiting to be filed.")
 		return err
 	}
-	names := issueNames(cmd.Context())
+	names := issueNames(lc)
 	if state := readIssueGHState(cmd.Context(), issueGH); !state.ok {
 		return issueFallback(cmd, todo, names, state)
 	}
@@ -110,6 +124,12 @@ func runIssueSubmit(cmd *cobra.Command, ref string, ask bool) error {
 		if err := issueSubmit(cmd, store, i, names, ask); err != nil {
 			return err
 		}
+	}
+	if !ask {
+		// Once for the run and not once per issue: a sweep of five previews is
+		// five previews and one thing to do about them.
+		_, err := fmt.Fprintln(out, "\nNothing was filed. Pass --ask to file these bytes from your own terminal.")
+		return err
 	}
 	return nil
 }
@@ -126,11 +146,23 @@ func runIssueSubmit(cmd *cobra.Command, ref string, ask bool) error {
 // takes a dismissal back. The sweep is the other way round for the same
 // reason — it visits what is waiting and leaves the two finished statuses
 // alone, so a dismissal nobody named is never filed by accident.
-func issueSubmittable(store *issues.Store, ref string) ([]issues.Issue, error) {
+//
+// installation is the project this run files for, and a record that names
+// another one is never filed from here (F8b): the folder is one for the whole
+// machine, and the post would be scrubbed of *this* project's names while
+// carrying another project's summary, diagnosis and log excerpts — the exact
+// leak the stamp exists to prevent. A record that names none is kept, the
+// answer `mine` gives it: it was saved by a build that had no field to stamp,
+// and dropping it would hide the user's own issue rather than attribute it to
+// the wrong project.
+func issueSubmittable(store *issues.Store, ref, installation string) ([]issues.Issue, error) {
 	if ref != "" {
 		i, err := store.Get(issueRefArg(ref))
 		if err != nil {
 			return nil, userErr("nothing was filed: %v", err)
+		}
+		if issueForeign(i, installation) {
+			return nil, userErr("nothing was filed: %s belongs to another installation, and submit files this project's issues only", issueRef(i))
 		}
 		if at := issueURL(i.URL); i.Status == issues.StatusSubmitted || at != "" {
 			where := ""
@@ -147,11 +179,23 @@ func issueSubmittable(store *issues.Store, ref string) ([]issues.Issue, error) {
 	}
 	var todo []issues.Issue
 	for _, i := range all {
-		if i.Status == issues.StatusPending {
-			todo = append(todo, i)
+		if i.Status != issues.StatusPending || issueForeign(i, installation) {
+			continue
 		}
+		todo = append(todo, i)
 	}
 	return todo, nil
+}
+
+// issueForeign reports whether a record belongs to an installation other than
+// this run's: the one condition under which it is neither filed nor read here.
+// It is the test `mine` makes of its own rows (F8b), word for word, including
+// the half that matters more than the name suggests — a record that names no
+// installation and a run that has none are both "not foreign", so an
+// unselected project files what it can and a pre-field record is never
+// orphaned.
+func issueForeign(i issues.Issue, installation string) bool {
+	return i.Installation != "" && installation != "" && i.Installation != installation
 }
 
 // issueSubmit is one issue's whole submission: the post built once, the
@@ -168,8 +212,10 @@ func issueSubmit(cmd *cobra.Command, store *issues.Store, i issues.Issue, names 
 		return err
 	}
 	if !ask {
-		_, err := fmt.Fprintf(out, "\nNothing was filed. Pass --ask to file these bytes from your own terminal.\n")
-		return err
+		// The run's one line about the flag comes after the last preview
+		// (runIssueSubmit): the preview is this issue's, the instruction is the
+		// run's.
+		return nil
 	}
 	ok, err := issueConfirm(cmd)
 	if err != nil {
@@ -239,6 +285,13 @@ func issueConfirm(cmd *cobra.Command) (bool, error) {
 // The agent case is initflow's own refusal, the one `dismiss` and `recipes
 // publish` give in the same session (F10), so the two commands that refuse a
 // coding agent here refuse it in one sentence.
+//
+// The four cases are the sessions askAtTerminal can refuse in, and not the four
+// flags this command carries: --json and --non-interactive are not flags of
+// `submit` today, so a run reads them as false and their two sentences wait for
+// the day one is added — which is why the switch answers the conditions rather
+// than the flag list, and why the help says what a pipe and a coding agent's
+// session do rather than naming a flag nobody can pass.
 func issueAskRefusal(c initflow.Conditions) string {
 	switch {
 	case c.Agent != "":
@@ -267,8 +320,8 @@ func issueFallback(cmd *cobra.Command, todo []issues.Issue, names []string, stat
 	}
 	for _, i := range todo {
 		p := issues.BuildPost(i, names)
-		if _, err := fmt.Fprintf(out, "\n%s\n%s\n\nOpen this link to file it in a browser:\n%s\n\nThe whole issue is on this machine: fugaro issue show %s\n",
-			issues.Preview(p), state.what, issues.NewIssueURL(p), p.Ref); err != nil {
+		if _, err := fmt.Fprintf(out, "\n%s\nOpen this link to file it in a browser:\n%s\n\nThe whole issue is on this machine: fugaro issue show %s\n",
+			issues.Preview(p), issues.NewIssueURL(p), p.Ref); err != nil {
 			return err
 		}
 	}
@@ -278,48 +331,49 @@ func issueFallback(cmd *cobra.Command, todo []issues.Issue, names []string, stat
 // issueGHState is whether this machine can file at all, and the two lines that
 // say why not (spec 5): the install hint when `gh` is missing, and `gh auth
 // login` when it is there with no account on the host the post goes to.
+//
+// It is the whole of what a person is told, printed once for the run and not
+// once per issue: a machine with five waiting issues gets one line about the
+// one thing that is wrong and five links, which is the shape setup's gh hint
+// is printed in too.
 type issueGHState struct {
 	// ok is true when `gh` is installed and logged in to github.com.
 	ok bool
 	// line is the whole sentence printed for a machine that cannot file, and
 	// why the shortened reason the error carries after it.
 	line, why string
-	// what names the missing piece where the person reads the link, so the
-	// line above and the line beside the link say which of the two it was.
-	what string
 }
 
-// readIssueGHState reads the two questions `gh` is asked before the post is built
-// (issues.GH). A no to either is a machine that cannot file, and the two are
-// told apart because the answer to a person is different: install `gh`, or log
-// in to it.
+// readIssueGHState reads the two questions `gh` is asked before the post is
+// built (issues.GH). A no to either is a machine that cannot file, and the two
+// are told apart because the answer to a person is different: install `gh`, or
+// log in to it.
 //
 // A login that cannot be read — a network that just blipped, which is why
-// scripts/retry.sh retries this call on any failure — is answered the same way
-// as one that is missing, and the line says which check said no, so a person
-// whose connection dropped is not told to log in again for nothing.
+// scripts/retry.sh retries `gh` on any failure — is answered as a login that is
+// missing: LoggedIn is a bool, so there is no failure to tell apart from an
+// account that is not there, and `gh auth login` is the answer that costs a
+// person nothing when the account was simply absent.
 func readIssueGHState(ctx context.Context, gh issues.GH) issueGHState {
 	if !gh.Installed() {
 		return issueGHState{
 			line: "GitHub's `gh` is not installed on this machine, so nothing can be filed from here. Install it with: " +
 				issues.InstallHint(runtime.GOOS, issueOSRelease()),
-			why:  "gh is not installed",
-			what: "Install `gh` and run this again, or open this link:",
+			why: "gh is not installed",
 		}
 	}
 	if !gh.LoggedIn(ctx) {
 		return issueGHState{
 			line: "`gh` has no account on github.com, so nothing can be filed from here. Run: gh auth login",
 			why:  "gh is not logged in to github.com",
-			what: "Run `gh auth login`, or open this link:",
 		}
 	}
 	return issueGHState{ok: true}
 }
 
 // issueNames is the names the post is scrubbed of (F4): the project's own name,
-// its GCP project and the repositories under it, as this machine's selected
-// config knows them.
+// its GCP project and the repositories under it, as the selected config knows
+// them.
 //
 // Scrub is not a boundary (F24) and a machine with no project selected passes
 // no names: the post is then projected and re-redacted like every other, and
@@ -327,8 +381,7 @@ func readIssueGHState(ctx context.Context, gh issues.GH) issueGHState {
 // same answer a machine with no config has for every other command here — the
 // issues folder is the user's own, and `submit` works in a directory that names
 // no project at all.
-func issueNames(ctx context.Context) []string {
-	lc := selectedProjectConfig(ctx)
+func issueNames(lc *localcfg.Config) []string {
 	if lc == nil {
 		return nil
 	}

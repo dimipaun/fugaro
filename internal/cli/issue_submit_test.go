@@ -22,8 +22,10 @@ const filedIssueURL = "https://github.com/dimipaun/fugaro/issues/4242"
 
 // issueSubmitConfig is the project config the submit tests select: a project
 // with a name, a GCP project and one repository, which are the names the post
-// is scrubbed of (F4, F5). It is the shape newCloudFixture writes, with the
-// endpoints and the bucket URL left out — nothing in submit reads either.
+// is scrubbed of (F4, F5), and a runs bucket, whose URL's digest is the
+// installation a record this run writes is stamped with (F8b). It is the shape
+// newCloudFixture writes, with the endpoints left out — nothing in submit reads
+// those.
 const issueSubmitConfig = `version: 1
 name: aurora
 gcp_project: proj-1234
@@ -33,6 +35,14 @@ user: someone@example.com
 repos:
   acme/widget: { provider: github, base_branch: main, workflows: [web] }
 `
+
+// issueSubmitBucket is the runs bucket URL the config above gives this run, and
+// its digest is the installation this run stamps on what it files (F8b).
+const issueSubmitBucket = "gs://unused-bucket"
+
+// foreignBucket is another project's runs bucket on the same machine: its
+// digest is the installation of a record this run does not file for.
+const foreignBucket = "gs://another-project-bucket"
 
 // issueSubmitState is the state a submit test runs in: the issue store in a
 // directory of its own, and the project config of a project whose own names
@@ -181,6 +191,32 @@ func TestIssueSubmitPreviewFilesNothing(t *testing.T) {
 			t.Errorf("the preview does not show %q:\n%s", want, out)
 		}
 	}
+	if got := strings.Count(out, "Pass --ask"); got != 1 {
+		t.Errorf("a preview says what to do about it %d time(s), want the run's one line:\n%s", got, out)
+	}
+
+	// A sweep prints every waiting issue and the one instruction once: the
+	// preview is each issue's, the line about the flag is the run's.
+	second := savedIssue("48214", issues.StatusPending, false)
+	second.Summary = "the second one waiting"
+	if err := store.Save(second); err != nil {
+		t.Fatalf("saving the second issue: %v", err)
+	}
+	out, _, err = execute(t, "issue", "submit")
+	if err != nil {
+		t.Fatalf("issue submit sweep: %v\n%s", err, out)
+	}
+	if got := len(spy.creates()); got != 0 {
+		t.Errorf("the sweep filed %d issue(s) with no --ask", got)
+	}
+	for _, want := range []string{i.Summary, second.Summary} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the sweep does not preview %q:\n%s", want, out)
+		}
+	}
+	if got := strings.Count(out, "Pass --ask"); got != 1 {
+		t.Errorf("the sweep says what to do about the previews %d time(s), want once:\n%s", got, out)
+	}
 	back, err := store.Get(i.LocalID)
 	if err != nil {
 		t.Fatalf("reading the issue back: %v", err)
@@ -243,6 +279,12 @@ func TestIssueSubmitAskFilesPreviewedBytes(t *testing.T) {
 	if back.Status != issues.StatusSubmitted || back.URL != filedIssueURL {
 		t.Errorf("the filed issue is %q with URL %q, want %q and %q", back.Status, back.URL, issues.StatusSubmitted, filedIssueURL)
 	}
+	// The record this run wrote names the project that wrote it (F8b): the
+	// issues folder is one for the whole machine, and an issue filed under this
+	// project is not one another project's `sync` uploads or its `mine` prints.
+	if want := issues.Digest(issueSubmitBucket); back.Installation != want {
+		t.Errorf("the filed record is stamped %q, want the project's installation %q", back.Installation, want)
+	}
 	if !strings.Contains(out, filedIssueURL) {
 		t.Errorf("the run does not name the issue it filed:\n%s", out)
 	}
@@ -304,6 +346,79 @@ func TestIssueSubmitAllSkipsSubmittedAndDismissed(t *testing.T) {
 	}
 }
 
+// TestIssueSubmitLeavesAnotherInstallationAlone: the issues folder is one for
+// the whole machine, and a record that says it belongs to another project is
+// never filed from here (F8b) — its words are this project's scrub list's
+// other project's, so filing it would carry another team's machine straight to
+// a public repository. The sweep steps over it without asking, and a reference
+// that names it is refused rather than filed.
+//
+// The record that names no installation is the other half, and the more
+// important one: it was saved by a build that had no field to stamp, it is the
+// user's own issue, and it is filed — with this run's installation written on
+// it, so it is this project's from now on.
+func TestIssueSubmitLeavesAnotherInstallationAlone(t *testing.T) {
+	store := issueSubmitState(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+
+	mine := savedIssue("48213", issues.StatusPending, false)
+	mine.Summary = "this project's own"
+	mine.Installation = issues.Digest(issueSubmitBucket)
+	other := savedIssue("48214", issues.StatusPending, false)
+	other.Summary = "another project's own"
+	other.Installation = issues.Digest(foreignBucket)
+	unstamped := savedIssue("48215", issues.StatusPending, false)
+	unstamped.Summary = "saved before there was a field"
+	for _, i := range []issues.Issue{mine, other, unstamped} {
+		if err := store.Save(i); err != nil {
+			t.Fatalf("saving: %v", err)
+		}
+	}
+
+	out, _, err := executeStdin(t, "y\ny\ny\n", "issue", "submit", "--ask")
+	if err != nil {
+		t.Fatalf("issue submit --ask: %v\n%s", err, out)
+	}
+	if got := len(spy.creates()); got != 2 {
+		t.Fatalf("the sweep filed %d issue(s), want the two that are this project's: %v\n%s", got, spy.creates(), out)
+	}
+	for n, want := range []string{mine.Summary, unstamped.Summary} {
+		if _, body := spy.filed(t, n); !strings.Contains(body, want) {
+			t.Errorf("the sweep filed the wrong issue at %d, want the one carrying %q:\n%s", n, want, body)
+		}
+	}
+	if strings.Contains(out, other.Summary) {
+		t.Errorf("the sweep previewed another installation's issue:\n%s", out)
+	}
+	back, err := store.Get(other.LocalID)
+	if err != nil {
+		t.Fatalf("reading the other installation's issue back: %v", err)
+	}
+	if back.Status != issues.StatusPending || back.URL != "" || back.Installation != other.Installation {
+		t.Errorf("the other installation's issue became %q with URL %q and installation %q, want it untouched", back.Status, back.URL, back.Installation)
+	}
+	if back, err := store.Get(unstamped.LocalID); err != nil {
+		t.Fatalf("reading the unstamped issue back: %v", err)
+	} else if want := issues.Digest(issueSubmitBucket); back.Installation != want {
+		t.Errorf("a filed record that named no installation is stamped %q, want %q", back.Installation, want)
+	}
+
+	// Named on its own, it is refused in a sentence of its own rather than
+	// previewed and offered: the person is told whose it is.
+	out, _, err = execute(t, "issue", "submit", other.LocalID)
+	if err == nil || !strings.Contains(err.Error(), "another installation") {
+		t.Fatalf("submit of another installation's issue: err = %v, want the refusal naming it\n%s", err, out)
+	}
+	if strings.Contains(out, other.Summary) {
+		t.Errorf("a refused submit previewed the other installation's issue:\n%s", out)
+	}
+	if got := len(spy.creates()); got != 2 {
+		t.Errorf("a refused submit filed %d issue(s), want the 2 that were this project's", got)
+	}
+}
+
 // TestIssueSubmitWithoutGhPrintsFallback: with no `gh` on PATH nothing is
 // filed, the machine is told how to get it, and the person is handed the
 // new-issue link with the post already in it and the command that prints the
@@ -318,19 +433,34 @@ func TestIssueSubmitWithoutGhPrintsFallback(t *testing.T) {
 	// package manager's own.
 	installOSRelease(t, "ID=ubuntu\n")
 	i := savedIssue("48213", issues.StatusPending, false)
-	if err := store.Save(i); err != nil {
-		t.Fatalf("saving: %v", err)
+	second := savedIssue("48214", issues.StatusPending, false)
+	second.Summary = "the second one waiting"
+	for _, one := range []issues.Issue{i, second} {
+		if err := store.Save(one); err != nil {
+			t.Fatalf("saving: %v", err)
+		}
 	}
 
-	out, _, err := execute(t, "issue", "submit", i.LocalID)
+	out, _, err := execute(t, "issue", "submit")
 	if err == nil {
 		t.Fatalf("submit without gh exited 0:\n%s", out)
 	}
 	if got := len(spy.creates()); got != 0 {
 		t.Errorf("a machine with no gh filed %d issue(s)", got)
 	}
+	// The one thing that is wrong is said once, however many issues the run
+	// would have filed: five waiting issues are five links and one line about
+	// gh, the shape setup's own gh hint is printed in.
 	if want := issues.InstallHint(runtime.GOOS, "ID=ubuntu\n"); !strings.Contains(out, want) {
 		t.Errorf("the fallback does not say how to install gh (%q):\n%s", want, out)
+	} else if got := strings.Count(out, want); got != 1 {
+		t.Errorf("the fallback says how to install gh %d time(s), want once:\n%s", got, out)
+	}
+	if got := strings.Count(out, "fugaro issue show "+i.LocalID); got != 1 {
+		t.Errorf("the fallback names the command that prints the whole issue %d time(s), want once per issue:\n%s", got, out)
+	}
+	if !strings.Contains(out, "fugaro issue show "+second.LocalID) {
+		t.Errorf("the fallback prints no reference for the second issue it would have filed:\n%s", out)
 	}
 	if !strings.Contains(out, "https://github.com/dimipaun/fugaro/issues/new?title=") {
 		t.Errorf("the fallback prints no new-issue link:\n%s", out)
@@ -368,8 +498,8 @@ func TestIssueSubmitNotLoggedInPrintsLogin(t *testing.T) {
 	if got := len(spy.creates()); got != 0 {
 		t.Errorf("a machine with no login filed %d issue(s)", got)
 	}
-	if !strings.Contains(out, "gh auth login") {
-		t.Errorf("the fallback does not tell the person to log in:\n%s", out)
+	if got := strings.Count(out, "gh auth login"); got != 1 {
+		t.Errorf("the fallback tells the person to log in %d time(s), want once:\n%s", got, out)
 	}
 	if strings.Contains(out, issues.GHInstallPage) {
 		t.Errorf("a gh that is installed is told how to install it:\n%s", out)
