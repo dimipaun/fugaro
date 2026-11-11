@@ -8,10 +8,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"gocloud.dev/blob"
 
@@ -82,6 +86,25 @@ func abLaunchPlanner(ctx context.Context, run fcli.PlannedRun) (*fcli.Pair, erro
 	return Plan(ctx, run)
 }
 
+// abLaunchPairBlock is the ab: block every fixture but the ones about a skip
+// publishes: the owner's challenger, at the highest rate a project layer may
+// set. abLaunchDailyBlock is the same block with the day's cap on the pairs
+// one repository is sampled for (D566) written down.
+var (
+	abLaunchPairBlock  = "ab: { rate: " + fmt.Sprintf("%g", config.ABMaxRate) + ", challengers: [" + abLaunchChallenger + "] }"
+	abLaunchDailyBlock = "ab: { rate: " + fmt.Sprintf("%g", config.ABMaxRate) + ", challengers: [" + abLaunchChallenger + "], max_pairs_per_day: 1 }"
+)
+
+// abLaunchLayerText is the published layer with the ab: block it is given: the
+// block is the one thing a fixture about a skip varies, and everything else —
+// the champion's coder and the profile that resolves the layer — is what a
+// launch of this project reads either way.
+func abLaunchLayerText(block string) string {
+	return "defaults:\n  agent: { auth: api-key, models: { coder: " + abLaunchChampion + " } }\n" +
+		block + "\n" +
+		"default_profile: web\nprofiles:\n  web: { commands: { build: make, test: make test } }\n"
+}
+
 // abLaunchFixture is a project whose fakes the launcher can drive end to end.
 type abLaunchFixture struct {
 	dir    string
@@ -93,6 +116,13 @@ type abLaunchFixture struct {
 }
 
 func newABLaunch(t *testing.T) *abLaunchFixture {
+	t.Helper()
+	return newABLaunchLayer(t, abLaunchLayerText(abLaunchPairBlock))
+}
+
+// newABLaunchLayer is newABLaunch with the layer's ab: block of the caller's
+// choosing: a launch reads the layer it is given before it decides anything.
+func newABLaunchLayer(t *testing.T, layer string) *abLaunchFixture {
 	t.Helper()
 	run := gcpfake.NewRun(t)
 	logging := gcpfake.NewLogging(t)
@@ -135,10 +165,7 @@ func newABLaunch(t *testing.T) *abLaunchFixture {
 	// A launch from outside the repository's checkout resolves the layer the
 	// task carries (launchLayerConfig), so the agent the launch judges — and
 	// the ab: block it samples on — are this layer's.
-	f.publishLayer(t,
-		"defaults:\n  agent: { auth: api-key, models: { coder: "+abLaunchChampion+" } }\n"+
-			"ab: { rate: "+fmt.Sprintf("%g", config.ABMaxRate)+", challengers: ["+abLaunchChallenger+"] }\n"+
-			"default_profile: web\nprofiles:\n  web: { commands: { build: make, test: make test } }\n")
+	f.publishLayer(t, layer)
 	abLaunchPlannerOnce.Do(func() {
 		if err := fcli.RegisterLaunchPlanner(abLaunchPlanner); err != nil {
 			t.Fatal(err)
@@ -293,5 +320,229 @@ func TestSampledLaunchStartsTwoRuns(t *testing.T) {
 	}
 	if doc.Pair.Challenger == "" {
 		t.Fatalf("--json names no challenger run: %q", out)
+	}
+}
+
+// TestBothArmsSameCommit: the two arms are one run twice (D571, U5). Both
+// tasks are the same bytes — the same commit, workflow, recipe, mode, tier and
+// --path set — but for the arm's own run id and ab block, which the launcher
+// copies onto the task the champion was started from.
+func TestBothArmsSameCommit(t *testing.T) {
+	f := newABLaunch(t)
+	out, errOut, err := f.launch(t, "--recipe", "default", "--json", "Add a feature")
+	if err != nil {
+		t.Fatalf("the launch failed: %v\n%s%s", err, out, errOut)
+	}
+	doc := abLaunchJSON(t, out)
+	if doc.Pair == nil || doc.Pair.Challenger == "" {
+		t.Fatalf("the launch sampled no pair: %q", out)
+	}
+	champion, arm := f.taskOf(t, doc.RunID), f.taskOf(t, doc.Pair.Challenger)
+	if champion.Ref != arm.Ref {
+		t.Errorf("the arms were launched at different refs: %q and %q", champion.Ref, arm.Ref)
+	}
+	// The arm is the champion's task as the *job* reads it, so the two are
+	// compared with the fields D555 gives the arm alone cleared: everything
+	// else has to match, or the pair compares two runs of different shapes.
+	champion.RunID, arm.RunID = "", ""
+	champion.AB, arm.AB = nil, nil
+	want, err := json.Marshal(champion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(arm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(want, got) {
+		t.Errorf("the arms' tasks differ but for the run id and the ab block:\nchampion %s\nchallenger %s", want, got)
+	}
+	if f.run.RunRequests()[0].Env["FUGARO_RUN"] == f.run.RunRequests()[1].Env["FUGARO_RUN"] {
+		t.Errorf("both arms were started as one run: %v", f.run.RunRequests())
+	}
+}
+
+// TestSkipReasonInJSON: a project that opens no challenger samples nothing,
+// and says so in the closed reason the launcher prints on stderr and carries
+// in the document (D556, D554).
+func TestSkipReasonInJSON(t *testing.T) {
+	f := newABLaunchLayer(t, abLaunchLayerText("ab: { rate: 0.1 }"))
+	out, errOut, err := f.launch(t, "--recipe", "default", "--json", "Add a feature")
+	if err != nil {
+		t.Fatalf("the launch failed: %v\n%s%s", err, out, errOut)
+	}
+	if got := len(f.run.RunRequests()); got != 1 {
+		t.Fatalf("the launch started %d runs, want the champion alone", got)
+	}
+	doc := abLaunchJSON(t, out)
+	if doc.Pair == nil || doc.Pair.Reason != ReasonNoChallenger {
+		t.Fatalf("--json carried no %q reason: %q", ReasonNoChallenger, out)
+	}
+	if want := "ab: no pair sampled: " + ReasonNoChallenger + "; launching the champion alone"; !strings.Contains(errOut, want) {
+		t.Errorf("stderr does not say %q:\n%s", want, errOut)
+	}
+}
+
+// TestNoPrecheckNoSample: D573 never samples beside a skipped pre-check. The
+// champion goes on with the check skipped, as --no-budget-check asks.
+func TestNoPrecheckNoSample(t *testing.T) {
+	f := newABLaunch(t)
+	out, errOut, err := f.launch(t, "--recipe", "default", "--no-budget-check", "--json", "Add a feature")
+	if err != nil {
+		t.Fatalf("the launch failed: %v\n%s%s", err, out, errOut)
+	}
+	if got := len(f.run.RunRequests()); got != 1 {
+		t.Fatalf("the launch started %d runs, want the champion alone", got)
+	}
+	doc := abLaunchJSON(t, out)
+	if doc.Pair == nil || !strings.Contains(doc.Pair.Reason, "--no-budget-check") {
+		t.Fatalf("--json does not name the skipped pre-check: %q", out)
+	}
+}
+
+// TestUncappedNoSample: a project whose database holds no per-run cap and no
+// daily cap has no figure to measure D573's margin against, so nothing is
+// sampled — and the champion still launches, because a pair is never the
+// launch (D554).
+func TestUncappedNoSample(t *testing.T) {
+	f := newABLaunch(t)
+	// A project whose database holds no caps at all and does not enforce them
+	// yet (the mode the launch's own pre-check reads): the champion's launch
+	// is nobody's refusal, and the margin has no figure to measure itself
+	// against.
+	f.db.Set("config/mode", "observe")
+	f.db.Set("config/caps/global", nil)
+	f.db.Set("config/caps/defaults", nil)
+	out, errOut, err := f.launch(t, "--recipe", "default", "--json", "Add a feature")
+	if err != nil {
+		t.Fatalf("the launch failed: %v\n%s%s", err, out, errOut)
+	}
+	if got := len(f.run.RunRequests()); got != 1 {
+		t.Fatalf("the launch started %d runs, want the champion alone", got)
+	}
+	doc := abLaunchJSON(t, out)
+	if doc.Pair == nil || !strings.Contains(doc.Pair.Reason, "no per-run cap") {
+		t.Fatalf("--json does not name the missing cap: %q", out)
+	}
+}
+
+// TestMarginRequired: five per-run caps of the day's headroom are what D573
+// requires before a pair is sampled, and a day under that is not sampled.
+func TestMarginRequired(t *testing.T) {
+	f := newABLaunch(t)
+	// A repository day with four per-run caps left: under the five the margin
+	// asks for, and above the two runs the pair's own pre-check leases.
+	f.db.Set("config/caps/defaults", map[string]any{
+		"repoDailyMicros":  20 * abLaunchUSD,
+		"repoPerRunMicros": 5 * abLaunchUSD,
+	})
+	out, errOut, err := f.launch(t, "--recipe", "default", "--json", "Add a feature")
+	if err != nil {
+		t.Fatalf("the launch failed: %v\n%s%s", err, out, errOut)
+	}
+	if got := len(f.run.RunRequests()); got != 1 {
+		t.Fatalf("the launch started %d runs, want the champion alone", got)
+	}
+	doc := abLaunchJSON(t, out)
+	if doc.Pair == nil || !strings.Contains(doc.Pair.Reason, "five per-run caps") {
+		t.Fatalf("--json does not name the margin: %q", out)
+	}
+}
+
+// TestDailyCountStopsSampling: the project's own cap on the pairs one
+// repository is sampled for per day (D566) is read off the day's challenger
+// records, and a day that is full samples nothing.
+func TestDailyCountStopsSampling(t *testing.T) {
+	f := newABLaunchLayer(t, abLaunchLayerText(abLaunchDailyBlock))
+	f.seedChallenger(t)
+	out, errOut, err := f.launch(t, "--recipe", "default", "--json", "Add a feature")
+	if err != nil {
+		t.Fatalf("the launch failed: %v\n%s%s", err, out, errOut)
+	}
+	if got := len(f.run.RunRequests()); got != 1 {
+		t.Fatalf("the launch started %d runs, want the champion alone", got)
+	}
+	doc := abLaunchJSON(t, out)
+	if doc.Pair == nil || doc.Pair.Reason != ReasonDailyCount {
+		t.Fatalf("--json carried no %q reason: %q", ReasonDailyCount, out)
+	}
+}
+
+// seedChallenger stores one challenger record of today, the way a launch that
+// sampled a pair earlier in the day left one: a day's count is a read of the
+// day's records, and nothing else reserves a pair slot.
+func (f *abLaunchFixture) seedChallenger(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	id := time.Now().UTC().Format("20060102") + "-000000-0001"
+	rec := &runstore.Record{
+		Version: 1, RunID: id, Repo: "acme/app", Status: runstore.StatusRunning, Stage: "implement",
+		AB: &task.AB{PairID: "pair-20260101-000000-0000", Arm: task.ABArmChallenger,
+			Publish: task.ABPublishNone, Challenger: abLaunchChallenger, ChallengerSource: task.ABChallengerOwner},
+	}
+	if err := runstore.Open(b, f.slug, id).CreateRecord(ctx, rec); err != nil {
+		t.Fatalf("seeding today's challenger: %v", err)
+	}
+}
+
+// TestChallengerFailureNeverFailsChampion: the money path. The second arm's
+// start is refused and the launch is still the developer's run: exit zero, the
+// champion launched, and one line saying the arm did not start (D554).
+func TestChallengerFailureNeverFailsChampion(t *testing.T) {
+	f := newABLaunch(t)
+	var calls atomic.Int32
+	f.run.SetOnRun(func(gcpfake.RunCall) {
+		// The champion's own start is the first call; every one after it is
+		// the arm, which the fake is made to refuse. A launch starts its arms
+		// one after the other, so the counter is the whole of the ordering.
+		if calls.Add(1) == 1 {
+			f.run.FailRunWith = http.StatusInternalServerError
+		}
+	})
+	out, errOut, err := f.launch(t, "--recipe", "default", "--json", "Add a feature")
+	if err != nil {
+		t.Fatalf("a challenger that did not start failed the champion's launch: %v\n%s%s", err, out, errOut)
+	}
+	doc := abLaunchJSON(t, out)
+	if doc.RunID == "" {
+		t.Fatalf("the champion did not launch: %q", out)
+	}
+	if doc.Pair == nil || doc.Pair.ID == "" || doc.Pair.Challenger != "" {
+		t.Fatalf("--json does not show a pair whose arm never started: %q", out)
+	}
+	if want := "ab: the challenger did not start:"; !strings.Contains(errOut, want) {
+		t.Errorf("stderr does not say %q:\n%s", want, errOut)
+	}
+}
+
+// TestOldImageNotSampled: a job image older than the ab field is never
+// sampled, because a pair written onto one costs the champion its run — the
+// runner refuses the whole task at bootstrap. The champion goes on alone, on
+// the task it was already launched with.
+func TestOldImageNotSampled(t *testing.T) {
+	f := newABLaunch(t)
+	f.writeBuildRecord(t, "ghcr.io/dimipaun/fugaro-base:0.13.0")
+	// The recipe is the one whose own constructs a 0.13.0 runner knows (solo
+	// reads review and nothing newer), so the image the pair gate refuses is
+	// one the launch itself still goes on with.
+	out, errOut, err := f.launch(t, "--recipe", "solo", "--json", "Add a feature")
+	if err != nil {
+		t.Fatalf("the launch failed: %v\n%s%s", err, out, errOut)
+	}
+	if got := len(f.run.RunRequests()); got != 1 {
+		t.Fatalf("the launch started %d runs, want the champion alone", got)
+	}
+	doc := abLaunchJSON(t, out)
+	if doc.Pair == nil || doc.Pair.Reason != "old-image" {
+		t.Fatalf("--json carried no old-image reason: %q", out)
+	}
+	champion := f.taskOf(t, doc.RunID)
+	if champion.AB != nil || champion.Batch != "" {
+		t.Errorf("the champion was marked with a pair it did not start: %+v, batch %q", champion.AB, champion.Batch)
 	}
 }
