@@ -590,6 +590,40 @@ func TestManagedGateRecordsTheFactItRanUnderWhenTheReReadFails(t *testing.T) {
 	}
 }
 
+// The other answer of that same read, and the one that makes it worth making:
+// where it DOES answer managed, the fact the record names is the one in force at
+// the record and not the one in force when the session started (D1024). The
+// marker is replaced between the read this command makes before the apply and
+// the read the record makes, and the record names the newer fact.
+func TestManagedGateRecordsTheFactInForceAtTheRecord(t *testing.T) {
+	r := newManagedGateRig(t)
+	gate, err := readManagedGate(context.Background(), r.env(), r.facts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := gate.marks.Generation
+	if first == 0 {
+		t.Fatal("the first read placed no generation, so this test cannot tell the two reads apart")
+	}
+	r.gcs.Put(managedPropertyBucket(), managed.MarkerObject, managedGateMarker())
+	now := r.markerGeneration(t)
+	if now == first {
+		t.Fatalf("the fake answered generation %d twice, so this test cannot tell the two reads apart", now)
+	}
+	doc := []byte(`{"version":1,"keys":{"rigor":"standard"}}`)
+	const rule = "every key is in the registry"
+	if err := gate.Record(context.Background(), managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, []string{rule})); err != nil {
+		t.Fatal(err)
+	}
+	got := r.audits(t)
+	if len(got) != 1 {
+		t.Fatalf("the day holds %d records, want the one verdict this step reached", len(got))
+	}
+	if want := strconv.FormatInt(now, 10); got[0].MarkerGeneration != want {
+		t.Errorf("the record names marker_generation %q, and the fact in force at the record is %q (the first read saw %d): the fact the record names has to be the one the write happened under (D1024)", got[0].MarkerGeneration, want, first)
+	}
+}
+
 // A record that could not be written fails the command (D1014), and it fails it
 // with the exit code the cause deserves: a missing grant on the operator's own
 // account is theirs to fix, an outage is not. The fake refuses every write under

@@ -839,6 +839,11 @@ func TestApplyRefusesARequestItCannotRun(t *testing.T) {
 		{"no cover", func(r *Request) { r.Cover = nil }},
 		{"no access", func(r *Request) { r.Access = nil }},
 		{"no impersonator", func(r *Request) { r.Impersonator = nil }},
+		// Nothing writes the audit record: an apply that would leave no trail
+		// is refused before it reads a plan, rather than applied and then found
+		// to have nowhere to account for itself (D1014, the ruling of
+		// 2026-11-11 that requires one).
+		{"nothing writes the record", func(r *Request) { r.Recorder = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newApplyRig(t, plainRoot())

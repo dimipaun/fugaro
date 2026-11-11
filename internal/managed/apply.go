@@ -697,11 +697,13 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		// Both sentences stay in the chain when it does (a %w each), the way
 		// the CLI gate's admit chains the same pair: the refusal is what
 		// errors.Is and errors.As find, so the session still reads why nothing
-		// was applied, and the write's own cause is what classifies the exit —
-		// an operator's missing grant is theirs to fix, an outage is not. A
-		// refusal replaced by the writer's error would leave "nothing was
-		// applied" with no reason, which is the one thing the session has to
-		// act on.
+		// was applied, and the write's own cause is in the message beside it
+		// rather than in place of it. A refusal replaced by the writer's error
+		// would leave "nothing was applied" with no reason, which is the one
+		// thing the session has to act on. Which of the two the command EXITS
+		// with is the caller's mapping and not this sequence's: the refusal is
+		// what this command's own mapping reads first, so a record that could
+		// not be written is reported under the refusal it was refused with.
 		refusal := &RefusedError{Verdict: v, Advice: r.advice(v)}
 		if werr := r.Recorder.Record(ctx, conv); werr != nil {
 			return res, fmt.Errorf("%w: %w", refusal, werr)

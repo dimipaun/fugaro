@@ -449,11 +449,18 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 		step.Skipped(fmt.Sprintf("no changes: the plan of %s is empty, so nothing was gated and nothing was applied", safetext.Field(rootArg)))
 		return nil
 	}
-	// What the step's own line says is what the verdict was (D1545): a plan
-	// whose gate recorded findings was applied WITH them — they were printed
-	// above this line and they are in this apply's audit record — so a line
-	// claiming the gate admitted every change in it would be the one sentence
-	// about a warned apply that is false.
+	// What the step's own line says is what the PLAN's verdict was (D1545): a
+	// plan whose gate recorded findings was applied WITH them — they were
+	// printed above this line and they are in this apply's audit record — so a
+	// line claiming the gate admitted every change in it would be the one
+	// sentence about a warned apply that is false. The line reads the verdict's
+	// own findings and not the record's warnings, because the marker's
+	// budget-evidence warning is D1545's one exception: it is a fact about the
+	// project rather than about the plan, it was printed before the plan was
+	// even read (Apply's own warning), and it is in the record. So a plan the
+	// gate admitted every change of can leave a record whose verdict is
+	// `warned` — that is the record saying what stood beside the plan, and this
+	// line is about the plan.
 	line := fmt.Sprintf("applied the saved plan of %s as %s: the gate admitted every change in it, and the owner's list approved every delete and replacement it carries",
 		safetext.Field(rootArg), safetext.Field(managedmode.DeployerAccount(lc.GCPProject)))
 	if len(res.Verdict.Warnings) > 0 {
