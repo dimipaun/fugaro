@@ -781,6 +781,26 @@ func TestVisionSlotIsJudgedOnlyWhenSet(t *testing.T) {
 	if got := problemsText(CheckProviderAuth(a, providers)); !strings.Contains(got, "agent.models.vision") {
 		t.Errorf("a written vision model served by a provider under vertex: CheckProviderAuth reported %q", got)
 	}
+	// The other two provider checks reach it as well, each with the rule it
+	// owns: the allow_data_to rule, which keeps a repository's code from going
+	// to a provider that does not list it, and the gateway rule, which a
+	// provider's calls need on enforce because they are real dollars.
+	prices := providerPrices(t)
+	got := problemsText(CheckProviderPolicy(a, nil, "edgeappinc/edgeweb", providers, prices))
+	if !strings.Contains(got, "agent.models.vision") || !strings.Contains(got, "allow_data_to") {
+		t.Errorf("a written vision model served by a provider whose allow_data_to leaves the repository out: CheckProviderPolicy reported %q", got)
+	}
+	if got := problemsText(CheckProviderGateway(a, "", providers, "observe")); !strings.Contains(got, "agent.models.vision") || !strings.Contains(got, "enforce") {
+		t.Errorf("a written vision model under observe: CheckProviderGateway reported %q", got)
+	}
+	// And neither refuses it once its own condition holds: the repository is on
+	// the provider's list, and the mode enforces.
+	if got := problemsText(CheckProviderPolicy(a, nil, "dimipaun/fugaro", providers, prices)); got != "" {
+		t.Errorf("a vision model the repository is listed for is refused: %s", got)
+	}
+	if got := problemsText(CheckProviderGateway(a, "", providers, "enforce")); got != "" {
+		t.Errorf("a vision model under enforce is refused: %s", got)
+	}
 }
 
 func TestPREarlyDraftDefaultsTrue(t *testing.T) {
