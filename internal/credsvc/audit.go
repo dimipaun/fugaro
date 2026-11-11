@@ -202,6 +202,21 @@ const (
 	// a credential of the cascade. The service's own line carries it, and that
 	// line is where the execution name the claim reported is recorded (F7).
 	PurposeSlipClaim = "slip_claim"
+	// PurposeMergeMint is the short-lived GitHub installation token the
+	// installation's orchestrator daemon asks this service for on the merge mint
+	// (E16, D2049), once the mint's gate has passed: the pull request is still at
+	// the head the call named, and no ruleset covering its base lets the App
+	// bypass branch protection. The credential's name is the App key's
+	// (config.GitHubAppKeySecret), which is what the service signs the mint's JWT
+	// with — the same credential a PurposeMint and a PurposeGitHubRead line names
+	// and for the same reason, so the PURPOSE is what tells the three acts apart.
+	//
+	// It is not a model credential of the cascade and has no tier, so a line for
+	// it names a credential and no tier (see credentialWithoutTier). Its line
+	// carries a repository and no run, like the read mints': the caller is the
+	// orchestrator daemon, which holds no run identity and is not a job of this
+	// installation (callerWithoutJobPurpose, repositoryOnlyPurpose).
+	PurposeMergeMint = "merge_mint"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
@@ -209,7 +224,7 @@ const (
 func ValidPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
-		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim:
+		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint:
 		return true
 	}
 	return false
@@ -232,7 +247,7 @@ func credentialWithoutTier(purpose string) bool {
 	return purpose == PurposeMint || purpose == PurposeReviewSign ||
 		purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
 		purpose == PurposeGitHubRead || purpose == PurposeGit ||
-		purpose == PurposeBitbucketAPI
+		purpose == PurposeBitbucketAPI || purpose == PurposeMergeMint
 }
 
 // callerWithoutJobPurpose reports whether a line records a caller's act rather
@@ -247,7 +262,8 @@ func credentialWithoutTier(purpose string) bool {
 // pins for the shape BB4 adds.
 func callerWithoutJobPurpose(purpose string) bool {
 	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
-		purpose == PurposeGitHubRead || purpose == PurposeSlipGrant
+		purpose == PurposeGitHubRead || purpose == PurposeSlipGrant ||
+		purpose == PurposeMergeMint
 }
 
 // repositoryOnlyPurpose reports whether a line names a repository and no run:
@@ -257,7 +273,8 @@ func callerWithoutJobPurpose(purpose string) bool {
 // for this purpose alone, and a repository recorded under any other purpose is
 // refused exactly as it is today.
 func repositoryOnlyPurpose(purpose string) bool {
-	return purpose == PurposeBitbucketRead || purpose == PurposeGitHubRead
+	return purpose == PurposeBitbucketRead || purpose == PurposeGitHubRead ||
+		purpose == PurposeMergeMint
 }
 
 // StatusOK is the one status that is not a refusal: a credential answered —

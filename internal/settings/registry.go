@@ -173,6 +173,21 @@ var yamlMeta = map[string]Row{
 		Default: unset("agent.model"),
 		Doc:     "docs/multi-model.md",
 	},
+	// The vision slot (V1, D2003) is the one model key with no fallback: a
+	// stage whose own model cannot read an image keeps it rather than running
+	// agent.model, which is exactly the text-only model that must not answer
+	// one. The models family owns it as it owns the three rows above — the
+	// slot's checks are that command's (D2013: priced, a route opens it to this
+	// repository, no whitespace), which a generic scalar write does not make —
+	// and the fourth role name reaches `models use` in V6 of docs/vision-model.
+	// Until it does, this row's refusal names the family that will write the
+	// key, and the key is written by hand — in fugaro.yaml, or in the project
+	// layer's own file for every repository of it.
+	"agent.models.vision": {
+		Owner:   "models",
+		Default: unset("none: a stage whose own model cannot read an image keeps it"),
+		Doc:     docVision,
+	},
 	// The four crafts (docs/model-crafts/spec.md §3), the spec's own table
 	// read back: the coder and the senior review are what a run cannot do
 	// without, and the review and the security review follow the craft above
@@ -316,12 +331,13 @@ var yamlMeta = map[string]Row{
 // `fugaro.yaml` rows from config.Scopes (so the two cannot drift), the project
 // layer's from config.ProjectLayer, the local config's from localcfg.Config.
 func buildRows() []Row {
-	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows)+len(config.RunStages))
+	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows)+len(cloudRows)+len(config.RunStages))
 	for _, s := range config.Scopes {
 		out = append(out, yamlRow(s))
 	}
 	out = append(out, layerRows...)
 	out = append(out, localRows...)
+	out = append(out, cloudRows...)
 	out = append(out, stageAccountRows()...)
 	for i := range out {
 		out[i].Sensitive = sensitiveKeys[out[i].Key]
@@ -424,6 +440,12 @@ const (
 	// DEFAULT column and the schema's keyDefaults, and a spec of the section's
 	// own would be the document that takes the rows over.
 	docTroubleshoot = "docs/troubleshoot-issue/implementation-plan.md"
+	// docVision is the document that states the vision slot (docs/vision-model)
+	// and the command that will write it. It is the work's plan rather than
+	// docs/multi-model.md, the three roles' own document, for docOrchestrator's
+	// reason: the slot is named there and nowhere else yet, and V8's documents
+	// take the row over.
+	docVision = "docs/vision-model/implementation-plan.md"
 	// docTriage is the document that states the triage stage and the switch
 	// that turns it off (D1854, D1851). It is the work's plan for
 	// docOrchestrator's reason: the stage, its default and the switch's home on
@@ -520,6 +542,11 @@ var layerRows = []Row{
 	layerRow("defaults.agent.models.coder", "defaults.agent.model", "models", docModels),
 	layerRow("defaults.agent.models.reviewer", "defaults.agent.model", "models", docModels),
 	layerRow("defaults.agent.models.background", "defaults.agent.model", "models", docModels),
+	// The vision slot's layer row (V1, D2003): the layer sets it for every
+	// repository of the project, and a layer that leaves it out leaves each
+	// repository's own row to decide — including the empty answer, which is
+	// the one slot whose empty answer is not the layer's model.
+	layerRow("defaults.agent.models.vision", "none: a stage whose own model cannot read an image keeps it", "models", docVision),
 	// The crafts' models are the layer's to set, as the three models rows
 	// above are; their access is not, and the row says so rather than leaving
 	// the layer's reader to find out at publish time (config.Scopes refuses
@@ -976,6 +1003,31 @@ var localRows = []Row{
 	// update_check's does, rather than from an "unset means" sentence.
 	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
 	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
+}
+
+// cloudRows are the Realtime Database's own keys (spec §2.1, §2.2): the mode a
+// lease compares against, the two cap scopes, the reserve limit and the global
+// kill switch. The caps layer is their only store — no file carries them and no
+// layer above them exists — so a read with --offline answers every one of them
+// `unread: offline`, and the value a run gets is what the node holds.
+//
+// Each default is the sentence saying what an absent node means, because an
+// absent node is not a value: no cap, no reserve limit, no run stopped, and the
+// mode that behaviour is named by (observe). A row that claimed a value here
+// would have the read print it for a database nobody asked (spec §2.5).
+//
+// The per-repository nodes (`config/caps/repos/<slug>`, `config/kill/repos/
+// <slug>`) have no row: their key varies with a repository, and the level those
+// two scopes combine at is `caps.repo`, a name `$defs.decider` does not carry —
+// so a row claiming one would print a WINS word the schema refuses.
+var cloudRows = []Row{
+	{Key: "caps.mode", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("observe"), Owner: "budget", Doc: docSetup},
+	{Key: "caps.global.per_run_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no global cap"), Owner: "budget", Doc: docSetup},
+	{Key: "caps.global.per_day_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no global cap"), Owner: "budget", Doc: docSetup},
+	{Key: "caps.defaults.per_run_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no default cap"), Owner: "budget", Doc: docSetup},
+	{Key: "caps.defaults.per_day_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no default cap"), Owner: "budget", Doc: docSetup},
+	{Key: "caps.max_reserve_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no reserve limit"), Owner: "budget", Doc: docSetup},
+	{Key: "kill.global.on", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("false: no run is stopped"), Owner: "budget", Doc: docSetup},
 }
 
 // stageAccountRows are the concrete spellings of the stages.*.claude_account

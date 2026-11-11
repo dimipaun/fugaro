@@ -300,6 +300,19 @@ func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend)
 	// effective policy (policy.Merge), so a later layer could add a level and
 	// none can take one away.
 	ceiling.ReviewFloor = pp.ReviewFloor
+	// The triage switch rides the ceiling layer for the floor's reason
+	// (D1854): it is the owner's word about whether a run's review rounds are
+	// judged at all, and the node is the one object the launcher cannot write.
+	// Unlike the floor it IS a key of the merge's own vocabulary
+	// (policy.KeyTriage, which the repository writes as agent.triage), so a
+	// node that turns it off and a repository that asks for it meet in
+	// policy.Merge and the tighter one wins — off, whichever way round
+	// (Effective.TriageOff). It is named in `set`, again unlike the floor: the
+	// node wrote a value result.json reports the source of, and "ceiling"
+	// would name the owner of the switch he did not flip.
+	if pp.Triage != nil {
+		ceiling.Triage, set[policy.KeyTriage] = pp.Triage, true
+	}
 	// The binary allow rule rides the ceiling layer for the floor's reason
 	// (D986): it is the owner's word about the paths a run may add a binary at,
 	// the node is the one object the launcher cannot write, and the merge

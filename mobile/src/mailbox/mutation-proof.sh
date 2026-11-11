@@ -105,6 +105,11 @@ require_clean mobile/src/mailbox/mac.js
 require_clean mobile/src/mailbox/store.js
 require_clean mobile/src/accounts/secure-store.js
 require_clean mobile/src/app/root.js
+require_clean mobile/src/licence/state.js
+require_clean mobile/src/licence/index.js
+require_clean mobile/src/text/input.js
+require_clean mobile/src/voice/dialogue.js
+require_clean mobile/src/voice/screen.js
 
 last_outcome=""
 killed=0
@@ -345,9 +350,9 @@ export function createRoot({ React, store, View, Text, Pressable, useDemo, scree
 #     on and a fake that stopped modelling the queue would quietly prove nothing.
 run "the connection gate in send is asked at all" \
   "    if (!verdict.ok) {
-      return gateRefusal(verdict, { text: body.text, at, keepText: !isAction });" \
+      return spokenRefusal(verdict, { text: body.text, at, keepText: !isAction });" \
   "    if (false) {
-      return gateRefusal(verdict, { text: body.text, at, keepText: !isAction });"
+      return spokenRefusal(verdict, { text: body.text, at, keepText: !isAction });"
 run "send judges the LAST poll's heartbeat again, at the time the owner speaks" \
   "evaluateGate({ online: connection.isOnline(), presence: consumerPresence(at) });" \
   "evaluateGate({ online: connection.isOnline(), presence: null });"
@@ -355,16 +360,16 @@ run "the poll's observation is kept for the gate" \
   "    observation = Object.freeze({ beat, heartbeat, verified: verdicts.result.heartbeat });" \
   "    observation = null;"
 run "the owner is TOLD: the refusal speaks" \
-  "    const message = offlineSpeech(verdict.code);
+  "    const message = offlineSpeech(verdict.code) ?? licenceSpeech(verdict.code);
     const said = await speaker.speak(message);" \
-  "    const message = offlineSpeech(verdict.code);
+  "    const message = offlineSpeech(verdict.code) ?? licenceSpeech(verdict.code);
     const said = { ok: true };"
 run "a gated utterance is kept as unsent text" \
   "    if (keepText) unsent.push(Object.freeze({ text, at, code: verdict.code }));" \
   "    if (false) unsent.push(Object.freeze({ text, at, code: verdict.code }));"
 run "a gated ACTION is not kept as unsent text" \
-  "      return gateRefusal(verdict, { text: body.text, at, keepText: !isAction });" \
-  "      return gateRefusal(verdict, { text: body.text, at, keepText: true });"
+  "      return spokenRefusal(verdict, { text: body.text, at, keepText: !isAction });" \
+  "      return spokenRefusal(verdict, { text: body.text, at, keepText: true });"
 run "an action record is recognised as one" \
   "    const isAction = Object.hasOwn(opts, 'action');" \
   "    const isAction = false;"
@@ -413,12 +418,12 @@ run "an unobserved consumer IS a refusal, not a licence (gate.js; the review's M
   mobile/src/mailbox/gate.js src/mailbox/gate.test.js
 run "the gate is asked AGAIN at the write, so a connection that goes while the Keychain is up is caught (client.js; the review's M1)" \
   "    if (!still.ok) {
-      return gateRefusal(still, { text: body.text, at, keepText: !isAction });" \
+      return spokenRefusal(still, { text: body.text, at, keepText: !isAction });" \
   "    if (false) {
-      return gateRefusal(still, { text: body.text, at, keepText: !isAction });"
+      return spokenRefusal(still, { text: body.text, at, keepText: !isAction });"
 run "a client with no connection port is built and REFUSES to send (client.js; the review's BLOCKER)" \
-  "  const { keys, store, connection = UNWIRED_CONNECTION, speaker, now, newId, secrets } = options;" \
-  "  const { keys, store, connection = { isOnline: () => true }, speaker, now, newId, secrets } = options;"
+  "    connection = UNWIRED_CONNECTION," \
+  "    connection = { isOnline: () => true },"
 run "a clock that disagrees is its own reason, not offline's (gate.js)" \
   "    case STATE.CLOCK_DIFFERS:
       return refuse(GATE_CODES.CONSUMER_CLOCK_DIFFERS, 'presence');" \
@@ -445,6 +450,138 @@ run "the SDK's queue is real, which is what the client's claim rests on (store.j
       return Object.freeze({ ok: true });
     }" \
   mobile/src/mailbox/store.js src/mailbox/client.test.js
+
+# 11. The lapse (S6.3; D436, T12; the design is docs/design/lapse-read-only.md
+#     §4). Seven guards in client.js -- the refuser this client gained, the
+#     QUESTION it answers (§5.7's second door, which classifies the write it is
+#     asked about as `send` does) and the five beside them -- three in state.js,
+#     the refuser and the two readings its table makes -- one in index.js, the
+#     door that must not hand the rules out, and four at the hops a launch's
+#     CLASSIFICATION travels: the typed input, the spoken dialogue, the voice
+#     screen P6.12 sends through, and the voice screen's own OFFLINE door, where
+#     the licence has to answer before the screen answers "the orchestrator is
+#     offline" for a licence's reason. The two scan guards plant what the two
+#     scans exist to catch: a second enforcement in the app, and a rule on the
+#     door.
+run "the lapse refuses the writes it does not keep (the launch, the merge, the config change)" \
+  "    if (refusedByLapse !== null) {
+      return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: !isAction });" \
+  "    if (false) {
+      return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: !isAction });"
+run "the lapse is asked about the ACTION RECORD and not only about the verb" \
+  "    const refusedByLapse = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({ verb: opts.verb, action: opts.action }),
+    });" \
+  "    const refusedByLapse = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({ verb: opts.verb }),
+    });"
+run "the licence's refusal is spoken in the licence's own words" \
+  "    const message = offlineSpeech(verdict.code) ?? licenceSpeech(verdict.code);" \
+  "    const message = offlineSpeech(verdict.code);"
+run "a refused action is not kept as unsent text at a lapse either" \
+  "      return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: !isAction });" \
+  "      return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: true });"
+run "the lapse is asked BEFORE the connection, so a lapsed launch is not told about the network" \
+  "    const refusedByLapse = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({ verb: opts.verb, action: opts.action }),
+    });
+    if (refusedByLapse !== null) {
+      return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: !isAction });
+    }
+
+    const verdict = evaluateGate({ online: connection.isOnline(), presence: consumerPresence(at) });
+    if (!verdict.ok) {
+      return spokenRefusal(verdict, { text: body.text, at, keepText: !isAction });
+    }" \
+  "    const verdict = evaluateGate({ online: connection.isOnline(), presence: consumerPresence(at) });
+    if (!verdict.ok) {
+      return spokenRefusal(verdict, { text: body.text, at, keepText: !isAction });
+    }
+
+    const refusedByLapse = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({ verb: opts.verb, action: opts.action }),
+    });
+    if (refusedByLapse !== null) {
+      return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: !isAction });
+    }"
+run "a licence port that cannot be asked is a wiring failure, not a silent refusal of nothing" \
+  "  if (licence === null || typeof licence !== 'object' || typeof licence.at !== 'function') {
+    throw new TypeError('createMailboxClient: a licence must carry at() when one is given');
+  }" \
+  "  if (false) {
+    throw new TypeError('createMailboxClient: a licence must carry at() when one is given');
+  }"
+run "a kept write is kept without reading the licence store (state.js)" \
+  "export async function lapseRefusalAt(port, { now, write } = {}) {
+  if (LAPSE_KEPT_WRITES.includes(write)) return null;" \
+  "export async function lapseRefusalAt(port, { now, write } = {}) {
+  if (false) return null;" \
+  mobile/src/licence/state.js src/licence/state.test.js
+run "the kept set is closed: a write it does not name is refused at a lapse (state.js)" \
+  "  if (LAPSE_KEPT_WRITES.includes(write)) return null;
+  return Object.freeze({ ok: false, code: LICENCE_STATE_CODES.LAPSED, field: 'licence' });" \
+  "  return null;
+  return Object.freeze({ ok: false, code: LICENCE_STATE_CODES.LAPSED, field: 'licence' });" \
+  mobile/src/licence/state.js src/licence/state.test.js
+run "a key state the table has not learned is read as the lapse, not as working (state.js)" \
+  "PRODUCT_OF_KEY_STATE[latest.state] ?? LICENCE_STATES.LAPSED" \
+  "PRODUCT_OF_KEY_STATE[latest.state] ?? LICENCE_STATES.VALID" \
+  mobile/src/licence/state.js src/licence/state.test.js
+run "the lapse's rules are reached from a second file (the scan)" \
+  "export function createRoot({ React, store, View, Text, Pressable, useDemo, screens, onLeaveDemo }) {" \
+  "import { lapseRefusalAt } from '../licence/state.js';
+export function createRoot({ React, store, View, Text, Pressable, useDemo, screens, onLeaveDemo }) {" \
+  mobile/src/app/root.js src/mailbox/write-path.test.js
+run "the door hands a rule out to every screen (index.js)" \
+  "export { LICENCE_KEYS_ENTRY, LICENCE_KEYS_MAX, LICENCE_KEY_PREFIX, LICENCE_STORE_CODES } from './store.js';" \
+  "export { LICENCE_KEYS_ENTRY, LICENCE_KEYS_MAX, LICENCE_KEY_PREFIX, LICENCE_STORE_CODES } from './store.js';
+export { writeOf } from './state.js';" \
+  mobile/src/licence/index.js src/licence/verify.test.js
+# The CLASSIFICATION, at each of the three hops a launch takes to the write
+# path (S6.3; review). A launch and an ordinary message are the same bytes in
+# `send`, so the verb the confirm machine just decided is the only thing that
+# lets the lapse refuse one and keep the other: drop it anywhere along the way
+# and a lapsed launch reaches the inbox as chatter. The machine still ANSWERS
+# `pass-through` in each of these, so what fails is the write, not the routing.
+run "the typed launch takes its classification to the write path (input.js)" \
+  "      return send(text, { verb: stepped.verb });" \
+  "      return send(text);" \
+  mobile/src/text/input.js src/text/input.test.js
+run "the spoken launch is handed to the sink WITH its classification (dialogue.js)" \
+  "        const sent = await deliver(text, { verb: stepped.verb });" \
+  "        const sent = await deliver(text);" \
+  mobile/src/voice/dialogue.js src/voice/screen.test.js
+run "the screen passes the classification on instead of swallowing it (screen.js)" \
+  "    const sent = await client.send(text, options);" \
+  "    const sent = await client.send(text);" \
+  mobile/src/voice/screen.js src/voice/screen.test.js
+# The screen's own OFFLINE pre-check sits in FRONT of `send` -- it has to, or a
+# write would escape while offline -- so it is the one place where a licence
+# reason and a network reason are both true and the screen answers first. The
+# question above is what stops it masking the licence (§5.7, and §4.4's "a lapse
+# may not be the reason the app hears nothing"), and the licence's answer must
+# WIN rather than only be asked for.
+run "the licence's answer beats this screen's own offline refusal (screen.js)" \
+  "      if (refusedByLicence !== null) return refusedByLicence;" \
+  "      if (false) return refusedByLicence;" \
+  mobile/src/voice/screen.js src/voice/screen.test.js
+# The question is a second door into the SAME table, so it classifies what it is
+# asked about exactly as `send` does: classify nothing here and every lapsed
+# write reads as chatter, which the lapse keeps.
+run "the licence question classifies the write it is asked about (client.js)" \
+  "    const refused = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({ verb: opts.verb, action: opts.action }),
+    });" \
+  "    const refused = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({}),
+    });" \
+  mobile/src/mailbox/client.js src/mailbox/client.test.js
 
 echo
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"

@@ -413,6 +413,14 @@ func (r *run) registryEntry() budget.AgentEntry {
 	if rr := r.rec.Recipe; rr != nil && rr.Name != recipe.DefaultName {
 		e.Recipe = rr.Name
 	}
+	// The rigor mode the run resolved at bootstrap, which is the moment this
+	// entry is built at (runner.go: bootstrapRigor precedes
+	// startBudgetBackend): the mode a live run shows in `fugaro watch` is the
+	// record's own, and recordRigor keeps this pair in step with a later
+	// moment that raises it.
+	if rr := r.rec.Rigor; rr != nil {
+		e.Mode, e.From = string(rr.Mode), string(rr.From)
+	}
 	return e
 }
 

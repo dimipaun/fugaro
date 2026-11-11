@@ -332,6 +332,9 @@
         "agent.models.reviewer": {
           "default": "unset = agent.model"
         },
+        "agent.models.vision": {
+          "default": "unset = none: a stage whose own model cannot read an image keeps it"
+        },
         "agent.oauth_token": {
           "default": "unset = the job's own credential"
         },
@@ -434,6 +437,24 @@
         },
         "build.service_account": {
           "default": "unset = the project's default service account"
+        },
+        "caps.defaults.per_day_usd": {
+          "default": "unset = no default cap"
+        },
+        "caps.defaults.per_run_usd": {
+          "default": "unset = no default cap"
+        },
+        "caps.global.per_day_usd": {
+          "default": "unset = no global cap"
+        },
+        "caps.global.per_run_usd": {
+          "default": "unset = no global cap"
+        },
+        "caps.max_reserve_usd": {
+          "default": "unset = no reserve limit"
+        },
+        "caps.mode": {
+          "default": "unset = observe"
         },
         "claude_account_auto": {
           "default": "unset = false: nothing chooses an account for the owner"
@@ -681,6 +702,9 @@
         "job_profiles.*.timeout_class": {
           "default": "unset = the workflow's own"
         },
+        "kill.global.on": {
+          "default": "unset = false: no run is stopped"
+        },
         "layer.ab.challengers": {
           "default": "unset = none"
         },
@@ -788,6 +812,9 @@
         },
         "layer.defaults.agent.models.reviewer": {
           "default": "unset = defaults.agent.model"
+        },
+        "layer.defaults.agent.models.vision": {
+          "default": "unset = none: a stage whose own model cannot read an image keeps it"
         },
         "layer.defaults.agent.recipe": {
           "default": "unset = the built-in recipe"

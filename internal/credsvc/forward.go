@@ -175,6 +175,13 @@ type answer struct {
 // The caller's own tokens are never sent upstream: the job token in
 // Authorization is dropped by the gateway's own deny-list, the run identity by
 // the scrub below, and this contract's headers when the call was read.
+//
+// This is the call the workspace's meter is meant to bracket, and it is not
+// bracketed yet: a call the workspace pays for is the one the meter takes the
+// room for BEFORE it goes out and settles on the answer's usage
+// (workspace_cap.go), and nothing here reserves. The wiring belongs in this
+// file, and workspace_cap.go's header states what it adds and why it is a task
+// of its own rather than a correction.
 func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 	dest, err := s.destination(cl, e)
 	if err != nil {
