@@ -12,7 +12,7 @@ package cli
 // command invents again — one colour rule, one log path and one summary line
 // at a time — which is the state the reporter exists to end.
 //
-// Two pins, each failing on a change no other test would see:
+// Three pins, each failing on a change no other test would see:
 //
 //   - TestDocsCliOutputStatesTheContract: §9.2 carries the sentences. Drop the
 //     T6 sentence (a read command writes no log) and a later command reads the
@@ -23,16 +23,26 @@ package cli
 //     document gives is the one the code resolves, per platform, and the sink
 //     CL3 opens lands in it. Move the state directory (D1351) and the document
 //     fails here rather than describing a directory nothing writes to.
+//   - TestDocsCliOutputPluginCitationsNameItsSection: the plugin section this
+//     commit renumbers keeps its referrers with it. §9.2 was the plugin's
+//     number until CL11 wrote the output contract above it, and three citations
+//     inside the document — the `plugin` stage row, the plugin artifact row and
+//     the `working` skill's follow-up part — sent a reader to the plugin by
+//     that number, which after the renumbering is the output section. A design
+//     of record that contradicts itself is read as the number it gives, and no
+//     other test reads v1.md's §9.x citations at all.
 //
 // Mutation (each run and restored): change the document's retention to "the
 // newest 500 files" -> TestDocsCliOutputStatesTheContract fails, naming the
 // sentence; move the POSIX fallback the state directory is read from
 // (localcfg.platformDirs) to `.local/state2` ->
 // TestDocsCliOutputLogPathMatchesTheDirectoryRule fails, naming the path the
-// document should have given instead; and take `XDG_STATE_HOME` out of that
+// document should have given instead; take `XDG_STATE_HOME` out of that
 // directory's variables, so it is resolved from HOME alone -> the same test
 // fails first on the sink it opens, which is then refused a directory to keep
-// the run's log in at all.
+// the run's log in at all; and write the plugin stage row's citation back as
+// `(§9.2)` -> TestDocsCliOutputPluginCitationsNameItsSection fails, naming the
+// row and the number the heading carries.
 
 import (
 	"path/filepath"
@@ -145,4 +155,66 @@ func TestDocsCliOutputLogPathMatchesTheDirectoryRule(t *testing.T) {
 	if win != local {
 		t.Errorf("the Windows state directory is %s, not %%LOCALAPPDATA%%'s own value: %s", win, docsCliOutputDoc)
 	}
+}
+
+// docsPluginHeading is the plugin section's heading tail, which the number the
+// section carries sits in front of. The tail rather than the whole heading: the
+// number is what this test reads out of the document and compares its citations
+// against, so writing it here as well would be the same defect one line up.
+const docsPluginHeading = " Claude Code plugin (`plugin/`)"
+
+// TestDocsCliOutputPluginCitationsNameItsSection: every citation inside the
+// document that sends a reader to the plugin names the number the plugin's
+// heading carries.
+//
+// The section that follows the new §9.2 was §9.2 itself until this commit wrote
+// the output contract above it, and three citations keep sending readers to the
+// plugin by that number — the `plugin` stage row of the converge's stage table,
+// the plugin artifact row and the `working` skill's follow-up part — so after a
+// renumbering the design of record says the plugin is stated where the run's
+// output is. Each is pinned with the words that make it that citation, so a
+// citation renumbered by hand is caught in its own sentence, and the document
+// is required to carry it once: a stale copy left beside the new one is the
+// same contradiction.
+func TestDocsCliOutputPluginCitationsNameItsSection(t *testing.T) {
+	doc := readDoc(t, docsCliOutputDoc)
+	section := docsPluginSection(t, doc)
+
+	for _, cite := range []struct{ prefix, what string }{
+		{"the merge of the marketplace and the plugin into `.claude/settings.json` is deleted (D949) (§", "the `plugin` stage row of the converge's stage table"},
+		{"repositories pin the marketplace to that tag (§", "the plugin artifact row"},
+		{"the follow-up part of the `working` skill (§", "the `working` skill's follow-up part"},
+	} {
+		switch n := strings.Count(doc, cite.prefix); {
+		case n == 0:
+			t.Errorf("%s no longer cites the plugin's section at all (%s), which is the citation that has to move with it", docsCliOutputDoc, cite.what)
+		case n > 1:
+			t.Errorf("%s cites the plugin's section %d times in %s, and one of them is stale", docsCliOutputDoc, n, cite.what)
+		default:
+			at := strings.Index(doc, cite.prefix) + len(cite.prefix)
+			stated, _, _ := strings.Cut(doc[at:], ")")
+			if stated != section {
+				t.Errorf("%s's %s cites §%s for the plugin, whose heading is §%s: the reader is sent to the section that number now names", docsCliOutputDoc, cite.what, stated, section)
+			}
+		}
+	}
+}
+
+// docsPluginSection reads the number out of the plugin's heading — "9.3" in
+// `### 9.3 Claude Code plugin (`plugin/`)` — and fails the test if the heading
+// is gone, since every citation below is checked against it.
+func docsPluginSection(t *testing.T, doc string) string {
+	t.Helper()
+	at := strings.Index(doc, docsPluginHeading)
+	if at < 0 {
+		t.Fatalf("%s no longer has a plugin section heading, which the citations below are read against", docsCliOutputDoc)
+	}
+	start := at
+	for start > 0 && (doc[start-1] == '.' || (doc[start-1] >= '0' && doc[start-1] <= '9')) {
+		start--
+	}
+	if !strings.HasSuffix(doc[:start], "### ") {
+		t.Fatalf("%s's plugin heading carries no number, and the number is what its citations are checked against", docsCliOutputDoc)
+	}
+	return doc[start:at]
 }
