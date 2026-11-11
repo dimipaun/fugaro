@@ -157,8 +157,10 @@ func credentialsImage(rel string) string {
 }
 
 // runEndpointRE is the config's one Cloud Run endpoint, which the fixture
-// repoints at this file's services fake.
-var runEndpointRE = regexp.MustCompile(`\brun: \S+`)
+// repoints at this file's services fake. The value stops at the flow mapping's
+// comma (newCloudFixture writes the endpoints as one), so the entries after it
+// keep their own.
+var runEndpointRE = regexp.MustCompile(`\brun: [^,}]+`)
 
 // credsSkewFixture is credsFixtureFor with the Cloud Run services fake as the
 // config's Cloud Run endpoint, and the installation's own pin written to state
@@ -215,7 +217,7 @@ func TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead(t *testing.T) {
 	f, _ := credsSkewFixture(t, "none", skew)
 	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
 	before := f.value(t)
-	skew.deployedService(credentialsImage(providerEntrySince), credentialsImage("0.18.0"))
+	skew.deployedService(credentialsImage("0.24.0"), credentialsImage("0.18.0"))
 
 	value := providerValueDoc(t)
 	out, _, err := executeStdin(t, value, "creds", "set", config.ProviderKeySecret)
@@ -227,11 +229,11 @@ func TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead(t *testing.T) {
 		t.Errorf("the refusal names no way out: %v", err)
 	}
 	// The release it judged is the one that SERVES: the template's own image
-	// names this release, and a guard reading it would have written.
+	// is the newer one above, and a guard reading it would have written.
 	if !strings.Contains(msg, "0.18.0") {
 		t.Errorf("the refusal does not name the release of the revision that serves the bundle: %v", err)
 	}
-	if strings.Contains(msg, providerEntrySince) {
+	if strings.Contains(msg, "0.24.0") {
 		t.Errorf("the refusal judged the template's image rather than the revision that serves: %v", err)
 	}
 	if strings.Contains(out, value) || strings.Contains(msg, credsValue(t, "provider")) {
@@ -285,7 +287,7 @@ func TestCredsSetRefusesWhenNoRecordSaysWhichServiceServes(t *testing.T) {
 	t.Run("the service cannot be read", func(t *testing.T) {
 		skew := newRunServiceSkew(t)
 		skew.serviceErr = true
-		if err := refuses(t, skew, "none"); !strings.Contains(err.Error(), "could not be read") {
+		if err := refuses(t, skew, "none"); !strings.Contains(err.Error(), "the read of the service that serves this bundle failed") {
 			t.Errorf("the refusal does not name the read that failed: %v", err)
 		}
 	})
@@ -398,6 +400,68 @@ func TestCredsSetWritesWhenTheServiceIsNewer(t *testing.T) {
 	if !strings.Contains(doc, config.ClaudeOAuthToken+": "+credsValue(t, "existing")) {
 		t.Errorf("the entry this write was not about changed:\n%s", doc)
 	}
+}
+
+// TestCredsSetRefusesAProviderValueThatIsNotTheThreeFields: the write AK10
+// teaches is the read consumer's one kind over, and it is refused the same way
+// — the mapping's own rules here, and the two routing facts at the loader this
+// command calls before it stores anything, so the shape is not read twice and
+// cannot drift from what the service reads.
+//
+// Every arm is against a service at this release, so the guard is not what
+// refuses the write: what is pinned is the value's shape and nothing else.
+func TestCredsSetRefusesAProviderValueThatIsNotTheThreeFields(t *testing.T) {
+	refuses := func(t *testing.T, value, want string) {
+		t.Helper()
+		skew := newRunServiceSkew(t)
+		f, _ := credsSkewFixture(t, "none", skew)
+		f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+		before := f.value(t)
+		skew.deployedService(credentialsImage(providerEntrySince), credentialsImage(providerEntrySince))
+
+		out, _, err := executeStdin(t, value, "creds", "set", config.ProviderKeySecret)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("creds set %s with a value that is not the mapping = %v, want a user error", config.ProviderKeySecret, err)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+		// The credential is a byte of the value in every arm that carries one,
+		// and no refusal repeats it.
+		if strings.Contains(err.Error(), credsValue(t, "provider")) || strings.Contains(out, credsValue(t, "provider")) {
+			t.Errorf("the refusal repeated the value's key: stdout %q, err %v", out, err)
+		}
+		if n := f.writes(); n != 0 {
+			t.Fatalf("%d version(s) written, want none", n)
+		}
+		if got := f.value(t); got != before {
+			t.Errorf("the document changed: %q", got)
+		}
+	}
+
+	t.Run("a single line is not the mapping", func(t *testing.T) {
+		refuses(t, credsValue(t, "provider")+"\n", providerShape)
+	})
+
+	t.Run("a field that is not one of the three", func(t *testing.T) {
+		refuses(t, providerValueDoc(t)+"token: "+credsValue(t, "stray")+"\n", "a field that is not one of the three")
+	})
+
+	t.Run("a field is missing", func(t *testing.T) {
+		refuses(t, "key: "+credsValue(t, "provider")+"\nbase_url: https://api.example.com/v1\n", providerShape)
+	})
+
+	// The two routing facts are the loader's own reading, reached through the
+	// ParseBundle call the write makes: a destination the platform's rule
+	// refuses and an auth word that is neither of the two are refused here
+	// because they are refused there.
+	t.Run("a base URL the platform's rule refuses", func(t *testing.T) {
+		refuses(t, "key: "+credsValue(t, "provider")+"\nbase_url: http://api.example.com/v1\nauth: bearer\n", config.ProviderKeySecret)
+	})
+
+	t.Run("an auth word that is neither of the two", func(t *testing.T) {
+		refuses(t, "key: "+credsValue(t, "provider")+"\nbase_url: https://api.example.com/v1\nauth: basic\n", config.ProviderKeySecret)
+	})
 }
 
 // TestCredsSetIsUnaffectedByAnInstallationWithNoService: an installation with

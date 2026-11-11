@@ -2255,20 +2255,38 @@ const installationServiceUnknown = "this installation's terraform.tfvars.json na
 // second machine, a config copied to someone else's — is a refusal on a launch
 // that works, with a remedy the reader cannot carry out.
 func installationServiceRelease(lc *localcfg.Config) (rel, image string, ok bool) {
-	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
-	if err != nil {
-		return "", "", false
-	}
-	vars, err := infra.ReadWorkdirVars(dir, "installation")
-	if err != nil {
-		return "", "", false
-	}
-	image, ok, err = infra.CredentialsServiceImageOf(vars)
-	if err != nil || !ok {
+	image, ok = installationServiceImageOf(lc)
+	if !ok {
 		return "", "", false
 	}
 	rel = infra.CredentialsServiceImageRelease(image)
 	return rel, image, rel != ""
+}
+
+// installationServiceImageOf is the record itself: the credentials service
+// image the installation's terraform.tfvars.json names, whether or not the
+// reference carries a release. It is what tells "no pin at all" — an
+// installation whose workdir this machine does not hold, or one that names no
+// service — from a pin this reader cannot read, which are two different
+// answers for a caller deciding whether anything is coming: the review gate
+// warns about both (installationServiceRelease), while the bundle write
+// refuses the second (creds.go's bundleReaderRelease), because an image whose
+// release cannot be shown is a service that may not be able to read the
+// document.
+func installationServiceImageOf(lc *localcfg.Config) (image string, ok bool) {
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return "", false
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		return "", false
+	}
+	image, ok, err = infra.CredentialsServiceImageOf(vars)
+	if err != nil {
+		return "", false
+	}
+	return image, ok
 }
 
 // refuseClonesNotShipped refuses, before any cloud effect, deploying or

@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"google.golang.org/api/googleapi"
+	runapi "google.golang.org/api/run/v2"
 	secretmanager "google.golang.org/api/secretmanager/v1"
 	"gopkg.in/yaml.v3"
 
@@ -29,8 +30,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -147,6 +150,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   ` + config.GitHubAppKeySecret + `                  the GitHub App's private key (no tier: the mint signs with it)
   ` + config.BitbucketSecret + `                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, and every other Bitbucket run's job still uses its own mounted copy until the flip)
   ` + credsvc.BitbucketReadConsumerSecret + `             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
+  ` + config.ProviderKeySecret + `                 the project's provider credential (tier C: the service's provider route authenticates upstream with it): a YAML mapping of key, base_url and auth, one field per line, so redirect it from a file — the hidden prompt takes one line. It is read by a credentials service from ` + providerEntrySince + ` on, which is not tagged yet: where the deployed service is older, this write is refused and ` + "`fugaro update`" + ` is the one command that moves it
   ` + config.ReviewSigningKeySecret(config.DefaultClaudeAccount) + `  the default account's review-signing key (no tier: the service's sign
                                      route computes a MAC with it; written by --generate below)
   ` + config.ClaudeOAuthTokenPrefix + `<account>` + config.ReviewSigningKeySuffix + `     a named account's review-signing key (no tier, and --generate's NAME too)
@@ -602,18 +606,6 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if generate && (!reviewSigning || previous) {
 		return credsGenerateNameRefusal()
 	}
-	// The provider key is a bundle entry this command has no value shape for:
-	// the service reads it as a mapping (credsvc's providerValue) and the write
-	// below builds a scalar for every name that is not the read consumer's, so
-	// the loader hands the document back once it has been built — which is
-	// AFTER the operator has been prompted for the key. That read is the one
-	// step of this command that cannot be taken back, so the refusal is placed
-	// before it, and before the project is opened. The write that teaches this
-	// command the mapping is AK10's, and it lands with the release that serves
-	// the entry.
-	if kind == credsvc.KindProvider {
-		return credsProviderNameRefusal()
-	}
 	_, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -640,6 +632,21 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	default:
 		if _, err := credsvc.ParseBundle(before.raw); err != nil {
 			return credsDocRefusal(store.id, err)
+		}
+	}
+	// The one entry of the bundle whose reader is newer than its writer's
+	// release, and so the one skew this command can create and is refused for
+	// (AK10, F26): a document holding the provider key is a document only a
+	// credentials service from providerEntrySince on can read, and the
+	// service's answer to an unknown key is a refusal of the WHOLE document,
+	// so the entry written into an older one halts every caller of it. It is
+	// judged before the value is read — reading that value is the one step of
+	// this command that cannot be taken back — and the trigger is the
+	// document's own answer: the entry is the one this run is writing, or it is
+	// already in the document this run is editing.
+	if kind == credsvc.KindProvider || bundleHoldsProviderEntry(before.raw) {
+		if err := refuseAProviderEntryTheServiceCannotRead(ctx, lc); err != nil {
+			return err
 		}
 	}
 	// The run's own account (CL7a): one line per step and the log beside it
@@ -686,14 +693,19 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	switch {
 	case generate:
 		doc, window, err = setReviewSigningRotation(doc, name, config.ReviewSigningKeyPreviousSecret(account), string(value))
-	case kind == credsvc.KindBitbucketReadConsumer:
-		// The one entry whose value is not a string: the operator's value is
+	case kind == credsvc.KindBitbucketReadConsumer || kind == credsvc.KindProvider:
+		// The two entries whose value is not a string: the operator's value is
 		// the entry's whole mapping, and it is put in as it was read, not as
-		// text. This is the one place the bytes are parsed for it:
+		// text. This is the one place the bytes are parsed for them:
 		// validateBundleValue leaves the shape to this call, so the node that is
 		// validated here is the node the document gets.
 		var valueNode *yaml.Node
-		if valueNode, err = readConsumerNode(value); err == nil {
+		if kind == credsvc.KindProvider {
+			valueNode, err = readProviderNode(value)
+		} else {
+			valueNode, err = readConsumerNode(value)
+		}
+		if err == nil {
 			doc, err = setBundleEntryValue(doc, name, valueNode)
 		}
 	default:
@@ -871,26 +883,231 @@ func credsDisabledRefusal(id, did string) error {
 // pasted value can land in (the rule `fugaro secrets set`'s own name check
 // follows), and nothing this command prints may carry a value.
 func credsNameRefusal() error {
-	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A), %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters), %s (the upstream Bitbucket token), %s (the Bitbucket read consumer), or the review-signing names %s and %s<account>%s, which --generate writes. The read consumer's value is %s. Nothing was read and nothing was written",
-		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen, config.BitbucketSecret, credsvc.BitbucketReadConsumerSecret,
-		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix, readConsumerShape)
+	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A), %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters), %s (the upstream Bitbucket token), %s (the Bitbucket read consumer), %s (the project's provider credential), or the review-signing names %s and %s<account>%s, which --generate writes. The read consumer's value is %s, and the provider credential's is %s. Nothing was read and nothing was written",
+		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen, config.BitbucketSecret, credsvc.BitbucketReadConsumerSecret, config.ProviderKeySecret,
+		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix, readConsumerShape, providerShape)
 }
 
-// credsProviderNameRefusal refuses the provider key's name, which IS a key of
-// the document and NOT one this command writes: the service reads its value as
-// a mapping of the key, the provider's base URL and how the key is sent
-// (credsvc's providerValue, AK6b), and every value this command reads is a
-// single line, except the read consumer's mapping. A write of a scalar under
-// this name is a document the loader refuses, and the refusal would come after
-// the value had been read from a terminal — so the name is refused at the door
-// instead, and that is why this is not credsNameRefusal: the name is one the
-// service accepts, and what is missing is this command's write for it.
+// refuseAProviderEntryTheServiceCannotRead is the guard at the bundle write
+// (AK10, F26): the write is refused when the document it would leave in place
+// carries an entry the credentials service that will read it predates.
 //
-// The name is the bundle's own constant and not operator text, so naming it
-// here echoes nothing that came in. Nothing was read and nothing was written.
-func credsProviderNameRefusal() error {
-	return userErr("%s is a bundle entry this command does not write. The credentials service reads its value as a mapping of the provider's key, the provider's base URL and how the key is sent, and a value read here as one line could only be handed back by the loader. The write for it ships with the release that lets a bundle hold it. Nothing was read and nothing was written",
-		config.ProviderKeySecret)
+// The entry is the provider key (config.ProviderKeySecret, AK6b), and the
+// reason there is a guard at all is the loader's own strictness: an unknown
+// KEY refuses the WHOLE document (credsvc.ErrBundleUnknownKey) rather than the
+// entry, and the service answers that as a service-wide refusal — so a bundle
+// written by a CLI newer than the service that reads it halts every caller of
+// that service, coding runs included, until `fugaro update` moves it.
+// `fugaro creds set` is the bundle's only writer, so this is the one write
+// that can be stopped before it lands.
+//
+// What is DEPLOYED decides, and the pin only when nothing is deployed
+// (bundleReaderRelease, which says why); a record that cannot be read refuses
+// the write rather than warning about it, which is where this parts from
+// checkReviewAdmission — the alternative here is the halt above.
+func refuseAProviderEntryTheServiceCannotRead(ctx context.Context, lc *localcfg.Config) error {
+	rel, image, why := bundleReaderRelease(ctx, lc)
+	switch {
+	case why != "":
+		return providerEntryRefusal(why)
+	case rel == "":
+		// Nothing serves the bundle and nothing is coming: no service can
+		// refuse the document, and there is none to halt. The write as today.
+		return nil
+	case !imagePredates(rel, providerEntrySince):
+		return nil
+	}
+	return providerEntryRefusal(fmt.Sprintf("this installation's credentials service is %s (image %s), and that release's service does not know the entry", rel, pluginwire.Printable(image)))
+}
+
+// providerEntryRefusal is the one sentence the guard refuses with, and why is
+// the clause that says which state was found — the read that failed, the
+// reference that carries no release, or the release that predates the entry.
+// It names `fugaro update` because that is the whole fix (CLAUDE.md's rule):
+// the command that resolves this release's credentials service image and
+// applies it.
+func providerEntryRefusal(why string) error {
+	return userErr("%s is an entry of the bundle that only a credentials service from fugaro %s on can read: the service's loader refuses a document holding a key it does not know, and it refuses the WHOLE document rather than that entry, so a bundle the deployed service cannot read halts every caller of that service, coding runs included. This write is refused: %s. Run fugaro update: that is the whole upgrade, and the command that moves this installation's credentials service onto this release's image. Nothing was read from you and nothing was written",
+		config.ProviderKeySecret, providerEntrySince, why)
+}
+
+// bundleReaderRelease answers the release of the credentials service that will
+// read the document this write leaves in place, with the image that release
+// was read from for the refusal to print.
+//
+// Two records name a release and this reads both, because the one that decides
+// is what is DEPLOYED: the revisions Cloud Run serves the bundle with now
+// (servingCredentialsRelease), and the installation's own pin
+// (installationServiceImageOf) only when Cloud Run holds no such service —
+// nothing serves yet and a service is coming, at the release the
+// installation's record names. The pin cannot raise the answer: `fugaro update`
+// writes terraform.tfvars.json as its stages plan and applies it afterwards, so
+// a run whose apply the owner declined or which failed at the apply leaves the
+// pin ahead of what serves, and a guard reading the pin alone writes the very
+// bundle F26 found.
+//
+// rel is "" with no why when nothing serves the bundle and nothing is coming,
+// which is not "unknown" but an answer: there is no service to refuse the
+// document. why is non-empty when the record that decides cannot be read at
+// all, which the caller refuses over.
+func bundleReaderRelease(ctx context.Context, lc *localcfg.Config) (rel, image, why string) {
+	rel, image, deployed, why := servingCredentialsRelease(ctx, lc)
+	switch {
+	case why != "":
+		return "", "", why
+	case deployed:
+		return rel, image, ""
+	}
+	pinned, stated := installationServiceImageOf(lc)
+	if !stated {
+		return "", "", ""
+	}
+	rel = infra.CredentialsServiceImageRelease(pinned)
+	if rel == "" {
+		return "", "", "this installation's terraform.tfvars.json names a credentials service image (" + pluginwire.Printable(pinned) + ") whose reference carries no release version"
+	}
+	return rel, pinned, ""
+}
+
+// servingCredentialsRelease is the deployed half of that answer: the release
+// of the credentials service's revisions that SERVE the bundle, read through
+// Cloud Run's v2 services and revisions calls (the client `fugaro doctor`'s
+// credentials-service check builds for the same service).
+//
+// Which revision serves is the service's own answer and not a guess: an
+// allocation to the latest revision — what the installation module writes,
+// credentials.tf's traffic block — serves the latestReadyRevision it reports,
+// and an entry naming one by name serves that one. The service's TEMPLATE is
+// deliberately not the answer: the template is the NEXT revision, and Cloud
+// Run keeps serving the previous healthy one when a roll-out fails to become
+// ready or an operator pins traffic by hand, so a guard reading the template
+// calls a service new whose serving revision is old. The oldest release among
+// the serving revisions decides, so no revision that serves and cannot read
+// the document slips past.
+//
+// deployed is false, with no why, for the one answer that needs no judging:
+// Cloud Run holds no such service. Every other unreadable state — a read that
+// fails for any reason but that one, a revision with no container image, a
+// service with no revision serving — is a why, because an unknown release is
+// exactly what this guard cannot clear.
+func servingCredentialsRelease(ctx context.Context, lc *localcfg.Config) (rel, image string, deployed bool, why string) {
+	svc, err := runapi.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.Run)...)
+	if err != nil {
+		return "", "", false, "the Cloud Run client could not be built (" + oneLineCLI(err.Error()) + ")"
+	}
+	name := fmt.Sprintf("projects/%s/locations/%s/services/%s", lc.GCPProject, lc.Region, infra.CredentialsServiceName)
+	s, err := svc.Projects.Locations.Services.Get(name).Context(ctx).Do()
+	if err != nil {
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && ge.Code == http.StatusNotFound {
+			// No service deployed: the installation's own pin is judged
+			// instead, and "no service" is not "unknown".
+			return "", "", false, ""
+		}
+		return "", "", false, "the read of the service that serves this bundle failed (" + oneLineCLI(err.Error()) + ")"
+	}
+	revs := servingRevisions(s)
+	if len(revs) == 0 {
+		return "", "", true, "the service reports no revision serving traffic, so the release that reads the bundle cannot be shown"
+	}
+	images := make([]string, 0, len(revs))
+	for _, rev := range revs {
+		r, err := svc.Projects.Locations.Services.Revisions.Get(rev).Context(ctx).Do()
+		if err != nil {
+			return "", "", true, "the revision that serves this bundle (" + safetext.Field(revisionShort(rev)) + ") could not be read (" + oneLineCLI(err.Error()) + ")"
+		}
+		if len(r.Containers) == 0 || r.Containers[0].Image == "" {
+			return "", "", true, "the revision that serves this bundle (" + safetext.Field(revisionShort(rev)) + ") names no container image"
+		}
+		images = append(images, r.Containers[0].Image)
+	}
+	rel, image, ok := oldestCredentialsRelease(images)
+	if !ok {
+		return "", "", true, "the image of the revision that serves this bundle carries no release version"
+	}
+	return rel, image, true, ""
+}
+
+// servingRevisions is every revision of s that serves traffic, by the
+// service's own answer: a target that allocates to the latest revision serves
+// s.LatestReadyRevision and one that names a revision serves that one, and a
+// target with no percent serves nothing. A service naming no target of its own
+// serves every request with its latest ready revision, which is the same
+// answer Cloud Run reads it as.
+func servingRevisions(s *runapi.GoogleCloudRunV2Service) []string {
+	var revs []string
+	seen := map[string]bool{}
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		revs = append(revs, name)
+	}
+	for _, t := range s.Traffic {
+		if t.Percent <= 0 {
+			continue
+		}
+		switch t.Type {
+		case "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST":
+			add(s.LatestReadyRevision)
+		case "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION":
+			add(t.Revision)
+		}
+	}
+	if len(revs) == 0 {
+		add(s.LatestReadyRevision)
+	}
+	return revs
+}
+
+// oldestCredentialsRelease is the oldest release among the images of the
+// revisions that serve, and the image it was read from. A reference that
+// carries no release at all — an operator's hand-written digest, one resolved
+// from another registry — makes the whole answer unknown rather than being
+// skipped, because a revision that serves and whose release cannot be shown is
+// one this guard cannot clear.
+func oldestCredentialsRelease(images []string) (rel, image string, ok bool) {
+	for _, img := range images {
+		r := infra.CredentialsServiceImageRelease(img)
+		if r == "" {
+			return "", "", false
+		}
+		if rel == "" || imagePredates(r, rel) {
+			rel, image = r, img
+		}
+	}
+	return rel, image, rel != ""
+}
+
+// revisionShort is a revision's name as a person reads it: the last segment of
+// the resource name Cloud Run answers with.
+func revisionShort(name string) string {
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+// bundleHoldsProviderEntry reports whether a bundle document holds the
+// provider key's entry, which is what the guard above judges.
+//
+// It is a node walk and not a parse with the loader, because the question is
+// about ONE key and the loader answers about the whole document: the caller has
+// already run credsvc.ParseBundle over this document and refused a document it
+// rejects, so what is left is a lookup. An empty document, or one the walk
+// cannot read at all (unreachable after that parse), holds no entry.
+func bundleHoldsProviderEntry(raw []byte) bool {
+	_, root, err := bundleNodes(raw)
+	if err != nil {
+		return false
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == config.ProviderKeySecret {
+			return true
+		}
+	}
+	return false
 }
 
 // credsGenerateNameRefusal refuses --generate for a NAME that is not an
@@ -948,10 +1165,11 @@ func credsDocRefusal(id string, err error) error {
 // readSecret's shape (secrets.go) — a terminal gets a hidden prompt, anything
 // else is read to EOF — with this command's own rules: a model credential and
 // the upstream Bitbucket token are one line each; the GitHub App's key is a PEM
-// and the Bitbucket read consumer is a mapping of three fields, and the hidden
-// prompt cannot take either (it reads one line), so those two names come in on
-// stdin and a terminal is refused before anything is read. The bound is the
-// loader's per-credential one rather than Secret Manager's.
+// and the Bitbucket read consumer and the provider credential are mappings of
+// three fields, and the hidden prompt cannot take any of those (it reads one
+// line), so those names come in on stdin and a terminal is refused before
+// anything is read. The bound is the loader's per-credential one rather than
+// Secret Manager's.
 //
 // The value never comes from an argument, a flag or the environment: this
 // function's only inputs are stdin and the terminal. One trailing "\n" or
@@ -975,6 +1193,8 @@ func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name s
 			return nil, userErr("%s is a private key, which spans several lines and the hidden prompt can't take; redirect it from the key file: fugaro creds set %s < PATH-TO-THE-KEY-FILE", name, name)
 		case credsvc.KindBitbucketReadConsumer:
 			return nil, userErr("%s is %s, which spans several lines and the hidden prompt can't take; redirect it from a file: fugaro creds set %s < PATH-TO-THE-FILE", name, readConsumerShape, name)
+		case credsvc.KindProvider:
+			return nil, userErr("%s is %s, which spans several lines and the hidden prompt can't take; redirect it from a file: fugaro creds set %s < PATH-TO-THE-FILE", name, providerShape, name)
 		}
 		b, err := readValueIn(ctx, f, prompt, valueSpec{what: name, secret: true})
 		if err != nil {
@@ -1023,14 +1243,15 @@ func validateBundleValue(raw []byte, kind credsvc.Kind) error {
 	switch kind {
 	case credsvc.KindGitHubApp:
 		return validateAppKeyPEM(raw)
-	case credsvc.KindBitbucketReadConsumer:
-		// The one value that is not a line of text, so the one-line rules below
-		// are not it. Its SHAPE is not checked here either: readConsumerNode is
-		// what says the shape is right, and it runs once, in credsSet, where the
-		// node it answers is the node the write stores. Checking it here as well
-		// would be a second parse of the same bytes for one write — this one's
-		// tree, every field's tag and style rewritten in it, thrown away and the
-		// bytes parsed again for the tree that is stored.
+	case credsvc.KindBitbucketReadConsumer, credsvc.KindProvider:
+		// The two values that are not a line of text, so the one-line rules
+		// below are not theirs. Their SHAPE is not checked here either: it is
+		// readConsumerNode's and readProviderNode's, and each runs once, in
+		// credsSet, where the node it answers is the node the write stores.
+		// Checking them here as well would be a second parse
+		// of the same bytes for one write — this one's tree, every field's tag
+		// and style rewritten in it, thrown away and the bytes parsed again for
+		// the tree that is stored.
 		//
 		// The bound above is this command's own, and the whole mapping is read
 		// and stored under it: one limit for every value, rather than three
@@ -1155,6 +1376,74 @@ func readConsumerNode(raw []byte) (*yaml.Node, error) {
 	return root, nil
 }
 
+// providerShape is what the provider key's value has to be, in the words the
+// refusals below and the help text use, for readConsumerShape's reason: three
+// of them say it, and an operator who reads one and then another should not
+// have to work out whether the two are the same rule.
+const providerShape = "a YAML mapping of exactly key, base_url and auth, one field per line"
+
+// readProviderNode reads the provider key's value (config.ProviderKeySecret,
+// AK6b), which is the bundle's second entry that is not a single string: a
+// mapping of exactly key, base_url and auth, the credential and the two
+// routing facts a call to that provider needs (credsvc's providerValue). It is
+// read on stdin, from a file the operator wrote in that shape, and it is read
+// as YAML so the three fields are named rather than positional.
+//
+// It is readConsumerNode's reading, and deliberately not its own second one:
+// the fields are forced to strings (a base URL or an auth word that looks like
+// a number is the text the operator pasted, and the loader would refuse the
+// unquoted form), a field that is a list or a nested mapping is refused rather
+// than stored, no refusal repeats a byte of a field's value, and the node it
+// answers is the node the document gets, so these bytes are parsed once per
+// write. What it does NOT do is judge the shapes of the two facts: the
+// destination rule is the platform's (config.CheckProviderBaseURL) and the
+// auth word is one of two, and both are credsvc's own answer, reached by the
+// ParseBundle call the write makes before it stores anything. A second reading
+// of them here is the drift providerValue's comment exists to prevent.
+//
+// The whole mapping is stored under this command's per-credential bound rather
+// than the loader's per-FIELD one, exactly as the read consumer's is: one
+// limit for every value is what the help text says.
+func readProviderNode(raw []byte) (*yaml.Node, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		// The parse error is not wrapped: a YAML error quotes the document it
+		// failed on, and that document is a credential.
+		return nil, userErr("the value must be %s; nothing was written", providerShape)
+	}
+	root := &doc
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) != 1 {
+			return nil, userErr("the value must be %s; nothing was written", providerShape)
+		}
+		root = root.Content[0]
+	}
+	if root.Kind != yaml.MappingNode {
+		return nil, userErr("the value must be %s; nothing was written", providerShape)
+	}
+	seen := make(map[string]bool, 3)
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		f, fv := root.Content[i], root.Content[i+1]
+		switch f.Value {
+		case "key", "base_url", "auth":
+		default:
+			return nil, userErr("the value must be %s, and it holds a field that is not one of the three; nothing was written", providerShape)
+		}
+		if seen[f.Value] {
+			return nil, userErr("the value holds %s twice; nothing was written", f.Value)
+		}
+		seen[f.Value] = true
+		if fv.Kind != yaml.ScalarNode {
+			return nil, userErr("%s must be one line of text; nothing was written", f.Value)
+		}
+		fv.Tag, fv.Style = "!!str", yaml.DoubleQuotedStyle
+	}
+	if !seen["key"] || !seen["base_url"] || !seen["auth"] {
+		return nil, userErr("the value must be %s; nothing was written", providerShape)
+	}
+	return root, nil
+}
+
 // setBundleEntry is the modify half of the read-modify-write: raw (the
 // document as it is, possibly empty) with key set to value, re-emitted.
 //
@@ -1167,8 +1456,9 @@ func setBundleEntry(raw []byte, key, value string) ([]byte, error) {
 }
 
 // setBundleEntryValue is setBundleEntry for a value that is already the node
-// the entry holds: the read consumer's mapping (readConsumerNode), which is
-// the one entry of the bundle that is not one line of text.
+// the entry holds: the read consumer's mapping and the provider key's
+// (readConsumerNode, readProviderNode), the two entries of the bundle that are
+// not one line of text.
 func setBundleEntryValue(raw []byte, key string, value *yaml.Node) ([]byte, error) {
 	doc, root, err := bundleNodes(raw)
 	if err != nil {
