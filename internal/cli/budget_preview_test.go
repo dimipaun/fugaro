@@ -880,8 +880,11 @@ func TestBudgetPreviewCeiling(t *testing.T) {
 	// The database's cap is the one that binds, and the line names the scope
 	// it came from: the default for repositories without one, not the
 	// repository's own and not the global fallback (plan Task 0.3 step 7).
+	// The config's $5.00 is scaled by pro's fraction to $4.25 (D16, T6.1); the
+	// database's $3.00 is the rules' own cap and is not scaled, so it is still
+	// the one that binds.
 	for _, want := range []string{"11 stages", "rough worst case: $18.00", "6 runs × $3.00 (per-run cap: default)",
-		"per-run caps found: budget.per_run_usd $5.00, the database's per-run cap (default) $3.00; the smallest counts",
+		"per-run caps found: budget.per_run_usd $5.00 → $4.25 at mode pro, the database's per-run cap (default) $3.00; the smallest counts",
 		"may exceed the repository's daily cap ($15.00 left today)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("preview never says %q:\n%s", want, out)
@@ -1078,6 +1081,9 @@ func TestBudgetPreviewRefusesBadArguments(t *testing.T) {
 		"too many runs":  {[]string{"budget", "preview", "--recipe", "standard", "--runs", "100001", "--repo", "acme/app"}, "is more than 100000 runs; estimate a batch, not a project's lifetime"},
 		"unknown recipe": {[]string{"budget", "preview", "--recipe", "nope", "--runs", "2", "--repo", "acme/app"}, "recipe nope is not in .fugaro/recipes"},
 		"bad repo":       {[]string{"budget", "preview", "--recipe", "standard", "--runs", "2", "--repo", "not-a-repo"}, "--repo: the repository must look like owner/name"},
+		// The rigor mode's vocabulary, and not budget set --mode's (observe
+		// or enforce): the refusal names the one this flag takes.
+		"unknown mode": {[]string{"budget", "preview", "--recipe", "standard", "--runs", "2", "--repo", "acme/app", "--mode", "quick"}, `--mode "quick": use poc, startup, pro, critical, hotfix`},
 	} {
 		_, _, err := execute(t, tc.args...)
 		if err == nil {
@@ -1099,13 +1105,14 @@ func TestBudgetPreviewEnvCapSupersedesTheConfig(t *testing.T) {
 	f.SetCaps(100, 3, 20, 3)
 	f.SetSpentToday(0)
 	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
-	// The config says $5, the environment $2: the runner would use $2.
+	// The config says $5, the environment $2: the runner would use $2 -- and
+	// the mode's fraction of it, which is the $1.70 below at pro (D16, T6.1).
 	t.Setenv(runner.MaxRunUSDEnv, "2")
 	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"6 runs × $2.00 (per-run cap: FUGARO_MAX_RUN_USD)", "FUGARO_MAX_RUN_USD $2.00", "the database's per-run cap (default) $3.00"} {
+	for _, want := range []string{"6 runs × $1.70 (per-run cap: FUGARO_MAX_RUN_USD)", "FUGARO_MAX_RUN_USD $2.00 → $1.70 at mode pro", "the database's per-run cap (default) $3.00"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("preview never says %q:\n%s", want, out)
 		}
@@ -1209,7 +1216,7 @@ func TestBudgetPreviewGlobalCapsOnly(t *testing.T) {
 	for _, want := range []string{
 		"rough worst case: $3.00",
 		"1 runs × $3.00 (per-run cap: global)",
-		"per-run caps found: budget.per_run_usd $5.00, the database's per-run cap (global) $3.00; the smallest counts",
+		"per-run caps found: budget.per_run_usd $5.00 → $4.25 at mode pro, the database's per-run cap (global) $3.00; the smallest counts",
 		"headroom left today: repository not set, project $10.00",
 		"fits the project's daily cap ($10.00 left today)",
 	} {
@@ -1433,6 +1440,134 @@ func previewCheckoutYAML(agentYAML string) string {
 	return "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github, base_branch: main }\n" +
 		"agent:\n  auth: api-key\n" + agentYAML +
 		"workflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+}
+
+// previewCheckoutRigor rewrites the checkout's fugaro.yaml with agentYAML and
+// the repository's own rigor: block, the layer a run reads its mode from and
+// the one a preview's --mode request resolves over.
+func previewCheckoutRigor(t *testing.T, agentYAML, mode string) {
+	t.Helper()
+	testutil.WriteFiles(t, ".", map[string]string{
+		"fugaro.yaml": previewCheckoutYAML(agentYAML) + "rigor: { default: " + mode + " }\n"})
+}
+
+// TestBudgetPreviewModeEqualsTheModesOwnEffects: --mode asks for a rigor mode
+// the way fugaro run --mode does, and the mode is an input to the two terms
+// the preview computes and to nothing else — the stage bound, through the
+// rounds the mode's own row gives the knobs the checkout leaves unset, and the
+// per-run cap, through the fraction of the deployed ceiling the mode carries
+// (config.RigorBudgetCap, D16/T6.1). A preview of --mode X is therefore the
+// same preview as one of a checkout that says rigor.default: X outright, which
+// is the honest claim the flag makes.
+//
+// The deployed cap is the config's $5.00 and the mode's fraction of it is what
+// binds: the per-stage cap is high enough that the stage bound is over it at
+// every row (7, 17, 31 and 47 stages at $10 is $70 to $470 a run), so the
+// figures below are the fractions themselves and a preview that dropped the
+// fraction would fail on the cap.
+func TestBudgetPreviewModeEqualsTheModesOwnEffects(t *testing.T) {
+	const agent = "  max_budget_usd: 10\n"
+	for _, tc := range []struct {
+		mode   rigor.Mode
+		first  int
+		rounds int
+		stages int
+		cap    string
+	}{
+		{rigor.POC, 1, 1, 7, "$2.75"},       // 55% of the $5.00 ceiling
+		{rigor.Startup, 2, 2, 17, "$3.50"},  // 70%
+		{rigor.Pro, 3, 3, 31, "$4.25"},      // 85%
+		{rigor.Critical, 3, 5, 47, "$5.00"}, // the whole ceiling
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			f := newBudgetFixture(t, "")
+			// The database's caps are high on purpose: what is compared here
+			// is the deployed cap's own half of the arithmetic, and a database
+			// cap binds both runs below the same way whatever the mode.
+			f.SetCaps(100, 50, 100, 50)
+			f.SetSpentToday(0)
+			f.Checkout(t, agent)
+			// poc is the base the request raises from: a request may raise a
+			// mode and never lower it, so every mode above poc is reachable
+			// this way and the four rows are comparable one by one.
+			previewCheckoutRigor(t, agent, string(rigor.POC))
+			asked, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", string(tc.mode))
+			if err != nil {
+				t.Fatal(err)
+			}
+			previewCheckoutRigor(t, agent, string(tc.mode))
+			said, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if asked != said {
+				t.Errorf("--mode %s is not the preview of rigor.default: %s\n--mode %s:\n%s\nrigor.default: %s:\n%s",
+					tc.mode, tc.mode, tc.mode, asked, tc.mode, said)
+			}
+			for _, want := range []string{
+				fmt.Sprintf("at most %d stages (mode %s, agent.first_line_rounds %d, agent.review_rounds %d)", tc.stages, tc.mode, tc.first, tc.rounds),
+				fmt.Sprintf("3 runs × %s (per-run cap: budget.per_run_usd)", tc.cap),
+				"rough worst case:",
+			} {
+				if !strings.Contains(asked, want) {
+					t.Errorf("--mode %s never says %q:\n%s", tc.mode, want, asked)
+				}
+			}
+			if strings.Contains(asked, "forecast") {
+				t.Errorf("--mode %s turned the ceiling into a forecast:\n%s", tc.mode, asked)
+			}
+		})
+	}
+}
+
+// TestBudgetPreviewModeNeverLowers: a request may raise a mode and never lower
+// it (D6), so a --mode below the mode the repository resolves changes nothing,
+// and the preview says so rather than quoting a cheaper ceiling than the run
+// would really be held to. hotfix is the sharpest case: it is off the axis and
+// ranks below every on-axis mode, so it never raises anything.
+func TestBudgetPreviewModeNeverLowers(t *testing.T) {
+	const agent = "  max_budget_usd: 10\n"
+	for _, mode := range []rigor.Mode{rigor.POC, rigor.Hotfix} {
+		t.Run(string(mode), func(t *testing.T) {
+			f := newBudgetFixture(t, "")
+			f.SetCaps(100, 50, 100, 50)
+			f.SetSpentToday(0)
+			f.Checkout(t, agent)
+			previewCheckoutRigor(t, agent, string(rigor.Critical))
+			out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", string(mode))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"at most 47 stages (mode critical", "3 runs × $5.00 (per-run cap: budget.per_run_usd)"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("--mode %s lowered the mode the repository resolves:\n%s", mode, out)
+				}
+			}
+			if want := "--mode " + string(mode) + " has no effect: this repository resolves to critical"; !strings.Contains(errOut, want) {
+				t.Errorf("the ignored request is not said:\n%s", errOut)
+			}
+		})
+	}
+}
+
+// TestBudgetPreviewTypicalStaysAbsentBelowTheMinimumInEveryMode: the mode
+// changes what the ceiling is made of, never what the empirical line needs —
+// it is the runs that are too few, at any mode.
+func TestBudgetPreviewTypicalStaysAbsentBelowTheMinimumInEveryMode(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 50, 100, 50)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 10\n")
+	f.SeedRuns(t, 0, previewMinRuns-1, previewRunStages(0.60, 0.10, 0.20, 1.00))
+	for _, mode := range rigor.Modes {
+		out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", string(mode))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, "typical:") || strings.Contains(errOut, "typical:") {
+			t.Errorf("--mode %s printed a typical line from %d runs:\n%s%s", mode, previewMinRuns-1, out, errOut)
+		}
+	}
 }
 
 // previewLayer is the project layer these preview cases read a rigor default

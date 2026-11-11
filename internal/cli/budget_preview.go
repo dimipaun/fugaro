@@ -63,18 +63,30 @@ type budgetPreviewOptions struct {
 	recipe string
 	runs   int
 	repo   string
+	mode   string
 	json   bool
 }
 
 func newBudgetPreviewCmd() *cobra.Command {
 	var o budgetPreviewOptions
 	cmd := &cobra.Command{
-		Use:   "preview --recipe NAME --runs N [--repo R]",
+		Use:   "preview --recipe NAME --runs N [--repo R] [--mode MODE]",
 		Short: "Estimate a batch's worst-case model spend against today's caps",
 		Long: "Estimate what N runs of a recipe may cost at most, and how that compares\n" +
 			"with today's remaining daily caps. It is a ceiling, not a forecast: a run\n" +
 			"is bounded by the smaller of budget.per_run_usd and the recipe's most\n" +
 			"stages times the repository's agent.max_budget_usd.\n\n" +
+			"--mode asks for a rigor mode for the figures, as fugaro run --mode asks\n" +
+			"for one for a run, and takes the same vocabulary. It may raise the mode\n" +
+			"the repository resolves (its rigor: block, the project layer) and never\n" +
+			"lower it, so a request below the resolved mode changes nothing and the\n" +
+			"preview says so rather than quoting a cheaper ceiling than the run would\n" +
+			"be held to. The mode is an input to the two terms the tool can compute\n" +
+			"and to nothing else: the recipe's stage bound, through the rounds the\n" +
+			"mode's own row gives the knobs the checkout leaves unset, and the per-run\n" +
+			"cap, through the fraction of the deployed ceiling the mode carries.\n" +
+			"That is not the mode budget set --mode takes, which is the accounting\n" +
+			"mode (observe or enforce). The output is a ceiling all the same.\n\n" +
 			"That figure is the model ceiling and nothing else: a run also bills for\n" +
 			"the machine it asked for, and no budget key bounds compute at all --\n" +
 			"the run's own timeout is the cap.\n" +
@@ -124,6 +136,7 @@ func newBudgetPreviewCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe to preview ("+strings.Join(recipe.CatalogNames(), ", ")+")")
 	f.IntVar(&o.runs, "runs", 0, "how many runs to estimate")
 	f.StringVar(&o.repo, "repo", "", "the repository (owner/name, or a path inside its checkout); default: the checkout's origin")
+	f.StringVar(&o.mode, "mode", "", "the rigor mode to preview: "+rigor.ModeList()+"; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce)")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	for _, name := range []string{"recipe", "runs"} {
@@ -162,10 +175,15 @@ type previewKnobs struct {
 // repository's file from: with no cfg at all the layer is the only layer there
 // is, and leaving it out resolved every such preview at rigor.Default (pro)
 // whatever the project had published.
-func previewKnobsOf(cfg *config.Config, project rigor.Config) previewKnobs {
-	k := previewKnobs{from: "defaults", mode: rigor.Resolve(project, rigor.Request{}).Mode}
+//
+// asked is --mode, fed to the resolver as the run's own request and nothing
+// more: the run's request may raise a mode and never lower it (D6), and a
+// preview that let it lower one would quote a ceiling the launched run would
+// never be held to — the unsafe direction for a spend estimate.
+func previewKnobsOf(cfg *config.Config, project rigor.Config, asked rigor.Mode) previewKnobs {
+	k := previewKnobs{from: "defaults", mode: rigor.Resolve(project, rigor.Request{Mode: asked}).Mode}
 	if cfg != nil {
-		k = previewKnobs{from: "checkout", mode: rigor.Resolve(cfg.RigorConfig(), rigor.Request{}).Mode,
+		k = previewKnobs{from: "checkout", mode: rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: asked}).Mode,
 			first: cfg.Agent.FirstLineRounds, rounds: cfg.Agent.ReviewRounds, maxStageUSD: cfg.Agent.MaxBudgetUSD}
 	}
 	defaults := rigor.DefaultRounds(k.mode)
@@ -345,11 +363,36 @@ type previewHeadroom struct {
 // smaller of the two would report a ceiling the runner never enforces -- the
 // unsafe direction for a ceiling. The database's cap is a min, because the
 // rules deny a lease that exceeds either.
-func previewPerRun(lc *localcfg.Config, caps budget.Caps) (best budget.Micros, srcs []string, origin string, ok bool, err error) {
+//
+// Both owner-side values stand for the cap the job was deployed with, and a
+// run of the mode this preview resolves carries that mode's fraction of it
+// (config.RigorBudgetCap, D16, T6.1): they are scaled, so the ceiling below is
+// the one the run would really be held to, and the sources line names the
+// figure that moved beside the number the configuration holds. The database's
+// caps are not scaled: they are the rules' own numbers, and a mode's fraction
+// is the default a run gets from the deployed ceiling, never a multiplier over
+// a cap the owner wrote (internal/runner/policy.go's spendFromPolicy reads
+// them the same way).
+func previewPerRun(lc *localcfg.Config, caps budget.Caps, mode rigor.Mode) (best budget.Micros, srcs []string, origin string, ok bool, err error) {
 	take := func(m budget.Micros, what, short string) {
 		srcs = append(srcs, what+" "+usdFixed(m.USD()))
 		if !ok || m < best {
 			best, ok, origin = m, true, short
+		}
+	}
+	// takeDeployed records one of the two owner-side values, which stand for
+	// the cap the job was deployed with: the sources line names both the value
+	// the configuration holds and the figure the run would carry, so a reader
+	// can tie the binding cap back to its layer.
+	takeDeployed := func(m budget.Micros, what, short string) {
+		scaled := config.RigorBudgetCap(mode, m)
+		at := ""
+		if scaled != m {
+			at = " → " + usdFixed(scaled.USD()) + " at mode " + string(mode)
+		}
+		srcs = append(srcs, what+" "+usdFixed(m.USD())+at)
+		if !ok || scaled < best {
+			best, ok, origin = scaled, true, short
 		}
 	}
 	if v := os.Getenv(runner.MaxRunUSDEnv); v != "" {
@@ -367,10 +410,10 @@ func previewPerRun(lc *localcfg.Config, caps budget.Caps) (best budget.Micros, s
 		if m < 1 {
 			return 0, nil, "", false, userErr("%s %q: it rounds to nothing; the smallest cap is $0.000001", runner.MaxRunUSDEnv, v)
 		}
-		take(m, runner.MaxRunUSDEnv, runner.MaxRunUSDEnv)
+		takeDeployed(m, runner.MaxRunUSDEnv, runner.MaxRunUSDEnv)
 	} else if lc.Budget != nil && lc.Budget.PerRunUSD > 0 {
 		if m, ferr := pricing.FromUSD(lc.Budget.PerRunUSD); ferr == nil {
-			take(m, "budget.per_run_usd", "budget.per_run_usd")
+			takeDeployed(m, "budget.per_run_usd", "budget.per_run_usd")
 		}
 	}
 	if m, capOK := caps.PerRun(); capOK {
@@ -462,6 +505,11 @@ type previewTypical struct {
 func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	ctx := cmd.Context()
 	switch {
+	case o.mode != "" && !rigor.Known(rigor.Mode(o.mode)):
+		// The closed vocabulary, checked before any read: a near miss is the
+		// caller's own mistake, as run's rigorFlags reads it, and it names the
+		// modes this flag takes rather than budget set --mode's two.
+		return userErr("--mode %q: use %s, or leave it off to resolve the mode from the repository's own configuration", o.mode, rigor.ModeList())
 	case o.runs <= 0:
 		return userErr("--runs must be more than 0")
 	case o.runs > previewMaxRuns:
@@ -515,7 +563,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	if cfg == nil {
 		project = previewProjectRigor(ctx, lc)
 	}
-	knobs := previewKnobsOf(cfg, project)
+	knobs := previewKnobsOf(cfg, project, rigor.Mode(o.mode))
 	level3 := previewLevel3Rounds(cfg, root, rr.Recipe, knobs.mode)
 	stages := recipe.StageBound(rr.Recipe, knobs.first, knobs.rounds, level3)
 	doc := &previewDoc{Project: lc.Name, GCPProject: lc.GCPProject, Repo: repo, Slug: slug,
@@ -523,6 +571,15 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		KnobsFrom: knobs.from, PerRunCapSource: []string{}, Notes: []string{}}
 	doc.Knobs.FirstLineRounds, doc.Knobs.ReviewRounds = knobs.first, knobs.rounds
 	doc.RigorMode = knobs.mode
+	// A request the layers already meet changes nothing (rigor.Resolve's
+	// raise-only rule), and the figures above are the resolved mode's: a caller
+	// who asked for poc and got pro's ceiling has to be told why, or the flag
+	// reads as broken. run says the same thing at a launch (noteRigorRequest).
+	// A request the resolution landed on exactly is not this case: it took
+	// effect, whether or not the layer that set the mode is the request.
+	if o.mode != "" && knobs.mode != rigor.Mode(o.mode) {
+		doc.Notes = append(doc.Notes, fmt.Sprintf("--mode %s has no effect: this repository resolves to %s, and a request may raise a mode and never lower it", o.mode, knobs.mode))
+	}
 	// resolveRecipe's note says where the stages come from when the recipe
 	// was not simply found: a stale cached project recipe standing in for an
 	// unreachable bucket, or the project layer skipped. run prints it for the
@@ -576,7 +633,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 
 	// The ceiling: N × the smaller side of a run's bound.
 	var perRunUSD *float64
-	if m, srcs, origin, ok, err := previewPerRun(lc, caps); err != nil {
+	if m, srcs, origin, ok, err := previewPerRun(lc, caps, knobs.mode); err != nil {
 		return err
 	} else if ok {
 		v := m.USD()
