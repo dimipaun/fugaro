@@ -933,7 +933,7 @@ which regenerates that file, lands last.
 | `internal/budget/rules/*` (other than the two rows above), `internal/infra/firebasedb.go`, `internal/cli/update_converge_test.go` | O2 (1) | one writer |
 | `internal/projectpolicy/policy.go`, `internal/policy/merge.go` | O4 (0), O14 (7) — O14 adds the local-only `TriageAfter` field to `policy.Orchestrator` and the by-name refusal of it on the project path | no |
 | `internal/settings/registry.go`, `schemas/settings.schema.json` | O4 (0, the guardrail keys, built in `8e534f5d`), O14 (7, the local-only key's row and its `$defs.keyDefaults` entry) | no |
-| `internal/localcfg/localcfg.go` | O4 (0), O14 (7) — O14 adds the **local-only** `orchestrator.triage_after`, which the policy layers must not carry | no |
+| `internal/localcfg/localcfg.go` | O4 (0), O14 (7) — O14 adds the **local-only** `orchestrator.triage_after` (**replaced by D2032 of `docs/outer-loop-escalation`, and never built**), which the policy layers must not carry | no |
 | `internal/orchestrator/export_test.go` | O0 (0); O3, O6, O7 each add an `export_<area>_test.go` of their own | one writer |
 | `internal/cli/launch_budget.go` | O8 (3) | one writer |
 | `schemas/*` | each schema has one writer (O0, O5, O12) | one writer each |
@@ -1061,7 +1061,7 @@ follows the ruling through O9, G11 and the conventions above.
   are reserved.** **O16a was gated by none of them** and is approved and launchable, after the open #1994; O16b (approved) waits on the
   MCP wiring task and O19 (approved) on W7, #2275.
 - **BF2, 2026-11-08: the long-run triage rule (D1244-D1247), one task, O14, all four the recommendation.** A run past the local threshold
-  `orchestrator.triage_after` (default `2h`, under the run's budget) is triaged by code from three reads — the run's record, the pull request's state and
+  `orchestrator.triage_after` (default `2h`, under the run's budget) — **replaced by D2032 of `docs/outer-loop-escalation`, and the key was never built: O14's note above says how** — is triaged by code from three reads — the run's record, the pull request's state and
   **its CI state** (through the provider read this task adds), and BF1's open-findings file — and the outcome is one of four: **merge as-is plus a follow-up task** (the owner's default, and automatic **only** on
   commits, green CI, **a diff wholly inside the routine allowlist** and a finding set with no critical finding and none high in a security path), **restart as smaller
   sub-tasks** (the owner's ruling: no commits, no progress, or a finding looping across rounds means cancel the run and split the work, never re-run the

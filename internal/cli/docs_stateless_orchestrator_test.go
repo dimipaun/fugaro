@@ -531,15 +531,26 @@ func TestDocsStatelessOrchestratorLadderAmendmentsAreRecorded(t *testing.T) {
 	if !strings.Contains(plan, "Amended by `docs/outer-loop-escalation`") {
 		t.Errorf("%s: O14 is not re-scoped to read the ladder", soPlan)
 	}
-	// The amendment is restated in two summaries that sit far from the row it
-	// changes, and each restatement needs its own pointer: a reader who lands
-	// on the summary instead of the row otherwise takes the retired key for the
-	// live threshold.
+	// The amendment is restated in three places that sit far from the row it
+	// changes — the plan's decisions-summary row and its section 6 owner-answers
+	// summary, and the reconciliation's "BF2's long-run triage rule" paragraph —
+	// and each restatement needs its own pointer: a reader who lands on one of
+	// them instead of the row otherwise takes the retired key for the live
+	// threshold. The O14 note's scope ends with the task's own bullets, so it
+	// cannot cover the two plan summaries above and below it.
 	if !strings.Contains(plan, "**replaced by D2032 of `docs/outer-loop-escalation`, and the key was never built: O14's note below says how**") {
 		t.Errorf("%s: the D1244-D1247 decisions-summary row still presents the retired key as the threshold", soPlan)
 	}
+	if !strings.Contains(plan, "and the key was never built: O14's note above says how**") {
+		t.Errorf("%s: the BF2 owner-answers summary still presents the retired key as the threshold", soPlan)
+	}
 	if !strings.Contains(rec, "`docs/outer-loop-escalation` (D2032), and `orchestrator.triage_after` was never built") {
 		t.Errorf("%s: the BF2 summary paragraph still presents the retired key as the threshold", soReconciled)
+	}
+	// The shared-files row is the fourth restatement: it says what O14 adds to
+	// the file it owns, and the retired key is no longer that.
+	if !strings.Contains(plan, "O14 adds the **local-only** `orchestrator.triage_after` (**replaced by D2032 of `docs/outer-loop-escalation`, and never built**)") {
+		t.Errorf("%s: the shared-files table still records the retired key as what O14 adds", soPlan)
 	}
 	if strings.Contains(readme, "triage_after") {
 		t.Errorf("%s: the README still names the retired key as the threshold a run fires on", soReadme)
