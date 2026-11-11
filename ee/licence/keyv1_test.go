@@ -257,11 +257,12 @@ func TestNoClaimIsReadBeforeTheSignatureVerifies(t *testing.T) {
 		}
 	}
 
-	// The same claim set, a signature that verifies and an unknown field in it:
-	// the refusal is still the signature's, which is what says the claim decode
-	// never ran. A verifier that decoded first would answer ErrClaims here.
-	withUnknown := append(bytes.TrimSuffix(payload, []byte("}")), []byte(`,"entitlements":["sso"]}`)...)
-	got, state, err = VerifyV1([]byte(encodeKeyV1(withUnknown, ed25519.Sign(stranger.priv, withUnknown))), atV1(30), ringOf(fixture), firebaseProjectV1)
+	// The same payload with a claim this build cannot read *and* a signature
+	// that does not verify: the refusal is the signature's, and it is the case
+	// that says the claim decode never ran, because a verifier that decoded
+	// first would answer ErrClaims here.
+	broken := append(bytes.TrimSuffix(payload, []byte("}")), []byte(`,"seats":"five"}`)...)
+	got, state, err = VerifyV1([]byte(encodeKeyV1(broken, ed25519.Sign(stranger.priv, broken))), atV1(30), ringOf(fixture), firebaseProjectV1)
 	refusedAs(t, got, state, err, ErrSignature)
 
 	// An id the ring does not hold, refused for the id alone: the refusal names
@@ -958,6 +959,13 @@ func generateVectorsV1(t *testing.T) vectorFileV1 {
 	}
 	respelled := bytes.Replace(spelled, []byte(`":`), []byte(`": `), 1)
 	refuse("a payload signed as it is spelled, re-spelled", encodeKeyV1(respelled, ed25519.Sign(fixture.priv, spelled)), "signature")
+
+	// A payload changed after it was signed, in a way this build cannot read:
+	// the answer is the signature's, and this is the vector that says the claim
+	// decode waits for it. A verifier that read the claims first would answer
+	// the claim refusal here.
+	broken := append(bytes.TrimSuffix(spelled, []byte("}")), []byte(`,"seats":"five"}`)...)
+	refuse("a claim set this build cannot read behind a signature that does not verify", encodeKeyV1(broken, ed25519.Sign(fixture.priv, spelled)), "signature")
 
 	// A payload that is not a claim set, and the three texts that are not the
 	// format: the shape and the payload are refused before any keyring is
