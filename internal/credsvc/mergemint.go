@@ -508,15 +508,17 @@ func (s *Server) mergeGate(ctx context.Context, call mergeGateCall) (mergeBindin
 	}
 	var rulesets []githubRuleset
 	rulesPath := "/repos/" + call.owner + "/" + call.name + "/rulesets?per_page=" + strconv.Itoa(mergeRulesetPage)
-	if err := s.githubGet(ctx, readToken, rulesPath, &rulesets); err != nil {
+	more, err := s.githubGetPage(ctx, readToken, rulesPath, &rulesets)
+	if err != nil {
 		return mergeBinding{}, fmt.Errorf("%w: the base's rulesets could not be read: %w", ErrMergeMintBypassActor, err)
 	}
-	if len(rulesets) >= mergeRulesetPage {
-		// GitHub pages this list, and a full page is one this code cannot tell
-		// from a truncated one — so it is not read as the whole list, because the
-		// ruleset that names the App may be the one past the page (G14). The read
-		// asks for GitHub's own maximum and a full answer is refused.
-		return mergeBinding{}, fmt.Errorf("%w: the base's rulesets do not fit in one page of %d", ErrMergeMintBypassActor, mergeRulesetPage)
+	if more || len(rulesets) >= mergeRulesetPage {
+		// The read is one page and the gate needs the whole list, because the
+		// ruleset that names the App may be the one past it (G14). A page GitHub
+		// says has a next one is refused, and so is a page that comes back full
+		// whether or not it says so — a server that ignored the page size would
+		// otherwise be read as having answered with everything.
+		return mergeBinding{}, fmt.Errorf("%w: the base's rulesets are more than one page of %d", ErrMergeMintBypassActor, mergeRulesetPage)
 	}
 	if rulesetsNameTheApp(rulesets, pr.Base.Ref, call.appID) {
 		return mergeBinding{}, fmt.Errorf("%w: a ruleset covering %s names the App among its bypass actors", ErrMergeMintBypassActor, pr.Base.Ref)
@@ -741,32 +743,55 @@ func refPatternRegexp(pattern string) (*regexp.Regexp, error) {
 // log — and only its status is, in the shape internal/gitprov/httpjson already
 // reports one.
 func (s *Server) githubGet(ctx context.Context, token, path string, out any) error {
+	_, err := s.githubGetPage(ctx, token, path, out)
+	return err
+}
+
+// githubGetPage is githubGet with the one thing a list needs: whether the answer
+// is a page of a longer one. GitHub says so with a Link header naming the next
+// page, and a list this gate cannot finish reading is a list it must not read as
+// complete (G14), so the caller refuses on a true rather than following it.
+func (s *Server) githubGetPage(ctx context.Context, token, path string, out any) (bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, github.DefaultBaseURL+path, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := s.cfg.Client.Do(req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, mergeMintMaxAnswer))
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode/100 != 2 {
-		return &httpjson.StatusError{Status: resp.StatusCode}
+		return false, &httpjson.StatusError{Status: resp.StatusCode}
 	}
+	more := linkHasNext(resp.Header.Get("Link"))
 	body, err := io.ReadAll(io.LimitReader(resp.Body, mergeMintMaxAnswer))
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := json.Unmarshal(body, out); err != nil {
-		return errors.New("GitHub's answer is not the object this service reads")
+		return false, errors.New("GitHub's answer is not the object this service reads")
 	}
-	return nil
+	return more, nil
+}
+
+// linkHasNext reports whether GitHub's Link header names a next page. The header
+// is a comma-separated list of `<url>; rel="name"` pairs and the gate needs the
+// one name; anything it cannot read is answered as a next page, because the
+// direction that refuses is the direction that fails closed.
+func linkHasNext(header string) bool {
+	for _, link := range strings.Split(header, ",") {
+		if _, params, ok := strings.Cut(link, ";"); ok && strings.Contains(params, `rel="next"`) {
+			return true
+		}
+	}
+	return false
 }
 
 // shortSHA is the first eight characters of a commit: what a refusal names, so

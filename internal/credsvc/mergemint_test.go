@@ -101,6 +101,10 @@ type mergeFake struct {
 	head, base string
 	// rulesets is what the rulesets read answers, verbatim.
 	rulesets []map[string]any
+	// rulesNext, when set, is the Link header the rulesets read answers with: the
+	// header GitHub pages a list with, and the one the gate must refuse on rather
+	// than read the page as the whole list.
+	rulesNext string
 	// protection is the classic branch protection read's bypass list: the Apps it
 	// names. An empty one is answered as GitHub answers a branch with no classic
 	// protection — 404 — and protectionStatus overrides that answer when a test
@@ -140,6 +144,7 @@ func (f *mergeFake) serve(w http.ResponseWriter, r *http.Request) {
 	f.seen = append(f.seen, ghSeen{method: r.Method, path: r.URL.Path, body: string(body), auth: r.Header.Get("Authorization")})
 	head, base, rulesets := f.head, f.base, f.rulesets
 	pullStatus, rulesStatus, mintStatus := f.pullStatus, f.rulesStatus, f.mintStatus
+	rulesNext := f.rulesNext
 	protection, protectionStatus := f.protection, f.protectionStatus
 	token, expires := f.token, f.expires
 	f.mu.Unlock()
@@ -169,6 +174,9 @@ func (f *mergeFake) serve(w http.ResponseWriter, r *http.Request) {
 		if rulesStatus != 0 && rulesStatus/100 != 2 {
 			w.WriteHeader(rulesStatus)
 			return
+		}
+		if rulesNext != "" {
+			w.Header().Set("Link", rulesNext)
 		}
 		f.write(w, http.StatusOK, rulesets)
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/protection"):
@@ -698,23 +706,39 @@ func TestMergeMintRefusesBypassActor(t *testing.T) {
 }
 
 // TestMergeMintRefusesAFullRulesetPage: GitHub pages the rulesets list, and the
-// gate reads one page of GitHub's own maximum. A page that comes back full is
-// one this code cannot tell from a truncated one — the ruleset that names the
-// App may be the next one — so it is refused rather than read as the whole list.
+// gate reads one page of GitHub's own maximum. A list that is longer than that
+// page — GitHub says so with a Link header naming the next one — is refused
+// rather than read as the whole list, because the ruleset that names the App may
+// be on the page this gate did not read.
 func TestMergeMintRefusesAFullRulesetPage(t *testing.T) {
-	s, gh := mergeMintSvc(t)
-	rulesets := make([]map[string]any, 0, mergeRulesetPage)
-	for i := 0; i < mergeRulesetPage; i++ {
-		rulesets = append(rulesets, mergeRuleset([]string{"refs/heads/release"}, mergeAppActor("9999")))
-	}
-	gh.rulesets = rulesets
-	resp, body := s.mintMerge(t, 7, mergeHead(1))
-	if resp.StatusCode != StatusUnavailable {
-		t.Fatalf("the merge mint read a full page as the whole list: HTTP %d %s", resp.StatusCode, body)
-	}
-	if e := refusal(t, resp.StatusCode, body); !strings.Contains(e.Message, ErrMergeMintBypassActor.Error()) {
-		t.Errorf("the refusal is %q, want the bypass class (%s)", e.Message, ErrMergeMintBypassActor.Error())
-	}
+	t.Run("a list GitHub says has a next page", func(t *testing.T) {
+		s, gh := mergeMintSvc(t)
+		gh.rulesets = []map[string]any{mergeRuleset([]string{"refs/heads/release"}, mergeAppActor("9999"))}
+		gh.rulesNext = `<https://api.github.com/repositories/1/rulesets?page=2>; rel="next", <https://api.github.com/repositories/1/rulesets?page=4>; rel="last"`
+		resp, body := s.mintMerge(t, 7, mergeHead(1))
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("the merge mint read one page of a paged list as the whole list: HTTP %d %s", resp.StatusCode, body)
+		}
+		if e := refusal(t, resp.StatusCode, body); !strings.Contains(e.Message, ErrMergeMintBypassActor.Error()) {
+			t.Errorf("the refusal is %q, want the bypass class (%s)", e.Message, ErrMergeMintBypassActor.Error())
+		}
+	})
+
+	t.Run("a page that comes back full", func(t *testing.T) {
+		s, gh := mergeMintSvc(t)
+		rulesets := make([]map[string]any, 0, mergeRulesetPage)
+		for i := 0; i < mergeRulesetPage; i++ {
+			rulesets = append(rulesets, mergeRuleset([]string{"refs/heads/release"}, mergeAppActor("9999")))
+		}
+		gh.rulesets = rulesets
+		resp, body := s.mintMerge(t, 7, mergeHead(1))
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("the merge mint read a full page as the whole list: HTTP %d %s", resp.StatusCode, body)
+		}
+		if e := refusal(t, resp.StatusCode, body); !strings.Contains(e.Message, ErrMergeMintBypassActor.Error()) {
+			t.Errorf("the refusal is %q, want the bypass class (%s)", e.Message, ErrMergeMintBypassActor.Error())
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
