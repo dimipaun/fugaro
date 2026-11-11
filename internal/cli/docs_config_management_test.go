@@ -134,8 +134,14 @@ const (
 // project-layer key `defaults.agent.models.vision` are both the `models`
 // family's, and a row claiming a family is refused before the allowlist is
 // asked — the same shape as the two rows above it.
+//
+// The diagnose slot (docs/diagnose-agent, T-DG8) moved it by two the same way
+// and in the same family: `agent.models.diagnose` is the model a local
+// diagnosis runs on and `defaults.agent.models.diagnose` is the layer's key
+// for it, and both are written by hand until `models use` takes the role, so
+// neither is in the allowlist.
 const (
-	cfmRegistryRows   = 400
+	cfmRegistryRows   = 402
 	cfmAllowlistNamed = 96
 )
 
