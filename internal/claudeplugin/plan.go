@@ -107,8 +107,9 @@ func Applying(root string, installed []Install) []Install {
 }
 
 // Effective is the plugin version that applies to root: a project or local
-// install's over the user one (as pluginwire's installState prefers), ""
-// when none applies.
+// install's over the user one, "" when none applies. It is the checkout's own
+// question (D942), and not the version pluginwire's installState answers with:
+// that one is the machine's own install, which is the one this step maintains.
 func Effective(root string, installed []Install) string {
 	v := ""
 	for _, in := range Applying(root, installed) {

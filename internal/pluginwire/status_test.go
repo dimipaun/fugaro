@@ -125,6 +125,20 @@ func TestInstalledVersionBestEffort(t *testing.T) {
 	if r := Status(set, "0.2.0", ""); r.Install != CannotCompare {
 		t.Errorf("no path: %q", r.Install)
 	}
+	// Both at once: the machine's own install is the one the report answers
+	// with (D949, U2), so a checkout-scoped install beside it is never the
+	// version named as behind the pin — fugaro moves no such install, and a
+	// state it cannot clear must not be the one every command prints.
+	both := func(user, project string) string {
+		return `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"` + user + `"},` +
+			`{"scope":"project","version":"` + project + `","projectPath":"` + root + `"}]}}`
+	}
+	if r := Status(set, "0.2.0", installedFile(t, both("0.2.0", "0.1.0"))); r.Install != OK || r.Version != "0.2.0" {
+		t.Errorf("the machine's own current beside this checkout's behind: install=%q version=%q", r.Install, r.Version)
+	}
+	if r := Status(set, "0.2.0", installedFile(t, both("0.1.0", "0.2.0"))); r.Install != InstalledDiffers || r.Version != "0.1.0" {
+		t.Errorf("the machine's own behind beside this checkout's current: install=%q version=%q", r.Install, r.Version)
+	}
 	dir := t.TempDir()
 	if r := Status(set, "0.2.0", dir); r.Install != CannotCompare {
 		t.Errorf("a directory: %q", r.Install)

@@ -246,10 +246,10 @@ func TestUpdateSkillsJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
-	// changed is whether the install in Claude Code moved, and ref is the
-	// leftover pin the checkout still carries: the command writes no pin, so
-	// the two are no longer the same question (U2, D949).
-	if !got.Checkout || !got.Changed || got.Ref != "v0.1.0" || got.Report == nil || got.Report.Pin != pluginwire.Outdated {
+	// changed and ref keep their meanings and are false and absent: the command
+	// writes no settings file any more (U2, D949). The leftover pin the checkout
+	// still carries is in the report, which is where a reader asks about it.
+	if !got.Checkout || got.Changed || got.Ref != "" || got.Report == nil || got.Report.Pin != pluginwire.Outdated || got.Report.Ref != "v0.1.0" {
 		t.Errorf("got %+v", got)
 	}
 	out, _, err = execute(t, "update-skills", "--json", "--check", "--dir", root)
@@ -269,9 +269,9 @@ func TestUpdateSkillsJSON(t *testing.T) {
 
 // U2 of docs/plugin-user-scope/implementation-plan.md: the machine-side
 // command's --json document keeps every member's meaning ("A field never
-// changes meaning"): settings and changed stay declared, and nothing in the
-// checkout is written. Red against today's tree, where the command merges the
-// pin in and reports changed true.
+// changes meaning"): settings and changed stay declared, ref stays absent
+// rather than being retyped onto the leftover pin's ref, and nothing in the
+// checkout is written.
 func TestUpdateSkillsJSONDocumentKeepsItsShape(t *testing.T) {
 	withVersion(t, "0.2.0")
 	root, settings := skillCheckout(t, "")
@@ -293,6 +293,9 @@ func TestUpdateSkillsJSONDocumentKeepsItsShape(t *testing.T) {
 	}
 	if got := string(raw["changed"]); got != "false" {
 		t.Errorf("changed = %s, want false: nothing in the checkout is written", got)
+	}
+	if got, ok := raw["ref"]; ok {
+		t.Errorf("ref = %s, want it absent: the tag this command pins to is not the leftover pin's ref", got)
 	}
 	if b, err := os.ReadFile(settings); !os.IsNotExist(err) {
 		t.Errorf("wrote %s:\n%s", settings, b)
@@ -542,7 +545,7 @@ func TestUpdateSkillsLeavesEveryCheckoutFileAlone(t *testing.T) {
 		}
 		js, _, err := execute(t, "update-skills", "--json", "--dir", root)
 		var got updateSkillsOutput
-		if err != nil || json.Unmarshal([]byte(js), &got) != nil || got.Error != "" || !got.Changed {
+		if err != nil || json.Unmarshal([]byte(js), &got) != nil || got.Error != "" || got.Changed || got.Ref != "" {
 			t.Errorf("%s json: err=%v out=%q", name, err, js)
 		}
 	}

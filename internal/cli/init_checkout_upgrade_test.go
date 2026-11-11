@@ -220,6 +220,38 @@ func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
 			t.Errorf("a checkout already at this release refreshed its job images: %q\n%s", *ran, out)
 		}
 	})
+
+	t.Run("a checkout at this release beside a behind project install", func(t *testing.T) {
+		r, root := upgradeRig(t)
+		settings := filepath.Join(root, ".claude", "settings.json")
+		checkoutFile(t, settings, wiredAt("v0.5.1"))
+		// The pin a wired checkout carries installs the plugin at project
+		// scope when the folder is trusted, and that install can stand at
+		// another version than the machine's own. The step maintains the
+		// machine's own install, so this run is still done: a check that
+		// called the checkout's install the one behind would make every run
+		// do something it cannot do (D949, U2).
+		checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
+			`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"},{"scope":"project","version":"0.5.0","projectPath":"`+root+`"}]}}`)
+		r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+		useFakeClaude(t, testutil.NewClaudePluginFake(t, "[]", "[]"))
+		ran := fakeSteps(t, "", nil)
+
+		e, out := checkoutEngine(t, &initOptions{yes: true})
+		res := updateStages(t, e, initflow.Plugin, checkoutStageName)
+		if res.Failed != nil || len(res.Left) != 0 {
+			t.Fatalf("a current checkout was not done: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+		}
+		if got := stateOf(res, string(initflow.Plugin)); got != initflow.Done {
+			t.Errorf("the plugin stage is %q beside a behind project install, want %q: the install it maintains is current\n%s", got, initflow.Done, out)
+		}
+		if got := stateOf(res, checkoutStageName); got != initflow.Done {
+			t.Errorf("the checkout stage is %q, want %q: the run has nothing to move\n%s", got, initflow.Done, out)
+		}
+		if len(*ran) != 0 {
+			t.Errorf("a checkout already at this release refreshed its job images: %q\n%s", *ran, out)
+		}
+	})
 }
 
 // The billable build is not covered by the run's one confirmation: the review

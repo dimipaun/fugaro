@@ -18,21 +18,21 @@ var installedPlugins = pluginwire.DefaultInstalledPlugins
 
 // updateSkillsOutput is `update-skills --json`.
 //
-// Every member stays declared with its meaning ("A field never changes
-// meaning", CLAUDE.md), and the merge's deletion (D949, U2 of
-// docs/plugin-user-scope/implementation-plan.md) is why three of them are now
-// what the checkout and the machine say rather than what this command wrote:
-// settings is the checkout's own .claude/settings.json, read for a pin an older
-// fugaro left there; changed is whether the plugin in Claude Code was installed
-// or updated; ref is the ref that leftover pin carries, "" when there is none.
-// snippet and disabled are what the deleted merge would have printed and
-// honoured; nothing sets them any more, and they are kept so the document a
-// reader outside this binary consumes keeps its shape.
+// Every member keeps its meaning ("A field never changes meaning", CLAUDE.md),
+// and the merge's deletion (D949, U2 of
+// docs/plugin-user-scope/implementation-plan.md) is what that leaves visible:
+// settings is the checkout's own .claude/settings.json; changed is whether this
+// command wrote it, and ref is the tag it pinned it to — neither is set any
+// more, because nothing in the checkout is written, and a member moved onto
+// another question would make a reader outside this binary draw a wrong figure
+// with no error. What the command did to the machine's own install is the
+// step's line and the report below; snippet and disabled are what the deleted
+// merge would have printed and honoured, and nothing sets them either.
 type updateSkillsOutput struct {
 	Checkout bool   `json:"checkout"`           // false outside a checkout: nothing is read and nothing installed
 	Settings string `json:"settings,omitempty"` // the checkout's settings file
-	Changed  bool   `json:"changed"`            // the plugin in Claude Code was installed or updated (with --check: never)
-	Ref      string `json:"ref,omitempty"`      // the ref the checkout's settings carry
+	Changed  bool   `json:"changed"`            // the settings file was written (with --check: not written, would change); false now that nothing writes one
+	Ref      string `json:"ref,omitempty"`      // the tag the settings file pins to; absent now that nothing pins one
 	Note     string `json:"note,omitempty"`
 	Snippet  string `json:"snippet,omitempty"`
 	Foreign  string `json:"foreign,omitempty"`  // the marketplace repository when it is not dimipaun/fugaro
@@ -137,7 +137,7 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, asJSON bool) error {
 	report := pluginwire.Status(loc.Settings, Version, installedPlugins())
 	if check {
 		say("%s\n", describeReport(loc.Settings, report))
-		o := updateSkillsOutput{Checkout: true, Settings: loc.Settings, Ref: report.Ref, Report: &report, Notices: pluginwire.NoticesFor(loc.Settings)}
+		o := updateSkillsOutput{Checkout: true, Settings: loc.Settings, Report: &report, Notices: pluginwire.NoticesFor(loc.Settings)}
 		say("%s", pluginwire.NoticeText(o.Notices))
 		o.NoticesNote = pluginwire.NoticesCaveat
 		if report.Pin == pluginwire.Foreign {
@@ -158,11 +158,11 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, asJSON bool) error {
 	u := &upgradeCtx{cmd: cmd, w: w, loc: loc}
 	step := pluginStep(cmd.Context(), u)
 	if step.state == stepFailed {
-		return fail(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Ref: report.Ref}, errors.New(step.reason))
+		return fail(updateSkillsOutput{Checkout: true, Settings: loc.Settings}, errors.New(step.reason))
 	}
 	say("%s\n", step.reason)
 	report = pluginwire.Status(loc.Settings, Version, installedPlugins())
-	return emit(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Changed: step.state == stepDone, Ref: report.Ref, Report: &report})
+	return emit(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Report: &report})
 }
 
 func joinStates(ss []pluginwire.State) string {

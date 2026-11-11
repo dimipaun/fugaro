@@ -223,9 +223,18 @@ func readPin(path string) (ref, repo string, wired bool, detail string) {
 	return ref, repo, true, ""
 }
 
-// installState compares the installed plugin with the pin. The file's format
-// is observed, not documented: anything unexpected is cannot compare, and
-// never an error.
+// installState compares the installed plugin with the pin. The install it
+// answers with is the machine's own, at user scope: that is the one fugaro
+// maintains (claudeplugin.UserVersion, D949, U2 of
+// docs/plugin-user-scope/implementation-plan.md), so it is the one every
+// reader of this report can act on — the plugin step's own check, the warning
+// every command prints in a checkout, and doctor. A checkout-scoped install
+// beside it is the checkout's own and not fugaro's to move, so it is never the
+// version reported as behind the pin: that would name a state on every command
+// which fugaro cannot clear. It is read only where there is no user-scope
+// install, and then it is what applies to the checkout (claudeplugin.Effective,
+// D942). The file's format is observed, not documented: anything unexpected is
+// cannot compare, and never an error.
 func installState(path, root string, pin semver) (State, string) {
 	if path == "" {
 		return CannotCompare, ""
@@ -266,7 +275,7 @@ func installState(path, root string, pin semver) (State, string) {
 		if !applies {
 			continue
 		}
-		if got == nil || e.Scope != "user" {
+		if got == nil || got.Scope != "user" {
 			got = &entries[i]
 		}
 	}

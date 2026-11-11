@@ -462,6 +462,29 @@ func TestUpgradePluginLeavesThisCheckoutsProjectInstall(t *testing.T) {
 	}
 }
 
+// TestUpgradeCheckLeavesThisCheckoutsProjectInstall: the same configuration on
+// the check side, which reads Claude Code's own record and runs no claude. The
+// version the report answers with is the machine's own install — the one the
+// step maintains — so a behind project install beside it is not "stale": the
+// update can never move that install, and a check that called it stale would
+// leave every run naming a state it cannot clear (D949, U2).
+func TestUpgradeCheckLeavesThisCheckoutsProjectInstall(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	record := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json")
+	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plugins := `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.2"},{"scope":"project","version":"0.5.1","projectPath":"` + root + `"}]}}`
+	if err := os.WriteFile(record, []byte(plugins), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := executeStdin(t, "", "upgrade", "--check", root)
+	if !strings.Contains(out, "plugin: current: installed 0.5.2") || strings.Contains(out, "plugin: stale") {
+		t.Fatalf("%s", out)
+	}
+}
+
 func TestUpgradePluginNeverReplacesAnotherMarketplace(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	f := testutil.NewClaudePluginFake(t, `[{"name":"fugaro","source":"github","repo":"someone/else"}]`, "[]")

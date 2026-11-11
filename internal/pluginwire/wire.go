@@ -32,7 +32,7 @@ func PrintableN(s string, maxRunes int) string {
 			b.WriteString("... (truncated)")
 			break
 		}
-		if (unicode.IsControl(r) && r != '\t') || unicode.Is(unicode.Cf, r) || r == ' ' || r == ' ' || r == utf8.RuneError {
+		if (unicode.IsControl(r) && r != '\t') || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' || r == utf8.RuneError {
 			fmt.Fprintf(&b, "\\u%04x", r)
 			continue
 		}
