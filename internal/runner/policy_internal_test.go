@@ -95,7 +95,7 @@ func TestFileLayerCarriesEveryPolicyKey(t *testing.T) {
 // has no per_day_usd key.
 func TestPolicyRecordCarriesPerDay(t *testing.T) {
 	rec := policyRecord(policy.Effective{Layer: policy.Layer{PerDayUSD: 7.5},
-		Sources: map[string]string{policy.KeyPerDayUSD: policy.SourceDefaultBranch}}, 0)
+		Sources: map[string]string{policy.KeyPerDayUSD: policy.SourceDefaultBranch}}, 0, 0)
 	if rec == nil || rec.Effective.PerDayUSD != 7.5 || rec.Sources["per_day_usd"] != "default-branch" {
 		t.Fatalf("record = %+v", rec)
 	}
@@ -103,7 +103,7 @@ func TestPolicyRecordCarriesPerDay(t *testing.T) {
 	if err != nil || !strings.Contains(string(raw), `"per_day_usd":7.5`) {
 		t.Fatalf("json = %s, %v", raw, err)
 	}
-	other := policyRecord(policy.Effective{Layer: policy.Layer{PerRunUSD: 2}, Sources: map[string]string{policy.KeyPerRunUSD: policy.SourceCeiling}}, 0)
+	other := policyRecord(policy.Effective{Layer: policy.Layer{PerRunUSD: 2}, Sources: map[string]string{policy.KeyPerRunUSD: policy.SourceCeiling}}, 0, 0)
 	if raw, _ := json.Marshal(other); strings.Contains(string(raw), "per_day_usd") {
 		t.Fatalf("json = %s", raw)
 	}
@@ -288,7 +288,7 @@ func TestPolicyRecordCraftIgnoredNamesALayer(t *testing.T) {
 		Access: map[string]string{config.CraftCoder: "repo-key",
 			config.CraftSeniorReview: "repo-pool"},
 	}}
-	rec := policyRecord(policy.Merge(project, file), 0)
+	rec := policyRecord(policy.Merge(project, file), 0, 0)
 	if rec == nil || len(rec.Ignored) == 0 {
 		t.Fatalf("the repository's refused craft values were not recorded: %+v", rec)
 	}
@@ -437,7 +437,7 @@ func TestPolicyCeilingCarriesTheBinariesList(t *testing.T) {
 		t.Errorf("sources[%s] = %q, want %q: the node wrote the empty list, so the environment cannot be its source",
 			policy.KeyBinariesAllow, got, policy.SourcePolicy)
 	}
-	if rec := policyRecord(cleared.policy, 0); rec == nil || rec.Sources[policy.KeyBinariesAllow] != policy.SourcePolicy {
+	if rec := policyRecord(cleared.policy, 0, 0); rec == nil || rec.Sources[policy.KeyBinariesAllow] != policy.SourcePolicy {
 		t.Errorf("result.json's policy.sources = %+v, want %s = %q", rec, policy.KeyBinariesAllow, policy.SourcePolicy)
 	}
 }
