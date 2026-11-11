@@ -62,8 +62,12 @@ func Sampled(runID string, rate float64) bool {
 		return true
 	}
 	sum := sha256.Sum256([]byte(runID))
-	return float64(binary.BigEndian.Uint64(sum[:8]))/float64(1<<64) < rate
+	return float64(binary.BigEndian.Uint64(sum[:8]))/idSpace < rate
 }
+
+// idSpace is 2^64: how many values the eight bytes the draw reads can hold,
+// so one value's share of it is the fraction a rate is compared with.
+const idSpace = float64(1 << 64)
 
 // LaunchFlags are the launch-time facts D558 excludes that a task cannot
 // carry: a run ID the caller chose (fugaro run --run-id), a retry of a stored
