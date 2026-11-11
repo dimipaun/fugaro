@@ -45,8 +45,8 @@ they are written:
 - `work_item_archive` — `{"op":"work_item_archive","archive":{"id":"wi-2","outcome":"merged as #412"}}`
   takes an item off the work list: `id` is the item and `outcome` is how it
   ended. Only a finished item leaves — one that is still open, one an approval
-  stands on, one another item waits on, or one with an attempt in flight is
-  refused, and refusing one op refuses the whole answer.
+  stands on, one that another item depends on, or one with an attempt in
+  flight is refused, and refusing one op refuses the whole answer.
 
 ## What you may not do
 
