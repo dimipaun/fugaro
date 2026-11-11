@@ -323,6 +323,56 @@ func (g *managedGate) recorded(ctx context.Context) error {
 	return g.record(ctx, *conv)
 }
 
+// Record writes the record of a verdict this gate never admitted through
+// admit, and it is what puts `fugaro managed apply` in the gate's set (the
+// owner's ruling of 2026-11-11): that command judges its own plan inside
+// internal/managed — managed.Apply reaches the gate itself, with the plan, the
+// confirmation and the apply in one place — and hands the verdict back here, so
+// the admission and the refusal of an apply leave the same one record every
+// other command in the set leaves, by the same write (record). It satisfies
+// managed.AuditRecorder.
+//
+// Why the marks are read again (D1024). A record names the creation fact that
+// was in force, and for every other command in the set that read happens in
+// admit, immediately before the command's own write. This command's write is
+// internal/managed's, so the moment that corresponds to it is here, and the
+// fact the record names is the one in force at the record rather than the one
+// in force when the session started.
+//
+// Where the second read finds the project is no longer managed, the record is
+// still written, with the marks the apply ran under — and that is the opposite
+// of what admit does with the same answer, deliberately. admit is asked for a
+// PERMISSION, and a permission a revocation has ended is not one to grant; this
+// is asked for the ACCOUNT of a step that already happened, and a record
+// withheld because the project stopped being managed afterwards would erase the
+// one trace of an apply that landed. The step is recorded as what it was.
+//
+// A gate nobody read, and a project whose marks are not there at all, write
+// nothing (D1025): those steps are an ordinary installation's, whose decisions
+// a person made at a terminal, and there is no managed project for a record to
+// be about.
+func (g *managedGate) Record(ctx context.Context, conv managedmode.Converge) error {
+	if !g.managed {
+		return nil
+	}
+	fresh, err := managed.ReadMarkFacts(ctx, g.env.s, g.env.crm, g.env.lc.Name, g.env.lc.GCPProject)
+	if err != nil {
+		// A mark that cannot be read is not a permission, and it is not a
+		// record either: the fact in force is the first thing a reader checks
+		// against a run, and a record written without it would name a creation
+		// fact nobody read (Validate refuses one that names none). D1014's rule
+		// is the same one it is everywhere else — a step that cannot leave its
+		// trail fails the command — and the sentence says which read failed so
+		// the operator can fix it.
+		return remote(fmt.Errorf("the creation fact of %s could not be read again for the audit record of this step, so the record of what was applied cannot name the fact it was applied under: %w",
+			safetext.Field(g.env.lc.Name), safetext.FieldErr(err)))
+	}
+	if fresh.Managed {
+		g.marks = fresh
+	}
+	return g.record(ctx, conv)
+}
+
 // record writes one record of one verdict, with the operator's own credentials
 // into the runs bucket's owner-only prefix. Both the refusal (from admit) and
 // the admission (from recorded) come through here, so a record cannot say

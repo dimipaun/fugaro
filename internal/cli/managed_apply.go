@@ -282,6 +282,42 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 	// confirmations (managedInventory's own comment) — and the answer is
 	// handed to the apply, which asks D55's rule with it.
 	inventory := managedInventory(ctx, lc, c, number)
+	// What this session says about who is there: read once, because D55's
+	// confirmation rule below and the audit record the apply writes both name
+	// it. It is read from the environment and from this command's own stdin and
+	// decides nothing here.
+	conds := managedConditions(cmd)
+	// The audit gate (D1014, D1025), read for the one thing this command needs
+	// of it: the writer of the record an apply leaves. `fugaro managed apply` is
+	// in the gate's set since the owner's ruling of 2026-11-11, and the record
+	// it writes — through the same helper every other gated command records
+	// with (managedGate.Record) — is what stands in for the person who would
+	// have read the plan, `fugaro doctor` included. It is read after the budget
+	// gate above, so a project that is not managed has already been refused and
+	// this read cannot turn one into an apply; a project the marks do not call
+	// managed records nothing (D1025), which the recorder itself decides.
+	//
+	// No budget database is passed: this command writes none of its own policy
+	// into one, so D1017's ownership question is not this path's to ask — the
+	// apply-time budget read above is the read this command makes of the
+	// database, and a question asked here would be a new refusal for a command
+	// the ruling did not touch.
+	mg, err := readManagedGate(ctx, managedGateEnv{lc: lc, s: c.Storage, crm: c.CRM}, managedGateFacts{
+		Subcommand:  "managed apply",
+		Argv:        os.Args[1:],
+		Declined:    "nothing was applied",
+		AgentMarker: conds.Agent,
+		// The delete list's own generation is left at zero, and the empty
+		// field says exactly that: the owner's list is read through
+		// managed.GuardAllowList, which answers the entries and not the
+		// object's version, and a record may not name a version nothing read
+		// (the field tells "no version read" from "version N" by being empty).
+		DeleteListGeneration: 0,
+		InventoryFallback:    inventory.Fallback(),
+	})
+	if err != nil {
+		return fail(err)
+	}
 	// Who is running, and with which credential: the impersonation grant is
 	// on people (deployer.tf grants it to var.operators), so this is the
 	// operator's own identity and the credential the IAM Credentials calls
@@ -339,13 +375,18 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 		// input of D55's confirmation rule that only the caller has, and the
 		// apply asks the rule once the gate has a verdict (managed.Request's
 		// own comment).
-		Conditions: managedConditions(cmd),
+		Conditions: conds,
 		// And the person's own answer, when the session is a person's: the
 		// project's name typed at the terminal, after a question that names
 		// the saved plan's hash and what it changes. A coding agent's session
 		// is never asked (D55), and a session with no terminal never reaches
 		// this (the rule refuses it first).
 		Ask: managedApplyAsk(cmd, lc, rep),
+		// The record of what this apply did: the refusal it reached, or the
+		// admission of the plan it applied (the ruling of 2026-11-11). It is
+		// required by managed.Apply — a nil one is refused — so a caller
+		// cannot reach an apply that leaves no trail (D1014).
+		Recorder: &mg,
 		// Session is nil, and it is written out rather than left to the zero
 		// value because the field is the assertion: this command registers no
 		// flag and no argument that names an address, so there is no way to
@@ -397,8 +438,18 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 		step.Skipped(fmt.Sprintf("no changes: the plan of %s is empty, so nothing was gated and nothing was applied", safetext.Field(rootArg)))
 		return nil
 	}
-	step.Done(fmt.Sprintf("applied the saved plan of %s as %s: the gate admitted every change in it, and the owner's list approved every delete and replacement it carries",
-		safetext.Field(rootArg), safetext.Field(managedmode.DeployerAccount(lc.GCPProject))))
+	// What the step's own line says is what the verdict was (D1545): a plan
+	// whose gate recorded findings was applied WITH them — they were printed
+	// above this line and they are in this apply's audit record — so a line
+	// claiming the gate admitted every change in it would be the one sentence
+	// about a warned apply that is false.
+	line := fmt.Sprintf("applied the saved plan of %s as %s: the gate admitted every change in it, and the owner's list approved every delete and replacement it carries",
+		safetext.Field(rootArg), safetext.Field(managedmode.DeployerAccount(lc.GCPProject)))
+	if len(res.Verdict.Warnings) > 0 {
+		line = fmt.Sprintf("applied the saved plan of %s as %s: the gate refused no change of it that its integrity rules judge, the findings it recorded were printed above, and they are in this apply's audit record",
+			safetext.Field(rootArg), safetext.Field(managedmode.DeployerAccount(lc.GCPProject)))
+	}
+	step.Done(line)
 	return nil
 }
 

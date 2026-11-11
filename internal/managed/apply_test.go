@@ -47,6 +47,58 @@ type applyRig struct {
 	// credFiles are the credential files the rig's terraform was built
 	// around, one per build.
 	credFiles []string
+	// rec is the audit record writer the apply hands its verdict to
+	// (Request.Recorder): every test below runs the request this builds, so
+	// the record every command in the gate's set leaves is written here too.
+	rec *fakeRecorder
+}
+
+// fakeRecorder is the caller's own writer of the audit record (AuditRecorder),
+// and it holds what the record would be made of: the verdicts the apply reached
+// and the error a test scripts the write to fail with.
+//
+// It writes nothing itself, deliberately: the record's own shape is
+// AuditRecordFor's and is tested there, and what this rig has to answer is the
+// one question the apply's sequence turns on — which verdict reached the
+// recorder, and when.
+type fakeRecorder struct {
+	mu sync.Mutex
+	// conv is every verdict the apply recorded, in the order it recorded them
+	// (one apply records one, whichever way it ends).
+	conv []Converge
+	// err is what a scripted write failure returns, and it stops the apply the
+	// way a real one does (D1014).
+	err error
+}
+
+func (f *fakeRecorder) Record(ctx context.Context, c Converge) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	f.conv = append(f.conv, c)
+	return nil
+}
+
+// recorded is the one verdict this apply recorded, and a test that calls it on
+// an apply that recorded none — or more than one — fails rather than reading a
+// zero value.
+func (f *fakeRecorder) recorded(t *testing.T) Converge {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.conv) != 1 {
+		t.Fatalf("the apply recorded %d verdict(s), and one apply leaves one record", len(f.conv))
+	}
+	return f.conv[0]
+}
+
+// records is what the recorder holds, as a copy.
+func (f *fakeRecorder) records() []Converge {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.conv)
 }
 
 // newApplyRig builds the rig with one root (rootFiles) in the checkout.
@@ -64,7 +116,7 @@ func newApplyRig(t *testing.T, rootFiles map[string]string) *applyRig {
 	if err != nil {
 		t.Fatalf("CopyRoot: %v", err)
 	}
-	return &applyRig{rig: r, wd: wd, src: src}
+	return &applyRig{rig: r, wd: wd, src: src, rec: &fakeRecorder{}}
 }
 
 // bin is the terraform this apply runs, built when it is asked for and not
@@ -269,6 +321,11 @@ func (r *applyRig) request(t *testing.T) Request {
 			r.mu.Unlock()
 			return true, nil
 		},
+		// The record this apply leaves, written by the caller's own writer
+		// (D1014, and the ruling of 2026-11-11 that puts this command in the
+		// gate's set): every apply in this file records one verdict, so a test
+		// reads the verdict back here rather than from the session's screen.
+		Recorder:     r.rec,
 		Workdir:      r.wd,
 		Terraform:    r.bin(t),
 		Cover:        admitAll{},
