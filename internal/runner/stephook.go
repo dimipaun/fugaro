@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/failure"
@@ -142,9 +143,7 @@ func (r *run) runEvaluateMode(ctx context.Context) {
 		Call:  r.DirectCall,
 		Log:   r.d.Log,
 	})
-	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{
-		Name: string(kind), StartedAt: started.UTC(), DurationS: r.d.Now().Sub(started).Seconds(),
-	})
+	r.rec.Stages = append(r.rec.Stages, r.stepTiming(string(kind), started))
 	r.updateCost()
 	switch {
 	case err == nil:
@@ -156,6 +155,39 @@ func (r *run) runEvaluateMode(ctx context.Context) {
 		r.endEvaluate(ctx, runstore.StatusCancelled, failure.Cancelled, "cancelled during "+string(kind), nil)
 	default:
 		r.endEvaluate(ctx, runstore.StatusFailed, failure.StageErrorUnexplained, r.redact(err.Error()), nil)
+	}
+}
+
+// stepTiming is the stage timing the step's stage is recorded with. The
+// record's stage list is what says what each stage cost and which model it ran
+// on (cost.go's stageTiming), and its figures are exact: the stages sum to
+// cost.model_usd, with the "unattributed" residual holding only spend that
+// settled after its stage's wait ran out. A registered step's calls are the
+// only model calls a mode: evaluate run makes, so leaving them out of its stage
+// would put the run's whole model figure in no stage and break that sum — which
+// is this stage's own reason to carry them, and not a courtesy.
+//
+// Model is left empty, and that is a figure too: nothing pinned a model for a
+// step — the step named the model it called, which is no role's slot — and
+// naming the coder's would be a model this call did not run on. Agents and
+// Repeats are zero because the stage cannot have any: a registered step is
+// handed no agent to spawn one and no way to run a command, and 0 is the count
+// of what the runner counted it doing, not a count nobody kept.
+func (r *run) stepTiming(name string, started time.Time) runstore.StageTiming {
+	r.mu.Lock()
+	sp := r.stepSpend
+	r.mu.Unlock()
+	zero := 0
+	return runstore.StageTiming{
+		Name:             name,
+		StartedAt:        started.UTC(),
+		DurationS:        r.d.Now().Sub(started).Seconds(),
+		ModelUSD:         (sp.used + sp.notional).USD(),
+		ModelNotionalUSD: sp.notional.USD(),
+		Calls:            &sp.calls,
+		Agents:           &zero,
+		Repeats:          &zero,
+		ServedBy:         runstore.CredentialForAuth(r.modelAuth()),
 	}
 }
 

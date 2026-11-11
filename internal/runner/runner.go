@@ -374,6 +374,12 @@ type run struct {
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
 	routeBy      map[string]pricing.Micros
+	// stepSpend is what a mode: evaluate run's registered step has spent and
+	// how many calls it made, accumulated by DirectCall (directcall.go). The
+	// gateway's own accumulators above cover it too, but a stage's timing is
+	// the sum of ITS calls and not of the run's, and nothing beside the step
+	// makes one in that mode (stephook.go's stepTiming).
+	stepSpend stepSpend
 	// modelTokens is the run's token counts by model, from whichever path
 	// filled them: the gateway's per-call usage under the model it priced
 	// each call for, taken from its ledger when it closes, or, with no

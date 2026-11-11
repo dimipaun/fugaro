@@ -11,7 +11,18 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
+
+// stepSpend is what a mode: evaluate run's registered step has spent and how
+// many calls it made, taken call by call as each one's stage closed. It is the
+// step's own account rather than a delta of the run's totals, so the figure
+// the step's stage timing carries is the calls this step made and nothing
+// else; the step is the only caller, and DirectCall its only writer.
+type stepSpend struct {
+	used, notional pricing.Micros
+	calls          int
+}
 
 // DirectCall makes one model call through this run's own gateway, with no tools
 // and no agent: the shape a registered step's own call takes (stephook.go).
@@ -50,6 +61,15 @@ func (r *run) DirectCall(ctx context.Context, req StepCall) (StepAnswer, error) 
 	gw.BeginStage(gateway.Stage{Name: evaluateStage, Model: req.Model, MaxOutputTokens: max})
 	answer, err := r.messages(ctx, client.BaseURL, client.Token, req, max)
 	r.endGatewayStage(evaluateStage)
+	// The call's own report is r.lastStage, which endGatewayStage has just set
+	// and nothing can have replaced: the step calls in this one goroutine.
+	r.mu.Lock()
+	r.stepSpend.calls++
+	if r.lastStage != nil {
+		r.stepSpend.used += r.lastStage.Used
+		r.stepSpend.notional += r.lastStage.Notional
+	}
+	r.mu.Unlock()
 	// The cross-check compares Claude Code's own figure for the stage, and a
 	// direct call is made with no agent to report one: it is left out the way
 	// a stage that was stopped leaves it out, rather than warning about a
