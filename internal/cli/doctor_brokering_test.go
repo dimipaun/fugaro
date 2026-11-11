@@ -43,6 +43,25 @@ workflows:
 const brokeringConfig = "project_secrets:\n  bitbucket-token:\n    allow_data_to: [workspace-a/repo-a]\n    proxy: true\n" +
 	"repos:\n  workspace-a/repo-a: { provider: bitbucket, workflows: [app] }\n"
 
+// brokeringVariantsConfig is brokeringConfig with two named Claude accounts
+// workspace-a/repo-a may run a workflow under, and — when on — the repository
+// recorded as applied with the credentials service ON. The record is what an
+// ordinary `fugaro update --repo` writes for a root its apply deployed with the
+// service on (localcfg.RecordSwitch over infra.CredentialsServiceServes), and a
+// record that is true is an apply whose agent.auth was cascade; a cascade
+// repository's root deploys the default variant of its workflow and no other
+// (infra.WorkflowAccounts), so team-a and team-b are the variants that
+// repository has no job — and no job account — for.
+func brokeringVariantsConfig(on bool) string {
+	repo := "repos:\n  workspace-a/repo-a: { provider: bitbucket, workflows: [app]"
+	if on {
+		repo += ", credentials_service_ready: true"
+	}
+	return "project_secrets:\n  bitbucket-token:\n    allow_data_to: [workspace-a/repo-a]\n    proxy: true\n" +
+		"claude_accounts:\n  team-a: { allow_data_to: [workspace-a/repo-a] }\n  team-b: { allow_data_to: [workspace-a/repo-a] }\n" +
+		repo + " }\n"
+}
+
 // brokeringRig is a doctor rig inside a checkout of workspace-a/repo-a, whose
 // installation's update deployed the credentials service (the block is in its
 // config) and whose local config proxies the repository's Bitbucket token, with
@@ -85,6 +104,25 @@ func newBrokeringNoServiceRig(t *testing.T) *brokeringRig {
 	r := newBrokeringCheckout(t, false)
 	addLocalLines(t, r.doctorRig, brokeringConfig)
 	putProjectSecret(t, r.sm, "aurora", config.BitbucketSecret, []byte("bundle-token-value"))
+	return r
+}
+
+// newBrokeringVariantsRig is the same checkout with two named Claude accounts
+// allowed for the repository, and with the switch's own record written (on) or
+// left out (off): the row's accounts are the ones a repository's root deploys,
+// so the two names matter only where that root deploys no job for them.
+func newBrokeringVariantsRig(t *testing.T, on bool) *brokeringRig {
+	t.Helper()
+	r := newBrokeringCheckout(t, true)
+	addLocalLines(t, r.doctorRig, brokeringVariantsConfig(on))
+	putProjectSecret(t, r.sm, "aurora", config.BitbucketSecret, []byte("bundle-token-value"))
+	// Both named accounts have their token stored project-wide, which is where
+	// an account's allow_data_to puts it: a name with no token anywhere is
+	// doctor's own hard failure (claude-accounts-stored, which carries no
+	// severity), and that is not the state this rig is about.
+	for _, name := range []string{"team-a", "team-b"} {
+		putProjectSecret(t, r.sm, "aurora", config.ClaudeAccountSecret(name), []byte("account-token-value"))
+	}
 	return r
 }
 
@@ -495,6 +533,88 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		}
 	})
 
+}
+
+// TestDoctorCredentialsServiceDeployedCountsTheDeployedVariants: the row
+// compares the service's caller table with the invoker grants, and the table is
+// every account the local config allows a repository — deliberately a superset,
+// since a row no run is ever minted for is the fail-closed direction
+// (infra.CredentialsJobAccounts). What holds a grant is narrower: a repository
+// ON the switch is a cascade one (the record the local config carries is
+// infra.CredentialsServiceServes as the apply that wrote it built it, so a
+// record that is true is an apply whose auth was config.AuthCascade), and a
+// cascade repository's root deploys the default variant of each workflow and no
+// other (infra.WorkflowAccounts). Counting the named variants' accounts
+// reported a working installation as one whose service admits nobody — the
+// false warning the live Check 191 stopped on — while a repository OFF the
+// switch keeps the whole allowed set, which is the warning that says
+// proxy: true is inert for it.
+func TestDoctorCredentialsServiceDeployedCountsTheDeployedVariants(t *testing.T) {
+	// deployed is the service itself, up and serving, with the grant the
+	// repository's DEFAULT job account holds: neither named account of the rig
+	// is on the policy at all, which is what a cascade root leaves.
+	deployed := func(t *testing.T, r *brokeringRig) {
+		t.Helper()
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+	}
+
+	t.Run("a switched repository counts its default variant alone", func(t *testing.T) {
+		r := newBrokeringVariantsRig(t, true)
+		deployed(t, r)
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("credentials-service-deployed = %+v, want one ok check: the repository is on the switch and its default job holds the grant, and an account of a variant its cascade root deploys no job for can never hold one", cs)
+		}
+	})
+
+	t.Run("a repository off the switch still names the variants", func(t *testing.T) {
+		r := newBrokeringVariantsRig(t, false)
+		deployed(t, r)
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("credentials-service-deployed = %+v, want one warning: the local config records no apply of this repository's root with the service on, and the local config states no agent.auth of its own, so the row keeps the whole allowed set rather than guessing which variants that root deployed", cs)
+		}
+		for _, want := range []string{"workspace-a/repo-a (app_team-a)", "workspace-a/repo-a (app_team-b)"} {
+			if !strings.Contains(cs[0].Problem, want) {
+				t.Errorf("the warning does not name %s, and a repository off the switch keeps the whole allowed set: %q", want, cs[0].Problem)
+			}
+		}
+	})
+
+	t.Run("a switched repository whose default job lacks the grant", func(t *testing.T) {
+		r := newBrokeringVariantsRig(t, true)
+		r.svcs.AddService(infra.CredentialsServiceName)
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("credentials-service-deployed = %+v, want one warning", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "workspace-a/repo-a (app)") {
+			t.Errorf("the warning does not name the repository's own deployed job, which is the account the service does not admit: %q", cs[0].Problem)
+		}
+		for _, unwanted := range []string{"app_team-a", "app_team-b"} {
+			if strings.Contains(cs[0].Problem, unwanted) {
+				t.Errorf("the warning names %s, a variant this repository's cascade root deploys no job for: %q", unwanted, cs[0].Problem)
+			}
+		}
+	})
 }
 
 // TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches: the live
