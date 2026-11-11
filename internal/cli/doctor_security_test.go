@@ -15,8 +15,9 @@ import (
 // doctor_security.go's tests (SC4, F11, D1503, D1513).
 //
 // What they hold. The line names the list in force by counts and by name and
-// never by a value (D1513); in slice 1 the list in force is the engine's floor
-// alone, so the line is a measurement and moves behind --security — and the
+// never by a value (D1513), counting the floor's rows, the project layer's and
+// the repository's separately (SC9); a list a person added nothing to is a
+// measurement and moves behind --security — and the
 // one finding it can carry, a written row that matches nothing in the base, is
 // the reader's to fix and is an item of the default view (D1503).
 

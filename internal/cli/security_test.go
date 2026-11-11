@@ -49,10 +49,11 @@ type securityDocShape struct {
 
 // securityNoKeyYAML is the file every fixture here commits: a valid fugaro.yaml
 // that names the project and the base branch and carries no security key at
-// all, which is the state of every repository in this slice (the key is SC7's
-// and SC8's). TestSecurityPathsOnARepositoryWithNoKeyIsTheFloor holds the "no
-// key" half of that claim against the text itself rather than against this
-// comment.
+// all, which is the state of most repositories. It is what makes the list in
+// force the floor alone here, with this machine's layer cache isolated as every
+// test in this file has it (securityCheckout).
+// TestSecurityPathsOnARepositoryWithNoKeyIsTheFloor holds the "no key" half of
+// that claim against the text itself rather than against this comment.
 var securityNoKeyYAML = baseBranchYAML("git: { provider: github, base_branch: main }\n")
 
 // securityCheckout makes the working directory a checkout of repo whose base
@@ -115,8 +116,8 @@ func securityFloorRows() []securityRow {
 }
 
 // TestSecurityPathsPrintsTheListInForce is the read's own test: without --check
-// the command prints the list in force — in this slice the floor alone, every
-// row with its source layer — and the document says which repository, which
+// the command prints the list in force — the floor alone here, every row with
+// its source layer — and the document says which repository, which
 // project and which base branch it answered for.
 func TestSecurityPathsPrintsTheListInForce(t *testing.T) {
 	securityCheckout(t, "acme/app", securityNoKeyYAML)
@@ -309,8 +310,10 @@ func TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath(t *testing.T) {
 // force carries the layer it came from, out of D1512's three words, and the
 // document names the layer the floor's rows carry once, so a reader can tell
 // the engine's own rows from a project's and a repository's without scanning
-// the list. In this slice the list is the floor alone (D1504), so every row is
-// `floor`.
+// the list. The repository here writes no key and this machine holds no cached
+// layer, so the list is the floor alone (D1504) and every row is `floor`; the
+// two written layers are TestSecurityPathsResolvesTheRepositorysRowsAtTheBase's
+// and TestSecurityPathsCarriesTheProjectLayersRows'.
 func TestSecurityPathsNamesTheSourceLayerOfEveryRow(t *testing.T) {
 	securityCheckout(t, "acme/app", securityNoKeyYAML)
 
@@ -326,7 +329,7 @@ func TestSecurityPathsNamesTheSourceLayerOfEveryRow(t *testing.T) {
 			continue
 		}
 		if row.source != "floor" {
-			t.Errorf("security.patterns[%d] (%s) has source %q, want %q: no project key and no repository key exists in this slice", i, row.name, row.source, "floor")
+			t.Errorf("security.patterns[%d] (%s) has source %q, want %q: this repository writes no security key and this machine holds no cached layer for the project", i, row.name, row.source, "floor")
 		}
 	}
 	if doc.Security.Count == 0 {
@@ -337,8 +340,8 @@ func TestSecurityPathsNamesTheSourceLayerOfEveryRow(t *testing.T) {
 // TestSecurityPathsReadsTheBaseAndNotTheWorktree is D1518's property, and the
 // whole of this command's safety: the list in force is read at the base branch,
 // so a change cannot carry the rule that governs its own review. The working
-// tree here says a different project from the committed base — the one thing
-// this slice reads at the ref — and the document has to carry the base's.
+// tree here says a different project from the committed base — one of the things
+// this reads at the ref — and the document has to carry the base's.
 func TestSecurityPathsReadsTheBaseAndNotTheWorktree(t *testing.T) {
 	dir := securityCheckout(t, "acme/app", securityNoKeyYAML)
 	working := strings.Replace(securityNoKeyYAML, "project: aurora", "project: bramble", 1)
@@ -417,9 +420,9 @@ func TestSecurityPathsNamesItsFieldsInTheContract(t *testing.T) {
 
 // TestSecurityPathsOnARepositoryWithNoKeyIsTheFloor: a repository whose
 // fugaro.yaml carries no security key resolves to the floor alone and never to
-// nothing (D1504). This slice has no key at all, so what the test holds is the
-// negative half — the file really writes none — and the positive one: the list
-// in force is sensitivity.Floor(), row for row.
+// nothing (D1504). What the test holds is the negative half — the file really
+// writes none — and the positive one: with no project layer cached on this
+// machine the list in force is sensitivity.Floor(), row for row.
 func TestSecurityPathsOnARepositoryWithNoKeyIsTheFloor(t *testing.T) {
 	if strings.Contains(securityNoKeyYAML, "security") {
 		t.Fatal("the fixture writes a security key, so this test would pass on a resolution that read one")

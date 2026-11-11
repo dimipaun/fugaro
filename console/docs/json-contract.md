@@ -3246,13 +3246,14 @@ checkout does not hold is the `error` above rather than a guess at another
 document.
 
 **A read that did not answer is not an exit, and it is not a silent floor
-either.** The one thing this slice reads at the ref is the repository's own
-`fugaro.yaml`, for `project`; a repository that has none at its base — one being
-onboarded — still gets an answer, because the list in force is the floor alone
-here and the floor is compiled in. So the document is printed with `error` set
-and the command exits zero, §6.21's own rule for a state that is the answer, and
-the table a person reads says the same thing on stderr beside it: what it printed
-is the floor, and the repository's own rows are not in it.
+either.** The one thing this reads at the ref is the repository's own
+`fugaro.yaml`, for `project` and for its own rows; a repository that has none at
+its base — one being onboarded — still gets an answer, because a file that names
+no project names no layer either, and the list in force is then the floor alone
+and the floor is compiled in. So the document is printed with `error` set and the
+command exits zero, §6.21's own rule for a state that is the answer, and the
+table a person reads says the same thing on stderr beside it: what it printed is
+the floor, and neither the repository's own rows nor a project layer's are in it.
 
 **What is not in it, and it is the whole of the bound: the session.** The
 document carries the caller's own `--check` paths and nothing else of the machine
@@ -3276,10 +3277,22 @@ console's spawn list, and that is D1514's deferral rather than an oversight: the
 console draws no screen from this document yet, and this section exists because
 §6 is where a document a console could read is written down.
 
-**This slice is the floor alone** (D1504, D1519). No project key and no
-repository key exists yet, so every row's `source` is `floor` and there is one
-layer to merge; SC7 and SC8 add the two keys, SC9 re-points this read at the one
-resolution, and the shape above does not move for any of them.
+**The three layers, and where the two written ones are read** (SC9, D1506,
+D1511). The list in force is `config.SecurityPatterns`' one resolution: the
+engine's floor, the project layer's rows and the repository's own, unioned by row
+name, so a repository with no `security:` key gets its project's rows and the
+floor's, a project with no key gets the floor, and no later layer can take a row
+an earlier one wrote away. Every row carries the `source` above. The
+repository's own rows are read out of its `fugaro.yaml` **at the base ref**, out
+of the checkout's own object database — the same read that answers `project`
+above. The project layer's are read out of this machine's **cached copy** of the
+published layer (`modelsLayer`, the offline read `fugaro models ls` makes) and
+never out of the bucket it lives in. A machine that holds no cached layer for the
+project therefore prints the floor's rows and the repository's without the
+project's, and no member above can carry that: the command says it on stderr, in
+both forms of the document. It is the one place this read can differ from a
+run's, and the run is the control — it resolves the published layer itself,
+while this document is the advisory read.
 
 ## 7. The CLI gaps, settled against the code
 
