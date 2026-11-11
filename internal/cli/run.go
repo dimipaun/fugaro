@@ -4710,12 +4710,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// shared job itself, which mounts the App key the review container exists
 	// to be without, and always marked, so the run records its verdict in the
 	// artifact instead of writing a comment on the pull request it read.
-	//
-	// A job a run this launch continues recorded is the one name this does not
-	// apply to: the platform reported it for an execution that already ran, so
-	// a review that recorded its own variant recorded the variant itself, and
-	// deriving one from that name would name a job no installation deployed.
-	reviewJob := spec.Mode == recipe.ModeReview && (job == nil || !job.Recorded)
+	reviewJob := spec.Mode == recipe.ModeReview
 	if reviewJob {
 		if job, err = env.reviewJobFor(ctx, job); err != nil {
 			return res, err

@@ -60,13 +60,6 @@ type launchProjectJob struct {
 	// launch on a long job gets a token that outlives it, and the same launch
 	// on a short one does not.
 	Timeout time.Duration
-	// Recorded is set when the name is the job a run this launch continues
-	// recorded (D907): a job the platform reported for an execution that
-	// already ran, which is launched exactly as it stands. It is the one
-	// thing that tells such a name from one this launch resolved itself,
-	// where the review-only variant still has to be derived from a coding
-	// job's name (review.go's reviewJobFor).
-	Recorded bool
 }
 
 // launchConfigWhereTheTreeGivesNone is the repository's own document for a
@@ -162,13 +155,16 @@ func (e *cloudEnv) launchConfigWhereTheTreeGivesNone(ctx context.Context, spec *
 // run recorded one (spec.md §2 source 2, §8; D907).
 //
 // The run a launch continues is the one its own task names: spec.PreviousRun,
-// which a --pr follow-up, a --continues chain and a --retry or a repeated
-// --run-id of a stored follow-up all carry — the retry of a follow-up
-// continues the same run its stored task does. A --retry of a task that names
-// no run is a replay of a run that never launched, which is the only run a
-// retry can reach this decision for: a run that launched is answered
+// which a --pr follow-up carries (newFollowUpSpec) and which a --retry or a
+// repeated --run-id of a stored follow-up carries with it — the retry of a
+// follow-up continues the same run its stored task does. A --retry of a task
+// that names no run is a replay of a run that never launched, which is the only
+// run a retry can reach this decision for: a run that launched is answered
 // "already launched" by the shared reader before the claim is taken
-// (run.go's existingLaunch), and a run that never launched recorded no job.
+// (run.go's existingLaunch), and a run that never launched recorded no job. A
+// --continues chain names a run for what is left of its chain, not for its job
+// (chain_continues.go), so its spec carries no PreviousRun and it decides from
+// the document as a first run does.
 //
 // ok is false when this launch continues no run, or when the run it continues
 // recorded nothing: the launch then decides from the document, exactly as a
@@ -225,10 +221,10 @@ func (e *cloudEnv) jobFromRecord(ctx context.Context, job string) (*launchProjec
 	if found && p != nil {
 		if profile, _, _, ok := runner.ProjectJobOfPolicy(p, job); ok {
 			timeout, _ := config.ParseDuration(p.Profiles[profile].TimeoutClass)
-			return &launchProjectJob{Name: job, Profile: profile, Timeout: timeout + backend.TaskTimeoutSlack, Recorded: true}, nil
+			return &launchProjectJob{Name: job, Profile: profile, Timeout: timeout + backend.TaskTimeoutSlack}, nil
 		}
 	}
-	return &launchProjectJob{Name: job, Timeout: backend.DefaultTaskTimeout, Recorded: true}, nil
+	return &launchProjectJob{Name: job, Timeout: backend.DefaultTaskTimeout}, nil
 }
 
 // launchProjectJobFor resolves the project job spec runs on, and returns nil
