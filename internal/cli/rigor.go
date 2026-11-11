@@ -399,8 +399,8 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 // names `fugaro update` — the Layer stage that seeds the file from the published
 // layer.
 //
-// The document it writes carries the three anchor keys, whose values are the
-// installation's own (`localcfg.Config`'s Version, Name and GCPProject) and
+// The document it writes carries the three anchor keys — the layer format's own
+// version, which is 1, with the installation's Name and GCPProject — and
 // nothing else of that file: the rest of it (`region`, `runs_bucket`,
 // `base_images`, `image_source`, `backend`) are keys the layer does not have,
 // and the layer parser refuses any top-level key outside its own set. The
@@ -426,7 +426,10 @@ func rigorCreateLayerFile(ctx context.Context, lc *localcfg.Config) (string, []b
 	if _, _, exists, err := layerPublishedRead(ctx, lc, recordReadURL(lc)); err != nil || exists {
 		return path, nil, nil
 	}
-	shell := []byte(fmt.Sprintf("version: %d\nproject: %s\ngcp_project: %s\n", lc.Version, lc.Name, lc.GCPProject))
+	// The version is the layer format's, not the local config's
+	// (localcfg.ConfigVersion): the two documents are separate formats, and the
+	// layer parser refuses anything but 1 (config.validateLayer).
+	shell := []byte(fmt.Sprintf("version: 1\nproject: %s\ngcp_project: %s\n", lc.Name, lc.GCPProject))
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", nil, userErr("creating %s: %v", path, err)
 	}
