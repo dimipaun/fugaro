@@ -1190,3 +1190,159 @@ func TestTheWorkspaceReadIsTheMembersPinAndNothingElse(t *testing.T) {
 		}
 	}
 }
+
+// The Firebase root's own IAM, read as text (coordinator plan P9b, the fence).
+//
+// These do not plan the module: a plan needs the Google provider, which is not
+// in this tree, and what they decide is who the module can bind a database role
+// to — which no Go-level check of the spec can state, because the grant is a
+// resource and the account it names is a variable. The mutation each fails on
+// is the one P9b's red step names: a database role granted to a job's account,
+// or to the front door's.
+
+// tfResourceBlocks returns this directory's resources, keyed "type.name", with
+// their bodies and with comment lines dropped: a role a comment mentions is not
+// a role the module grants. A root that declares none — the two roots below are
+// module calls — answers an empty map rather than failing, and the callers that
+// mean a module say so.
+func tfResourceBlocks(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	src := readDir(t, dir)
+	var kept strings.Builder
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		kept.WriteString(line)
+		kept.WriteString("\n")
+	}
+	blocks := map[string]string{}
+	for _, m := range regexp.MustCompile(`(?ms)^resource\s+"([a-z0-9_]+)"\s+"([a-z0-9_]+)"\s*\{(.*?)^\}`).FindAllStringSubmatch(kept.String(), -1) {
+		blocks[m[1]+"."+m[2]] = m[3]
+	}
+	return blocks
+}
+
+// tfAttr is the expression a block gives an attribute, "" when it sets none.
+func tfAttr(body, name string) string {
+	m := regexp.MustCompile(`(?m)^\s*` + name + `\s*=\s*(.+?)\s*$`).FindStringSubmatch(body)
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
+}
+
+// databaseRoleMembers returns every IAM member this module binds a role that
+// carries a database permission to, keyed "resource" and valued with the member
+// expression. A role carries one if it is a predefined firebasedatabase role or
+// a custom role this module declares whose permissions name firebasedatabase
+// (the workspace's read, modules/firebase/workspace_access.tf).
+func databaseRoleMembers(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	blocks := tfResourceBlocks(t, dir)
+	custom := map[string]bool{}
+	for key, body := range blocks {
+		if strings.HasPrefix(key, "google_project_iam_custom_role.") && strings.Contains(body, "firebasedatabase.") {
+			custom[strings.Trim(tfAttr(body, "role_id"), `"`)] = true
+		}
+	}
+	out := map[string]string{}
+	for key, body := range blocks {
+		if !strings.Contains(key, "_iam_member.") {
+			continue
+		}
+		role := tfAttr(body, "role")
+		carries := strings.Contains(role, "firebasedatabase")
+		for id := range custom {
+			if strings.HasSuffix(strings.Trim(role, `"`), "/roles/"+id) {
+				carries = true
+			}
+		}
+		if carries {
+			out[key] = tfAttr(body, "member")
+		}
+	}
+	return out
+}
+
+// TestNoJobAccountHoldsTheDatabase (D6, D194, D2118): every principal the
+// Firebase root binds a database role to is a person the installation's policy
+// names, the history job's account, the coordinator's account, or the
+// workspace's account at its own read-only role. A run holds a Firebase ID
+// token and is not an IAM identity at all, so a job's account here would be a
+// grant nothing on this installation needs — and the front door's account is
+// not among the four, because it queues a roadmap write rather than making one
+// (D2124).
+func TestNoJobAccountHoldsTheDatabase(t *testing.T) {
+	allowed := map[string]bool{
+		"each.value": true, // the people locals below
+		`"serviceAccount:${var.history_account}"`:           true,
+		`"serviceAccount:${var.coordinator_account}"`:       true,
+		`"serviceAccount:${var.workspace_service_account}"`: true,
+	}
+	members := databaseRoleMembers(t, "gcp/modules/firebase")
+	if len(members) == 0 {
+		t.Fatal("the Firebase module binds no database role: the walk is reading the wrong files")
+	}
+	for key, member := range members {
+		if !allowed[member] {
+			t.Errorf("%s: the Firebase root binds a database role to %s, and the principals it may bind one to are the people, the history account, the coordinator's account and the workspace's", key, member)
+		}
+	}
+
+	// The two `each.value` grants are the people, and the people are these four
+	// member lists and nothing else: a job's or the front door's account
+	// reaching a database role through a local would leave the member
+	// expressions above unchanged.
+	src := readDir(t, "gcp/modules/firebase")
+	for _, want := range []struct{ re, why string }{
+		{`(?m)^\s*people\s*=\s*toset\(concat\(var\.launchers,\s*var\.operators\)\)\s*$`,
+			"local.people is the launchers and the operators, the two member lists internal/infra's CheckFirebaseMembers refuses a Fugaro account in"},
+		{`(?m)^\s*admins\s*=\s*toset\(concat\(var\.admins,\s*var\.budget_admins\)\)\s*$`,
+			"local.admins is the admins and the budget admins, for the same reason"},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(src) {
+			t.Errorf("the Firebase module's members are not exactly what the grants assume: %s", want.why)
+		}
+	}
+	if strings.Contains(src, MCPServerAccountID) {
+		t.Errorf("the Firebase root's Terraform names %s, the front door's service account: an account it cannot name is one it cannot grant a role to", MCPServerAccountID)
+	}
+}
+
+// TestFrontDoorHoldsNoDatabaseWrite (D922/H3, D2118, D2124): the front door's
+// account is reachable from the network and is the identity that queues roadmap
+// writes, so it holds no database role anywhere in this tree — not the admin
+// role the coordinator's account holds, and not the credentials service's
+// custom role, which is the one other role in the installation with a write
+// permission on the instance.
+func TestFrontDoorHoldsNoDatabaseWrite(t *testing.T) {
+	dirs := []string{"gcp/modules/firebase", "gcp/modules/installation", "gcp/roots/firebase", "gcp/roots/installation"}
+	boundSomewhere := false
+	for _, dir := range dirs {
+		for key, member := range databaseRoleMembers(t, dir) {
+			if !namesTheFrontDoor(member) {
+				continue
+			}
+			t.Errorf("%s: %s binds a database role to %s: the front door holds no database write (D2118, D922/H3)", dir, key, member)
+		}
+		// The control that makes the emptiness above mean something: this walk
+		// does see the front door where it is granted something, so a member it
+		// cannot read is not what keeps the check green.
+		for key, body := range tfResourceBlocks(t, dir) {
+			if strings.Contains(key, "_iam_member.") && namesTheFrontDoor(tfAttr(body, "member")) {
+				boundSomewhere = true
+			}
+		}
+	}
+	if !boundSomewhere {
+		t.Error("no grant in this tree names the front door's account: the walk cannot see it, so it proves nothing about what it is bound to")
+	}
+}
+
+// namesTheFrontDoor reports whether a member expression is the front door's
+// account: the module's own account resource, the variable that shapes it, or
+// the account id the Go constant carries.
+func namesTheFrontDoor(member string) bool {
+	return strings.Contains(member, "mcp_server") || strings.Contains(member, MCPServerAccountID)
+}
