@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -55,11 +56,26 @@ func hit(run, fingerprint, reporter, version string, at time.Time) Issue {
 	return i
 }
 
+// verified is the identity an upload names: the member string a credential
+// answered with, and the source that says it was this run's credential rather
+// than the cache (F3).
+func verified(member string) Identity {
+	return Identity{Address: member, Digest: Digest(member), Source: SourceVerified}
+}
+
+// uploadRaw is Upload with the identity every existing fixture's credential
+// answers with — the reporter the fixture itself carries — so a call site that
+// is about something else reads as it did before the reporter became the
+// credential's to name.
+func uploadRaw(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
+	return Upload(ctx, b, i, verified(i.Reporter))
+}
+
 // upload is Upload with the error taken out, for the tests whose subject is
 // what happened after it.
 func upload(t *testing.T, ctx context.Context, b *blobx.Bucket, i Issue) Uploaded {
 	t.Helper()
-	up, err := Upload(ctx, b, i)
+	up, err := uploadRaw(ctx, b, i)
 	if err != nil {
 		t.Fatalf("uploading %s: %v", i.Run, err)
 	}
@@ -209,11 +225,11 @@ func TestConcurrentUploadsGetDistinctNumbers(t *testing.T) {
 		ch := make(chan struct{})
 		go func() {
 			defer close(ch)
-			other, otherErr = Upload(ctx, b, sharedIssue("update-20261107183015-48216", fingerprint("33")))
+			other, otherErr = uploadRaw(ctx, b, sharedIssue("update-20261107183015-48216", fingerprint("33")))
 		}()
 		<-ch
 	})
-	ours, err := Upload(ctx, b, sharedIssue("update-20261107183014-48215", fingerprint("22")))
+	ours, err := uploadRaw(ctx, b, sharedIssue("update-20261107183014-48215", fingerprint("22")))
 	if err != nil {
 		t.Fatalf("this machine's upload: %v", err)
 	}
@@ -251,17 +267,17 @@ func TestSameFingerprintOneNumber(t *testing.T) {
 	fp := fingerprint("44")
 	first := sharedIssue("update-20261107183012-48213", fp)
 
-	up, err := Upload(ctx, b, first)
+	up, err := uploadRaw(ctx, b, first)
 	if err != nil || up.Number != 1 || up.Attached {
 		t.Fatalf("the first upload = %+v, %v", up, err)
 	}
-	up2, err := Upload(ctx, b, hit("update-20261107183013-48214", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
+	up2, err := uploadRaw(ctx, b, hit("update-20261107183013-48214", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
 	if err != nil || up2.Number != 1 || !up2.Attached {
 		t.Fatalf("the second machine's upload = %+v, %v", up2, err)
 	}
 	// An upload repeated because its answer was lost is the issue that is
 	// there, not an occurrence of itself.
-	again, err := Upload(ctx, b, first)
+	again, err := uploadRaw(ctx, b, first)
 	if err != nil || again.Number != 1 || again.Attached {
 		t.Fatalf("the retried upload = %+v, %v", again, err)
 	}
@@ -285,11 +301,11 @@ func TestSameFingerprintOneNumber(t *testing.T) {
 			ch := make(chan struct{})
 			go func() {
 				defer close(ch)
-				other, otherErr = Upload(ctx, b, hit("update-20261107183015-48216", fp, "bo@example.test", "0.9.0", issueAt.Add(2*time.Minute)))
+				other, otherErr = uploadRaw(ctx, b, hit("update-20261107183015-48216", fp, "bo@example.test", "0.9.0", issueAt.Add(2*time.Minute)))
 			}()
 			<-ch
 		})
-		ours, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "ana@example.test", "0.9.0", issueAt.Add(time.Minute)))
+		ours, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "ana@example.test", "0.9.0", issueAt.Add(time.Minute)))
 		if err != nil {
 			t.Fatalf("this machine's upload: %v", err)
 		}
@@ -334,7 +350,7 @@ func TestMatchAtOrAboveResolvedInIsRegression(t *testing.T) {
 	at := issueAt.Add(time.Minute)
 	for _, version := range []string{"0.21.1", "0.22.0"} {
 		t.Run(version, func(t *testing.T) {
-			got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", version, at))
+			got, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", version, at))
 			if err != nil {
 				t.Fatalf("uploading the hit: %v", err)
 			}
@@ -367,7 +383,7 @@ func TestMatchBelowResolvedInAttaches(t *testing.T) {
 	up, _ := filedIssue(t, ctx, b, fp)
 	setResolvedIn(t, ctx, b, up.Number, "0.21.1")
 
-	got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.20.3", issueAt.Add(time.Minute)))
+	got, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.20.3", issueAt.Add(time.Minute)))
 	if err != nil {
 		t.Fatalf("uploading the hit: %v", err)
 	}
@@ -387,7 +403,7 @@ func TestMatchBelowResolvedInAttaches(t *testing.T) {
 	// The issue this hit attaches to was never resolved, so a hit from any
 	// version is a plain occurrence too.
 	unresolved := upload(t, ctx, b, sharedIssue("update-20261107183016-48217", fingerprint("78")))
-	other, err := Upload(ctx, b, hit("update-20261107183017-48218", fingerprint("78"), "cy@example.test", "0.99.0", issueAt.Add(2*time.Minute)))
+	other, err := uploadRaw(ctx, b, hit("update-20261107183017-48218", fingerprint("78"), "cy@example.test", "0.99.0", issueAt.Add(2*time.Minute)))
 	if err != nil || other.Number != unresolved.Number || other.Regression {
 		t.Fatalf("the hit on an unresolved issue = %+v, %v", other, err)
 	}
@@ -414,7 +430,7 @@ func TestDevOrUnparseableVersionNeverRegresses(t *testing.T) {
 			if tc.resolvedIn != "" {
 				setResolvedIn(t, ctx, b, up.Number, tc.resolvedIn)
 			}
-			got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", tc.reporter, issueAt.Add(time.Minute)))
+			got, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", tc.reporter, issueAt.Add(time.Minute)))
 			if err != nil {
 				t.Fatalf("uploading the hit: %v", err)
 			}
@@ -443,7 +459,7 @@ func TestFingerprintWithoutNumberIsCompleted(t *testing.T) {
 		t.Fatalf("seeding the fingerprint's entry: %v", err)
 	}
 
-	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	up, err := uploadRaw(ctx, b, sharedIssue("update-20261107183012-48213", fp))
 	if err != nil || up.Number != 1 || up.Attached {
 		t.Fatalf("the upload = %+v, %v", up, err)
 	}
@@ -456,7 +472,7 @@ func TestFingerprintWithoutNumberIsCompleted(t *testing.T) {
 	}
 	// The number is an issue: the next machine to report the bug attaches to
 	// it rather than completing the entry again.
-	got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
+	got, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
 	if err != nil || got.Number != 1 || !got.Attached {
 		t.Fatalf("the next machine's upload = %+v, %v", got, err)
 	}
@@ -477,7 +493,7 @@ func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
 		race(t, fingerprintKey(fp), func() { g.FailObjectWrites("fugaro-issues", fingerprintKey(fp), 1) })
 
 		issue := sharedIssue("update-20261107183012-48213", fp)
-		_, err := Upload(ctx, b, issue)
+		_, err := uploadRaw(ctx, b, issue)
 		if err == nil {
 			t.Fatal("an upload reported success for a naming write the store refused")
 		}
@@ -498,7 +514,7 @@ func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
 		}
 		// The retry takes the next number — the counter is not rolled back — and
 		// the store holds the bug once.
-		up, err := Upload(ctx, b, issue)
+		up, err := uploadRaw(ctx, b, issue)
 		if err != nil || up.Number != 2 || up.Attached {
 			t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
 		}
@@ -531,7 +547,7 @@ func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
 		})
 
 		issue := sharedIssue("update-20261107183012-48213", fp)
-		if _, err := Upload(ctx, b, issue); err == nil {
+		if _, err := uploadRaw(ctx, b, issue); err == nil {
 			t.Fatal("an upload reported success for a naming write the store refused")
 		}
 		if rows, err := ListShared(ctx, b); err != nil || len(rows) != 0 {
@@ -541,7 +557,7 @@ func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
 			t.Errorf("the fingerprint's entry after the naming = %v; want it still gone", err)
 		}
 		// The retry takes the next number and the store holds the bug once.
-		up, err := Upload(ctx, b, issue)
+		up, err := uploadRaw(ctx, b, issue)
 		if err != nil || up.Number != 2 || up.Attached {
 			t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
 		}
@@ -566,7 +582,7 @@ func TestCancelledNamingLeavesNoIssueBehind(t *testing.T) {
 	race(t, fingerprintKey(fp), cancel)
 
 	issue := sharedIssue("update-20261107183012-48213", fp)
-	if _, err := Upload(cctx, b, issue); !errors.Is(err, context.Canceled) {
+	if _, err := uploadRaw(cctx, b, issue); !errors.Is(err, context.Canceled) {
 		t.Fatalf("the upload = %v, want the caller's own cancellation", err)
 	}
 	// Nothing of the cancelled attempt is left: not a record the retry numbers
@@ -576,13 +592,54 @@ func TestCancelledNamingLeavesNoIssueBehind(t *testing.T) {
 	}
 	// The retry the contract invites takes the next number — the counter is not
 	// rolled back — and the store holds the bug once.
-	up, err := Upload(ctx, b, issue)
+	up, err := uploadRaw(ctx, b, issue)
 	if err != nil || up.Number != 2 || up.Attached {
 		t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
 	}
 	rows, err := ListShared(ctx, b)
 	if err != nil || len(rows) != 1 || rows[0].Number != up.Number {
 		t.Errorf("the listing after the retry = %+v, %v; want issue %d once", rows, err, up.Number)
+	}
+}
+
+// An index write the store refuses is the same orphan a refused naming leaves:
+// the record is written and nothing names its fingerprint yet, so it has to go
+// the same way, on a context of its own — otherwise a caller that retries the
+// upload it was told to retry numbers a second issue of that fingerprint beside
+// the first, and the store lists neither of them (F21, F28).
+func TestRefusedIndexWriteLeavesNoIssueBehind(t *testing.T) {
+	ctx := context.Background()
+	g := gcpfake.NewGCS(t)
+	b := g.Bucket(t, "fugaro-issues")
+	ana := "ana@example.test"
+	fp := fingerprint("35")
+	// The first upload of a store takes number 1, so the index entry it writes
+	// for its reporter is this one, and the store refuses that write alone: the
+	// record before it and the fingerprint's entry are written as usual.
+	g.FailObjectWrites("fugaro-issues", reporterIndexKey(1, Digest(ana)), 1)
+
+	issue := sharedIssue("update-20261107183012-48213", fp)
+	if _, err := uploadRaw(ctx, b, issue); err == nil {
+		t.Fatal("an upload reported success for an index write the store refused")
+	}
+	if _, err := readVersion(ctx, b, recordKey(1)); !errors.Is(err, blobx.ErrNotExist) {
+		t.Errorf("the refused attempt left a record at the number it took: %v", err)
+	}
+	if rows, err := ListShared(ctx, b); err != nil || len(rows) != 0 {
+		t.Errorf("the listing after the refused index write = %+v, %v; want nothing", rows, err)
+	}
+	// The retry the contract invites takes the next number — the counter is not
+	// rolled back — and the store holds the bug once.
+	up, err := uploadRaw(ctx, b, issue)
+	if err != nil || up.Number != 2 || up.Attached {
+		t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
+	}
+	rows, err := ListShared(ctx, b)
+	if err != nil || len(rows) != 1 || rows[0].Number != up.Number {
+		t.Errorf("the listing after the retry = %+v, %v; want issue %d once", rows, err, up.Number)
+	}
+	if _, err := readVersion(ctx, b, recordKey(1)); !errors.Is(err, blobx.ErrNotExist) {
+		t.Errorf("the store still has a record at number 1 after the retry: %v", err)
 	}
 }
 
@@ -651,7 +708,7 @@ func TestNamingThatLandedBeforeItsErrorKeepsTheIssue(t *testing.T) {
 	// and the caller cannot tell that from a write that never happened.
 	race(t, fingerprintKey(fp), func() { g.FailObjectStoresAfterWrite(1) })
 
-	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	up, err := uploadRaw(ctx, b, sharedIssue("update-20261107183012-48213", fp))
 	if err != nil || up.Number != 1 {
 		t.Fatalf("the upload = %+v, %v; want issue 1", up, err)
 	}
@@ -746,7 +803,7 @@ func TestOccurrenceOnDismissedReopensNothing(t *testing.T) {
 			up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fp))
 			tc.closing(t, b, up.Number)
 
-			got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
+			got, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
 			if err != nil || got.Number != up.Number || !got.Attached {
 				t.Fatalf("the hit = %+v, %v; want an occurrence of issue %d", got, err, up.Number)
 			}
@@ -1005,7 +1062,7 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 		} {
 			bad := sharedIssue("update-20261107183012-48213", fp)
 			bad.URL, bad.OriginalURL = tc.url, tc.original
-			if _, err := Upload(ctx, b, bad); err == nil {
+			if _, err := uploadRaw(ctx, b, bad); err == nil {
 				t.Errorf("uploading a record with %s (%q) was allowed", tc.name, tc.url)
 			}
 		}
@@ -1018,7 +1075,7 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 		if _, err := readVersion(ctx, b, fingerprintKey(fp)); !errors.Is(err, blobx.ErrNotExist) {
 			t.Errorf("a refused upload took the fingerprint: %v", err)
 		}
-		up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fp))
+		up, err := uploadRaw(ctx, b, sharedIssue("update-20261107183012-48213", fp))
 		if err != nil || up.Number != 1 {
 			t.Fatalf("the corrected upload = %+v, %v; want issue 1", up, err)
 		}
@@ -1744,7 +1801,7 @@ func TestUploadRefusesAValueThatIsNotAFingerprint(t *testing.T) {
 		{"not hexadecimal", "9f2c4a1b0d3e5f60718293a4b5c6d7gz"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", tc.fingerprint)); err == nil {
+			if _, err := uploadRaw(ctx, b, sharedIssue("update-20261107183012-48213", tc.fingerprint)); err == nil {
 				t.Errorf("uploading %q as a fingerprint was allowed", tc.fingerprint)
 			}
 		})
@@ -1759,7 +1816,7 @@ func TestUploadRefusesAValueThatIsNotAFingerprint(t *testing.T) {
 	if obj, err := iter.Next(ctx); !errors.Is(err, io.EOF) {
 		t.Errorf("a refused upload left %v under the fingerprint prefix: %v", obj, err)
 	}
-	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("23")))
+	up, err := uploadRaw(ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("23")))
 	if err != nil || up.Number != 1 {
 		t.Fatalf("the corrected upload = %+v, %v; want issue 1", up, err)
 	}
@@ -1775,7 +1832,7 @@ func TestUploadRefusesARecordTheStoreCouldNotReadBack(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
 
-	if _, err := Upload(ctx, b, sized(t, "update-20261107183012-48213", fingerprint("41"), sharedRecordMax-sharedClaimHeadroom+1)); err == nil {
+	if _, err := uploadRaw(ctx, b, sized(t, "update-20261107183012-48213", fingerprint("41"), sharedRecordMax-sharedClaimHeadroom+1)); err == nil {
 		t.Fatal("an upload wrote a record past what a reader takes back")
 	} else if !strings.Contains(err.Error(), "more than the shared store reads back") {
 		t.Errorf("the refusal = %v, want the size of the record", err)
@@ -1864,5 +1921,207 @@ func TestRecordKeyMustBeCanonical(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Number != up.Number {
 		t.Errorf("the listing = %+v, want issue %d once", rows, up.Number)
+	}
+}
+
+// listKeys is every object name under one prefix, sorted, so a test asserts on
+// what a reader lists rather than on the order a store happens to return.
+func listKeys(t *testing.T, ctx context.Context, b *blobx.Bucket, prefix string) []string {
+	t.Helper()
+	iter := b.List(&blob.ListOptions{Prefix: prefix})
+	var out []string
+	for {
+		obj, err := iter.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("listing %s: %v", prefix, err)
+		}
+		if obj.IsDir {
+			continue
+		}
+		out = append(out, obj.Key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// indexKeys is one reporter's own index as the store holds it.
+func indexKeys(t *testing.T, ctx context.Context, b *blobx.Bucket, digest string) []string {
+	t.Helper()
+	return listKeys(t, ctx, b, reporterPrefix(digest))
+}
+
+// occurrenceKeys is one issue's occurrences as the store holds them.
+func occurrenceKeys(t *testing.T, ctx context.Context, b *blobx.Bucket, number int) []string {
+	t.Helper()
+	return listKeys(t, ctx, b, occurrencePrefix(number))
+}
+
+// The reporter an upload writes is the verified credential's member string,
+// and not the local file's header, which is text a person or a coding agent
+// can edit (F3).
+func TestUploadReporterIsVerifiedCredential(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	i := sharedIssue("update-20261107183012-48213", fingerprint("51"))
+	i.Reporter = "header@example.test"
+	up, err := Upload(ctx, b, i, verified("user:ana@example.test"))
+	if err != nil {
+		t.Fatalf("uploading: %v", err)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.Reporter != "user:ana@example.test" {
+		t.Errorf("the record's reporter is %q, want the verified credential's", rec.Issue.Reporter)
+	}
+}
+
+// The header's reporter decides nothing an upload writes: not the record, not
+// the index entry, not the occurrence name (F3, F7).
+func TestUploadIgnoresHeaderReporter(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	ana := "user:ana@example.test"
+	header := "header@example.test"
+	i := sharedIssue("update-20261107183012-48213", fingerprint("52"))
+	i.Reporter = header
+	up, err := Upload(ctx, b, i, verified(ana))
+	if err != nil {
+		t.Fatalf("uploading: %v", err)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.Reporter != ana {
+		t.Errorf("the record's reporter is %q, want %q", rec.Issue.Reporter, ana)
+	}
+	if got, want := indexKeys(t, ctx, b, Digest(ana)), []string{reporterIndexKey(up.Number, Digest(ana))}; !slices.Equal(got, want) {
+		t.Errorf("the credential's index = %v, want %v", got, want)
+	}
+	if got := indexKeys(t, ctx, b, Digest(header)); len(got) != 0 {
+		t.Errorf("the header's reporter is indexed at %v, want nothing", got)
+	}
+}
+
+// An upload with only the cached identity does not happen: the cache is a
+// display convenience a coding agent or anyone with the user's own files could
+// write, and it never names a write (F3). The issue stays local.
+func TestUploadWithCachedIdentityOnlyStaysLocal(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	env := identityEnv(t)
+	// A verified run caches the address, and then the network is gone: the
+	// only identity this run has is the cache's.
+	if _, err := ResolveIdentity(ctx, identityDeps(env, verifiedLookup(testMember))); err != nil {
+		t.Fatalf("caching an identity: %v", err)
+	}
+	id, err := ResolveIdentity(ctx, identityDeps(env, refusedLookup))
+	if err != nil || id.Source != SourceCached {
+		t.Fatalf("the offline identity = %+v, %v; want the cached one", id, err)
+	}
+	_, err = Upload(ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("53")), id)
+	if !errors.Is(err, errNoVerifiedIdentity) {
+		t.Fatalf("uploading with a cached identity: err = %v, want the verified-only refusal", err)
+	}
+	rows, err := ListShared(ctx, b)
+	if err != nil {
+		t.Fatalf("listing the shared store: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("the store holds %d issues after a refused upload, want none", len(rows))
+	}
+}
+
+// An upload writes both index entries — the creator's and each duplicate's
+// reporter — and names the occurrence by the verified reporter's digest and the
+// hit time. The original report is not an occurrence of itself (F7).
+func TestUploadWritesIndexAndOccurrenceNames(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	fp := fingerprint("54")
+	ana, bo := "user:ana@example.test", "user:bo@example.test"
+	first := sharedIssue("update-20261107183012-48213", fp)
+	first.Reporter = "header-ana@example.test"
+	up, err := Upload(ctx, b, first, verified(ana))
+	if err != nil {
+		t.Fatalf("uploading: %v", err)
+	}
+	hitAt := issueAt.Add(time.Hour)
+	other := hit("update-20261107183014-48215", fp, "header-bo@example.test", "0.9.0", hitAt)
+	got, err := Upload(ctx, b, other, verified(bo))
+	if err != nil {
+		t.Fatalf("uploading the duplicate: %v", err)
+	}
+	if got.Number != up.Number || !got.Attached {
+		t.Fatalf("the duplicate = %+v, want an occurrence of issue %d", got, up.Number)
+	}
+	for _, tc := range []struct{ who, digest string }{
+		{ana, Digest(ana)},
+		{bo, Digest(bo)},
+	} {
+		want := []string{reporterIndexKey(up.Number, tc.digest)}
+		if keys := indexKeys(t, ctx, b, tc.digest); !slices.Equal(keys, want) {
+			t.Errorf("the index of %s = %v, want %v", tc.who, keys, want)
+		}
+	}
+	for _, header := range []string{"header-ana@example.test", "header-bo@example.test"} {
+		if keys := indexKeys(t, ctx, b, Digest(header)); len(keys) != 0 {
+			t.Errorf("a header reporter is indexed at %v, want nothing", keys)
+		}
+	}
+	want := []string{occurrenceDigestPrefix(up.Number, Digest(bo)) + hitAt.UTC().Format(occurrenceTimeLayout)}
+	if keys := occurrenceKeys(t, ctx, b, up.Number); !slices.Equal(keys, want) {
+		t.Errorf("the occurrences = %v, want %v", keys, want)
+	}
+}
+
+// An occurrence's name carries the hit time — the moment the reporter's record
+// was created — and not the moment of the upload, and a retried upload of the
+// same hit is a create-if-absent no-op (F7).
+func TestOccurrenceTimeIsTheHitTimeAndRetryIsANoOp(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	fp := fingerprint("55")
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	hitAt := issueAt.Add(-72 * time.Hour)
+	other := hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", hitAt)
+	if _, err := uploadRaw(ctx, b, other); err != nil {
+		t.Fatalf("uploading the duplicate: %v", err)
+	}
+	if _, err := uploadRaw(ctx, b, other); err != nil {
+		t.Fatalf("retrying the upload: %v", err)
+	}
+	keys := occurrenceKeys(t, ctx, b, up.Number)
+	want := []string{occurrenceDigestPrefix(up.Number, Digest("bo@example.test")) + hitAt.UTC().Format(occurrenceTimeLayout)}
+	if !slices.Equal(keys, want) {
+		t.Errorf("the occurrences = %v, want one at %v", keys, want)
+	}
+}
+
+// Reporters reads the layout the store now writes: the digest is in the path,
+// so the names come back in digest order and the reader orders the hits by the
+// time each one carries instead (F7, F10).
+func TestReportersReadsTheNewLayout(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	fp := fingerprint("56")
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	// Two duplicates, the later hit uploaded first, so a reader that trusted
+	// the listing order would not come back in time order.
+	later := hit("update-20261107183015-48216", fp, "cy@example.test", "0.9.0", issueAt.Add(2*time.Hour))
+	upload(t, ctx, b, later)
+	earlier := hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Hour))
+	upload(t, ctx, b, earlier)
+	got, err := Reporters(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading the reporters: %v", err)
+	}
+	if want := []string{"ana@example.test", "bo@example.test", "cy@example.test"}; !slices.Equal(got, want) {
+		t.Errorf("the reporters = %v, want %v", got, want)
 	}
 }

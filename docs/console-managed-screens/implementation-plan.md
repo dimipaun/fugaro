@@ -4,8 +4,8 @@
 each as recommended.** **D1470–D1489** carry the owner's dated answer
 ([reconciliation.md](reconciliation.md) §7), so no task waits on **its own** row any more, and the
 same day's approval covers the plan as a whole (owner: "All tasks approved. Jobmax"). The plan is
-here so the owner can read what he priced and approved; what the folder's status line means now is
-**plan only; nothing is implemented; decisions answered 2026-11-07, all tasks approved 2026-11-07.**
+here so the owner can read what he priced and approved.
+**Status as of 2026-11-10: done; see [docs/status.md](../status.md) for the current table.**
 
 This document adds no code, no schema, no console source, no fixture and no workflow: it names the
 files the tasks will touch and edits none of them.

@@ -198,9 +198,11 @@ func prepareAnchor(lc *localcfg.Config, root string) (*anchorEdit, error) {
 	return &anchorEdit{path: path, id: lc.GCPProject, old: old, out: out, changed: changed}, nil
 }
 
-// writeAnchor is the one confirmation and write of the line, after the
-// plugin stage's pattern: the diff, then --yes writes, a terminal asks
-// [y/N], and anything else leaves the file alone and prints the line to add.
+// writeAnchor is the one write of the line, after the plugin stage's pattern:
+// the diff, then --yes writes, a person at the terminal writes having read the
+// diff, and anything else leaves the file alone and prints the line to add.
+// Nothing is typed for it (T7, docs/no-prompt-policy: the [y/N] this used to
+// ask for is gone, and --ask is the flag that puts the question back).
 // planOnly prints what it would do and writes nothing. It reports whether
 // the file was written; an edit with nothing to change writes nothing and
 // prints nothing.
@@ -208,11 +210,11 @@ func prepareAnchor(lc *localcfg.Config, root string) (*anchorEdit, error) {
 // A managed project's own terminal is asked nothing here either (the owner's
 // ruling of 2026-11-06): the diff above is the whole of what the owner reads,
 // the line to add is not needed because the write is made, and the sentence
-// says why. It is asked before --yes and before the y/N, so an owner who
-// passed the flag reads the managed sentence rather than a line about a flag
-// the project's marks already answered for. Nothing else moves: a project that
-// is not managed, a mark that did not answer and a coding agent's session keep
-// the three arms below exactly as they were.
+// says why. It is read before --yes, so an owner who passed the flag reads the
+// managed sentence rather than a line about a flag the project's marks already
+// answered for. Nothing else moves: a project that is not managed, a mark that
+// did not answer and a coding agent's session keep the arms below exactly as
+// they were.
 func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (bool, error) {
 	if !a.changed {
 		return false, nil
@@ -227,16 +229,21 @@ func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (b
 		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
 	case env.Yes:
 		fmt.Fprintln(r.w, "  confirmed by --yes")
-	case env.Interactive:
-		fmt.Fprintf(r.w, "Write this to %s? [y/N]: ", a.path)
-		line, _ := r.in.ReadString('\n') // an ended input is a no
-		if ans := strings.ToLower(strings.TrimSpace(line)); ans != "y" && ans != "yes" {
+	case !env.Interactive:
+		fmt.Fprint(r.w, addLine)
+		return false, nil
+	default:
+		// A person at the terminal is asked nothing (T7): the y/N they used
+		// to type is gone, --ask is the flag that puts the question back, and
+		// the diff above is what they read.
+		ok, err := r.confirmNow("write this to " + a.path + "?")
+		if err != nil {
+			return false, err
+		}
+		if !ok {
 			fmt.Fprint(r.w, addLine)
 			return false, nil
 		}
-	default:
-		fmt.Fprint(r.w, addLine)
-		return false, nil
 	}
 	if err := writeFileAtomic(a.path, a.out); err != nil {
 		return false, err

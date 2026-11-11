@@ -69,7 +69,7 @@ var lsStates = []string{
 	string(runstore.StatusCancelled), runview.StatusError, string(runstore.StatusFailed),
 	string(runstore.StatusHalted), string(runstore.StatusInfraError), runview.StatusLaunching,
 	runview.StatusPending, string(runstore.StatusRunning), string(runstore.StatusSucceeded),
-	runview.StatusUnlaunched,
+	runview.StatusUnlaunched, string(runstore.StatusUnreviewed),
 }
 
 // prLookback is runs ls --pr's default --since: run --pr's window

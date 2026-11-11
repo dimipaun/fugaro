@@ -109,6 +109,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -330,6 +331,47 @@ type Policy struct {
 	// existed.
 	ReviewFloor map[rigor.Mode][]policy.Level `json:"review_floor,omitempty"`
 
+	// Triage is the owner's switch for the run's triage stage (D1854): the
+	// step that weighs a review round's findings before the fix round takes
+	// them. false turns it off for every repository of the installation, true
+	// leaves it on where its mode has it at all (config.TriageMode — startup
+	// and pro, D1851), and an absent member says nothing.
+	//
+	// It belongs to this node for the reason ReviewFloor does: it decides how
+	// much review a run gets, so a launcher must not be able to move it, and
+	// the shared file and the task are both launcher-written
+	// (docs/design/bucket-iam.md §10 L1, L2). The repository's own
+	// agent.triage is the other home, and it is the *only* one a repository
+	// has: a run merges the node's answer over the file's as the stricter of
+	// the two (internal/policy's Merge), so a repository may turn the stage off
+	// for itself and may not turn it back on under a node that turned it off.
+	//
+	// Only false has an effect that true cannot undo, which is why a project
+	// that sets neither publishes no member: the node of such a project stays
+	// byte for byte what it was before this member existed.
+	Triage *bool `json:"triage,omitempty"`
+	// Binaries is the project's binary allow rule (D981, D986): the paths a run
+	// may add a binary at, and the largest one it may add. It belongs to this
+	// node for the floor's reason — the owner writes it and the runner fails
+	// closed on it, while the shared file is writable by any launcher — and for
+	// the sharper one the block's own comment gives: the rule's writer must not
+	// be a file the subject of the rule can write, and the repository's
+	// fugaro.yaml is inside the checkout the run's own agent writes.
+	//
+	// Nothing decodes it yet: `binaries` is deliberately not in
+	// knownTopLevelKeys, so a node that writes the key has it listed in
+	// UnknownKeys and this field stays nil, which is the strict end — the run
+	// admits no binary. The member, its validation and the version bump that
+	// publishes them are the plan's AR0 and land together, because a block read
+	// before its patterns, count, lengths and cap are checked would be an
+	// unvalidated rule in force (see internal/projectpolicy/binaries.go).
+	//
+	// The runner reads it at bootstrap and puts the block on the ceiling layer
+	// (internal/runner's policyCeiling), where Merge intersects the list and
+	// takes the smaller cap, so a layer under the ceiling can remove an admitted
+	// path and can never add one.
+	Binaries *Binaries `json:"binaries,omitempty"`
+
 	// VerifierAccounts are the identities that may ask the credentials
 	// service's verify route whether a verdict's signature is that service's
 	// (C3.9g3, D1068, D1075): the coordinator's own account once it exists,
@@ -405,6 +447,28 @@ type Policy struct {
 	// existed.
 	ImageMap ImageMap `json:"image_map,omitempty"`
 
+	// ImageServices is the services each catalog entry's image provides
+	// (D1904): the entry's own list, keyed by the entry's name, which a run
+	// reads back to start the services its tests need before they run.
+	//
+	// It is a key of its own BESIDE the catalog and not a member of an entry,
+	// and that is F20's answer rather than a spelling choice: the image_catalog
+	// block decodes strictly (catalogEntryMembers, DisallowUnknownFields), so a
+	// member added inside an entry makes a reader of the release behind refuse
+	// the WHOLE node — and a node is re-read while runs are in flight (the
+	// credentials service reads it per model call), so that refusal stops runs
+	// the update promised to leave alone. Every unknown key at this level is
+	// listed in UnknownKeys and tolerated (P8), so an older reader reads
+	// everything it understands and goes on; the same reason image_map and
+	// bake_repos are keys of their own. The member is published from the
+	// catalog's entries by the publisher, which is where the two spellings are
+	// kept in step.
+	//
+	// A map with no entry is nil, so a project whose catalog declares no
+	// service writes no member and its node is byte for byte what it was before
+	// this key existed.
+	ImageServices ImageServices `json:"image_services,omitempty"`
+
 	// BakeRepos is whether a repository is baked into the image its job runs
 	// (D1901): the setup wizard's "Bake your repos into the Docker images?",
 	// asked with the answer yes.
@@ -468,10 +532,11 @@ var knownTopLevelKeys = map[string]bool{
 	"bitbucket_token": true, "bitbucket_api_roots": true,
 	"review_floor": true, "verifier_accounts": true,
 	"image_catalog": true,
-	"image_map":     true, "bake_repos": true,
+	"image_map":     true, "bake_repos": true, "image_services": true,
 	"default_claude_account": true, "claude_account_stages": true,
 	"crafts": true, "craft_credentials": true, "craft_pools": true,
 	"orchestrator": true,
+	"triage":       true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -595,6 +660,17 @@ type ImageCatalog = config.Catalog
 // and this reader would take the last of — the check below holds every name
 // to the documented spelling, as the budget block's and a model_prices
 // entry's are held.
+// The services an entry declares are deliberately NOT one of an entry's
+// members (F20, D1904): this list is what holds the block to the members a
+// release reads, and a member here that release does not carry is refused by
+// DisallowUnknownFields as the WHOLE policy rather than the block — so adding
+// the entry key would make every reader of the release behind stop on a node
+// `fugaro update` publishes while runs are in flight (the credentials service
+// re-reads it per model call), which the HARD RULE forbids. The fact travels
+// as the top-level ImageServices key instead, where an unknown key is listed
+// in UnknownKeys and tolerated (P8), and config.Entry carries the list as a
+// config-only field whose json spelling is "-" so no writer can put it in the
+// block. TestEntryServicesRunInFlightKeepsReading pins both halves.
 var (
 	catalogEntryMembers  = []string{"name", "tags", "source", "description", "default"}
 	catalogSourceMembers = []string{"kind", "repo", "path", "branch", "context", "inline", "image"}
@@ -1322,6 +1398,11 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		}
 		p.ReviewFloor = floor
 	}
+	if traw, ok := doc["triage"]; ok && !IsNull(traw) {
+		if err := json.Unmarshal(traw, &p.Triage); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: triage: %w", err)
+		}
+	}
 	if vraw, ok := doc["verifier_accounts"]; ok && !IsNull(vraw) {
 		if err := json.Unmarshal(vraw, &p.VerifierAccounts); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: verifier_accounts: %w", err)
@@ -1348,6 +1429,17 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		}
 		if len(p.ImageMap) == 0 {
 			p.ImageMap = nil
+		}
+	}
+	if sraw, ok := doc["image_services"]; ok && !IsNull(sraw) {
+		if err := json.Unmarshal(sraw, &p.ImageServices); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: image_services: %w", err)
+		}
+		if err := ValidImageServices(p.ImageServices); err != nil {
+			return nil, true, err
+		}
+		if len(p.ImageServices) == 0 {
+			p.ImageServices = nil
 		}
 	}
 	if braw, ok := doc["bake_repos"]; ok && !IsNull(braw) {
@@ -1644,6 +1736,97 @@ func ValidImageMap(m map[string]string) error {
 		}
 		if !config.ValidCatalogName(m[key]) {
 			return fmt.Errorf("%s: %s", at, config.CatalogNameMessage)
+		}
+	}
+	return nil
+}
+
+// ImageServices is the image_services block of a policy: the services each
+// catalog entry's image provides, keyed by the entry's name (D1904). It is
+// what a run reads to start the services its tests need, and the entry's own
+// list is its only source — a repository's text never adds one.
+//
+// Its keys are catalog entry names, which are 1 to 40 of a-z, 0-9 and '-' and
+// so are RTDB keys as they stand (no "/", no "$", no ".", the characters that
+// would need the escape image_map's repository names do). The block is an
+// object on the node and a map here, and both spellings are the entry's name.
+//
+// A written entry names at least one service: the operator who wrote one
+// believes the entry's image provides services, and an empty list is what a
+// project that declares none says by writing no member at all — the way
+// RepoCredentials refuses a written block that names no account.
+type ImageServices map[string][]string
+
+// ServicesFor returns the services the entry's image provides, nil when the
+// node names none for it. It is a method rather than the map read so that a
+// nil policy, and a node with no image_services member, answer the same thing:
+// no entry provides anything this policy says.
+func (p *Policy) ServicesFor(entry string) []string {
+	if p == nil {
+		return nil
+	}
+	return p.ImageServices[entry]
+}
+
+// ImageServicesFromCatalog derives the image_services block from a project's
+// catalog (D1904): one member per entry that declares services, under the
+// entry's own name. The catalog is where an entry's services are written —
+// the only document that can carry them, since an entry member on the node is
+// what F20 refuses — so this is the one derivation the publisher's node build
+// and the drift comparison both call, and the two cannot disagree about which
+// entries the node names.
+//
+// A catalog with no entry declaring a service derives nil, which omitempty
+// drops: the node of a project whose catalog declares none is byte for byte
+// what it was before this key existed.
+func ImageServicesFromCatalog(c *config.Catalog) ImageServices {
+	if c == nil {
+		return nil
+	}
+	var out ImageServices
+	for _, e := range c.Entries {
+		if len(e.Services) == 0 {
+			continue
+		}
+		if out == nil {
+			out = ImageServices{}
+		}
+		out[e.Name] = slices.Clone(e.Services)
+	}
+	return out
+}
+
+// ValidImageServices checks the image_services block, entry by entry: each key
+// the name of a catalog entry, and each list a non-empty set of the service
+// names config.ServiceNames states, with no name twice.
+//
+// Each half is checked on the node and not only where the block is written,
+// for the reason ValidImageMap checks both: the node is what a run reads, and a
+// name this reader took on trust is a value the run would hand the services
+// script — which fails on it, at run time, naming a service nobody declared.
+func ValidImageServices(m map[string][]string) error {
+	for _, entry := range sortedStringKeys(m) {
+		at := fmt.Sprintf("projectpolicy: image_services[%s]", entry)
+		if !config.ValidCatalogName(entry) {
+			return fmt.Errorf("%s: %s", at, config.CatalogNameMessage)
+		}
+		services := m[entry]
+		if len(services) == 0 {
+			return fmt.Errorf("%s: a written entry names at least one service; an entry whose image provides none writes no member at all", at)
+		}
+		// A name outside the allowlist is refused by the rule and not by
+		// echoing the value, which is catalogTagMessage's rule: a refusal that
+		// repeated one would put whatever it holds, an escape sequence among
+		// it, into a log.
+		seen := make(map[string]bool, len(services))
+		for _, s := range services {
+			if !config.ValidServiceName(s) {
+				return fmt.Errorf("%s: every service must be one of %s: the services fugaro-services starts", at, strings.Join(config.ServiceNames, ", "))
+			}
+			if seen[s] {
+				return fmt.Errorf("%s: a service is named twice: the list is written as the environment value a run hands the services script, and a name written twice reads as two services there", at)
+			}
+			seen[s] = true
 		}
 	}
 	return nil

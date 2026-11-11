@@ -17,7 +17,8 @@
 #   - `as_of` is the release each half of the matrix was last read against: `cli` names the
 #     newest `docs/releases/vX.Y.Z.md` and `console` the newest
 #     `docs/releases/console/vX.Y.Z.md` (D1538). The release procedure moves both in the
-#     release it cuts.
+#     release it cuts, in the same PR as the notes file (docs/release.md, "Before you tag"),
+#     and `website/test/compatibility.mjs` refuses a stamp behind the newest file.
 #   - `never_say` is the phrases the page may not be made of — the ones the reconciliation
 #     marked Wrong, which a reader of the spec would otherwise expect to find here. The
 #     page-wide test reads this list rather than repeating it.
@@ -38,8 +39,8 @@
 #     exists today, and a claim with no path behind it is a claim the page cannot back.
 version: 1
 as_of:
-  cli: v0.20.3
-  console: v0.120.0
+  cli: v0.22.0
+  console: v0.121.0
 never_say:
   - "any model"
   - "via MCP"

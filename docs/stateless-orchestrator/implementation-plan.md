@@ -86,7 +86,7 @@ adjacent code), `.claude/rules/terraform.md` (O2 edits `internal/infra/firebased
 
 - **No secret-shaped literal** in any test, doc, log or fixture. Fixtures use marker values.
 - **No agent performs a live cloud action.** Checks 300-305 are written by agents and **run by the owner**. Never against project `belong`
-  from an agent run.
+  from an agent run. **Check 300 ran 2026-11-10 and passed**; 301-305 are still the owner's.
 - **Hermetic tests**: `internal/gcpfake` (its RTDB fake honours ETag and if-match), `internal/testutil`, `t.TempDir()`; the rules emulator
   tests are the repo's existing pattern (`internal/budget/rules/emulator_*_test.go`).
 - **`fugaro update` is the whole upgrade (the HARD RULE), literally.** The owner's Q2 answer of 2026-11-04 cut the daemon unit out of `update`, which
@@ -152,7 +152,7 @@ is unwritten and the bounds D1228 names are proposals not measurements (U4), so 
 the slice 1 daemon already contains the circuit-breaker and spawn caps the decision agent will run under (O6).
 
 Checks come from the reserved block **300-309**, verified free on 2026-11-04: the register's top Check in `docs/` on `origin/main` is 273 (274-299 are reserved by other designs, so they are not free either), and
-no open pull request diff adds one in 300-399. **One task, O2, writes Checks 300-305 into `docs/gcp-live-checklist.md` as NOT RUN** (the file has one writer, so no level holds two); the other tasks name their Check and do not edit the file. **Checks 306-309 stay reserved.**
+no open pull request diff adds one in 300-399. **One task, O2, writes Checks 300-305 into `docs/gcp-live-checklist.md` as NOT RUN** (the file has one writer, so no level holds two); the other tasks name their Check and do not edit the file. **Checks 306-309 stay reserved.** Check 300 has since run — **PASSED 2026-11-10**, installation `fugaro` — and the register's row and section carry the record; 301-305 are still the owner's.
 
 Common to every task: the **Command** is a targeted `go test` with `-count=1`, then `go build ./... && gofmt -l . && go vet ./...`.
 Tasks are mergeable one at a time. The commit message is `type(scope): subject (Oz)` and carries the attribution trailers.
@@ -233,7 +233,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 
 - **Files (11; `internal/infra/firebasedb.go` is the marker's Plan and write, as the credentials marker is at `rules.PathCredsRulesMarker()` there; open PR #1715 (the mcpauth subtree) edits the same rules template, so the later of the two rebases), and the emulator and parity tests carry `//go:build firebase`:** `internal/budget/rules/rules.go`, `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/marker.go`, `internal/infra/firebasedb.go`,
   `internal/budget/rules/emulator_orchestrator_test.go` (new), `internal/budget/rules/parity_test.go`, `internal/cli/update_converge_test.go`,
-  `docs/releases/vX.Y.Z.md` (the release the owner assigns; created or amended), `internal/budget/rules/rules_test.go` (edit: `isNamedAddition` and `TestRulesPreexistingPathsUnchanged` must name the new subtree; PR #1715 edits the same test and golden for `mcpauth`, so the later of the two rebases), `internal/budget/rules/testdata/rules.golden.json` (regenerated), `docs/gcp-live-checklist.md` (the one writer: Checks 300-305, NOT RUN).
+  `docs/releases/vX.Y.Z.md` (the release the owner assigns; created or amended), `internal/budget/rules/rules_test.go` (edit: `isNamedAddition` and `TestRulesPreexistingPathsUnchanged` must name the new subtree; PR #1715 edits the same test and golden for `mcpauth`, so the later of the two rebases), `internal/budget/rules/testdata/rules.golden.json` (regenerated), `docs/gcp-live-checklist.md` (the one writer: Checks 300-305 as written; 300 has since run, **PASSED 2026-11-10**).
 - **Interfaces:** a top-level `orchestrator/<id>/` subtree: `.read` for the signed-in person, and a `.write` that is **`false` for every identity the
   rules evaluate** — a run-scoped job token, a minter-minted custom token and any other token-based writer alike, not a denylist of run-scoped jobs
   with a shape check behind it; **shape and size are the client-side validator's (O0's), never the rules'**, because a value that passes a shape check
@@ -254,6 +254,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   test first proves a person write succeeds, then a job and a minted token write fail).
 - **OWNER-RUN, Check 300:** with a real installation that is **not** project `belong`: run `fugaro update`; confirm the person's own credential
   (D1241's answer) can write the state node and no token identity can. O2 writes the check text, the owner runs it. Operators' line: "run `fugaro update`".
+  **Run 2026-11-10 on installation `fugaro` (project `fugaro-dev`) with CLI 0.22.1: every fact passed** — the register's row and section carry the record.
 - **Reviewer:** security (rules and guards).
 
 ### O3. The state store, the audit log and the daemon lease
@@ -761,7 +762,7 @@ which regenerates that file, lands last.
 | `internal/orchestrator/tick.go` | O7 (2), O13 (6), O14 (7) | no |
 | `internal/cli/root.go` | O5 (2) | one writer |
 | `docs/releases/vX.Y.Z.md` | O2 (1), O11 (5) | no |
-| `docs/gcp-live-checklist.md` | O2 (1) only (Checks 300-305, NOT RUN); no other task edits it | one writer |
+| `docs/gcp-live-checklist.md` | O2 (1) only (Checks 300-305 as written; 300 has since run, **PASSED 2026-11-10**); no other task edits it | one writer |
 | `internal/budget/rules/rules_test.go`, `internal/budget/rules/testdata/rules.golden.json` | O2 (1) | one writer |
 | `internal/orchestrator/runview.go` | O7 (2); O6 (1) defines the `RunView` type in `launch.go`, not there | one writer |
 | `ee/register/orchestrator.go` and its test | O17 (2), O18 (3) | no |
@@ -824,7 +825,8 @@ alone, with a second `update` writing nothing**), 302 (O11: the cutover on the o
 call and the measured cost, **which is Q4's gate for slice 2 together with slice 1's 14 days**), 304 (O17:
 a two-person handoff), 305 (O16: the MCP state group, when it exists). 306-309 are reserved. **BF2's O14 claims none of them**: its merge and cancel
 paths are exercised against the fake provider and the fake backend, and the first real automatic merge happens on the owner's own installation, which is
-where a Check would go if the owner wants one. No agent performs any of them. **The manual rollback is
+where a Check would go if the owner wants one. No agent performs any of them. **Check 300 is the one of these that has run — PASSED
+2026-11-10, on installation `fugaro` — so 301 to 304 stay the owner's and 305 waits for O16.** **The manual rollback is
 the one owner action here that has no command behind it** (T1, answered 2026-11-04): it is the three steps Check 302 names, run by hand. **After T7's
 ruling (2026-11-05) no upgrade asks for a command at all**: a binary upgrade is the daemon's own hand-over, a template change is `fugaro update`'s
 re-render, and `fugaro orchestrator install` is the explicit command for a machine that skipped `setup` or needs a repair — **`update` never installs a

@@ -321,11 +321,14 @@ export interface FugaroSource {
    * arguments are the operation's own and both required, and an implementation
    * must add no word of its own to that argv: this is the second read whose
    * child mints a credential of the host's: `run.launch` is the first, and its
-   * child is a run whose token can write. This one's is the coordinator's own
-   * read-only installation token -- so what it is asked and nothing else is what
-   * it may send. It has no precondition of its own beyond the two arguments: the CLI
-   * resolves the repository's provider itself and the credential with it, and
-   * under `FUGARO_CREDENTIALS_SERVICE_URL` the command refuses rather than
+   * child is a run whose token can write. This one's is the person read set's
+   * own read-only installation token -- contents read, pull requests read and
+   * metadata read, no `write` of any kind
+   * (`github.PersonReadTokenPermissions`) -- so what it is asked and nothing
+   * else is what it may send. It has no precondition of its own beyond the two
+   * arguments: the CLI resolves the repository's provider itself, the
+   * credential with it, and the credentials service from the project's own
+   * published block -- a project that publishes none refuses rather than
    * reading. */
   coordinatorShow(args: ValidatedArguments): Promise<Snapshot>
   /** coordinatorIntents is what the fleet's writers have declared, newest first
@@ -335,9 +338,9 @@ export interface FugaroSource {
    * word of its own to it and has nothing a caller could influence. Like the
    * stored view beside it, the read is the caller's own database node -- no App
    * key, no installation token, no provider and no host -- so it has no
-   * precondition of its own and succeeds under `FUGARO_CREDENTIALS_SERVICE_URL`
-   * where `coordinatorShow`'s host read refuses: the reads that ask the host
-   * are the ones the service URL turns away, and this one is not among them --
+   * precondition of its own where `coordinatorShow`'s host read needs the
+   * credentials service its project publishes: the reads that ask the host are
+   * the ones that need one, and this one is not among them --
    * neither is `coordinatorStatus`, which is the stored view and needs no host
    * credential either. */
   coordinatorIntents(args: ValidatedArguments): Promise<Snapshot>
@@ -351,8 +354,8 @@ export interface FugaroSource {
    * screen can widen the disclosure by asking differently. The read is the
    * caller's own database node and the installation's two marks, like
    * `coordinatorIntents` above and for the same reason: no host credential is
-   * involved, so it succeeds under `FUGARO_CREDENTIALS_SERVICE_URL` where
-   * `coordinatorShow`'s host read refuses. */
+   * involved, so it needs no published credentials service where
+   * `coordinatorShow`'s host read needs the one its project publishes. */
   managedStatus(args: ValidatedArguments): Promise<Snapshot>
   /** policyShow is the published policy node a project's runs read, and nothing
    * else (`project policy show --json`, the same plan's CM4, D1480 and D1481).

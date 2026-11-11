@@ -1,7 +1,6 @@
 # Workspaces: the implementation plan
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The sixteen decisions in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**) are
+**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.** The sixteen decisions in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**) are
 **answered**, every one as recommended, so no task below is waiting on a decision any more. **Two of
 them were amended on 2026-11-04, after the design merged and its security review ran** — D1299,
 D1300 and D1301, marked below [reconciliation.md](reconciliation.md) §4 and §8 — and the tasks they
@@ -170,10 +169,12 @@ key, so a workspace cannot move a member's trust by publishing a different one,
 
 **The issuer is checked against the project, not trusted on its own.** The signature is verified
 against **Google's published Firebase signing keys**, which are one global set — `GoogleKeysURL`
-(`internal/credsvc/auth.go`:1371-1373) names the one x509 document, and it is the same document for
+(`internal/credsvc/auth.go`:1388-1390) names the one x509 document, and it is the same document for
 every Firebase project, so "the keys the pinned project publishes" is not a thing that exists. What
 distinguishes one project's tokens from another's is the pair `aud`/`iss`, and main derives the
-second from the first: `"https://securetoken.google.com/"+a.cfg.FirebaseProject` (`:1072`). The pin
+second from the first in one place: `"https://securetoken.google.com/"+a.cfg.FirebaseProject`, the
+body of `firebaseIssuer` (`internal/credsvc/auth.go`:1059-1060), which `verifyRun` holds the token's
+`iss` to (`:1089`). The pin
 therefore carries both values and **`Validate` refuses a pair that disagrees** — the issuer must be
 exactly `https://securetoken.google.com/<firebase_project>` — so a member that mistypes one of the
 two is refused at the write and again at the load, rather than being admitted by one and refused by
@@ -185,13 +186,22 @@ the `models` commands use, and every one ending with `next: fugaro update`. `wor
 the membership key **and the pin** — the four values it is given, which is the one place a member
 decides what it trusts — firebase project, issuer, assertion key and service account — and
 `workspace rm` removes both. `workspace member add` is the owner's side: it writes the member entry
-**and the four values the service's per-member table is built from** (the member's **job service
-accounts**, its **Firebase project id and `fp`**, and its **exchange URL**, spec.md §5), and
-`member rm` removes the entry. **The member's database URL is not among them**: it is **derived from
-the Firebase project the verified `iss` names** (finding 6 of the post-merge review), so an owner
-cannot splice member B's accounts onto member A's database, and **the runs bucket is not among them
-either** — O1's answer dropped the bucket grant, and nothing derives it. The two commands are the two
-halves of a membership, and neither writes the other's file.
+**and the values the service's per-member table is built from** (the member's **job service
+accounts**, its **Firebase project id**, its **`fp`**, and its **exchange URL**, spec.md §5), and
+`member rm` removes the entry. **The member's database URL is not among them**: its project half is
+**derived from the Firebase project the verified `iss` names** (finding 6 of the post-merge review),
+so an owner cannot splice member B's accounts onto member A's database, and **the runs bucket is not
+among them either** — O1's answer dropped the bucket grant, and nothing derives it. **The region of
+that database is not among them yet, and no task in this plan carries it**: the verb has no option
+for it and `localcfg.WorkspaceMember` has no field for it, so the credentials node's
+`database_region` has no writer anywhere in the tree — the node's own comment says so
+(`internal/projectpolicy/workspace_credentials.go`:101) and spec.md §5 states it — and a member whose
+Firebase project was adopted with a **regional** database is therefore derived the legacy
+`<firebase_project>-default-rtdb` host until a later task takes the field. **The owner answered that
+on 2026-11-10, as recommended**: the field is taken by the task that gives the node its writer, so
+the verb's option and this plan's own later task are where the region lands
+([reconciliation.md](reconciliation.md) §9, O4). The two commands are the two halves of a membership,
+and neither writes the other's file.
 
 **`workspace show` reads files and no cloud node**, and the two halves it can therefore see are not
 the same (spec.md §6). The **workspace owner's** machine holds the record it publishes, so its drift
@@ -343,7 +353,7 @@ converges rather than half-applies).
 member's authorization server (the MCP design's §3) accepts it **at `/oauth/authorize`, as the
 sign-in proof** — not as a grant at `/oauth/token` (finding 2 of the post-merge security review), and
 with **no second endpoint of this design's own**. The signer endpoint verifies the workspace's
-Firebase ID token against **Google's published Firebase signing keys** (`internal/credsvc/auth.go`:1371-1373
+Firebase ID token against **Google's published Firebase signing keys** (`internal/credsvc/auth.go`:1388-1390
 — one global set, which is why the pin's project tells tokens apart by its `aud`/`iss` pair and not by
 any per-project keys), against the workspace's own project as `aud` and its securetoken issuer as
 `iss`, against `email_verified`, and against the **pinned `firebase.sign_in_provider` set**; and it
@@ -442,29 +452,52 @@ allow-list, and the effective set is that list intersected with the member's own
 service resolves a caller by folding the token's `email` and looking it up in its own account table
 (`internal/credsvc/auth.go`:727), and it returns the configured spelling of what it found (`:738`) —
 that, and nothing in a request body, header or query, is what names the member. `verifyRun`
-(`:1047`) additionally refuses a token whose `aud` is not this service's Firebase project (`:1069`),
-whose `iss` is not that project's securetoken issuer (`:1072`), or whose `fp` is not this service's
-Fugaro project (`:1105`), so the workspace deployment accepts **each member's** Firebase project as
+(`:1064`) additionally refuses a token whose `aud` is not this service's Firebase project (`:1086`),
+whose `iss` is not that project's securetoken issuer (`:1089`), or whose `fp` is not this service's
+Fugaro project (`:1122`), so the workspace deployment accepts **each member's** Firebase project as
 the issuer and **each member's** Fugaro project as `fp` and holds all three to the same member: the
 account's, the issuer's and the `fp`'s must name one member, or the call is refused. This is a change
 to `verifyRun`'s pinning and not only to the list it looks the account up in, and it is the half of
 this task that a reader is most likely to miss.
 
 **The account table is the workspace's own per-member table, and the owner's config supplies it.**
-Each entry carries the member's job service accounts, its Firebase project id and `fp`, and its
-**exchange URL** — and **not its database URL**: that is **derived from the Firebase project the
-verified `iss` names** (finding 6 of the post-merge security review), so an owner cannot declare
+Each entry carries the member's job service accounts, its Firebase project id, the region of that
+project's database when it is not the default one, its `fp`, and its
+**exchange URL** — and **not its database URL**: the project half of it is **derived from the Firebase
+project the verified `iss` names** and the region says where in that project the database lives
+(finding 6 of the post-merge security review), so an owner cannot declare
 member B's accounts against member A's looser database. There is **no runs bucket** in the entry
 either (O1's answer dropped the bucket grant). Every value that *is* there is the **workspace owner's**
 declaration, converged by the workspace owner's `fugaro update` (W2's stage writes the record; this
 task's service and W3's root of the workspace's own project carry the table) — never read from a
 member's machine and never taken from `workspaces/<name>`, which names the members and carries the cap
-and nothing else (spec.md §2, §5). A member the table does not bind is refused at this front door, and
+and nothing else (spec.md §2, §5). **The stage that writes this node is not this task's, and no task
+in this plan is it**: nothing in the tree writes `workspace_credentials` today — the node's own
+comment says so (`internal/projectpolicy/workspace_credentials.go`:101), and W1's `workspace member
+add` records no region for it to carry — so what this task ships is the shape a later task's publish
+fills, `database_region` included (spec.md §5 states the same gap). A member the table does not bind
+is refused at this front door, and
 one the comparison cannot read is reported as an alarm by W7's reconciliation: an unbound member is an
 unreadable one.
 
+**What nothing binds, and why it is the owner's call rather than this task's.** The pool's effective
+set is the member's own policy, the repository's own admission child and the member's two
+`allow_repos` legs, all asked over the run identity's verified slug (spec.md §4). What is **not**
+compared is that slug against the repository the **calling job account** belongs to — the check the
+installation's own front door makes (`internal/credsvc/server.go`:737) — because a member's row names
+its job accounts and no repository (`WorkspaceCredentialMember`,
+`internal/projectpolicy/workspace_credentials.go`:115, `JobAccounts` at `:149`), so an account bound
+to one of a member's repositories can present a run identity of another of them. The reach is bounded
+by the member's own lists (both legs are asked), and closing it is a **column** beside each job
+account — the pair `credsvc.JobAccount` already carries for the installation's own jobs — which is an
+owner decision rather than a task's: it is spec.md §8's residual risk 7, stated and **not enforced**
+by this task, and W9 is where `SECURITY.md` carries it. **The owner answered that decision on
+2026-11-10, as recommended**: the column is taken by the task that gives the per-member table a
+writer, and this release ships with the pairing stated and not enforced
+([reconciliation.md](reconciliation.md) §9, O3).
+
 **A member's policy and its outcomes are read per member, from the database its own verified `iss`
-names.** `checkLive` (`internal/credsvc/auth.go`:1196) and the outcomes reader it uses
+names.** `checkLive` (`internal/credsvc/auth.go`:1213) and the outcomes reader it uses
 (`RTDBOutcomes`, `internal/credsvc/auth.go`:217) take the database to read from the call rather than
 from a field the owner set: the member the call resolved to decides it, so two members' accounts can
 never be pointed at one database. The credentials service's own guard that a database URL is
@@ -483,9 +516,10 @@ is what makes the class checkable at all: the list that names a member's people 
 launcher/operator file, which this service holds no grant to read (§5), so an admission it cannot
 check is an admission it does not make.
 
-**Files (9):** `internal/credsvc/workspace.go`, `internal/credsvc/workspace_test.go`,
+**Files (10):** `internal/credsvc/workspace.go`, `internal/credsvc/workspace_test.go`,
 `internal/credsvc/bundle_workspace.go`, `internal/credsvc/bundle_workspace_test.go`,
-`internal/creds/workspace.go`, `internal/creds/workspace_test.go`,
+`internal/credsvc/auth.go` (the run identity's pinning — `verifyRun`'s `aud`, `iss` and `fp` held to
+one member), `internal/creds/workspace.go`, `internal/creds/workspace_test.go`,
 `internal/projectpolicy/workspace_credentials.go`,
 `internal/projectpolicy/workspace_credentials_test.go`, `internal/cli/creds.go`.
 

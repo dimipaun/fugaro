@@ -20,13 +20,17 @@ package credsvc
 //     read mint: it holds the App credential itself (coordinatorAppCredential)
 //     and mints its own read-only token, so this route would be a second way to
 //     the same credential for a caller that has no need of it.
-//   - The permissions are the coordinator's read-only set and this service adds
-//     none (github.CoordinatorTokenPermissions): contents and pull requests
-//     read. It is the same set the project-wide reader mints in-process with,
-//     so a person's read and the coordinator's own read are the same reach —
-//     and the set is asked for by name rather than derived from the caller,
-//     which is what makes "this route never mints a write" a property of one
-//     constant and not of a check.
+//   - The permissions are the PERSON read set and this service adds none
+//     (github.PersonReadTokenPermissions): contents, pull requests and metadata,
+//     read. It carries the coordinator's two because this one route is also what
+//     a person's `coordinator show` reads a pull request with, and contents: read
+//     because the route serves the launcher's read of a repository's own
+//     fugaro.yaml at a ref as well (D915, task A0 of
+//     docs/run-without-checkout/implementation-plan.md) — so the reach is a set
+//     of its own rather than the coordinator's widened, and the coordinator's
+//     constant does not move. The set is asked for by name rather than derived
+//     from the caller, which is what makes "this route never mints a write" a
+//     property of one constant and not of a check.
 //   - The key that signs is the bundle's and nothing else. A bundle with no App
 //     key is a refusal and never a fallback to a key the caller may hold.
 //   - The App ID is the caller's, and it is not a secret: the mint route's own
@@ -87,7 +91,7 @@ const GitHubReadPath = "/v1/github/read-token"
 //
 // It is two fields and it is two on purpose. There is no permission field, no
 // repository-list field and no API-root field: the permissions are this
-// service's constant (github.CoordinatorTokenPermissions), the token is scoped
+// service's constant (github.PersonReadTokenPermissions), the token is scoped
 // to the one repository named here and to no other, and the endpoint the mint
 // goes to is api.github.com and nothing a caller can move. A body that carries
 // any of them is refused by the strict decoder rather than read for the fields
@@ -314,7 +318,7 @@ func (s *Server) githubRead(ctx context.Context, w http.ResponseWriter, r *http.
 	token, expires, err := github.MintInstallationToken(ctx, github.Options{
 		Owner: owner, Repo: name, AppID: req.AppID, PrivateKey: key,
 		HTTP: s.cfg.Client, Now: s.now,
-	}, github.CoordinatorTokenPermissions())
+	}, github.PersonReadTokenPermissions())
 	if err != nil {
 		// The operator gets the class of the failure and, when GitHub answered,
 		// its status -- and never a byte of GitHub's own text: the request that

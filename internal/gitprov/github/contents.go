@@ -42,7 +42,11 @@ var _ gitprov.ContentsReader = (*Provider)(nil)
 // not a file's bytes rather than symlinks as such. An answer that is not
 // base64, or is larger than gitprov.MaxContentsBytes, is refused too — a
 // caller may put these bytes into an image's build, so what it gets is a
-// bounded regular file or an error.
+// bounded regular file or an error. A file over the bound is answered with
+// GitHub's own too-large reply — `"encoding": "none"` and no content — and is
+// refused as too large rather than as an encoding this reader cannot decode,
+// so a caller that reads no bytes at all still tells that file apart from a
+// path that is not there.
 func (p *Provider) Contents(ctx context.Context, path, ref string) ([]byte, error) {
 	// The path in a message is the caller's value printed through
 	// pluginwire.Printable, as every other value that reaches a log here is:
@@ -64,12 +68,20 @@ func (p *Provider) Contents(ctx context.Context, path, ref string) ([]byte, erro
 	switch {
 	case f.Type != "file":
 		return nil, fmt.Errorf("reading %s: the repository holds a %s there, not a file", at, pluginwire.Printable(f.Type))
+	case f.Encoding == "none":
+		// GitHub's answer for a file over 1 MB, and its only one: no content,
+		// this encoding, and the file's own size. It is the same fact the size
+		// gate below refuses — the file is too large for this endpoint to
+		// serve — and it carries the same error, because a caller that never
+		// reads the bytes (the survey's lockfiles, F22) has to read it as "the
+		// file is there" rather than as an encoding it cannot decode.
+		return nil, fmt.Errorf("reading %s: the reply is encoded as none, this endpoint's answer for a file it will not serve: %d bytes, more than the %d a definition may be: %w", at, f.Size, gitprov.MaxContentsBytes, gitprov.ErrContentsTooLarge)
 	case f.Encoding != "base64":
 		return nil, fmt.Errorf("reading %s: the reply is encoded as %s, not base64", at, pluginwire.Printable(f.Encoding))
 	case f.Size <= 0:
-		return nil, fmt.Errorf("reading %s: the reply is %d bytes", at, f.Size)
+		return nil, fmt.Errorf("reading %s: the reply is %d bytes: %w", at, f.Size, gitprov.ErrContentsEmpty)
 	case f.Size > gitprov.MaxContentsBytes:
-		return nil, fmt.Errorf("reading %s: it is %d bytes, more than the %d a definition may be", at, f.Size, gitprov.MaxContentsBytes)
+		return nil, fmt.Errorf("reading %s: it is %d bytes, more than the %d a definition may be: %w", at, f.Size, gitprov.MaxContentsBytes, gitprov.ErrContentsTooLarge)
 	}
 	// GitHub wraps the base64 content at 60 characters with newlines; the
 	// decoder reads it either way, and the size above has already bounded

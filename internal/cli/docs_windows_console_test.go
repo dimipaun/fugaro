@@ -639,7 +639,9 @@ func TestWindowsConsolePackIsNotInTheReleaseGate(t *testing.T) {
 // TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere is what the staging
 // moves outside docs/console-windows/, held to the file it describes: the two
 // sentences -- the staging README's own section for the pack, and the site page
-// that names it among the pending workflows -- and the section's status line.
+// that names it, among the pending workflows while the staged copy is here and
+// as the file that runs once the copy-in has removed it -- and the section's
+// status line.
 // Those two both described a pull-request job before the D7 ruling, and both
 // would be a reader told the wrong thing about a job that runs once per release;
 // the status line is the half of "this file is still staged" that the copy-in
@@ -696,30 +698,24 @@ func TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 		t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section %s", problem)
 	}
 
-	// The site's page names it among the pending workflows and says when it
-	// runs. website/test/readme.mjs checks the set and the count word; this is
-	// the claim inside that sentence, which nothing else reads.
-	//
-	// The name is read against the tree for the reason the status line above is:
-	// the page's sentence counts what `docs/pending-workflows/` holds, and the
-	// copy-in takes the staged copy away, so the page stops printing the staged
-	// path in that same commit -- it has to, because
-	// TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere reads every backticked
-	// `docs/pending-workflows/<name>.yml` on that page as a claim that the file
-	// is still pending, and the pending set is the directory's. What the page
-	// says about the pack once it runs is the claim that does not move: the bare
-	// name, and that it is a release-time job rather than a pull-request check.
+	// The site's page names it and says when it runs -- among the pending
+	// workflows while the staged copy is here, and as the file that runs once
+	// the copy-in has removed it, because the page's list is held to the
+	// directory (website/test/readme.mjs, and
+	// TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere for the other
+	// direction). This is the claim inside that sentence, which nothing else
+	// reads.
 	site := flattenDoc(readDoc(t, "website/README.md"))
-	named := "`console-windows.yml`"
-	if docExists(t, windowsConsoleWorkflowPath) {
-		named = "`" + windowsConsoleWorkflowPath + "`"
+	named := "`" + windowsConsoleWorkflowPath + "`"
+	if !docExists(t, windowsConsoleWorkflowPath) {
+		named = "`" + appliedConsoleWindowsPath + "`"
 	}
 	for _, want := range []string{
 		named,
 		"release time",
 	} {
 		if !strings.Contains(site, want) {
-			t.Errorf("website/README.md no longer carries %q about the console's Windows pack: the page names it while it is pending and records it once it runs, and a reader who follows the name needs to know it runs at release time rather than on their pull request", want)
+			t.Errorf("website/README.md no longer carries %q about the console's Windows pack: the page names every pending workflow, and a reader who follows the name needs to know it runs at release time rather than on their pull request", want)
 		}
 	}
 
@@ -1072,14 +1068,16 @@ func TestDocsWindowsConsoleNotesSayWhichHalfMoved(t *testing.T) {
 
 	// Every note says the same three things, because "which half moved" is only
 	// checkable if the note names both halves and the identity neither one has:
-	// the date, the build half with the pack's own staged path, the signing half,
-	// and the Authenticode identity that does not exist.
+	// the date, the build half with the path of the file that runs, the signing
+	// half, and the Authenticode identity that does not exist. The path is the
+	// applied one: the notes landed on 2026-11-10, the day the staged copy was
+	// removed, so the staged path they once named is a file that is not there.
 	note := []string{
 		windowsConsoleNoteDate,
 		"the *build* half",
 		"the signing half",
 		"Authenticode",
-		windowsConsoleWorkflowPath,
+		appliedConsoleWindowsPath,
 	}
 	for _, tc := range []struct{ what, start, stop string }{
 		{"section 4.2's Windows bullet", "- **Windows as a *packaged* deliverable**", "\n- **The backing-repository history view**"},

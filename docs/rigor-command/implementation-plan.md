@@ -1,7 +1,6 @@
 # `fugaro rigor`: implementation plan
 
-**Design approved; the tasks here queue for CLI 0.15.0 (and console 0.117.0, which is not this
-plan's — D836).** Every decision in this design's block is answered
+**Status as of 2026-11-10: 3/10 merged, and R2–R5 closed as duplicates of the two winning plans; see [docs/status.md](../status.md) for the current table.** Every decision in this design's block is answered
 ([reconciliation.md](reconciliation.md) §3): **D830 and D831** by the owner's SD4 ruling of
 2026-10-31, **D832–D839 on 2026-10-31, all as recommended**. The one decision the plan **cites** and
 does not own — **D854**, the settings design's, whether the `Layer` stage records the generation it
@@ -9,97 +8,128 @@ read at the seed — is **answered by the owner on 2026-10-31: record the genera
 written to that answer, with the within-run guard it also carries unconditional. **D900** — whether
 the setup wizard asks the project's rigor mode explicitly — was added to this design on 2026-10-31
 and is **answered by the owner the same day: it does**, and its task is **W**, at the end of the plan
-and after R0–R3 and S5. The tasks are written to the answers above. Each task touches at most 12
+and after R0, R1 and S5. The tasks are written to the answers above. Each task touches at most 12
 files, names its tests, starts with a red step and ends at the gates below.
+
+**The owner's ruling of 2026-11-10 closes this plan's duplicates.** Four tasks here build the same
+command, key or writer as a task of [docs/settings-commands](../settings-commands/implementation-plan.md)
+or [docs/config-management](../config-management/implementation-plan.md), and the owner ruled on
+2026-11-10 that **those two plans win**: **R2** (the rigor ops on the shared editor) is
+config-management **G0–G2** with **G4**, **R3** (`fugaro rigor show`) is the settings design's read
+(**S0–S2, S4**), and **R4** and **R5** (`fugaro rigor set`, `unset`, `--repo R`) are config-management
+**G6**. Each closed task carries the marker, keeps its section as the record of what was designed —
+G6's own interface says its first step is re-reading that record against the tree — and keeps its
+number, which is never reused. **R0, R1 and R8 are merged and stay as they are**: R0 and R1 landed on
+`main`, and R8's refusal landed with **#1478** on 2026-10-31. **R6, R7 and W stay open**, and the
+behaviour the winners do not carry is listed under *behaviour not covered by the winners* in the pull
+request that carries this ruling rather than dropped here.
 
 ## Order, and what this plan does not own
 
 - **External dependency E1: `internal/yamledit`, the shared comment-preserving YAML editor.** The
   package, its generic operations and the rulings the two designs share are named **once**, in the
   [README](README.md) §"the joint order, and the rulings the rigor and settings designs share" —
-  this plan does not restate them. **One task owns it — the editor task — and it lands first in the
+  this plan does not restate them. **One task owns it — the editor task — and it landed first in the
   joint order**; rigor does not own it, does not fork it, and is not "the second caller that keeps a
-  copy": **R2 is a thin caller** (`EditRigor`, spec §9) and **R4 and R5 call the shared write helper
-  settings S5 lands** — the joint order's position 5 — **not** an `internal/cli/rigor_write.go` this
-  plan does not have. **E1 has not landed**: there is no `internal/yamledit` on `main` today
-  (verified 2026-10-31), and the path this folder once proposed for the editor,
-  `internal/localcfg/edit.go`, does not exist either. The plan therefore names the **package and the
-  task that lands it**, never an existing file it cannot point at; the only precedent that exists is
-  `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) — one scalar on one line, which the splice
-  generalises rather than repeats. **Not** a merge of the works' plans: they stay separate plans with
-  separate owners, and the README's joint order is what keeps them from colliding.
+  copy": **R2 was a thin caller** (`EditRigor`, spec §9) and **R4 and R5 called the shared write
+  helper settings S5 lands** — the joint order's position 5 — **not** an
+  `internal/cli/rigor_write.go` this plan does not have, and **R2, R4 and R5 are closed (2026-11-10)
+  as duplicates of config-management's G0–G2 with G4 and of its G6**, so the callers are that plan's
+  and this one keeps none. **E1 has landed**: `internal/yamledit` is on `main`, created 2026-11-01 by
+  **#1467** and extended by **#1501**, and it carries every generic operation this plan's callers
+  needed, so the joint order's position 1 is done for them. What the editor still owes is the
+  settings design's own remainder — writing an empty mapping, and expanding a flow `{}` back into a
+  block mapping — which is E3's scope and not this plan's. The path this folder once proposed for
+  the editor, `internal/localcfg/edit.go`, was never written. The plan therefore names the **package
+  and the task that landed it**, never a file of its own; the precedent the splice generalised is
+  `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) — one scalar on one line. **Not** a merge
+  of the works' plans: they stay separate plans with separate owners, and the README's joint order
+  is what keeps them from colliding.
 - **External dependency E2 (the mode floors, `docs/rigor-modes` plan T1.5).** `show`'s floors
   section prints the review floor (F10) and one line saying the mode floors are not built (F9). The
   task that ships T1.5 adds the sensitive-path set to that section; until then no surface here may
-  claim to display a floor that does not exist. Not a blocker.
+  claim to display a floor that does not exist. **R3 designed that section and is closed, so what
+  the caveat binds is whatever surface prints a floor — the `fugaro rigor floor` family
+  (config-management's G7, which wins over the settings design's S7, closed as G7's duplicate on
+  2026-11-10), whose read is the one that shows the floor per mode.** Not a blocker.
 - **The console's project view** (plan P6, not built) is not an external dependency of anything:
   D836 puts no console task in this plan.
-- **The `rigor` command group is shared, and nobody may assume it exists.** `internal/cli/rigor.go`
-  — the group that holds `show`, `set`, `unset` and (SD10) the `floor` subgroup — is created by
-  **whichever of this design's R3 and the settings design's S7 lands first**, and the second adds its
-  own subcommand to what the first created. The settings design states the same sentence; neither
-  plan may write "the group exists by then", and a task that touches the file says which of the two
-  it expects.
+- **The `rigor` command group is not this plan's any more.** `internal/cli/rigor.go` — the group that
+  holds `show`, `set`, `unset` and (SD10) the `floor` subgroup — is created by **whichever of
+  config-management's G6 (`fugaro rigor set`) and its G7 (`fugaro rigor floor`) lands first**, and
+  the other adds its own subcommand to it: the two winning folders
+  state that one sentence the same way, and which of the two creates the file is theirs to settle,
+  not this plan's.
+  The version that made it "whichever of R3 and S7 lands first" is spent, because **R3 and S7 are
+  both closed** — S7, the settings design's `fugaro rigor floor`, as G7's duplicate on 2026-11-10;
+  no task left in this plan touches the file, and **W** takes the wording of its summary line from G6
+  rather than from a second sentence of its own.
 - **Files other work owns:** registering the command in `internal/cli/root.go`, the generated
   `website/content/cli-reference.md`, `plugin/**` and `console/**` are each owned by another open
-  work stream at the time of writing. R3 and R6 name them, and the task that touches them waits for
-  the owner's go for those files.
+  work stream at the time of writing. R6 names them, and the task that touches them waits for the
+  owner's go for those files.
 
 **The `Needs` column is a *code* dependency: what must be merged for that task to build, test and be
-reviewed on its own.** Three of its entries reach into another design — E1, the editor task's
-`internal/yamledit`; S5, the settings task that lands the shared write helper
-(`internal/cli/settings_write.go`); and **R3 or S7**, the two tasks that can create the `rigor`
-command group `internal/cli/rigor.go` — and each is a position in the [README](README.md)'s joint
-order rather than a task in this plan. R3 is this plan's; S7 is the settings design's.
+reviewed on its own.** Two of its entries reach into another design — **S5**, the settings task that
+lands the shared write helper (`internal/cli/settings_write.go`), and **the winners' rigor tasks**
+(config-management's **G6** and **G7**), which build the commands
+this plan designed and the owner closed as duplicates on 2026-11-10 — and each is a position in the
+[README](README.md)'s joint order rather than a task in this plan.
 
 | Level | Tasks | Needs (code) |
 | --- | --- | --- |
-| 0 | R0 | nothing |
-| 1 | R1, R2 | R0 for R1; E1 for R2 (the editor task's `internal/yamledit`) |
-| 2 | R3 | R0 |
-| 3 | R4 | R0, R1, R2, S5, and R3 or S7 (whichever created `internal/cli/rigor.go`) |
-| 4 | R5 | R4 (and the same code needs: R0, R1, R2, S5, and R3 or S7) |
-| 5 | R6 | R1–R5 |
-| 6 | R7, R8 | nothing (R7 lands nothing before the owner answers) |
-| 7 | W | R0, R1, R2, R3, S5, and R4's hotfix refusal (D834) |
+| 0 | R0 (merged) | nothing |
+| 1 | R1 (merged) | R0 |
+| 2 | R6 | R1, and the winners' commands it documents (config-management's G6 and G7) |
+| 3 | R7, R8 (merged) | nothing (R7 lands nothing before the owner answers) |
+| 4 | W | R0, R1, S5, and config-management's G6 (its write path, and D834's `hotfix` refusal with the sentence it uses) |
 
-**R4 and R5 need R1 among their code needs — and that one is what makes the HARD RULE hold
-mechanically rather than by promise.** The row is the whole list (R0, R1, R2, S5, and R3 or S7 —
-`internal/cli/rigor.go`, the group both R4 and R5 extend and both R3 and the settings design's S7
-can create, so the row names either and the task waits for whichever landed first); the three
-bullets below are about the entry the HARD RULE turns on, which is not the only one the row names:
-they say nothing about R0, R2, S5 or R3/S7, and nothing here may be read as shortening the row. A
-`set` that
+**The closed tasks are off the table, and the numbers stay spent.** R2–R5 are gone from the levels
+above and from the order: the commands they designed are the winners', and their numbers are never
+reused — a later task here takes **R9**, and it re-reads this plan's `Needs` column rather than this
+sentence. Nothing else about the plan's order moves: R0 and R1 are the foundation the two winning
+plans also stand on, and R6, R7 and W keep the order they had among themselves — R6's documentation
+after the commands it documents, R7's question before W's wizard — at the levels the table above now
+gives them, which is higher than before only because the four closed tasks left the table.
+
+**R4 and R5 needed R1 among their code needs — and that one is what makes the HARD RULE hold
+mechanically rather than by promise.** The argument does not leave with them: the `set` they
+designed is config-management's **G6**, which writes the same one local layer file, and R1 is what
+that write leans on. A `set` that
 lands without the publish stage leaves the owner's next step as `fugaro config publish FILE` — the
-second command the HARD RULE forbids (F18) — so no task here may write the layer before the task
-that publishes it has landed, and the table says so in the same column it says everything else:
+second command the HARD RULE forbids (F18) — so no task may write the layer before the task that
+publishes it has landed, and the table says so in the same column it says everything else:
 
-- **R1's publish half is what makes `set`'s last line true.** R4 ends by printing `next: fugaro
-  update` (spec §3 step 7); that sentence is only honest once `update` publishes the layer.
+- **R1's publish half is what makes `set`'s last line true.** The `set` this plan designed ends by
+  printing `next: fugaro update` (spec §3 step 7); that sentence is only honest once `update`
+  publishes the layer, and config-management's plan states the same dependency for G6.
 - **R1's seeding half is what makes `set` usable on a real installation.** On an installation whose
   layer predates this release the file is absent while a layer is published, so without the seed the
   first `rigor set` is D830's refusal and the owner's next step is a second command after all. R1's
   task carries both halves, and the release notes (R6's `### For operators`) say the one command now
   seeds as well as publishes.
-- **R3 is the exception, and deliberately so.** `show` writes nothing, so it needs neither the
-  publish stage nor the seed: it reports `unpublished` (README, the shared state word) instead of
-  fixing it, which is exactly the reading an owner needs *before* the stage has run.
+- **The read is the exception, and deliberately so.** The read that replaced R3 writes nothing, so it
+  needs neither the publish stage nor the seed: it reports `unpublished` (README, the shared state
+  word) instead of fixing it, which is exactly the reading an owner needs *before* the stage has run.
 
 **R7 and R8 are follow-ups this design found and does not fix** (reconciliation §4): the missing
 hotfix gate (F13) and the loader that accepts two area rules with one glob (F14). Neither blocks
-R0–R6; both target 0.15.0 with them. R7's first step is a question to the owner and it lands nothing
-before the answer, so its level is the last row of the table and not a gate on anything. Whichever of
-R7 and R8 lands in the same release as R0–R6 has its user-visible half written into that release's
-notes by R6; a release that carries neither notes neither.
+R0, R1 or R6; both target 0.15.0 with them. R7's first step is a question to the owner and it lands
+nothing before the answer, so its row is not a gate on anything.
+**R8's refusal has since landed** (2026-10-31, **#1478**), so of the two only **R7** is still open.
+Whichever of R7 and R8 lands in the same release as R0, R1 and R6 has its user-visible half written
+into that release's notes by R6; a release that carries neither notes neither.
 
 **W is not a follow-up: it is D900's task, and it is the one task here that is not a `rigor`
 subcommand.** The owner's ruling of 2026-10-31 is that the setup wizard asks the project's rigor mode
 explicitly, and W is that question — a row of the wizard's own question table, the `--rigor <mode>`
 flag beside it, and the answer written into the one local layer file by R1's stage and published by
 the same run (the HARD RULE, F18). Its letter is the wizard's, not this family's, because the files it
-changes are the wizard's and the setup skill's; the tasks it needs are R0, R1, R2, R3 and the settings
-design's S5, plus R4's refusal of `hotfix` as a default (D834), and it is the last row of the table
-for that reason. A release that carries it is the one where `fugaro setup` asks the question, and R6's
+changes are the wizard's and the setup skill's; the tasks it needs are **R0**, **R1** and the settings
+design's **S5**, plus config-management's **G6** — the write path, and D834's refusal of `hotfix` as a
+default with the sentence it uses, which R4 designed and G6 inherited — and it is the last row of the
+table for that reason. (**R2** and **R3**, which this paragraph used to name, are closed as duplicates
+of the winners.) A release that carries it is the one where `fugaro setup` asks the question, and R6's
 `### For operators` says so in the same notes.
 
 ## Gates (every task)
@@ -256,8 +286,9 @@ installation that has never had one.
   `reconciliation.md` §4 gives its policy stage the same first-run behaviour, so the two stages
   answer the same question the same way). Refusing once to force a record would leave the first
   `update` after the release incomplete, which is the HARD RULE's own objection.
-- **The record is what keeps `unpublished` from being one word for two states.** The wording `show`
-  (R3) and doctor's `local-layer-file` check (R0) print must say which reading it is, because the
+- **The record is what keeps `unpublished` from being one word for two states.** The wording the
+  settings read (which took R3's place, 2026-11-10) and doctor's `local-layer-file` check (R0) print
+  must say which reading it is, because the
   recorded generation is the only thing that tells them apart: a **local edit** (the bytes differ and
   the recorded generation is still the published one — the owner's change, to publish) or a **stale
   copy from another machine** (the recorded generation is not the published one — the file was
@@ -265,7 +296,7 @@ installation that has never had one.
   different remedies, so one word for both would send the owner to the wrong one.
 - **Red step:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` fails while no stage writes a local
   layer file.
-- **Tests:** `TestStageOrderMatchesDependencies` (`internal/initflow/loop_test.go`: sixteen stages,
+- **Tests:** `TestStageOrderMatchesDependencies` (`internal/initflow/loop_test.go`: seventeen stages,
   with `Layer` between `Policy` and `Checkout` in the order it pins, and `Checkout`'s `needs`
   carrying `Layer` — the slot registration the loop reads),
   `TestUpdateSeedsTheLocalLayerFromThePublishedOne` (no local file, a published layer: the
@@ -297,6 +328,22 @@ installation that has never had one.
   file. No apply, no deploy, no cloud call.
 
 ## R2. `EditRigor`, the rigor ops on the shared editor (D830). **SEC**
+
+**CLOSED 2026-11-10: duplicate of [docs/config-management](../config-management/implementation-plan.md) G0–G2 with G4, which win by the owner's ruling.**
+
+**Considered and declined, and why.** The task was considered as the rigor half of the one-editor
+ruling (D847) and declined because the winner already carries it: config-management's **G0–G2**
+widen the generic writer's entry members and **G4** writes the project layer file's own entries —
+`profiles.*`, `defaults.*` (agent, git, **rigor**) and `ab.*` — through `internal/yamledit` and the
+same `applySettingsEdit`, so the two anchors this task named (`{"defaults", "rigor"}` for the layer
+file, `{"rigor"}` for a repository's `fugaro.yaml`) are both reached by the winner's generic path
+over the registry's own rows. A second, rigor-shaped splice vocabulary is precisely the second
+editor the shared ruling forbids, and the rigour it would buy — five ops with the glob as their
+subject — is the same capability the generic ops already give. **Nothing is lost**: the winner
+writes the same keys, and the section below stays as the record of the vocabulary and the two
+checks (structural validity against `config.ParseProjectLayer`, byte preservation), which
+config-management's **G6** re-reads as its own first step. **The number R2 is spent and is never
+reused.**
 
 The layer decides what every repository of the project runs, and a lossy rewrite is a change nobody
 reviewed. The write must keep comments, key order and every key it does not touch — and it must be
@@ -351,6 +398,27 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
 
 ## R3. `fugaro rigor show` (D835, D839)
 
+**CLOSED 2026-11-10: duplicate of [docs/settings-commands](../settings-commands/implementation-plan.md) S0–S2 and S4, which win by the owner's ruling.**
+
+**Considered and declined, and why.** `fugaro rigor show` was considered as the rigor family's read
+and declined because the settings design's read already is it: **S0–S2 and S4** print one row per
+(key, scope) over every layer, and the registry they print from is the one that carries the rigor
+keys — `rigor.default` and `rigor.areas` at repository scope, `defaults.rigor.default` and the
+per-entry `defaults.rigor.areas.*.name/.match/.mode` at layer scope, and `review_floor`, each owned
+by the `rigor` family — with the same
+`unpublished` state word, the same sha256 comparison against the published object and the same
+`unknown (no checkout on this machine)` sentence for a repository this machine has no checkout for
+(D839). What the winner resolves for the `rigor.default` row is `rigor.Resolve`'s answer, which is
+the one the settings spec states the read calls rather than ordering the layers itself, so the two
+commands could not disagree — which is exactly the duplication this ruling closes. **What the
+winner does not carry is listed, not dropped**: the four sections of spec §2 in `show`'s own shape
+(the resolved mode with its `from`, the area rules as rules rather than rows, the floors section
+that names `fugaro rigor floor`, and `--path` matching an area against a path the user names), the
+versioned `--json` document with its `layer` member (D835, `schemas/rigor-show.schema.json`), and
+the project-layer summary line **W** takes its wording from — all of it under *behaviour not
+covered by the winners* in the pull request that carries this ruling, for the owner to decide.
+**Nothing here was built**, and **the number R3 is spent and is never reused**.
+
 - **Files (6):** `internal/cli/rigor.go` (the command group, whose subcommand list is built so the
   **`floor` subgroup SD10 rules for** is added by one entry and not by a reshape — the group exists
   to hold more than `show`, `set` and `unset`), `internal/cli/rigor_show.go` (new),
@@ -362,7 +430,9 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
   first** creates it; the second adds its own subcommand to the group the first built (README, and
   the settings design states the same sentence). R3 therefore does **not** assume the file is there,
   and S7 must not either: the task's first commit either creates the group or adds to it, and says
-  which in the message.
+  which in the message. **(R3 is closed, so this is the record of what was designed: the group is
+  config-management's G6's and G7's — S7, which this sentence paired with R3, is closed as G7's
+  duplicate on 2026-11-10; see "Order, and what this plan does not own".)**
 - **The resolution is `rigor.Resolve` and nothing else.** `show` calls
   `rigor.Resolve` (`internal/rigor/resolve.go`) per repository and prints what it returns —
   `internal/rigor` is the one place the modes are ordered and the precedence settled (spec §2), and
@@ -400,6 +470,22 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
 
 ## R4. `fugaro rigor set` and `unset` — the project default and its areas (D832, D834, D837, D838). **SEC**
 
+**CLOSED 2026-11-10: duplicate of [docs/config-management](../config-management/implementation-plan.md) G6, which wins by the owner's ruling.**
+
+**Considered and declined, and why.** The command was considered as this family's writer and
+declined because config-management's **G6** *is* it: its interface names `docs/rigor-command/`'s own
+design — D830–D839 and D900 — and adopts its rules whole (the rank rule, D834's `hotfix` refusal,
+D838's duplicate-glob refusal), writing through `applySettingsEdit` with this design's `set` as its
+first step's reading material. Two tasks building one command is the duplication the owner's ruling
+ends; the winner's is the one with the gate row and the typed-name step (D1170, D1180) settled
+beside it. **What the winner's own title does not name is listed, not dropped**: `unset` (D837's
+remove-the-key, and D838's twin-glob half) and **R5**'s `--repo R` write into a repository's own
+`fugaro.yaml` both go under *behaviour not covered by the winners* in the pull request that carries
+this ruling — G6 is titled `fugaro rigor set` while its interface sentence adopts the whole design,
+so the owner is asked to confirm that "the command `docs/rigor-command/` designed" covers its other
+forms too. **Nothing here was built**, and **the
+number R4 is spent and is never reused**.
+
 It writes the key that decides how much review a whole project gets, and `unset` removes one.
 
 - **Files (3):** `internal/cli/rigor_set.go` (new: both `set` and `unset`, which share one write
@@ -430,6 +516,20 @@ It writes the key that decides how much review a whole project gets, and `unset`
   `TestRigorSetPrintsOnlyFugaroUpdateNext`, `TestRigorSetWritesNothingInTheCloud`.
 
 ## R5. `fugaro rigor set --repo R` (D833)
+
+**CLOSED 2026-11-10: duplicate of [docs/config-management](../config-management/implementation-plan.md) G6, which wins by the owner's ruling.**
+
+**Considered and declined, and why.** This is R4's command pointed at a repository's own file, so it
+falls with it: the winner's **G6** adopts this design whole (D830–D839, D900), and a repository's
+`rigor.default` and `rigor.areas` are rows the winner's registry already carries and its generic
+writer already reaches — the `{"rigor"}` anchor this task named is one of the two the winner's write
+path serves. **What is not covered is listed, not dropped**: G6's interface sentence names *the
+command `docs/rigor-command/` designed*, and its own title names only `set`, so **the `--repo R` form
+— a write into the user's working tree, which the user reviews and commits, with the lowering
+confirmation and the agent-session refusal of spec §4 — is under *behaviour not covered by the
+winners* in the pull request that carries this ruling** for the owner to confirm as inside G6 or as
+work that still needs a task. **Nothing here was built**, and **the number R5 is spent and is never
+reused**.
 
 It edits a repository's own file in its working tree, which the user reviews and commits; it writes
 no layer and nothing in the cloud.
@@ -468,7 +568,8 @@ no layer and nothing in the cloud.
   command ships — nothing here may document a command that does not exist),
   `docs/rigor-command/README.md` (the status line — **approved, tasks queue for CLI 0.15.0 (and
   console 0.117.0)** as it reads now, which this task moves to *shipped* in the release that lands
-  R0–R5, so the folder never claims a version that is not out — and the "joint order and shared
+  R0, R1 and the winners' rigor commands, so the folder never claims a version that is not out — and
+  the "joint order and shared
   rulings" section, whose **order and rulings are shared with the settings design**: each folder
   states them in its own words and points at the other, so this task changes the order or a ruling
   here and in the settings design's own statement of it in the same release, and leaves the wording
@@ -480,10 +581,14 @@ no layer and nothing in the cloud.
   `fugaro setup` asks the project's rigor mode once and `fugaro update` never asks it),
   `website/data/release-summaries.yaml`, the
   generated `website/content/cli-reference.md` (regenerated, not hand-edited).
-- **Red step:** the plugin's command test fails while the skill names `fugaro rigor set` before R4 is
-  merged; it turns green on R4's branch.
+- **Red step:** the plugin's command test fails while the skill names `fugaro rigor set` before
+  config-management's **G6** is merged; it turns green on G6's branch.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs`, the plugin tests, `npm run check` in
   `website/`.
+- **Depends on:** R1 (the stage whose release notes and `docs/project-layer.md` sentences it writes)
+  and the winners' commands it documents — config-management's **G6** and **G7** — because nothing
+  here may document a command that does not exist. Not on R7, R8 or
+  W; the W sentence above is added by the release that carries W, and only then.
 
 ## R7. The hotfix gate D12 names, which does not exist (F13). **SEC**
 
@@ -527,9 +632,20 @@ neither is it, and no code reads one.
   `internal/config/scope.go`, the read in the resolution path, one refusal sentence that names
   `fugaro run --mode hotfix`'s own door, and tests that a first run without the opt-in is refused and
   that a hand-written `rigor.default: hotfix` with no opt-in is refused too.
-- **Owner of the answer:** the owner (D12 is theirs). **Not a blocker** of R0–R6.
+- **Owner of the answer:** the owner (D12 is theirs). **Not a blocker** of R0, R1 or R6.
 
 ## R8. Two area rules with one glob are refused where the layer is validated (F14)
+
+**MERGED 2026-10-31, and it stays as it is.** The behaviour this task designed is on `main`:
+`validateRigor` (`internal/config/validate.go`) refuses a repeated glob — "repeats the glob %q of
+areas[%d]" — and it landed with **#1478** (`config, cli: duplicate area globs refused, remedies name
+a project, and four pins`), reached from `Parse` and from `ParseProjectLayer` alike, so the "one
+function, two prefixes" property the task asked for holds. The commit's own test is
+`TestValidateRefusesDuplicateAreaGlob` (`internal/config/validate_test.go`), which names the glob and
+the rule that repeats it and keeps the two-layers case allowed; the three test names this section
+lists were never written under those names, and no work is queued here. **The task keeps its number
+and its section, because a merged task is not a duplicate**: it was never one of the tasks the
+2026-11-10 ruling closes.
 
 The other follow-up. Two area rules with the same `match` in one layer are accepted today, and
 `rigor.Strictest` (`internal/rigor/mode.go`) then applies the stricter of the two: the weaker rule's
@@ -553,7 +669,7 @@ intent is discarded with **nothing said**, and the layer still parses.
   the governance bounds already have — so `fugaro validate` on a `fugaro.yaml` and the published
   object's own validation refuse the same document, and `config publish` cannot accept what a run
   rejects).
-- **Hermetic:** `t.TempDir()`, the existing layer fixtures. **Not a blocker** of R0–R6.
+- **Hermetic:** `t.TempDir()`, the existing layer fixtures. **Merged, so it blocks nothing.**
 - **Why a refusal and not a warning:** a layer is not a log. The two rules disagree about one path
   and the run reads one of them; saying nothing is what makes a hand-written layer lie, and a warning
   nobody reads is the same silence with more output.
@@ -566,6 +682,14 @@ project's runs get and a wizard that never names it leaves every project on the 
 (`rigor.Default`, `internal/rigor/mode.go`) with nothing said — the "important and easy to miss" state
 the ruling of 2026-10-31 ends. Its letter is the wizard's and not this family's, because the files it
 changes are the wizard's and the setup skill's.
+
+**Where the closed tasks are named below, read them as the record the winners inherited** — the
+sentences keep the names they were written with, because config-management's **G6** re-reads this
+design as its own first step: **R2**'s `EditRigor` is that plan's generic write path over
+`internal/yamledit` (**G0–G2** with **G4**), **R3**'s summary line is the rigor wording of **G6** and
+of the settings design's **S7**, whose winner for the floor is config-management's **G7** (S7 is
+closed as its duplicate, as above), and **R4**'s refusal of `hotfix` (D834) and its
+`TestRigorSetCreatesTheFileWhenNoLayerIsPublished` are **G6**'s.
 
 - **The question is a row of `setupQuestions`, and that is what makes it required.** The wizard's
   questions are one table (`internal/cli/setup.go`'s `setupQuestions`, the "table the phase's own
@@ -707,9 +831,11 @@ changes are the wizard's and the setup skill's.
   `internal/gcpfake` for the runs bucket, `internal/testutil`, `git init` for a fake checkout. No
   apply, no deploy, no cloud call.
 - **Depends on:** **R0** (the layer file's path), **R1** (the stage that publishes it — without it the
-  answer is the second command the HARD RULE forbids), **R2** (`EditRigor`), **R3** (the summary line's
-  wording), the settings design's **S5** (the shared write helper) and **R4** (the sentence the refusal
-  of `hotfix` uses, D834). Not on R5, R6, R7 or R8; R7's missing gate is untouched by it.
+  answer is the second command the HARD RULE forbids), the settings design's **S5** (the shared write
+  helper) and config-management's **G6** (the rigor write path, the summary line's wording, and the
+  sentence the refusal of `hotfix` uses, D834 — R2, R3 and R4 designed those three and the owner
+  closed them as duplicates of G0–G4 and G6 on 2026-11-10). Not on R6, R7 or R8; R7's missing gate is
+  untouched by it.
 
 ## Live checks
 

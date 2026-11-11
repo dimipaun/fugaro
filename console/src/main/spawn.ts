@@ -1161,9 +1161,9 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     //
     // **This is the second row whose child mints a credential of the host's**:
     // `run.launch` is the first, and its child is a run whose token can write.
-    // This one's is the coordinator's own read-only GitHub App installation
-    // token -- so what the table lets this argv carry is the whole security
-    // question, and the answer
+    // This one's is the person read set's own read-only GitHub App installation
+    // token (contents, pull requests and metadata, all read) -- so what the
+    // table lets this argv carry is the whole security question, and the answer
     // is the two arguments and nothing else: no `--token`, no `--host`, no
     // `--url`, no `--dir` and no positional word. `--json` is the only flag the
     // row fixes, and every other word it could emit is refused by

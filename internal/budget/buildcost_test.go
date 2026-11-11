@@ -488,3 +488,24 @@ func TestBillingTiersPriceTheDearestBand(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildPriceMatchesTheRowWhateverItsCase pins the live catalog's own
+// spelling: us-east5 describes its E2 row "E2 cpu utilization per minute in
+// us-east5" where the other regions read "E2 CPU", so an exact-case match
+// refused every build in that region. The match stays exact in every other
+// respect: a private-pool row, another region or another family is still no
+// match.
+func TestBuildPriceMatchesTheRowWhateverItsCase(t *testing.T) {
+	book := PriceBook{ServiceID: BuildBillingServiceID, SKUs: []BuildSKU{
+		fixtureSKU("SKU-E2-CPU-USE5", "E2 cpu utilization per minute in us-east5", "min", "USD", fixtureCPUMicros, "us-east5"),
+		fixtureSKU("SKU-E2-RAM-USE5", "E2 ram utilization per minute in us-east5", "min", "USD", fixtureRAMMicros, "us-east5"),
+		fixtureSKU("SKU-E2-POOL-USE5", "E2 cpu utilization per minute in us-east5 (Private Pool)", "min", "USD", Micros(9_999), "us-east5"),
+	}}
+	rate, err := BuildCost(book, "E2_HIGHCPU_8", "us-east5")
+	if err != nil {
+		t.Fatalf("a lower-case cpu row refused: %v", err)
+	}
+	if want := 8*fixtureCPUMicros + 8*fixtureRAMMicros; rate.MicrosPerMinute != want {
+		t.Errorf("rate = %v, want %v", rate.MicrosPerMinute, want)
+	}
+}
