@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -592,6 +593,52 @@ func TestAnUnknownScopeIsRefusedNotDropped(t *testing.T) {
 		if !strings.HasPrefix(key, clientPrefix) && !strings.HasPrefix(key, requestPrefix) {
 			t.Errorf("a refused scope left %s behind: the refusals happen before the request, the code or any token is written", key)
 		}
+	}
+}
+
+// TestAnAuthorizationWithNoScopeGetsOnlyTheTaskScopes is R1, the resolution the
+// 2026-11-10 pass of the stateless orchestrator's plan states rather than asks
+// (finding F26): an authorization that names no scope is given the task pair
+// and never a state scope.
+//
+// The gap it closes is the one the state scopes open: `requestedScopes`
+// answers the vocabulary when a request carries no scope, so a vocabulary that
+// grew would hand every default sign-in `state:write` — the silent widening
+// D1227's own reason refuses one step earlier ("a tasks:write token must not
+// silently become a state editor"). A state scope is therefore held only when
+// it is asked for by name.
+//
+// The control is an installation that grants every scope this build mints, so
+// the narrowing at the exchange cannot be what keeps the state names out: with
+// both sides wide, the default is the only thing left that decides.
+func TestAnAuthorizationWithNoScopeGetsOnlyTheTaskScopes(t *testing.T) {
+	got, err := requestedScopes("")
+	if err != nil {
+		t.Fatalf("requestedScopes(\"\") = %v; want the default: an authorization that names no scope is a request this server answers", err)
+	}
+	if !slices.Equal(got, DefaultScopes) {
+		t.Errorf("requestedScopes(\"\") = %v; want %v: the default is DefaultScopes and not the whole vocabulary", got, DefaultScopes)
+	}
+	for _, s := range []string{ScopeStateRead, ScopeStateWrite} {
+		if slices.Contains(got, s) {
+			t.Errorf("an authorization naming no scope is given %q: a state scope is held only when it is asked for by name (R1)", s)
+		}
+	}
+
+	cfg := testConfig()
+	cfg.Limits = Limits{Scopes: slices.Clone(ScopeVocabulary)}
+	ts := newTestServerWith(t, cfg)
+	_, tokens := ts.runFlow(t, testClientRedirect)
+	want := strings.Join(DefaultScopes, " ")
+	if tokens.Scope != want {
+		t.Errorf("a default sign-in's token came back with scope %q; want %q", tokens.Scope, want)
+	}
+	record, err := ts.store.LookupByHash(context.Background(), TokenHash(tokens.AccessToken))
+	if err != nil {
+		t.Fatalf("reading the access token's record: %v", err)
+	}
+	if got := strings.Join(record.Token.Limits.Scopes, " "); got != want {
+		t.Errorf("the record of a default sign-in's token carries the scopes %q; want %q: the record is what the resource server enforces on every call, and a record holding a state scope would let a sign-in that asked for none edit the orchestrator's state", got, want)
 	}
 }
 
