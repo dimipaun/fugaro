@@ -231,13 +231,22 @@ func TestDoctorNamesTheFixLine(t *testing.T) {
 	}
 }
 
-// TestDoctorRefusesCloudBatch: `backend: cloud-batch` is a name this build
-// knows but must not run on yet -- the seam and the fake exist, the tasks
-// that make a Batch run safe (the log sink, the cost of a VM, the reaper)
-// come after the owner's Check 57a measurement (design compute-backend.md
-// §8.1 Task 2, §9). doctor must say so rather than reporting the project
-// healthy and leaving the refusal to a launch.
-func TestDoctorRefusesCloudBatch(t *testing.T) {
+// TestDoctorGatesTheBatchName: `backend: cloud-batch` is a name this build
+// accepts, and an installation that selects it without the provisioning behind
+// it is what `fugaro doctor` refuses -- the enable task
+// (plan 2026-10-19-compute-backend.md Task 10) lifted
+// internal/localcfg's refusal and is what turned those Batch checks into the
+// gate, in one commit, because a Batch run without log routing or a reaper is
+// what the refusal was holding back (design compute-backend.md §4.4, §8.1
+// task 9).
+//
+// This test is the inverted form of the one it replaced: the same config, and
+// where doctor used to fail the config READ ("not enabled yet") it now reads
+// it and fails the INSTALLATION by name. That the name is accepted is what
+// the project being reported at all says -- a config localcfg refused leaves
+// doctor with no installation to check -- and the refusal that follows is the
+// gate's own, at the check the missing provisioning is read from.
+func TestDoctorGatesTheBatchName(t *testing.T) {
 	r := newDoctorRig(t)
 	if err := os.WriteFile(r.cfgPath, []byte(r.cfg+"backend: cloud-batch\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -250,11 +259,24 @@ func TestDoctorRefusesCloudBatch(t *testing.T) {
 	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
 		t.Fatalf("json: %v\n%s", jerr, out)
 	}
-	// doctor cannot check a project whose config it cannot read, so the
-	// refusal is the run's error, and it names the backend that was refused
-	// and the one this build runs.
-	if !strings.Contains(o.Error, "cloud-batch") || !strings.Contains(o.Error, "cloud-run") {
-		t.Fatalf("error = %q, want it to name both backends", o.Error)
+	if strings.Contains(o.Error, "not enabled yet") {
+		t.Fatalf("error = %q: the enable task is what lifted that refusal", o.Error)
+	}
+	if o.Project.Name != "aurora" || o.Project.GCPProject != "proj-1234" {
+		t.Fatalf("project = %+v, want the config read and its project reported", o.Project)
+	}
+	c, ok := doctorCheckByID(o.Checks, "batch-block")
+	if !ok {
+		t.Fatalf("doctor reports no batch-block check for a config that selects the backend and carries none of its facts: %+v", failingChecks(o))
+	}
+	// The config SELECTS the backend, so the finding carries no severity at
+	// all: that, and not a warning, is what refuses the installation
+	// (batchSeverity).
+	if c.OK || c.Severity != "" {
+		t.Errorf("batch-block = %+v, want doctor's own hard failure", c)
+	}
+	if !strings.Contains(c.Problem, "cloud-batch") || !strings.Contains(c.Fix, "--provision-batch") {
+		t.Errorf("batch-block = %+v, want the refusal to name the backend and the one command that provisions it", c)
 	}
 }
 

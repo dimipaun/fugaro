@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	iam "google.golang.org/api/iam/v1"
 	logging "google.golang.org/api/logging/v2"
 	run "google.golang.org/api/run/v2"
+	secretmanager "google.golang.org/api/secretmanager/v1"
 	serviceusage "google.golang.org/api/serviceusage/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -100,9 +102,22 @@ import (
 // cloud-run installation would refuse work that is fine today.
 
 // doctorBatchChecks are the checks above, in the order doctor prints them.
+//
+// An installation that carries no batch block gets none of them, with one
+// exception: the one whose config SELECTS the backend. There the missing block
+// is itself the finding -- every check below reads the block for the machine
+// type, the network, the image and the account a run's VMs are built from, and
+// an installation that selected the name without them is exactly the state the
+// gate exists to refuse -- so the block's absence is answered by name rather
+// than read as "not provisioned for Batch, nothing to say".
 func doctorBatchChecks(ctx context.Context, lc *localcfg.Config, c *crm.Service) []doctorCheck {
 	if lc.Batch == nil {
-		return nil
+		if lc.Backend() != backend.CloudBatch {
+			return nil
+		}
+		return []doctorCheck{batchProblem(lc, "batch-block",
+			"this installation selects backend: cloud-batch and its local config carries no batch block, so nothing on this path knows the machine type, the boot image, the network or the account a run's VMs would be built from (design compute-backend.md §4.4, §8.1 task 9). The block is what the installation's own apply writes, so a config that selects the backend without one is an installation that was never provisioned for it -- and a launch on it has no job definition to submit",
+			"provision the backend (fugaro setup --provision-batch in "+lc.GCPProject+"), which writes the block and applies the compute root, then rerun fugaro doctor")}
 	}
 	var out []doctorCheck
 	out = append(out, doctorBatchAPIs(ctx, lc)...)
@@ -112,6 +127,7 @@ func doctorBatchChecks(ctx context.Context, lc *localcfg.Config, c *crm.Service)
 	out = append(out, doctorBatchNetwork(ctx, lc)...)
 	out = append(out, doctorBatchLogSink(ctx, lc)...)
 	out = append(out, doctorBatchJobImage(ctx, lc))
+	out = append(out, doctorBatchSecrets(ctx, lc))
 	out = append(out, doctorBatchRunAccounts(ctx, lc, c)...)
 	out = append(out, doctorBatchLauncherIAM(ctx, lc, c)...)
 	out = append(out, doctorBatchReaper(ctx, lc)...)
@@ -936,6 +952,68 @@ func doctorBatchJobImage(ctx context.Context, lc *localcfg.Config) doctorCheck {
 	return batchProblem(lc, id,
 		fmt.Sprintf("the batch block's image %s is served from %s, whose mode is %s: a repository that is not a STANDARD_REPOSITORY serves content this project's own builds did not push -- a REMOTE_REPOSITORY is a pull-through cache of another registry, and a VIRTUAL_REPOSITORY resolves through a priority list that may name one -- so the job's VMs would run whatever its upstream's owner published, as this installation's own run account, with that account's grants on the project (design compute-backend.md §3.2, §4.4)", lc.Batch.Image, repo, oneLineCLI(r.Mode)),
 		"push the installation's image into a STANDARD_REPOSITORY of this project and point batch.image at it (the repository the installation's pin names is the one fugaro update builds into); a pull-through repository is for pulling other people's images, never for the image a run executes")
+}
+
+// doctorBatchSecrets reads the Secret Manager secrets the batch block names
+// (Task 10 step 5, fourth entry): the block's `secrets:` entries become the
+// job's secretVariables, so a run's VM mounts them and the run reads their
+// values. The block is published to the runs bucket, and `internal/cli`'s
+// ParseShared holds each of them to the anchor's project and to nothing more --
+// it has a name, a GCP project and a bucket, and no way to ask which of that
+// project's secrets this installation created. A writer with objectAdmin on the
+// bucket could therefore name another secret of the same project, and the
+// installation's own launcher would read it and hand its value to a run's
+// agents: step 4's neighbour, with a secret instead of an account.
+//
+// The rule is the ownership LABEL, which is the project's own answer to "did
+// this installation create it" and the same kind of answer infra.JobRunAccounts
+// takes from the display name: every Fugaro-created secret carries
+// fugaro=managed (gcp.LabelManaged), and internal/infra's discovery reads its
+// own the same way (liveProjectSecrets). A secret of the project that does not
+// carry it is not one the installation created, whatever its name.
+//
+// What this does NOT read is whether the run account can read the secret: that
+// is the accessor grant `fugaro update` writes for the installation's own
+// secrets, and a block naming a secret it may not read is a run that fails at
+// pull, not an escalation.
+func doctorBatchSecrets(ctx context.Context, lc *localcfg.Config) doctorCheck {
+	const id = "batch-secrets"
+	if len(lc.Batch.Secrets) == 0 {
+		return doctorCheck{ID: id, OK: true}
+	}
+	if lc.Endpoints.NoAuth && lc.Endpoints.SecretManager == "" {
+		return batchSkipped(id, "the secrets the batch block names", "secret_manager")
+	}
+	svc, err := secretmanager.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.SecretManager)...)
+	if err != nil {
+		return batchUnchecked(id, "the installation's secrets in "+lc.GCPProject, batchReadFix, err, lc)
+	}
+	ours := map[string]bool{}
+	it := svc.Projects.Secrets.List("projects/"+lc.GCPProject).
+		Filter("labels."+gcp.LabelManaged+"="+gcp.ManagedValue).Pages(ctx, func(p *secretmanager.ListSecretsResponse) error {
+		for _, s := range p.Secrets {
+			ours[pathTail(s.Name)] = true
+		}
+		return nil
+	})
+	switch {
+	case isAccessDenied(it):
+		return batchRefused(id, "the secrets of "+lc.GCPProject, "an operator runs fugaro doctor, which can list the project's secrets", lc)
+	case it != nil:
+		return batchUnchecked(id, "the installation's secrets in "+lc.GCPProject, batchReadFix, it, lc)
+	}
+	var foreign []string
+	for _, env := range slices.Sorted(maps.Keys(lc.Batch.Secrets)) {
+		if name := pathTail(lc.Batch.Secrets[env]); !ours[name] {
+			foreign = append(foreign, env+" ("+lc.Batch.Secrets[env]+")")
+		}
+	}
+	if len(foreign) > 0 {
+		return batchProblem(lc, id,
+			fmt.Sprintf("the batch block names secrets that Fugaro did not create in %s: %s. The block is published to the runs bucket, so a writer with objectAdmin there could otherwise point a run at any secret of the project -- one a teammate owns, one the installation's own deployer holds -- and the launcher would read it and hand its value to the run's agents. A secret this installation created carries the %s=%s label, which is what this check reads (design compute-backend.md §3.2, §4.4)", lc.GCPProject, strings.Join(foreign, ", "), gcp.LabelManaged, gcp.ManagedValue),
+			"remove those entries from batch.secrets, or have the installation create the secret (fugaro update in "+lc.GCPProject+" writes the project's own), then rerun fugaro doctor")
+	}
+	return doctorCheck{ID: id, OK: true}
 }
 
 // dockerPkgRepo parses a Docker image reference served by Artifact Registry

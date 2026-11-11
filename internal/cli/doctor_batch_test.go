@@ -841,12 +841,22 @@ type batchGateCondition struct {
 	// the four conditions that are a VALUE of the block rather than a
 	// resource in the project.
 	block string
+	// absentOnly marks the one condition that is the block's own absence:
+	// `backend: cloud-batch` selected by a config that was never provisioned
+	// for it. Its check exists in the absent world alone -- the whole world
+	// runs the checks below the block instead, and an installation that runs
+	// on cloud-run and carries no block says nothing about Batch at all --
+	// so the two assertions that assume a check in every world are inverted
+	// for it. Leaving it out of the table instead would read as "not a gate
+	// condition", which is the opposite of what it is.
+	absentOnly bool
 }
 
 // batchGateConditions is the whole product of the gate's conditions. A check
 // added to doctorBatchChecks without a case here is a condition nothing proves
 // doctor refuses for -- which is what the plan's property test is for.
 var batchGateConditions = []batchGateCondition{
+	{name: "the batch block itself", id: "batch-block", want: "carries no batch block", absentOnly: true},
 	{name: "the Compute and Batch APIs enabled", id: "batch-apis", want: batchServiceBatch,
 		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) { f.usage.Disable(batchServiceBatch) }},
 	{name: "a job definition the backend accepts", id: "batch-job-definition", want: "network and a subnetwork",
@@ -884,6 +894,8 @@ var batchGateConditions = []batchGateCondition{
 		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
 			f.ar.SetRepositoryMode("proj-1234", batchRegion, batchJobRepo, "REMOTE_REPOSITORY")
 		}},
+	{name: "a secret the installation did not create", id: "batch-secrets", want: "Fugaro did not create",
+		block: batchSecretBlock},
 	{name: "the block naming one of the installation's run accounts", id: "batch-run-accounts", want: "confused deputy",
 		block: strings.Replace(batchBlock, "service_account: "+batchRunAccount, "service_account: "+batchReaperAccount, 1)},
 	{name: "the installation's run accounts", id: "batch-run-accounts", want: "no Fugaro run account at all",
@@ -971,7 +983,9 @@ func TestDoctorBatchGateRefusesAnInstallationThatSelectsTheName(t *testing.T) {
 		r, f := newDoctorRig(t), newBatchFakes(t)
 		block := batchBlock
 		if absent {
-			if tc.block != "" {
+			if tc.absentOnly {
+				block = ""
+			} else if tc.block != "" {
 				block = tc.block
 			}
 			batchProvisionedWithout(t, r, f, tc.without...)
@@ -997,7 +1011,11 @@ func TestDoctorBatchGateRefusesAnInstallationThatSelectsTheName(t *testing.T) {
 			if !whole.OK {
 				t.Errorf("a fully provisioned installation that selects the backend is refused: %+v", failingChecks(whole))
 			}
-			if c, ok := doctorCheckByID(whole.Checks, tc.id); !ok || !c.OK {
+			if c, ok := doctorCheckByID(whole.Checks, tc.id); tc.absentOnly {
+				if ok {
+					t.Errorf("a provisioned installation reports %s: it is the absent world's finding alone (%+v)", tc.id, c)
+				}
+			} else if !ok || !c.OK {
 				t.Fatalf("the provisioned check %s = %+v (%v), want ok: this case's condition is not one doctor checks", tc.id, c, ok)
 			}
 
@@ -1023,6 +1041,20 @@ func TestDoctorBatchGateRefusesAnInstallationThatSelectsTheName(t *testing.T) {
 			// The same absent world on Cloud Run: a warning, and no refusal.
 			_, cloudRun := world(t, tc, true, false)
 			cr, ok := doctorCheckByID(cloudRun.Checks, tc.id)
+			if tc.absentOnly {
+				// Nothing selects the backend and nothing published a block:
+				// there is no Batch fact to read, so the finding does not
+				// exist and doctor names Batch nowhere. The block is what an
+				// installation's apply writes, so this is the state of every
+				// installation that never asked for the backend.
+				if ok {
+					t.Errorf("an installation that runs on cloud-run and carries no batch block reports %s: %+v", tc.id, cr)
+				}
+				if !cloudRun.OK {
+					t.Errorf("an installation with no batch block and no batch backend is refused: %+v", failingChecks(cloudRun))
+				}
+				return
+			}
 			if !ok {
 				t.Fatalf("doctor reports no %s check for an installation that runs on cloud-run", tc.id)
 			}
@@ -1110,6 +1142,79 @@ func TestDoctorBatchRefusesAnImageFromAPullThroughRepository(t *testing.T) {
 				t.Errorf("the finding has severity %q: an installation that selects the backend is refused for it", c.Severity)
 			}
 			for _, want := range []string{image, pullThrough, "STANDARD_REPOSITORY", "design compute-backend.md §3.2, §4.4"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("the finding does not name %q: %s", want, c.Problem)
+				}
+			}
+		})
+	}
+}
+
+// batchSecretBlock is batchBlock with the one `secrets:` entry an installation
+// publishes: an environment variable name and a Secret Manager secret's own
+// resource name, never a value (localcfg's Batch.Secrets).
+var batchSecretBlock = batchBlock + "  secrets: { OPENROUTER_API_KEY: projects/proj-1234/secrets/" + batchSecretID + " }\n"
+
+// batchSecretID is the secret the block above names, and the one the fake is
+// seeded with: a project secret this installation created (the labels
+// internal/infra's own discovery lists them by).
+const batchSecretID = "fugaro-openrouter-key"
+
+// TestDoctorBatchRefusesASecretTheInstallationDidNotCreate is step 5's fourth
+// entry as its own case (plan 2026-10-19-compute-backend.md Task 10): the
+// batch block's `secrets:` entries become the job's secretVariables, the block
+// is published to the runs bucket, and the only thing the reader
+// (internal/cli's ParseShared) can hold them to is that they are secrets of the
+// anchor's project -- it has a name, a GCP project and a bucket, and no way to
+// ask which of that project's secrets this installation created. A writer with
+// objectAdmin on the bucket can therefore name any secret the project holds,
+// and this installation's own launcher would read it and hand its value to a
+// run's agents: step 4's shape, with a secret instead of an account.
+//
+// The shape this task took is the ownership label, which is the same kind of
+// answer step 4 takes from the account's display name: every Fugaro-created
+// secret carries fugaro=managed (gcp.LabelManaged), which is what
+// internal/infra's own discovery lists its secrets by, and a secret of the
+// project without it is not one this installation created whatever its name.
+// The gate refuses an installation that selects the backend for such an entry.
+//
+// Mutation (drop the check; or compare names instead of reading the label): the
+// foreign case stops failing, and the case below of the installation's own
+// secret -- which no name rule could tell from it -- starts failing.
+func TestDoctorBatchRefusesASecretTheInstallationDidNotCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		labels  map[string]string
+		want    bool
+		comment string
+	}{
+		{"a secret this installation created", map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: "aurora"}, true,
+			"the labels internal/infra's discovery lists an installation's project secrets by"},
+		{"a secret of the project Fugaro did not create", map[string]string{"owner": "teammate"}, false,
+			"a secret another team's deployment wrote: the block is published, so naming it is what the gate refuses"},
+		{"a secret of the project with no labels at all", nil, false,
+			"a stranger's secret never carries the ownership label"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			batchProvisioned(t, r, f)
+			r.sm.Seed(batchSecretID, tc.labels, []byte("not-a-real-value"))
+			r.withBatchSelected(t, f, batchSecretBlock, batchLists)
+
+			c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-secrets")
+			if !ok {
+				t.Fatal("doctor reports no batch-secrets check")
+			}
+			if c.OK != tc.want {
+				t.Fatalf("the block's secret with labels %v: %+v, want ok=%v (%s)", tc.labels, c, tc.want, tc.comment)
+			}
+			if tc.want {
+				return
+			}
+			if c.Severity != "" {
+				t.Errorf("the finding has severity %q: an installation that selects the backend is refused for it", c.Severity)
+			}
+			for _, want := range []string{batchSecretID, "OPENROUTER_API_KEY", gcp.LabelManaged + "=" + gcp.ManagedValue, "did not create"} {
 				if !strings.Contains(c.Problem, want) {
 					t.Errorf("the finding does not name %q: %s", want, c.Problem)
 				}
