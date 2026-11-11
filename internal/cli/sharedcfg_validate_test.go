@@ -623,10 +623,16 @@ func TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen(t *testing.T) {
 // inside it. The reader cannot close this: it has a name, a GCP project and a
 // bucket, and no repository list to tell the project's remote repositories from
 // the ones this installation's builds push to.
-// plan 2026-10-19-compute-backend.md Task 10 step 5 owns closing it, and this
-// test is what fails on the day it is closed: an image refused here means the
-// reader changed, and §5's sentence, the plan's step and this test move
-// together with it.
+// plan 2026-10-19-compute-backend.md Task 10 step 5 is where it is closed, and
+// the shape that task took leaves this reader alone: the closure is `fugaro
+// doctor`'s, which refuses an installation whose job image is served from a
+// repository that is not a STANDARD_REPOSITORY, so the project's remote
+// repositories are refused as a class and the reader keeps the one check it can
+// make from a name, a project and a bucket
+// (TestDoctorBatchRefusesAnImageFromAPullThroughRepository). A reader that
+// refused it too would be the other shape the plan allows, and this test is
+// what fails then: an image refused here means the reader changed, and §5's
+// sentence, the plan's step and this test move together with it.
 func TestParseSharedLeavesAnotherPullThroughRepository(t *testing.T) {
 	const ref = "us-east5-docker.pkg.dev/fugaro-belong/docker-hub/attacker/evil:1"
 	published := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", ref, 1)

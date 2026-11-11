@@ -1049,6 +1049,75 @@ func failingChecks(o doctorOutput) []doctorCheck {
 	return out
 }
 
+// TestDoctorBatchRefusesAnImageFromAPullThroughRepository is step 5's fifth
+// entry as its own case (plan 2026-10-19-compute-backend.md Task 10): a
+// published `batch.image` in a pull-through repository of the project OTHER
+// than `fugaro-ghcr` -- the one `internal/cli`'s ParseShared refuses by name
+// and by that name alone, because the reader has no repository list to tell the
+// project's remote repositories from the ones this installation's builds push
+// to (docs/design/shared-config.md §5, TestParseSharedLeavesAnotherPullThroughRepository).
+//
+// The shape this task took is the second of the two the plan's vocabulary
+// allows: the project's remote repositories are refused AS A CLASS, and the
+// gate is where it is read. The gate reads the repository's MODE through this
+// project's own Artifact Registry -- a name-based check (`fugaro-ghcr`, or any
+// other ID) passes every repository an operator adds under another ID, and also
+// passes a standard repository that later becomes a pull-through one -- and a
+// repository that is not a STANDARD_REPOSITORY is a finding, which refuses an
+// installation that selects the backend. The image is the code a run's VMs
+// execute as the run account, so this is the confusion the entry names: the
+// upstream's owner publishes under the name the cache serves, and the VMs run
+// it with that account's grants on the project.
+//
+// Mutation (replace the mode rule with a `fugaro-ghcr` name check): the
+// pull-through case below stops failing, and the standard-repository case in
+// TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen's own list still
+// passes -- which is exactly the pair that distinguishes the shape.
+func TestDoctorBatchRefusesAnImageFromAPullThroughRepository(t *testing.T) {
+	const (
+		pullThrough = "docker-hub"
+		image       = "us-east5-docker.pkg.dev/proj-1234/" + pullThrough + "/attacker/evil:1"
+	)
+	for _, tc := range []struct {
+		mode string
+		want bool
+	}{
+		{"REMOTE_REPOSITORY", false},
+		{"VIRTUAL_REPOSITORY", false},
+		{"STANDARD_REPOSITORY", true},
+		// A repository that never set the field: the API documents that as the
+		// standard mode, which is what the installation's own repository does.
+		{"", true},
+	} {
+		t.Run("mode "+oneLineCLI(tc.mode), func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			f.ar.AddRepository("proj-1234", batchRegion, pullThrough, nil)
+			f.ar.SetRepositoryMode("proj-1234", batchRegion, pullThrough, tc.mode)
+			batchProvisioned(t, r, f)
+			r.withBatchSelected(t, f, strings.Replace(batchBlock, "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro:1", image, 1), batchLists)
+
+			c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-job-image")
+			if !ok {
+				t.Fatal("doctor reports no batch-job-image check")
+			}
+			if c.OK != tc.want {
+				t.Fatalf("the job image's repository with mode %q: %+v, want ok=%v", tc.mode, c, tc.want)
+			}
+			if tc.want {
+				return
+			}
+			if c.Severity != "" {
+				t.Errorf("the finding has severity %q: an installation that selects the backend is refused for it", c.Severity)
+			}
+			for _, want := range []string{image, pullThrough, "STANDARD_REPOSITORY", "design compute-backend.md §3.2, §4.4"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("the finding does not name %q: %s", want, c.Problem)
+				}
+			}
+		})
+	}
+}
+
 // TestDoctorBatchNamesTheArtifactBoundary: Global Constraint 13 asks doctor to
 // name the boundary an artifact-producing run meets on this backend, and this
 // is the check that does it. Informational, never a warning: it describes the
