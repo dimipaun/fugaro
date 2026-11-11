@@ -161,6 +161,7 @@ var exemptListings = map[string]exemptListing{
 	"project show":         {"a listing: the effective project: caps, policy, allow-list and runs in flight", true},
 	"recipes ls":           {"a listing: the recipes of this checkout, the project and the catalog, and the winner", true},
 	"recipes show":         {"a listing: the recipe a run would get for a name, and the layer it comes from", true},
+	"troubleshoot":         {"a listing: the diagnosis of a failed command on this machine, as text or a document under --json", true},
 	"recipes validate":     {"a listing: the verdict for a recipe file, as a table or a document", true},
 	"review show":          {"a listing: a review run's verdict artifact and its markdown", true},
 	"runs ls":              {"a listing: the runs with their status, stage, cost and PR, table or document", true},
