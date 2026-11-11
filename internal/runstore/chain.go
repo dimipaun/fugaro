@@ -103,18 +103,11 @@ type LedgerReader interface {
 
 // PerRunCaps is, per dimension, the largest amount one run of this chain
 // could have been holding, and so what a ledger that cannot be read is
-// charged (D1049). The caller passes the bounds it resolved: the effective
-// per-run cap where the installation sets one — the lower of the policy's
-// and the database's — and otherwise **the chain's own limit for that
-// dimension**, which is then the tightest bound in play. Neither is the
-// chain's limit where a per-run cap exists: that one is the root launch's
-// number and lives in its stored task (D1046).
-//
-// That fallback is one no caller can always pass: the chain's limit is that
-// stored number and the read is what names the root run holding it, so a caller
-// with only the caps passes no bound and charges the chain's own limit for the
-// dimension the read leaves unmeasured instead — the same figure by the other
-// route, and the one number the charge has to be.
+// charged (D1049). The caller passes the bounds it resolved: the installation's
+// per-run cap where it sets one — the lower of the policy's and the database's.
+// That is not the chain's limit where a per-run cap exists: that one is the
+// root launch's number and lives in its stored task (D1046), and it is the
+// number a caller reads out of the chain rather than one it hands in.
 //
 // **Zero is the absence of a bound**, in this codebase's own vocabulary for
 // both dimensions: policy.PerRunUSD is documented `0 = unset` and

@@ -345,27 +345,26 @@ func TestRunContinuesWithAnUnreadableLedgerChargedTheCap(t *testing.T) {
 	}
 }
 
-// TestRunContinuesWithAnUnmeasuredLedgerChargedTheChainsLimit: with the budget
-// on, a chain-limited dimension the read could not measure is never read as a
-// zero — a missing ledger read as free restores the chain's whole budget, which
-// is cheaper than forging one (F14) — and it is not a refusal of the read
-// either, which D1049 rules out: the rollover prunes an old chain's ledgers
-// while the records stay, so a ledger that cannot be read is the ordinary case
-// there rather than a failure. D1049 charges an unreadable ledger the per-run
-// cap, so the dimension is left unmeasured only where this installation sets no
-// cap to charge it with — the ordinary case for tokens, whose cap is optional
-// policy with no database counterpart — and there the charge is the chain's own
-// limit: no one run of the chain can have held more, so it is the figure that
-// favours the bound the way the cap does. The chain then reads as spent, and the
-// launch stops at the rule every exhausted chain stops at, with the charge the
-// limit rather than a zero.
+// TestRunContinuesWithAnUnmeasuredLedgerAndNoCapReportsIt: with the budget on, a
+// chain-limited dimension the read could not measure is never read as a zero —
+// a missing ledger read as free restores the chain's whole budget, which is
+// cheaper than forging one (F14) — and it is not a refusal of the read either,
+// which D1049 rules out: the rollover prunes an old chain's ledger node eight
+// days after its last share while the record stays, so a ledger that cannot be
+// read is the ordinary case for an old chain rather than a failure. D1049
+// charges an unreadable ledger the per-run cap, so the dimension is left
+// unmeasured only where this installation sets no cap to charge it with — the
+// ordinary case for tokens, whose cap is optional policy with no database
+// counterpart — and there the dimension is *reported*: the note on stderr names
+// the run whose ledger could not be read and the per-run cap that would charge
+// it, and the launch proceeds with the chain's own limit standing for this run,
+// since nothing read says what the chain had left.
 //
-// A --used-* is no way past that charge (D1048): the figure the engine holds is
-// a floor a caller may only raise, so a stated 800000 of the limit's 900000 —
-// or a stated zero, which is the whole limit handed over again — is refused, and
-// the note on stderr says which run's ledger could not be read and which per-run
-// cap would charge it instead (TestRunContinuesWithAPerRunTokenCapChargedTheCap).
-func TestRunContinuesWithAnUnmeasuredLedgerChargedTheChainsLimit(t *testing.T) {
+// What the launch may not do is count that silence as a spend: the chain is
+// charged the runs the read could establish and nothing else, and a --used-*
+// under that figure is refused (D1048). One above it is the charge, which is the
+// only way a caller can tighten a dimension the engine could not measure.
+func TestRunContinuesWithAnUnmeasuredLedgerAndNoCapReportsIt(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	limitsImage(t, f.cloudFixture)
 	limitsCheckout(t)
@@ -375,63 +374,52 @@ func TestRunContinuesWithAnUnmeasuredLedgerChargedTheChainsLimit(t *testing.T) {
 	tokens := int64(900_000)
 	seedChainRun(t, f.cloudFixture, chainRun, chainSpent, task.Overrides{MaxTokens: &tokens})
 	_, errOut, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "A task")
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want the chain charged its own token limit and the launch refused", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"--continues " + task.ShortRun(chainRun),
-		"900000 tokens of 900000 tokens used", // the chain's own limit, not a zero
-		"nothing to spend",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("err = %v, want it to name %q", err, want)
-		}
+	// The chain's own limit stands for this run: the read measured nothing and
+	// charged nothing, and a run bounded by no figure at all is the hole D1052
+	// closes.
+	if o := chainTask(t, f.cloudFixture, chainFu).Overrides; o.MaxTokens == nil || *o.MaxTokens != 900_000 {
+		t.Fatalf("overrides = %+v, want the chain's own 900000 tokens standing for a run nothing measured", o)
 	}
-	// The note says why the chain reads as spent, names the run whose ledger
-	// could not be read and names the per-run cap that would charge it: the
-	// refusal's own figures are a charge, and a reader must not take them for a
-	// spend somebody measured.
+	// The note says why the figure is unknown, names the run whose ledger could
+	// not be read and names the per-run cap that would charge it, so a reader is
+	// not left to take the chain's limit for a spend somebody measured.
 	for _, want := range []string{
 		"does not measure its token",
 		task.ShortRun(chainRun),
 		"no ledger node",
 		"budget.max_run_tokens",
+		"spend past what the chain had left",
 	} {
 		if !strings.Contains(errOut, want) {
 			t.Fatalf("stderr = %q, want it to name %q", errOut, want)
 		}
 	}
-	if n := len(f.run.Executions()); n != 0 {
-		t.Fatalf("%d executions, want none: the whole token limit was about to be handed over", n)
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the continuation launched: one unreadable ledger is not a stopped chain", n)
 	}
-	// A stated figure under the charge is refused rather than applied, whether
-	// it is a figure one might have picked from the chain's own numbers or the
-	// zero that would give the run the whole limit back (D1048, T1, F14).
-	for _, stated := range []string{"0", "800000"} {
-		_, _, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu,
-			"--used-tokens", stated, "A task")
-		if ExitCode(err) != ExitUserError {
-			t.Fatalf("--used-tokens %s: err = %v, want a figure under the charge this chain holds refused", stated, err)
-		}
-		for _, want := range []string{"--used-tokens " + stated, "below the charge this chain already holds", "900000 tokens", "raise a charge"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("--used-tokens %s: err = %v, want it to name %q", stated, err, want)
-			}
-		}
+	// A stated figure is the charge, so it tightens what the run may spend: the
+	// chain holds 800000 of its 900000 tokens used by the caller's own account,
+	// and what is left is what this launch writes. A second run id, since the
+	// launch above already started chainFu.
+	second := wallRunIDAt(0, "140000", "d4d4")
+	if _, _, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", second,
+		"--used-tokens", "800000", "A task"); err != nil {
+		t.Fatal(err)
 	}
-	if n := len(f.run.Executions()); n != 0 {
-		t.Fatalf("%d executions, want none: a stated figure under the charge is not a way past it", n)
+	if o := chainTask(t, f.cloudFixture, second).Overrides; o.MaxTokens == nil || *o.MaxTokens != 100_000 {
+		t.Fatalf("overrides = %+v, want the 100000 tokens the caller's own figure leaves", o)
 	}
 }
 
-// TestRunContinuesWithAPerRunTokenCapChargedTheCap: the way past the charge
-// above, and the one the note names, is the installation's own per-run cap:
-// with budget.max_run_tokens set, an unreadable ledger is charged the cap
-// instead of leaving the dimension unmeasured (D1049), so the chain's limit can
-// still pay for a continuation rather than reading as spent to its last token.
-// The chain is charged the cap for the run nobody could read and what its
-// readable runs hold for the rest, which is the figure D1049 asks for — the
-// most that run may have been holding — and never neither.
+// TestRunContinuesWithAPerRunTokenCapChargedTheCap: the same chain with the
+// installation's own per-run cap set, which is the figure D1049 charges an
+// unreadable ledger instead of leaving the dimension unmeasured. The chain is
+// charged the cap for the run nobody could read and what its readable runs hold
+// for the rest — the most that run may have been holding — so it reads 100000 of
+// its 900000 tokens used and can still pay for a continuation.
 func TestRunContinuesWithAPerRunTokenCapChargedTheCap(t *testing.T) {
 	f := newLaunchBudgetWith(t, "enforce", "max_run_tokens: 100000")
 	limitsImage(t, f.cloudFixture)
@@ -484,7 +472,7 @@ func TestRunRefusesAUsedFigureBelowWhatTheChainCouldRead(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a --used-tokens under the 500000 the read holds refused", err)
 	}
-	for _, want := range []string{"--used-tokens 100000", "below the charge this chain already holds", "500000 tokens"} {
+	for _, want := range []string{"--used-tokens 100000", "below what the engine could read", "500000 tokens"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %v, want it to name %q", err, want)
 		}

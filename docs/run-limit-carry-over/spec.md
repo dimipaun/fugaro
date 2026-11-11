@@ -195,28 +195,32 @@ failing — the node absent, the call erroring — and it is not the same as a l
 ledger cannot be read is charged the **largest** amount it could have been holding, that run's own per-run cap
 (the effective `PerRunUSD` and its token twin), so a chain never reads an unreadable predecessor as cheaper
 than that run may have been. There is no separate "unknown" state carried into `remaining` and no launch that
-has to be refused for it: the charge is a number, it favours the cap, and a caller may only raise it
-(`--used-*`, below). It is the sweeper's own direction applied to a read that failed rather than to a lease
-that was never released.
+has to be refused for it: where the cap exists the charge is a number, it favours the cap, and a caller may
+only raise it (`--used-*`, below); where the installation sets no cap for the dimension the figure is reported
+**unmeasured** and the launch continues (below), never charged zero and never stopped for the read. It is the
+sweeper's own direction applied to a read that failed rather than to a lease that was never released.
 
-**Where the installation sets no per-run cap for a dimension, the chain's own limit for it is the charge**
-(D1049). The per-run token cap is optional policy with no database counterpart (`budget.max_run_tokens` for
-the installation, `agent.max_run_tokens` in a repository's `fugaro.yaml`), so the *token* dimension has no
-cap on an installation that sets none, and the rollover deletes a run's ledger
-node eight days after its last share (`internal/budget/rollover.go`, `PruneAfter`) while the run's record
-stays — so an unreadable ledger is the ordinary case for an old chain, not a failure. One run of the chain
-cannot have held more than the chain's own limit for the dimension, so that limit is the charge: a number
-again, favouring the bound as above, and never a refusal of the read's own. A charge that size leaves the
-chain reading as spent, so the launch then stops at the rule every exhausted chain stops at (§5, D1047) —
-not for the read, but for the number the read is charged — and the ways past it are the installation's own
-per-run cap for the dimension (`budget.per_run_usd`, `budget.max_run_tokens`: with one set, the run nobody
-could read is charged the cap and the dimension is measured, so the chain can still pay for a continuation)
-or a raise of the chain's limit in the run that began it (D1061). A caller's `--used-*` is **not** one of
-them: it may only raise a charge (D1048), and the charge it would raise already holds the limit, so a figure
-under it is refused. Nothing durable replaces the pruned ledger today: the token members a record carries are
-the gateway's cache sums, which are not the input and output tokens a cap counts, and the per-model counts
-that would carry a total (`model_tokens`) have no writer in the runner, so the charge is the bound and not
-the run's own figure (F8).
+**Where the installation sets no per-run cap for a dimension, that dimension is reported unmeasured and the
+launch proceeds** (D1049). The per-run token cap is optional policy with no database counterpart
+(`budget.max_run_tokens` for the installation, `agent.max_run_tokens` in a repository's `fugaro.yaml`), so the
+*token* dimension has no cap on an installation that sets none, and the rollover deletes a run's ledger node
+eight days after its last share (`internal/budget/rollover.go`, `PruneAfter`) while the run's record stays — so
+an unreadable ledger is the ordinary case for an old chain, not a failure. D1049 gives a read that cannot be
+charged no state to stop at: the run whose ledger could not be read is named, the dimension is reported
+unmeasured, and the launch continues. What the chain is charged for it is **the sum the read could
+establish** — the runs whose ledgers it did read, and nothing at all where every ledger of the chain is gone —
+so a chain the rollover has pruned entirely hands the run that continues it the **chain's own limit** for that
+dimension, the figure the budget-off arm of the same code names for the same reason. The honest cost is that
+the chain's limit for that dimension **is not enforced for that continuation**: what bounds the run is its own
+`--max-*` under the policy, and not what the chain had left. The installation's own per-run cap for the
+dimension (`budget.per_run_usd`, `budget.max_run_tokens`) is what brings the dimension back under the read's
+figure, since the unreadable run is then charged the cap (above); a raise of the chain's limit in the run that
+began it (D1061) is the other thing a caller can do; and a `--used-*` of the caller's own is the one way to
+*tighten* a dimension the engine could not measure, charged as it is stated (D1048). Nothing durable replaces
+the pruned ledger today: the token members a record carries are the gateway's cache sums, which are not the
+input and output tokens a cap counts, and the per-model counts that would carry a total (`model_tokens`) have
+no writer in the runner — which is why the chain's figure for such a run is what the read could establish
+rather than that run's own total (F8).
 
 **The caller never supplies `used`** (D1048). A caller-supplied usage number is accepted only as a *further
 tightening*: a `--used-usd X` that is **larger** than what the engine read raises the charge, and one that is
@@ -224,12 +228,11 @@ smaller is refused, naming both figures. That keeps the one honest use of the kn
 knows about spend the chain's own ledgers do not, such as a sibling chain — without giving a caller a way to
 understate. **The figure a caller may not go under is the floor the read establishes, and not only the amount
 it measured.** Where a dimension comes back unmeasured the figure is nothing to read, but the read still read
-something: the runs it *could* read, in that dimension, are a sum no stated figure may go below — an
-understatement there takes the charge under a figure the database itself holds. And where an enforced chain
-limits a dimension the read could not measure, the charge the launch is already holding is the chain's own
-limit for it (above), so that limit is the floor too: a `--used-tokens` of anything under it — zero included —
-is refused rather than applied, which is what keeps the knob from handing the run the whole limit back
-(T1, F14).
+something: the runs it *could* read, in that dimension, are a sum no stated figure may go below, since an
+understatement there takes the charge under a figure the database itself holds (T1). A figure at or above that
+sum *is* the charge, and bounds the chain by the caller's own account — the one way the knob tightens a
+dimension the engine could not measure. What a launch with no stated figure carries there is the chain's own
+limit (above), and that is not a figure a caller states.
 
 **The engine applies `remaining`, not `limit`, to the run.** The **launcher** computes the chain's `remaining`
 before the launch — it is the identity that can read the chain's ledgers (§3) — and it rides the launch's
