@@ -24,6 +24,11 @@ const (
 	// the installation's).
 	StatePrefixFirebase = "fugaro/firebase"
 	StatePrefixRepos    = "fugaro/repos/"
+	// StatePrefixWorkspace is the workspace root's state: the workspace's OWN
+	// project's root (internal/cli/workspace_create.go, W3 of the workspaces
+	// plan), a workdir of its own so the installation's tfvars and saved plan
+	// are never written by an apply of this root.
+	StatePrefixWorkspace = "fugaro/workspace"
 	// StatePrefixManaged is where the agent-authored root's state lives in
 	// D77's dedicated bucket (managed.ManagedStateBucketName). It is a prefix
 	// of a bucket of its own, so it carries none of the installation's state
@@ -42,7 +47,7 @@ const (
 )
 
 // The roots the embedded tree holds.
-var roots = map[string]bool{"installation": true, "repo": true, "firebase": true, "compute": true}
+var roots = map[string]bool{"installation": true, "repo": true, "firebase": true, "compute": true, "workspace": true}
 
 var projectIDRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 
@@ -116,6 +121,23 @@ func PluginCache(getenv func(string) string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(cache, "fugaro", "terraform-plugins"), nil
+}
+
+// WorkspaceWorkdir is where fugaro setup and fugaro update plan the
+// workspace root of project: $XDG_STATE_HOME/fugaro/terraform/<project>/workspace,
+// beside the installation's workdir and the Firebase root's. It applies to the
+// project the WORKSPACE is named after — a project of the workspace's own, not
+// of a member's — and its root creates the workspace's own service account and
+// the one grant that reaches the workspace's database. A workdir of its own,
+// for the reason the Firebase root's is one: the installation's tfvars, imports
+// and saved plan must never be written by an apply of another root, and a plan
+// saved by one root must never be gated and applied as another's.
+func WorkspaceWorkdir(getenv func(string) string, project string) (string, error) {
+	dir, err := InstallationWorkdir(getenv, project)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(dir), "workspace"), nil
 }
 
 // ManagedWorkdir is where fugaro managed apply works on the agent-authored

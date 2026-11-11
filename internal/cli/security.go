@@ -62,15 +62,37 @@ import (
 // document carries no argv of its own. A refusal names a path or a ref and
 // never a value read out of a file.
 //
-// What is not here yet. This slice is the floor alone (D1504, D1519): no
-// project key and no repository key exists, so every row's `source` is `floor`
-// and the resolution has one layer to merge. SC7 and SC8 add the keys, SC9
-// re-points this read at the one resolution, and nothing in the document's
-// shape has to move for either.
-
-// securitySourceFloor is the source label the floor's own rows carry (D1512's
-// three words: floor, project, repo).
-const securitySourceFloor = "floor"
+// Which list, and where its three layers are read (SC9, D1506, D1511). The list
+// in force is config.SecurityPatterns' one resolution — the engine's floor, the
+// project layer's rows and the repository's own, unioned — and each row carries
+// the layer it came from. The two written halves are read offline, like every
+// other read here: the repository's own rows out of its fugaro.yaml at the base
+// ref, and the project layer's out of this machine's cached copy of the
+// published layer (modelsLayer, the read `fugaro models ls` makes), never out of
+// the bucket the published layer lives in. The cached copy is read by project
+// name, so it is used only when the file at that ref names the layer's project
+// and gcp_project (config.ProjectLayer.Applies) — the rule a run applies a layer
+// by (ResolveConfig's Applied). A machine that holds no cached layer for the
+// project, and a machine whose cached layer is not the one this file anchors to,
+// therefore print the floor's rows and the repository's without the project's,
+// and the command says which of the two it is on stderr rather than letting an
+// incomplete list read like a complete one. The run is not weakened by either
+// gap: it resolves the published layer in the cloud, so `fugaro security paths`
+// is the advisory read and the runner's own resolution is the control.
+//
+// A row a later layer writes under a name an earlier layer's row already spends
+// is not in force and is said on stderr beside the list
+// (config.SecurityIgnoredRow, D1506): the row is what its author believes and
+// the list in force is not, which is a difference only the reader can settle.
+//
+// The repository's own rows are measured before any of them is matched
+// (securityMatchable). This reader matches a file's own bytes, and
+// sensitivity.Match's cost is the row's own: the alternation refusal is what
+// keeps one row from costing minutes, and every row a caller matches is meant to
+// have passed it. So a row sensitivity.Pattern.Validate refuses is dropped and
+// said on stderr, and a block that writes more rows than a layer may hold is
+// refused whole. Both commands that resolve the list read the file through
+// securityBaseFile, so both are bounded by it.
 
 // securityPathsDoc is D1512's document, and it is the contract the desktop
 // console's §6.23 describes. The shape is closed in the way every wire shape in
@@ -88,8 +110,9 @@ type securityPathsDoc struct {
 	Base string `json:"base"`
 	// FloorSource is the source label the floor's rows carry in Security. It is
 	// what lets a reader tell the engine's own rows from a layer's without
-	// scanning the list for one label, and it is "floor" in every answer this
-	// slice can give (D1504).
+	// scanning the list for one label, and it is always `floor`: the engine's
+	// rows are the resolution's first writer, so no project layer and no
+	// repository can relabel one (D1504, D1506).
 	FloorSource string `json:"floor_source"`
 	// Security is the list in force: the rows, and how many of them there are.
 	Security securityListDoc `json:"security"`
@@ -99,12 +122,19 @@ type securityPathsDoc struct {
 	// one.
 	Checked []securityPathAnswer `json:"checked"`
 	// Error is why the repository's own file could not be read at Base: this
-	// checkout holds no such ref, holds no fugaro.yaml at it, or holds one this
-	// reader cannot place a project in. It is a state inside the document and
-	// not a refusal, because the list in force still answers — it is the floor
-	// alone — and a caller that only wants to know what a path is treated as
-	// still gets its answer. "" means the read answered. The text names a ref or
-	// a line, never a value read out of the file.
+	// checkout holds no such ref, holds no fugaro.yaml at it, holds one this
+	// reader cannot place a project in, or holds one whose security: block no run
+	// holds because it writes more rows than a layer may hold
+	// (securityMatchable). It is a state inside the document and not a refusal,
+	// because the list in force still answers — it is the floor alone — and a
+	// caller that only wants to know what a path is treated as still gets its
+	// answer. "" means the read answered, which a block whose individual rows are
+	// refused still does: those are dropped from the list and said on stderr, not
+	// carried here. The text names a ref or a line, never a value read out of the
+	// file. It is about this file alone and never about the project layer: a file
+	// that names no project names no layer either, and a project layer that is not
+	// in force for this file — no cached copy of it, or one the file's own
+	// project: and gcp_project: do not name — is said on stderr rather than here.
 	Error string `json:"error"`
 }
 
@@ -243,25 +273,81 @@ func runSecurityPaths(cmd *cobra.Command, o *securityPathsOptions) error {
 	doc := securityPathsDoc{
 		Repo:        repo,
 		Base:        base,
-		FloorSource: securitySourceFloor,
+		FloorSource: string(config.SecuritySourceFloor),
 	}
-	doc.Project, doc.Error = securityBaseProject(ctx, root, base)
+	var own *config.Security
+	var refused []securityRefusedRow
+	var gcpProject string
+	doc.Project, gcpProject, own, refused, doc.Error = securityBaseFile(ctx, root, base)
 
-	// The list in force is the floor alone in this slice (D1504): an absent
-	// project list, an absent repository list and an explicitly empty list all
-	// mean the floor, and no run reads the keys that write one yet (SC9).
-	list := sensitivity.Floor()
+	// The list in force is the one resolution (SC9, D1506, D1511): the engine's
+	// floor, the project layer that applies to this repository and the
+	// repository's own rows, each row carrying the layer it came from. The
+	// cached layer is read by project name alone (modelsLayer), while a run
+	// applies a layer only to a file whose project: and gcp_project: are the
+	// layer's own (config.ProjectLayer.Applies, the rule ResolveConfig's Applied
+	// is), so one this file does not anchor to is not the layer a run of this
+	// checkout resolves and is dropped here rather than printed as in force.
+	cached := modelsLayer(doc.Project)
+	layer := cached
+	if !cached.Applies(doc.Project, gcpProject) {
+		layer = nil
+	}
+	resolved := config.SecurityPatterns(own, layer)
+	list := resolved.List()
 	doc.Security.Count = len(list)
 	for _, row := range list {
 		doc.Security.Patterns = append(doc.Security.Patterns, securityPattern{
-			Name:     row.Name,
-			Match:    row.Match,
-			Category: string(row.Category),
-			Source:   securitySourceFloor,
+			Name:     row.Pattern.Name,
+			Match:    row.Pattern.Match,
+			Category: string(row.Pattern.Category),
+			Source:   string(row.Source),
 		})
 	}
 	for _, path := range o.check {
 		doc.Checked = append(doc.Checked, securityAnswer(path, list))
+	}
+
+	if doc.Error != "" {
+		// The answer is still an answer — with the repository's own file
+		// unreadable there is no project to read a layer for and no rows of the
+		// repository's, so the list really is the floor alone — and a caller
+		// piping stdout should be told what it is missing without a JSON member
+		// in a table.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: the repository's own list could not be read: %s; what is printed is the floor alone\n", oneLine(doc.Error))
+	} else if doc.Project != "" && layer == nil {
+		// The floor and the repository's rows are printed and the project's are
+		// not, which the document's shape cannot say: its every member is the
+		// console's contract (§6.23) and none of them is this. stderr is where
+		// the table already says what a read did not answer.
+		//
+		// Two states leave the layer out, and they are different to the reader:
+		// no cached copy at all, or one that is not this file's — the second is
+		// an anchor to fix in the repository's own fugaro.yaml, and the wording
+		// is the one doctor's `project-layer-drift` line uses for the same
+		// mismatch in a run's record.
+		if cached != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: this machine's cached copy of project %s's layer is not in force for this repository: fugaro.yaml at the base ref does not name the layer's project and gcp_project, and a run applies the layer only to a file that names both; the rows its security: block writes are not in this list\n", oneLine(doc.Project))
+		} else {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: this machine holds no cached copy of project %s's layer, so the rows its security: block writes are not in this list; a run resolves the published layer itself\n", oneLine(doc.Project))
+		}
+	}
+	for _, ig := range resolved.Ignored() {
+		// A row the union dropped is a row its author believes and the list in
+		// force is not (config.SecurityIgnoredRow, F10, D1506). It is said here
+		// for the same reason the two above are: the document's shape is the
+		// console's contract and carries no member for it.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this %s writes a security row named %s (%s), which is not in force: the %s row of that name (%s) is the one a run matches, because a name is a row's identity in the list and only the first layer that writes it keeps it\n",
+			ig.Source, cellOneLine(ig.Name), cellOneLine(ig.Written.Match), ig.HeldBy, cellOneLine(ig.Kept.Match))
+	}
+	for _, r := range refused {
+		// A row the matcher refuses is a row its author wrote and no run holds
+		// (securityMatchable). It is not the row above: no union of a name kept
+		// it out — the file it is written in is one a run's load refuses. Said on
+		// stderr for the same reason, with the index `fugaro validate` names the
+		// same row by, because the reader's fix is the row's own text.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this repository's security.patterns[%d] writes a security row named %s (%s), which is not in force: %s; a row the matcher refuses is one a run's load refuses, so nothing here matches it and fugaro validate says the same where it is written\n",
+			r.Index, cellOneLine(r.Row.Name), cellOneLine(r.Row.Match), r.Reason)
 	}
 
 	if o.json {
@@ -313,35 +399,134 @@ func securityPlaceable(path string) bool {
 // a later one. `sensitive` is a row match, or a path the reader cannot place at
 // all: the classifier's class is deliberately not a third input, because a run
 // escalates on the list and not on the class (see this file's header).
-func securityAnswer(path string, list []sensitivity.Pattern) securityPathAnswer {
+func securityAnswer(path string, list config.SecurityList) securityPathAnswer {
 	answer := securityPathAnswer{Path: path}
-	matched := sensitivity.Match([]string{path}, list)
+	matched := sensitivity.Match([]string{path}, list.Patterns())
 	if len(matched) > 0 {
 		answer.Matched = &securityMatch{
 			Name:     matched[0].Name,
 			Category: string(matched[0].Category),
-			Source:   securitySourceFloor,
+			Source:   securityRowSource(list, matched[0].Name),
 		}
 	}
 	answer.Sensitive = answer.Matched != nil || !securityPlaceable(path)
 	return answer
 }
 
-// securityBaseProject is the project the repository's own fugaro.yaml names at
-// ref, and the reason that read did not answer ("" when it did). The second
-// return is the document's `error`: a ref this checkout does not hold, no
-// fugaro.yaml at it, or a file with no place for a project name in it. Both
-// texts name a ref or a line and never a value read out of the file.
-func securityBaseProject(ctx context.Context, root, ref string) (string, string) {
+// securityRowSource is the layer the matched row is in force from. A name is a
+// row's identity in the list in force (sensitivity.Union), so the row Match
+// answered with is the one row of that list carrying that name, and a caller
+// that wants the layer the answer came from wants the one the row carries.
+func securityRowSource(list config.SecurityList, name string) string {
+	for _, row := range list {
+		if row.Pattern.Name == name {
+			return string(row.Source)
+		}
+	}
+	return string(config.SecuritySourceFloor)
+}
+
+// securityBaseFile is what the repository's own fugaro.yaml says at ref: the
+// project and the GCP project it names — the two keys a project layer is
+// anchored to (config.LayerAnchor) — and the security: block it writes, plus
+// the reason the read did not answer ("" when it did). The last return is the
+// document's `error`: a ref this checkout does not hold, no fugaro.yaml at it, a
+// file this reader cannot read as one, or a block of it no run holds
+// (securityMatchable). Both texts name a ref or a line and never a value read
+// out of the file. It is one read of one file, because the answers are all
+// about the same file's bytes and a second read could only disagree with the
+// first — and a caller that has to decide whether a project layer applies wants
+// both keys out of the bytes the layer is being tested against, never out of a
+// differently resolved file.
+//
+// The rows are the ones a reader may match: the fourth return is the rows of the
+// block sensitivity.Pattern.Validate refuses, which are dropped from the third
+// (securityMatchable), so a caller that matches the block it is handed cannot be
+// made to spend what a row's own text costs.
+//
+// A file that writes no security: key answers with a nil block, which is the
+// same list as an empty one: the resolution reads a nil half as "this layer
+// wrote nothing" (config.SecurityPatterns, D1504).
+func securityBaseFile(ctx context.Context, root, ref string) (string, string, *config.Security, []securityRefusedRow, string) {
 	data, err := readFugaroYAMLAtRef(ctx, root, ref)
 	if err != nil {
-		return "", err.Error()
+		return "", "", nil, nil, err.Error()
 	}
 	project, err := config.ProjectOf(data)
 	if err != nil {
-		return "", fmt.Sprintf("fugaro.yaml at %s: %v", ref, err)
+		return "", "", nil, nil, fmt.Sprintf("fugaro.yaml at %s: %v", ref, err)
 	}
-	return project, ""
+	gcpProject, err := config.GCPProjectOf(data)
+	if err != nil {
+		return "", "", nil, nil, fmt.Sprintf("fugaro.yaml at %s: %v", ref, err)
+	}
+	own, ok := config.SecurityOf(data)
+	if !ok {
+		return "", "", nil, nil, fmt.Sprintf("fugaro.yaml at %s: this reader cannot read the file as a fugaro.yaml", ref)
+	}
+	own, refused, problem := securityMatchable(own)
+	if problem != "" {
+		return "", "", nil, nil, fmt.Sprintf("fugaro.yaml at %s: %s", ref, problem)
+	}
+	return project, gcpProject, own, refused, ""
+}
+
+// securityRefusedRow is one row of the repository's own security block that no
+// reader may match: the row, the index the file wrote it at — the index
+// internal/config's own problems name the same row by, so this warning and
+// `fugaro validate` point at the same row of the same block — and the reason
+// sensitivity.Pattern.Validate gives.
+type securityRefusedRow struct {
+	Index  int
+	Row    sensitivity.Pattern
+	Reason string
+}
+
+// securityMatchable measures the repository's own block before a reader matches
+// it, and is the one place that read is bounded.
+//
+// sensitivity.Match's cost is the row's own: doublestar matches most globs in
+// work proportional to the path, and the one shape that is not — `{a,b}`
+// alternation, where every group re-enters the matcher with the alternative
+// spliced in — is refused by Pattern.Validate (hasAlternation) so that no row
+// can cost minutes. That refusal, and the two bounds around it (MaxPatternMatch
+// on a row's text, MaxPatterns on a layer's list), are what Match's own note
+// rests on: "every row a caller matches has passed that check". A run's lists
+// reach the matcher that way — the runner resolves its files through
+// internal/config, whose rules are these — but this reader's repository half is
+// a file's own bytes read at a ref (config.SecurityOf, D1518), which no run has
+// measured. Matching those as written would hang the two commands a person runs
+// to diagnose a security block, which is the opposite of what they are for: so
+// the rules a run's load applies are applied here, to the same rows, by the same
+// function, and what is dropped is said rather than silently passed over.
+//
+// A row Validate refuses is dropped. A block that writes more rows than a layer
+// may hold is refused whole and its problem returned, because there is no
+// per-row answer to a count: the caller answers with the floor (and the project
+// layer) alone and carries the reason in the document's `error`. The floor's
+// rows and the project layer's are never measured here — the floor is the
+// engine's own, and a published layer is validated where it is published
+// (internal/projectpolicy).
+func securityMatchable(own *config.Security) (*config.Security, []securityRefusedRow, string) {
+	if own == nil {
+		return nil, nil, ""
+	}
+	if len(own.Patterns) > sensitivity.MaxPatterns {
+		return nil, nil, fmt.Sprintf("security.patterns writes %d rows and a layer may hold %d: no run holds a block that long, so no row of it is read", len(own.Patterns), sensitivity.MaxPatterns)
+	}
+	kept := make([]sensitivity.Pattern, 0, len(own.Patterns))
+	var refused []securityRefusedRow
+	for i, row := range own.Patterns {
+		if reason := row.Validate(); reason != "" {
+			refused = append(refused, securityRefusedRow{Index: i, Row: row, Reason: reason})
+			continue
+		}
+		kept = append(kept, row)
+	}
+	if len(refused) == 0 {
+		return own, nil, ""
+	}
+	return &config.Security{Patterns: kept}, refused, ""
 }
 
 // securityBaseBranch is the ref the list in force is read at, resolved through
@@ -400,10 +585,12 @@ func securityFileBaseBranch(ctx context.Context, repo string) (string, bool) {
 }
 
 // writeSecurityPaths prints the document as the table a person reads: the list
-// with its layers, or one answer per checked path. The error, when there is
-// one, goes to stderr beside the answer rather than inside it, because the
-// answer is still an answer — the floor alone — and a caller piping stdout
-// should be told what it is missing without a JSON member in a table.
+// with its layers, or one answer per checked path. A read that did not answer,
+// and a project layer that is not in force for this file — no cached copy of it,
+// or one the file's own project: and gcp_project: do not name — are said on
+// stderr by runSecurityPaths rather than here, for both forms of the document,
+// since none of them is something a table can carry and a caller piping stdout
+// should be told what it is missing.
 func writeSecurityPaths(cmd *cobra.Command, doc securityPathsDoc) error {
 	w := cmd.OutOrStdout()
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
@@ -430,9 +617,6 @@ func writeSecurityPaths(cmd *cobra.Command, doc securityPathsDoc) error {
 	}
 	if err := tw.Flush(); err != nil {
 		return err
-	}
-	if doc.Error != "" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: the repository's own list could not be read: %s; what is printed is the floor alone\n", oneLine(doc.Error))
 	}
 	return nil
 }

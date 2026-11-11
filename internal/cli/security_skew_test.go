@@ -508,3 +508,42 @@ func TestSecuritySinceIsTheReleaseSecurityShipsIn(t *testing.T) {
 		t.Errorf("securitySince = %q: the security: block ships in CLI 0.22.0", securitySince)
 	}
 }
+
+// TestSecuritySchemasSayTheListInForceIsResolved (SC9, D1506, D1511): the two
+// schemas' security: description is what an editor shows a person writing the
+// key, and both said, until this change, that no run reads either half yet and
+// that what a run matches and what `fugaro security paths` prints is still the
+// engine's floor of 43 rows. The resolution is what made that false — a run,
+// `fugaro security paths` and `fugaro doctor` read the one list in force — so a
+// schema still saying the floor alone tells the person writing a row that their
+// runs ignore it. The image gate's own sentence is the part of the old text
+// that is still true, and both keep it.
+//
+// Mutation (verified, run and restored): the two descriptions' "no run reads
+// either half yet: what a run matches, and what `fugaro security paths` prints,
+// is still the engine's floor of 43 rows" put back, and this fails naming both
+// files.
+func TestSecuritySchemasSayTheListInForceIsResolved(t *testing.T) {
+	for _, path := range []string{"schemas/fugaro.schema.json", "schemas/project-layer.schema.json"} {
+		s := readDoc(t, path)
+		for _, want := range []string{
+			"the readers are what resolve them into the one list in force",
+			"`fugaro security paths` prints it and `fugaro doctor` counts it",
+			"a job image older than 0.22.0",
+		} {
+			if !strings.Contains(s, want) {
+				t.Errorf("%s lacks %q: the description is what an editor shows a person writing the key, and the readers are what resolve the two layers into the one list in force", path, want)
+			}
+		}
+		for _, notWant := range []string{
+			"no run reads either half yet",
+			"is still the engine's floor of 43 rows",
+			"arrive with a later release",
+			"arrive with later releases",
+		} {
+			if strings.Contains(s, notWant) {
+				t.Errorf("%s still says %q, which the resolution made false: a run, `fugaro security paths` and `fugaro doctor` read the one list in force", path, notWant)
+			}
+		}
+	}
+}

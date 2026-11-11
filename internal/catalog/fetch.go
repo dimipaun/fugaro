@@ -30,6 +30,28 @@ import (
 // where it is resolved rather than carried.
 const MaxDockerfileBytes = gitprov.MaxContentsBytes
 
+// BuildsImage reports whether a Fugaro catalog build writes an image from e's
+// source kind (PIC4). It is the classification two readers share — the
+// deploy-time job spec, which refuses a prebuilt entry on a baked job (D1191,
+// infra's unbuiltOnBaked), and the resolver's own reading of the default a job
+// cannot run — so neither can hold an entry to be built that the other refuses
+// to run.
+//
+// builtSourceKinds is what a build writes rather than what it does not, so a
+// kind added to the catalog later is classified as prebuilt until someone
+// states that a build writes it. That is the direction the failure is safe in:
+// the list lagging behind a kind the catalog gains refuses a configuration by
+// name, and the refusal names both ways out, where the opposite list would
+// hold a kind to be built that no build in this installation writes — the
+// shape D1191 refuses.
+func BuildsImage(e config.Entry) bool {
+	return slices.Contains(builtSourceKinds, e.Source.Kind)
+}
+
+// builtSourceKinds are the catalog source kinds a Fugaro build writes an image
+// from (PIC4): a Dockerfile at a repository or inline in the catalog.
+var builtSourceKinds = []config.SourceKind{config.SourceDockerfile, config.SourceInline}
+
 // MaxContextBytes and MaxContextFiles bound a catalog entry's build context
 // (D1398): the bytes its tree may hold together and how many files it may
 // hold. Both are checked against the provider's own listing before a byte of
@@ -48,7 +70,7 @@ const (
 	MaxContextFiles       = 4000
 )
 
-// Source is what a copy stages for one catalog entry (D1394, D1395): the
+// Resolved is what a copy stages for one catalog entry (D1394, D1395): the
 // Dockerfile bytes a build reads, the commit they were read at, and the digest
 // of the build context beside them.
 //
@@ -62,7 +84,7 @@ const (
 // ContextHash is the digest of the context tree (contextDigest), and "" for an
 // entry that names no context — the shape every entry had before the key
 // existed.
-type Source struct {
+type Resolved struct {
 	Dockerfile  []byte
 	Commit      string
 	ContextHash string
@@ -96,25 +118,25 @@ type Source struct {
 // catalog's own validation is not this package's to rely on, and a name or a
 // repository that carried an escape sequence would carry it into whatever
 // reads the message.
-func Resolve(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) (Source, error) {
+func Resolve(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) (Resolved, error) {
 	switch e.Source.Kind {
 	case config.SourceInline:
 		data, err := definition(e, []byte(e.Source.Inline))
-		return Source{Dockerfile: data}, err
+		return Resolved{Dockerfile: data}, err
 	case config.SourceDockerfile:
 		data, commit, p, err := fetchDockerfileAt(ctx, open, kind, e)
 		if err != nil {
-			return Source{}, err
+			return Resolved{}, err
 		}
 		hash, err := contextHash(ctx, p, kind, e, commit)
 		if err != nil {
-			return Source{}, err
+			return Resolved{}, err
 		}
-		return Source{Dockerfile: data, Commit: commit, ContextHash: hash}, nil
+		return Resolved{Dockerfile: data, Commit: commit, ContextHash: hash}, nil
 	case config.SourceImage:
-		return Source{}, fmt.Errorf("the catalog entry %s has no Dockerfile: its source is a prebuilt image, so there is nothing to build or copy", nameOf(e))
+		return Resolved{}, fmt.Errorf("the catalog entry %s has no Dockerfile: its source is a prebuilt image, so there is nothing to build or copy", nameOf(e))
 	default:
-		return Source{}, fmt.Errorf("the catalog entry %s has no source kind this build knows (%s)", nameOf(e), strings.Join(config.SourceKinds, ", "))
+		return Resolved{}, fmt.Errorf("the catalog entry %s has no source kind this build knows (%s)", nameOf(e), strings.Join(config.SourceKinds, ", "))
 	}
 }
 

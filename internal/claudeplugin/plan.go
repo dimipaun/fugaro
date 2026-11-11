@@ -15,7 +15,7 @@ type Input struct {
 	Root      string    // the checkout's top directory
 	Want      string    // this fugaro's release version, X.Y.Z
 	Ref       string    // the release tag the marketplace must carry, vX.Y.Z
-	Repo      string    // the marketplace repository: pluginwire.Repo, or a fork allowed with --allow-fork
+	Repo      string    // the marketplace repository: pluginwire.Repo, always Fugaro's own since D949
 	Markets   []Market  // claude plugin marketplace list --json
 	Installed []Install // claude plugin list --json
 }
@@ -64,12 +64,13 @@ type Call struct {
 }
 
 // Plan is the change calls to make, in order (none: nothing to do), the plugin
-// version that applied to the checkout before them ("" for none), and the calls
-// that put back what a Clear removes (nil when nothing is cleared), in the
-// order they are needed: the marketplace declared as it was, then the plugin
-// installed from it, because claude uninstalls every install of a marketplace
-// it removes. A Declare that fails runs them, so a failed add leaves the machine
-// with the marketplace and the plugin it had.
+// version installed on this machine before them ("" for none: the step's own
+// subject, claudeplugin.UserVersion, and not what applies to the checkout,
+// Effective), and the calls that put back what a Clear removes (nil when
+// nothing is cleared), in the order they are needed: the marketplace declared
+// as it was, then the plugin installed from it, because claude uninstalls every
+// install of a marketplace it removes. A Declare that fails runs them, so a
+// failed add leaves the machine with the marketplace and the plugin it had.
 type Plan struct {
 	Calls   []Call
 	Before  string
@@ -107,12 +108,34 @@ func Applying(root string, installed []Install) []Install {
 }
 
 // Effective is the plugin version that applies to root: a project or local
-// install's over the user one (as pluginwire's installState prefers), ""
-// when none applies.
+// install's over the user one, "" when none applies. Nothing calls it: the
+// step's own line and its check ask the machine's version (UserVersion, D949,
+// U2), and the checkout's question — doctor's, and the staleness warning's —
+// is asked in pluginwire.installState, which answers with Install and Version
+// and makes the same selection this function makes. U3
+// re-aims doctor's plugin-install at the user-scope install
+// (docs/plugin-user-scope/spec.md §6), which is the opposite question, so this
+// is not a reader waiting to arrive; it stays with the rest of the read side
+// because the question is still one this package answers (U2's F26).
 func Effective(root string, installed []Install) string {
 	v := ""
 	for _, in := range Applying(root, installed) {
 		if v == "" || in.Scope != "user" {
+			v = in.Version
+		}
+	}
+	return v
+}
+
+// UserVersion is the plugin version installed on this machine at user scope:
+// the install Decide maintains, and so the one the step's own check after the
+// calls asks about ("" when there is none). A project or local install is the
+// checkout's, and its version is what Effective answers with; this step moves
+// none of them (D949, U2).
+func UserVersion(installed []Install) string {
+	v := ""
+	for _, in := range installed {
+		if in.ID == pluginwire.PluginID && in.Scope == "user" && v == "" {
 			v = in.Version
 		}
 	}
@@ -133,16 +156,23 @@ func refNewer(ref, want string) bool {
 
 // Decide plans the change calls for one checkout:
 //   - a fugaro marketplace from another source: OtherMarketError;
-//   - the marketplace pinned at Ref and every applying install at Want: none;
+//   - the marketplace pinned at Ref and the machine's own install at Want:
+//     none;
 //   - otherwise the marketplace declared at Ref (missing, or there at another
 //     ref that is not newer, in which case the declaration it is refused by is
 //     cleared first, and Restore is what puts back what the clear takes) and
-//     refreshed, then the plugin installed at user scope when nothing applies
-//     or a Clear is in the plan — on the cleared path it is what puts back the
-//     install the clear takes from a machine whose own settings leave the name
-//     undeclared — and each stale scope updated (local, project, user). The
-//     install and those updates are Repair when a Clear is in the plan: which
-//     of them the clear left anything to do is not knowable before it runs.
+//     refreshed, then the plugin installed at user scope when the machine has
+//     no install of it or a Clear is in the plan — on the cleared path it is
+//     what puts back the install the clear takes from a machine whose own
+//     settings leave the name undeclared — and a stale user install updated.
+//     (A stale project or local install is not updated, and is not a reason to
+//     do anything: those installs are a checkout's own settings and not this
+//     step's to move, D949. Neither does one stand in for the machine's own:
+//     a checkout whose settings installed the plugin at project scope has no
+//     user-scope install, and the step's promise — and its own check after the
+//     calls — is that one exists at this release.) The install and that update
+//     are Repair when a Clear is in the plan: which of them the clear left
+//     anything to do is not knowable before it runs.
 //
 // Every call it returns passes Allowed.
 func Decide(in Input) (Plan, error) {
@@ -180,14 +210,25 @@ func Decide(in Input) (Plan, error) {
 	// failure.
 	moved := market != nil && market.Ref != in.Ref && !refNewer(market.Ref, in.Ref)
 	applying := Applying(in.Root, in.Installed)
-	p := Plan{Before: Effective(in.Root, in.Installed)}
+	// The machine's own install is the user-scope one, and the only install
+	// this step maintains (D949, U2). A checkout-scoped install applies to the
+	// checkout but is not it: it neither makes the machine current nor stands in
+	// for the install this step puts at user scope, so the early return below
+	// asks about this one and the install below is planned whenever it is
+	// missing.
+	own := UserVersion(in.Installed)
+	p := Plan{Before: own}
 	var stale []string
 	for _, a := range applying {
-		if a.Version != in.Want && !slices.Contains(stale, a.Scope) {
+		// Only the machine's own install is this step's to move, whatever made
+		// a checkout-scoped one: a stale project or local install is not
+		// something to do here, so it neither keeps the early return below from
+		// answering "nothing to do" nor has a call planned for it (D949, U2).
+		if a.Scope == "user" && a.Version != in.Want && !slices.Contains(stale, a.Scope) {
 			stale = append(stale, a.Scope)
 		}
 	}
-	if !moved && market != nil && len(applying) > 0 && len(stale) == 0 {
+	if !moved && market != nil && own == in.Want && len(stale) == 0 {
 		return p, nil
 	}
 	if market == nil || moved {
@@ -209,16 +250,23 @@ func Decide(in Input) (Plan, error) {
 	// clear took the declaration alone and the declaration alone is what goes
 	// back. An install of one that is already there does not move it, though
 	// (claude answers "already installed" and names update as the call that
-	// re-records the version), so each stale install is still updated where it
-	// stands. With a clear in the plan, this install and those updates are
+	// re-records the version), so each stale user install is still updated
+	// where it stands. With a clear in the plan, this install and those updates are
 	// Repair: which of them the clear left anything to do is not knowable before
 	// it runs, and the check after the calls is what sees whether the machine
 	// came out of them with an install that applies.
+	//
+	// own == "" is the machine having no install of the plugin at all, and that
+	// is what asks for this call: the step maintains the user-scope install, so
+	// a machine whose only install is a checkout's own (a trusted folder's
+	// project install, say) is not one it has left alone — it is one that has
+	// none, whatever applies to the checkout, and the check after the calls
+	// would fail the step for the install this call is what makes.
 	kind := Change
 	if moved {
 		kind = Repair
 	}
-	if len(applying) == 0 || moved {
+	if own == "" || moved {
 		install := slices.Clone(installUser)
 		p.Calls = append(p.Calls, Call{Args: install, Kind: kind})
 		if moved && len(applying) > 0 {

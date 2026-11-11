@@ -49,29 +49,29 @@ const catalogDockerfileType = "text/plain; charset=utf-8"
 // process resolved a moment earlier, and the values it staged are what tells
 // it the copy it read back is this one and not another publisher's
 // (refuseMixedCatalogCopy).
-func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.Opener, kind string, e config.Entry) (catalog.Source, error) {
+func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.Opener, kind string, e config.Entry) (catalog.Resolved, error) {
 	// The keys first: a name that is not one is refused before any credential
 	// is used to read a definition, and the refusal is the helper's own
 	// sentence (it does not repeat the name, which is what reached it).
 	key, err := config.CatalogDockerfileKey(e.Name)
 	if err != nil {
-		return catalog.Source{}, err
+		return catalog.Resolved{}, err
 	}
 	var commitKey, hashKey string
 	if e.Source.Context != "" {
 		if commitKey, err = config.CatalogContextCommitKey(e.Name); err != nil {
-			return catalog.Source{}, err
+			return catalog.Resolved{}, err
 		}
 		if hashKey, err = config.CatalogContextHashKey(e.Name); err != nil {
-			return catalog.Source{}, err
+			return catalog.Resolved{}, err
 		}
 	}
 	src, err := catalog.Resolve(ctx, open, kind, e)
 	if err != nil {
-		return catalog.Source{}, err
+		return catalog.Resolved{}, err
 	}
 	if err := writeCatalogObject(ctx, b, key, src.Dockerfile, catalogDockerfileType, catalog.MaxDockerfileBytes, catalogCopyLead); err != nil {
-		return catalog.Source{}, err
+		return catalog.Resolved{}, err
 	}
 	if e.Source.Context == "" {
 		return src, nil
@@ -82,10 +82,10 @@ func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.O
 	// and the digest last: it is the object the check reads, and an entry
 	// whose digest is staged is an entry whose context was read whole.
 	if err := writeCatalogObject(ctx, b, commitKey, []byte(src.Commit), catalogIdentityType, catalogIdentityBytes, catalogCommitLead); err != nil {
-		return catalog.Source{}, err
+		return catalog.Resolved{}, err
 	}
 	if err := writeCatalogObject(ctx, b, hashKey, []byte(src.ContextHash), catalogIdentityType, catalogIdentityBytes, catalogHashLead); err != nil {
-		return catalog.Source{}, err
+		return catalog.Resolved{}, err
 	}
 	return src, nil
 }
@@ -108,7 +108,7 @@ func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.O
 //
 // part names the value that differed, so the sentence says which of the three
 // moved.
-func refuseMixedCatalogCopy(e config.Entry, src catalog.Source, definition []byte, commit, hash string) error {
+func refuseMixedCatalogCopy(e config.Entry, src catalog.Resolved, definition []byte, commit, hash string) error {
 	part := ""
 	switch {
 	case !bytes.Equal(definition, src.Dockerfile):

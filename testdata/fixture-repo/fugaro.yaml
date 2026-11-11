@@ -5,6 +5,7 @@ git:
   base_branch: main
 agent:
   auth: api-key
+  triage: false
   review_rounds: 2
 workflows:
   app:

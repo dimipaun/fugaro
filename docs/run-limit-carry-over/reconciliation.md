@@ -173,7 +173,7 @@ a block above everything in use (`docs/models-commands/README.md`, `docs/rigor-c
 rules at all, because the sweeper writes it with database admin rights. Two further ties bind the leaves:
 `released + spent <= reserved` and `spent + released <= reserved`, so a release may take at most the
 unsettled amount, and `reserved` must move with the day counter by the same delta (`COUNTERS_FOLLOW`). The
-rules' own identity test (`RUN`, `internal/budget/rules/rules.go:580`) requires
+rules' own identity test (`RUN`, `internal/budget/rules/rules.go:592`) requires
 `auth.token.fs == $slug && auth.token.fr == $run`, so a token speaks only for the one run it was minted
 for. *Consequence, and it is the load-bearing one:* `Outstanding()` = `Reserved − Released` **cannot be pushed
 below `Spent` by any writer the rules bind** — every leaf is increase-only and a release is capped at
@@ -185,7 +185,7 @@ coordinator's writer (`:138-143`), each of which can write a ledger down; and **
 says a run is closed**, so there is no settled state to branch on and the read is `Outstanding()` in every
 case (D1046, spec §4). *The read is the launcher's:* `runs/$slug/$run` is readable on `RUN` alone
 (`internal/budget/rules/rules.json.tmpl:56-57`) and `RUN` requires
-`auth.token.fs == $slug && auth.token.fr == $run` (`internal/budget/rules/rules.go:580`), so **a run's token
+`auth.token.fs == $slug && auth.token.fr == $run` (`internal/budget/rules/rules.go:592`), so **a run's token
 reads its own ledger and no sibling's** — while launchers and operators already hold
 `roles/firebasedatabase.viewer` (`modules/firebase/iam.tf:44-50`), which reads every path: the **launcher**
 performs the chain read and the runner re-reads only its own (spec §3; plan L1).
@@ -313,4 +313,4 @@ question this design does not answer. The spec states the mode and its limit pla
 | U1 | That Cloud Run's `jobs.run` override cannot carry environment variables | Read off the Go client's API surface and the backend seam, not against the live API; the answer does not depend on it (D1041 carries the limits in the task either way) |
 | U2 | ~~That a launcher's write grant on the runs bucket is its own run's prefix only~~ | **Withdrawn.** The grant's own condition (`deploy/terraform/gcp/modules/installation/iam.tf:172-190`, `:186`) names `runs/` and `tokens/` as **prefix matches**, not one run's prefix, so a launcher can write and delete any repository record under `runs/`. F21 records the fact and D1046 is what it costs the design |
 | U3 | The exact cost of the `runs show` read over a long chain | `docs/console-coordinator-v2/spec.md:131` measures `runs ls --json --since 24h` at about 5.8 s; a chain read is one resolution plus the chain's ledgers, unmeasured |
-| U4 | ~~Whether a chain's ledger read may cross runs~~ | **Settled, and no longer an open item.** `runs/$slug/$run` carries `.read: "RUN"` and nothing else (`internal/budget/rules/rules.json.tmpl:56-57`), and `RUN` requires `auth.token.fs == $slug && auth.token.fr == $run` (`internal/budget/rules/rules.go:580`), so **a run's token cannot read a sibling's ledger** — `USER` reaches only `spend/<day>/runs/$slug/$run`. The read is therefore the **launcher's**, which already holds `roles/firebasedatabase.viewer` (`deploy/terraform/gcp/modules/firebase/iam.tf:44-50`) and reads every path, and the runner re-reads only its **own** ledger plus the chain's records (spec §3, §4; plan L1). The earlier draft called this an admin read and made it the plan's one blocking pre-work item; both were wrong — the launcher holds the **viewer** role, not the admin one — and the answer changes **who performs the read, not one figure and not one test** |
+| U4 | ~~Whether a chain's ledger read may cross runs~~ | **Settled, and no longer an open item.** `runs/$slug/$run` carries `.read: "RUN"` and nothing else (`internal/budget/rules/rules.json.tmpl:56-57`), and `RUN` requires `auth.token.fs == $slug && auth.token.fr == $run` (`internal/budget/rules/rules.go:592`), so **a run's token cannot read a sibling's ledger** — `USER` reaches only `spend/<day>/runs/$slug/$run`. The read is therefore the **launcher's**, which already holds `roles/firebasedatabase.viewer` (`deploy/terraform/gcp/modules/firebase/iam.tf:44-50`) and reads every path, and the runner re-reads only its **own** ledger plus the chain's records (spec §3, §4; plan L1). The earlier draft called this an admin read and made it the plan's one blocking pre-work item; both were wrong — the launcher holds the **viewer** role, not the admin one — and the answer changes **who performs the read, not one figure and not one test** |

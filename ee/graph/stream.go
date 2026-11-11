@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/coordpath"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 )
 
 // The stream's own rules: `graph --watch --json` prints whole documents rather
@@ -53,6 +56,41 @@ const KeepAlive = 30 * time.Second
 // limit rather than a loss: a change inside the floor is held and printed when
 // it passes, never dropped.
 const Floor = time.Second
+
+// ScopeSubtrees is the subtrees one scope's reader holds a subscription to: the
+// one scope asks for, and — for `all` — one per scope subtree it covers (H6).
+//
+// It is a function of the scope and of nothing else, because the subscription
+// count is a property of the scope rather than of the child that opens them:
+// the contract pins "one subscription per scope subtree" (§6.22, F12), so two
+// readers of the same scope must open the same set, and a scope that grows a
+// subtree grows it here where both of them read it.
+//
+// The coordinator's subtree is `coordpath.PathRoot` (`/coordinator`) and the
+// orchestrator's is `orchestrator.SubtreeRoot` (`/orchestrator`), each with one
+// owner in the core; a single orchestrator's subscription is its own node under
+// the second, built through the same path builder the writer used
+// (orchestrator.PathNode), so the reader and the writer cannot disagree about
+// which node an id names. The set is in the order a document lists its sources
+// — the coordinator first — so a test and a reader see the same order.
+//
+// An id this pattern cannot carry is refused rather than escaped into a path:
+// every scope that reaches here has been through ParseScope, so this is the
+// second half of the same fence (H1) and not the first.
+func ScopeSubtrees(scope Scope) ([]string, error) {
+	switch scope.Kind {
+	case ScopeAll:
+		return []string{coordpath.PathRoot, orchestrator.SubtreeRoot}, nil
+	case ScopeOrchestrator, ScopeLocal:
+		node, err := orchestrator.PathNode(scope.ID)
+		if err != nil {
+			return nil, fmt.Errorf("%w: source %s", err, scope)
+		}
+		return []string{node}, nil
+	default:
+		return []string{coordpath.PathRoot}, nil
+	}
+}
 
 // Stream is one child's stream: the identity every document it writes carries,
 // the sequence that rises within it, and the two intervals that decide when a

@@ -410,9 +410,17 @@ const workflowExecutableRefusal = "nothing was written: the workflow changes com
 // change is read before it is made, so it is answered rather than refused; the
 // write is what is gated.
 func workflowExecutableGate(cmd *cobra.Command, target settingsTarget, o settingsWriteOptions, old, next []byte) error {
+	if target.kind == settingsDocLayer {
+		// The layer's own gate is settingsLayerGate, and it runs after the
+		// managed gate rather than here: a managed project's session is refused
+		// and recorded by that gate, with its own rule over the profiles block
+		// (settingsProfilesRule, D1025), and a refusal printed before it would
+		// leave the record with nothing to say.
+		return nil
+	}
 	if target.kind != settingsDocRepo {
 		if o.executableChanges {
-			return userErr("--executable-changes goes with --layer repo: it is the owner's word for a change to a repository's own workflows, whose commands and image steps run as shell in its runs")
+			return userErr("--executable-changes goes with --layer repo or --layer project: it is the owner's word for a change to a repository's own workflows, or to the project layer's profiles, whose commands and image steps run as shell in every run of the repositories that take them")
 		}
 		return nil
 	}
@@ -426,6 +434,79 @@ func workflowExecutableGate(cmd *cobra.Command, target settingsTarget, o setting
 	workflowExecutableBanner(cmd.OutOrStdout(), changes)
 	if !o.executableChanges {
 		return userErr("%s", workflowExecutableRefusal)
+	}
+	return nil
+}
+
+// layerExecutableRefusal is workflowExecutableRefusal's sentence for the layer
+// file, which is the document this door writes: one constant, because the flag
+// that would have allowed it is the same on both.
+const layerExecutableRefusal = "nothing was written: the layer changes commands or image steps (shown above); review them, then run again with --executable-changes"
+
+// settingsLayerGate is the two refusals a write into this machine's project
+// layer file meets (G4, D1175; spec §3.6), in the order the file's own rules are
+// read: the reserved runs no coding agent's session writes (config publish's
+// layerReservedRuns), and then the executable keys of a profile, which the
+// owner's --executable-changes is the word for.
+//
+// It is read after the managed gate and never instead of it: a managed project's
+// session meets settingsProfilesRule over this same document, is refused by it
+// and leaves the refusal in the record (D1025), and a sentence printed before
+// that read would be an answer with no record behind it.
+func settingsLayerGate(cmd *cobra.Command, target settingsTarget, o settingsWriteOptions, key string, old, newData []byte) error {
+	if target.kind != settingsDocLayer {
+		return nil
+	}
+	if err := settingsLayerReservedGate(cmd, target, key, old, newData); err != nil {
+		return err
+	}
+	return layerExecutableGate(cmd, target, o, old, newData)
+}
+
+// layerExecutableGate is workflowExecutableGate for a write into this machine's
+// project layer file (G4, D1175; spec §3.6). A profile is where a repository's
+// commands and image steps are templated from — every repository that takes the
+// profile runs them — so a layer edit that moves one is the owner's own step
+// exactly as a change to a repository's own workflows is, and it is the same
+// step and the same flag `fugaro config publish` asks for on the document it
+// uploads.
+//
+// The comparison, the banner and the values are that command's own
+// (executableChanges over config.ExecutableKeys, its banner's words): the two
+// doors write one document, and a second comparison here would be a second
+// answer to what runs as shell.
+func layerExecutableGate(cmd *cobra.Command, target settingsTarget, o settingsWriteOptions, old, next []byte) error {
+	if o.dryRun {
+		return nil
+	}
+	// The old document is untrusted and unvalidated — it may hold what a hand
+	// edit put there — so one this Fugaro cannot read leaves prev nil and counts
+	// every executable key as changed: config publish's own fail-closed default.
+	prev, problems := config.ParseProjectLayer(old, target.anchor)
+	if len(problems) > 0 {
+		prev = nil
+	}
+	nextLayer, problems := config.ParseProjectLayer(next, target.anchor)
+	if len(problems) > 0 {
+		// A backstop and not a live path: settingsReparse read the edit back
+		// before this, in the same words. It is here so a document that cannot
+		// be read is refused rather than compared as an empty layer, which would
+		// find no executable change at all.
+		return userErr("%s would not read back as a project layer: %s", target.path, problems[0].String())
+	}
+	changes, err := executableChanges(prev, nextLayer)
+	if err != nil {
+		return userErr("nothing was written: this fugaro cannot compare executable key %s: upgrade it or file a bug", err)
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), executableChangesBanner)
+	for _, c := range changes {
+		fmt.Fprintln(cmd.OutOrStdout(), "  "+pluginwire.Printable(c))
+	}
+	if !o.executableChanges {
+		return userErr("%s", layerExecutableRefusal)
 	}
 	return nil
 }

@@ -33,6 +33,10 @@
 //     why, and the utterance is kept **only** as unsent text to resend; a
 //     destructive action record is never queued at all. See `gate.js` for the
 //     decision and "The offline gate" below for what this file does with it.
+//   * **it refuses a launch and a configuration change once the licence has
+//     lapsed, and keeps the cancel and the kill switch** (S6.3, D436, T12): the
+//     lapse is read here, before anything is minted, signed or written. See
+//     "The lapse" below.
 //
 // **What is injected, and why nothing is reached for.** The client reads no
 // clock (`now` is D117's server-anchored now, supplied by the app), mints no
@@ -85,16 +89,50 @@
 // while it is up (the PR #663 review's M1: the first version asked only at the
 // top, which is before the await and therefore not "at the write").
 //
+// **The lapse** (S6.3; D436, T12; the design is
+// `docs/design/lapse-read-only.md` §4) is the third thing this file owns and
+// the only refusal that is not about the network. `licence/state.js` owns the
+// table -- which of the app's five states it is in, and which writes a lapsed
+// one keeps -- and this file is its only caller, and the app's only write path
+// (D113), so the check is here or it is nowhere (§4.3). It runs **beside the
+// connection gate, and before it**: before anything is minted, signed or
+// written, and before the connection is even asked, because a lapsed launch is
+// not news about the network, and the licence's own sentence names the way out
+// (the key screen, never gated) rather than "try again when you are online".
+//
+// What a lapse refuses is a CLASS of write and not a command -- §3.2's rule for
+// the console's table, and the reason a command that has not been written yet
+// cannot slip past: the client asks `writeOf` what this utterance will DO (the
+// verb the caller classified it as, or the action record it carries) and the
+// state answers. **The verb reaches `send` through `options.verb`**, and it has
+// to: D162's launch travels as an ordinary message, so at this layer a launch
+// and a question are the same bytes.
+//
+// A licence refusal keeps the text as `unsent()` and never queues it, and an
+// action record is not kept at all -- the gate's two rules, unchanged, because
+// both screens already render these refusals the same way.
+//
 // **The port is optional and its default is the refusing one.** A client built
 // without a `connection` gets `connection.js`'s `UNWIRED_CONNECTION`, which
 // answers "no", so it refuses with `no-connection` and says so rather than
 // typing out of a port that was never wired (the review's BLOCKER: the first
 // version required the port and threw in seventy-seven of this app's own
-// tests). Fail closed, in the constructor as in the gate.
+// tests). Fail closed, in the constructor as in the gate. The `licence` port
+// takes the same constructor rule and answers the other way -- a client built
+// without one gets `UNENFORCED_LICENCE`, which has no reading to make, because
+// there is nothing to enforce with until the app has a verifier and a key
+// service (D523) and a release that had not wired one must not refuse a launch
+// on a state it never read.
 
 import { validateAccount } from '../accounts/account.js';
 import { SECRET_ITEMS } from '../accounts/secret.js';
 import { SECURE_STORE_CODES } from '../accounts/secure-store.js';
+// **The licence state, reached as a FILE and not through its door** (S6.3):
+// `licence/index.js` names `@noble/curves`, and this suite runs in a fresh
+// clone with no `node_modules` (`mobile/README.md`), so a client that imported
+// the door would make the mailbox suite need an install. `store.test.js` and
+// `verify.test.js` reach the modules behind the door the same way.
+import { UNENFORCED_LICENCE, lapseRefusalAt, licenceSpeech, writeOf } from '../licence/state.js';
 import {
   TEXT_MAX,
   canonicalBytes,
@@ -400,7 +438,16 @@ export function createMailboxClient(options = {}) {
   // own tests, or an online default, which would send into the SDK's queue
   // exactly when nobody is looking. A connection that IS given must still be
   // usable: a half-wired port is a wiring bug and still throws here.
-  const { keys, store, connection = UNWIRED_CONNECTION, speaker, now, newId, secrets } = options;
+  const {
+    keys,
+    store,
+    connection = UNWIRED_CONNECTION,
+    licence = UNENFORCED_LICENCE,
+    speaker,
+    now,
+    newId,
+    secrets,
+  } = options;
   if (keys === null || typeof keys !== 'object' || typeof keys.use !== 'function') {
     throw new TypeError('createMailboxClient: a secret store with use() is required');
   }
@@ -410,6 +457,13 @@ export function createMailboxClient(options = {}) {
   }
   if (connection === null || typeof connection !== 'object' || typeof connection.isOnline !== 'function') {
     throw new TypeError('createMailboxClient: a connection must carry isOnline() when one is given');
+  }
+  // S6.3's port, with the same rule: a licence that is given must be askable.
+  // The default (`UNENFORCED_LICENCE`) is a real port that answers "no reading",
+  // so the absence of one is a product decision (D523) and a HALF-wired one is
+  // still a bug -- it would refuse nothing at all, silently.
+  if (licence === null || typeof licence !== 'object' || typeof licence.at !== 'function') {
+    throw new TypeError('createMailboxClient: a licence must carry at() when one is given');
   }
   if (speaker === null || typeof speaker !== 'object' || typeof speaker.speak !== 'function') {
     throw new TypeError('createMailboxClient: a speaker with speak() is required');
@@ -504,22 +558,32 @@ export function createMailboxClient(options = {}) {
   }
 
   /**
-   * The gate's decision, and the two things that follow from it when it says no.
+   * A refusal the owner has to be TOLD about, and the shape it comes back in:
+   * the connection gate's and the licence's alike (S6.3).
    *
-   * The owner is **told** -- through the one port this directory has for saying
-   * anything, the speaker -- and the sentence is `gate.js`'s, so the voice screen
-   * and this refusal cannot say two different things about one reason. A speak
-   * that failed does not change the refusal: the code is what a screen switches
-   * on, and `told` reports the truth about whether the owner heard it.
+   * The owner is told -- through the one port this directory has for saying
+   * anything, the speaker -- and the sentence is the table's, `gate.js`'s or
+   * `licence/state.js`'s, looked up by the refusal's own code: two screens
+   * render this shape and a sentence written twice is a sentence that ends up
+   * disagreeing with itself. A speak that failed does not change the refusal:
+   * the code is what a screen switches on, and `told` reports the truth about
+   * whether the owner heard it.
    *
    * `keepText` is false for an action record, and that is D167's "a destructive
    * action record is never queued at all": there is nothing to resend, because
-   * resending a destructive command means confirming it again (P6.2).
+   * resending a destructive command means confirming it again (P6.2). It is the
+   * same rule for both refusals -- the gate's and the licence's -- because it is
+   * about what the utterance IS and not about why it was refused.
    *
    * @returns {Promise<object>} the frozen refusal `send` returns
    */
-  async function gateRefusal(verdict, { text, at, keepText }) {
-    const message = offlineSpeech(verdict.code);
+  async function spokenRefusal(verdict, { text, at, keepText }) {
+    // `??` and not `||`: a code neither table carries answers `null` from both,
+    // and `null` is what a screen renders as nothing at all. Today the two sets
+    // are disjoint -- the gate's codes are the connection's, the licence's is
+    // `licence-lapsed` -- so the order of the lookup cannot decide anything, and
+    // it is written this way so that it stays that way.
+    const message = offlineSpeech(verdict.code) ?? licenceSpeech(verdict.code);
     const said = await speaker.speak(message);
     if (keepText) unsent.push(Object.freeze({ text, at, code: verdict.code }));
     return Object.freeze({
@@ -543,16 +607,22 @@ export function createMailboxClient(options = {}) {
    * schema before it is written -- so a record the rules or the consumer would
    * refuse is never attempted, and no unsigned record ever reaches the store.
    *
-   * **The gate is here, before anything is minted or signed** (P6.10, D167):
-   * the text is redacted first (so what is kept as unsent text and what is
-   * signed are the same string, with no secret in either), then the clock is
-   * read (the gate cannot judge a heartbeat's age without one), then the gate.
-   * Nothing is written, no id is minted and the key is not touched.
+   * **Both gates are here, before anything is minted or signed** (P6.10, D167;
+   * S6.3, T12): the text is redacted first (so what is kept as unsent text and
+   * what is signed are the same string, with no secret in either), then the
+   * clock is read (neither the gate nor a licence state can be judged without
+   * one), then the LAPSE, then the connection gate. Nothing is written, no id is
+   * minted and the key is not touched.
    *
    * @param {unknown} text what the owner said
-   * @param {{action?: object}} [options] pass `action` to send D169's action
-   *   record: the message carries `kind: 'action'`, and it is **never queued**
-   *   -- not in the outbox, not in `pending()`, not in `unsent()`
+   * @param {{action?: object, verb?: string}} [options] pass `action` to send
+   *   D169's action record: the message carries `kind: 'action'`, and it is
+   *   **never queued** -- not in the outbox, not in `pending()`, not in
+   *   `unsent()`. Pass `verb` to say what a message the owner spoke WAS -- a
+   *   launch is D162's pass-through and travels as an ordinary message, so it is
+   *   the caller's classification that lets the lapse refuse it (see "The lapse"
+   *   above). Neither option is written to the record: what the record carries is
+   *   P6.3's.
    * @returns {Promise<{ok: true, id: string, at: number}
    *   | {ok: false, code: string, field: string|null}>}
    */
@@ -575,9 +645,35 @@ export function createMailboxClient(options = {}) {
     // the schema refuses a malformed one after the tag is made.
     const isAction = Object.hasOwn(opts, 'action');
 
+    // **The lapse, before the gate and before anything is minted** (S6.3; D436,
+    // T12; the design's §4.3). It is asked FIRST of the two, and that is a
+    // decision: being offline and having lapsed are both true of the same
+    // utterance, and the one that helps the owner is the licence's -- it names
+    // the key screen, while "try again when you are online" would be advice that
+    // cannot work, sent to someone whose next launch will be refused whatever
+    // their connection does.
+    //
+    // What the port is asked about is the CLASS of write (see "The lapse"
+    // above), and the classification is the caller's: `opts.verb` for a
+    // classified message, `opts.action` for one of the three verbs that travel
+    // as records. A write this table cannot name is not kept, so it is refused
+    // at a lapse -- and nothing else changes at any other state, where the
+    // licence has no opinion at all.
+    //
+    // The clock crosses as a `Date`, which is what `verify.js` and
+    // `licence/state.js` take and not what the client holds: this client's `now`
+    // is D117's milliseconds.
+    const refusedByLapse = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({ verb: opts.verb, action: opts.action }),
+    });
+    if (refusedByLapse !== null) {
+      return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: !isAction });
+    }
+
     const verdict = evaluateGate({ online: connection.isOnline(), presence: consumerPresence(at) });
     if (!verdict.ok) {
-      return gateRefusal(verdict, { text: body.text, at, keepText: !isAction });
+      return spokenRefusal(verdict, { text: body.text, at, keepText: !isAction });
     }
 
     const id = newId();
@@ -628,7 +724,7 @@ export function createMailboxClient(options = {}) {
       presence: consumerPresence(atWrite === null ? at : atWrite),
     });
     if (!still.ok) {
-      return gateRefusal(still, { text: body.text, at, keepText: !isAction });
+      return spokenRefusal(still, { text: body.text, at, keepText: !isAction });
     }
     minted.add(id);
 
@@ -654,6 +750,57 @@ export function createMailboxClient(options = {}) {
     // that did not land is reported and dropped, and the owner confirms again.
     if (!isAction) outbound.set(id, { record, landed: false });
     return refuse(written.code, written.field);
+  }
+
+  /**
+   * The LICENCE's answer for one write, asked before anything else and reported
+   * as the refusal `send` would return -- and nothing else (S6.3; the design's
+   * §5.7).
+   *
+   * A screen with a refusal of its own asks this first. The voice screen will
+   * not accept a message while P1.4 says offline, and that pre-check sits in
+   * front of `send` -- so on its own it answers "the orchestrator is offline"
+   * for a licence's reason, which §5.7 forbids: the owner is sent to wait for a
+   * network that is not the problem, and the sentence naming the key screen
+   * (which is never gated) is never said. The licence outranks the gate here
+   * for the same reason it does inside `send`, and a screen cannot reach that
+   * order without the write path.
+   *
+   * It writes nothing: no id is minted, no key is touched and the store is not
+   * reached. What it does is report the refusal the way `send` reports one --
+   * spoken, and the text kept as `unsent()` for a message -- because it IS the
+   * same refusal, made by the same table.
+   *
+   * `null` is "the licence has no opinion": a kept class (a message, a cancel,
+   * the kill switch), a state that keeps this write, or a client built with no
+   * port at all. A caller's own refusal then stands where it stood.
+   *
+   * @param {unknown} text what the owner said
+   * @param {{action?: object, verb?: string}} [options] the caller's
+   *   classification, exactly as `send` takes it
+   * @returns {Promise<object|null>} the refusal, or `null`
+   */
+  async function licenceRefusal(text, options) {
+    if (typeof text !== 'string' || text === '') return null;
+    if (text.length > TEXT_MAX) return null;
+    const body = redact(text);
+    if (!body.ok) return null;
+    const at = clock();
+    if (at === null) return null;
+    const opts = options === undefined || options === null ? {} : options;
+    if (typeof opts !== 'object' || Array.isArray(opts)) {
+      throw new TypeError('licenceRefusal: the options must be an object');
+    }
+    const refused = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({ verb: opts.verb, action: opts.action }),
+    });
+    if (refused === null) return null;
+    return spokenRefusal(refused, {
+      text: body.text,
+      at,
+      keepText: !Object.hasOwn(opts, 'action'),
+    });
   }
 
   // flushMutating re-writes every message the outbox has not answered, oldest
@@ -977,6 +1124,7 @@ export function createMailboxClient(options = {}) {
     ok: true,
     paths,
     send: (text, options) => serial(() => send(text, options)),
+    licenceRefusal: (text, options) => serial(() => licenceRefusal(text, options)),
     flush: () => serial(() => flush()),
     poll: () => serial(() => poll()),
     pending,

@@ -791,3 +791,31 @@ func TestCatalogResolveRefusesAProviderWithoutAReader(t *testing.T) {
 		t.Errorf("the refusal = %q, want %q", err, want)
 	}
 }
+
+// TestBuiltSourceKindsClassifyEveryCatalogSourceKind holds the fail-closed
+// half of D1191's rule to the kinds that exist: builtSourceKinds is what a
+// build writes rather than what it does not, which is only safe while every
+// kind the catalog offers is decided somewhere, so a kind added to
+// config.SourceKinds has to be classified here in the same change. Without
+// this, the new kind would be refused as prebuilt on every baked workflow —
+// a false refusal of a configuration the rest of the tree builds — until
+// somebody noticed.
+//
+// The list and this test sit beside Fetch, which is the other reader of what a
+// kind means ("there is nothing to build or copy" for a prebuilt image), and
+// not in internal/infra, where the refusal D1191 writes lives: infra reads the
+// classification through BuildsImage, so the one list is this package's.
+func TestBuiltSourceKindsClassifyEveryCatalogSourceKind(t *testing.T) {
+	for _, k := range config.SourceKinds {
+		e := config.Entry{Source: config.Source{Kind: config.SourceKind(k)}}
+		built := BuildsImage(e)
+		if want := config.SourceKind(k) != config.SourceImage; built != want {
+			t.Errorf("BuildsImage holds %s = %v, want %v: a kind the catalog gains is classified as built or as prebuilt in the same change, or every baked workflow on an entry of that kind is refused (D1191)", k, built, want)
+		}
+	}
+	for _, kind := range builtSourceKinds {
+		if !slices.ContainsFunc(config.SourceKinds, func(k string) bool { return config.SourceKind(k) == kind }) {
+			t.Errorf("builtSourceKinds holds %q, which is no kind of config.SourceKinds: the list is read as a classification of the kinds the catalog has", kind)
+		}
+	}
+}

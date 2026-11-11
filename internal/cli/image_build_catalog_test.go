@@ -692,6 +692,33 @@ func TestCatalogBuildCopiesNothingOverCap(t *testing.T) {
 	}
 }
 
+// TestCatalogBuildNoWaitSettleFailureNamesTheBuild: the catalog arm's own
+// version of image_test.go's TestImageBuildNoWaitSettleFailureNamesTheBuild.
+// With --no-wait nothing waits for the build, so its whole reservation is
+// recorded and the sentence naming it is the step's own line — which the
+// settle precedes. A settle that fails therefore has to carry that sentence as
+// its context (G8): the build is out and billing from the submission, and on
+// this arm nothing else in the run says which build it is.
+func TestCatalogBuildNoWaitSettleFailureNamesTheBuild(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	noTerminal(t)
+	// The settle's own write and only it: the lease a take writes carries no
+	// "settled" key, so the build is submitted first and this failure lands
+	// after it — the state this test is about.
+	f.db.DenyKeys("settled")
+
+	out, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1", "--no-wait")
+	if err == nil {
+		t.Fatalf("the build's spend could not be recorded and the command exited zero:\n%s%s", out, stderr)
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("submitted %d builds, want the one the failure is about\n%s%s", buildPosts(fb), out, stderr)
+	}
+	if !strings.Contains(out, "submitted Cloud Build build ") || !strings.Contains(out, "log:") {
+		t.Errorf("the failed run never names the build it submitted and is still billing:\n%s", out)
+	}
+}
+
 // TestCatalogBuildCountsTheWholeReservationWhenTheWatchIsLost: an entry whose
 // build is submitted and whose watch then gives up — here the first status read
 // is refused, which Wait does not retry — goes on billing without this command,

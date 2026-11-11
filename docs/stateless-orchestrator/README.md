@@ -1,10 +1,20 @@
 # The stateless orchestrator
 
+**Status (2026-11-10): twelve of the [implementation plan](implementation-plan.md)'s twenty tasks are merged on `main`** (O0-O8, O10, O17, O18);
+O9 (#2193) and O12 (#2290) are open drafts; O11, O13 and O14 are not started. **This revision makes O16 and O19 tasks**: O16 splits into
+**O16a** (the MCP state scopes, catalogue rows and read handlers, dormant — **approved and launchable**, after the open #1994) and **O16b**
+(serving them — approved, waits on the MCP front door's wiring task) and **O19** (a workspace's refusal pauses the queue — approved, waits on
+W7, #2275). It writes the MCP amendments T3 and T4 into `docs/mcp-server` and puts **D2020-D2022** to the owner, **all answered as recommended
+on 2026-11-10** (reconciliation section 8; D2023-D2029 reserved). **The owner approved all tasks on 2026-11-10.** The status of 2026-11-08
+follows, kept.
+
 **Status (2026-11-08): six tasks of the [implementation plan](implementation-plan.md) are built, all merged on `main`.** Task **O0**, the state schema,
 the typed patch and the validator (#1823, `36abeffc`, 2026-11-07): `internal/orchestrator/state.go`, `patch.go`, `validate.go`, `summary.go`, their tests,
 `testdata/state-a.json` and the two `schemas/` documents. Task **O1**, the deterministic security-sensitive classifier (#1822, `405dae8b`, 2026-11-07), is its
 own four files in `internal/orchestrator/sensitivity/` (the package also holds SC1's `floor` and `pattern` files); **O2** (#1945, `5053cbce`), the `orchestrator/`
 subtree and its rules, **O3** (#1954, `70ec7800`), the state store and the audit log, **O4** (#1825, `8e534f5d`), the guardrail policy fields, and **O6** (#1950, `6145e445`), the launcher, are merged too. Every other task is plan only, including **BF2's long-run triage rule (2026-11-08): task O14 and the decisions D1244-D1247, design only, no task approved.**
+
+**Check 300 has run: PASSED 2026-11-10.** The owner ran `bash scripts/live-checks/check300.sh --installation fugaro` with CLI 0.22.1 on the dogfood installation (project `fugaro`, GCP `fugaro-dev`) and every fact passed — the `orchestrator/` subtree and its marker on the real database, the person's own credential writing the state node (D1241's answer) while a credential-less client was refused the same node, and the deployed document byte-for-byte unchanged — so O2's fence is **verified live**; the register's row and section (`docs/gcp-live-checklist.md`) carry the record. **Checks 301 to 304 stay the owner's, and 305 stays reserved** for O16.
 
 *The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved. Every decision D1220-D1243 and every question the plan raised (Q1-Q4) is answered — Q2 twice — and the last tension the answers left open, T7, was ruled on 2026-11-05, so nothing is left for the owner to rule** (reconciliation section 6).
 
@@ -13,8 +23,8 @@ subtree and its rules, **O3** (#1954, `70ec7800`), the state store and the audit
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec verbatim: the stateless orchestrator loop and its daemon addendum. Not edited |
-| [reconciliation.md](reconciliation.md) | The spec against the code (F1-F23), the hard questions, the decisions **D1220-D1247** with the owner's answers of 2026-11-04 and 2026-11-08 (BF2: D1244-D1247, the long-run triage rule), the UNVERIFIED list (U1-U10) and the tensions (T1-T7; T6 and T7 closed by the owner's answers, T7 not the recommendation) |
-| [implementation-plan.md](implementation-plan.md) | Tasks O0-O19 in three slices, the parallel levels, the shared-files table, the owner-run Checks 300-305 and the owner questions Q1-Q4 |
+| [reconciliation.md](reconciliation.md) | The spec against the code (F1-F23), the hard questions, the decisions **D1220-D1247** with the owner's answers of 2026-11-04 and 2026-11-08 (BF2: D1244-D1247, the long-run triage rule), the pass of 2026-11-10 (section 8: F24-F29, R1-R3, **D2020-D2022 answered 2026-11-10, as recommended**), the UNVERIFIED list (U1-U12) and the tensions (T1-T7; T6 and T7 closed by the owner's answers, T7 not the recommendation) |
+| [implementation-plan.md](implementation-plan.md) | Tasks O0-O19 (O16 split into O16a and O16b on 2026-11-10) in three slices, the parallel levels, the shared-files table, the owner-run Checks 300-305 (300 **PASSED 2026-11-10**) and the owner questions Q1-Q4 |
 
 ## The owner's answers
 
@@ -45,7 +55,7 @@ All of D1220-D1243 were answered on 2026-11-04. Most are the recommendation; **t
   in a security path, stops the run and asks the owner (a `waiting_on: person` decision). Everything else **fails closed** into the fourth,
   **recommend-only** outcome — BF1's file absent, `CIUnknown`, a truncated path set, a severity the triage does not know — tried before the two that act, so it merges nothing, cancels
   nothing and restarts nothing, and prints what it could not read. Every triage is written to the orchestrator audit log under `<run>:triage` and printed read-only by
-  **`fugaro runs watch`**; until BF1 lands that is every long run (U10), and the threshold it fires on is the person's own local key (`orchestrator.triage_after`, default `2h`, refused when it is not under the run's budget).
+  **`fugaro runs watch`**; until BF1 lands that is every long run (U10), and what fires it is the per-mode ladder table of `docs/outer-loop-escalation` — local-only keys, one set per rigor mode (D2032) — rather than a single age threshold.
 
 D1241 (the person's own credential writes the `orchestrator/` node), D1242 (the terminal Typed confirmation now, a paired-device channel later) and
 D1243 (the session-start print reads a local cache the daemon writes) are all the recommendation, and the gates the plan had put on them are lifted.
@@ -53,7 +63,8 @@ D1243 (the session-start print reads a local cache the daemon writes) are all th
 ## The number block
 
 **D1220-D1249**, confirmed by the owner. D1220-D1247 are written (D1244-D1247 by BF2); **D1248-D1249 are reserved and unused.** Checks **300-309** are
-reserved for the plan (300-305 used, 306-309 reserved), verified free on 2026-11-04.
+reserved for the plan (300-305 used, 306-309 reserved), verified free on 2026-11-04. **Check 300 has run — PASSED 2026-11-10** — and
+301-305 stay the owner's, with 305 reserved until O16 names its files.
 
 ## The spec's typo and numbering fixes
 

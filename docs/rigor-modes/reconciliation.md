@@ -795,7 +795,12 @@ carry an empty owner's-answer cell, the number block sits above every claim the 
 and every task in the plan states its files, its red step and its reviewer tier.
 Amended 2026-11-08: that move was resolved away by the batch merge that landed the
 same pin beside `de90e93c`'s recount of the doubled row, so the table's row moves from
-113 to 114 and carries the tree's figure again. Amended 2026-11-09: `7297a7e4` (#2013,
+113 to 114 and carries the tree's figure again. Amended 2026-11-08:
+`internal/cli/docs_check361_test.go`, the workspaces work's pin over its Check 361
+section of the live checklist (W3, added with the check on 2026-11-07), is a pin no
+line above counted — it landed on the workspaces branch while this row was being
+recounted — so the row moves from 114 to 115, the merged tree's own figure rather than
+the chain's next number. Amended 2026-11-09: `7297a7e4` (#2013,
 the security-classification work) added one top-level `fugaro.yaml` key, one config
 scope row and one image-skew `Since` constant, and left three rows below at the
 counts of the tree before it, so they move with the tree: the top-level keys from
@@ -817,30 +822,50 @@ pin over `docs/dogfooding.md`'s own reports section, moved the table's row
 from 115 to 116: the folder the page names and the launch it schedules are read
 out of `internal/digest` and `internal/recipe`, so the page and the layout cannot
 drift apart.
-Amended 2026-11-10: `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin (the register's Checks 510 and 511, their two steps files and the numbers the folder claims, DS0.2), moved the same row once more, from 116 to 117.
+Amended 2026-11-10: `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin (the register's Checks 510 and 511, their two steps files and the numbers the folder claims, DS0.2), moved the table's row from 116 to 117.
 Amended 2026-11-10: `internal/cli/docs_run_without_checkout_test.go`,
 the run-without-checkout folder's pin over A0 having landed — the person read
 set its status lines name and the answer row it was raised by are read
-against — moved the table's row from 117 to 118.) They
+against — moved the table's row from 117 to 118.
+Amended 2026-11-10: `660112bd` (#2213, the triage stage and its switch) added the
+image-skew `Since` constant the triage stage's carrier is gated by and left the
+image-skew row at 34, so it moves to 35.
+Amended 2026-11-11: `slotSince`, the A/B pair's slot gate the review-levels work's
+B1.1 adds to `internal/cli/recipes_skew.go` (that folder's ruling of 2026-10-30: a
+pair that names a reviewer slot needs a runner that replays the champion's patch,
+B1.2 there), added one more image-skew `Since` constant and left the image-skew
+row at 35, so it moves to 36.
+Amended 2026-11-10: `internal/cli/docs_issue_test.go`, the issue-mine folder's pin
+over `docs/issues.md`'s `fugaro issue mine` section (T-IM7), moved the table's
+pin row from 118 to 119.
+Amended 2026-11-10: `internal/cli/docs_bitbucket_runbook_test.go`, the
+bitbucket-credentials folder's pin over the credentials-service runbook's
+read-consumer section, moved the table's pin row from 120 to 121.
+Amended 2026-11-10: `internal/cli/docs_bitbucket_security_test.go`, the same
+folder's pin over SECURITY.md's section for the read mint and its two caller
+classes, moved it from 121 to 122.
+Amended 2026-11-11: `internal/cli/docs_forge_checks_test.go`, the
+forge-authorship-images plan's pin over the register's Checks 230, 231, 232, 234
+and 235 (X1), moved the table's row from 123 to 124.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
 
 | Construct | Count | Command |
 | --- | --- | --- |
-| Catalog recipes | 9 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
+| Catalog recipes | 11 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 14 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 105 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 106 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 4 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 35 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 36 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 118 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 124 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 4 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
@@ -1407,6 +1432,13 @@ cannot, for the reason above; and making it possible means granting the App the
 Workflows permission and lifting the refusal, which is a security decision
 several sizes larger than this feature. The honest version of this alternative is
 "a person merges and watches CI", which is the recommendation.
+
+**Amended 2026-11-10 by `docs/outer-loop-escalation`.** Fugaro still opens pull requests and still never deploys, and a run still never merges — `gitprov` had
+no merge call when this was answered. The one exception the owner has now ruled is the orchestrator daemon, which may mark a stalled draft ready and merge it,
+and only under the long-run triage rule's gate: green CI at that head, a changed-path set wholly inside the routine allowlist, no critical finding and none
+high in a security path. It merges at the exact head SHA it readied and judged, never with an admin or bypass flag, and every other merge stays a person's.
+Nothing else in this ruling moves: "ship immediately" is still a ready pull request the operator merges now, with the full suite running as CI on `main` after
+the merge.
 
 ### D14 — Fix confidence: a deterministic diff rule gates; the agent's number is recorded, never trusted
 

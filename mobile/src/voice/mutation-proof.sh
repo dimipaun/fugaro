@@ -317,19 +317,28 @@ run "the OS's refusal of the microphone is recorded" \
   });" ""
 
 # 5. The offline refusal: the plan's own sentence, and the one state it names.
+#    The branch asks the client's licence question first (S6.3; the review's
+#    masking finding), so what these mutate is the branch itself and the
+#    refusal it returns -- asking is not refusing.
 run "the app refuses to accept a message while offline" \
-  "    if (offline()) return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));" ""
+  "    if (offline()) {" \
+  "    if (false) {"
 run "the refusal is shown, not only returned" \
-  "    if (offline()) return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));" \
-  "    if (offline()) return refuse(SCREEN_CODES.OFFLINE, 'presence');"
+  "      return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));" \
+  "      return refuse(SCREEN_CODES.OFFLINE, 'presence');"
 run "only offline refuses: stale is still an orchestrator" \
   "  const offline = () => presence !== null && presence.state === STATE.OFFLINE;" \
   "  const offline = () => presence !== null && presence.state !== STATE.LIVE;"
 run "the message is judged before the presence is" \
   "    if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
-    if (offline()) return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));" \
-  "    if (offline()) return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
-    if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));"
+    if (offline()) {
+      const refusedByLicence = await client.licenceRefusal(text, options);" \
+  "    if (offline()) {
+      return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
+    }
+    if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
+    if (offline()) {
+      const refusedByLicence = await client.licenceRefusal(text, options);"
 run "an empty message is refused as an empty message" \
   "    if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));" ""
 
@@ -362,11 +371,8 @@ run "a release is never a takeover" \
 run "a lease state P1.2 will not read is refused" \
   "      if (!read.ok) return refuse(SCREEN_CODES.BAD_LEASE, 'lease');" ""
 run "the lease does not gate the app" \
-  "    if (offline()) return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));" \
-  "    if (offline()) return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
-    if (leaseRefused !== null && leaseRefused.code === 'already-claimed') {
-      return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'lease'));
-    }"
+  "    if (offline()) {" \
+  "    if (offline() || (leaseRefused !== null && leaseRefused.code === 'already-claimed')) {"
 
 # 7. The guards on the settings themselves.
 run "the switch has two values and no third" \
@@ -463,7 +469,7 @@ run "an app command is never forwarded as text" \
 #     -- and a `propose` that answered a launch without sending it would leave the
 #     owner's command nowhere.
 run "a launch is sent as the owner's own words" \
-  "        const sent = await deliver(text);
+  "        const sent = await deliver(text, { verb: stepped.verb });
         if (sent.ok !== true) return sent;" \
   "        const sent = Object.freeze({ ok: true, outcome: DIALOGUE_OUTCOME.SENT, id: null, at });" \
   mobile/src/voice/dialogue.js src/voice/dialogue.test.js
