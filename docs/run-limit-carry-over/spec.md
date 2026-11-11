@@ -199,6 +199,20 @@ has to be refused for it: the charge is a number, it favours the cap, and a call
 (`--used-*`, below). It is the sweeper's own direction applied to a read that failed rather than to a lease
 that was never released.
 
+**Where the installation sets no per-run cap for a dimension, the chain's own limit for it is the charge**
+(D1049). The per-run token cap is optional policy (`agent.max_run_tokens`) with no database counterpart, so
+the *token* dimension has no cap on an installation that sets none, and the rollover deletes a run's ledger
+node eight days after its last share (`internal/budget/rollover.go`, `PruneAfter`) while the run's record
+stays — so an unreadable ledger is the ordinary case for an old chain, not a failure. One run of the chain
+cannot have held more than the chain's own limit for the dimension, so that limit is the charge: a number
+again, favouring the bound as above, and never a refusal of the read's own. A charge that size leaves the
+chain reading as spent, so the launch then stops at the rule every exhausted chain stops at (§5, D1047) —
+not for the read, but for the number the read is charged — and the ways past it are the caller's own
+`--used-*`, which states the figure the engine could not measure (D1048), or a raise of the chain's limit in
+the run that began it (D1061). Nothing durable replaces the pruned ledger today: a record's only token
+members are the gateway's cache sums (`schemas/result.schema.json`), which are not the input and output
+tokens a cap counts, so the charge is the bound and not the run's own figure (F8).
+
 **The caller never supplies `used`** (D1048). A caller-supplied usage number is accepted only as a *further
 tightening*: a `--used-usd X` that is **larger** than what the engine read raises the charge, and one that is
 smaller is refused, naming both figures. That keeps the one honest use of the knob — an orchestrator that

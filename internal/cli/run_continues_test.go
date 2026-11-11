@@ -345,17 +345,23 @@ func TestRunContinuesWithAnUnreadableLedgerChargedTheCap(t *testing.T) {
 	}
 }
 
-// TestRunContinuesWithAnUnmeasuredLedgerRefused: with the budget on, a
-// chain-limited dimension the read could not measure is never read as a zero —
-// a missing ledger read as free restores the chain's whole budget, which is
-// cheaper than forging one (F14). D1049 charges an unreadable ledger the
-// per-run cap, so the dimension is unmeasured only where this installation
-// sets no cap for it to be charged — the ordinary case for tokens, whose cap
-// is optional policy with no database counterpart — and there the launch is
-// refused rather than handed the chain's whole token limit again. The refusal
-// names the run whose ledger could not be read, and --used-tokens is the way
-// out: a caller who knows the figure states it (D1048).
-func TestRunContinuesWithAnUnmeasuredLedgerRefused(t *testing.T) {
+// TestRunContinuesWithAnUnmeasuredLedgerChargedTheChainsLimit: with the budget
+// on, a chain-limited dimension the read could not measure is never read as a
+// zero — a missing ledger read as free restores the chain's whole budget, which
+// is cheaper than forging one (F14) — and it is not a refusal of the read
+// either, which D1049 rules out: the rollover prunes an old chain's ledgers
+// while the records stay, so a ledger that cannot be read is the ordinary case
+// there rather than a failure. D1049 charges an unreadable ledger the per-run
+// cap, so the dimension is left unmeasured only where this installation sets no
+// cap to charge it with — the ordinary case for tokens, whose cap is optional
+// policy with no database counterpart — and there the charge is the chain's own
+// limit: no one run of the chain can have held more, so it is the figure that
+// favours the bound the way the cap does. The chain then reads as spent, and the
+// launch stops at the rule every exhausted chain stops at, with the charge the
+// limit rather than a zero. The note on stderr names the run whose ledger could
+// not be read, and --used-tokens states the figure the engine could not measure
+// (D1048), which is the way past it.
+func TestRunContinuesWithAnUnmeasuredLedgerChargedTheChainsLimit(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	limitsImage(t, f.cloudFixture)
 	limitsCheckout(t)
@@ -364,19 +370,31 @@ func TestRunContinuesWithAnUnmeasuredLedgerRefused(t *testing.T) {
 	// answers this launch.
 	tokens := int64(900_000)
 	seedChainRun(t, f.cloudFixture, chainRun, chainSpent, task.Overrides{MaxTokens: &tokens})
-	_, _, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "A task")
+	_, errOut, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "A task")
 	if ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want a chain whose token spend cannot be established refused", err)
+		t.Fatalf("err = %v, want the chain charged its own token limit and the launch refused", err)
 	}
 	for _, want := range []string{
 		"--continues " + task.ShortRun(chainRun),
-		"token spend cannot be established",
-		task.ShortRun(chainRun), // the run whose ledger could not be read
-		"no ledger node",
-		"--used-tokens",
+		"900000 tokens of 900000 tokens used", // the chain's own limit, not a zero
+		"nothing to spend",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %v, want it to name %q", err, want)
+		}
+	}
+	// The note says why the chain reads as spent, and names both the run whose
+	// ledger could not be read and the knob that states the figure: the refusal's
+	// own figures are a charge, and a reader must not take them for a spend
+	// somebody measured.
+	for _, want := range []string{
+		"does not measure its token",
+		task.ShortRun(chainRun),
+		"no ledger node",
+		"--used-tokens",
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("stderr = %q, want it to name %q", errOut, want)
 		}
 	}
 	if n := len(f.run.Executions()); n != 0 {

@@ -99,6 +99,12 @@ type LedgerReader interface {
 // chain's limit where a per-run cap exists: that one is the root launch's
 // number and lives in its stored task (D1046).
 //
+// That fallback is one no caller can always pass: the chain's limit is that
+// stored number and the read is what names the root run holding it, so a caller
+// with only the caps passes no bound and charges the chain's own limit for the
+// dimension the read leaves unmeasured instead — the same figure by the other
+// route, and the one number the charge has to be.
+//
 // **Zero is the absence of a bound**, in this codebase's own vocabulary for
 // both dimensions: policy.PerRunUSD is documented `0 = unset` and
 // agent.max_run_tokens (FUGARO_MAX_RUN_TOKENS) `0 is none`, and the per-run
