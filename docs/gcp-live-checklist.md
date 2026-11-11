@@ -12715,10 +12715,11 @@ machine that is not the author's. The check is `scripts/live-checks/check-410.sh
 owner's alone: **no agent runs any step of it**, because what it measures is a real failed `fugaro update`
 on a real installation and the answer a real credential buys.
 
-**What it settles.** The spec's T7 as a person meets it: a command that fails tells them the one command
-that explains it, and that command works with no setup step, no login and no cloud project of their own.
-It reads **T-DG9**'s sentence, so at a build where that task has not landed the `failure-line` row is a
-finding rather than a pass — which is the reading this check exists for.
+**What it settles.** [spec.md](diagnose-agent/spec.md)'s own acceptance criteria, read from the outside:
+*a failed `fugaro update` prints its run ID and the diagnose command*, and *a diagnosis without any extra
+setup* — over a real failed run rather than a fixture. It reads **T-DG9**'s sentence, so at a build where
+that task has not landed the `failure-line` row is a finding rather than a pass — which is the reading
+this check exists for.
 
 - **The premise is a row.** The project it names is one it makes up (`fugaro-chk410-<stamp>`) and then
   reads back with `gcloud projects describe`: only a **NOT FOUND** lets the run continue, so the probe's
@@ -12782,15 +12783,17 @@ read back rather than assumed.
   it mirrored. A machine that cannot even find `fugaro` on the mirrored PATH is refused for the same
   reason.
 - **No account.** `GH_TOKEN`, `GITHUB_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` and `GH_CONFIG_DIR` are unset for
-  the diagnosis, and the check reads back that the command recorded them as unset. The fetch is an
-  anonymous read of the public archive at the ref the record names.
+  the diagnosis, and the fetch is an anonymous read of the public archive at the ref the record names —
+  which needs no account, so a tree fetched under this environment was fetched without one. The check's
+  own test asserts the other direction, that the child really was given none.
 - **The version.** The record under the scratch cache has to say `kind: tarball` (a clone is a finding: the
   git path is what a machine with `git` is for, and F21's unpack rules are what this check's tree is read
   under), a `version` that is the installed build's own — the release's version verbatim, or the tag
   `vX.Y.Z` when the binary carries no commit (D1611, and the two spellings are both accepted) — and
-  `may_not_match` false. A build that names no release at all, a `dev` build, is **not measured** rather
-  than passed or failed: D1611's own case is a build that carries a commit or a tag, and a `dev` build
-  says so itself.
+  `may_not_match` false. A build that names no release at all — a `dev` build, or one this check cannot
+  read a release out of — is **not measured** rather than passed or failed: D1611's own case takes the
+  newest release tag and says so in its own sentence, which is not what this check measures, and the row
+  names the release to run it against instead.
 - **The tree.** The unpacked tree has to hold its `go.mod`: a tree that is not the source is the one thing
   the fetched source must never be.
 - **The order.** The fetch happens **before** the credential is acted on (T-DG8's order), so an offline
