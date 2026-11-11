@@ -917,7 +917,11 @@ step_reach() {
 # recorded, and it records the credential's NAME.
 step_audit() {
   local ans
-  ans=$(audit_for "$RUN") || stop "the service's own audit lines could not be read from the fugaro-dev project's Cloud Logging"
+  # The read is the waited one: this line was written moments ago, and Cloud
+  # Logging is eventually consistent, so an immediate read is as likely to be
+  # empty as full — and empty is the sentence this row reads as "the mint was
+  # answered and left unrecorded".
+  ans=$(wait_for_audit "$RUN" 1) || stop "the service's own audit lines could not be read from the fugaro-dev project's Cloud Logging"
   local lines statuses credential purpose tier repository ghs
   lines=$(field_of lines "$ans")
   statuses=$(field_of statuses "$ans")
@@ -957,7 +961,7 @@ step_pairing() {
   # Auth.Verify returned a whole identity, and it names the RUN's repository and
   # not the calling job's.
   local lines statuses credential purpose tier repository ghs
-  ans=$(audit_for "$RUNX") || stop "the service's audit lines for the second run could not be read"
+  ans=$(wait_for_audit "$RUNX" 1) || stop "the service's audit lines for the second run could not be read"
   lines=$(field_of lines "$ans")
   statuses=$(field_of statuses "$ans")
   credential=$(field_of credential "$ans")
@@ -993,7 +997,10 @@ step_outsider() {
   error=$(field_of error "$ans")
   message=$(field_of message "$ans")
   local lines statuses
-  ans=$(audit_for "$RUN") || stop "the service's audit lines for the mint's run could not be read a second time"
+  # The count expected here is the mint's own line and not a new one: the wait is
+  # for that line to be readable at all, so the row cannot read "the log carries
+  # no line for this call" off a log that has not caught up.
+  ans=$(wait_for_audit "$RUN" 1) || stop "the service's audit lines for the mint's run could not be read a second time"
   lines=$(field_of lines "$ans")
   statuses=$(field_of statuses "$ans")
   if [ "$status" = 200 ]; then
@@ -1115,6 +1122,36 @@ audit_for() {
   reader audit <"$SCRATCH/audit-$1.json"
 }
 
+# wait_for_audit RUN WANT — audit_for RUN, taken once the log has caught up. Cloud
+# Logging is eventually consistent: the line the service wrote a moment ago is
+# usually readable within seconds and sometimes is not, and a read taken too early
+# counts zero lines. Zero is what the `audit` and `pairing` rows read as "the
+# service answered this call and left it unrecorded" — the one finding those rows
+# exist to report, and the finding the pairing case names in as many words — so an
+# ordinary ingestion delay would be reported as the failure the App-key drop (#907)
+# is waiting on the absence of. The wait is what separates the two: it re-reads
+# until the run has at least WANT lines, and gives up after CHECK96_LOG_TRIES (18)
+# reads CHECK96_LOG_POLL (5) seconds apart — about 90 seconds — reporting whatever
+# the last read answered, so a line that never arrives still FAILs the row it was
+# expected in.
+wait_for_audit() { # wait_for_audit RUN WANT
+  local run=$1 want=$2 ans lines tries=0
+  local every=${CHECK96_LOG_POLL:-5} limit=${CHECK96_LOG_TRIES:-18}
+  while :; do
+    ans=$(audit_for "$run") || return 1
+    lines=$(field_of lines "$ans")
+    case "$lines" in
+    '' | *[!0-9]*) return 1 ;;
+    esac
+    [ "$lines" -ge "$want" ] && break
+    tries=$((tries + 1))
+    [ "$tries" -ge "$limit" ] && break
+    say "the service's log carries $lines of the $want line(s) this run should have; reading again in ${every}s"
+    sleep "$every"
+  done
+  printf '%s' "$ans"
+}
+
 # no_identity_call — the mint endpoint with no Authorization header at all. Its
 # body is written to a file because it is Google's, not this service's, and it is
 # printed nowhere; what the row reads is the status.
@@ -1221,7 +1258,7 @@ print_plan() {
   say "  [network, WRITES] the mint: POST $SVCURL$MINT with both identities, which MINTS a real GitHub installation token for $REPO and creates a Firebase Auth user (uid r~$SLUG~<run>)"
   say "  [network] two read-only GitHub calls with that token — the installation's repository list and a contents read — and one probe against a workflow name that does not exist, which is a POST GitHub refuses"
   say "  [network] two more run identities and two more calls: the pairing refusal ($OTHER_SLUG's run identity with $JOB's own account) and a caller that is no job account ($SIGNER)"
-  say "  [network] the service's own log, read for the two runs' audit lines"
+  say "  [network] the service's own log, read for the two runs' audit lines and re-read while a line is still being ingested (up to ${CHECK96_LOG_TRIES:-18} reads ${CHECK96_LOG_POLL:-5}s apart per row: a just-written line is often not readable at once, and an empty read is what the audit and pairing rows report as a call left unrecorded)"
   say "and its Cleanup (from the exit trap, and the last step) would run:"
   say "  [network, DELETES] the two Firebase Auth users this run created, at Identity Toolkit's accounts:delete, then the project's user list read back"
   say "  [local] rm -rf of the scratch directory $SCRATCH, which holds the log dumps and the one credential that touches the disk (the custom token gcloud signs, 0600 and removed the moment it is read)"

@@ -337,6 +337,31 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		t.Errorf("scripts/live-checks/check96.sh's `step_front_end` no longer tells the two `403`s apart by the body (%q): the section states that discrimination as this row's mechanism, and a step that read the status and the line count alone would pass a service deployed without Cloud Run IAM", strings.TrimSpace(body))
 	}
 
+	// A row that reads the service's log has to wait for it. Cloud Logging is
+	// eventually consistent — the line the service wrote a moment ago is often
+	// not readable at once — and the `audit` and `pairing` rows read an empty
+	// document as the one finding they exist to report, *"the service answered
+	// this call and left it unrecorded"*. A row that read once would therefore
+	// report that finding, on every run, against a service that is behaving: a
+	// false live result, and the one the App-key drop (#907) is waiting on. The
+	// section says both rows re-read until the line is there and fails only a
+	// line that never arrives; the script's `wait_for_audit` is that read, with
+	// the bound the section names — so the document's "about 90 seconds" and the
+	// script's `CHECK96_LOG_TRIES` × `CHECK96_LOG_POLL` cannot drift apart — and
+	// all three rows that read a run's lines go through it rather than through
+	// `audit_for`, which reports the empty first read.
+	// Mutation (run and restored): `wait_for_audit`'s loop cut to a single
+	// `audit_for` call → FAIL, on the case whose first read is empty.
+	if !strings.Contains(check, "Both rows therefore re-read the run's lines until the line the call should have written is there") || !strings.Contains(check, "about 90 seconds") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the `audit` and `pairing` rows re-read the service's log until the line is there, within a bound: an empty document is what those rows read as \"the service answered and left it unrecorded\", so a reader who is not told about the wait takes an ordinary ingestion delay for the finding")
+	}
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "wait_for_audit() {"); !strings.Contains(body, `local every=${CHECK96_LOG_POLL:-5} limit=${CHECK96_LOG_TRIES:-18}`) || !strings.Contains(body, `[ "$lines" -ge "$want" ] && break`) {
+		t.Errorf("scripts/live-checks/check96.sh's `wait_for_audit` no longer re-reads until the run's lines are there, with the bound the section names (%q): a read taken once reports the empty document Cloud Logging serves while a just-written line is still being ingested, and the `audit` and `pairing` rows read that as the finding they exist to report", strings.TrimSpace(body))
+	}
+	if script := readRepoFile(t, check96Script); strings.Count(script, `wait_for_audit "`) != 3 {
+		t.Errorf("scripts/live-checks/check96.sh has %d `wait_for_audit` call(s) where the section names three log reads that wait — the `audit` row's, the `pairing` row's and the `outsider` row's second read of the mint's run: a row left reading through `audit_for` reports a service whose line has not been ingested yet as one that left the call unrecorded", strings.Count(script, `wait_for_audit "`))
+	}
+
 	// Which repository the check mints for is the owner's to name. With more than
 	// one repository holding state and none named, the reader used to take the
 	// first one — and what the check does with that repository is mint a REAL

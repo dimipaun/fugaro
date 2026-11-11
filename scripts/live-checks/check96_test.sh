@@ -132,6 +132,21 @@ logging)
   case "$filter" in
   *'jsonPayload.run="'*)
     run=$(printf '%s' "$filter" | sed -n 's/.*jsonPayload.run="\([^"]*\)".*/\1/p')
+    # Cloud Logging's own eventually-consistent read: FAKE96_LOG_EMPTY_FIRST=yes
+    # answers an empty document on the first read of a run's lines and the lines
+    # from the second read on, and FAKE96_LOG_EMPTY_ALWAYS=yes answers empty
+    # every time (a line that never arrives). A check that read once would report
+    # the service as having answered a call and left it unrecorded.
+    if [ -n "${FAKE96_LOG_EMPTY_FIRST:-}" ] || [ -n "${FAKE96_LOG_EMPTY_ALWAYS:-}" ]; then
+      seen="$FAKE96_DIR/log-read-$run"
+      n=0
+      [ -f "$seen" ] && n=$(cat "$seen")
+      printf '%s\n' "$((n + 1))" >"$seen"
+      if [ -n "${FAKE96_LOG_EMPTY_ALWAYS:-}" ] || [ "$n" = 0 ]; then
+        printf '[]\n'
+        exit 0
+      fi
+    fi
     case "$run" in
     *-c96a) tmpl=${FAKE96_AUDIT_OK:-$FAKE96_DIR/audit-ok.tmpl} ;;
     *) tmpl=${FAKE96_AUDIT_REFUSAL:-$FAKE96_DIR/audit-refusal.tmpl} ;;
@@ -601,6 +616,10 @@ setup_case() {
   export FAKE96_DIR="$dir/state" FAKE96_PROJ="$FUGARO_PROJECT" FAKE96_APPID="$APPID"
   export FAKE96_LABEL="$SANDBOX_SLUG" FAKE96_URL="$SERVICE_URL"
   export FAKE96_APPKEY="$APPKEY" FAKE96_BUNDLE="$BUNDLE"
+  # The interval between the check's re-reads of the service's log is not what
+  # any case measures, and the one case whose line never arrives would sit out the
+  # whole 90-second bound at the script's own 5 seconds. Nothing here sleeps.
+  export CHECK96_LOG_POLL=0
   export FAKE96_OTHER_SLUG="$OTHER_SLUG"
   export FAKE96_OUTSIDER_DOMAIN="${SIGNER##*@}"
   export FAKE96_MINT_URL="$SERVICE_URL/v1/github/installation-token"
@@ -1210,6 +1229,45 @@ test_a_mint_that_answered_and_left_no_line_is_a_fail() {
   expect_contains "$out" "FACT audit: FAIL — " "the unrecorded mint: the row"
 }
 
+test_a_log_that_has_not_caught_up_is_read_again() {
+  setup_case loglag
+  # Cloud Logging is eventually consistent: a line the service wrote a moment ago
+  # is often not readable at once, and a read taken too early answers an empty
+  # document. The `audit` and `pairing` rows read a 0 as "the service answered
+  # this call and left it unrecorded" — the finding they exist to report — so a
+  # check that read once would fail a service that is behaving, on every run, on
+  # the live result the App-key drop (#907) waits on. The fake answers empty on
+  # the first read of each run's lines and the lines from the second read on.
+  RUN96_ENV=(FAKE96_LOG_EMPTY_FIRST=yes)
+  run96
+  expect_status "$status" 0 "a log that had not caught up"
+  expect_contains "$out" "FACT audit: PASS — " "a log that had not caught up: the row reads the line that arrived late"
+  expect_contains "$out" "FACT pairing: PASS — " "a log that had not caught up: the refusal line arrived late too"
+  # And it really did read again: the count of reads the fake served for one run's
+  # lines is at least the empty one plus the one carrying them.
+  local reads=0 n
+  for f in "$dir/state"/log-read-*; do
+    [ -f "$f" ] || continue
+    n=$(cat "$f")
+    [ "$n" -gt "$reads" ] && reads=$n
+  done
+  [ "$reads" -ge 2 ] \
+    || fail "a log that had not caught up: the check read a run's lines $reads time(s), so it reported the empty first read instead of waiting for the line"
+  expect_contains "$(cat "$dir/err")" "reading again in" "a log that had not caught up: it says it is reading again"
+}
+
+test_a_log_line_that_never_arrives_still_fails_the_row() {
+  setup_case lognever
+  # The other half of the same wait: a line that is never written at all is still
+  # the finding, so the wait is bounded and the row FAILs on the last read rather
+  # than waiting forever or passing on the empty document.
+  RUN96_ENV=(FAKE96_LOG_EMPTY_ALWAYS=yes CHECK96_LOG_TRIES=2)
+  run96
+  expect_status "$status" 1 "a line that never arrives"
+  expect_contains "$out" "FACT audit: FAIL — " "a line that never arrives: the row"
+  expect_contains "$out" "0 line(s)" "a line that never arrives: the row reports the count it read"
+}
+
 test_an_outsider_that_is_answered_is_the_finding() {
   setup_case outsideranswered
   # A service that admits a caller which is no job account of the installation:
@@ -1415,6 +1473,8 @@ t test_a_mint_that_answers_200_with_no_token_stops
 t test_a_pairing_that_is_answered_is_the_finding
 t test_a_refusal_with_no_audit_line_is_the_finding
 t test_a_mint_that_answered_and_left_no_line_is_a_fail
+t test_a_log_that_has_not_caught_up_is_read_again
+t test_a_log_line_that_never_arrives_still_fails_the_row
 t test_an_outsider_that_is_answered_is_the_finding
 t test_a_user_that_survived_the_deletions_is_a_fail
 t test_a_user_list_that_cannot_be_read_back_stops_the_run
