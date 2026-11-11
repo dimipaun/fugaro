@@ -878,11 +878,11 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 }
 
 // backendNamed is a backend.Backend that answers with one codec and nothing
-// else: launchBackend reads the seam for the backend a launch runs on, and no
-// test can select cloud-batch in this build (internal/localcfg refuses the
-// name until the enable task), so the name a launch would carry is stood in
-// for here. The embedded interface is nil, so any other method called on it
-// panics rather than answering something wrong.
+// else: launchBackend reads the seam for the backend a launch runs on, and
+// what these tests need is a backend of a named kind without the cloud client
+// behind it, so the name a launch would carry is stood in for here. The
+// embedded interface is nil, so any other method called on it panics rather
+// than answering something wrong.
 type backendNamed struct {
 	backend.Backend
 	codec backend.Codec

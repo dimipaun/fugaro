@@ -19,9 +19,9 @@ import (
 // into the gate). Every check fires only for an installation that carries a
 // batch block, and its severity is what the installation's own selection
 // decides (batchSeverity): a hard failure with no severity for a config that
-// selects backend: cloud-batch -- which is what refuses the enable until every
-// one of them passes -- and a warning for one that merely carries the block
-// while it runs on Cloud Run.
+// selects backend: cloud-batch -- which is the gate the enable hands over:
+// every one of them has to pass -- and a warning for one that merely carries
+// the block while it runs on Cloud Run.
 
 // batchRigFakes are the fakes a Batch installation's checks read, plus the
 // rig's own CRM and Cloud Run fakes (already pointed at by resource_manager

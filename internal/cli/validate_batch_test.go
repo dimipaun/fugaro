@@ -18,12 +18,12 @@ import (
 // Task 8 step 4, design compute-backend.md §4.4).
 //
 // Every check here fires only for an installation whose project config selects
-// backend: cloud-batch, and internal/localcfg refuses that name until the
-// enable task (Task 10) -- so no installation reaches any of these lines
-// today, which is the plan's Global Constraint 12 and the reason these tests
-// call the check directly rather than through the command. Task 10's own
-// commit is what makes them reachable, and its test asserts the artifact
-// refusal survives that enable.
+// backend: cloud-batch -- a name internal/localcfg accepts since the enable
+// (Task 10), so these are lines a real installation reaches. They are still
+// called directly rather than through the command, because what each one is
+// about is the check and not the launch that invokes it. The artifact refusal
+// is the boundary that enable left standing (Global Constraint 13), and
+// TestCloudBatchIsAccepted is where it is asserted to have survived.
 
 // batchValidateRig is a project config that selects the Batch backend without
 // going through localcfg's refusal (which is the build's, not the config's):
@@ -439,8 +439,8 @@ func TestBatchValidateProblemsJudgeOnlyTheFilesOwnProject(t *testing.T) {
 // the checkout read did not: so an installation whose machine type cannot be
 // priced was told nothing at all, and no per-workflow resource check ran
 // either (CheckResources cannot size a VM it cannot price, so it returns that
-// one issue and nothing else). Unreachable today only because
-// internal/localcfg refuses backend: cloud-batch; the enable task makes it
+// one issue and nothing else). It was unreachable only while
+// internal/localcfg refused backend: cloud-batch; the enable makes it
 // reachable, which is why it is closed here.
 //
 // Mutation (drop the batchValidateProblems half from the shared helper): this
