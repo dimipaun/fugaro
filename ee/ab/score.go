@@ -460,22 +460,22 @@ func bounceCount(records []runstore.ReviewSummary) int {
 // the first entry ends the question, and two arms equal on every entry are a
 // tie (D561).
 func signalVector(s Signals, mode rigor.Mode) []int {
-	v := []int{flag(s.Halted || s.FinalHead == ""), flag(!s.Verified)}
+	v := []int{signalFlag(s.Halted || s.FinalHead == ""), signalFlag(!s.Verified)}
 	switch mode {
 	case rigor.POC:
 		return v
 	case rigor.Startup:
-		return append(v, flag(!s.ReviewReady))
+		return append(v, signalFlag(!s.ReviewReady))
 	case rigor.Pro:
-		return append(v, flag(!s.ReviewReady), s.Untolerated)
+		return append(v, signalFlag(!s.ReviewReady), s.Untolerated)
 	default:
-		return append(v, flag(!s.ReviewReady), s.Untolerated, s.Iterations)
+		return append(v, signalFlag(!s.ReviewReady), s.Untolerated, s.Iterations)
 	}
 }
 
-// flag is a signal a mode reads as true or false, as the value the vector
+// signalFlag is a signal a mode reads as true or false, as the value the vector
 // orders.
-func flag(b bool) int {
+func signalFlag(b bool) int {
 	if b {
 		return 1
 	}
