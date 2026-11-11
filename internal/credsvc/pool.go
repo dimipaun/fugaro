@@ -129,6 +129,15 @@ func poolOffering(p *projectpolicy.Policy, b *Bundle) (offering []creds.Credenti
 // poolRefusalHead is what every crafts refusal begins with.
 const poolRefusalHead = "the project's crafts leave this call nothing the credentials service can serve it by: "
 
+// poolSkipSubscription is what a pool's Claude OAuth member is recorded as
+// while the project's subscription_spread switch is off (D1626). It is the
+// runner's own sentence for the same skip, word for word
+// (internal/runner's poolSkipSubscription), because the two paths answer one
+// pool: a run whose credential this service serves reads the same reason in the
+// run's log and in a refusal, and an operator who meets one of them meets the
+// same words.
+const poolSkipSubscription = "the project's subscription_spread switch is off, so this subscription is not spread"
+
 // craftOffering is ONE craft's contribution to the list: the credentials its
 // access names, in the pool's listed order, and — when it contributes nothing —
 // the clause that says why. The two are exclusive.
@@ -183,10 +192,22 @@ func craftOffering(name string, e craft.Effective, p *projectpolicy.Policy, held
 // whatever the pool meant by it: the OAuth accounts and the Anthropic key are
 // the bundle's (bundle.go), and a name that is not in it is a credential the
 // job that would spend it holds instead — the runner path's shape.
+//
+// **A Claude OAuth member is served only once the subscription switch is on**
+// (D1622, D1626, D1636). The resolver calls a pool of two or more such members
+// inert, and this is the other half of the same ruling on this path: inside a
+// pool that also holds another kind each subscription member is stepped over
+// while the switch is off, which is the skip the runner's poolMember makes from
+// its side (poolSkipSubscription) — the two paths answer one pool, so a mixed
+// pool must not be spread by this one alone.
 func poolOfferingOf(pool config.Pool, p *projectpolicy.Policy, held map[string]creds.Tier) []creds.Credential {
+	spread := subscriptionSpreadOf(p)
 	var out []creds.Credential
 	for _, m := range config.PoolMembers(pool, p.CraftCredentials) {
 		if m.Path != config.CredentialPathCredsvc {
+			continue
+		}
+		if m.Type == config.CredentialTypeClaudeOAuth && !spread {
 			continue
 		}
 		tier, ok := held[m.Name]
@@ -209,6 +230,10 @@ func memberClauses(pool config.Pool, p *projectpolicy.Policy, held map[string]cr
 		case m.Path == "":
 			parts = append(parts, fmt.Sprintf("%s (no path this release serves a credential of type %q on)", m.Name, m.Type))
 		default:
+			if m.Type == config.CredentialTypeClaudeOAuth && !subscriptionSpreadOf(p) {
+				parts = append(parts, fmt.Sprintf("%s (%s)", m.Name, poolSkipSubscription))
+				continue
+			}
 			if _, ok := held[m.Name]; !ok {
 				parts = append(parts, fmt.Sprintf("%s (%s, which this service's bundle does not hold)", m.Name, m.Type))
 				continue
@@ -275,15 +300,34 @@ func nodeCredentialType(name string, p *projectpolicy.Policy) string {
 }
 
 // bundleTiers is the bundle's credentials by name: the tiers this service's own
-// accessor answers (b.Credentials, which excludes the App key, the git tokens,
-// the signing keys and the provider key's sibling entries), so a name is
-// offered with the tier the candidate list must carry and a name the bundle
-// does not hold is absent.
+// accessor answers (b.Credentials, which excludes the App key, the git tokens
+// and the signing keys), so a name is offered with the tier the candidate list
+// must carry and a name the bundle does not hold is absent.
+//
+// The provider key is added beside Credentials rather than through it, and this
+// map is the only place the two meet: a craft may name that credential (AK6b),
+// and the answer to it must be what this service HOLDS it as — a tier-C
+// credential this path does not select for a craft's calls — rather than that
+// the bundle holds nothing under the name. Reading it here is not offering it:
+// every candidate this file builds refuses a tier outside A and B, which is the
+// exclusion Credentials makes for the sharper reason that a tier-C candidate
+// would refuse the caller's whole call (checkCandidates).
 func bundleTiers(b *Bundle) map[string]creds.Tier {
 	all := b.Credentials()
-	out := make(map[string]creds.Tier, len(all))
+	out := make(map[string]creds.Tier, len(all)+1)
 	for _, c := range all {
 		out[c.Name] = c.Tier
+	}
+	if e, ok := b.ProviderKey(); ok {
+		// A name a model credential already answers keeps that credential: an
+		// account may legally be named "provider-key"
+		// (claude-oauth-token-provider-key), and the name a craft's access
+		// spells is then the account's — the value the cascade would select,
+		// Lookup answering model credentials — rather than the provider
+		// entry's, which is never selected by a caller of this list.
+		if _, taken := out[e.Name]; !taken {
+			out[e.Name] = e.Tier
+		}
 	}
 	return out
 }

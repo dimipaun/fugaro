@@ -320,3 +320,161 @@ func TestSubscriptionPoolInertInCredsvc(t *testing.T) {
 		t.Errorf("%s = %q, want %q: the switch on makes the pool's first member serve, and a tie is broken by the order the pool lists them in", HeaderCredential, got, want)
 	}
 }
+
+// TestMixedPoolSkipsItsSubscriptionWhileTheSwitchIsOff is D1626 on this path: a
+// pool holding ONE subscription beside another kind is not inert — it is the
+// API-key fallback shape the owner asked for — and while the switch is off its
+// subscription member is stepped over, so the key beside it serves.
+//
+// The pool lists the subscription FIRST, which is what makes the call's answer
+// evidence: with the member offered, the tier rule would serve it (tier A before
+// tier B, TestPoolMembersAreServedByTierOrder's own pool with the switch on),
+// and the key can serve only because the member above it was skipped. The
+// runner makes the same skip from its side (poolchoice.poolMember), or a mixed
+// pool would be spread by whichever path answered it.
+func TestMixedPoolSkipsItsSubscriptionWhileTheSwitchIsOff(t *testing.T) {
+	s := poolSvc(t, `"credentials": {"fallback": "auto"},
+		`+poolCraftBlock(
+		`{"name": "`+testPoolAccount+`", "type": "claude-oauth"},
+			{"name": "`+config.AnthropicSecret+`", "type": "anthropic"}`,
+		testPoolAccount, config.AnthropicSecret))
+
+	resp, body := s.call(t, callBody("pool-mixed-switch-off"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call is %d, want the pool's key member to serve it: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != config.AnthropicSecret {
+		t.Errorf("%s = %q, want %q: the subscription member is skipped while the switch is off, so the key beside it serves (D1626)", HeaderCredential, got, config.AnthropicSecret)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierB {
+		t.Errorf("%s = %q, want %q: the credential that served is the paid key", HeaderTier, got, TierB)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Errorf("the upstream saw %d requests, want 1: the skipped member is not tried", n)
+	}
+
+	t.Run("a pool whose only member is a subscription is refused, and the skip says why", func(t *testing.T) {
+		s := poolSvc(t, `"credentials": {"fallback": "auto"},
+			`+poolCraftBlock(
+			`{"name": "`+testPoolAccount+`", "type": "claude-oauth"}`,
+			testPoolAccount))
+
+		resp, body := s.call(t, callBody("pool-one-subscription"))
+		if resp.StatusCode == http.StatusOK {
+			t.Fatalf("a pool of one skipped subscription served the call: %d %s", resp.StatusCode, body)
+		}
+		e := refusal(t, resp.StatusCode, body)
+		for _, want := range []string{testPoolName, testPoolAccount, poolSkipSubscription} {
+			if !strings.Contains(e.Message, want) {
+				t.Errorf("the refusal %q does not name %q: the operator is told which member was skipped and that the switch would let it serve", e.Message, want)
+			}
+		}
+		if lines := auditLines(t, s.audit); len(lines) != 1 {
+			t.Errorf("a refusal wrote %d audit lines, want exactly one", len(lines))
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want none: every member was skipped", n)
+		}
+	})
+}
+
+// TestProviderKeyIsAnsweredAsHeldAndNeverSelected is AK6b's entry against this
+// file: the bundle's provider key is a credential of tier C, so a craft that
+// names it is answered with what this service HOLDS it as — one it does not
+// select for a craft's calls — and never with "the bundle does not hold it",
+// which would send an operator to `fugaro creds set` for a credential the
+// bundle is carrying (the tier is read by bundleTiers beside Credentials, which
+// never offers it).
+//
+// Both shapes of the name are walked, because both answer it: a craft's access,
+// and a pool that lists it as a member. Neither is served by it — a tier-C
+// candidate would refuse the caller's whole call (checkCandidates, Check 50) —
+// and the value is never rendered, which is the last arm.
+func TestProviderKeyIsAnsweredAsHeldAndNeverSelected(t *testing.T) {
+	providerBundle := func(t *testing.T) [][]byte {
+		t.Helper()
+		return [][]byte{append(poolBundleDoc(t), providerKeyDoc(t, testProviderBase, providerAuthBearer)...)}
+	}
+	admissions := func(s *svc) {
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(config.DefaultClaudeAccount, testAccount, testPoolAccount))
+	}
+
+	t.Run("a craft's access", func(t *testing.T) {
+		s := newSvcWith(t, func(s *svc, _ *Config) {
+			s.src.docs = providerBundle(t)
+			s.policy.shared = decodeTestPolicy(t, poolNode(`"credentials": {"fallback": "auto"},
+				"craft_credentials": [{"name": "`+config.ProviderKeySecret+`", "type": "anthropic"}],
+				"crafts": {"coder": {"access": "`+config.ProviderKeySecret+`"}}`))
+			admissions(s)
+		})
+
+		resp, body := s.call(t, callBody("provider-key-access"))
+		if resp.StatusCode == http.StatusOK {
+			t.Fatalf("a craft naming the provider key served the call with it: %d %s", resp.StatusCode, body)
+		}
+		e := refusal(t, resp.StatusCode, body)
+		if !strings.Contains(e.Message, config.ProviderKeySecret) || !strings.Contains(e.Message, providerNotSelected) {
+			t.Errorf("the refusal %q does not name %q and %q: the bundle holds the name, and this path does not select it", e.Message, config.ProviderKeySecret, providerNotSelected)
+		}
+		if strings.Contains(e.Message, "does not hold") {
+			t.Errorf("the refusal %q says the bundle does not hold a credential the fixture's bundle carries", e.Message)
+		}
+		if strings.Contains(string(body), fakeCred(t, "provider-key")) {
+			t.Errorf("the refusal rendered the credential's value: %s", body)
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want none: the provider key is never a candidate for a coding caller", n)
+		}
+	})
+
+	t.Run("a pool's member", func(t *testing.T) {
+		s := newSvcWith(t, func(s *svc, _ *Config) {
+			s.src.docs = providerBundle(t)
+			s.policy.shared = decodeTestPolicy(t, poolNode(`"credentials": {"fallback": "auto"},
+				`+poolCraftBlock(
+				`{"name": "`+config.ProviderKeySecret+`", "type": "anthropic"},
+					{"name": "`+config.AnthropicSecret+`", "type": "anthropic"}`,
+				config.ProviderKeySecret, config.AnthropicSecret)))
+			admissions(s)
+		})
+
+		resp, body := s.call(t, callBody("provider-key-member"))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the call is %d, want the pool's other member to serve it: %s", resp.StatusCode, body)
+		}
+		if got := resp.Header.Get(HeaderCredential); got != config.AnthropicSecret {
+			t.Errorf("%s = %q, want %q: the probe member is listed first and is never offered (its tier is not one this path selects)", HeaderCredential, got, config.AnthropicSecret)
+		}
+		if got := resp.Header.Get(HeaderTier); got != TierB {
+			t.Errorf("%s = %q, want %q", HeaderTier, got, TierB)
+		}
+
+		only := newSvcWith(t, func(s *svc, _ *Config) {
+			s.src.docs = providerBundle(t)
+			s.policy.shared = decodeTestPolicy(t, poolNode(`"credentials": {"fallback": "auto"},
+				`+poolCraftBlock(
+				`{"name": "`+config.ProviderKeySecret+`", "type": "anthropic"}`,
+				config.ProviderKeySecret)))
+			admissions(s)
+		})
+
+		resp, body = only.call(t, callBody("provider-key-only-member"))
+		if resp.StatusCode == http.StatusOK {
+			t.Fatalf("a pool served the call from the provider key: %d %s", resp.StatusCode, body)
+		}
+		e := refusal(t, resp.StatusCode, body)
+		if !strings.Contains(e.Message, providerNotSelected) {
+			t.Errorf("the refusal %q does not say why the member cannot serve: this service holds it and does not select it (%q)", e.Message, providerNotSelected)
+		}
+		if n := only.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want none", n)
+		}
+	})
+}
+
+// providerNotSelected is the tail both of this file's clauses for a credential
+// the bundle HOLDS and a craft's call may not go out on share: the craft's own
+// clause ("which this service holds as a credential …") and a pool member's
+// ("this service holds it as a credential …"). One rule, so one sentence, and a
+// test that reads the answer off the two shapes needs the part they agree on.
+const providerNotSelected = "does not select for a craft's calls"
