@@ -795,7 +795,12 @@ carry an empty owner's-answer cell, the number block sits above every claim the 
 and every task in the plan states its files, its red step and its reviewer tier.
 Amended 2026-11-08: that move was resolved away by the batch merge that landed the
 same pin beside `de90e93c`'s recount of the doubled row, so the table's row moves from
-113 to 114 and carries the tree's figure again. Amended 2026-11-09: `7297a7e4` (#2013,
+113 to 114 and carries the tree's figure again. Amended 2026-11-08:
+`internal/cli/docs_check361_test.go`, the workspaces work's pin over its Check 361
+section of the live checklist (W3, added with the check on 2026-11-07), is a pin no
+line above counted — it landed on the workspaces branch while this row was being
+recounted — so the row moves from 114 to 115, the merged tree's own figure rather than
+the chain's next number. Amended 2026-11-09: `7297a7e4` (#2013,
 the security-classification work) added one top-level `fugaro.yaml` key, one config
 scope row and one image-skew `Since` constant, and left three rows below at the
 counts of the tree before it, so they move with the tree: the top-level keys from
@@ -817,11 +822,17 @@ pin over `docs/dogfooding.md`'s own reports section, moved the table's row
 from 115 to 116: the folder the page names and the launch it schedules are read
 out of `internal/digest` and `internal/recipe`, so the page and the layout cannot
 drift apart.
-Amended 2026-11-10: `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin (the register's Checks 510 and 511, their two steps files and the numbers the folder claims, DS0.2), moved the same row once more, from 116 to 117.
+Amended 2026-11-10: `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin (the register's Checks 510 and 511, their two steps files and the numbers the folder claims, DS0.2), moved the table's row from 116 to 117.
 Amended 2026-11-10: `internal/cli/docs_run_without_checkout_test.go`,
 the run-without-checkout folder's pin over A0 having landed — the person read
 set its status lines name and the answer row it was raised by are read
-against — moved the table's row from 117 to 118.) They
+against — moved the table's row from 117 to 118.
+Amended 2026-11-10: `660112bd` (#2213, the triage stage and its switch) added the
+image-skew `Since` constant the triage stage's carrier is gated by and left the
+image-skew row at 34, so it moves to 35.
+Amended 2026-11-10: `internal/cli/docs_issue_test.go`, the issue-mine folder's pin
+over `docs/issues.md`'s `fugaro issue mine` section (T-IM7), moved the table's
+pin row from 118 to 119.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -840,7 +851,7 @@ stale has found a merge that did not.
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 35 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 118 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 120 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 4 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
