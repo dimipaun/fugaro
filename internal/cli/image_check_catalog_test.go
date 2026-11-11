@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
@@ -733,6 +734,72 @@ func TestCatalogCheckJobRefusesAnEntryAssignedTwice(t *testing.T) {
 
 // TestCatalogCheckJobNeedsItsSpec: a job that cannot read what to check says
 // so, and submits nothing.
+// TestCatalogCheckReadsTheStagedContextHash: the context trigger's input is the
+// digest the copy staged beside the Dockerfile, read from the runs bucket and
+// never from the repository. An entry whose staged digest is not the one its
+// record names is a rebuild with the catalog-context reason, one whose staged
+// digest is the record's is a skip, and the fingerprint the entry's check.json
+// keeps carries the staged value — all three of which the bucket read is the
+// only source of. Nothing on this path opens a git provider, and the opener
+// below fails the test if one is ever reached: the digest is read from the
+// bucket precisely so this job keeps the credential-less shape the comment on
+// its Lockfiles: false states (D1401, reconciliation §4.6).
+func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
+	was := openCatalogProvider
+	openCatalogProvider = func([]string, func(string)) (string, gitprov.Opener, error) {
+		t.Error("the catalog check opened a git provider: the context trigger reads the digest the copy staged in the runs bucket (D1401)")
+		return "", nil, errors.New("no provider")
+	}
+	t.Cleanup(func() { openCatalogProvider = was })
+
+	cat := &config.Catalog{Entries: []config.Entry{
+		{Name: "tools", Tags: []string{"node"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: ".fugaro/tools.Dockerfile", Context: "."}},
+		{Name: "extra", Tags: []string{"node"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: ".fugaro/extra.Dockerfile", Context: "ci"}},
+	}}
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, cat, 5))
+	staged, same := strings.Repeat("7", 64), strings.Repeat("8", 64)
+	for _, tc := range []struct{ entry, recorded, staged string }{
+		{"tools", strings.Repeat("9", 64), staged},
+		{"extra", same, same},
+	} {
+		gen, sum := f.seed(t, tc.entry, "acme/app", catalogCheckAppDef, checkBaseDigest)
+		recKey, err := gcp.CatalogRecordKey(f.slugs["acme/app"], tc.entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(imagecheck.CatalogRecordState{
+			Version: imagecheck.CatalogRecordVersion, Entry: tc.entry, SourceCommit: catalogCheckCommit,
+			ContextCommit: catalogCheckCommit, ContextSHA256: tc.recorded,
+			DefinitionGeneration: gen, DefinitionSHA256: sum,
+			BaseRef: checkBase, BaseDigest: checkBaseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.put(t, recKey, data)
+		hashKey, err := config.CatalogContextHashKey(tc.entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.put(t, hashKey, []byte(tc.staged))
+	}
+
+	lines, err := runCatalogCheck(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := lineFor(t, lines, "tools"); l.Decision != imagecheck.Rebuild || !slices.Equal(l.Reasons, []string{imagecheck.ReasonCatalogContext}) {
+		t.Fatalf("tools line = %+v, want a rebuild on the moved context", l)
+	}
+	if l := lineFor(t, lines, "extra"); l.Decision != imagecheck.Skip || len(l.Reasons) != 0 {
+		t.Fatalf("extra line = %+v, want a skip (its staged digest is its record's)", l)
+	}
+	st := f.state(t, "tools", "acme/app")
+	if st == nil || st.BuildInputs == nil || st.BuildInputs.ContextSHA256 != staged {
+		t.Fatalf("tools check.json = %+v, want the staged context digest %s on its inputs", st, staged)
+	}
+}
+
 func TestCatalogCheckJobNeedsItsSpec(t *testing.T) {
 	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools"), 5))
 	t.Setenv(catalogCheckSpecEnv, "")

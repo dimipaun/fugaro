@@ -211,6 +211,9 @@ type catalogEvaluation struct {
 	// read back from the one object the build itself reads.
 	definitionSHA256     string
 	definitionGeneration int64
+	// contextSHA256 is the digest of the build context the entry names, as the
+	// copy staged it beside the Dockerfile; "" for an entry that names none.
+	contextSHA256 string
 	// inputs are what imagecheck.CheckCatalog decides the entry from: this
 	// run's read of everything a decision needs, which the pass below hands
 	// the library rather than deciding the entry itself.
@@ -277,6 +280,27 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	sum := sha256.Sum256(def)
 	ev.definitionSHA256, ev.definitionGeneration = hex.EncodeToString(sum[:]), gen
 
+	// The context the entry names, for the entry that names one: the digest the
+	// copy staged beside the Dockerfile, read from the bucket and never from the
+	// repository. That read is what makes the context trigger cost this job no
+	// credential at all (D1401), and a missing object is not "nothing changed":
+	// it is a copy that never staged the context, which is what a build pins.
+	if e.Source.Context != "" {
+		hashKey, err := config.CatalogContextHashKey(e.Name)
+		if err != nil {
+			return ev, err
+		}
+		staged, _, err := t.bucket.Read(ctx, hashKey)
+		switch {
+		case errors.Is(err, blobx.ErrNotExist):
+			return ev, fmt.Errorf("the catalog entry %s names the build context %s but has no staged context digest at %s, which is what its rebuild pins: fugaro image build %s from %s's checkout stages it and builds it once, and this job rebuilds it from then on",
+				pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Context), hashKey, pluginwire.Printable(e.Name), pluginwire.Printable(r.Repo))
+		case err != nil:
+			return ev, fmt.Errorf("reading %s: %w", hashKey, err)
+		}
+		ev.contextSHA256 = string(staged)
+	}
+
 	checkKey := imagecheck.CatalogCheckKey(slug, e.Name)
 	ev.prevRaw, ev.prevGen, err = t.bucket.Read(ctx, checkKey)
 	switch {
@@ -308,7 +332,8 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	}
 	ev.inputs = imagecheck.CatalogInputs{
 		Entry: e.Name, Record: ev.rec, LastCheck: ev.prev, LastBuildStatus: ev.lastStatus,
-		DefinitionSHA256: ev.definitionSHA256, BaseRef: t.base, BaseDigest: t.baseDigest,
+		DefinitionSHA256: ev.definitionSHA256, ContextSHA256: ev.contextSHA256,
+		BaseRef: t.base, BaseDigest: t.baseDigest,
 		// The lockfiles trigger is the one trigger this job cannot evaluate: it
 		// is decided from the baked repository's tree, and this job has no
 		// checkout of it and no git credential to read one with. An entry whose
