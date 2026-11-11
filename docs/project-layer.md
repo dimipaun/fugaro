@@ -31,14 +31,18 @@ each version came in — 1 is the model, 0.8.0; 2 is the profile gate, 0.8.5; 3 
 the release a refusal for a node *ahead*
 of the binary quotes, never 0.8.0, the release the model ships in). Version 5 adds `owner` and
 `allowed_users` to every `craft_pools` entry — the account the pool belongs to and the other people
-it is served to, both spelled by email and resolved to a `sub` when a slip is granted — and the
-explicit `legacy_open` marker a pool that predates owners carries. A pool written now must name its
-owner *where it is published*: a pool with no owner serves nobody, and `fugaro project policy
-publish` refuses one, while an installation's own config keeps loading without it, so a pool
+it is served to, both spelled by email — and the explicit `legacy_open` marker a pool that predates
+owners carries. A pool written now must name its owner *where it is published*: `fugaro project
+policy publish` refuses one, while an installation's own config keeps loading without it, so a pool
 written before owners existed still starts a run on this release. Such a pool is what the migration
 `fugaro update` runs marks instead (D1942): every ownerless pool of the published node comes out
-with `legacy_open`, so the upgrade serves exactly whom the installation served before it and a
-reader can tell a pool that predates owners from one whose owner is still to be named. A
+with `legacy_open`, so a reader can tell a pool that predates owners from one whose owner is still
+to be named. **Nothing reads the owner and the roster yet**: they are decoded, validated and
+published by this release and by no run of it, so a `fugaro_p_` name is still granted to any
+launcher that asks for it and `config.Pool.Serves`, the function that answers whether a pool is
+served to a person, has no caller here — whether a pool admits the person asking for one of its
+credentials is DS3.2's check, made where the credential is resolved, and until that ships the owner
+and the roster are a declaration of intent rather than a gate. A
 version-4 reader refuses a version-5 node — the two members sit *inside* a pool entry, which its
 own decode reads strictly, so it is unreadable there rather than listed in the unknown keys — and
 the other direction refuses too: a version-4 node is refused by this release's runs and by `fugaro

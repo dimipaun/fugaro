@@ -2,6 +2,7 @@ package projectpolicy
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -165,6 +166,64 @@ func TestCraftBlockDecodesStrictly(t *testing.T) {
 			p, _, err := Decode([]byte(`{"version":5,"crafts":` + tc.block + `}`))
 			if err == nil {
 				t.Fatalf("the block %s was read: %+v", tc.block, p.Crafts)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal %q does not name %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestAPublishedPoolMustNameItsOwner: the published node is where D1936's owner
+// rule bites, and it is the one document it is a rule of. An installation's own
+// config keeps loading without an owner — a pool written before owners existed
+// still starts a run on the release that bumped the version — so the two
+// validators are not one rule: config.ValidatePools is what a person's own
+// document is held to, and config.ValidatePublishedPools, which this decoder
+// reads a craft_pools block through, adds the one rule only the node has.
+//
+// The marker is the other side of it (D1942): a pool the migration found
+// ownerless comes out carrying legacy_open, and that spelling is what says
+// "this pool predates owners" where a node that names no owner at all is
+// refused whole rather than read as a pool nobody answers for.
+func TestAPublishedPoolMustNameItsOwner(t *testing.T) {
+	const creds = `"craft_credentials":[{"name":"acme-main","type":"openrouter"}],`
+	for _, tc := range []struct {
+		name, pool, want string
+	}{
+		{
+			name: "an ownerless pool",
+			pool: `{"name":"acme-pool","members":["acme-main"]}`,
+			want: "pools.acme-pool: owner is required",
+		},
+		{
+			name: "an ownerless pool that names a roster",
+			pool: `{"name":"acme-pool","members":["acme-main"],"allowed_users":["other@example.com"]}`,
+			want: "pools.acme-pool: owner is required",
+		},
+		{
+			name: "the migration's marker",
+			pool: `{"name":"acme-pool","members":["acme-main"],"legacy_open":true}`,
+		},
+		{
+			name: "an owner",
+			pool: `{"name":"acme-pool","members":["acme-main"],"owner":"owner@example.com"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := fmt.Sprintf(`{"version":%d,`+creds+`"craft_pools":[%s]}`, Version, tc.pool)
+			p, found, err := Decode([]byte(raw))
+			if tc.want == "" {
+				if err != nil || !found || p == nil {
+					t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+				}
+				if len(p.CraftPools) != 1 {
+					t.Errorf("CraftPools = %+v, want the one pool the node writes", p.CraftPools)
+				}
+				return
+			}
+			if err == nil || p != nil {
+				t.Fatalf("a node whose pool is %s was read: %+v", tc.name, p)
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("the refusal %q does not name %q", err, tc.want)

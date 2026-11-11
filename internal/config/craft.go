@@ -225,8 +225,8 @@ type Pool struct {
 	AllowedUsers []string `yaml:"allowed_users,omitempty" json:"allowed_users,omitempty"`
 	// LegacyOpen marks a pool that existed before pools carried an owner: the
 	// migration of a published node writes it (D1942), so a pool an
-	// installation already holds keeps serving exactly whom it served before
-	// the upgrade, and `fugaro doctor` asks an admin to name an owner. It is a
+	// installation already holds is not read as one whose owner is still to be
+	// named. It is a
 	// NEW NAME and not the absence of one: a pool written now must name its
 	// owner where it is published (ValidatePublishedPools), so "no owner" and
 	// "open to everyone" cannot be the same piece of text (F37).
