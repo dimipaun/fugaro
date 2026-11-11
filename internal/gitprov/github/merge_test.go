@@ -47,12 +47,20 @@ func (m *testMint) MintMerge(_ context.Context, repo string, pr int, headSHA str
 	return mintToken, time.Date(2026, 9, 27, 11, 0, 0, 0, time.UTC), nil
 }
 
-// pullJSON is pull request number as this adapter reads it, at sha.
+// pullJSON is pull request number as this adapter reads it, at sha, open.
 func pullJSON(number int, title, sha string, draft bool) string {
+	return pullStateJSON("open", false, number, title, sha, draft)
+}
+
+// pullStateJSON is the same answer for a pull request that is no longer open.
+// This host reports one with state "closed" and a merged flag — the flag is
+// what tells a merged pull request from a declined one (github.go:539) — and
+// both are refused the same way by every write.
+func pullStateJSON(state string, merged bool, number int, title, sha string, draft bool) string {
 	return fmt.Sprintf(`{"number": %d, "html_url": "https://github.com/acme/web/pull/%d", "draft": %t, `+
-		`"node_id": "PR_kwDOA", "title": %q, "body": "Adds search.", "state": "open", `+
+		`"node_id": "PR_kwDOA", "title": %q, "body": "Adds search.", "state": %q, "merged": %t, `+
 		`"head": {"ref": %q, "sha": %q}, "base": {"ref": "main"}}`,
-		number, number, draft, title, branchName, sha)
+		number, number, draft, title, state, merged, branchName, sha)
 }
 
 // TestGithubMergeSendsExpectedSHAAndNoBypass is E8's core assertion for this
@@ -105,6 +113,12 @@ func TestGithubMergeSendsExpectedSHAAndNoBypass(t *testing.T) {
 // request is at another commit than the call names, so nothing is merged. The
 // handler serves no merge endpoint, and fakeAPI fails the test if one is asked
 // for anyway.
+//
+// The mint here hands back a token without looking at the head, which is the
+// one thing a real mint does not do (TestGithubWriteReportsTheMintsRefusal
+// below is the path a stale head really takes): this test is the provider's own
+// read, the second of the two, and it is the one that catches a push landing
+// after the mint answered.
 func TestGithubMergeRefusesWhenTheHeadMoved(t *testing.T) {
 	p := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method == "GET" && r.URL.Path == "/repos/acme/web/pulls/12" {
@@ -158,6 +172,37 @@ func TestMergeRefusesWhenActorOnBypassList(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "#12") {
 		t.Errorf("the refusal does not name the pull request: %v", err)
+	}
+}
+
+// TestGithubWriteReportsTheMintsRefusal pins the order the two head reads run
+// in, because it decides which error a caller sees. A head that was already
+// stale when the call began is refused by the mint, before this provider reads
+// anything: the refusal it reports is the mint's own error rather than
+// ErrHeadMoved (the service answers every refusal of its route with one code,
+// so the client cannot tell a moved head from another refusal — ErrHeadMoved's
+// doc in internal/gitprov/merge.go says so). The provider adds nothing to it
+// and writes nothing, and a real mergeMinter is what this refusal comes from in
+// production: internal/creds.ServiceMergeMint wraps the service's answer in
+// creds.ErrMergeMint.
+func TestGithubWriteReportsTheMintsRefusal(t *testing.T) {
+	errMoved := errors.New("the merge mint refused: the pull request's head is not the commit the call named")
+	p := fakeAPI(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	p.UseMergeMint(&testMint{err: errMoved})
+	for _, c := range []struct {
+		name string
+		call func() error
+	}{
+		{"Merge", func() error { return p.Merge(ctx, 12, mergeHead) }},
+		{"MarkReady", func() error { return p.MarkReady(ctx, 12, mergeHead) }},
+	} {
+		err := c.call()
+		if !errors.Is(err, errMoved) {
+			t.Errorf("%s = %v; want the mint's refusal, which is what a stale head produces", c.name, err)
+		}
+		if errors.Is(err, gitprov.ErrHeadMoved) {
+			t.Errorf("%s = %v; the provider cannot know the mint refused over the head, so it must not claim it did", c.name, err)
+		}
 	}
 }
 
@@ -244,6 +289,54 @@ func TestGithubMarkReadyOnAReadyPRWritesNothing(t *testing.T) {
 	p.UseMergeMint(&testMint{})
 	if err := p.MarkReady(ctx, 12, mergeHead); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestGithubHeadBoundCallRefusesAClosedOrMergedPR keeps these two writes on the
+// same footing as every other write this provider makes: UpdatePR (github.go),
+// ApplyReady and Bitbucket's MarkReady all refuse a pull request that is not
+// open, and the fake does too, so a production path that wrote one anyway would
+// be the one adapter out of step — and the tests E10b writes against the double
+// would certify a path production handles differently.
+//
+// The head is the same commit the call names in every case, and that is the
+// point: a closed pull request keeps its head, so the head check passes and
+// nothing but the state stands between this call and the write. The handler
+// serves the read and no write at all, so a call that got past the refusal
+// fails the test rather than landing.
+func TestGithubHeadBoundCallRefusesAClosedOrMergedPR(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		call func(p *Provider) error
+	}{
+		{"Merge", func(p *Provider) error { return p.Merge(ctx, 12, mergeHead) }},
+		{"MarkReady", func(p *Provider) error { return p.MarkReady(ctx, 12, mergeHead) }},
+	} {
+		for _, s := range []struct {
+			state  string
+			merged bool
+			want   string
+		}{
+			{"closed", true, "merged"},
+			{"closed", false, "closed"},
+		} {
+			p := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method == "GET" && r.URL.Path == "/repos/acme/web/pulls/12" {
+					io.WriteString(w, pullStateJSON(s.state, s.merged, 12, "Add search", mergeHead, true))
+					return true
+				}
+				return false
+			})
+			p.UseMergeMint(&testMint{})
+			err := c.call(p)
+			if !errors.Is(err, gitprov.ErrPRNotOpen) {
+				t.Errorf("%s on a %s pull request = %v, want ErrPRNotOpen", c.name, s.want, err)
+				continue
+			}
+			if !strings.Contains(err.Error(), s.want) {
+				t.Errorf("%s on a %s pull request = %v; the refusal does not say it is %s", c.name, s.want, err, s.want)
+			}
+		}
 	}
 }
 

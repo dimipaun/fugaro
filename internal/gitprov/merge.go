@@ -22,6 +22,19 @@ var (
 	// judged is the commit the caller carries, so a head that has moved is a
 	// new review and not a retry. Every head-bound call re-reads the head and
 	// refuses with this rather than acting on the one it finds.
+	//
+	// It is not always the sentinel a caller ends up seeing, and the
+	// difference is worth knowing rather than discovering. On a provider whose
+	// credential comes from the gated mint the head is read twice: the mint
+	// refuses one that has moved, and that refusal is the MINT's error — the
+	// daemon's creds.ErrMergeMint, because the credentials service answers
+	// every refusal of that route with one coarse code and a client cannot tell
+	// a moved head from a bad request (credsvc's ErrorRequestRefused). So a
+	// GitHub ready or merge call at a head that was already stale when the call
+	// began fails with creds.ErrMergeMint, and this sentinel is what it fails
+	// with when the head moves between the mint's read and the provider's own
+	// — the race the second read is there for. Both are the same refusal to a
+	// caller: nothing was written, and the answer is a person, not a retry.
 	ErrHeadMoved = errors.New("the pull request's head is not the commit the call named")
 	// ErrMergeNoHeadPrecondition is a merge call on a provider whose merge
 	// API has no expected-head precondition (F24: Bitbucket's was not shown
@@ -87,6 +100,14 @@ type MergeMinter interface {
 	// MintMerge mints a token for repository ("owner/name") and pull request
 	// pr, which must still be at headSHA. The mint refuses when it is not, so
 	// a caller that gets a token holds one the gate checked.
+	//
+	// A refusal here is the mint's own error and not ErrHeadMoved, including
+	// the refusal of a head that has moved: the service reports every refusal
+	// of this route with one code, so a caller cannot tell from the answer
+	// which gate refused (ErrHeadMoved's doc says what that means for a caller
+	// reading errors.Is). What it can rely on is the order — the head is
+	// checked here first, and the provider's own read is the second one, there
+	// for a push landing in between.
 	MintMerge(ctx context.Context, repo string, pr int, headSHA string) (token string, expires time.Time, err error)
 }
 

@@ -224,11 +224,11 @@ func TestGithubChecksRefusesAValueThatIsNotACommit(t *testing.T) {
 // TestGithubChecksRefusesForWantOfThePermission pins the one 403 this host
 // explains. Both endpoints need the App's "Checks: read" and "Commit
 // statuses: read", and a run's installation token asks for neither, so an
-// installation that has not granted them answers 403 — which must arrive as
-// ErrChecksPermission, naming the grant, rather than as a bare HTTP refusal an
-// operator has to decode. It stays a failed read: the caller sees an error and
-// never a state, so nothing reads a commit as green because the read was
-// refused.
+// installation that has not granted them answers the 403 whose body names the
+// missing integration — which must arrive as ErrChecksPermission, naming the
+// grant, rather than as a bare HTTP refusal an operator has to decode. It stays
+// a failed read: the caller sees an error and never a state, so nothing reads a
+// commit as green because the read was refused.
 func TestGithubChecksRefusesForWantOfThePermission(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -263,6 +263,56 @@ func TestGithubChecksRefusesForWantOfThePermission(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "Checks: read") || !strings.Contains(err.Error(), "Commit statuses: read") {
 			t.Errorf("%s: the refusal %q does not name the grants it needs", c.name, err)
+		}
+	}
+}
+
+// TestGithubChecksDoesNotCallARateLimitAPermission is the other half of that
+// mapping: 403 is also this host's rate-limit answer, and sending an operator
+// to the App's settings page for a permission the App already holds hides the
+// cause and changes nothing. A rate-limited read is still a failed read — the
+// caller sees an error and never a state — but it is reported as what it is, so
+// a ladder that may retry can tell it from a grant it must wait for.
+func TestGithubChecksDoesNotCallARateLimitAPermission(t *testing.T) {
+	// A handler that refuses one of the two reads with a rate limit and serves
+	// the other, so the refusal comes from the read itself rather than from the
+	// installation exchange in front of it (which fakeAPI serves).
+	forbid := func(refusedPath, body string) func(http.ResponseWriter, *http.Request) bool {
+		return func(w http.ResponseWriter, r *http.Request) bool {
+			if r.URL.Path == refusedPath {
+				http.Error(w, body, http.StatusForbidden)
+				return true
+			}
+			if r.URL.Path == "/repos/acme/web/commits/"+checksSHA+"/check-runs" {
+				io.WriteString(w, `{"total_count": 1, "check_runs": [{"status": "completed", "conclusion": "success"}]}`)
+				return true
+			}
+			return false
+		}
+	}
+	for _, c := range []struct {
+		name string
+		body string
+	}{
+		{"primary", `{"message": "API rate limit exceeded for installation ID 12. If you reach out to GitHub Support for help, please include the request ID 0000:0000:0000:0000."}`},
+		{"secondary", `{"message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}`},
+	} {
+		for _, ep := range []struct{ name, path string }{
+			{"the check-runs read", "/repos/acme/web/commits/" + checksSHA + "/check-runs"},
+			{"the commit-statuses read", statusPath},
+		} {
+			p := fakeAPI(t, forbid(ep.path, c.body))
+			runs, err := p.Checks(ctx, 12, checksSHA)
+			if err == nil {
+				t.Errorf("%s at %s: a rate-limited read did not fail", c.name, ep.name)
+				continue
+			}
+			if errors.Is(err, gitprov.ErrChecksPermission) {
+				t.Errorf("%s at %s: Checks = %v; a rate limit is not a missing permission, so this must not send an operator to the App's settings page", c.name, ep.name, err)
+			}
+			if runs != nil {
+				t.Errorf("%s at %s: a refused read returned %+v; want no runs at all", c.name, ep.name, runs)
+			}
 		}
 	}
 }

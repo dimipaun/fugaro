@@ -438,21 +438,34 @@ type Provider interface {
 	// MarkReady marks pull request number ready for review, bound to the
 	// head expectedHeadSHA (E8, D2041, G2): it re-reads the head, refuses
 	// with ErrHeadMoved when the pull request is not at that commit, and
-	// only then clears the draft state. The credential comes from the merge
-	// mint (UseMergeMint, E16/D2049); a provider without one refuses with
+	// only then clears the draft state. A pull request that is not open is
+	// refused with ErrPRNotOpen before the head is considered — a closed
+	// pull request keeps its head, so the head check alone would pass on one
+	// — which is the refusal every other write of every provider gives. On a
+	// provider whose credential is the gated mint's, the mint has already
+	// re-read and refused a moved head (MergeMinter.MintMerge), so
+	// ErrHeadMoved is this call's own read, the one that catches a push
+	// landing after the mint's; both are the same refusal to a caller and
+	// neither is a retry. The credential comes from the merge mint
+	// (UseMergeMint, E16/D2049); a provider without one refuses with
 	// ErrNoMergeMint rather than reaching for its own, and a host with no
 	// mint to gate says so with MintExempt and ErrMintNotApplicable rather
-	// than being taken for one that does. It is not ApplyReady:
-	// that one adds reviewers and labels to a pull request somebody else
-	// made ready, and this one is the daemon's own new authority to un-draft
-	// a pull request a run left as a draft.
+	// than being taken for one that does. It is not ApplyReady: that one adds
+	// reviewers and labels to a pull request somebody else made ready, and
+	// this one is the daemon's own new authority to un-draft a pull request a
+	// run left as a draft.
 	MarkReady(ctx context.Context, number int, expectedHeadSHA string) error
 	// Merge merges pull request number at exactly the head expectedHeadSHA
 	// (E8, G2, G14): it re-reads the head and refuses with ErrHeadMoved when
 	// it has moved, sends the expected head to the host as the merge's own
-	// precondition, and never sends an admin or bypass flag. The credential
-	// is the merge mint's (UseMergeMint), so a merge is a merge the gate
-	// minted for; a provider without one refuses with ErrNoMergeMint, and a
+	// precondition, and never sends an admin or bypass flag. A pull request
+	// that is not open is refused with ErrPRNotOpen before anything is sent:
+	// a closed pull request keeps its head, so the head check alone would
+	// pass on one. On a provider whose credential is the gated mint's the
+	// mint has already re-read and refused a moved head
+	// (MergeMinter.MintMerge), so ErrHeadMoved is this call's own read. The
+	// credential is the merge mint's (UseMergeMint), so a merge is a merge
+	// the gate minted for; a provider without one refuses with ErrNoMergeMint, and a
 	// host with no mint to gate says so with MintExempt and
 	// ErrMintNotApplicable. A provider whose merge API has no expected-head
 	// precondition refuses with ErrMergeNoHeadPrecondition (F24): an unbound

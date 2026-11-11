@@ -73,9 +73,18 @@ func (p *Provider) MarkReady(ctx context.Context, number int, expectedHeadSHA st
 	if err != nil {
 		return err
 	}
-	d, _, err := p.getPullWith(ctx, c, number)
+	d, info, err := p.getPullWith(ctx, c, number)
 	if err != nil {
 		return err
+	}
+	// The state is checked before the head, the way UpdatePR and ApplyReady
+	// check it and the way Bitbucket's MarkReady does: a closed pull request
+	// keeps its head, so the head check would pass and the write below — at
+	// minimum the REST retitle a prefix-marked draft gets — would land on a
+	// pull request that is closed. The head is not the question for a closed
+	// one; the answer is the refusal this provider's every other write gives.
+	if info.State != gitprov.PROpen {
+		return fmt.Errorf("pull request #%d is %s: %w", info.Number, info.State, gitprov.ErrPRNotOpen)
 	}
 	// The head is re-read with the minted credential and checked here as well
 	// as at the mint: the mint's read and this one are two answers from GitHub
@@ -109,9 +118,18 @@ func (p *Provider) Merge(ctx context.Context, number int, expectedHeadSHA string
 	if err != nil {
 		return err
 	}
-	d, _, err := p.getPullWith(ctx, c, number)
+	d, info, err := p.getPullWith(ctx, c, number)
 	if err != nil {
 		return err
+	}
+	// A closed pull request keeps its head, so the head check below would pass
+	// on one a person already merged or declined and this call would send a
+	// merge at it anyway; whatever the endpoint answers then is a sentence
+	// about a call that should never have been made. The state is the
+	// refusal, and it is checked first, as UpdatePR, ApplyReady and
+	// Bitbucket's MarkReady check it.
+	if info.State != gitprov.PROpen {
+		return fmt.Errorf("pull request #%d is %s: %w", info.Number, info.State, gitprov.ErrPRNotOpen)
 	}
 	if err := gitprov.CheckExpectedHead(d.Head.SHA, expectedHeadSHA); err != nil {
 		return fmt.Errorf("merging pull request #%d: %w", number, err)

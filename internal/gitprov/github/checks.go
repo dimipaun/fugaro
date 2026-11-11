@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
@@ -52,8 +53,10 @@ const (
 // It does need a READ permission a run's installation token does not ask for.
 // GitHub requires the App's "Checks: read" for the check runs and "Commit
 // statuses: read" for the statuses, and tokenPermissions names neither, so on
-// an installation that has not granted both this call gets 403 — which
-// checksErr reports as ErrChecksPermission rather than as a bare refusal. The
+// an installation that has not granted both this call gets the 403 whose body
+// names the missing integration — which checksErr reports as
+// ErrChecksPermission rather than as a bare refusal, and which is the only 403
+// it reports that way (a rate limit's 403 is a rate limit). The
 // grant is the owner's (Check 231 of docs/gcp-live-checklist.md, B2 of
 // docs/forge-authorship-images/implementation-plan.md, which widens
 // tokenPermissions and RequiredPermissions together); until it lands, this
@@ -84,19 +87,36 @@ func (p *Provider) Checks(ctx context.Context, number int, sha string) ([]gitpro
 }
 
 // checksErr is the refusal a checks read reports, with the one failure this
-// host explains: a 403 is GitHub refusing the CREDENTIAL rather than the read,
-// because both of these endpoints need the App's "Checks: read" and "Commit
-// statuses: read" and a run's installation token asks for neither
-// (tokenPermissions). The read is already wrapped with the pull request and
-// the commit by the caller, so this only adds the sentinel and the grant it
-// names; every other failure is reported as it came.
+// host explains: a 403 whose body says the App is missing a permission, which
+// is what both of these endpoints answer without "Checks: read" and "Commit
+// statuses: read" (tokenPermissions asks for neither). The read is already
+// wrapped with the pull request and the commit by the caller, so this only adds
+// the sentinel and the grant it names; every other failure is reported as it
+// came.
 func checksErr(err error) error {
 	var se *httpjson.StatusError
-	if errors.As(err, &se) && se.Status == http.StatusForbidden {
+	if errors.As(err, &se) && se.Status == http.StatusForbidden && refusedForWantOfPermission(se.Body) {
 		return fmt.Errorf("%w: %w; the App must be granted Checks: read and Commit statuses: read, and each installation must accept them",
 			gitprov.ErrChecksPermission, err)
 	}
 	return err
+}
+
+// refusedForWantOfPermission reports whether a 403's body is GitHub refusing
+// the CREDENTIAL rather than the request.
+//
+// 403 is this host's answer to more than one thing, and only one of them is a
+// grant an operator can make. A missing App permission reads "Resource not
+// accessible by integration"; a primary rate limit reads "API rate limit
+// exceeded for installation ID …" and a secondary one "You have exceeded a
+// secondary rate limit". Reading the status alone would tell an operator to
+// grant a permission the App already holds: a rate-limited checks read would be
+// answered with a trip to the App's settings page instead of its cause, and the
+// operator would find the grant already there. The body is what tells them
+// apart; every 403 still fails the read, so a rate limit is reported as the
+// failure it is and never as a state.
+func refusedForWantOfPermission(body string) bool {
+	return strings.Contains(strings.ToLower(body), "not accessible by integration")
 }
 
 // checkRuns reads every check run GitHub reports at commit sha, following the
