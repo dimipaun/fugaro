@@ -139,7 +139,7 @@ poll answers the same for unknown and expired codes. (5) *Email delivery of keys
 credential in mail; the mail carries the key text only to the verified purchaser and the account page
 re-issues it, so a mailbox leak is the same exposure the built key service already accepts (T25). (6) *The
 project-level store* is a licence-grade object readable by every identity that reads the runs bucket;
-the key is not an account credential (F47) and holds nothing a viewer can act with.
+a viewer **can** copy the key; with an optional `workspace_id` (D2134) the copy works elsewhere, an accepted limit (the plan's "Limits this plan accepts"). It cannot renew: the key holds only the secret's hash and the renewal call sends the secret itself. Round 1 amended F7's fix, because an HMAC keyed by that hash would have been forgeable by any bucket reader.
 
 ## Decisions
 
