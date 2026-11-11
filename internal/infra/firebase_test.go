@@ -1234,9 +1234,18 @@ func tfAttr(body, name string) string {
 
 // databaseRoleMembers returns every IAM member this module binds a role that
 // carries a database permission to, keyed "resource" and valued with the member
-// expression. A role carries one if it is a predefined firebasedatabase role or
-// a custom role this module declares whose permissions name firebasedatabase
-// (the workspace's read, modules/firebase/workspace_access.tf).
+// expression (or the member list, for a binding). A role carries one if it is a
+// predefined firebasedatabase role or a custom role this module declares whose
+// permissions name firebasedatabase (the workspace's read,
+// modules/firebase/workspace_access.tf).
+//
+// Both shapes an IAM grant takes are read: an `_iam_member` carries one member
+// and an `_iam_binding` carries a list of them, and a walk that read only the
+// first would pass a module that granted the front door the database through
+// the second. An `_iam_policy` is a third shape whose members this walk cannot
+// read — they live in a policy document, a data source elsewhere in the tree —
+// so its presence in a directory walked here fails by name: a membership that
+// cannot be read is not one that can be passed.
 func databaseRoleMembers(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	blocks := tfResourceBlocks(t, dir)
@@ -1245,10 +1254,19 @@ func databaseRoleMembers(t *testing.T, dir string) map[string]string {
 		if strings.HasPrefix(key, "google_project_iam_custom_role.") && strings.Contains(body, "firebasedatabase.") {
 			custom[strings.Trim(tfAttr(body, "role_id"), `"`)] = true
 		}
+		if strings.Contains(key, "_iam_policy.") {
+			t.Errorf("%s: %s is an IAM policy document, and the members it binds are in a policy this walk does not read; grant with an _iam_member or an _iam_binding so the fence can see who holds the database", dir, key)
+		}
 	}
 	out := map[string]string{}
 	for key, body := range blocks {
-		if !strings.Contains(key, "_iam_member.") {
+		var member string
+		switch {
+		case strings.Contains(key, "_iam_member."):
+			member = tfAttr(body, "member")
+		case strings.Contains(key, "_iam_binding."):
+			member = tfAttr(body, "members")
+		default:
 			continue
 		}
 		role := tfAttr(body, "role")
@@ -1259,7 +1277,7 @@ func databaseRoleMembers(t *testing.T, dir string) map[string]string {
 			}
 		}
 		if carries {
-			out[key] = tfAttr(body, "member")
+			out[key] = member
 		}
 	}
 	return out

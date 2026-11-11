@@ -487,6 +487,12 @@ func (i roadmapIndex) edge(e Edge) bool {
 	return !i.tasks[e.Task] || !i.tasks[e.Needs]
 }
 
+// carriesTask reports whether the plans hold a task. It is the question the
+// prune asks apart from `dangling`: a document dangles when its task is gone
+// or when its release is, and only the first is a fact the plans can date —
+// the writer stamps a mark on the one and never touches the other.
+func (i roadmapIndex) carriesTask(task string) bool { return i.tasks[task] }
+
 // danglingIDs names the qualified task ids no plan document carries, over
 // every assignment and edge of one read (D2115). A task's own assignment
 // naming a release the record does not hold dangles too, and it is the task

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -484,6 +485,45 @@ func TestRoadmapBoundsAreEnforced(t *testing.T) {
 	})
 }
 
+// TestMoveToTheSameReleaseWritesNothing: a move to the release the record
+// already holds is no move, and it must not be written as one. Written, it
+// would set `prev` to the release it replaced — itself — so the undo target
+// the move recorded is destroyed by the one request that changed nothing, and
+// the document's ETag moves for it, which is the version every other writer's
+// `expect` compares against.
+func TestMoveToTheSameReleaseWritesNothing(t *testing.T) {
+	s, _, fx := writeStore(t)
+	ctx := testCtx(t)
+	task := fx.Plans[0].Plan + "/" + fx.Plans[0].Tasks[0].ID
+	home := ReleaseID("console", "0.110")
+	if err := s.SetRelease(ctx, "person-1@example.com", Release{
+		ID: "0.111", Stream: "console", Name: "console 0.111", State: ReleaseOpen, Order: 2,
+	}); err != nil {
+		t.Fatalf("creating the release the task moves to: %v", err)
+	}
+	away := ReleaseID("console", "0.111")
+	if err := s.Move(ctx, "person-2@example.com", task, away, home); err != nil {
+		t.Fatalf("moving the task out of its release: %v", err)
+	}
+	moved, found := readDoc[Assignment](t, s, PathAssign(task))
+	if !found || moved.Prev == nil || *moved.Prev != home {
+		t.Fatalf("after the move the assignment = %+v (found %v), want prev %s", moved, found, home)
+	}
+	if err := s.Move(ctx, "person-3@example.com", task, away, away); err != nil {
+		t.Fatalf("moving a task into the release it is already in: %v", err)
+	}
+	after, found := readDoc[Assignment](t, s, PathAssign(task))
+	if !found {
+		t.Fatal("the no-op move deleted the assignment")
+	}
+	if after.Prev == nil || *after.Prev != home {
+		t.Errorf("the no-op move set prev = %v, want the release it replaced (%s): a move that changes nothing must not move the undo target", after.Prev, home)
+	}
+	if !reflect.DeepEqual(after, moved) {
+		t.Errorf("the assignment after the no-op move = %+v, want %+v: a move to where the task already is writes nothing", after, moved)
+	}
+}
+
 // TestPublishUnchangedWritesNothing is P5's idempotency at the publish: an
 // artifact the record already holds writes nothing and moves no ETag, which is
 // what every other writer's `expect` compares against.
@@ -556,6 +596,42 @@ func TestPublishWithAStaleExpectIsRefused(t *testing.T) {
 	}
 }
 
+// TestPublishOfAnUnpublishedPlanWithAStaleExpectIsRefused: an unpublish moves
+// the document as a publish does — away — so a publish whose `expect` is the
+// version it had before the unpublish is refused rather than applied. Applied,
+// it would put the plan back over the unpublish, which is the one change the
+// person who unpublished it meant to make.
+func TestPublishOfAnUnpublishedPlanWithAStaleExpectIsRefused(t *testing.T) {
+	s, _, fx := writeStore(t)
+	ctx := testCtx(t)
+	doc := fx.Plans[0]
+	path := PathPlan(doc.Plan)
+	etag, found, err := s.Read(ctx, path, nil)
+	if err != nil || !found {
+		t.Fatalf("reading the stored plan: found %v, err %v", found, err)
+	}
+	if err := s.UnpublishPlan(ctx, doc.Plan); err != nil {
+		t.Fatalf("unpublishing the plan: %v", err)
+	}
+	changed := doc
+	changed.Tasks = append([]Task{}, doc.Tasks...)
+	changed.Tasks[0].Title = "a title the publisher read before the unpublish"
+	if err := s.PublishPlan(ctx, changed, etag, false); !errors.Is(err, ErrPublishStale) {
+		t.Errorf("publishing on the version an unpublish removed: err = %v, want ErrPublishStale", err)
+	}
+	if _, found := readDoc[Plan](t, s, path); found {
+		t.Error("the refused publish put the unpublished plan back into the record")
+	}
+	// The control: the same publish, read again, is applied — the refusal is
+	// of the version and not of the plan.
+	if err := s.PublishPlan(ctx, changed, "", false); err != nil {
+		t.Fatalf("publishing the plan the record no longer holds: %v", err)
+	}
+	if got, found := readDoc[Plan](t, s, path); !found || got.Tasks[0].Title != changed.Tasks[0].Title {
+		t.Errorf("after publishing it again the plan = %+v (found %v), want the publisher's", got, found)
+	}
+}
+
 // TestUnpublishMakesItsTasksDangling: removing a plan leaves the assignments
 // and edges that named its tasks dangling rather than deleting them (D2115),
 // which is what the reader reports and the prune later clears.
@@ -581,10 +657,52 @@ func TestUnpublishMakesItsTasksDangling(t *testing.T) {
 	}
 }
 
+// TestPlanRefusesAnAmbiguousOrRepeatedTaskID: the record's name for a task is
+// the qualified `<plan>/<task>`, split at the last slash because a plan id is
+// a path under docs/ and holds slashes of its own. A task id with a slash in
+// it moves that split inside the task, so a plan `plans/x` carrying a task
+// `y/T1` and a plan `plans/x/y` carrying a task `T1` would be one name for two
+// tasks: an edge between them reads as an edge inside one plan — D2112's
+// refusal, bypassed — and one plan's task masks another's everywhere the
+// dangling rule asks. Two tasks of one plan sharing an id are the same
+// collision one plan closer: one name, two tasks, and the record holds one.
+func TestPlanRefusesAnAmbiguousOrRepeatedTaskID(t *testing.T) {
+	s, _, _ := writeStore(t)
+	ctx := testCtx(t)
+	aliasing := planWithTasks("plans/x", 1, "a task")
+	aliasing.Tasks = append(aliasing.Tasks, Task{ID: "y/T1", Title: "a task"})
+	if err := s.PublishPlan(ctx, aliasing, "", false); !errors.Is(err, ErrRoadmapInvalid) {
+		t.Errorf("publishing a task id with a slash in it: err = %v, want ErrRoadmapInvalid", err)
+	}
+	repeated := planWithTasks("plans/x", 1, "a task")
+	repeated.Tasks = append(repeated.Tasks, repeated.Tasks[0])
+	if err := s.PublishPlan(ctx, repeated, "", false); !errors.Is(err, ErrRoadmapInvalid) {
+		t.Errorf("publishing one task id twice: err = %v, want ErrRoadmapInvalid", err)
+	}
+	if _, found := readDoc[Plan](t, s, PathPlan("plans/x")); found {
+		t.Error("a refused plan was written to the record")
+	}
+	// The control: a plan whose two tasks are named inside their own plan is
+	// published, so the refusals above are of the names and not of a plan with
+	// two tasks.
+	good := planWithTasks("plans/x", 2, "a task")
+	good.Tasks[1].ID = "T1"
+	if err := s.PublishPlan(ctx, good, "", false); err != nil {
+		t.Fatalf("publishing a plan whose task ids are names: %v", err)
+	}
+}
+
+// markDangling seeds the ledger's mark for a document, which is what a prune
+// that has already seen it dangling writes.
+func markDangling(t *testing.T, f *gcpfake.RTDB, key string, at time.Time) {
+	t.Helper()
+	f.Set(PathDanglingMark(key), danglingMark{Schema: RoadmapSchema, At: at})
+}
+
 // TestPruneDeletesAtMostOneHundredDanglingItems is D2125's bound: the prune
-// runs inside a publish and an unpublish, deletes only what has been dangling
-// past D2115's 30 days, and takes at most PruneBatch of them per call, so one
-// person's request never carries a record's whole clean-up.
+// runs inside a publish and an unpublish, deletes only what the ledger has
+// marked dangling past D2115's 30 days, and takes at most PruneBatch of them
+// per call, so one person's request never carries a record's whole clean-up.
 func TestPruneDeletesAtMostOneHundredDanglingItems(t *testing.T) {
 	s, f := testStoreAndFake(t)
 	plan := planWithTasks("plans/prune", 1, "the plan the prune hangs off")
@@ -596,12 +714,14 @@ func TestPruneDeletesAtMostOneHundredDanglingItems(t *testing.T) {
 			Schema: RoadmapSchema, Task: gone(i), Release: ReleaseID("console", "0.110"),
 			By: "person-2@example.com", At: old,
 		})
+		markDangling(t, f, AssignID(gone(i)), old)
 	}
 	young := "plans/gone/Tyoung"
 	f.Set(PathAssign(young), Assignment{
 		Schema: RoadmapSchema, Task: young, Release: ReleaseID("console", "0.110"),
 		By: "person-2@example.com", At: time.Now(),
 	})
+	markDangling(t, f, AssignID(young), time.Now().Add(-time.Hour))
 
 	if err := s.UnpublishPlan(testCtx(t), plan.Plan); err != nil {
 		t.Fatalf("unpublishing the plan the prune hangs off: %v", err)
@@ -610,7 +730,7 @@ func TestPruneDeletesAtMostOneHundredDanglingItems(t *testing.T) {
 		t.Errorf("after one call the record holds %d assignments, want 51 (100 pruned, 50 old and the young one left)", left)
 	}
 	if f.Value(PathAssign(young)) == nil {
-		t.Error("the prune deleted an assignment dangling for an hour: the age is D2115's 30 days")
+		t.Error("the prune deleted an assignment marked dangling an hour ago: the mark is D2115's 30 days")
 	}
 	// The write that follows carries the rest, and a document that is not
 	// dangling is never touched.
@@ -625,55 +745,114 @@ func TestPruneDeletesAtMostOneHundredDanglingItems(t *testing.T) {
 	}
 }
 
-// TestThePruneLeavesADocumentThatMovedUnderIt: the prune's decision is one read
-// of the record and its deletion is another, and a document that changed in
-// between belongs to a decision that never saw it. Here a task is moved into a
-// live release while the prune's own read of its assignment is in flight, and
-// the move must survive: the deletion is put on the ETag that read returned —
-// the moved document's own — and a prune that deleted on it would take a move
-// made beside it.
-func TestThePruneLeavesADocumentThatMovedUnderIt(t *testing.T) {
+// TestThePruneDatesFromTheOrphaningNotFromTheLastMove: D2115's 30 days are
+// counted from the day a document went dangling, and the document's own `at`
+// is not that day — it is when it was last moved, which for an assignment
+// moved long ago is long before its task left the plans. A prune counting from
+// `at` would delete the move minutes after the publish that orphaned it, and
+// no republish inside the 30 days could put it back.
+func TestThePruneDatesFromTheOrphaningNotFromTheLastMove(t *testing.T) {
 	s, f := testStoreAndFake(t)
 	ctx := testCtx(t)
-	live := ReleaseID("console", "0.110")
 	f.Set(PathRelease("console", "0.110"), Release{
 		Schema: RoadmapSchema, ID: "0.110", Stream: "console", Name: "console 0.110",
 		State: ReleaseOpen, Order: 1, By: "person-2@example.com", At: time.Now().UTC(),
 	})
-	// The task is one a plan document carries, and its assignment names a
-	// release the record does not hold: that, and nothing else, is what makes it
-	// dangling.
-	source := planWithTasks("plans/gone", 1, "the plan the task is in")
-	f.Set(PathPlan(source.Plan), source)
-	task := source.Plan + "/" + source.Tasks[0].ID
+	full := planWithTasks("plans/p", 2, "a task")
+	f.Set(PathPlan(full.Plan), full)
+	task := full.Plan + "/" + full.Tasks[0].ID
+	// The move is forty days old: made long before the publish that orphans it.
 	f.Set(PathAssign(task), Assignment{
-		Schema: RoadmapSchema, Task: task, Release: ReleaseID("console", "0.999"),
-		By: "person-2@example.com", At: time.Now().Add(-PruneAge - time.Hour),
+		Schema: RoadmapSchema, Task: task, Release: ReleaseID("console", "0.110"),
+		By: "person-2@example.com", At: time.Now().Add(-PruneAge - 10*24*time.Hour),
 	})
 
+	short := full
+	short.Tasks = full.Tasks[1:]
+	if err := s.PublishPlan(ctx, short, "", false); err != nil {
+		t.Fatalf("publishing the plan without the task: %v", err)
+	}
+	if _, found := readDoc[Assignment](t, s, PathAssign(task)); !found {
+		t.Fatal("the publish deleted the assignment it had just orphaned")
+	}
+	// An unrelated publish arrives minutes later. The document is dangling
+	// now, and this is the first prune to see it so: it is stamped and kept,
+	// where a prune counting from `at` would have taken it here.
+	if err := s.PublishPlan(ctx, planWithTasks("plans/other", 1, "a task"), "", false); err != nil {
+		t.Fatalf("publishing beside the dangling assignment: %v", err)
+	}
+	if _, found := readDoc[Assignment](t, s, PathAssign(task)); !found {
+		t.Fatal("the next publish deleted an assignment that had been dangling for minutes: the 30 days are counted from the orphaning, not from the last move")
+	}
+	mark, found := readDoc[danglingMark](t, s, PathDanglingMark(AssignID(task)))
+	if !found || mark.At.IsZero() {
+		t.Fatalf("the first prune to see the assignment dangling left no mark for it (found %v): nothing would date the orphaning", found)
+	}
+	if time.Since(mark.At) > time.Hour {
+		t.Errorf("the mark dates %v ago, want the publish that saw it dangling", time.Since(mark.At))
+	}
+	// Past the keep — the ledger's own date, moved back — the same publish
+	// takes it, and the mark goes with the document it was about.
+	markDangling(t, f, AssignID(task), time.Now().Add(-PruneAge-time.Hour))
+	if err := s.PublishPlan(ctx, planWithTasks("plans/another", 1, "a task"), "", false); err != nil {
+		t.Fatalf("publishing past the keep: %v", err)
+	}
+	if _, found := readDoc[Assignment](t, s, PathAssign(task)); found {
+		t.Error("the prune kept an assignment marked dangling past the 30 days: D2115's keep has an end, D2125's prune is it")
+	}
+	if _, found := readDoc[danglingMark](t, s, PathDanglingMark(AssignID(task))); found {
+		t.Error("the mark outlived the document it was about: the key a later move writes would inherit its date")
+	}
+}
+
+// TestThePruneLeavesADocumentWhoseTaskCameBack: the prune's decision is one
+// read of the record and its deletion follows another, and a task a republish
+// puts back in between belongs to a decision that never saw it. Here the
+// republish lands while the prune's own read of the assignment is in flight,
+// and the move must survive: the deletion is decided from the second read,
+// which sees the task back, and the mark the ledger held for the document goes
+// with the dangling it was about.
+func TestThePruneLeavesADocumentWhoseTaskCameBack(t *testing.T) {
+	s, f := testStoreAndFake(t)
+	ctx := testCtx(t)
+	source := planWithTasks("plans/gone", 1, "the task the plan carries")
+	task := source.Plan + "/" + source.Tasks[0].ID
+	f.Set(PathRelease("console", "0.110"), Release{
+		Schema: RoadmapSchema, ID: "0.110", Stream: "console", Name: "console 0.110",
+		State: ReleaseOpen, Order: 1, By: "person-2@example.com", At: time.Now().UTC(),
+	})
+	f.Set(PathAssign(task), Assignment{
+		Schema: RoadmapSchema, Task: task, Release: ReleaseID("console", "0.110"),
+		By: "person-2@example.com", At: time.Now().Add(-PruneAge - time.Hour),
+	})
+	markDangling(t, f, AssignID(task), time.Now().Add(-PruneAge-time.Hour))
+
 	// The prune's own read of the dangling assignment is the one held, so the
-	// other writer's move lands while the decision to delete it is in flight.
+	// republish that puts the task back lands while the deletion is in flight.
 	stamped, openRead := f.HoldNext(PathAssign(task))
-	defer openRead()
 	done := make(chan error, 1)
 	go func() { done <- s.PublishPlan(ctx, planWithTasks("plans/other", 1, "a task"), "", false) }()
 	<-stamped
-	moved := Assignment{
-		Schema: RoadmapSchema, Task: task, Release: live,
-		By: "person-3@example.com", At: time.Now().UTC(),
+	if err := s.PublishPlan(ctx, source, "", false); err != nil {
+		t.Fatalf("republishing the plan that carries the task: %v", err)
 	}
-	f.Set(PathAssign(task), moved)
 	openRead()
 
 	if err := <-done; err != nil {
-		t.Fatalf("publishing beside a move: %v", err)
+		t.Fatalf("publishing beside a republish: %v", err)
 	}
-	got, found := readDoc[Assignment](t, s, PathAssign(task))
-	if !found {
-		t.Fatal("the prune deleted an assignment that was moved while it was deciding")
+	if _, found := readDoc[Assignment](t, s, PathAssign(task)); !found {
+		t.Fatal("the prune deleted an assignment whose task a republish had just put back")
 	}
-	if got.Release != moved.Release {
-		t.Errorf("the assignment's release = %s, want %s: the move that landed beside the prune", got.Release, moved.Release)
+	if _, found := readDoc[danglingMark](t, s, PathDanglingMark(AssignID(task))); found {
+		t.Error("the mark survived the republish that ended the dangling: a later orphaning would inherit its date")
+	}
+	rm, err := s.ReadRoadmap(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slicesContains(rm.Dangling, task) {
+		t.Errorf("the dangling ids = %v, want none: the task is in a plan again", rm.Dangling)
 	}
 }
 

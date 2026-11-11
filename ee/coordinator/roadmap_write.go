@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -154,9 +155,11 @@ const (
 //
 // An unchanged document writes nothing and moves no ETag, and a document whose
 // `expect` is not the version the record now holds is refused before anything
-// is written (ErrPublishStale). A publish whose provenance names another
-// repository than the stored one is refused unless replaceSource says the
-// publisher means it (D2123).
+// is written (ErrPublishStale) — including one the record does not hold at all,
+// which is what a plan unpublished since the publisher read it looks like: a
+// publish that went ahead would put the plan back over that unpublish. A
+// publish whose provenance names another repository than the stored one is
+// refused unless replaceSource says the publisher means it (D2123).
 //
 // It asks for no actor: the plan document carries no `by` (P9a's shape has no
 // such field — the artifact's provenance is where it came from, and the
@@ -173,7 +176,17 @@ func (s *Store) PublishPlan(ctx context.Context, doc Plan, expect string, replac
 	if err != nil {
 		return err
 	}
-	if found {
+	if !found {
+		// A publish carrying a version the record no longer holds is refused
+		// whether the plan is there under another version or not there at all:
+		// an unpublish since the publisher read is a move of the document as
+		// much as a second publish is, and a publish that went ahead would put
+		// the plan back over it — the one write a person unpublishing a plan
+		// means to have removed.
+		if expect != "" {
+			return fmt.Errorf("%w: /%s is not in the record; read the record again and publish what it holds", ErrPublishStale, path)
+		}
+	} else {
 		var stored Plan
 		if err := strictDecode(raw, &stored); err != nil {
 			return fmt.Errorf("coordinator: reading /%s: %w: %w", path, ErrUnreadable, err)
@@ -246,7 +259,10 @@ func (s *Store) UnpublishPlan(ctx context.Context, plan string) error {
 //
 // The refusals, in the order they are decided: a stale expect, a task no plan
 // document carries, a release the record does not hold, and a release whose
-// own state is finished (D2113).
+// own state is finished (D2113). A move to the release the record already
+// holds is none of them: it writes nothing, because the document it would
+// write is the one that is there, but for a `prev` and an `at` that would say
+// a change happened where none did.
 func (s *Store) Move(ctx context.Context, actor Actor, task, release, expect string) error {
 	if _, _, ok := SplitQualifiedID(task); !ok {
 		return fmt.Errorf("%w: %q is not a qualified task id (<plan>/<task>)", ErrRoadmapInvalid, task)
@@ -269,8 +285,20 @@ func (s *Store) Move(ctx context.Context, actor Actor, task, release, expect str
 		if stored != expect {
 			return fmt.Errorf("%w: /%s holds %s and the request expected %s; read the record again and move from what it holds", ErrMoveStale, path, stored, expect)
 		}
+		// A move to the release the record already holds is no move: writing it
+		// would set `prev` to that same release — the undo target a second move
+		// needs, destroyed by the one request that changed nothing — and would
+		// move the ETag every other writer's `expect` compares against. It
+		// covers the unassign of a task that has no assignment (D2114), which
+		// is a document that is not there being asked to not be there. The
+		// record's own refusals are asked first: a task no plan carries and a
+		// release the record does not hold are refused whether or not the move
+		// would have written anything.
 		if err := s.checkMove(ctx, task, release); err != nil {
 			return err
+		}
+		if release == stored {
+			return nil
 		}
 		var doc any
 		if release != NoneRelease {
@@ -487,6 +515,28 @@ func (s *Store) RemoveEdge(ctx context.Context, task, needs string) error {
 	return nil
 }
 
+// PathDanglingMarks is the ledger the prune keeps: one mark per document the
+// record holds dangling, saying when a prune first saw it so. It is the
+// writer's own node and no reader's — it is not a fact about the roadmap but
+// the bookkeeping that makes D2115's 30 days countable from the day a document
+// went dangling, which is a day the document itself does not carry: its `at`
+// is when it was last moved, and a task that leaves the plans years after its
+// last move would otherwise be deleted by the next publish, minutes later.
+func PathDanglingMarks() string { return PathRoadmap() + "/dangling" }
+
+// PathDanglingMark is the mark for the document stored under key: an
+// assignment's or an edge's own key, so a mark and the document it is about
+// are one lookup apart.
+func PathDanglingMark(key string) string { return PathDanglingMarks() + "/" + key }
+
+// danglingMark is what the ledger holds for one document. It is a document of
+// the record's own shape — a schema and a time — so it decodes the way every
+// other one does.
+type danglingMark struct {
+	Schema int       `json:"schema"`
+	At     time.Time `json:"at"`
+}
+
 // pruneDangling deletes the assignment and edge documents that have been
 // dangling for PruneAge, at most PruneBatch of them per call (D2115, D2125).
 //
@@ -496,69 +546,62 @@ func (s *Store) RemoveEdge(ctx context.Context, task, needs string) error {
 // is where the 30 days are counted, and the batch bound is what keeps one
 // person's request from carrying the whole of a record's clean-up.
 //
+// The 30 days are counted from PathDanglingMarks, and not from the document's
+// own `at`: `at` is when the document was last written, which for an
+// assignment moved long ago is years before the task left the plans, and a
+// prune counting from it would delete a document inside its keep — the very
+// write that orphaned it, for the assignment whose last move is old enough.
+// The ledger is stamped on the first sighting and read on every one after, so
+// the delete happens 30 days after a prune first saw the document dangling:
+// never earlier than D2115's keep, and later only by how long the record went
+// without a publish or an unpublish, which is the laziness D2125 chose.
+//
+// A mark whose document comes back — a republish puts its task in a plan again
+// — is dropped by the publish that put it back, and a mark is dropped before
+// the document it marks, so a mark never outlives its document and a key a
+// later move reuses cannot inherit an old date. What the write cannot date is
+// a document dangling because its release is gone: no mark is written for one
+// and none is ever deleted, so it stays with the record (no writer here can
+// make one — the move refuses a release the record does not hold and the
+// delete refuses one an assignment names).
+//
 // before is the record as the write that called this found it, and it is what
 // makes the prune safe to run beside a record other writers are changing. No
-// deletion rests on a single read: a document goes only when three observations
+// deletion rests on a single read: a document goes only when four observations
 // agree, and the put that takes it is made on the ETag its own document was
 // read on, so anything written to that document in between fails the put.
 //
-//   - The candidates come from before, so this write never deletes what it has
-//     itself just orphaned: a document that was not dangling before the call is
-//     not on the list whatever its own `at` says. That is what keeps D2115's
-//     "kept and shown dangling" true of the publish or the unpublish that
-//     orphaned it, and what lets a republish inside the 30 days put the task
-//     back with its moves still on it.
-//   - The candidates' own documents are read before the deletion is decided, so
-//     a task moved out of a dangling assignment is seen for what it is: its
-//     document no longer matches the one the record read holds, or it is no
-//     longer dangling, and either way it stays.
+//   - The candidates come from before, so this write never stamps or deletes
+//     what it has itself just orphaned: a document that was not dangling before
+//     the call is not on the list. That is what keeps D2115's "kept and shown
+//     dangling" true of the publish or the unpublish that orphaned it, and what
+//     lets a republish inside the 30 days put the task back with its moves
+//     still on it.
+//   - The candidates' own documents are read before anything is decided, and a
+//     document that is no longer the one that read holds — another writer
+//     changed it, or removed it — is left alone: it belongs to a decision that
+//     never saw it, and the deletion below is put on the ETag of the document
+//     as it was read, so the same is true of a write that lands later.
 //   - The decision comes from a second read of the record, taken after those
 //     documents were read — never from before — so a plan published back
 //     between the write and the prune leaves the assignments it restores
-//     assigned: before is stale in exactly that direction, and a prune that
-//     decided from it would delete the moves a republish has just put back.
-//
-// What this cannot do, named rather than papered over: the 30 days are counted
-// from the document's own last write (`at`), which is a lower bound on how long
-// it has been dangling and not the day it went dangling. A document whose task
-// left the plans long after its last move can therefore still be deleted inside
-// D2115's 30 days — by a later publish, never by the one that orphaned it. The
-// record holds no fact that would date the orphaning: P9a's shape (schema 1)
-// carries no "dangling since" field and no marker node, and a shape that did
-// would be a later schema's.
+//     assigned and their marks dropped: before is stale in exactly that
+//     direction, and a prune that decided from it would delete the moves a
+//     republish has just put back.
+//   - The mark itself is a fourth: a document goes only when a mark for it is
+//     older than PruneAge, and a mark is written the first time a prune sees
+//     the document dangling.
 func (s *Store) pruneDangling(ctx context.Context, before Roadmap) error {
-	idx := indexRoadmap(before)
-	cutoff := time.Now().Add(-PruneAge)
-	var assigns, edges []pruneCandidate
-	for _, a := range before.Assignments {
-		if len(assigns)+len(edges) == PruneBatch {
-			break
-		}
-		if !idx.assignment(a) || a.At.After(cutoff) {
-			continue
-		}
-		c, ok, err := s.readPruneCandidate(ctx, PathAssign(a.Task))
-		if err != nil {
-			return err
-		}
-		if ok {
-			assigns = append(assigns, c)
-		}
+	if len(before.Dangling) == 0 {
+		return nil
 	}
-	for _, e := range before.Edges {
-		if len(assigns)+len(edges) == PruneBatch {
-			break
-		}
-		if !idx.edge(e) || e.At.After(cutoff) {
-			continue
-		}
-		c, ok, err := s.readPruneCandidate(ctx, PathEdge(e.Task, e.Needs))
-		if err != nil {
-			return err
-		}
-		if ok {
-			edges = append(edges, c)
-		}
+	marks, err := s.danglingMarks(ctx)
+	if err != nil {
+		return err
+	}
+	assigns, edges, err := s.danglingCandidates(ctx, before, marks)
+	if err != nil {
+		return err
 	}
 	if len(assigns)+len(edges) == 0 {
 		return nil
@@ -567,45 +610,199 @@ func (s *Store) pruneDangling(ctx context.Context, before Roadmap) error {
 	if err != nil {
 		return err
 	}
-	now := indexRoadmap(after)
-	for _, c := range assigns {
-		var doc Assignment
-		if !roadmapDocument(c.raw, &doc) {
-			continue
-		}
-		doc = doc.sanitised()
-		stored, held := heldAssignment(after, doc.Task)
-		if !held || !reflect.DeepEqual(stored, doc) || !now.assignment(stored) {
-			continue
-		}
-		if err := s.deletePruned(ctx, c); err != nil {
-			return err
-		}
-	}
-	for _, c := range edges {
-		var doc Edge
-		if !roadmapDocument(c.raw, &doc) {
-			continue
-		}
-		doc = doc.sanitised()
-		stored, held := heldEdge(after, doc.Task, doc.Needs)
-		if !held || !reflect.DeepEqual(stored, doc) || !now.edge(stored) {
-			continue
-		}
-		if err := s.deletePruned(ctx, c); err != nil {
+	for _, v := range danglingVerdicts(after, append(assigns, edges...)) {
+		if err := s.applyDangling(ctx, v); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// pruneCandidate is one document the prune may delete: where it lives, the ETag
-// it was read on, and the document as it was read — the three facts the
-// deletion is put on and checked against.
+// pruneCandidate is one document the prune may act on: where it lives, the
+// ETag it was read on, the document as it was read, the key its mark lives
+// under, the mark the ledger held for it when this call began, and which of
+// the record's two dangling families it belongs to.
 type pruneCandidate struct {
 	path string
 	etag string
 	raw  json.RawMessage
+	key  string
+	mark danglingMark
+	edge bool
+}
+
+// danglingCandidates is the documents this call may act on, in the two sets
+// the bound is spent on: those the ledger already marks, which are the ones a
+// deletion or a republish's clearing can be about, and those it does not,
+// which are stamped so that a later call can delete them.
+//
+// The two sets are gathered and capped apart because a mark is only a promise
+// about the future: a document stamped today is dangling for the next 30 days,
+// and one set in record order would spend every call's batch on those same
+// documents and never reach the ones behind them. Each set is capped at
+// PruneBatch, so a call reads at most twice the batch and deletes, at most,
+// the batch (D2125).
+//
+// A document dangling because its release is gone is in neither set: no
+// writer here can make one, and the record cannot date it.
+func (s *Store) danglingCandidates(ctx context.Context, before Roadmap, marks map[string]danglingMark) (decide, stamp []pruneCandidate, err error) {
+	idx := indexRoadmap(before)
+	add := func(edge bool, path, key string) error {
+		mark, marked := marks[key]
+		if marked && len(decide) == PruneBatch {
+			return nil
+		}
+		if !marked && len(stamp) == PruneBatch {
+			return nil
+		}
+		c, ok, err := s.readPruneCandidate(ctx, path)
+		if err != nil || !ok {
+			return err
+		}
+		c.key, c.mark, c.edge = key, mark, edge
+		if marked {
+			decide = append(decide, c)
+		} else {
+			stamp = append(stamp, c)
+		}
+		return nil
+	}
+	for _, a := range before.Assignments {
+		if !idx.assignment(a) || idx.carriesTask(a.Task) {
+			continue
+		}
+		if err := add(false, PathAssign(a.Task), AssignID(a.Task)); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, e := range before.Edges {
+		if !idx.edge(e) {
+			continue
+		}
+		if err := add(true, PathEdge(e.Task, e.Needs), EdgeID(e.Task, e.Needs)); err != nil {
+			return nil, nil, err
+		}
+	}
+	return decide, stamp, nil
+}
+
+// danglingVerdict is one candidate as the record's second read answers for it:
+// the record still holds the document as it was read, still holds it dangling,
+// and it dangles because its task is what is missing — the only dangling this
+// writer can date.
+type danglingVerdict struct {
+	candidate pruneCandidate
+	dangling  bool
+	datable   bool
+}
+
+// danglingVerdicts asks the record's second read about each candidate. A
+// document that has changed since it was read, or that the read no longer
+// holds at all, is not a verdict: it belongs to a decision that never saw it.
+func danglingVerdicts(after Roadmap, cs []pruneCandidate) []danglingVerdict {
+	idx := indexRoadmap(after)
+	out := make([]danglingVerdict, 0, len(cs))
+	for _, c := range cs {
+		if c.edge {
+			var doc Edge
+			if !roadmapDocument(c.raw, &doc) {
+				continue
+			}
+			doc = doc.sanitised()
+			stored, held := heldEdge(after, doc.Task, doc.Needs)
+			if !held || !reflect.DeepEqual(stored, doc) {
+				continue
+			}
+			// An edge dangles only when a plan no longer carries one of its
+			// endpoints, so every edge this writer can see dangling is datable.
+			out = append(out, danglingVerdict{candidate: c, dangling: idx.edge(stored), datable: true})
+			continue
+		}
+		var doc Assignment
+		if !roadmapDocument(c.raw, &doc) {
+			continue
+		}
+		doc = doc.sanitised()
+		stored, held := heldAssignment(after, doc.Task)
+		if !held || !reflect.DeepEqual(stored, doc) {
+			continue
+		}
+		out = append(out, danglingVerdict{candidate: c, dangling: idx.assignment(stored), datable: !idx.carriesTask(stored.Task)})
+	}
+	return out
+}
+
+// applyDangling is the ledger's one decision, taken for one candidate that the
+// record's second read still holds as it was read.
+func (s *Store) applyDangling(ctx context.Context, v danglingVerdict) error {
+	switch {
+	case !v.dangling && v.candidate.mark.At.IsZero():
+		return nil
+	case !v.dangling:
+		// A republish put the task back while this prune was deciding: the mark
+		// goes with the dangling it was about, so a later orphaning of the same
+		// document starts its own 30 days rather than inheriting these.
+		return s.clearDanglingMark(ctx, v.candidate.key)
+	case !v.datable:
+		return nil
+	case v.candidate.mark.At.IsZero():
+		return s.putDanglingMark(ctx, v.candidate.key, time.Now().UTC())
+	case time.Since(v.candidate.mark.At) < PruneAge:
+		return nil
+	}
+	// The mark goes before the document it marks: a deletion that loses its
+	// ETag race below leaves a document with no mark, which the next call
+	// stamps again and keeps longer — the direction that loses nothing. The
+	// other order would leave a mark for a document that is gone, and the key a
+	// later move wrote the same task's assignment under would inherit it.
+	if err := s.clearDanglingMark(ctx, v.candidate.key); err != nil {
+		return err
+	}
+	return s.deletePruned(ctx, v.candidate)
+}
+
+// danglingMarks reads the ledger. A mark this build cannot read is one it does
+// not trust: an unreadable mark and a missing one are the same answer — this
+// document has not been seen dangling before — and the caller stamps a fresh
+// one, which keeps the document longer and never shorter.
+func (s *Store) danglingMarks(ctx context.Context) (map[string]danglingMark, error) {
+	var raw map[string]json.RawMessage
+	_, found, err := s.Read(ctx, PathDanglingMarks(), &raw)
+	if err != nil || !found {
+		return nil, err
+	}
+	marks := make(map[string]danglingMark, len(raw))
+	for key, one := range raw {
+		var m danglingMark
+		if err := strictDecode(one, &m); err != nil || m.Schema != RoadmapSchema || m.At.IsZero() {
+			continue
+		}
+		marks[key] = m
+	}
+	return marks, nil
+}
+
+// putDanglingMark stamps a document the ledger has not seen dangling before.
+// It is a plain write and not a compare-and-set: a mark may only move forward,
+// and two prunes racing to stamp one document write the later date, which is
+// the one that keeps the document longer.
+func (s *Store) putDanglingMark(ctx context.Context, key string, at time.Time) error {
+	path := PathDanglingMark(key)
+	if err := s.Write(ctx, path, danglingMark{Schema: RoadmapSchema, At: at}); err != nil {
+		return fmt.Errorf("coordinator: marking /%s dangling: %w", path, err)
+	}
+	return nil
+}
+
+// clearDanglingMark drops a document's mark: its task is back in a plan, or
+// the document is about to go. A mark that is not there is one an earlier
+// prune dropped, and a delete of a node that does not exist is no write at all.
+func (s *Store) clearDanglingMark(ctx context.Context, key string) error {
+	path := PathDanglingMark(key)
+	if err := s.Write(ctx, path, nil); err != nil {
+		return fmt.Errorf("coordinator: clearing /%s: %w", path, err)
+	}
+	return nil
 }
 
 // readPruneCandidate reads one candidate's own document. A document that is
@@ -659,6 +856,17 @@ func heldEdge(r Roadmap, task, needs string) (Edge, bool) {
 
 // checkPlan refuses a plan document that is not the shape the record holds, or
 // that is past D2116's bounds.
+//
+// A task id is a name inside its plan and carries no slash: the record's own
+// name for a task is the qualified `<plan>/<task>`, which SplitQualifiedID
+// splits at the last slash because a plan id is a path under docs/ and may
+// hold slashes itself. A task id with one in it would make that split land
+// inside the task, so `plans/x` with a task `y/T1` and `plans/x/y` with a task
+// `T1` would be one qualified id for two different tasks: an edge between them
+// would be read as an edge inside one plan — D2112's refusal, bypassed — and a
+// name that masks another plan's task is a name no reader can tell from it.
+// Two tasks of one plan sharing an id are refused with it, for the same
+// reason: one name, two tasks, and the record holds one of them.
 func checkPlan(doc Plan) error {
 	if doc.Plan == "" {
 		return fmt.Errorf("%w: a plan document names its plan id", ErrRoadmapInvalid)
@@ -666,10 +874,18 @@ func checkPlan(doc Plan) error {
 	if len(doc.Tasks) > MaxPlanTasks {
 		return fmt.Errorf("%w: a plan carries at most %d tasks, and this one carries %d", ErrRoadmapTooLarge, MaxPlanTasks, len(doc.Tasks))
 	}
+	seen := make(map[string]bool, len(doc.Tasks))
 	for _, task := range doc.Tasks {
 		if task.ID == "" {
 			return fmt.Errorf("%w: a task of %s has no id", ErrRoadmapInvalid, doc.Plan)
 		}
+		if strings.ContainsRune(task.ID, '/') {
+			return fmt.Errorf("%w: the task id %q of %s holds a slash; a task id is a name inside its plan, and the record's qualified id is <plan>/<task>", ErrRoadmapInvalid, task.ID, doc.Plan)
+		}
+		if seen[task.ID] {
+			return fmt.Errorf("%w: %s names the task %q twice; one name is one task", ErrRoadmapInvalid, doc.Plan, task.ID)
+		}
+		seen[task.ID] = true
 		if utf8.RuneCountInString(task.Title) > MaxTaskTitle {
 			return fmt.Errorf("%w: a title is at most %d characters, and %s's is %d", ErrRoadmapTooLarge, MaxTaskTitle, task.ID, utf8.RuneCountInString(task.Title))
 		}

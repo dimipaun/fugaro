@@ -53,10 +53,11 @@ func TestCoordinatorIsWrittenByNoClient(t *testing.T) {
 }
 
 // TestRoadmapNodesAreWrittenByNoClient is P9b's half of the fence (D2118 as
-// finally answered, D2124): the roadmap's node and its four document families —
-// plans, releases, edges, assignments — are governed by the /coordinator node
-// alone, whose .write is the boolean false, and every generated location nearer
-// than it that governs one of them denies a write too.
+// finally answered, D2124): the roadmap's node, its four document families —
+// plans, releases, edges, assignments — and the ledger the prune keeps beside
+// them are governed by the /coordinator node alone, whose .write is the
+// boolean false, and every generated location nearer than it that governs one
+// of them denies a write too.
 //
 // A `.write: "USER"` on a roadmap node is the mistake this asserts against, and
 // it is the one a future change is most likely to make: the front door queues
@@ -70,6 +71,7 @@ func TestRoadmapNodesAreWrittenByNoClient(t *testing.T) {
 	for _, node := range []string{
 		roadmap,
 		roadmap + "/plans", roadmap + "/releases", roadmap + "/edges", roadmap + "/assign",
+		roadmap + "/dangling",
 	} {
 		governing := governingPaths(t, node)
 		if len(governing) == 0 {

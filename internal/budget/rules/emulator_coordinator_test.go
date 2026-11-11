@@ -53,11 +53,12 @@ func TestCoordinatorGrantOnTheEmulator(t *testing.T) {
 }
 
 // TestNoClientWritesARoadmapNode is P9b's fence on the emulator (D2118 as
-// finally answered, D2124): the roadmap node and each of its four document
-// families are refusals for all three of the client identities the rules know
-// — the signed-in reader the phone and the console hold, a project token, and a
-// run's — and each identity is beside a positive control, so the refusal is of
-// these paths and not of a token the rules would refuse anywhere.
+// finally answered, D2124): the roadmap node, each of its four document
+// families and the ledger the prune keeps beside them are refusals for all
+// three of the client identities the rules know — the signed-in reader the
+// phone and the console hold, a project token, and a run's — and each identity
+// is beside a positive control, so the refusal is of these paths and not of a
+// token the rules would refuse anywhere.
 //
 // The one writer is the coordinator's account over IAM through the apply job
 // (D2118), which is why every write here has to be denied: the front door
@@ -85,6 +86,7 @@ func TestNoClientWritesARoadmapNode(t *testing.T) {
 	for _, node := range []string{
 		roadmap,
 		roadmap + "/plans", roadmap + "/releases", roadmap + "/edges", roadmap + "/assign",
+		roadmap + "/dangling",
 	} {
 		doc := map[string]any{"schema": 1}
 		h.mustDeny(reader, "the signed-in reader writing /"+node, put(node+"/a-document", doc))
