@@ -36,6 +36,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -90,13 +91,18 @@ func mergeMintLiteralBody(repo string, number int, head, appID string) string {
 // request but the installation lookup and the mint — which is exactly the
 // property the run's own mint needs and exactly the wrong one here.
 //
-// It answers the five calls the route makes: the installation lookup and the
-// token mint (twice: once for the gate's read token, once for the answer), the
-// pull request, the repository's rulesets, and the base's classic branch
-// protection. What it answers with is the test's: the head the pull request is
-// at, the base it targets, the rulesets that cover it, the Apps the classic
-// protection lets bypass it, and the status any of the reads answers with when a
-// test wants one to fail.
+// It answers the calls the route makes: the installation lookup and the token
+// mint (twice: once for the gate's read token, once for the answer), the pull
+// request, the rulesets list, one per-id ruleset read per listed ruleset, and
+// the base's classic branch protection. What it answers with is the test's: the
+// head the pull request is at, the base it targets, the rulesets that cover it,
+// the Apps the classic protection lets bypass it, and the status any of the
+// reads answers with when a test wants one to fail.
+//
+// The two ruleset reads are answered the way GitHub answers them, and that
+// difference is the point of having both: the list answers a SUMMARY of each
+// ruleset — an id and its metadata — and the per-id read is the only one that
+// carries conditions, bypass_actors and current_user_can_bypass.
 type mergeFake struct {
 	t   *testing.T
 	srv *httptest.Server
@@ -107,7 +113,9 @@ type mergeFake struct {
 	// head and base are what the pull request read answers: the commit the pull
 	// request is at, and the branch it targets.
 	head, base string
-	// rulesets is what the rulesets read answers, verbatim.
+	// rulesets is what the rulesets read answers, verbatim: one ruleset object
+	// per entry, which the list answers as a summary of and the per-id read
+	// answers whole.
 	rulesets []map[string]any
 	// rulesNext, when set, is the Link header the rulesets read answers with: the
 	// header GitHub pages a list with, and the one the gate must refuse on rather
@@ -119,9 +127,10 @@ type mergeFake struct {
 	// wants the read to fail another way.
 	protection       []map[string]any
 	protectionStatus int
-	// pullStatus and rulesStatus, when not 2xx, are what those two reads answer
-	// with instead.
-	pullStatus, rulesStatus int
+	// pullStatus, rulesStatus and rulesetStatus, when not 2xx, are what those
+	// reads answer with instead: the pull request, the rulesets list, and one
+	// per-id ruleset read.
+	pullStatus, rulesStatus, rulesetStatus int
 	// mintStatus, when not 2xx, is what the token mint answers with.
 	mintStatus int
 	// token and expires are the token the mint answers with and its life.
@@ -151,7 +160,7 @@ func (f *mergeFake) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.seen = append(f.seen, ghSeen{method: r.Method, path: r.URL.Path, body: string(body), auth: r.Header.Get("Authorization")})
 	head, base, rulesets := f.head, f.base, f.rulesets
-	pullStatus, rulesStatus, mintStatus := f.pullStatus, f.rulesStatus, f.mintStatus
+	pullStatus, rulesStatus, rulesetStatus, mintStatus := f.pullStatus, f.rulesStatus, f.rulesetStatus, f.mintStatus
 	rulesNext := f.rulesNext
 	protection, protectionStatus := f.protection, f.protectionStatus
 	token, expires := f.token, f.expires
@@ -186,7 +195,27 @@ func (f *mergeFake) serve(w http.ResponseWriter, r *http.Request) {
 		if rulesNext != "" {
 			w.Header().Set("Link", rulesNext)
 		}
-		f.write(w, http.StatusOK, rulesets)
+		// GitHub's list answers a summary of each ruleset and not the ruleset:
+		// no conditions, no bypass_actors, no current_user_can_bypass. A gate
+		// that read its rules out of this answer reads every ruleset as naming
+		// nobody.
+		summaries := make([]map[string]any, 0, len(rulesets))
+		for i, rs := range rulesets {
+			summaries = append(summaries, mergeRulesetSummary(i+1, rs))
+		}
+		f.write(w, http.StatusOK, summaries)
+	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rulesets/"):
+		if rulesetStatus != 0 && rulesetStatus/100 != 2 {
+			w.WriteHeader(rulesetStatus)
+			return
+		}
+		id, ok := mergeRulesetID(r.URL.Path)
+		if !ok || id < 1 || id > len(rulesets) {
+			// GitHub's own answer for a ruleset that is not there.
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		f.write(w, http.StatusOK, mergeRulesetDetail(rulesets[id-1]))
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/protection"):
 		if protectionStatus != 0 && protectionStatus/100 != 2 {
 			w.WriteHeader(protectionStatus)
@@ -203,7 +232,7 @@ func (f *mergeFake) serve(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	default:
-		f.t.Errorf("the fake GitHub was asked for %s %s, and the merge mint reads the installation, the pull request, the rulesets, the branch protection and the two mints and nothing else", r.Method, r.URL.Path)
+		f.t.Errorf("the fake GitHub was asked for %s %s, and the merge mint reads the installation, the pull request, the rulesets and each of them by id, the branch protection and the two mints and nothing else", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
 	}
 }
@@ -590,16 +619,70 @@ func mergeAppActor(appID string) map[string]any {
 	return map[string]any{"actor_id": json.Number(appID), "actor_type": "Integration"}
 }
 
+// mergeRulesetSummary is one ruleset as the rulesets LIST answers it: an id and
+// its metadata, and none of the three fields the gate's rule is read out of.
+// It is what GitHub answers, and the fake answering it is what makes a gate that
+// read the bypass list out of the list go red.
+func mergeRulesetSummary(n int, rs map[string]any) map[string]any {
+	return map[string]any{
+		"id":          json.Number(strconv.Itoa(n)),
+		"name":        "ruleset-" + strconv.Itoa(n),
+		"source":      "acme/aurora",
+		"source_type": "Repository",
+		"enforcement": rs["enforcement"],
+	}
+}
+
+// mergeRulesetDetail is one ruleset as the per-id read answers it: the whole
+// object, which is where conditions, bypass_actors and current_user_can_bypass
+// come from. current_user_can_bypass is filled in when the test did not set it,
+// because GitHub always answers it for the identity that asked — the App — and
+// an App that is on no bypass list is one that may bypass nothing.
+func mergeRulesetDetail(rs map[string]any) map[string]any {
+	out := make(map[string]any, len(rs)+1)
+	for k, v := range rs {
+		out[k] = v
+	}
+	if _, ok := out["current_user_can_bypass"]; !ok {
+		out["current_user_can_bypass"] = "never"
+	}
+	return out
+}
+
+// mergeRulesetID is the id in a per-id ruleset read's path, and whether the
+// path carries one at all.
+func mergeRulesetID(path string) (int, bool) {
+	_, tail, ok := strings.Cut(path, "/rulesets/")
+	if !ok {
+		return 0, false
+	}
+	id, err := strconv.Atoi(tail)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
 // TestMergeMintRefusesBypassActor is G14: the token never merges past branch
 // protection, in either of the two places GitHub keeps a bypass list.
 //
-// The first five cells are the ways the gate refuses — a base whose rules the
-// App may bypass, a bypass list that could not be read at all (because an
-// unreadable list is not an absent one), the same rule read out of the classic
-// branch protection's own list, a protection object that could not be read, and
-// a ruleset whose include is a pattern rather than a ref — and every one of them
+// The first cells are the ways the gate refuses — a base whose rules the App may
+// bypass, a bypass list that could not be read at all (because an unreadable
+// list is not an absent one), the same rule read out of the classic branch
+// protection's own list, a protection object that could not be read, and a
+// ruleset whose include is a pattern rather than a ref — and every one of them
 // answers `state_unavailable`: what is wrong is this installation's
 // configuration or GitHub, and the daemon must not merge.
+//
+// Most of them are about the rulesets read being TWO reads and not one. GitHub's
+// list answers a summary of each ruleset — an id and its metadata — and the
+// conditions, the bypass list and GitHub's own `current_user_can_bypass` come
+// back from the per-id read alone, so a gate that read its rule out of the list
+// read every ruleset as naming nobody and served a merge the App may bypass. The
+// cells that hold that are the App named on a bypass list (which the summary
+// does not carry), a ruleset that hides its list from this token, one GitHub
+// says the App may bypass, one whose answer says nothing either way, and one
+// whose per-id read fails outright.
 //
 // The wildcard cell is the one that was wrong: GitHub's ref patterns are fnmatch
 // and not literals, so a ruleset whose include is `refs/heads/ma*` covers the
@@ -613,11 +696,12 @@ func mergeAppActor(appID string) map[string]any {
 // with neither are all admitted.
 func TestMergeMintRefusesBypassActor(t *testing.T) {
 	refusals := []struct {
-		name   string
-		base   string
-		rules  []map[string]any
-		apps   []map[string]any
-		status int
+		name          string
+		base          string
+		rules         []map[string]any
+		apps          []map[string]any
+		status        int
+		rulesetStatus int
 	}{
 		{
 			name:  "a ruleset naming the App as a bypass actor",
@@ -649,6 +733,45 @@ func TestMergeMintRefusesBypassActor(t *testing.T) {
 			rules: []map[string]any{mergeRulesetExcluding([]string{"refs/heads/*"}, []string{"refs/heads/[abc]"}, mergeAppActor(testAppID))},
 		},
 		{
+			// The ruleset is read by id and the list's summary is not the
+			// ruleset: this answer carries no bypass list at all, which is what
+			// a ruleset the token may not read into answers with, and it is not
+			// the empty list it looks like.
+			name: "a ruleset that hides its bypass list",
+			rules: []map[string]any{func() map[string]any {
+				rs := mergeRuleset([]string{"refs/heads/main"})
+				delete(rs, "bypass_actors")
+				return rs
+			}()},
+		},
+		{
+			// GitHub's own reading of the actor, which is answered for the
+			// identity that asked — the App — and is not "never" here.
+			name: "a ruleset GitHub says the App may bypass",
+			rules: []map[string]any{func() map[string]any {
+				rs := mergeRuleset([]string{"refs/heads/main"})
+				rs["current_user_can_bypass"] = "always"
+				return rs
+			}()},
+		},
+		{
+			// An answer that says nothing about whether the App may bypass the
+			// ruleset is not an answer of "never".
+			name: "a ruleset whose answer does not say whether the App may bypass it",
+			rules: []map[string]any{func() map[string]any {
+				rs := mergeRuleset([]string{"refs/heads/main"})
+				rs["current_user_can_bypass"] = ""
+				return rs
+			}()},
+		},
+		{
+			// A listed ruleset the per-id read cannot reach: the list said it is
+			// there, so what it says about the App is unread and not absent.
+			name:          "a listed ruleset whose own answer cannot be read",
+			rules:         []map[string]any{mergeRuleset([]string{"refs/heads/main"}, mergeAppActor("9999"))},
+			rulesetStatus: http.StatusInternalServerError,
+		},
+		{
 			name: "a classic branch protection whose bypass list names the App",
 			apps: []map[string]any{{"id": json.Number(testAppID)}},
 		},
@@ -673,6 +796,7 @@ func TestMergeMintRefusesBypassActor(t *testing.T) {
 			} else {
 				gh.protectionStatus = tc.status
 			}
+			gh.rulesetStatus = tc.rulesetStatus
 			resp, body := s.mintMerge(t, 7, mergeHead(1))
 			if resp.StatusCode != StatusUnavailable {
 				t.Fatalf("the merge mint served a base the App may bypass: HTTP %d %s", resp.StatusCode, body)

@@ -37,26 +37,40 @@ package credsvc
 //     machine cannot reach at all, which is the owner's ruling to make and not
 //     this task's (D2049's alternatives).
 //
-//   - The token is bound to ONE HEAD. The call names the head SHA the daemon's
+//   - The MINT is bound to ONE HEAD. The call names the head SHA the daemon's
 //     gate admitted, and the service reads the pull request's CURRENT head from
-//     GitHub and refuses when the two differ (G2): a token minted for a head
-//     that has moved is a token for a merge nobody reviewed.
+//     GitHub and refuses when the two differ (G2): a mint asked for a head that
+//     has moved is a mint for a merge nobody reviewed.
 //
-//   - The token never bypasses branch protection (G14). The service reads both
-//     places GitHub lets an App be named as an actor that may merge past a
-//     protected base — the rulesets that cover it and its classic branch
-//     protection's own bypass list — and refuses when the App is on either, and
-//     it refuses when either read fails in any way but the 404 that means "no
-//     such protection": an unreadable bypass list is not an absent one. It asks
-//     for no administration write and sends no bypass flag — the permission set
-//     it mints is mergeTokenPermissions, which is the narrowest set GitHub's
-//     merge endpoint accepts.
+//     What this is NOT is a property of the credential it hands over. GitHub's
+//     installation token is scoped to a repository and a permission set and to
+//     nothing narrower: it does not expire when the head moves, and it cannot be
+//     told which pull request it was minted for. A holder of one can push to any
+//     branch that token reaches and then call the merge endpoint again, so the
+//     head the token was minted at is a condition of the MINT and the thing that
+//     keeps the merge itself at that head is the merge call passing `sha` equal
+//     to it — which is the daemon's contract with the provider and is written
+//     down where the daemon holds this interface (internal/creds' MergeMinter).
+//
+//   - The token bypasses no branch protection the service could read (G14). The
+//     service reads both places GitHub lets an App be named as an actor that may
+//     merge past a protected base — the rulesets that cover it and its classic
+//     branch protection's own bypass list — and refuses when the App may bypass
+//     either, and it refuses when either read fails in any way but the 404 that
+//     means "no such protection": an unreadable bypass list is not an absent
+//     one. A listed ruleset is read again by id, because the list answers a
+//     summary and the bypass list is only in the per-id answer. It asks for no
+//     administration write and sends no bypass flag — the permission set it
+//     mints is mergeTokenPermissions, which is the narrowest set GitHub's merge
+//     endpoint accepts.
 //
 //   - The mint is rate-limited per repository, and every act of it is audited
 //     once (PurposeMergeMint, no tier): the line names the daemon account, the
 //     repository's SLUG and the App key, and carries no run and no job, because
 //     the caller is neither (callerWithoutJobPurpose, repositoryOnlyPurpose). A
-//     mint whose line cannot be written hands the token to nobody (D143).
+//     mint whose line cannot be written hands the token to nobody (D143). The
+//     rate is this process's memory (mergeMintWindow) and is a bound on a
+//     runaway daemon rather than a promise about the service as a whole.
 //
 // The repository is resolved through the installation's own inventory and the
 // App ID is the caller's, exactly as the read mint resolves and takes them: the
@@ -179,6 +193,14 @@ var (
 // is a bound on a runaway daemon and not a policy an installation tunes; a
 // repository that legitimately needs more merges in an hour is a repository
 // whose daemon is not the one this bound is for.
+//
+// The window is this process's memory and nothing else (mergeMints): the
+// service is deployed without a minimum instance count and may run several, so
+// the bound is per instance, is best effort, and begins again at every cold
+// start, every new instance and every revision. It is a bound on a daemon
+// looping on one instance — which is what the owner ruled it for — and not a
+// claim about how many mints a repository can be given in an hour; SECURITY.md
+// states it as the bound it is.
 const (
 	mergeMintWindow    = time.Hour
 	mergeMintPerRepo   = 10
@@ -198,12 +220,13 @@ const mergeRulesetPage = 100
 var headRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // mergeTokenPermissions is the reach of the token this route hands out, and it
-// is the whole of "the token never merges past branch protection" on this
-// service's side: contents write and pull requests write are what GitHub's
-// merge endpoint and its ready-for-review call require, metadata read is the
-// noun every installation token carries, and there is no administration noun
-// and no bypass of any kind. The set is a constant of this service and not a
-// field of the call, which is what makes a caller unable to widen it.
+// is the whole of "no token is minted for a base whose protection the App may
+// bypass" on this service's side: contents write and pull requests write are
+// what GitHub's merge endpoint and its ready-for-review call require, metadata
+// read is the noun every installation token carries, and there is no
+// administration noun and no bypass of any kind. The set is a constant of this
+// service and not a field of the call, which is what makes a caller unable to
+// widen it.
 //
 // It is defined here rather than in internal/gitprov/github because it is the
 // credential of THIS route and the reason the route exists: the run's own mint
@@ -236,7 +259,11 @@ func mergeGateReadPermissions() map[string]string {
 // memory. It is deliberately not in the database: what it bounds is a daemon
 // looping on this service, a restart of the service is a clean slate for a
 // bound of an hour, and a node under creds/ would be a second writer of a fact
-// that has no reader.
+// that has no reader. The service may also run several instances at once, each
+// with its own map, so the bound a caller meets is one instance's — which is
+// the bound the owner ruled for and is stated that way where it is published
+// (SECURITY.md), rather than read as a count of what the service as a whole
+// will mint.
 type mergeMintRate struct {
 	mu   sync.Mutex
 	now  func() time.Time
@@ -467,10 +494,12 @@ type mergeGateCall struct {
 //   - the head GitHub reports must be the head the call named, character for
 //     character. A pull request that moved since the daemon admitted it is
 //     refused, and so is one whose head cannot be read.
-//   - no ruleset that covers the base may name the App among its bypass
-//     actors, and the rulesets must be readable — all of them, which is why a
-//     page that comes back full is refused rather than read as the whole list.
-//     An empty list is a repository with no rulesets, which is a merge nothing
+//   - no ruleset that covers the base may be one the App may bypass, and the
+//     rulesets must be readable — all of them, which is why a page that comes
+//     back full is refused rather than read as the whole list, and why every
+//     listed ruleset is read again by id: GitHub's list answers a SUMMARY of
+//     each ruleset, and the bypass list comes from the per-id answer alone. An
+//     empty list is a repository with no rulesets, which is a merge nothing
 //     bypasses.
 //   - the base's classic branch protection may not name the App among its own
 //     bypass actors either, and that read must answer — with the object or with
@@ -506,7 +535,7 @@ func (s *Server) mergeGate(ctx context.Context, call mergeGateCall) (mergeBindin
 	if pr.Head.SHA != call.head || pr.Base.Ref == "" {
 		return mergeBinding{}, fmt.Errorf("%w: the pull request is at %s and the call named %s", ErrMergeMintHeadMoved, shortSHA(pr.Head.SHA), shortSHA(call.head))
 	}
-	var rulesets []githubRuleset
+	var rulesets []githubRulesetSummary
 	rulesPath := "/repos/" + call.owner + "/" + call.name + "/rulesets?per_page=" + strconv.Itoa(mergeRulesetPage)
 	more, err := s.githubGetPage(ctx, readToken, rulesPath, &rulesets)
 	if err != nil {
@@ -520,8 +549,19 @@ func (s *Server) mergeGate(ctx context.Context, call mergeGateCall) (mergeBindin
 		// otherwise be read as having answered with everything.
 		return mergeBinding{}, fmt.Errorf("%w: the base's rulesets are more than one page of %d", ErrMergeMintBypassActor, mergeRulesetPage)
 	}
-	if rulesetsNameTheApp(rulesets, pr.Base.Ref, call.appID) {
-		return mergeBinding{}, fmt.Errorf("%w: a ruleset covering %s names the App among its bypass actors", ErrMergeMintBypassActor, pr.Base.Ref)
+	for _, listed := range rulesets {
+		var rs githubRuleset
+		path := "/repos/" + call.owner + "/" + call.name + "/rulesets/" + strconv.Itoa(listed.ID)
+		if err := s.githubGet(ctx, readToken, path, &rs); err != nil {
+			// A ruleset the list named and this read could not reach is not a
+			// ruleset that binds nobody: what it says about the App is the thing
+			// being read, and a bypass list this gate did not see is not an
+			// absent one (G14).
+			return mergeBinding{}, fmt.Errorf("%w: a ruleset of %s could not be read: %w", ErrMergeMintBypassActor, pr.Base.Ref, err)
+		}
+		if rulesetNamesTheApp(rs, pr.Base.Ref, call.appID) {
+			return mergeBinding{}, fmt.Errorf("%w: a ruleset covering %s is one the App may bypass", ErrMergeMintBypassActor, pr.Base.Ref)
+		}
 	}
 	var protection githubBranchProtection
 	protectionPath := "/repos/" + call.owner + "/" + call.name + "/branches/" + url.PathEscape(pr.Base.Ref) + "/protection"
@@ -541,11 +581,27 @@ func (s *Server) mergeGate(ctx context.Context, call mergeGateCall) (mergeBindin
 	return mergeBinding{head: pr.Head.SHA, base: pr.Base.Ref}, nil
 }
 
-// githubRuleset is the part of a repository ruleset this gate reads: whether it
-// is in force, which refs it covers, and who may bypass it.
+// githubRulesetSummary is what the rulesets LIST answers about one ruleset: its
+// id, and nothing this gate reads a rule out of.
+//
+// GitHub's list endpoint answers a summary — id, name, source, enforcement and
+// links — and the conditions, the bypass list and GitHub's own reading of the
+// asking identity against them come back from the per-id read alone. So the id
+// is the only field here, and the next read is not an optimisation to skip: a
+// gate that read the bypass list out of the list's answer would read every
+// ruleset as naming nobody and skip the one that names the App, which is the
+// whole of this refusal.
+type githubRulesetSummary struct {
+	ID int `json:"id"`
+}
+
+// githubRuleset is the part of a repository ruleset this gate reads, from the
+// answer that carries it: whether it is in force, which refs it covers, who may
+// bypass it, and GitHub's own answer to whether the identity that asked — this
+// gate's own installation token, which is the App — may.
 //
 // It is deliberately this service's own struct and not a type of
-// internal/gitprov: what the gate needs is three fields of one answer, and a
+// internal/gitprov: what the gate needs is four fields of one answer, and a
 // shared type would make the gate's rule a fact about the provider's model
 // rather than about this refusal.
 type githubRuleset struct {
@@ -557,21 +613,45 @@ type githubRuleset struct {
 			Exclude []string `json:"exclude"`
 		} `json:"ref_name"`
 	} `json:"conditions"`
-	BypassActors []struct {
-		ActorID   int    `json:"actor_id"`
-		ActorType string `json:"actor_type"`
-	} `json:"bypass_actors"`
+	// BypassActors is a pointer because an answer that carries NO bypass list
+	// has to be told from one that carries an empty one: the first is a ruleset
+	// that hid its list from this token, the second is a ruleset that names
+	// nobody, and only one of them is a merge the App may make.
+	BypassActors *[]githubBypassActor `json:"bypass_actors"`
+	// CurrentUserCanBypass is GitHub's own reading of the actor for the identity
+	// that asked: "never", or one of the modes that let it past.
+	CurrentUserCanBypass string `json:"current_user_can_bypass"`
 }
 
-// rulesetsNameTheApp reports whether any ruleset in force covers branch and
-// names the App among its bypass actors. The App is an `Integration` actor and
-// its id is the App ID the call named, which is the only spelling GitHub uses
-// for it on a bypass list.
+// githubBypassActor is one entry of a ruleset's bypass list. An App is an
+// `Integration` actor whose id is the App ID, which is the only spelling GitHub
+// uses for it on one of these lists.
+type githubBypassActor struct {
+	ActorID   int    `json:"actor_id"`
+	ActorType string `json:"actor_type"`
+}
+
+// rulesetNamesTheApp reports whether one ruleset, read by id, is one the App may
+// merge past. Everything it answers true on is a refusal, and all of them fail
+// closed:
 //
-// A ruleset whose conditions this code cannot read covers everything: an
-// unreadable condition is not an absent one, and the direction that refuses is
-// the direction that fails closed.
-func rulesetsNameTheApp(rulesets []githubRuleset, branch, appID string) bool {
+//   - the App is on the ruleset's bypass list;
+//   - GitHub says the identity that asked may bypass it at all
+//     (current_user_can_bypass). This is read beside the list rather than
+//     instead of it because it is GitHub's own reading of the actor, and an
+//     actor spelled in a way this code does not know is still one GitHub
+//     counted;
+//   - the answer carries no bypass list at all — a ruleset may hide its actors
+//     from a repository-scoped token, and a hidden list is not an empty one;
+//   - the answer says nothing about whether the App may bypass it, for the same
+//     reason: no answer is not "never".
+//
+// A ruleset that is not in force, does not target branches, or does not cover
+// the base binds no merge of this base and is skipped — but a ruleset whose
+// CONDITIONS are unreadable is not: rulesetCoversRef reads an unreadable
+// condition as covering, because a ruleset read as not covering is a ruleset
+// skipped and the App's place on its bypass list never seen.
+func rulesetNamesTheApp(rs githubRuleset, branch, appID string) bool {
 	app, err := strconv.Atoi(appID)
 	if err != nil {
 		// The App ID is held to the digits-only shape before this is reached, so
@@ -580,14 +660,18 @@ func rulesetsNameTheApp(rulesets []githubRuleset, branch, appID string) bool {
 		// a bypass list it must refuse on.
 		return true
 	}
-	for _, rs := range rulesets {
-		if rs.Target != "branch" || rs.Enforcement == "disabled" || !rulesetCoversRef(rs, branch) {
-			continue
-		}
-		for _, actor := range rs.BypassActors {
-			if actor.ActorType == "Integration" && actor.ActorID == app {
-				return true
-			}
+	if rs.Target != "branch" || rs.Enforcement == "disabled" || !rulesetCoversRef(rs, branch) {
+		return false
+	}
+	if rs.CurrentUserCanBypass != "never" {
+		return true
+	}
+	if rs.BypassActors == nil {
+		return true
+	}
+	for _, actor := range *rs.BypassActors {
+		if actor.ActorType == "Integration" && actor.ActorID == app {
+			return true
 		}
 	}
 	return false
@@ -613,7 +697,7 @@ type githubBranchProtection struct {
 // no allowances, no Apps — is a list that names nobody, because the read that
 // produced it answered, and an answer that carries no actor is an answer about a
 // branch the App may not bypass. The App ID that will not parse is the same
-// refusal rulesetsNameTheApp makes of it.
+// refusal rulesetNamesTheApp makes of it.
 func (p githubBranchProtection) namesTheApp(appID string) bool {
 	app, err := strconv.Atoi(appID)
 	if err != nil {

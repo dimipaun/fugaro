@@ -89,6 +89,15 @@ type MergeToken struct {
 // MergeMinter is what the daemon holds and what the provider's ready, merge and
 // checks calls are given (E8). It is one method and the plan's own signature, so
 // that the provider depends on the mint and not on the way it is reached.
+//
+// The head it takes is the head the merge must be made at, and the CALLER of
+// the merge is what keeps the merge there: the service checks the head at mint
+// time (G2) and the token it hands back is a repository-scoped installation
+// token that outlives that check, so a merge call that does not name the head
+// is a merge call this mint did not gate. The provider's merge call therefore
+// passes `sha` equal to the headSHA it minted for, and treats a refusal of that
+// head as the merge not happening — a second mint for a moved head is a second
+// review, not a retry.
 type MergeMinter interface {
 	MintMerge(ctx context.Context, repo string, pr int, headSHA string) (MergeToken, error)
 }
@@ -144,6 +153,12 @@ var headShape = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // ErrMergeMint with the service's own code beside it. A daemon that finds this
 // call refused reports it; it does not merge with another credential, and there
 // is no other credential for it to merge with.
+//
+// The head is checked HERE and at the service, and the merge is the third place
+// it has to hold: the token this returns is scoped to the repository and not to
+// the head, so the call that merges passes `sha` equal to headSHA (E8's
+// provider). Minting and then merging without that `sha` is a merge the gate did
+// not decide.
 func (m *ServiceMergeMint) MintMerge(ctx context.Context, repo string, pr int, headSHA string) (MergeToken, error) {
 	if m.URL == "" || m.AppID == "" || m.IDToken == nil {
 		return MergeToken{}, fmt.Errorf("%w: this daemon has no credentials service to mint a merge token at", ErrMergeMintIdentity)
