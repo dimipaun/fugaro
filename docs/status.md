@@ -6,7 +6,7 @@ As of 2026-11-11, read from `main`, the open pull requests and each plan's task 
 
 | Spec | Merged | Left |
 | --- | --- | --- |
-| licensing | 17/23 | owner-run only |
+| licensing | 18/23 | owner-run only: L0.2's allow-list and status, Check 130, the Terms publication (L4.3, L4.4), L5.1 T3(c); L3.1 is superseded |
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
 | console-dependency-graph | 13/17 | GV3.1, GV3.2, GV4.1 |
 | bitbucket-credentials | 11/12 | owner Checks 149 and 145, and 148's read half (S2, D1961; its script landed with T2.6 and T2.11 in #2270); S3 superseded by the secrets-brokering proxy chain (2026-11-10), except T3.3's trust paths; Check 147 retired (D1960) and T2.6 unblocked (D1962); D1960–D1962 answered 2026-11-10 as recommended (its reconciliation-secrets-brokering.md) |

@@ -85,6 +85,10 @@ organisation behind the email domains has a claim on work committed under its ad
 how AI-assisted authorship bears on the copyright the enterprise licence rests on. Neither blocks
 the 0.11.0 slice; both bear on D305.
 
+**Answered by the owner, 2026-11-11 (L0.1):** (a) no organisation behind the email domains has a
+claim; (b) AI-assisted authorship needs no change to the licence, the CLA or the commit trailers;
+and D307's notices meet the dependencies' licence terms. This closes L0.1.
+
 **F4 — Rule (internal contradiction): "nothing gets moved out of the core" vs the later
 candidates.** The candidates are already core: `console/` (released, F5), `mobile/`, the
 coordinator (docs/coordinator plus open PRs #1021, #1024), the central orchestrators (branch
@@ -434,7 +438,7 @@ unused.
   otherwise (an input for that plan).
 - **O1 — Counsel (OWNER-RUN, task L0.1):** the `ee/LICENSE` text and licensor line (T1), the CLA
   text for the hosted app (D304), F3 (a) and (b), and whether D307's notices meet the dependencies'
-  terms.
+  terms. All answered 2026-11-11 (see F3).
 - **O2 — D301 and GitHub's detector.** F27: GitHub reports `other` for a repository whose root
   `LICENSE` carries a scope statement ahead of the MIT text. D301's statement sits after line 1 but
   is still extra text, so Check 130 will most likely show "other" rather than "MIT" (U1). The owner
