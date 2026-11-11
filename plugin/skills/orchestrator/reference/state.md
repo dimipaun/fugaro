@@ -37,7 +37,7 @@ One patch is `{"base_rev": N, "ops": [...]}`, at most 64 ops, and the ops apply 
 | `fact_delete` | `fact`: `key` | a person, a session, the daemon |
 | `goal_set` | `goal`: `goal` | a person only |
 
-A `work_item_upsert` from anyone but the daemon may not carry `phase`, `run_id`, `spent_approval_at`, `attempts` or `intent`: those are the loop's record of what it started, and a session that could write them could requeue an approved item or mark work done that never ran. Editing an item's declarative fields after a person approved it drops the approval, because the approval binds the spec the person read.
+A `work_item_upsert` from anyone but the daemon may not carry `phase`, `run_id`, `spent_approval_at`, `attempts`, `intent` or `escalation`: those are the loop's record of what it started and where the ladder has taken the item, and a session that could write them could requeue an approved item, mark work done that never ran, or claim a rung nobody climbed. Editing an item's declarative fields after a person approved it drops the approval, because the approval binds the spec the person read.
 
 ## Phases
 

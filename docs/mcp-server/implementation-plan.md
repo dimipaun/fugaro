@@ -321,6 +321,13 @@ and the four read tools — and the sentence "the coordinator mints nothing" sta
 **Of §2's levels, L5 is the deferred slice's and L6 loses its spawn half; every other row and every
 other edge above stands as written.**
 
+**Added 2026-11-11, the owner's ruling (the coordinator plan's D2119): M12.** The front door mounted on
+a binary is a task of this plan, **M12**, with the edges **M12 ← M5b, M6, M7, M8, M10** and, in other
+plans, **O16b ← M12** and **P9e ← M12**. It is a level of its own after L6's read half (**L7**), on the
+critical path of everything served: no task above is reachable by a caller until it lands. M12 edits
+`ee/coordinator/service.go` (after M4, M5 and M7), `ee/coordinator/mcpauth/server_test.go` and
+`ee/coordinator/mcpauth/register.go`, and no task at its level shares a file with it.
+
 
 ## 3. The tasks
 
@@ -1014,7 +1021,8 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
   carries it**: nothing on a binary's side supplies a `Roster`, so the two lists bound what a token
   buys only once one does. **The task that mounts this package on a binary
   owes that reading beside the two bounds and M5b's delivery of a flow to the paired device**, and
-  spec.md §11 carries it as an open item until the owner assigns it. What M7 holds is the rule that reading has to keep: the lists are the source and
+  spec.md §11 carried it as an open item until the owner assigned it: **the owner's ruling of
+  2026-11-11 makes it M12's**, and M7's roster half depends on M12. What M7 holds is the rule that reading has to keep: the lists are the source and
   never one machine's local config, and only exact `user:` entries are read.
 
 ### M8 — The read tools
@@ -1045,7 +1053,8 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
   `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service
   (`deploy/terraform/gcp/modules/installation/coordinator.tf:500`, "the repositories the front door
   may answer about"), and where a token's own repository filter is applied on top of that list
-  rather than instead of it. spec.md §11 carries it as an open item until the owner assigns it.
+  rather than instead of it. spec.md §11 carried it as an open item until the owner assigned it:
+  **the owner's ruling of 2026-11-11 makes it M12's**, and M8's serving depends on M12.
 
 ### M9 — `spawn_task`, `cancel_task`, and the narrowed ceiling — **DEFERRED (D936), PARKED: no release schedules it**
 **Out of the first slice (D936).** The first slice is **the authorization server plus the read
@@ -1246,6 +1255,55 @@ marker on the run's task, and the launch binding keyed by the execution. **The r
 check** ([reconciliation.md](reconciliation.md) §6 check 9), and **§7 carries it as this plan's open
 item**.
 
+### M12 — The front door mounted on a binary, dormant until enabled (the owner's ruling of 2026-11-11)
+
+**Why it exists.** M7's reading of the installation's published lists, M8's serving of its four read
+tools, the stateless plan's **O16b** and the coordinator plan's **P9e** all waited on "the task that
+mounts this package on a binary", and no task of this plan carried it. **The owner ruled on
+2026-11-11 that this plan writes it** — the coordinator plan's **D2119**, answered (A)
+(`docs/coordinator/implementation-plan.md`) — and this is that task. It is what deletes
+`TestNoBinaryLinksTheFrontDoorYet`, and it carries the debts that test's comment names.
+
+- **Files (8):** `ee/coordinator/service.go` (the authorization server and the resource server
+  mounted through `Handle`, only when enabled), `ee/coordinator/cli/coordinator_serve.go` (reads the
+  switch and the lists' source from the environment the module sets), a new roster file and its test
+  in `ee/coordinator/mcpauth/` (M7's `Roster` over the installation's own published state — a source
+  only an operator can write — exact `user:` entries only), `ee/coordinator/mcpauth/register.go` and
+  `ee/coordinator/mcpauth/register_test.go` (the open registration endpoint's two bounds: a
+  per-source rate limit, and an expiry and sweep of the registrations it writes),
+  `ee/coordinator/mcpauth/server_test.go` (deletes `TestNoBinaryLinksTheFrontDoorYet` and replaces it
+  with `TestTheFrontDoorIsServedOnlyWhenEnabled`), and
+  `deploy/terraform/gcp/modules/installation/coordinator.tf` (the one environment variable that says
+  the door is enabled, set only under `var.mcp_server`).
+- **Interface:** `fugaro coordinator serve` mounts the front door when, and only when, the
+  installation's D934 flag is on (no released `fugaro update` writes it yet), and otherwise serves
+  exactly what it serves today; with it on, M7's registry answers with M8's read tools registered
+  (`RegisterReadTools`, its repositories from the `FUGARO_COORDINATOR_REPOS` the module already puts
+  on the service, a token's own filter applied on top), and the file other groups register beside —
+  O16b's `RegisterStateTools`, P9e's roadmap tools — is this one.
+- **Red step:** `TestTheFrontDoorIsServedOnlyWhenEnabled` — with the flag off, a request to
+  `/.well-known/oauth-authorization-server` and to the MCP endpoint is answered 404 exactly as today;
+  it fails because nothing mounts the door at all, and its "on" half fails for the same reason.
+- **Tests:** `TestTheFrontDoorIsServedOnlyWhenEnabled`, `TestTheRosterIsReadFromThePublishedState`
+  (never from one machine's local config), `TestOnlyExactUserEntriesAdmit`,
+  `TestRegistrationIsRateLimitedPerSource`, `TestRegistrationsExpireAndAreSwept`,
+  `TestReadToolsServeOnlyTheProjectsRepositories`, `TestTheDoorRefusesToEnableWithoutTheDeviceDelivery`
+  (D2126's recommendation: an enabled door with no delivery of a flow to the paired device refuses to
+  start, so a half-built door cannot be switched on), and
+  `TestUpdateConvergesAnInstallationAtThePreviousRelease` (the HARD RULE's converge test, with the flag
+  off: one `fugaro update` adds the variable and changes nothing served).
+- **SEC:** **yes, mandatory** — it is the change that makes every earlier task of this plan reachable.
+  Reviewer: **opus + mandatory independent review, level 3 in the run.**
+- **Depends on:** M5b, M6, M7, M8, M10 (all built), and the coordinator plan's open **D2126** (whether
+  M5b's delivery of a flow to the paired device — a QR of the flow's binding on the launcher's page,
+  the phone reading it — is this task or a task of its own, recommended **M12b**). **H1's residual risk
+  is unchanged by it**: the approval is proved by the ID token and by no device key, as the owner
+  accepted (spec.md §3, §8).
+- **What waits on it:** M7's roster half and M8's serving (both built and unserved), the stateless
+  plan's **O16b**, and the coordinator plan's **P9e** (its roadmap tools, and through them the console
+  graph's GV3.1 and GV3.2).
+- **Commit:** `coordinator: the MCP front door mounted on the service, dormant until enabled (M12)`
+
 ## 4. The shared-files table
 
 Files more than one task touches, with the level each writer is in (§2). **No level has two writers of
@@ -1379,7 +1437,17 @@ here is small enough to pull forward.
   invoker grants and its IAM checks are the coordinator work's, and M4 must not silently take them
   over — where they overlap, the coordinator's plan wins and this one adapts.
 - **The console's graph write.** D927 keeps `roadmap:write` out of v1; GV3.1 and GV3.2 stay blocked
-  and that work comes back to ask.
+  and that work comes back to ask. **It came back on 2026-11-11**: the owner answered the coordinator's
+  **D2110** with a front-door `roadmap:write` scope, which **amends D927** as D1227 did; the scope,
+  its tools and their serving are the coordinator plan's P9d and P9e
+  (`docs/coordinator/implementation-plan.md`), and P9e waits, like M8's tools and the stateless
+  plan's O16b, on the task that mounts this front door on a binary — which the owner ruled on
+  2026-11-11 (that plan's D2119) is this plan's **M12**. **And the owner answered that plan's D2118
+  the same day with a database write role on this front door's account** — a custom role of
+  `firebasedatabase.instances.get` and `.update`, database-wide because Realtime Database IAM has no
+  path scope — **which reverses D922/H3 for the roadmap path**; [reconciliation.md](reconciliation.md)
+  §4a carries the amendment beside D922's, and the coordinator plan's P9e and P9g carry the grant and
+  the `SECURITY.md` text.
 - **The central-orchestrator plan.** D196 answered that the coordinator's service is its own; the
   orchestrator reaches it as a client like any other, and this plan adds nothing to it.
 - **The stateless-orchestrator spec** (open as **#1682**, not on `main` when this was written). Its
