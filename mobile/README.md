@@ -410,6 +410,26 @@ the app uses only standard/exempt encryption), made after `eas build` printed
 that it cannot write that key into a dynamic config — while **the owner answers
 Apple's other export questions in App Store Connect**.
 
+**Which primitives the app uses, now that pairing added some.** The pairing
+plan's §13 asks this file to say so, because the declaration of 2026-10-20 was
+made for an app whose only cryptography was the platform's TLS. Two things
+changed, and both are standard, non-exempt primitives:
+
+* **Pairing** (`src/pairing/`) performs **X25519** key agreement and opens an
+  **AES-256-GCM** envelope with a key derived by **HKDF-SHA-256**. `key.js`
+  takes X25519 as an injected port (the entry supplies it), `hkdf.js` and
+  `aes.js` are the tree's own implementations, and `envelope.test.js` opens an
+  envelope the **Go command sealed**, so the two ends are checked against each
+  other and not only against vectors.
+* **The licence verifier** (`src/licence/`) verifies an **Ed25519** signature,
+  through `@noble/curves` — the app's one cryptographic dependency, pinned
+  exact and MIT in the lockfile (`src/dependencies.test.js`).
+
+Everything else the app does over the network is the platform's TLS, and
+nothing here is a cipher the app invented: the envelope's construction is the
+CLI's (`internal/budget/token/device.go`), and the phone is the second
+implementation of it.
+
 ## The mailbox client, and the app's write set
 
 `src/mailbox/` is where the app talks to the database, and it is the only place

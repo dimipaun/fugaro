@@ -13,13 +13,24 @@
 // binds the device's ports -- X25519, the random draw, the clock, the database
 // client, the auth exchange and the `AccountStore` -- to the session and the
 // screen, so `mobile/index.js` (the one file that knows what a device is) can
-// build the whole feature in one call. It names **no dependency of its own**:
-// there is no X25519 provider in `mobile/package.json` today, and adding one is
-// a decision about the app's dependencies rather than this task's, so the port
-// arrives from the entry and a missing one is a `TypeError` at construction
-// rather than a crash at the first pairing. The camera is the same shape: the
-// screen takes the payload's text, and how a device obtains it is the entry's
-// (`screen.js` says why).
+// build the whole feature in one call. It names **no dependency of its own**,
+// which is this tree's rule for a module a test loads: the suite runs with no
+// `node_modules`, so `key.js`, `envelope.js`, `hkdf.js` and `aes.js` all import
+// nothing outside the app and take the primitive as an argument. The port
+// arrives from the entry, and a missing one is a `TypeError` at construction
+// rather than a crash at the first pairing.
+//
+// **The entry already has the provider.** `@noble/curves` is a declared
+// dependency (`dependencies.test.js` pins it at 2.4.0, MIT in the lockfile) and
+// the app's licence verifier imports it -- and that same subpath exports
+// `x25519`, so the port is `{ getPublicKey, getSharedSecret }` off
+// `@noble/curves/ed25519.js`, with `random: () => x25519.utils.randomSecretKey()`
+// beside it. No dependency is added by wiring it; the line is the entry's to
+// write, and `mobile/README.md`'s export-compliance section names the
+// primitives the app now uses.
+//
+// The camera is the same shape: the screen takes the payload's text, and how a
+// device obtains it is the entry's (`screen.js` says why).
 //
 // `mobile/src/app/first-screen.js` already carries the seam this screen fills
 // (`pairingScreen`), and nothing wires it yet: wiring it needs the device's
