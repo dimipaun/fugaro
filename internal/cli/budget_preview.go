@@ -899,7 +899,10 @@ var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"
 // then a first line of review_first and its fix, then a senior review, its
 // fix, and, with bounce, one more cheap pair; an adversarial step adds level
 // 3's round and its fix, and, with bounce, one more cheap pair of its own (one
-// round here too, however many its own cap allows). A mode:
+// round here too, however many its own cap allows). A review that hands the
+// run over buys no fix round: the run ends at that review with its verdict
+// recorded, so its rounds are the review alone (the escalation's `escalate`).
+// A mode:
 // review recipe runs the senior review alone, and a digest recipe has no
 // implement stage at all:
 // its first step is the runner's own work, which writes the run reports with
@@ -919,13 +922,13 @@ func previewTypicalCounts(rp *recipe.Recipe, first, rounds, level3 int) map[stri
 		return map[string]int{"review": 1}
 	}
 	f, n, bounce := 0, 0, false
-	adv, advBounce := 0, false
+	adv, advBounce, handOver := 0, false, false
 	for _, s := range rp.Steps {
 		switch s.Kind {
 		case recipe.StepFirstLine:
 			f = roundCount(first, s.MaxRounds)
 		case recipe.StepReview:
-			n, bounce = roundCount(rounds, s.MaxRounds), s.Bounce
+			n, bounce, handOver = roundCount(rounds, s.MaxRounds), s.Bounce, s.HandOver
 		case recipe.StepAdversarial:
 			// level3 is the number this step resolves to --
 			// agent.adversarial_rounds where a layer set it, else the mode's
@@ -945,11 +948,17 @@ func previewTypicalCounts(rp *recipe.Recipe, first, rounds, level3 int) map[stri
 	}
 	// The fix after the first line and the fix after each review are one kind
 	// in result.json ("fix"), so they share one mean and one count here, and
-	// every review is the "review" kind however deep the level.
+	// every review is the "review" kind however deep the level. A hand_over
+	// review answers no demand, so its rounds buy no fix here either, exactly
+	// as they buy none in recipe.StageBound's per.
+	reviewFix := n
+	if handOver {
+		reviewFix = 0
+	}
 	counts := map[string]int{
-		"review_first": f + cheap + advCheap,           // the first line, and its bounce-backs
-		"review":       n + adv,                        // the senior round and level 3's
-		"fix":          f + n + adv + cheap + advCheap, // each review's demands answered
+		"review_first": f + cheap + advCheap,                   // the first line, and its bounce-backs
+		"review":       n + adv,                                // the senior round and level 3's
+		"fix":          f + reviewFix + adv + cheap + advCheap, // each review's demands answered
 	}
 	if !recipe.UsesDigest(rp) {
 		counts["implement"] = 1 // the first_line step's first stage

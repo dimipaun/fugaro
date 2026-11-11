@@ -2682,3 +2682,160 @@ func TestTriageSinceIsTheReleaseTheDocsName(t *testing.T) {
 		t.Errorf("fugaro.yaml's schema does not name the release agent.triage ships in: want %q", want)
 	}
 }
+
+// TestRecipesSkewRefusesEscalationOnOldImage: a recipe holding the escalation
+// constructs — a review step's hand_over, or the rebase step — needs a job
+// image whose runner holds them, which is one release for both
+// (escalationSince, E5), and the catalog's three escalation recipes are held to
+// that release by name as well (escalationRecipeNamed). 0.22.0 knows every
+// other recipe construct and refuses both outright, so the whole recipe would
+// die at bootstrap with the launch already paid for: the gate turns that into a
+// refusal at the launcher's terminal, for a derived image (checkRecipeImage), a
+// checkout: clone workflow's base image (checkCloneRecipeImage), a repository
+// recipe (repoRecipeForGate) and a project recipe (the embedded text,
+// embeddedRecipeOf) alike.
+func TestRecipesSkewRefusesEscalationOnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	escalate, ok := recipe.CatalogText("escalate")
+	if !ok {
+		t.Fatal("no catalog recipe escalate")
+	}
+	rebase, ok := recipe.CatalogText("rebase")
+	if !ok {
+		t.Fatal("no catalog recipe rebase")
+	}
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "escalate", Source: string(recipe.SourceCatalog), YAML: string(escalate)}}
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &warn)
+		return warn.String(), err
+	}
+	// The newest release tagged when the constructs were added: it knows every
+	// other construct a recipe can carry and still refuses both.
+	warn, err := check("ghcr.io/dimipaun/fugaro-base:0.22.0")
+	if err == nil || !strings.Contains(err.Error(), "recipe escalate needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.22.0: warn = %q, err = %v", warn, err)
+	}
+	if warn != "" {
+		t.Errorf("0.22.0: warning %q, want none", warn)
+	}
+	if warn, err := check("ghcr.io/dimipaun/fugaro-base:0.23.0"); err != nil {
+		t.Fatalf("0.23.0: warn = %q, err = %v", warn, err)
+	}
+	warn, err = check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// The rebase step is the other construct of the same release.
+	spec.Recipe = &task.Recipe{Name: "rebase", Source: string(recipe.SourceCatalog), YAML: string(rebase)}
+	if _, err := check("ghcr.io/dimipaun/fugaro-base:0.22.0"); err == nil ||
+		!strings.Contains(err.Error(), "recipe rebase needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") {
+		t.Fatalf("rebase on 0.22.0: err = %v", err)
+	}
+	// The name floor: merge-judge is the third of the ladder's recipes and
+	// E6's, so the catalog does not hold its file yet, and a task naming it is
+	// held to the same release as the two that carry the constructs.
+	spec.Recipe = &task.Recipe{Name: "merge-judge", Source: string(recipe.SourceCatalog)}
+	if _, err := check("ghcr.io/dimipaun/fugaro-base:0.22.0"); err == nil ||
+		!strings.Contains(err.Error(), "recipe merge-judge needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") {
+		t.Fatalf("merge-judge on 0.22.0: err = %v", err)
+	}
+	// A launch on a checkout: clone workflow, whose job has no derived image
+	// and so no build record: the gate raises checkCloneImageSince's threshold
+	// on base_images.base itself.
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.22.0"}
+	var cloneWarn bytes.Buffer
+	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &cloneWarn); err == nil ||
+		!strings.Contains(err.Error(), "recipe merge-judge needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") ||
+		!strings.Contains(err.Error(), "release 0.22.0") {
+		t.Fatalf("clone: warn = %q, err = %v", cloneWarn.String(), err)
+	}
+	// A repository recipe is that repository's own file, whatever it is
+	// called: it is judged by the constructs it carries, which is what the
+	// rp arm of recipeSinceFor reads. Its name is deliberately not one of the
+	// catalog's — one that were would still be the repository's file.
+	recipeCheckout(t, f, "", map[string]string{
+		".fugaro/recipes/hand-over.yaml": "version: 1\nname: hand-over\nsteps:\n  - review: { max_rounds: 1, hand_over: true }\n",
+		".fugaro/recipes/plain.yaml":     "version: 1\nname: plain\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n",
+		".fugaro/recipes/rebase.yaml":    "version: 1\nname: rebase\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n",
+	})
+	other := mustSlug("github", "acme/other")
+	writeBuildRecord(t, f, other, "svc", "ghcr.io/dimipaun/fugaro-base:0.22.0")
+	spec.Repo, spec.Workflow = "acme/other", "svc"
+	spec.Recipe = &task.Recipe{Name: "hand-over", Source: string(recipe.SourceRepo)}
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err == nil ||
+		!strings.Contains(err.Error(), "recipe hand-over needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") {
+		t.Fatalf("a repository recipe with hand_over: %v", err)
+	}
+	// The control, and the reason the gate is the constructs and not the
+	// name: a repository recipe called `rebase` (or any other name) that
+	// carries neither construct is judged by the constructs it does carry,
+	// and 0.22.0 knows those.
+	spec.Recipe.Name = "rebase"
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a repository recipe named rebase with no rebase step: %v", err)
+	}
+	spec.Recipe.Name = "plain"
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a repository recipe with no escalation construct: %v", err)
+	}
+	// A project recipe is neither the catalog's name nor a file in the
+	// checkout: it reaches the task as embedded text, and that text is the
+	// only place its constructs can be read — escalationRecipeNamed requires
+	// the catalog source, and repoRecipeForGate reads a file this task never
+	// named — so the embedded-text arm is what holds such a recipe to
+	// escalationSince. Both constructs, since either one of them is what the
+	// job image must know.
+	for _, tc := range []struct{ name, yaml string }{
+		{"project-hand-over", "version: 1\nname: project-hand-over\nsteps:\n  - review: { max_rounds: 1, hand_over: true }\n"},
+		{"project-rebase", "version: 1\nname: project-rebase\nsteps:\n  - rebase: {}\n"},
+	} {
+		spec.Recipe = &task.Recipe{Name: tc.name, Source: string(recipe.SourceProject), YAML: tc.yaml}
+		err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "recipe "+tc.name+" needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") {
+			t.Fatalf("a project recipe with %s on 0.22.0: %v", tc.name, err)
+		}
+	}
+	// The control, as for the repository recipes above: the same source with
+	// no escalation construct is judged at recipesSince, which 0.22.0 knows.
+	spec.Recipe = &task.Recipe{Name: "project-plain", Source: string(recipe.SourceProject),
+		YAML: "version: 1\nname: project-plain\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n"}
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a project recipe with no escalation construct: %v", err)
+	}
+}
+
+// TestEscalationSinceHasAReleaseBullet: escalationSince names 0.23.0, which is
+// not tagged, so docs/release.md's Before-you-tag list is what holds the
+// constant to the release actually cut — the job every other *Since constant's
+// bullet does (TestAdversarialSinceHasAReleaseBullet). Nothing else ties the
+// number the gate accepts to the release that ships hand_over and the rebase
+// step, and a release that landed them elsewhere would otherwise keep refusing
+// images that can run them.
+func TestEscalationSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `escalationSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no escalationSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+escalationSince+"\"`") {
+		t.Errorf("docs/release.md's escalationSince bullet does not carry the constant's release (%q)", escalationSince)
+	}
+	for _, want := range []string{"hand_over", "rebase", "not tagged yet"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's escalationSince bullet does not say %q", want)
+		}
+	}
+}
