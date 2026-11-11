@@ -773,9 +773,9 @@ export const CONSOLE_OPERATIONS = [
   //
   // What is deliberately absent is the point. `--all-users` is a flag of
   // `newRunsStatsCmd` that shows every user's row, and it is not a key of this
-  // schema: the command resolves the view itself -- an operator of the
+  // schema: the command resolves the view itself -- an admin of the
   // installation (the identity named in the local config's `user:`/git, listed
-  // in its `terraform.operators`) sees every user's rows, and everyone else sees
+  // in its `terraform.admins`) sees every user's rows, and everyone else sees
   // their own row alone (`internal/cli/runs_stats.go`, `userStatsViewOwn`) --
   // and a console that could pass the flag could widen a private view to
   // everyone's with one click. `--by` is fixed to `user` by the command's own

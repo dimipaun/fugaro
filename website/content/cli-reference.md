@@ -4858,11 +4858,11 @@ $/RUN is COUNTED $ over COUNTED RUNS, the runs that settled a real-dollar cost;
 a notional run, a run with no readable record and a record from before the cost
 breakdown existed are none of them averaged in as a run that cost nothing.
 
-Who sees whom. An operator of the installation -- the identity the local config's
-user: (or git config user.email) names, listed in its terraform.operators, the
-list fugaro doctor's runs-bucket-iam check reads -- sees every user. Anyone else
-sees their own row alone, and --all-users asks for the whole table. An
-installation that names no operators (one from before the 0.7.0 hardening, say)
+Who sees whom. An admin of the installation -- the identity the local config's
+user: (or git config user.email) names, listed in its terraform.admins, one of
+the two lists fugaro doctor's runs-bucket-iam check reads -- sees every user.
+Anyone else sees their own row alone, and --all-users asks for the whole table.
+An installation that names no admins (one from before the 0.7.0 hardening, say)
 places nobody, and the view then stays private: the default is never the wider
 one. Whose numbers a table shows is printed above it.
 
@@ -4896,7 +4896,7 @@ record -- never launched, cancelled before launch, or a stale claim -- never
 started and is counted in no figure. The count of those is the window's, over
 everyone's runs, and is no more the caller's own than the truncation is.
 
---json prints {project, by, view, you, operator, since, until, max_runs,
+--json prints {version, project, by, view, you, admin, since, until, max_runs,
 truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,
 currency, runs, succeeded, failed, halted, infra_error, other, no_record,
 counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the counts add up:

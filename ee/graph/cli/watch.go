@@ -378,5 +378,5 @@ func downDoc(last graph.Document, reason string) graph.Document {
 // and is refused in the same breath, so sending a person there is sending them
 // in a circle.
 func refusedStream(err error) error {
-	return fcli.UserErr("graph: the database refused this CLI's credential and it may not listen to /coordinator: that read is a signed-in reader's and the database role its caller holds (roles/firebasedatabase.viewer, which terraform.launchers and terraform.operators have), so run gcloud auth application-default login if the grant has expired, and otherwise ask an owner to add the role (%v)", err)
+	return fcli.UserErr("graph: the database refused this CLI's credential and it may not listen to /coordinator: that read is a signed-in reader's and the database role its caller holds (roles/firebasedatabase.viewer, which terraform.operators and terraform.admins have), so run gcloud auth application-default login if the grant has expired, and otherwise ask an owner to add the role (%v)", err)
 }
