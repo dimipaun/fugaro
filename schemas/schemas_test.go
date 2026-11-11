@@ -3323,6 +3323,73 @@ func TestRecipeSchemaDigestStepsMatchGo(t *testing.T) {
 	}
 }
 
+// TestRecipeSchemaHandOverStepsMatchGo pins the schema's step shape for the
+// hand_over review (the escalation's escalate recipe) against recipe.Parse,
+// position by position: hand_over only removes the fix round after the
+// review, so the review carrying it sits exactly where a review without a
+// bounce sits, and every shape the key contradicts — a bounce, an adversarial
+// step after it, mode: review — is refused by both. A schema wider than the
+// parser accepts a recipe file the CLI would refuse, and one that is narrower
+// refuses a recipe that runs.
+func TestRecipeSchemaHandOverStepsMatchGo(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	const outs = "outputs:\n  globs: [\"out/*.png\"]\n"
+	for _, tc := range []struct{ name, text string }{
+		{"hand over alone", "version: 1\nname: a\nsteps:\n  - review: { hand_over: true }\n"},
+		{"hand over with rounds", "version: 1\nname: a\nsteps:\n  - review: { max_rounds: 1, hand_over: true }\n"},
+		{"check then hand over", "version: 1\nname: a\nsteps:\n  - check: { command: test }\n  - review: { hand_over: true }\n"},
+		{"first line then hand over", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: { hand_over: true }\n"},
+		{"check then first line then hand over", "version: 1\nname: a\nsteps:\n  - check: { command: test }\n  - first_line: {}\n  - review: { hand_over: true }\n"},
+		{"digest then hand over", "version: 1\nname: a\nsteps:\n  - digest: {}\n  - review: { hand_over: true }\n"},
+		{"hand over false", "version: 1\nname: a\nsteps:\n  - review: { hand_over: false }\n"},
+		{"hand over with a bounce", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: { hand_over: true, bounce: first_line }\n"},
+		{"a step after the hand over", "version: 1\nname: a\nsteps:\n  - review: { hand_over: true }\n  - adversarial: {}\n"},
+		{"hand over with an unknown knob", "version: 1\nname: a\nsteps:\n  - review: { hand_over: true, rounds: 2 }\n"},
+		{"hand over twice", "version: 1\nname: a\nsteps:\n  - review: { hand_over: true }\n  - review: { hand_over: true }\n"},
+		{"hand over in mode review", "version: 1\nname: a\nmode: review\nsteps:\n  - review: { hand_over: true }\n"},
+		{"hand over in mode artifact", "version: 1\nname: a\nmode: artifact\n" + outs + "steps:\n  - review: { hand_over: true }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schemaOK := sch.Validate(yamlInstance(t, []byte(tc.text))) == nil
+			_, ps := recipe.Parse([]byte(tc.text))
+			if schemaOK != (len(ps) == 0) {
+				t.Errorf("schema ok = %v, recipe.Parse problems = %v", schemaOK, ps)
+			}
+		})
+	}
+}
+
+// TestRecipeSchemaRebaseStepsMatchGo pins the schema's step shape for the
+// rebase step (the escalation's rebase recipe) against recipe.Parse: the step
+// is the whole run — [rebase] in a mode: implement recipe — so anything it is
+// put beside, a second rebase, an option on it, the two modes that pin their
+// own steps, is refused by both. A schema wider than the parser accepts a
+// recipe file the CLI would refuse, and one that is narrower refuses a recipe
+// that runs.
+func TestRecipeSchemaRebaseStepsMatchGo(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	const outs = "outputs:\n  globs: [\"out/*.png\"]\n"
+	for _, tc := range []struct{ name, text string }{
+		{"rebase alone", "version: 1\nname: a\nsteps:\n  - rebase: {}\n"},
+		{"rebase with a null body", "version: 1\nname: a\nsteps:\n  - rebase:\n"},
+		{"implement rebases", "version: 1\nname: a\nmode: implement\nsteps:\n  - rebase: {}\n"},
+		{"rebase then review", "version: 1\nname: a\nsteps:\n  - rebase: {}\n  - review: {}\n"},
+		{"first line then rebase", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - rebase: {}\n"},
+		{"rebase twice", "version: 1\nname: a\nsteps:\n  - rebase: {}\n  - rebase: {}\n"},
+		{"rebase with an option", "version: 1\nname: a\nsteps:\n  - rebase: { max_rounds: 2 }\n"},
+		{"rebase in mode review", "version: 1\nname: a\nmode: review\nsteps:\n  - rebase: {}\n"},
+		{"rebase in mode artifact", "version: 1\nname: a\nmode: artifact\n" + outs + "steps:\n  - rebase: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schemaOK := sch.Validate(yamlInstance(t, []byte(tc.text))) == nil
+			_, ps := recipe.Parse([]byte(tc.text))
+			if schemaOK != (len(ps) == 0) {
+				t.Errorf("schema ok = %v, recipe.Parse problems = %v", schemaOK, ps)
+			}
+		})
+	}
+}
+
 // TestRecipeSchemaAdversarialStepsMatchGo pins the schema's step shape for
 // the adversarial step (review level 3, D720) against recipe.Parse, shape by
 // shape: the step comes after the review and last of all, so the schema has
