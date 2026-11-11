@@ -610,6 +610,14 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 
 ### O14. The long-run triage rule and `fugaro runs watch` (BF2, slice 1)
 
+- **Amended by `docs/outer-loop-escalation` (E0; D2032, D2036, D2041, D2042, D2043):** O14 is re-scoped to **read the ladder**. That plan's
+  per-mode ladder table — its local keys `escalation.r2_after_hours`, `escalation.r2_after_attempts`, `escalation.r3_after_hours` and
+  `escalation.critical_path_factor` — is the threshold, and the single local key `orchestrator.triage_after` this section names below, which
+  **was never built** (docs only), is retired with it: every threshold sentence below is read through this note. The rule itself is unchanged —
+  its three reads, its four outcomes, the fixed order they are tried in, its fail-closed reading, its audit id and its read-only print all
+  stand — and the ladder calls it: that plan's rung 3 is this rule's `MergeAsIs` and its rung 4 this rule's `Restart`, its rungs 0 to 2 run before the rule is
+  read, and every R0 rebased head gets a `review-only` run before a merge is eligible (D2043).
+
 - **Files (25):** `internal/orchestrator/triage.go` (new: the rule), `internal/orchestrator/triage_test.go` (new), `internal/orchestrator/export_triage_test.go`
   (new; O0 owns `export_test.go`), `internal/orchestrator/tick.go` (edit: one more step of the same tick), `internal/localcfg/localcfg.go` (edit: reads the
   `orchestrator.triage_after` key and refuses a value that is not under the run's budget), `internal/localcfg/triage_test.go` (new), and the six files the key itself

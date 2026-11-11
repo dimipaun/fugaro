@@ -500,6 +500,42 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 	}
 }
 
+// The outer-loop-escalation plan (2026-11-10) amends this folder rather than
+// replacing it: its ladder's per-mode table replaces D1244's single age key,
+// which was never built; D2036 amends D1246's first reaction; D2041 amends
+// D1245's readiness condition (a draft the daemon may ready); and D2042 amends
+// D1226 (an item's approval covers the ladder's runs). Each row has to stay
+// readable as an amendment — the ruling it amends is kept, and the pointer
+// names who changed it — and the README must stop naming the retired key as
+// the threshold a run fires on.
+func TestDocsStatelessOrchestratorLadderAmendmentsAreRecorded(t *testing.T) {
+	rec := soRead(t, soReconciled)
+	plan := soRead(t, soPlan)
+	readme := soRead(t, soReadme)
+	for _, tc := range []struct{ id, want string }{
+		{"D1244", "replaced by D2032 of `docs/outer-loop-escalation`"},
+		{"D1244", "`orchestrator.triage_after` was never built"},
+		{"D1245", "D2041 of `docs/outer-loop-escalation`"},
+		{"D1245", "`escalation.ready_drafts`"},
+		{"D1246", "D2036 of `docs/outer-loop-escalation`"},
+		{"D1226", "D2042 of `docs/outer-loop-escalation`"},
+	} {
+		row := soRow(rec, tc.id)
+		if row == "" {
+			t.Fatalf("%s: %s has no decision row", soReconciled, tc.id)
+		}
+		if !strings.Contains(row, tc.want) {
+			t.Errorf("%s: the %s row does not record the amendment %q", soReconciled, tc.id, tc.want)
+		}
+	}
+	if !strings.Contains(plan, "Amended by `docs/outer-loop-escalation`") {
+		t.Errorf("%s: O14 is not re-scoped to read the ladder", soPlan)
+	}
+	if strings.Contains(readme, "triage_after") {
+		t.Errorf("%s: the README still names the retired key as the threshold a run fires on", soReadme)
+	}
+}
+
 // T1 was ruled: the scripts are kept 14 days and the rollback is manual, with
 // no command built for it.
 func TestDocsStatelessOrchestratorRollbackIsManual(t *testing.T) {

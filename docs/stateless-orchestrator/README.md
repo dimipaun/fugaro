@@ -55,7 +55,7 @@ All of D1220-D1243 were answered on 2026-11-04. Most are the recommendation; **t
   in a security path, stops the run and asks the owner (a `waiting_on: person` decision). Everything else **fails closed** into the fourth,
   **recommend-only** outcome — BF1's file absent, `CIUnknown`, a truncated path set, a severity the triage does not know — tried before the two that act, so it merges nothing, cancels
   nothing and restarts nothing, and prints what it could not read. Every triage is written to the orchestrator audit log under `<run>:triage` and printed read-only by
-  **`fugaro runs watch`**; until BF1 lands that is every long run (U10), and the threshold it fires on is the person's own local key (`orchestrator.triage_after`, default `2h`, refused when it is not under the run's budget).
+  **`fugaro runs watch`**; until BF1 lands that is every long run (U10), and what fires it is the per-mode ladder table of `docs/outer-loop-escalation` — local-only keys, one set per rigor mode (D2032) — rather than a single age threshold.
 
 D1241 (the person's own credential writes the `orchestrator/` node), D1242 (the terminal Typed confirmation now, a paired-device channel later) and
 D1243 (the session-start print reads a local cache the daemon writes) are all the recommendation, and the gates the plan had put on them are lifted.
