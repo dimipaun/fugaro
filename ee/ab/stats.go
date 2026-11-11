@@ -18,6 +18,8 @@ import (
 	"cmp"
 	"math"
 	"slices"
+
+	"github.com/dimipaun/fugaro/internal/stats"
 )
 
 // Alpha is the level every figure here is read at (D563): the Clopper-Pearson
@@ -37,8 +39,11 @@ const MinRuns = 20
 
 // LossTolerance is the highest Clopper-Pearson upper bound of the challenger's
 // share of losses among a group's decisive pairs that D565 still calls "not
-// worse". Below it the pairs cannot show the challenger losing more often than
-// the champion; at or above it they can, and the champion stays.
+// worse". It is the bar a challenger clears to be recommended on price, and it
+// is deliberately not a demonstration that it loses no more often than the
+// champion: a group sitting exactly on it is still consistent with a challenger
+// losing close to three pairs in five. "Not worse" is the weak claim D565 makes
+// it, which is why the region that rests on it also asks for a lower price.
 const LossTolerance = 0.6
 
 // SignTest reads a group's decisive pairs. p is the exact two-sided sign test's
@@ -103,21 +108,20 @@ func binomTail(n, k int, p float64) float64 {
 		return 0
 	}
 	logp, logq := math.Log(p), math.Log1p(-p)
+	// log C(n,i) p^i q^(n-i), carried term by term -- C(n,i+1)/C(n,i) is
+	// (n-i)/(i+1), so no coefficient is ever formed on its own -- and folded
+	// into a running sum whose scale is the largest term seen so far, so no
+	// term is ever added to one that dwarfs it.
 	logTerm := float64(n) * logq
-	terms := make([]float64, 0, k+1)
-	terms = append(terms, logTerm)
-	largest := logTerm
-	// log C(n,i) p^i q^(n-i), carried term by term: C(n,i+1)/C(n,i) is
-	// (n-i)/(i+1), so no factor is ever formed on its own and nothing overflows
-	// on the way to a coefficient that is far below the largest double.
+	largest, sum := logTerm, 1.0
 	for i := 1; i <= k; i++ {
 		logTerm += math.Log(float64(n-i+1)/float64(i)) + logp - logq
-		terms = append(terms, logTerm)
-		largest = max(largest, logTerm)
-	}
-	sum := 0.0
-	for _, t := range terms {
-		sum += math.Exp(t - largest)
+		if logTerm > largest {
+			sum = sum*math.Exp(largest-logTerm) + 1
+			largest = logTerm
+		} else {
+			sum += math.Exp(logTerm - largest)
+		}
 	}
 	return math.Exp(largest) * sum
 }
@@ -138,7 +142,10 @@ func tailCrossing(n, k int, target float64) float64 {
 			hi = mid
 		}
 	}
-	return (lo + hi) / 2
+	// lo is itself a p whose tail is at least target, and the largest one
+	// tested: the bracket's midpoint could sit on the far side of the crossing
+	// and make an endpoint the interval's own definition does not allow.
+	return lo
 }
 
 // Holm is Holm's step-down correction across the groups of one report (D563):
@@ -175,32 +182,33 @@ func Holm(ps []float64) []bool {
 
 // MedianRatio is the median of the paired cost ratios the caller passes, one
 // per pair, the challenger's dollars over the champion's (D563) -- the figure
-// D565's exchange rate is measured against. An even sample's median is the mean
-// of its two middle values, the type-7 interpolation internal/stats uses, so a
-// median means one thing in both of the reports a reader sees.
+// D565's exchange rate is measured against. It is internal/stats' interpolation
+// rather than a second copy of one: an even sample's median is the mean of its
+// two middle values in both, so a median means one thing in the two reports a
+// reader sees.
 //
 // A ratio that is not a finite number is skipped rather than read: a pair whose
 // champion cost 0 has no ratio, and a pair one arm carries no figure for has
-// none either. Skipping is what keeps the rule from treating an unknown price
-// as a cheap one -- 0 is returned when nothing finite is left, and the rule
-// reads that as no price at all. The caller's slice is not modified.
+// none either. The caller's slice is not modified, and 0 is returned when
+// nothing finite is left -- the rule asks HasCost before it reads a 0, so an
+// unknown price is never a cheap one.
 func MedianRatio(ratios []float64) float64 {
+	return stats.PercentilesOf(finiteRatios(ratios)).Median
+}
+
+// finiteRatios is the ratios of a group that can be read: one ratio per pair
+// whose arms both carry a cost figure, in the caller's order. It is what tells
+// a group with no price from a group whose challenger was free, which is the
+// difference between keeping the champion and recommending the cheapest arm
+// there could be -- so the two are never the same value.
+func finiteRatios(ratios []float64) []float64 {
 	xs := make([]float64, 0, len(ratios))
 	for _, r := range ratios {
 		if !math.IsNaN(r) && !math.IsInf(r, 0) {
 			xs = append(xs, r)
 		}
 	}
-	if len(xs) == 0 {
-		return 0
-	}
-	slices.Sort(xs)
-	mid := float64(len(xs)-1) / 2
-	below, above := int(math.Floor(mid)), int(math.Ceil(mid))
-	if below == above {
-		return xs[below]
-	}
-	return xs[below] + (mid-float64(below))*(xs[above]-xs[below])
+	return xs
 }
 
 // Summary is one group's evidence: the pairs a report counts and the figures
@@ -289,9 +297,12 @@ type Recommendation struct {
 	// DecisionNoConclusion, where the interval is the reason.
 	P, Lo, Hi float64
 	// CostRatio is the group's median paired cost ratio, challenger over
-	// champion (MedianRatio). 0 means no pair carried both arms' costs, which
-	// is no price rather than a price of nothing.
+	// champion (MedianRatio), and HasCost says whether it is a figure at all:
+	// false means no pair carried both arms' costs, which is no price, while
+	// true with a ratio of 0 means the challenger was free. The two are read
+	// differently by the rule, so they cannot be one value.
 	CostRatio float64
+	HasCost   bool
 	// Rate is the extra cost per pair the group was read at, as a fraction of
 	// the champion's cost: the mode's own figure (D565), passed in rather than
 	// looked up here, because which mode a group belongs to is the report's
@@ -318,21 +329,27 @@ type Recommendation struct {
 // A rate of 0 -- POC, and the floor of any mode a layer leaves out -- is "no
 // extra cost is worth this group", not "never": a challenger that is clearly
 // better and no dearer still wins the first region. The same price is not a
-// saving, so the price region wants a ratio below 1; and a ratio of 0 is no
-// price at all, so a group with no cost figure keeps the champion: an unknown
-// price is not a cheap one, and this rule advises a change of default.
+// saving, so the price region wants a ratio below 1.
+//
+// A group with no cost figure keeps the champion whatever its pairs did: an
+// unknown price is not a cheap one, and this rule advises a change of default.
+// A challenger that cost nothing is the opposite case and not the same one: it
+// is priced, at the lowest price there is, so it is read like any other
+// challenger and can win either region.
 //
 // A group below MinRuns decisive pairs gets DecisionNoConclusion and no region
 // is read (D563). Every figure is still computed and returned: a report shows
 // the interval beside the conclusion it is too narrow a sample to carry.
 func Recommend(group Summary, rate float64) Recommendation {
+	ratios := finiteRatios(group.CostRatios)
 	decide := func(d Decision, r Rule) Recommendation {
 		p, lo, hi := SignTest(group.Wins, group.Losses)
 		return Recommendation{
 			Decision: d, Rule: r,
 			Decisive: group.Wins + group.Losses,
 			P:        p, Lo: lo, Hi: hi,
-			CostRatio: MedianRatio(group.CostRatios),
+			CostRatio: MedianRatio(ratios),
+			HasCost:   len(ratios) > 0,
 			Rate:      rate,
 		}
 	}
@@ -341,9 +358,9 @@ func Recommend(group Summary, rate float64) Recommendation {
 	}
 	rec := decide(DecisionKeep, RuleKeep)
 	switch {
-	case rec.CostRatio > 0 && rec.Lo > 0.5 && rec.CostRatio-1 <= rate:
+	case rec.HasCost && rec.Lo > 0.5 && rec.CostRatio-1 <= rate:
 		rec.Decision, rec.Rule = DecisionChallenger, RuleBetterWithinRate
-	case rec.CostRatio > 0 && 1-rec.Lo < LossTolerance && rec.CostRatio < 1:
+	case rec.HasCost && 1-rec.Lo < LossTolerance && rec.CostRatio < 1:
 		rec.Decision, rec.Rule = DecisionChallenger, RuleCheaperNotWorse
 	}
 	return rec

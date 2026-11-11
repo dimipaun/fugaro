@@ -271,8 +271,16 @@ func TestRecommendCheaperNotWorse(t *testing.T) {
 		t.Errorf("thirteen of twenty at 0.85 of the price = %s/%s, want %s/%s",
 			rec.Decision, rec.Rule, DecisionChallenger, RuleCheaperNotWorse)
 	}
-	if math.Abs(rec.CostRatio-0.85) > 1e-12 {
-		t.Errorf("CostRatio = %v, want the median of the three paired ratios: 0.85", rec.CostRatio)
+	if math.Abs(rec.CostRatio-0.85) > 1e-12 || !rec.HasCost {
+		t.Errorf("CostRatio = %v (a figure: %t), want the median of the three paired ratios: 0.85", rec.CostRatio, rec.HasCost)
+	}
+	// A free challenger is priced at the lowest price there is, which is not
+	// the same state as carrying no price at all: it wins this region, and
+	// HasCost says the zero is a measurement rather than an absence.
+	free := Recommend(Summary{Wins: 13, Losses: 7, CostRatios: []float64{0, 0, 0}}, 0)
+	if free.Decision != DecisionChallenger || free.Rule != RuleCheaperNotWorse || !free.HasCost || free.CostRatio != 0 {
+		t.Errorf("thirteen of twenty at no cost = %s/%s at ratio %v (a figure: %t), want %s/%s at 0 (a figure: true)",
+			free.Decision, free.Rule, free.CostRatio, free.HasCost, DecisionChallenger, RuleCheaperNotWorse)
 	}
 	// The loss bound is read at the tolerance and not at a half: the same
 	// thirteen of twenty with the same saving is what the rule is for, while
@@ -337,14 +345,15 @@ func TestRecommendKeep(t *testing.T) {
 	// read, the challenger's price is unknown, and an unknown price is not one
 	// this rule recommends a change of default on.
 	rec := Recommend(Summary{Wins: 18, Losses: 2}, 2.0)
-	if rec.Decision != DecisionKeep || rec.Rule != RuleKeep || rec.CostRatio != 0 {
-		t.Errorf("eighteen of twenty with no cost figure = %s/%s at ratio %v, want %s/%s at 0",
-			rec.Decision, rec.Rule, rec.CostRatio, DecisionKeep, RuleKeep)
+	if rec.Decision != DecisionKeep || rec.Rule != RuleKeep || rec.CostRatio != 0 || rec.HasCost {
+		t.Errorf("eighteen of twenty with no cost figure = %s/%s at ratio %v (a figure: %t), want %s/%s at 0 (a figure: false)",
+			rec.Decision, rec.Rule, rec.CostRatio, rec.HasCost, DecisionKeep, RuleKeep)
 	}
 	// A ratio that is not a finite number -- a pair whose champion cost 0 -- is
 	// skipped for the same reason, never read as an infinite saving.
-	if rec := Recommend(Summary{Wins: 18, Losses: 2, CostRatios: []float64{math.Inf(1), math.NaN()}}, 2.0); rec.Decision != DecisionKeep {
-		t.Errorf("eighteen of twenty with no finite cost ratio = %s/%s, want %s", rec.Decision, rec.Rule, DecisionKeep)
+	if rec := Recommend(Summary{Wins: 18, Losses: 2, CostRatios: []float64{math.Inf(1), math.NaN()}}, 2.0); rec.Decision != DecisionKeep || rec.HasCost {
+		t.Errorf("eighteen of twenty with no finite cost ratio = %s/%s (a figure: %t), want %s with no figure",
+			rec.Decision, rec.Rule, rec.HasCost, DecisionKeep)
 	}
 	// The halts are context the report shows and the rule never reads: a halt
 	// is already a loss among the decisive pairs (D567), so moving the counts
