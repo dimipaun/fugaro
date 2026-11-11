@@ -1053,6 +1053,115 @@ func TestBootstrapRefusesATextOnlyCoderWithImagesAndNoVisionModel(t *testing.T) 
 	}
 }
 
+// TestBootstrapRefusalNamesTheSlotAndThePriceMember (V5, D2006): the refusal is
+// the sentence the owner reads in the run's reason, and it has to be
+// actionable without the issue in hand — the model that cannot read, the file
+// that made the check refuse, the slot to set and the price member that gives
+// that slot's model an image rate (D2001, V2). A sentence naming the slot
+// alone would send an owner to a key whose model the gateway then refuses for
+// the same reason, from its own price row.
+func TestBootstrapRefusalNamesTheSlotAndThePriceMember(t *testing.T) {
+	g := providerRun(t, providerPinned(t), "enforce", "50", nil, "acme/app")
+	g.setTask(t, "Fix the console golden: docs/shot.png is out of date")
+	rec, err := g.run(t)
+	if err == nil {
+		t.Fatalf("a run whose task names an image and whose coder cannot read one was not refused: %+v", rec)
+	}
+	for _, want := range []string{deepseek, "docs/shot.png", "agent.models.vision", "model_prices", "image_tokens"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason %q lacks %q", rec.Reason, want)
+		}
+	}
+}
+
+// TestBootstrapWarnsForARepositoryWithImages (V5, D2005): a repository that
+// tracks a picture is the case the check may not refuse — most repositories
+// track a logo or a favicon, and a refusal on one would refuse most runs — so
+// this run goes on, and the file, the slot and the price member are a warning
+// in the job log, where the bootstrap's model warnings already go: it is what
+// an owner who meets the gateway's image refusal at implement can still read.
+func TestBootstrapWarnsForARepositoryWithImages(t *testing.T) {
+	g := newGWFiles(t, providerPinned(t), "enforce", "50", map[string]string{"docs/logo.png": pngFixture})
+	wireProviders(t, g, nil, "acme/app")
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a repository tracking a picture alone was refused: rec = %+v, err = %v", rec, err)
+	}
+	logs := g.logs.String()
+	for _, want := range []string{"docs/logo.png", "agent.models.vision", "image_tokens"} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("the job log lacks %q:\n%s", want, logs)
+		}
+	}
+}
+
+// TestBootstrapSaysNothingWithAVisionModelSet (V5, V1's slot): the run names a
+// model to run when a stage's own cannot read an image, so a task naming one
+// is not a run that dies at implement and the bootstrap has nothing to refuse.
+// V7 is what puts the slot to work; this check reads it as the answer it is.
+func TestBootstrapSaysNothingWithAVisionModelSet(t *testing.T) {
+	g := providerRun(t, withVision(t, providerPinned(t), sonnet), "enforce", "50", nil, "acme/app")
+	g.setTask(t, "Fix the console golden: docs/shot.png is out of date")
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a run with a vision model was refused: rec = %+v, err = %v", rec, err)
+	}
+	if len(g.agent.calls) == 0 {
+		t.Fatal("the run reached no stage: the check refused a run that has a model for the image")
+	}
+}
+
+// TestBootstrapSaysNothingForACoderWithAnImageRate (V5, D2016): a coder whose
+// own price row carries an image rate sends what it reads, so the task naming
+// a picture is one it can do. The row is the owner's, priced through
+// model_prices' image_tokens — the member the refusal above names as the
+// remedy (D2001, V2) — which is what makes this the other half of that
+// sentence: the fix it points at is one that works.
+func TestBootstrapSaysNothingForACoderWithAnImageRate(t *testing.T) {
+	prices := `{"` + deepseek + `": {"input_per_m": 1, "output_per_m": 2, "image_tokens": 1500}}`
+	g := routeRun(t, providerPinned(t), "enforce", "50", []string{"deepseek/*"}, prices, nil, "acme/app")
+	if m, ok := g.deps.Spend.Prices.Lookup(deepseek); !ok || m.ImageTokens == 0 {
+		t.Fatalf("the coder's price row is %+v (found %v), want one with an image rate", m, ok)
+	}
+	g.setTask(t, "Fix the console golden: docs/shot.png is out of date")
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a coder that can read an image was refused: rec = %+v, err = %v", rec, err)
+	}
+	if len(g.agent.calls) == 0 {
+		t.Fatal("the run reached no stage")
+	}
+}
+
+// TestBootstrapSaysNothingForATaskThatNamesNoImage (V5, D2005): the check
+// refuses a name, and ordinary prose about the things around a picture is not
+// one — "the icon font" holds a kind's letters and names no file. The fixture
+// repository tracks no picture either, so this run carries neither the refusal
+// nor the warning.
+func TestBootstrapSaysNothingForATaskThatNamesNoImage(t *testing.T) {
+	g := providerRun(t, providerPinned(t), "enforce", "50", nil, "acme/app")
+	g.setTask(t, "Refactor the palette handling and the icon font in the theme layer")
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a task naming no image was refused: rec = %+v, err = %v", rec, err)
+	}
+	if logs := g.logs.String(); strings.Contains(logs, "image_files") {
+		t.Errorf("the run warned about a repository's images, which this one does not track:\n%s", logs)
+	}
+}
+
+// withVision is cfg with the vision slot set (V1): the model a stage runs
+// instead when its own cannot read an image.
+func withVision(t *testing.T, cfg, model string) string {
+	t.Helper()
+	old := "background: " + haiku
+	out := strings.Replace(cfg, old, old+", vision: "+model, 1)
+	if out == cfg {
+		t.Fatal("the fixture names no background model")
+	}
+	return out
+}
+
 // capScript replies to each call with $0.04 of output.
 func capScript(n int) []anthropicfake.Reply {
 	out := make([]anthropicfake.Reply, n)
