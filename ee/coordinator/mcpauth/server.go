@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/zitadel/oidc/v3/pkg/oidc"
@@ -118,6 +119,17 @@ type Server struct {
 	audit    *Auditor
 	now      func() time.Time
 	logger   *slog.Logger
+	// registrations is M12's per-source bound on the open registration
+	// endpoint, and it is a value here rather than a caller's: the bound is
+	// the endpoint's own and there is nothing to configure it from.
+	registrations *registerLimiter
+	// sweepMu and sweptAt are the sweep's own two fields (maybeSweep): when
+	// the last trigger ran, and the lock that makes one trigger's decision the
+	// one the next sees. The instant is read and written under the lock and
+	// the sweep itself runs outside it, so a slow sweep delays other triggers
+	// rather than the door.
+	sweepMu sync.Mutex
+	sweptAt time.Time
 }
 
 // DeviceDeliveryBuilt is the build's own answer to whether this binary carries
@@ -235,7 +247,10 @@ func NewServer(cfg Config, store Store, verifier *Verifier, opts ...ServerOption
 	if err := issuerURL(cfg.Issuer); err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, store: store, verifier: verifier, tools: NewRegistry(), now: time.Now, logger: slog.Default()}
+	s := &Server{
+		cfg: cfg, store: store, verifier: verifier, tools: NewRegistry(),
+		now: time.Now, logger: slog.Default(), registrations: newRegisterLimiter(),
+	}
 	for _, o := range opts {
 		o(s)
 	}

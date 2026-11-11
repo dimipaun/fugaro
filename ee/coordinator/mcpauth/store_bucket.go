@@ -7,11 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
 	"google.golang.org/api/googleapi"
 )
@@ -183,6 +185,30 @@ func (o bucketObjects) replace(ctx context.Context, key string, data []byte, gen
 		return 0, err
 	}
 	return newGen, nil
+}
+
+// list is every key under one prefix, which is how the sweep finds the records
+// nobody asks for by id. It is the one operation here that is not conditional:
+// a janitor lists by definition, and the two refusals that matter on this
+// route — a bucket whose IAM was narrowed and a store that is not there — are
+// the driver's own errors rather than a fold into an empty list, which would
+// report a sweep that reached nothing as a sweep that found nothing.
+func (o bucketObjects) list(ctx context.Context, prefix string) ([]string, error) {
+	it := o.b.Bucket.List(&blob.ListOptions{Prefix: prefix})
+	var keys []string
+	for {
+		obj, err := it.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			return keys, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if obj.IsDir {
+			continue
+		}
+		keys = append(keys, obj.Key)
+	}
 }
 
 func (o bucketObjects) delete(ctx context.Context, key string) error {

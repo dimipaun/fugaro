@@ -95,7 +95,23 @@ func newTestServerClock(t *testing.T, cfg Config, now func() time.Time) *testSer
 // its own logger, and a caller's option comes after this one, so it wins.
 func newTestServerOver(t *testing.T, cfg Config, now func() time.Time, wrap func(objects) objects, opts ...ServerOption) *testServer {
 	t.Helper()
-	fs := newFakeStoreOver(t, wrap)
+	return newTestServerClocked(t, cfg, now, nil, wrap, opts...)
+}
+
+// newTestServerClocked is newTestServerOver with one more seam, used by M12's
+// sweep and by nothing else: the clock the store itself reads.
+//
+// The store's clock and the server's are the same clock in an installation —
+// one process, one time.Now — and they are deliberately apart in this
+// package's tests, which is why the seam is here rather than the store simply
+// following the server: a test that moved the server's clock past a TTL, which
+// the flow's two lifetimes are pinned by, would age every family it had minted
+// by the same amount if the store moved with it
+// (TestAnAgedFamilyIsAnsweredAsAnAge). A nil store clock is the process's own,
+// which is what every test but the sweep wants.
+func newTestServerClocked(t *testing.T, cfg Config, now, storeClock func() time.Time, wrap func(objects) objects, opts ...ServerOption) *testServer {
+	t.Helper()
+	fs := newFakeStoreOver(t, storeClock, wrap)
 	counting := &countingStore{Store: fs.Store, keys: map[string]bool{}}
 	v := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
 	srv, err := NewServer(cfg, counting, v, append([]ServerOption{WithServerClock(now), WithLogger(slog.New(slog.DiscardHandler))}, opts...)...)

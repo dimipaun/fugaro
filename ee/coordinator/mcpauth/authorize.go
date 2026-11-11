@@ -151,6 +151,13 @@ const refusalPage = `<!doctype html>
 // prevent. Everything after that point is redirected back with the `state` the
 // client sent (RFC 6749 §4.1.2.1).
 func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
+	// The second trigger of the store's sweep (M12). This is the other
+	// unauthenticated write of the flow — one pending request per request,
+	// written by anybody, refused for a client id this installation does not
+	// know — so it is where a loop that never registers anything would leave
+	// its records, and the sweep is triggered by the traffic that writes them
+	// rather than by the registration endpoint alone (register.go, maybeSweep).
+	s.maybeSweep(r.Context())
 	q := r.URL.Query()
 	clientID, redirectURI, state := q.Get("client_id"), q.Get("redirect_uri"), q.Get("state")
 

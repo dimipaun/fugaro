@@ -62,11 +62,10 @@ const (
 	// Both are also written before a person has proved anything: the request
 	// is written by the unauthenticated GET, so a stranger with a loop leaves
 	// one behind per iteration until its TTL passes. The TTL is a bound on
-	// what the record is *read* as and not on what is stored — nothing in
-	// this tree sweeps an expired request or code, RevokeFamily being the
-	// store's only delete — and that is the deferral Client.CreatedAt records
-	// too. No task of the plan carries it, so it is raised as a finding for
-	// the owner rather than left to look assigned.
+	// what the record is read as, and M12's sweep is the bound on what is
+	// stored (register.go, SweepExpired): an expired record is refused by the
+	// read that judges it and removed by the sweep, so a loop leaves nothing
+	// behind that outlives the sweep's own interval.
 	requestPrefix = PathPrefix + "requests/"
 	codePrefix    = PathPrefix + "codes/"
 )
@@ -166,18 +165,15 @@ type Client struct {
 	// SecretHash is sha256 of the client secret, hex, empty for a client
 	// that holds none. The secret itself is returned once, at registration.
 	SecretHash string `json:"secret_hash"`
-	// CreatedAt is when the registration was written. It is the field a
-	// lifecycle reads, and it is deliberately the only thing here that
-	// anticipates one: spec.md §8 bounds an open registration endpoint's
-	// residual risk by a per-source rate limit and by these records being
-	// expirable, and neither bound is implemented in this package or anywhere
-	// else in this tree. No task of the plan carries either one — the
-	// M10 entry is the audit record and revocation — so both are recorded in
-	// reconciliation.md §4a as a finding for the owner to assign. Until one
-	// lands the exposure is latent only because no binary mounts these
-	// routes yet: the record carries the timestamp that lifecycle will read
-	// and nothing here enforces it. The flow's two records are in the same
-	// position and are named on requestPrefix above.
+	// CreatedAt is when the registration was written, and it is the field the
+	// registration's own lifetime is read from: spec.md §8 bounds an open
+	// registration endpoint's residual risk by a per-source rate limit and by
+	// these records being expirable, and M12 is the task that carries both —
+	// the limit at the endpoint and the expiry in the sweep
+	// (register.go, RegistrationTTL). What the sweep leaves alone is a
+	// registration a family still names, so an installation's client list
+	// holds the clients that are in use rather than every client that ever
+	// registered.
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -494,6 +490,16 @@ type Store interface {
 	// audit record is where D920's audit is at rest (D935), and the tool that
 	// serves it is the only reader of it a caller has (D933).
 	GetAudit(ctx context.Context, identity string) (AuditRecord, error)
+	// SweepExpired removes the records whose own lifetime has passed (M12's
+	// second bound, spec.md §8): a registration no family names, and the two
+	// single-use records of the flow once the moment each carries has been
+	// reached, spent or not. It is one method of the store and not a caller's
+	// loop over the reads above for the same reason RotateRefresh is: the
+	// prefixes it reaches are this store's layout, which a caller outside it
+	// would be holding. What it removed comes back for the log, and what it
+	// could not decide comes back as an error rather than as a partial sweep
+	// reported as a whole one (register.go is where it lives).
+	SweepExpired(ctx context.Context) (Swept, error)
 }
 
 // TokenHash is sha256 of a token value, hex: what the store keys a record by
@@ -546,11 +552,20 @@ type records struct {
 // rotation is a compare-and-swap, and a store that quietly turned one into a
 // read-modify-write would reintroduce exactly the race D930's replay
 // detection is counting on.
+//
+// list is the fifth, and it is here for the sweep alone: the records M12
+// expires are found by prefix rather than by id, because the whole point of
+// the bound is the record nobody asks for — a client no flow names and a
+// request a stranger's loop abandoned are exactly the ones no caller can look
+// up. It answers keys and no generations: every read the sweep makes is
+// followed by an unconditional delete, with the record's own expiry as the
+// only precondition there is.
 type objects interface {
 	read(ctx context.Context, key string) (data []byte, gen int64, err error)
 	create(ctx context.Context, key string, data []byte) (gen int64, err error)
 	replace(ctx context.Context, key string, data []byte, gen int64) (newGen int64, err error)
 	delete(ctx context.Context, key string) error
+	list(ctx context.Context, prefix string) (keys []string, err error)
 }
 
 func newRecords(objs objects) Store { return records{objs: objs} }
@@ -1018,7 +1033,10 @@ func (r records) BindCodeFamily(ctx context.Context, hash, familyID string) erro
 	if !isConsumed(data) {
 		return fmt.Errorf("mcpauth: code %s is not spent, so there is no exchange to bind a family to", hash)
 	}
-	marker, err := json.Marshal(spentRecord{Consumed: true, FamilyID: familyID})
+	// The expiry consume wrote is carried across this rewrite: the marker is
+	// the same record under the same key either way, and losing the moment it
+	// stops being readable would put it beyond the sweep that removes it.
+	marker, err := json.Marshal(spentRecord{Consumed: true, FamilyID: familyID, ExpiresAt: spentMarkerIn(data).ExpiresAt})
 	if err != nil {
 		return fmt.Errorf("mcpauth: encoding the spent code %s: %w", hash, err)
 	}
@@ -1031,18 +1049,46 @@ func (r records) BindCodeFamily(ctx context.Context, hash, familyID string) erro
 // spentRecord is the marker a single-use record is replaced by when it is spent.
 // FamilyID is empty for every record but a code: it is what BindCodeFamily adds
 // afterwards, and it is the one thing a replay of a spent record is read for.
+//
+// **The marker is written rather than the record deleted** so that the second
+// presentation of a code or a binding is a refusal that says so, instead of an
+// absence a reader cannot tell from a record that never existed — and so that
+// the spend is one generation-matched write, which is what makes it single-use
+// under two simultaneous callers rather than one behind a race.
 type spentRecord struct {
 	Consumed bool   `json:"consumed"`
 	FamilyID string `json:"family_id,omitempty"`
+	// ExpiresAt is the moment the record this marker replaced stopped being
+	// readable, carried over out of it by consume and kept across
+	// BindCodeFamily's rewrite. It is here for M12's sweep and it is the only
+	// reason the field is written: a marker holds no fields of the record it
+	// replaced, so without it a spent record would be an object with no
+	// lifetime at all — and the code markers, one per completed flow, would
+	// outlive the codes they stand for by forever.
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
-// consumedBytes is what a single-use record is replaced by when it is spent. It
-// is written rather than deleted so that the second presentation of a code or a
-// binding is a refusal that says so, instead of an absence a reader cannot tell
-// from a record that never existed — and so that the spend is one
-// generation-matched write, which is what makes it single-use under two
-// simultaneous callers rather than one write behind a race.
-var consumedBytes = []byte(`{"consumed":true}`)
+// expiring is the half of a single-use record the sweep reads: the moment the
+// record stops being usable, which is what decides whether it is still a
+// record at all. Request and Code are the two shapes, and the sweep is written
+// over the interface rather than over either of them because the two are
+// removed by one rule.
+type expiring interface{ expiresAt() time.Time }
+
+func (r Request) expiresAt() time.Time { return r.ExpiresAt }
+func (c Code) expiresAt() time.Time    { return c.ExpiresAt }
+
+// expiryOf is the moment the record consume just decoded stops being readable,
+// for the marker it leaves in its place. A value that is not one of the two
+// shapes above is marked with the zero time, which the sweep reads as "no
+// expiry to sweep by" and leaves where it is: the wrong direction to be wrong
+// in here is deleting a record whose lifetime nobody stated.
+func expiryOf(into any) time.Time {
+	if e, ok := into.(expiring); ok {
+		return e.expiresAt()
+	}
+	return time.Time{}
+}
 
 // errConsumed is the record layer's own answer for a single-use record that was
 // already spent. TakeRequest and ConsumeCode name it for their own callers, the
@@ -1073,7 +1119,11 @@ func (r records) consume(ctx context.Context, key string, into any) ([]byte, err
 	if err := decode(data, into); err != nil {
 		return nil, fmt.Errorf("%s: %w", key, err)
 	}
-	if _, err := r.objs.replace(ctx, key, consumedBytes, gen); err != nil {
+	marker, err := json.Marshal(spentRecord{Consumed: true, ExpiresAt: expiryOf(into)})
+	if err != nil {
+		return nil, fmt.Errorf("mcpauth: encoding the spent record %s: %w", key, err)
+	}
+	if _, err := r.objs.replace(ctx, key, marker, gen); err != nil {
 		if errors.Is(err, errChanged) {
 			return nil, errConsumed
 		}
@@ -1082,15 +1132,19 @@ func (r records) consume(ctx context.Context, key string, into any) ([]byte, err
 	return nil, nil
 }
 
-// isConsumed reports whether an object is the marker consume leaves. It reads
-// one field and ignores the rest on purpose: the alternative is a decode that
-// has to know which record shape it was looking at, and a spent record is the
-// one thing this store reads without knowing what it used to be.
-func isConsumed(data []byte) bool {
-	var marker struct {
-		Consumed bool `json:"consumed"`
+// isConsumed reports whether an object is the marker consume leaves.
+func isConsumed(data []byte) bool { return spentMarkerIn(data).Consumed }
+
+// spentMarkerIn decodes the marker consume leaves. It decodes into the marker
+// type and not into the shape the record used to be: a spent record is the one
+// thing this store reads without knowing what it was, so every unknown field
+// of the bytes is ignored on purpose rather than refused as it is by decode.
+func spentMarkerIn(data []byte) spentRecord {
+	var marker spentRecord
+	if err := json.Unmarshal(data, &marker); err != nil {
+		return spentRecord{}
 	}
-	return json.Unmarshal(data, &marker) == nil && marker.Consumed
+	return marker
 }
 
 // get reads and decodes one record, answering the backend's own errMissing for
