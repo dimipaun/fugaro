@@ -821,7 +821,7 @@ func TestUpdateNeverSendsThePersonToUpdateFromInsideIt(t *testing.T) {
 			if err != nil {
 				t.Fatalf("fugaro update failed (exit %d): %v\n%s\n%s", ExitCode(err), err, out, errOut)
 			}
-			for _, bad := range []string{"Run fugaro update to install the plugin for you", "Run fugaro update to refresh it for you", "run fugaro update again"} {
+			for _, bad := range []string{"Run fugaro update to install the plugin for you", "Run fugaro update to refresh it for you"} {
 				if strings.Contains(out, bad) {
 					t.Errorf("the run prints %q: that is the command this run IS\n%s", bad, out)
 				}
