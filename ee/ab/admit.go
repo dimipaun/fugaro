@@ -9,11 +9,11 @@
 package ab
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -30,12 +30,20 @@ const (
 	// v1: a challenger's clone needs a read-only installation token and
 	// Bitbucket has none, so the shadow arm cannot exist there (A2.1).
 	ReasonBitbucket = "bitbucket"
+	// ReasonServiceHeldKey is a GitHub repository whose App key is the
+	// credentials service's: the job opens its provider keyless, so there is
+	// no in-job key to sign with and no read-only installation token to mint
+	// for a challenger's clone (A2.1). Like ReasonBitbucket it is a fact about
+	// the repository rather than about the challenger, and the arm would be
+	// refused at the same place for the same reason.
+	ReasonServiceHeldKey = "service-held-key"
 	// ReasonChampionModel is a challenger that is the champion's own coder
 	// model: the arms would differ in nothing (D555).
 	ReasonChampionModel = "champion-model"
-	// ReasonNotAllowed is a challenger the repository's own allowed_models
-	// leaves out. A repository can only tighten the owner's list, so a model
-	// outside it is one this repository's runs may not use at all (D556).
+	// ReasonNotAllowed is a challenger the run's allow-list leaves out: the
+	// merge of every layer that writes one, so a repository can only tighten
+	// the project's and a model outside the result is one this run may not use
+	// at all (D556).
 	ReasonNotAllowed = "not-allowed"
 	// ReasonUnrouted is a challenger no provider route serves for this
 	// repository: no provider claims it, or the one that does has an
@@ -70,17 +78,42 @@ const (
 // Admit picks the challenger of a sampled launch: the first model of the
 // project layer's ab.challengers that is not the champion's own coder model
 // and passes, for this repository, the checks a run's own model passes — the
-// repository's allowed_models, the provider policy (a route claims the model,
-// that route's allow_data_to names the repository, and the ID is plain and
-// priced), the pin rule a run under a budget applies to its coder (an explicit
-// model ID, never an alias), the credential that may carry a provider's key,
-// and the budget gateway a provider's calls need (D556, F18). No challenger
-// reaches a provider this repository could not already use.
+// run's allow-list, the provider policy (a route claims the model, that
+// route's allow_data_to names the repository, and the ID is plain and priced),
+// the pin rule a run under a budget applies to its coder (an explicit model
+// ID, never an alias), the credential that may carry a provider's key, and the
+// budget gateway a provider's calls need (D556, F18). No challenger reaches a
+// provider this repository could not already use.
 //
 // Every one of them is a check the run itself makes at bootstrap, which is the
 // point: a challenger admitted here that the run would refuse there would burn
 // a daily pair slot (config.AB.MaxPairs) and a job execution to produce a
 // refusal instead of an arm.
+//
+// Two of the answers are not in cfg at all, because a repository's file is
+// only one of the layers a run resolves:
+//
+//   - eff is the run's own policy merge (internal/policy), which is what the
+//     runner re-reads at bootstrap. Its Mode is the mode a provider's calls
+//     are judged against and its AllowedModels the intersection of every list
+//     that was written — the project's ceiling included, which is where a
+//     project config's budget.mode: enforce lives. Reading the file's own
+//     budget block instead would refuse every provider challenger as
+//     needs-enforce on an installation whose runs all enforce, and would admit
+//     a model the published list drops. The routing switch is the one other
+//     half of the runner's own allow-list check (config.CheckAllowed) that
+//     this does not mirror: a challenger spelled as a route's own ID is
+//     refused here even where the switch would route it, which is the safe
+//     direction and never a launched arm.
+//   - serviceHeldKey is whether the credentials service holds this
+//     installation's GitHub App key, so that the job opens its provider
+//     keyless (internal/gitprov/providers.FromEnv) and mints no read-only
+//     installation token. The launch knows the fact — it is what decides
+//     whether the job is handed the service's address
+//     (internal/cli's credentialsServiceLaunchEnv) — and the runner refuses
+//     the arm on it (internal/gitprov/github's GitAuthReadOnly, reached from
+//     runner.go's mintGitAuth), so it is refused here rather than after a pair
+//     slot and a job execution.
 //
 // ok is false with one of the reasons above when nothing is admitted, and the
 // caller then launches the champion alone: a pair is never started for a
@@ -98,9 +131,12 @@ const (
 //
 // A nil prices table skips the price rule, exactly as config.CheckProviderPolicy
 // does with one: a caller that has no table has no price question to ask.
-func Admit(cfg config.Config, layer config.AB, repo string, providers map[string]config.ModelProvider, prices *pricing.Table) (model string, ok bool, why string) {
+func Admit(cfg config.Config, layer config.AB, repo string, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table, serviceHeldKey bool) (model string, ok bool, why string) {
 	if cfg.Git.Provider == gitprov.KindBitbucket {
 		return "", false, ReasonBitbucket
+	}
+	if serviceHeldKey {
+		return "", false, ReasonServiceHeldKey
 	}
 	why = ReasonNoChallenger
 	refuse := func(reason string) {
@@ -120,7 +156,7 @@ func Admit(cfg config.Config, layer config.AB, repo string, providers map[string
 			refuse(ReasonChampionModel)
 			continue
 		}
-		if !allowedByRepo(cfg, c) {
+		if !eff.Allows(c) {
 			refuse(ReasonNotAllowed)
 			continue
 		}
@@ -144,7 +180,7 @@ func Admit(cfg config.Config, layer config.AB, repo string, providers map[string
 			refuse(ReasonNeedsAPIKey)
 			continue
 		}
-		if ps := config.CheckProviderGateway(agent, "", providers, budgetMode(cfg)); len(ps) > 0 {
+		if ps := config.CheckProviderGateway(agent, "", providers, policyMode(eff)); len(ps) > 0 {
 			refuse(ReasonNeedsEnforce)
 			continue
 		}
@@ -162,30 +198,18 @@ func challengerAgent(a config.Agent, model string) config.Agent {
 	return config.Agent{Auth: a.Auth, Models: config.ModelRoles{Coder: model}}
 }
 
-// allowedByRepo reports whether the repository's own budget.allowed_models
-// admits model. The file's list is the one visible here and the only one a
-// repository can write: it may only tighten the owner's, so a model outside it
-// is one this repository's runs may not use (D556). A file that writes no list
-// sets none, and the project's list — which this function cannot see — is
-// applied by the launch's own policy merge and re-read by the runner.
-func allowedByRepo(cfg config.Config, model string) bool {
-	if cfg.Budget == nil || cfg.Budget.AllowedModels == nil {
-		return true
+// policyMode is the run's effective budget mode as the runner reads it: a
+// merge that set no mode is off (internal/runner's resolvePolicy fills the
+// same value), and "" and "off" are the same answer to
+// config.CheckProviderGateway, which admits a provider's call only under
+// enforce. It is read off the merge rather than off the file because the mode
+// is a project key: a file that writes none is the ordinary shape, and its
+// runs enforce.
+func policyMode(eff policy.Effective) string {
+	if eff.Mode == "" {
+		return policy.ModeOff
 	}
-	return slices.Contains(cfg.Budget.AllowedModels, model)
-}
-
-// budgetMode is the budget mode the launcher can see for this repository. The
-// project's ceiling may be stricter than the file's (internal/policy merges
-// the two, and only tightening wins), and a stricter answer than this one only
-// ever refuses a sample: a file that reads as enforce here is enforce after
-// the merge too, so a provider challenger is never admitted on a mode the run
-// would not actually have.
-func budgetMode(cfg config.Config) string {
-	if cfg.Budget == nil {
-		return ""
-	}
-	return cfg.Budget.Mode
+	return eff.Mode
 }
 
 // providerReason is why config.CheckProviderPolicy refused model for repo, in

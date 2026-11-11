@@ -8,6 +8,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -48,16 +49,30 @@ func admitPrices() *pricing.Table {
 	}}
 }
 
+// admitConfig is the repository's own file as the launch reads it: a GitHub
+// repository whose coder is a Claude model under an api-key credential, and no
+// budget block at all — the mode and the allow-list are the project's, which
+// is the ordinary shape (a file writes a budget block only to tighten one).
 func admitConfig() config.Config {
 	return config.Config{
-		Git:    config.Git{Provider: gitprov.KindGitHub},
-		Agent:  config.Agent{Auth: "api-key", Model: admitChampion},
-		Budget: &config.Budget{Mode: "enforce"},
+		Git:   config.Git{Provider: gitprov.KindGitHub},
+		Agent: config.Agent{Auth: "api-key", Model: admitChampion},
 	}
 }
 
+// admitPolicy is the run's own merge (internal/policy) for that file: the
+// project config's enforce, and no allow-list written anywhere. It is the
+// answer the runner re-reads at bootstrap, and the one Admit is given.
+func admitPolicy() policy.Effective { return policy.Effective{Mode: policy.ModeEnforce} }
+
 func admitLayer(challengers ...string) config.AB {
 	return config.AB{Challengers: challengers}
+}
+
+// admit is Admit with the fixtures above and no service-held key, which is the
+// shape every test but the credentials service's own starts from.
+func admit(cfg config.Config, layer config.AB, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table) (string, bool, string) {
+	return Admit(cfg, layer, admitRepo, eff, providers, prices, false)
 }
 
 // TestAdmitTakesTheFirstChallengerThatPasses is the happy path: the list is
@@ -65,8 +80,8 @@ func admitLayer(challengers ...string) config.AB {
 // the one the pair runs, and the ones before it are skipped rather than
 // ending the search.
 func TestAdmitTakesTheFirstChallengerThatPasses(t *testing.T) {
-	model, ok, why := Admit(admitConfig(), admitLayer(admitChampion, "openai/gpt-9", admitChallenger, admitClaudeAlt),
-		admitRepo, admitProviders(), admitPrices())
+	model, ok, why := admit(admitConfig(), admitLayer(admitChampion, "openai/gpt-9", admitChallenger, admitClaudeAlt),
+		admitPolicy(), admitProviders(), admitPrices())
 	if !ok || model != admitChallenger || why != "" {
 		t.Fatalf("Admit = %q %v %q, want %q admitted with no reason", model, ok, why, admitChallenger)
 	}
@@ -77,9 +92,37 @@ func TestAdmitTakesTheFirstChallengerThatPasses(t *testing.T) {
 	// Claude models — so the challengers of a real installation are provider
 	// models; the case is here because it is what the checks answer, and the
 	// bare alias a layer *can* name is refused below (TestAdmitRefusesAlias).
-	model, ok, why = Admit(admitConfig(), admitLayer(admitClaudeAlt), admitRepo, nil, nil)
+	model, ok, why = admit(admitConfig(), admitLayer(admitClaudeAlt), admitPolicy(), nil, nil)
 	if !ok || model != admitClaudeAlt || why != "" {
 		t.Errorf("a direct model was refused: %q %v %q", model, ok, why)
+	}
+}
+
+// TestAdmitReadsTheRunsMergedPolicy is the source of two of the answers: the
+// budget mode and the allow-list are the run's own merge (internal/policy),
+// not the repository file's budget block. A file that writes no mode is the
+// ordinary shape — the mode lives in the project config, which is
+// config.CheckProviderGateway's own remedy — and a file that writes a looser
+// one is only one of the layers, so a launcher reading the file would refuse
+// every provider challenger as needs-enforce on an installation whose runs all
+// enforce, with a reason that is false about the run.
+func TestAdmitReadsTheRunsMergedPolicy(t *testing.T) {
+	if model, ok, why := admit(admitConfig(), admitLayer(admitChallenger), admitPolicy(), admitProviders(), admitPrices()); !ok || model != admitChallenger || why != "" {
+		t.Errorf("a file with no mode, under a run that enforces: Admit = %q %v %q, want %q", model, ok, why, admitChallenger)
+	}
+	// The file observes; the project's ceiling is enforce and the merge takes
+	// the stricter one.
+	cfg := admitConfig()
+	cfg.Budget = &config.Budget{Mode: policy.ModeObserve}
+	if model, ok, why := admit(cfg, admitLayer(admitChallenger), admitPolicy(), admitProviders(), admitPrices()); !ok || model != admitChallenger || why != "" {
+		t.Errorf("a file that observes under a run that enforces: Admit = %q %v %q, want %q", model, ok, why, admitChallenger)
+	}
+	// The run's mode is the one that decides, in the refusing direction too:
+	// the same file under a merge that observes is refused.
+	eff := admitPolicy()
+	eff.Mode = policy.ModeObserve
+	if model, ok, why := admit(cfg, admitLayer(admitChallenger), eff, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNeedsEnforce {
+		t.Errorf("a file that enforces under a run that observes: Admit = %q %v %q, want %q", model, ok, why, ReasonNeedsEnforce)
 	}
 }
 
@@ -92,16 +135,16 @@ func TestAdmitTakesTheFirstChallengerThatPasses(t *testing.T) {
 // refuses a "claude-*" ID.
 func TestAdmitRefusesAlias(t *testing.T) {
 	for _, model := range []string{"opus", "sonnet", "haiku", "default", "best"} {
-		if got, ok, why := Admit(admitConfig(), admitLayer(model), admitRepo, admitProviders(), admitPrices()); ok || got != "" || why != ReasonVariant {
+		if got, ok, why := admit(admitConfig(), admitLayer(model), admitPolicy(), admitProviders(), admitPrices()); ok || got != "" || why != ReasonVariant {
 			t.Errorf("%s: Admit = %q %v %q, want no model and %q", model, got, ok, why, ReasonVariant)
 		}
 	}
 	// The refusal is the alias rule and not a ":" variant alone: a "-latest"
 	// pointer is an alias too, and the plain ID a run may name is not.
-	if got, ok, why := Admit(admitConfig(), admitLayer("claude-opus-5-5-latest"), admitRepo, nil, nil); ok || got != "" || why != ReasonVariant {
+	if got, ok, why := admit(admitConfig(), admitLayer("claude-opus-5-5-latest"), admitPolicy(), nil, nil); ok || got != "" || why != ReasonVariant {
 		t.Errorf("a -latest pointer: Admit = %q %v %q, want %q", got, ok, why, ReasonVariant)
 	}
-	if got, ok, why := Admit(admitConfig(), admitLayer(admitClaudeAlt), admitRepo, nil, nil); !ok || got != admitClaudeAlt {
+	if got, ok, why := admit(admitConfig(), admitLayer(admitClaudeAlt), admitPolicy(), nil, nil); !ok || got != admitClaudeAlt {
 		t.Errorf("a plain Claude ID: Admit = %q %v %q, want it admitted", got, ok, why)
 	}
 }
@@ -122,7 +165,7 @@ func TestAdmitRefusesUnroutedChallenger(t *testing.T) {
 		// order, and where the code may go is the sharper truth about it.
 		{"a variant of a model the route does not serve here", admitChallenger + ":free", admitProvidersClosed()},
 	} {
-		model, ok, why := Admit(admitConfig(), admitLayer(tc.model), admitRepo, tc.providers, admitPrices())
+		model, ok, why := admit(admitConfig(), admitLayer(tc.model), admitPolicy(), tc.providers, admitPrices())
 		if ok || model != "" || why != ReasonUnrouted {
 			t.Errorf("%s: Admit = %q %v %q, want no model and %q", tc.name, model, ok, why, ReasonUnrouted)
 		}
@@ -135,27 +178,36 @@ func TestAdmitRefusesUnroutedChallenger(t *testing.T) {
 // what makes the refusal the price rule and not something else.
 func TestAdmitRefusesUnpricedChallenger(t *testing.T) {
 	empty := &pricing.Table{Models: map[string]pricing.Model{}}
-	if model, ok, why := Admit(admitConfig(), admitLayer(admitChallenger), admitRepo, admitProviders(), empty); ok || model != "" || why != ReasonUnpriced {
+	if model, ok, why := admit(admitConfig(), admitLayer(admitChallenger), admitPolicy(), admitProviders(), empty); ok || model != "" || why != ReasonUnpriced {
 		t.Errorf("Admit = %q %v %q, want no model and %q", model, ok, why, ReasonUnpriced)
 	}
-	if model, ok, why := Admit(admitConfig(), admitLayer(admitChallenger), admitRepo, admitProviders(), admitPrices()); !ok || model != admitChallenger || why != "" {
+	if model, ok, why := admit(admitConfig(), admitLayer(admitChallenger), admitPolicy(), admitProviders(), admitPrices()); !ok || model != admitChallenger || why != "" {
 		t.Errorf("a priced challenger was refused: %q %v %q", model, ok, why)
 	}
 }
 
-// TestAdmitRefusesDisallowedModel is the repository's own allow-list: it may
-// only tighten the owner's, and a challenger outside it is a model this
-// repository's runs may not use at all (D556). The list is the file's, so a
-// repository that names the challenger admits it.
+// TestAdmitRefusesDisallowedModel is the run's allow-list, which is the
+// intersection the merge computes (internal/policy's intersectAllowList): a
+// repository may only tighten the project's, so the list that answers is the
+// one the run re-reads at bootstrap, and an entry a ceiling drops is not on
+// it. The file's own list is not the answer — a file naming the challenger
+// under a merge that leaves it out is refused here and at bootstrap, which is
+// the pair slot and the job execution this check exists to save.
 func TestAdmitRefusesDisallowedModel(t *testing.T) {
-	cfg := admitConfig()
-	cfg.Budget.AllowedModels = []string{admitChampion}
-	if model, ok, why := Admit(cfg, admitLayer(admitChallenger), admitRepo, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNotAllowed {
+	eff := admitPolicy()
+	eff.AllowedModels = []string{admitChampion}
+	if model, ok, why := admit(admitConfig(), admitLayer(admitChallenger), eff, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNotAllowed {
 		t.Errorf("Admit = %q %v %q, want no model and %q", model, ok, why, ReasonNotAllowed)
 	}
-	cfg.Budget.AllowedModels = []string{admitChampion, admitChallenger}
-	if model, ok, why := Admit(cfg, admitLayer(admitChallenger), admitRepo, admitProviders(), admitPrices()); !ok || model != admitChallenger || why != "" {
+	eff.AllowedModels = []string{admitChampion, admitChallenger}
+	if model, ok, why := admit(admitConfig(), admitLayer(admitChallenger), eff, admitProviders(), admitPrices()); !ok || model != admitChallenger || why != "" {
 		t.Errorf("a listed challenger was refused: %q %v %q", model, ok, why)
+	}
+	cfg := admitConfig()
+	cfg.Budget = &config.Budget{AllowedModels: []string{admitChallenger}}
+	eff.AllowedModels = []string{admitChampion}
+	if model, ok, why := admit(cfg, admitLayer(admitChallenger), eff, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNotAllowed {
+		t.Errorf("the file lists it and the merge does not: Admit = %q %v %q, want %q", model, ok, why, ReasonNotAllowed)
 	}
 }
 
@@ -164,10 +216,10 @@ func TestAdmitRefusesDisallowedModel(t *testing.T) {
 // It is skipped, not fatal — a list that names it first still finds the model
 // behind it — and a list that names nothing else admits nothing.
 func TestAdmitSkipsChampionModel(t *testing.T) {
-	if model, ok, why := Admit(admitConfig(), admitLayer(admitChampion, admitChallenger), admitRepo, admitProviders(), admitPrices()); !ok || model != admitChallenger {
+	if model, ok, why := admit(admitConfig(), admitLayer(admitChampion, admitChallenger), admitPolicy(), admitProviders(), admitPrices()); !ok || model != admitChallenger {
 		t.Errorf("Admit = %q %v %q, want the challenger behind the champion's own model", model, ok, why)
 	}
-	model, ok, why := Admit(admitConfig(), admitLayer(admitChampion), admitRepo, admitProviders(), admitPrices())
+	model, ok, why := admit(admitConfig(), admitLayer(admitChampion), admitPolicy(), admitProviders(), admitPrices())
 	if ok || model != "" || why != ReasonChampionModel {
 		t.Errorf("Admit = %q %v %q, want no model and %q", model, ok, why, ReasonChampionModel)
 	}
@@ -176,23 +228,19 @@ func TestAdmitSkipsChampionModel(t *testing.T) {
 // TestAdmitNeedsEnforceForProvider pins the gateway half of D556's checks: a
 // provider's calls go through the budget gateway, which holds the key and
 // routes the call, so a provider-served challenger under any other mode would
-// be a call to Anthropic. A direct model needs none of it.
+// be a call to Anthropic. A direct model needs none of it. The mode is the
+// run's, and a merge that set none is off (the runner fills the same value).
 func TestAdmitNeedsEnforceForProvider(t *testing.T) {
-	for _, mode := range []string{"", "off", "observe"} {
-		cfg := admitConfig()
-		cfg.Budget.Mode = mode
-		if model, ok, why := Admit(cfg, admitLayer(admitChallenger), admitRepo, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNeedsEnforce {
+	for _, mode := range []string{"", policy.ModeOff, policy.ModeObserve} {
+		eff := admitPolicy()
+		eff.Mode = mode
+		if model, ok, why := admit(admitConfig(), admitLayer(admitChallenger), eff, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNeedsEnforce {
 			t.Errorf("mode %q: Admit = %q %v %q, want no model and %q", mode, model, ok, why, ReasonNeedsEnforce)
 		}
 	}
-	cfg := admitConfig()
-	cfg.Budget = nil
-	if model, ok, why := Admit(cfg, admitLayer(admitChallenger), admitRepo, admitProviders(), admitPrices()); ok || why != ReasonNeedsEnforce {
-		t.Errorf("no budget block: Admit = %q %v %q, want %q", model, ok, why, ReasonNeedsEnforce)
-	}
-	cfg = admitConfig()
-	cfg.Budget.Mode = "observe"
-	if model, ok, why := Admit(cfg, admitLayer(admitClaudeAlt), admitRepo, admitProviders(), admitPrices()); !ok || model != admitClaudeAlt || why != "" {
+	eff := admitPolicy()
+	eff.Mode = policy.ModeObserve
+	if model, ok, why := admit(admitConfig(), admitLayer(admitClaudeAlt), eff, admitProviders(), admitPrices()); !ok || model != admitClaudeAlt || why != "" {
 		t.Errorf("a direct model under observe was refused: %q %v %q", model, ok, why)
 	}
 }
@@ -209,7 +257,7 @@ func TestAdmitNeedsAPIKeyForProvider(t *testing.T) {
 	for _, auth := range []string{"vertex", "oauth", "cascade"} {
 		cfg := admitConfig()
 		cfg.Agent.Auth = auth
-		if model, ok, why := Admit(cfg, admitLayer(admitChallenger), admitRepo, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNeedsAPIKey {
+		if model, ok, why := admit(cfg, admitLayer(admitChallenger), admitPolicy(), admitProviders(), admitPrices()); ok || model != "" || why != ReasonNeedsAPIKey {
 			t.Errorf("auth %q: Admit = %q %v %q, want no model and %q", auth, model, ok, why, ReasonNeedsAPIKey)
 		}
 	}
@@ -218,11 +266,12 @@ func TestAdmitNeedsAPIKeyForProvider(t *testing.T) {
 	// the champion's pins are refused by validate, not here.
 	cfg := admitConfig()
 	cfg.Agent.Auth = "oauth"
-	if model, ok, why := Admit(cfg, admitLayer(admitClaudeAlt), admitRepo, admitProviders(), admitPrices()); !ok || model != admitClaudeAlt || why != "" {
+	if model, ok, why := admit(cfg, admitLayer(admitClaudeAlt), admitPolicy(), admitProviders(), admitPrices()); !ok || model != admitClaudeAlt || why != "" {
 		t.Errorf("a direct model under oauth was refused: %q %v %q", model, ok, why)
 	}
-	cfg.Budget.Mode = "observe"
-	if _, _, why := Admit(cfg, admitLayer(admitChallenger), admitRepo, admitProviders(), admitPrices()); why != ReasonNeedsAPIKey {
+	eff := admitPolicy()
+	eff.Mode = policy.ModeObserve
+	if _, _, why := admit(cfg, admitLayer(admitChallenger), eff, admitProviders(), admitPrices()); why != ReasonNeedsAPIKey {
 		t.Errorf("under oauth and observe the reason is %q, want %q: the credential is asked before the mode", why, ReasonNeedsAPIKey)
 	}
 }
@@ -233,8 +282,27 @@ func TestAdmitNeedsAPIKeyForProvider(t *testing.T) {
 func TestAdmitSkipsBitbucket(t *testing.T) {
 	cfg := admitConfig()
 	cfg.Git.Provider = gitprov.KindBitbucket
-	if model, ok, why := Admit(cfg, admitLayer(admitChallenger), admitRepo, admitProviders(), admitPrices()); ok || model != "" || why != ReasonBitbucket {
+	if model, ok, why := admit(cfg, admitLayer(admitChallenger), admitPolicy(), admitProviders(), admitPrices()); ok || model != "" || why != ReasonBitbucket {
 		t.Errorf("Admit = %q %v %q, want no model and %q", model, ok, why, ReasonBitbucket)
+	}
+}
+
+// TestAdmitSkipsServiceHeldKey is the other half of A2.1's read-only rule, the
+// one a GitHub repository meets where the App's key is the credentials
+// service's: the job opens its provider keyless, so it can sign no JWT and
+// mints no read-only installation token, and the arm is refused before the
+// clone (internal/gitprov/github's GitAuthReadOnly, reached from runner.go's
+// mintGitAuth). The launch knows the fact — it is what decides whether the job
+// is handed the service's address — so it is refused here rather than after a
+// daily pair slot and a job execution.
+func TestAdmitSkipsServiceHeldKey(t *testing.T) {
+	if model, ok, why := Admit(admitConfig(), admitLayer(admitChallenger), admitRepo, admitPolicy(), admitProviders(), admitPrices(), true); ok || model != "" || why != ReasonServiceHeldKey {
+		t.Errorf("Admit = %q %v %q, want no model and %q", model, ok, why, ReasonServiceHeldKey)
+	}
+	// It is the read-only mint that is missing and not the challenger: the
+	// same launch on a job holding its own App key admits.
+	if model, ok, why := admit(admitConfig(), admitLayer(admitChallenger), admitPolicy(), admitProviders(), admitPrices()); !ok || model != admitChallenger {
+		t.Errorf("a job holding its own App key: Admit = %q %v %q, want %q", model, ok, why, admitChallenger)
 	}
 }
 
@@ -242,7 +310,7 @@ func TestAdmitSkipsBitbucket(t *testing.T) {
 // a layer whose only entry is empty, admit nothing and say so.
 func TestAdmitNeedsAChallenger(t *testing.T) {
 	for _, layer := range []config.AB{admitLayer(), admitLayer("")} {
-		if model, ok, why := Admit(admitConfig(), layer, admitRepo, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNoChallenger {
+		if model, ok, why := admit(admitConfig(), layer, admitPolicy(), admitProviders(), admitPrices()); ok || model != "" || why != ReasonNoChallenger {
 			t.Errorf("layer %+v: Admit = %q %v %q, want no model and %q", layer, model, ok, why, ReasonNoChallenger)
 		}
 	}
@@ -255,11 +323,11 @@ func TestAdmitNeedsAChallenger(t *testing.T) {
 // champion's credential and an enforced budget), so a disagreement can only be
 // this pair's.
 func TestAdmitAgreesWithTheProviderPolicy(t *testing.T) {
-	cfg, providers, prices := admitConfig(), admitProviders(), admitPrices()
+	cfg, providers, prices, eff := admitConfig(), admitProviders(), admitPrices(), admitPolicy()
 	for _, model := range []string{admitChallenger, "openai/gpt-9", "deepseek/chat-x:free", "deepseek/unpriced", admitClaudeAlt} {
 		agent := config.Agent{Auth: cfg.Agent.Auth, Models: config.ModelRoles{Coder: model}}
 		ps := config.CheckProviderPolicy(agent, nil, admitRepo, providers, prices)
-		_, ok, why := Admit(cfg, admitLayer(model), admitRepo, providers, prices)
+		_, ok, why := admit(cfg, admitLayer(model), eff, providers, prices)
 		switch {
 		case len(ps) > 0 && ok:
 			t.Errorf("%s: Admit admitted a model CheckProviderPolicy refuses: %v", model, ps)
