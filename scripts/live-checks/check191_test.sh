@@ -197,10 +197,31 @@ for line in open(path).read().splitlines() if os.path.exists(path) else []:
     row = {"run": repo.replace("/", "-") + "/" + rid, "run_id": rid,
            "repo": repo, "terminal": True}
     if kind == "ended":
-        # The probe whose outcome was written before its launch: it must not be
-        # served at all, so it pushed nothing and opened no pull request.
+        # The probe whose outcome was written before its launch, as its record
+        # really reads on a correct installation: halted in the credential
+        # family, and its halt detail is the GATEWAY's own constant naming the
+        # wire type. The service's sentence ("the run has ended: its outcome is
+        # written") is never relayed to the run (D143 — internal/gateway/
+        # service.go's refusalDetail is a constant, for every refusal type), so
+        # a check that looked for the service's words in the run's log or its
+        # record could never pass here: this fixture is what makes the happy
+        # path below the regression test for that reading. It pushed nothing
+        # and opened no pull request.
+        refused = ("the credentials service refused this run's identity "
+                   "(unverified_run_identity)")
         row.update({"status": "halted", "pushed": False,
-                    "reason": "the run has ended: its outcome is written"})
+                    "reason": "halted: budget_unavailable: " + refused,
+                    "halt": {"reason": "budget_unavailable", "scope": "run",
+                             "at": "2026-11-11T16:31:30Z", "detail": refused}})
+        if mode == "ended-pushed":
+            # The write landed and the service's own lines say nothing about it:
+            # a runner without the proxy pushed with the job's own mounted
+            # token, so the row measures nothing about the service.
+            row.update({"pushed": True, "pr": 65})
+        if mode == "ended-unrefused":
+            # The probe was served: the write-once outcome ended nothing.
+            row.update({"status": "succeeded", "pushed": False,
+                        "reason": "the agent made no commits", "halt": None})
     elif mode == "run-failed":
         # A real run's task commits one line, so the row a repository whose run
         # pushed nothing (or opened no pull request) answers with is the one the
@@ -220,7 +241,17 @@ logs)
   rid=${1:-}
   kind=$(sed -n "s/^$rid\t//p" "$state/runs" 2>/dev/null | head -n 1 | cut -f1)
   case "$kind" in
-  ended) echo "fatal: the run has ended: its outcome is written" ;;
+  ended)
+    # What the run's own log really carries: the halt the gateway wrote, whose
+    # detail is the gateway's constant. The service's own sentence is not here
+    # and is not anywhere in the run's record (D143); a case that sets
+    # FAKE_FUGARO_LOG_MODE=service-sentence puts it in, for the one reading that
+    # must never be taken from a log.
+    echo "fugaro: budget halted: the credentials service refused this run's identity (unverified_run_identity)"
+    if [ "${FAKE_FUGARO_LOG_MODE:-}" = service-sentence ]; then
+      echo "fatal: the run has ended: its outcome is written"
+    fi
+    ;;
   review) echo "CHK191 attempt=push refused=yes answer=403" ;;
   *)
     for attempt in other-repository other-ref tag ref-delete other-pull-request merge workspaces; do
@@ -384,8 +415,10 @@ elif sub == ("logging", "read"):
     # `ok` for a call it served, one `request_refused` per refusal), and one
     # refusal line per refusal, which is where the CLASS is written down
     # (internal/credsvc/bitbucketproxy.go's refuseProxyReason). The ended run's
-    # refusal is NOT audited (the service answers it before there is a verified
-    # identity) and so gets neither.
+    # refusal is NOT audited (the service answers it before there is a route at
+    # all) and so gets neither — which is what the ended-identity row reads: no
+    # line for that run is the ended identity having reached no route, and
+    # `ended-served` is the hole, the same run answered by the route.
     #
     # Every read is counted, and so is every read OF ONE RUN: `lagging-log`
     # answers a run's first read with three of its classes and the rest from its
@@ -424,21 +457,38 @@ elif sub == ("logging", "read"):
     path = os.path.join(STATE, "runs")
     for line in open(path).read().splitlines() if os.path.exists(path) else []:
         rid, kind, repo = line.split("\t")
-        if kind == "ended":
-            continue
         reads = 0
         reads_path = os.path.join(LOG, "logging.reads-" + rid)
         if os.path.exists(reads_path):
             reads = int(open(reads_path).read().strip() or "0")
         with open(reads_path, "w") as fh:
             fh.write(str(reads + 1))
+        if kind == "ended" and mode != "ended-served":
+            # An ended run leaves NO line: its identity is refused before there
+            # is a route at all, and every route that answers a call writes
+            # exactly one audit line (internal/credsvc's ServeHTTP verifies
+            # before every branch; bitbucketproxy_test.go's
+            # TestBitbucketRouteEndedRun pins 403 with zero audit lines). The
+            # `ended-served` mode is the hole: a line for the ended run is the
+            # service having answered it.
+            continue
         common = {"message": "credsvc: audit", "run": rid,
                   "repository": "bitbucket/workspace-a/repo-a",
                   "job": "fugaro-workspace-a-repo-a-web-0123456789ab",
                   "caller": "fugaro-b-1@fugaro-dev.iam.gserviceaccount.com",
                   "credential": "bitbucket-token"}
-        out.append({"jsonPayload": dict(common, purpose="github_read", status="ok")})
-        want = work_classes(rid, repo) if kind == "work" else ["no_run_branch"]
+        # The served line: `ok` for a call the route forwarded. The ended run of
+        # the mode above reaches the route at all, so its line is a git one and
+        # nothing refuses it — the hole the ended-identity row exists for.
+        out.append({"jsonPayload": dict(common,
+                                        purpose="git" if kind == "ended" else "github_read",
+                                        status="ok")})
+        if kind == "ended":
+            want = []
+        elif kind == "work":
+            want = work_classes(rid, repo)
+        else:
+            want = ["no_run_branch"]
         if mode == "missing-tag-refusal" and kind == "work":
             want = [c for c in want if c != "tag_ref"]
         if mode == "no-review-refusal" and kind == "review":
@@ -1251,6 +1301,12 @@ test_happy_path() {
     "commit it, push your branch and open the pull request" \
     "happy path: the working run's task asks for a real run"
   expect_contains "$out" "opened pull request #41" "happy path: the run-outcome row carries the pull request"
+  # The ended probe is read from its own record (the halt the gateway wrote) and
+  # from the service's own lines, which hold nothing for it: the service's own
+  # sentence is nowhere in the run (D143), so this is the reading the row has.
+  expect_contains "$out" "the halt budget_unavailable" "happy path: the probe's refusal is read from its own record"
+  [ -f "$dir/logs/logging.reads-$(rid_of "$dir" ended)" ] ||
+    fail "happy path: the service's own lines are not read for the ended probe, so the row cannot say the ended identity reached no route"
   # The outcome node was written, read back and deleted, and it is the node the
   # service reads a run's outcome from.
   calls=$(cat "$dir/logs/curl.calls")
@@ -1401,6 +1457,52 @@ test_an_outcome_that_cannot_be_written_stops_the_check() {
   expect_contains "$out" "FACT ended-identity: FAIL" "an unwritable outcome: the fact"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "--run-id $run_base-0003" "an unwritable outcome: no probe was launched"
   expect_contains "$out" "FACT scratch-removed: PASS" "an unwritable outcome: the scratch directory is still restored"
+}
+
+test_the_hole_the_ended_row_exists_for_is_a_failure() {
+  local dir=$work/endedserved
+  prepare "$dir"
+  # The service's own lines hold a line for the probe — a served git call — so
+  # the ended identity reached the proxy route: the hole this row exists for.
+  # The probe's own record is the correct one here, which is the point: a
+  # reading taken from the run's record alone would pass this run.
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=ended-served
+  expect_status "$status" 1 "a served ended run"
+  expect_contains "$out" "FACT ended-identity: FAIL" "a served ended run: the fact"
+  expect_contains "$out" "reached a route of the service instead of being refused as an identity" "a served ended run: the row says what it read"
+  expect_contains "$out" "status=ok" "a served ended run: the line it read is carried"
+}
+
+test_a_write_that_missed_the_service_is_unmeasured() {
+  local dir=$work/endeddirect
+  prepare "$dir"
+  # The probe pushed, and the service's own lines hold nothing for it: that
+  # write did not go through the service at all — this repository's job still
+  # mounts its own Bitbucket token and the runner used it the old way, which is
+  # a release whose runner carries no proxy (proxySince's own reason). The row
+  # is one the check could not measure, not a PASS over a write it cannot
+  # account for.
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=ended-pushed
+  expect_status "$status" 2 "a write that missed the service"
+  expect_contains "$out" "FACT ended-identity: FAIL" "a write that missed the service: the fact"
+  expect_contains "$out" "did not go through the credentials service" "a write that missed the service: the row says what it read"
+  expect_contains "$out" "0.22.0" "a write that missed the service: the release that carries the runner half is named"
+  expect_contains "$out" "FACT restore: PASS" "a write that missed the service: the node is still restored"
+}
+
+test_a_probe_that_was_served_and_wrote_nothing_is_a_failure() {
+  local dir=$work/endedunrefused
+  prepare "$dir"
+  # The probe ran to an ordinary end with no identity refusal in its record and
+  # no line in the service's own: nothing shows the write-once outcome ending
+  # anything, so the row is a failure rather than a pass about the proxy. The
+  # service's own sentence is put in the run's log to say the reading is not
+  # the log's: a check that looked for it there would pass this run.
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=ended-unrefused FAKE_FUGARO_LOG_MODE=service-sentence
+  expect_status "$status" 1 "a probe nobody refused"
+  expect_contains "$out" "FACT ended-identity: FAIL" "a probe nobody refused: the fact"
+  expect_contains "$out" "unverified_run_identity" "a probe nobody refused: the type the record must carry is named"
+  expect_contains "$out" "measured no refusal of the ended identity" "a probe nobody refused: the row does not claim more than it read"
 }
 
 test_after_flip_happy_path() {
@@ -1599,6 +1701,9 @@ t test_the_review_runs_push_refusal_is_asserted
 t test_the_review_probe_is_launched_with_the_pull_request_it_reviews
 t test_a_review_probe_launched_without_its_pull_request_is_a_failure
 t test_an_outcome_that_cannot_be_written_stops_the_check
+t test_the_hole_the_ended_row_exists_for_is_a_failure
+t test_a_write_that_missed_the_service_is_unmeasured
+t test_a_probe_that_was_served_and_wrote_nothing_is_a_failure
 t test_after_flip_happy_path
 t test_after_flip_a_job_that_still_mounts_the_token_is_a_failure
 t test_after_flip_an_account_that_still_has_the_accessor_is_a_failure

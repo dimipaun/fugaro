@@ -2,10 +2,16 @@
 
 **Status: written by task B1.11 of the secrets-brokering plan; run by the owner, task B1.12 (Check
 191) and the flip's own task (Check 192).** Neither has been run: Check 191 runs on the **released**
-build that first carries the proxy — **0.21.0** (the plan's Levels table gives the proxy chain
-0.15.0, and that release has no proxy to measure: `internal/credsvc/bitbucketproxy.go` landed
-2026-11-07, and 0.21.0 is the first tag that holds it) — and not on a development build: a build from
-a checkout resolves no released credentials-service image to deploy
+build whose **runner** carries the proxy — **0.22.0**. The plan's Levels table gives the proxy chain
+0.15.0, which has no proxy to measure, and 0.21.0 is the first tag that holds the service's half
+(`internal/credsvc/bitbucketproxy.go` landed 2026-11-07) — but it was cut **without** the runner's,
+which landed in the release after it (`internal/cli/recipes_skew.go`'s `proxySince` names the release
+that carries it, and that constant is the gate `fugaro run` refuses an older job image with). A run of
+this check made with an older CLI measures nothing about the proxy: such a CLI carries no `proxySince`
+launch gate, so a repository whose job image predates the proxy is launched as any other run, its
+runner pushes straight to Bitbucket with the token the job still mounts (the mount Check 192's flip
+takes off it), and the rows below would read as if the service had served that traffic. And not on a
+development build: a build from a checkout resolves no released credentials-service image to deploy
 (`internal/cli/init_credentials.go`, `resolveCredentialsImage`), so `fugaro version` must not print
 `dev`. Check 192 runs after the flip (D500, O7). **No agent runs any step of either**, and no agent
 has: what they measure is a live installation, real runs and the credentials service's own answers.
@@ -200,7 +206,8 @@ not a pass: the audit line is the other half of the reading.
 **Exit codes.** `0` is every criterion that was measured holding. `1` is a measured criterion that did
 not hold, or a guard that stopped the check before it ran. `2` is the check not being able to
 **measure** — a tool is missing, the ended-run probe could not be set up (the node could not be
-written, or did not read back), or no secret carries the label the accessor row is read from. A key
+written, did not read back, or its write landed with the service's own lines holding nothing for it),
+or no secret carries the label the accessor row is read from. A key
 the run never reached reads `FAIL — not reached`.
 
 ## If it stops before the end
@@ -275,10 +282,25 @@ knowing by name:
   or the account may not write it), or was written and did not read back. **No probe was launched**
   and nothing about the ended-run refusal was measured; the row's detail says which of the two, and
   the node, if one was written, is left for the restore to delete.
-- **`ended-identity: FAIL` on a launched probe** — the probe was launched with its outcome already
-  written and was **not** refused (`without the service's ended-run refusal in its own log or its
-  row`), or it pushed, or opened a pull request. That is the reading that the write-once outcome no
-  longer ends an identity: run `fugaro diagnose <slug>/<run id>` before anything else.
+- **The probe's write landed and the service's own lines hold nothing for it** (`ended-identity: FAIL`,
+  exit `2`) — the row could not measure the service: the probe pushed (or opened a pull request) and
+  no `credsvc: audit` or class line names it, so that write did not go through the credentials service
+  at all. The repository's job still mounts its own Bitbucket token, and the runner that pushed used
+  it the old way, which is what a release whose **runner** does not carry the proxy does — see the
+  release paragraph above, and run the check again with the release that carries it and a job image
+  built from it. Read the service's own lines for the probe yourself first (`gcloud logging read`,
+  `jsonPayload.run`): a line there makes this the finding below instead.
+- **`ended-identity: FAIL` on a launched probe** — one of two readings, and the row's detail says
+  which. **The service's own lines name the probe**: a call that reaches any route of the service is
+  audited before it is answered, while an identity refusal is answered before there is a route at all,
+  so a line for the ended run is the service having **served** a call of a run that had ended — this is
+  the finding the row exists for. **Or the probe's own record carries no identity refusal**: a run
+  whose outcome is written is refused at its first call (`RunEnded`), and the type its record carries
+  for that refusal is `unverified_run_identity`. The service's own sentence ("the run has ended: its
+  outcome is written") is **never** relayed to the run — the gateway that forwards the call answers the
+  agent with a constant of its own naming the type (D143; Check 95 records the same by hand) — so the
+  sentence is not the reading, and a row that looked for it could never pass. Either way: run `fugaro
+  diagnose <slug>/<run id>` and read the service's own lines before anything else.
 
 ## What is left behind
 
