@@ -21,6 +21,10 @@ package cli
 //     command — one orchestrator's work items and their `depends_on`, a local
 //     scope falling back to this machine's cached brief, and `all` as the union
 //     keyed by source (D1356, D1358, §6.22).
+//   - TestGraphAllWarnsAboutAnUnreadableCache: a cache file this release cannot
+//     read is the warning of a read that still answers for every scope the
+//     database holds, and it refuses only the `local:<id>` that asked for that
+//     file — never a document-less exit for the console's default scope.
 //   - TestGraphAllIsTheCoordinatorToday: `all` is the union of the scopes that
 //     exist, which today is the coordinator alone, and the document names it as
 //     itself — `coordinator` is the source half of every key it produced and the
@@ -308,6 +312,32 @@ func (f *graphFixture) writeCachedBrief(t *testing.T, id string, at time.Time) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// writeUnreadableBrief leaves a file where the daemon writes a cached brief,
+// holding a document this release does not read — a brief another release's
+// daemon wrote, which is what a machine that has upgraded the CLI around a
+// daemon it did not restart has. It answers the path it wrote, so a test can
+// name the file in the sentence the read gives about it.
+func (f *graphFixture) writeUnreadableBrief(t *testing.T, id string) string {
+	t.Helper()
+	path, err := orchestrator.BriefCachePath(os.Getenv, runtime.GOOS, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(orchestrator.BriefCache{
+		Version: orchestrator.BriefCacheVersion + 1, Brief: "a brief another release wrote.", WrittenAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // seedRun leaves one run of the fixture's repository in the fixture's bucket: a
@@ -628,6 +658,73 @@ func TestGraphReadsTheOrchestratorAndLocalScopes(t *testing.T) {
 		t.Error("an orchestrator scope was answered from this machine's cached brief, want the refusal: only a local scope falls back to the cache")
 	} else if !strings.Contains(err.Error(), "fugaro orchestrator ls") {
 		t.Errorf("the refusal is %q, want it to say where the ids this installation has are listed", err)
+	}
+}
+
+// TestGraphAllWarnsAboutAnUnreadableCache: the ids this machine runs are one of
+// the two ways `all` names the scopes that exist, and a cache file this release
+// cannot read — a daemon of another release wrote it, which is what a machine
+// whose CLI was upgraded around a daemon that was not has — takes that way away
+// without taking the read away with it. `all` is the console's default read, so
+// the scopes the database answers for are still in the document, the ids only
+// the cache knew about are left out, and the sentence saying so is the
+// document's warning (H3, T3).
+//
+// A scope that *asks* for that file is the other thing, and it is still refused:
+// `local:<id>` is a request for the brief at that id, and a caller that asked
+// for one scope and got a document without it could not tell that from an
+// orchestrator this installation does not have (§6.22, cachedBriefs).
+func TestGraphAllWarnsAboutAnUnreadableCache(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	f.writeOrchestratorState(t, "o1", "land the state migration", "move the sweep onto the daemon")
+	path := f.writeUnreadableBrief(t, "o9")
+
+	doc := graphDocument(t, "graph", "--json")
+	if len(doc.Sources) != 2 || doc.Sources[0].Source != "coordinator" || doc.Sources[1].Source != "orchestrator:o1" {
+		t.Fatalf("`all` covers %+v, want the coordinator and the orchestrator the database holds", doc.Sources)
+	}
+	if len(doc.Nodes) != 3 {
+		t.Errorf("`all` drew %d nodes, want the stored record's one and the node's two work items", len(doc.Nodes))
+	}
+	for _, src := range doc.Sources {
+		if strings.HasPrefix(src.Source, "local:") {
+			t.Errorf("`all` lists %q, want no local scope: the cache one would have come from cannot be read", src.Source)
+		}
+	}
+	if len(doc.Warnings) != 1 {
+		t.Fatalf("the document's warnings are %q, want the one sentence about the cache", doc.Warnings)
+	}
+	if !strings.Contains(doc.Warnings[0], filepath.Base(path)) || !strings.Contains(doc.Warnings[0], "left out") {
+		t.Errorf("the warning is %q, want it to name %s and say what was left out for it", doc.Warnings[0], filepath.Base(path))
+	}
+
+	// The table is the same read with the warnings on stderr, which is where a
+	// person reading it is told what the read could not do.
+	out, errOut, err := execute(t, "graph")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	if !strings.Contains(out, "coordinator") {
+		t.Errorf("the table is\n%s\nwant the coordinator scope", out)
+	}
+	if !strings.Contains(errOut, filepath.Base(path)) {
+		t.Errorf("stderr is %q, want the warning naming %s", errOut, filepath.Base(path))
+	}
+
+	// The one scope that asked for that file: refused, with no document at all.
+	out, _, err = execute(t, "graph", "--source", "local:o9", "--json")
+	if err == nil {
+		t.Fatalf("graph --source local:o9 answered for a cached brief this release cannot read")
+	}
+	if got := fcli.ExitCode(err); got != fcli.ExitUserError {
+		t.Errorf("the refusal exits %d, want %d: it is a file this machine cannot read, not a database that failed", got, fcli.ExitUserError)
+	}
+	if !strings.Contains(err.Error(), filepath.Base(path)) {
+		t.Errorf("the refusal is %q, want it to name the file it is about", err)
+	}
+	if out != "" {
+		t.Errorf("the refused scope wrote %q to stdout, want no document at all", out)
 	}
 }
 

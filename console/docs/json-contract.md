@@ -2997,8 +2997,14 @@ brief when there is none (CG5). **An id the project's database does not hold is
 refused**, naming the scope and `fugaro orchestrator ls` — and so is a
 `local:<id>` this machine has no cached brief for — because a screen must be
 able to tell "nothing here" from "not asked", and never answered with an empty
-document, which is the same shape a scope with no work in it prints. The cache
-is `local:`'s own fallback and never the orchestrator scope's:
+document, which is the same shape a scope with no work in it prints. **A cache
+file this release cannot read is the warning of a read that still answers**, and
+not a refusal: the ids the project's database holds are read as the
+orchestrators they are, the ids only that cache knew about are left out of the
+document, and `warnings` carries the one sentence naming the file. A `local:<id>`
+asked for by name is the other thing: it asked for that very brief, so it is
+refused over it. The cache is `local:`'s own fallback and never the orchestrator
+scope's:
 `orchestrator:<id>` reads the node through the caller's credential, and a
 machine that happened to have a brief for that id cannot answer the scope that
 asks the project (D1358). The value reaches argv from the renderer, so the CLI

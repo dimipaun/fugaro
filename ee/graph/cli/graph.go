@@ -35,6 +35,7 @@ import (
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // Three properties are this command rather than niceties around it:
@@ -253,7 +254,7 @@ func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, d
 	nodes := []graph.Node{}
 	edges := []graph.Edge{}
 
-	covers, orchestrators, err := graphSources(ctx, env, db, scope)
+	covers, orchestrators, err := graphSources(ctx, env, db, scope, warned)
 	if err != nil {
 		return graph.Document{}, err
 	}
@@ -318,7 +319,13 @@ func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, d
 // as a scope that is down (H3), while a read this CLI is *refused* is returned
 // as it is — terminal, exit 1, the one failure the console draws as "this CLI
 // has no graph" (T3).
-func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope graph.Scope) (bool, []graph.OrchestratorSource, error) {
+//
+// A cache this release cannot read is neither of those under `all`: it takes
+// away one of the two ways an id is named and not the scopes the database
+// answers for, so the read warns about it and carries on. Only a scope *named*
+// on the command line is refused over it, because `local:<id>` is a request for
+// that very file (cachedBriefs).
+func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope graph.Scope, warned *bytes.Buffer) (bool, []graph.OrchestratorSource, error) {
 	switch scope.Kind {
 	case graph.ScopeCoordinator:
 		return true, nil, nil
@@ -334,7 +341,15 @@ func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope g
 	// brief for, which is the union `fugaro orchestrator ls` lists.
 	caches, err := cachedBriefs()
 	if err != nil {
-		return false, nil, err
+		// A file on this machine this release cannot read is one way of naming
+		// the orchestrators a machine runs, and the database is the other: the
+		// ids it holds are still read, as the central scopes they are, and the
+		// ones only the cache knew about are left out with the warning saying
+		// so. `all` is the console's default read, and a console told "this CLI
+		// has no graph" over one stale cache file would draw nothing at all
+		// (H3, T3).
+		_, _ = fmt.Fprintf(warned, "the orchestrators only this machine runs are left out of this graph: %s\n", safetext.OneLine(err.Error()))
+		caches = nil
 	}
 	ids, err := orchestrator.NodeIDs(ctx, db)
 	if err != nil {
@@ -421,11 +436,12 @@ func orchestratorNode(ctx context.Context, db *rtdb.Client, id string) (json.Raw
 // how the cache's directory is placed (orchestrator.CachedBriefs, D1243) — the
 // reader is internal/orchestrator's and this is not a second one.
 //
-// A cache this release cannot read is a refusal rather than a scope that is
-// down: it is a file on this machine, not an answer from the database, and
-// `fugaro orchestrator ls` refuses it with the same sentence for the same
-// reason (CG4). Reporting the id as merely down would hide a file a person can
-// see and fix.
+// An error here is what a caller makes of it, and the two callers differ: a
+// scope named `local:<id>` is a request for this file, so it refuses with the
+// sentence `fugaro orchestrator ls` refuses it with (CG4) — reporting the id as
+// merely down would hide a file a person can see and fix — while `all` warns
+// and reads the scopes the database answers for (graphSources), because one
+// file this release cannot read is not every scope's failure.
 func cachedBriefs() (map[string]time.Time, error) {
 	briefs, err := orchestrator.CachedBriefs(os.Getenv, runtime.GOOS)
 	if err != nil {

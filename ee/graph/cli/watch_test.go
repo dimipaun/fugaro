@@ -44,6 +44,10 @@ package cli
 //     stop the read, so a change on the subtree that is still listening still
 //     reaches a reader while the other scope stays down in the same document
 //     (H3, H4).
+//   - TestWatchSurvivesAnUnreadableCacheFile: the scopes this machine alone
+//     runs come from a cache file the read meets again on every document, and
+//     one it cannot read is a warning each time rather than the end of the
+//     child (H3, T3).
 //   - TestWatchRefusedReadIsTerminalAndNamesTheCommand: the listen *refused* —
 //     a 401 or 403 on the subscription itself — ends the child, its sentence
 //     carrying the database's own cause and naming the command that fixes it
@@ -74,6 +78,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -775,6 +780,41 @@ func TestWatchTransientReadFailureIsADownScopeAndIsRetried(t *testing.T) {
 	}
 	if len(back.Nodes) != len(first.Nodes) || back.Nodes[0].Title != first.Nodes[0].Title {
 		t.Errorf("the recovered document drew %+v, want the whole stored graph again %+v", back.Nodes, first.Nodes)
+	}
+	child.stillRunning(t, 20*testFloor)
+}
+
+// TestWatchSurvivesAnUnreadableCacheFile: every document is a read, and the
+// scopes a document covers include the orchestrators this machine runs — so the
+// cache the local scope's briefs live in is met again on every one of them. A
+// cache file this release cannot read is therefore a warning in each document
+// and never the end of the child (H3, T3, graph.go's graphSources): a stream
+// that exited over one stale file would tell a console "this CLI has no graph"
+// about a project whose coordinator it can read perfectly well.
+func TestWatchSurvivesAnUnreadableCacheFile(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	path := f.writeUnreadableBrief(t, "o9")
+	fast(t, testFloor, testKeep)
+
+	sink := newWatchSink()
+	child := startWatch(t, sink, "graph", "--watch", "--json")
+	first := sink.next(t, testPatience)
+	if len(first.Sources) != 1 || first.Sources[0].Source != "coordinator" {
+		t.Fatalf("the first document lists %+v, want the coordinator alone: the local scopes come from the cache that cannot be read", first.Sources)
+	}
+	if len(first.Warnings) != 1 || !strings.Contains(first.Warnings[0], filepath.Base(path)) {
+		t.Fatalf("the first document's warnings are %q, want the one naming %s", first.Warnings, filepath.Base(path))
+	}
+
+	// The next document meets the same file, and carries the change beside it.
+	f.writeStoredView(t, changedView())
+	second := sink.next(t, testPatience)
+	if second.Seq != first.Seq+1 {
+		t.Errorf("the document after the change is seq %d, want the next one, %d", second.Seq, first.Seq+1)
+	}
+	if len(second.Warnings) != 1 {
+		t.Errorf("the next document's warnings are %q, want the warning the read gives every time", second.Warnings)
 	}
 	child.stillRunning(t, 20*testFloor)
 }
