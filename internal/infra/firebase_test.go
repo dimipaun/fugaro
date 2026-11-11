@@ -1367,12 +1367,18 @@ func TestNoJobAccountHoldsTheDatabase(t *testing.T) {
 		`"serviceAccount:${var.workspace_service_account}"`: true,
 	}
 	// A grant spelled `member = each.value` binds whatever its own for_each
-	// iterates, so the set is half the member: only these two locals are the
+	// iterates, so the set is half the member: only these three locals are the
 	// installation's people, and a grant iterating anything else — a
 	// var.job_accounts, or a set a later edit adds — is not one of them. The
 	// member expression alone cannot tell the two apart, which is why the walk
 	// reads the for_each.
-	peopleLocals := map[string]bool{"local.people": true, "local.admins": true}
+	//
+	// local.readers is the people with the viewer list (RS4, roles.md §4):
+	// the viewer's own grant of roles/firebasedatabase.viewer, which is the
+	// read the role is named for and no write. It is a local of its own and
+	// not the people widened, so the minter's grant, which is what would let
+	// a viewer claim an identity, still iterates local.people alone.
+	peopleLocals := map[string]bool{"local.people": true, "local.admins": true, "local.readers": true}
 	members := databaseRoleMembers(t, "gcp/modules/firebase")
 	if len(members) == 0 {
 		t.Fatal("the Firebase module binds no database role: the walk is reading the wrong files")
@@ -1387,7 +1393,7 @@ func TestNoJobAccountHoldsTheDatabase(t *testing.T) {
 		t.Errorf("%s: the Firebase root binds a database role to %s with for_each = %q, and the principals it may bind one to are the people, the history account, the coordinator's account and the workspace's", key, grant.member, grant.forEach)
 	}
 
-	// The two `each.value` grants are the people, and the people are these four
+	// The `each.value` grants are the people, and the people are these five
 	// member lists and nothing else: a job's or the front door's account
 	// reaching a database role through a local would leave the member
 	// expressions above unchanged.
@@ -1397,6 +1403,8 @@ func TestNoJobAccountHoldsTheDatabase(t *testing.T) {
 			"local.people is the launchers and the operators, the two member lists internal/infra's CheckFirebaseMembers refuses a Fugaro account in"},
 		{`(?m)^\s*admins\s*=\s*toset\(concat\(var\.admins,\s*var\.budget_admins\)\)\s*$`,
 			"local.admins is the admins and the budget admins, for the same reason"},
+		{`(?m)^\s*readers\s*=\s*setunion\(local\.people,\s*toset\(var\.viewers\)\)\s*$`,
+			"local.readers is the people with the viewer list and nothing else, the third member list the same check refuses a Fugaro account in"},
 	} {
 		if !regexp.MustCompile(want.re).MatchString(src) {
 			t.Errorf("the Firebase module's members are not exactly what the grants assume: %s", want.why)

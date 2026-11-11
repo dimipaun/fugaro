@@ -2144,9 +2144,14 @@ var runAccountGrants = setOf(
 
 	// The operators' and launchers' grants whose for_each this test does not
 	// resolve to a set of people (a conditional, a merge of pairs): pinned
-	// whole, so a member slipped into one is a different key.
+	// whole, so a member slipped into one is a different key. The log view's
+	// is the one the viewer list reaches too (RS4): the role is
+	// roles/logging.viewAccessor on the isolated view, which is a read of the
+	// runs' logs and of nothing else — the view is the module's own, the role
+	// carries no storage permission and no permission to grant one, and the
+	// member is a member of one of these three sets.
 	`google_cloud_run_v2_job_iam_member | var.job_runner_role | name=google_cloud_run_v2_job.this[0].name | each.value | for_each=var.workflow.deploy_job ? toset(var.launchers) : toset([]) | perms=?`,
-	`google_logging_log_view_iam_member | "roles/logging.viewAccessor" | name=google_logging_log_view.runs[0].name | each.value | for_each=var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([]) | perms=`,
+	`google_logging_log_view_iam_member | "roles/logging.viewAccessor" | name=google_logging_log_view.runs[0].name | each.value | for_each=var.log_isolation ? toset(concat(var.launchers, var.operators, var.viewers)) : toset([]) | perms=`,
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.project[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_project_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_project_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_project_secrets={ for p in setproduct(keys(var.project_secrets), var.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.this[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_secrets={ for p in setproduct(keys(var.repo.secrets), var.installation.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
 
@@ -2444,7 +2449,7 @@ func (s *iamScan) checkModule(p string, b hclBlock, locals map[string]map[string
 	if !strings.HasPrefix(src, "../") || !strings.HasPrefix(target, "modules/") || strings.Contains(strings.TrimPrefix(target, "modules/"), "/") {
 		s.failf("%s: module %q has source %q, which is not one of the modules this test scans: whatever it grants is unread", p, strings.Join(b.labels, " "), src)
 	}
-	for _, k := range []string{"operators", "launchers", "admins", "budget_admins"} {
+	for _, k := range []string{"operators", "launchers", "admins", "budget_admins", "viewers"} {
 		v := field(b.body, k)
 		if v == "" {
 			continue
@@ -2771,10 +2776,21 @@ func roleIDKey(id string) string { return strings.ToLower(strings.ReplaceAll(id,
 var peopleVars = map[string]bool{
 	"var.operators": true, "var.launchers": true, "var.admins": true, "var.budget_admins": true,
 	"var.installation.operators": true, "var.installation.launchers": true,
+	// The viewer list (RS4, roles.md §4). It is a member list like the
+	// others, and what it holds is a READ of the runs and their logs: the
+	// role the installation grants it is the launcher's minus
+	// run.executions.cancel, and every other grant it reaches is read-only
+	// (modules/installation/iam.tf, modules/firebase/iam.tf). A write role
+	// on the runs bucket granted to it is then the same documented limit the
+	// operators' own unconditioned grant is (SECURITY.md:56) — the storage
+	// rules below still read that grant, and the bucket a viewer or an
+	// operator is written on is still their own access, not a run
+	// credential's.
+	"var.viewers": true,
 }
 
 // peopleSet reports whether a for_each expression is a set of people:
-// var.operators and var.launchers, directly or through a locals block. A
+// the variables in peopleVars, directly or through a locals block. A
 // reference to anything else — a service account, a literal, a variable this
 // test does not know — is not one, so each.value over it is not a person.
 func peopleSet(expr string, locals map[string]string) bool { return peopleSetDepth(expr, locals, 0) }
@@ -3319,8 +3335,9 @@ func mapValues(expr string) ([]string, bool) {
 	return out, len(out) > 0
 }
 
-// isPersonSet is whether a member is one of the operators' or launchers' own
-// identities: each.value over a set of people, or a variable that is one.
+// isPersonSet is whether a member is one of the operators', launchers' or
+// viewers' own identities: each.value over a set of people, or a variable that
+// is one.
 func isPersonSet(member, forEach string, locals map[string]string) bool {
 	if member == "each.value" {
 		return peopleSet(forEach, locals)

@@ -63,7 +63,14 @@ func TestInstallationVarsMatchModule(t *testing.T) {
 	spec.AlertEmail = &email
 	// The default leaves log_isolation out; the rollback's ForgetSpec
 	// writes log_isolation=false, which must be a root variable too.
-	for name, s := range map[string]InstallationSpec{"default": spec, "forget": ForgetSpec(spec)} {
+	//
+	// The third case is the viewer list's (RS4, roles.md §4): an empty list
+	// is left out of the tfvars, so the two cases above write no viewers key
+	// and nothing would check that the key the module's role and grants are
+	// gated on is a variable of the root.
+	withViewers := spec
+	withViewers.Viewers = []string{"user:viewer@example.com"}
+	for name, s := range map[string]InstallationSpec{"default": spec, "viewers": withViewers, "forget": ForgetSpec(spec)} {
 		data, err := InstallationVars(s)
 		if err != nil {
 			t.Fatal(err)
