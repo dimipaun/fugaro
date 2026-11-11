@@ -571,8 +571,13 @@ type danglingMark struct {
 // before is the record as the write that called this found it, and it is what
 // makes the prune safe to run beside a record other writers are changing. No
 // deletion rests on a single read: a document goes only when the reads agree,
-// and the put that takes it is made on the ETag its own document was read on,
-// so anything written to that document in between fails the put.
+// the put that takes it is made on the ETag its own document was read on, and
+// the plan that would carry its task again — the one write that undoes a
+// dangling without touching this document — is read immediately before that
+// put. What is left is the round trip between that read and the put, which no
+// single-document compare-and-set closes: the deletion is guarded by the
+// assignment's ETag and the republish writes the plan. That is the prune's one
+// residual, and it is stated rather than papered over.
 //
 //   - The candidates come from before, so this write never stamps or deletes
 //     what it has itself just orphaned: a document that was not dangling before
@@ -584,16 +589,23 @@ type danglingMark struct {
 //     document that is no longer the one that read holds — another writer
 //     changed it, or removed it — is left alone: it belongs to a decision that
 //     never saw it, and the deletion below is put on the ETag of the document
-//     as it was read, so the same is true of a write that lands later.
+//     as it was read, so the same is true of a write to that document that
+//     lands later.
 //   - The decision comes from a second read of the record, taken after those
 //     documents were read — never from before — so a plan published back
 //     between the write and the prune leaves the assignments it restores
 //     assigned and their marks dropped: before is stale in exactly that
 //     direction, and a prune that decided from it would delete the moves a
 //     republish has just put back.
+//   - The plan is read again as the deletion is made (aPlanCarries), because
+//     that second read is stale in the other direction too: a republish after
+//     it puts a task back in a plan document, which this document's ETag says
+//     nothing about.
 //   - The ledger is read against the same two records, and a mark is dropped
 //     rather than acted on when the record does not show its document dangling
-//     at both ends of the write.
+//     at both ends of the write. It is the last thing the call does, so that
+//     the round trips it spends clearing marks are not time a republish has to
+//     land in between the record's second read and the first deletion.
 //   - The mark itself is the last: a document goes only when a mark for it is
 //     older than PruneAge, and a mark is written the first time a prune sees
 //     the document dangling.
@@ -616,18 +628,12 @@ func (s *Store) pruneDangling(ctx context.Context, before Roadmap) error {
 	if err != nil {
 		return err
 	}
-	if err := s.reconcileDanglingMarks(ctx, before, after, marks); err != nil {
-		return err
-	}
-	if len(assigns)+len(edges) == 0 {
-		return nil
-	}
 	for _, c := range stillDangling(after, append(assigns, edges...)) {
 		if err := s.applyDangling(ctx, c); err != nil {
 			return err
 		}
 	}
-	return nil
+	return s.reconcileDanglingMarks(ctx, before, after, marks)
 }
 
 // danglingKeys is the keys of the documents one read of the record holds
@@ -690,15 +696,18 @@ func (s *Store) reconcileDanglingMarks(ctx context.Context, before, after Roadma
 
 // pruneCandidate is one document the prune may act on: where it lives, the
 // ETag it was read on, the document as it was read, the key its mark lives
-// under, the mark the ledger held for it when this call began, and which of
-// the record's two dangling families it belongs to.
+// under, the mark the ledger held for it when this call began, which of the
+// record's two dangling families it belongs to, and the qualified task ids
+// whose absence from a plan is what makes the document dangling — the check
+// made again, against the plans themselves, as the deletion is put.
 type pruneCandidate struct {
-	path string
-	etag string
-	raw  json.RawMessage
-	key  string
-	mark danglingMark
-	edge bool
+	path  string
+	etag  string
+	raw   json.RawMessage
+	key   string
+	mark  danglingMark
+	edge  bool
+	tasks []string
 }
 
 // danglingCandidates is the documents this call may act on, in the two sets
@@ -778,6 +787,7 @@ func stillDangling(after Roadmap, cs []pruneCandidate) []pruneCandidate {
 			if !held || !reflect.DeepEqual(stored, doc) || !idx.edge(stored) {
 				continue
 			}
+			c.tasks = []string{stored.Task, stored.Needs}
 			out = append(out, c)
 			continue
 		}
@@ -790,6 +800,7 @@ func stillDangling(after Roadmap, cs []pruneCandidate) []pruneCandidate {
 		if !held || !reflect.DeepEqual(stored, doc) || !idx.assignment(stored) || idx.carriesTask(stored.Task) {
 			continue
 		}
+		c.tasks = []string{stored.Task}
 		out = append(out, c)
 	}
 	return out
@@ -812,7 +823,65 @@ func (s *Store) applyDangling(ctx context.Context, c pruneCandidate) error {
 	if err := s.clearDanglingMark(ctx, c.key); err != nil {
 		return err
 	}
+	carried, err := s.allPlansCarry(ctx, c.tasks)
+	if err != nil {
+		return err
+	}
+	if carried {
+		return nil
+	}
 	return s.deletePruned(ctx, c)
+}
+
+// allPlansCarry says whether every plan the candidate's tasks name carries its
+// task again. It is the prune's last check before a deletion, taken as the
+// deletion is put: the record's second read is stale in exactly the direction a
+// republish moves, because a republish writes the plan document while the ETag
+// the deletion rests on guards the assignment or the edge. A candidate every
+// one of whose tasks is back is one whose dangling has ended, and the mark just
+// cleared is what the ledger pass would have done with it anyway.
+//
+// What is left is the round trip between this read and the put, and it is the
+// prune's residual: a task put back inside it has its assignment or its edge
+// deleted by the very next request, and the next move the task is given writes
+// the assignment again without the release and the log it had. No single
+// document's compare-and-set closes it, and the alternative — never deleting —
+// gives up D2115's 30-day bound altogether.
+func (s *Store) allPlansCarry(ctx context.Context, tasks []string) (bool, error) {
+	for _, task := range tasks {
+		carried, err := s.aPlanCarries(ctx, task)
+		if err != nil || !carried {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// aPlanCarries reads one plan document and says whether it carries a qualified
+// task. A plan that is not there carries nothing — an unpublish is what took
+// the task away — and one this build cannot read is taken as carrying it: the
+// same answer the ledger gives an unreadable mark, and the one that keeps a
+// document rather than deleting it over a document nobody here can read.
+func (s *Store) aPlanCarries(ctx context.Context, task string) (bool, error) {
+	plan, id, ok := SplitQualifiedID(task)
+	if !ok {
+		return false, nil
+	}
+	var raw json.RawMessage
+	_, found, err := s.Read(ctx, PathPlan(plan), &raw)
+	if err != nil || !found {
+		return false, err
+	}
+	var doc Plan
+	if !roadmapDocument(raw, &doc) {
+		return true, nil
+	}
+	for _, t := range doc.Tasks {
+		if t.ID == id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // danglingMarks reads the ledger. A mark this build cannot read is one it does

@@ -898,6 +898,45 @@ func TestThePruneLeavesADocumentWhoseTaskCameBack(t *testing.T) {
 	}
 }
 
+// TestThePruneReadsThePlanBeforeItDeletes pins the window the record's second
+// read leaves open on its own: a republish writes the plan document, and the
+// ETag the deletion rests on guards the assignment, so the second read cannot
+// see it. The clear of the candidate's mark is held — the prune's last request
+// before the put — and the republish lands inside the hold, after the second
+// read and before the deletion. The prune reads the plan again as it puts, so
+// the move survives.
+func TestThePruneReadsThePlanBeforeItDeletes(t *testing.T) {
+	s, f := testStoreAndFake(t)
+	ctx := testCtx(t)
+	source := planWithTasks("plans/gone", 1, "the task the plan carries")
+	task := source.Plan + "/" + source.Tasks[0].ID
+	f.Set(PathRelease("console", "0.110"), Release{
+		Schema: RoadmapSchema, ID: "0.110", Stream: "console", Name: "console 0.110",
+		State: ReleaseOpen, Order: 1, By: "person-2@example.com", At: time.Now().UTC(),
+	})
+	f.Set(PathAssign(task), Assignment{
+		Schema: RoadmapSchema, Task: task, Release: ReleaseID("console", "0.110"),
+		By: "person-2@example.com", At: time.Now().Add(-PruneAge - time.Hour),
+	})
+	markDangling(t, f, AssignID(task), time.Now().Add(-PruneAge-time.Hour))
+
+	stamped, openClear := f.HoldNext(PathDanglingMark(AssignID(task)))
+	done := make(chan error, 1)
+	go func() { done <- s.PublishPlan(ctx, planWithTasks("plans/other", 1, "a task"), "", false) }()
+	<-stamped
+	if err := s.PublishPlan(ctx, source, "", false); err != nil {
+		t.Fatalf("republishing the plan that carries the task: %v", err)
+	}
+	openClear()
+
+	if err := <-done; err != nil {
+		t.Fatalf("publishing beside a republish: %v", err)
+	}
+	if _, found := readDoc[Assignment](t, s, PathAssign(task)); !found {
+		t.Fatal("the prune deleted an assignment whose task a republish had just put back")
+	}
+}
+
 // TestARemovedEdgeDoesNotLeaveItsDateBehind: the ledger dates a spell of
 // dangling, and a mark that outlives its document hands the next document
 // under that key a keep that is already spent. An edge removed and added back
