@@ -112,7 +112,15 @@ printf 'path=%s\n' "${PATH:-}" >>"$FAKE_LOG_DIR/paths"
 # environment this shell has.
 if [ "${1:-}" = troubleshoot ]; then
   printf 'token=%s\n' "${GH_TOKEN:-unset}${GITHUB_TOKEN:+ and a second one}" >>"$FAKE_LOG_DIR/gh"
+  # two-path: what the child's own PATH resolves `claude` to, run rather than
+  # read, so a case can say which of two directories' tools the mirror kept. Only
+  # this mode starts it, since `claude` may be a real client on the machine
+  # running the test.
+  if [ "${FAKE_MODE:-default}" = two-path ]; then
+    printf 'claude=%s\n' "$(claude 2>/dev/null || echo none)" >>"$FAKE_LOG_DIR/tools"
+  fi
 fi
+
 mode=${FAKE_MODE:-default}
 cache=${XDG_CACHE_HOME:-$HOME/.cache}/fugaro/source
 logs=${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/logs
@@ -182,6 +190,18 @@ FUGARO_EOF
   chmod +x "$1/bin/fugaro"
 }
 
+# write_decoy_claude writes a stand-in `claude` into a directory of its own, so a
+# case can put the same name in two directories of PATH and say which one the
+# child's PATH resolves.
+write_decoy_claude() { # dir text
+  mkdir -p "$1"
+  cat >"$1/claude" <<DECOY_EOF
+#!/usr/bin/env bash
+echo "$2"
+DECOY_EOF
+  chmod +x "$1/claude"
+}
+
 run_check() { # run_check DIR ENV... [-- ARGS...]
   local dir=$1
   shift
@@ -199,6 +219,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
   : >"$dir/logs/fugaro.calls"
   : >"$dir/logs/paths"
   : >"$dir/logs/gh"
+  : >"$dir/logs/tools"
   status=0
   local bashargs=()
   case "${cli[0]:-}" in
@@ -313,6 +334,24 @@ test_the_mirrored_path_leaves_git_out() {
   prepare "$dir"
   run_check "$dir"
   expect_absent "$out" "fake git" "the mirrored PATH: the check never ran the git it was given to lose"
+}
+
+test_the_first_directory_of_your_path_wins() {
+  # A name two of your PATH's directories both hold is run from the first, and the
+  # mirror is your PATH minus git: a link written over the first one (ln -sfn)
+  # would hand the diagnosis a claude you never start, which is what the no-git
+  # row's claim ("mirrored from your own PATH") would then be false about.
+  local dir=$work/twopath
+  prepare "$dir"
+  write_decoy_claude "$dir/one" "claude from the first directory"
+  write_decoy_claude "$dir/two" "claude from the second directory"
+  run_check "$dir" FAKE_MODE=two-path "PATH=$dir/one:$dir/two:$dir/bin:$PATH"
+  expect_status "$status" 0 "two PATH directories"
+  expect_contains "$out" "FACT no-git: PASS" "two PATH directories: the mirror still holds no git"
+  expect_contains "$(cat "$dir/logs/tools")" "claude=claude from the first directory" \
+    "two PATH directories: the child's PATH resolves claude the way yours does, from the first directory that holds it"
+  expect_absent "$(cat "$dir/logs/tools")" "claude from the second directory" \
+    "two PATH directories: the later directory's claude never reaches the child"
 }
 
 test_a_build_that_names_no_release_is_not_measured() {
@@ -512,6 +551,7 @@ t test_help
 t test_dry_run
 t test_happy_path
 t test_the_mirrored_path_leaves_git_out
+t test_the_first_directory_of_your_path_wins
 t test_a_build_that_names_no_release_is_not_measured
 t test_a_version_that_is_not_a_release_is_not_measured
 t test_the_xtrace_guard

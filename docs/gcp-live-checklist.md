@@ -12779,11 +12779,12 @@ source of the build that is installed, and it is fetched **without** the develop
 account. F9 is why the version rule is a rule rather than an equality, and F21 is why the unpacked tree is
 read back rather than assumed.
 
-- **No `git` is something the check builds, not something it assumes.** It mirrors every directory of your
-  own PATH except the `git` entry into a scratch directory of symlinks, and then asks **that** PATH for
-  `git`: the run dies rather than proceeds if it still finds one, and the `no-git` row says how many tools
-  it mirrored. A machine that cannot even find `fugaro` on the mirrored PATH is refused for the same
-  reason.
+- **No `git` is something the check builds, not something it assumes.** It mirrors every name of your own
+  PATH except the `git` entry into a scratch directory of symlinks — each name from the **first** directory
+  of your PATH that holds it, so the child resolves tools the way your own shell does and a second `claude`
+  or `node` later in your PATH never reaches it — and then asks **that** PATH for `git`: the run dies rather
+  than proceeds if it still finds one, and the `no-git` row says how many tools it mirrored. A machine that
+  cannot even find `fugaro` on the mirrored PATH is refused for the same reason.
 - **No account.** `GH_TOKEN`, `GITHUB_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` and `GH_CONFIG_DIR` are unset for
   the diagnosis, and the fetch is an anonymous read of the public archive at the ref the record names —
   which needs no account, so a tree fetched under this environment was fetched without one. The check's

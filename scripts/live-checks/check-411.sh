@@ -336,12 +336,14 @@ step_project() {
   die "this check needs a project that does not exist and '${P}' is not that: gcloud said '$(printf '%s' "$out" | head -n 1 | head -c 200)'. It names one it makes up (CHECK411_PROJECT pins one); if that name is taken, run it again, or pick another with CHECK411_PROJECT=<an id nobody has>"
 }
 
-# step_nogit: the PATH the diagnosis gets, built rather than assumed. Every entry
+# step_nogit: the PATH the diagnosis gets, built rather than assumed. Every name
 # of every directory in your PATH is symlinked into one scratch directory except
-# `git`, so the child has the tools you have and cannot find git at all — which is
-# the whole premise of this check, and why it is built instead of hoped for.
+# `git`, from the first directory that holds it, so the child has the tools you
+# have — resolved as your own shell resolves them — and cannot find git at all,
+# which is the whole premise of this check, and why it is built instead of hoped
+# for.
 step_nogit() {
-  local dirs=() d entry linked=0
+  local dirs=() d entry name linked=0
   NOPATH="$SCRATCH/path"
   local IFS=:
   read -r -a dirs <<<"$PATH"
@@ -349,8 +351,15 @@ step_nogit() {
     [ -n "$d" ] && [ -d "$d" ] || continue
     for entry in "$d"/*; do
       [ -f "$entry" ] || [ -L "$entry" ] || continue
-      [ "${entry##*/}" = git ] && continue
-      if ln -sfn "$entry" "$NOPATH/${entry##*/}" 2>/dev/null; then linked=$((linked + 1)); fi
+      name=${entry##*/}
+      [ "$name" = git ] && continue
+      # The FIRST directory of your PATH that holds a name is the one that
+      # resolves, so the mirror keeps that one and skips the name after it: a
+      # later link written over it (ln -sfn) would hand the diagnosis a tool your
+      # own shell never runs — a second claude, a second node — and the no-git
+      # row's whole claim is that this PATH is yours minus git.
+      if [ -e "$NOPATH/$name" ] || [ -L "$NOPATH/$name" ]; then continue; fi
+      if ln -sn "$entry" "$NOPATH/$name" 2>/dev/null; then linked=$((linked + 1)); fi
     done
   done
   if [ -x "$NOPATH/fugaro" ]; then
@@ -364,7 +373,7 @@ step_nogit() {
   if [ -n "$found" ]; then
     die "git is still reachable with the PATH this check built ('$found' came back from 'command -v git' with PATH=${NOPATH}), so the diagnosis would take the git transport and this check would measure the other one. Nothing else in your PATH moved — ${linked} tools were symlinked and git alone was left out — so this is a git this check did not see, and it stops rather than reporting on a machine it did not build"
   fi
-  fact no-git PASS "PATH=${NOPATH} holds ${linked} tools mirrored from your own PATH and no git at all: 'command -v git' answers nothing with it, so the source fetch has to take the tarball (a machine without git, D1611)"
+  fact no-git PASS "PATH=${NOPATH} holds ${linked} tools mirrored from your own PATH — every name from the first directory of it that holds one, so the child resolves tools as your own shell does — and no git at all: 'command -v git' answers nothing with it, so the source fetch has to take the tarball (a machine without git, D1611)"
 }
 
 # step_noaccount: the other half of the premise, said as what the check did. The
