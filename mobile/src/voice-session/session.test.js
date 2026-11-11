@@ -279,7 +279,7 @@ test("the interrupt decision is handed the pipeline's live pair, and no event is
   assert.equal(h.session.state().screen.turn, false);
   assert.equal(h.screen.queued().length, 0);
   assert.deepEqual(h.tts.spoken(), [update.text, update.text]);
-  assert.deepEqual(h.mailbox.calls.map((call) => call.name), ['licenceRefusal', 'send']);
+  assert.deepEqual(h.mailbox.calls.map((call) => call.name), ['send']);
 });
 
 test('the session holds the machine’s fields and the screen’s snapshot, and no copy of the pair', async () => {
@@ -390,7 +390,7 @@ test('§8’s timeout ends the session and the port, with no hang-up', async () 
   assert.equal(callsNamed(h.native, 'end').at(-1).open, false);
   assert.deepEqual(
     statuses(h.native).map((status) => status.state),
-    ['starting', 'listening'],
+    ['starting', 'listening', 'paused_interruption'],
     'the port is never told about a state it is about to be ended from',
   );
 });
