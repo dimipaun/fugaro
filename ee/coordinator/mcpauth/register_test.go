@@ -5,8 +5,10 @@ package mcpauth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -449,6 +451,66 @@ func TestRegistrationIsRateLimitedPerSource(t *testing.T) {
 	}
 }
 
+// TestAnIPv6SourceIsCountedByItsPrefix is the same bound from the other side:
+// what one source *is*, which the test above takes as given because every
+// address in it is IPv4.
+//
+// **An address is not something a bound can count.** A caller holding one /64
+// may take any address in it, so an address-keyed limiter is no limiter at
+// all: the rotating caller below writes the same record ten times per minute
+// from ten names, and 4,096 of them is the map `maxRegisterSources` bounds —
+// which, once full, refuses every source that is not already in it, so the
+// per-source bound would become the global denial of service the per-source
+// shape was chosen to avoid, with one /64 as the lever. The prefix is the
+// boundary a registry hands out, so it is the one that counts.
+//
+// The neighbouring /64 is what pins the boundary rather than the fact of
+// masking: a source in `2001:db8:1:3::/64` is one bit away from the rotating
+// one and is a different subscriber, so it must still be admitted — which a
+// /56 would refuse, and with it the rest of that access network.
+func TestAnIPv6SourceIsCountedByItsPrefix(t *testing.T) {
+	const (
+		oneAllocation = "2001:db8:1:2::" // the /64 the rotating caller holds
+		neighbouring  = "2001:db8:1:3::1"
+	)
+	now := testNow
+	clock := func() time.Time { return now }
+	ts := newTestServerOver(t, testConfig(), clock, nil)
+
+	for i := range registerPerWindow {
+		source := fmt.Sprintf("%s%d", oneAllocation, i+1)
+		if rec := ts.postRegistration(t, source); rec.Code != http.StatusCreated {
+			t.Fatalf("registration %d from %s answered %d (%s); want 201: one source's window is ten registrations, and the ten addresses of one /64 are one source", i+1, source, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+	}
+	// An eleventh address in the same /64 is the same source, and it is what
+	// an address-keyed limiter would have admitted.
+	if rec := ts.postRegistration(t, oneAllocation+"dead:beef"); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("an eleventh address in one /64 answered %d (%s); want 429: rotating through the addresses of one allocation is free for the caller and cannot buy a fresh window", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	// And it is one source and not one network: the allocation next door, one
+	// bit away, has a window of its own.
+	if rec := ts.postRegistration(t, neighbouring); rec.Code != http.StatusCreated {
+		t.Errorf("the neighbouring /64 answered %d (%s) while another allocation was past its window; want 201: the bound counts the allocation a registry hands out and not the access network around it", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	// The same for IPv4, where the address *is* the allocation — including the
+	// v4-mapped form of it, which a prefix applied without unmapping first
+	// would put in `::/64` along with every other IPv4 client in the world.
+	now = now.Add(registerWindow)
+	const v4 = "198.51.100.7"
+	for i := range registerPerWindow {
+		if rec := ts.postRegistration(t, v4); rec.Code != http.StatusCreated {
+			t.Fatalf("registration %d from %s answered %d (%s); want 201", i+1, v4, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+	}
+	if rec := ts.postRegistration(t, "::ffff:"+v4); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("the v4-mapped form of a source past its window answered %d; want 429: the two spellings are one address, and one that counted as a prefix would take every IPv4 caller's window with it", rec.Code)
+	}
+	if rec := ts.postRegistration(t, "203.0.113.9"); rec.Code != http.StatusCreated {
+		t.Errorf("another IPv4 source answered %d (%s); want 201: an IPv4 address is a host, and two of them are two sources", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
 // TestRegistrationsExpireAndAreSwept is M12's second bound (spec.md §8,
 // reconciliation.md §4a), and it is the one that has to reach the three shapes
 // the store holds for somebody who has proved nothing: the registration, the
@@ -681,5 +743,88 @@ func TestTheDoorSweepsTheRecordsItsOwnTrafficWrites(t *testing.T) {
 	}
 	if held(third) {
 		t.Errorf("%s survived an authorization request: the flow a stranger abandons is written by that path and has to be swept by it too", third)
+	}
+}
+
+// hungUpObjects is the store's backend as a real one behaves once the caller
+// that asked for an operation is gone: gocloud's client checks its context
+// before it sends, so an operation on a cancelled context comes back with
+// context.Canceled instead of being performed. The fake's bucket performs it
+// either way, which is why the check has to be here for a test about which
+// context the sweep runs on.
+type hungUpObjects struct{ objects }
+
+func (o hungUpObjects) read(ctx context.Context, key string) ([]byte, int64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	return o.objects.read(ctx, key)
+}
+
+func (o hungUpObjects) create(ctx context.Context, key string, data []byte) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return o.objects.create(ctx, key, data)
+}
+
+func (o hungUpObjects) replace(ctx context.Context, key string, data []byte, gen int64) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return o.objects.replace(ctx, key, data, gen)
+}
+
+func (o hungUpObjects) delete(ctx context.Context, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return o.objects.delete(ctx, key)
+}
+
+func (o hungUpObjects) list(ctx context.Context, prefix string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return o.objects.list(ctx, prefix)
+}
+
+// TestTheSweepOutlivesTheCallerThatTriggeredIt is the review of this branch's
+// finding on the sweep's second bound: a trigger that hangs up must not be a
+// way to spend the interval without sweeping.
+//
+// The door runs the sweep inside the request that triggered it, and the trigger
+// an attacker reaches for is free: the unauthenticated GET has no rate limit at
+// all, so a caller that polls it and closes the connection immediately is the
+// first trigger of every interval — and while the sweep ran on the request's
+// own context, each of those closed the sweep the moment the caller left, which
+// left every record the interval was supposed to remove in place, for ever, at
+// no cost. What the sweep runs on instead is the caller's values without its
+// cancellation and under a bound of its own (maybeSweep), which is what this
+// test plants: a request whose context is already cancelled, and a record that
+// is gone after it.
+func TestTheSweepOutlivesTheCallerThatTriggeredIt(t *testing.T) {
+	now := testNow
+	clock := func() time.Time { return now }
+	ts := newTestServerClocked(t, testConfig(), clock, clock,
+		func(o objects) objects { return hungUpObjects{objects: o} })
+
+	// A record a stranger abandoned, planted on a context of the test's own:
+	// the backend refuses a cancelled context and not this one.
+	const abandoned = "a-flow-a-stranger-abandoned"
+	if err := ts.store.PutRequest(t.Context(), Request{ID: abandoned, ExpiresAt: now.Add(-time.Minute)}); err != nil {
+		t.Fatalf("planting an expired flow: %v", err)
+	}
+
+	// The trigger that hung up. Its request is over before the handler runs, and
+	// the handler's own write is not part of this: a caller that has left loses
+	// its registration to its own cancellation, which is its own business, while
+	// what the door owes the store is not the caller's to cancel.
+	hungUp, hangUp := context.WithCancel(t.Context())
+	hangUp()
+	ts.maybeSweep(hungUp)
+
+	if _, ok := ts.store.objects(t)[requestPrefix+abandoned]; ok {
+		t.Errorf("%s survived the sweep its own trigger ran: a caller that hangs up cancels the request and not the door's housekeeping, or the second bound of this endpoint is one an attacker switches off by disconnecting", requestPrefix+abandoned)
 	}
 }

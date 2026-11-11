@@ -1254,7 +1254,16 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   registrations, the pending requests and the codes the open shapes leave behind are removed once
   their own lifetime has passed (`SweepExpired`, `RegistrationTTL`, the sweep triggered by the two
   unauthenticated writes; `TestRegistrationsExpireAndAreSwept`), with the guard deleted and replaced
-  by `TestTheFrontDoorIsServedOnlyWhenEnabled`. **A spent code is the one record that outlives its
+  by `TestTheFrontDoorIsServedOnlyWhenEnabled`. **Neither bound is the caller's to switch off, and
+  neither counts a value the caller chooses.** The sweep runs on the values of the request that
+  triggered it without that request's cancellation and under a bound of its own, so a trigger that
+  hangs up cannot spend the interval with a sweep that never ran — the unauthenticated GET has no
+  rate limit and is the cheapest trigger there is (`ee/coordinator/mcpauth/register.go`,
+  `maybeSweep`; `TestTheSweepOutlivesTheCallerThatTriggeredIt`) — and **a source is the allocation an
+  address is in and not the address**: an IPv6 caller is counted as its `/64`, because the addresses
+  inside one allocation are free to rotate through and an address-keyed bound would fill the
+  limiter's own map from one host, which refuses every source that is not already in it
+  (`sourceKey`; `TestAnIPv6SourceIsCountedByItsPrefix`). **A spent code is the one record that outlives its
   own moment, and deliberately**: its marker is the only record a later presentation of that code
   acts on — the already-redeemed refusal, and the family the first exchange minted, which is what a
   replay revokes (OAuth 2.1 §4.1.3) — so it is kept while that family is in the store and inside

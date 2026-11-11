@@ -729,7 +729,21 @@ minted, which is the revocation OAuth 2.1 §4.1.3 asks for — and the review of
 marker going at the code's own moment, one `CodeTTL` after the exchange, which ended both. It is now
 kept while the family it names is in the store and inside both of that family's bounds (`FamilyTTL`,
 `FamilyIdleTTL`), so what bounds a marker is the chain it stands for rather than forever, and
-`TestRegistrationsExpireAndAreSwept` plants both directions. **The guard is gone with them**: `TestNoBinaryLinksTheFrontDoorYet` is deleted, and what stands where it stood is
+`TestRegistrationsExpireAndAreSwept` plants both directions. **The review of this branch found the
+other two holes either bound had**, and both were the same shape — a bound that its own subject
+decides. The sweep ran inside the request that triggered it and on that request's own context, so a
+trigger that disconnected cancelled the sweep *and* spent the interval, and the cheapest trigger of
+all is the unauthenticated GET, which has no rate limit: a caller polling it could have kept the
+sweep from ever running. It now runs on the trigger's values without its cancellation and under a
+bound of its own (`maybeSweep`; `TestTheSweepOutlivesTheCallerThatTriggeredIt`). And a source was the
+address itself, which one caller holding a `/64` may take any of for free: ten registrations a
+minute per address is a map reached in seconds, and a limiter whose map is full refuses the source
+that is not in it — the global denial of service the per-source shape exists to avoid, offered by the
+bound that was supposed to prevent it. A source is now the allocation the address is in, an IPv6
+caller counting as its `/64` and an IPv4 address as itself, with a v4-mapped address unmapped before
+anything is counted (`sourceKey`; `TestAnIPv6SourceIsCountedByItsPrefix` asserts a rotating `/64` is
+one source, that the `/64` next door is not, and that no two IPv4 clients share a window). **The
+guard is gone with them**: `TestNoBinaryLinksTheFrontDoorYet` is deleted, and what stands where it stood is
 `TestTheFrontDoorIsServedOnlyWhenEnabled`, so what holds the door now is the switch rather than a
 test — the door mounts nothing without the entry the module writes under `var.mcp_server`, no release
 writes that entry (D934), and a build without M12b's device delivery refuses to enable a door at all

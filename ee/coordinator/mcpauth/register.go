@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strconv"
@@ -116,9 +117,11 @@ const (
 	// maxRegisterSources bounds the limiter's own map. A limiter that grew
 	// one entry per source would be a record in memory that a stranger
 	// chooses the size of, which is the same class of unbounded write the
-	// limit exists to refuse — and a source cannot choose its own entry,
-	// because the source is the address the platform's front end put in the
-	// header and not one the caller typed (registerSource).
+	// limit exists to refuse — and a source cannot choose how many entries it
+	// holds: the value it may send is the one the platform's front end
+	// overwrites or appends to, and the key is that address — or, for IPv6,
+	// the one /64 an allocation gives it, however many addresses in it the
+	// caller rotates through (registerSource, sourceKey).
 	maxRegisterSources = 4096
 )
 
@@ -194,7 +197,7 @@ func (l *registerLimiter) evict(now time.Time) {
 //
 // **It is the rightmost entry of X-Forwarded-For, or the peer address when
 // there is no header** — and the choice between the two ends of that header is
-// the whole of the function. A caller can send an X-Forwarded-For of its own,
+// the whole of the selection. A caller can send an X-Forwarded-For of its own,
 // and the platform's front end appends the address it saw to whatever arrived,
 // so the *leftmost* entry is a value the caller wrote and the rightmost is the
 // one Cloud Run's load balancer put there. Counting by the leftmost entry
@@ -205,19 +208,68 @@ func (l *registerLimiter) evict(now time.Time) {
 // as it stands rather than refused: an unidentifiable source counting as one
 // source is the fail-safe direction, and the alternative is an endpoint that
 // refuses to register a client because its address did not parse.
+//
+// What the entry is then *counted as* is sourceKey's question and not this
+// one's: the value read here is not what a window is keyed by, because rotating
+// through the addresses of one allocation is free for the caller (sourceKey).
 func registerSource(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		entries := strings.Split(xff, ",")
 		for i := len(entries) - 1; i >= 0; i-- {
 			if entry := strings.TrimSpace(entries[i]); entry != "" {
-				return entry
+				return sourceKey(entry)
 			}
 		}
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && host != "" {
-		return host
+		return sourceKey(host)
 	}
-	return r.RemoteAddr
+	return sourceKey(r.RemoteAddr)
+}
+
+// ipv6SourceBits is how much of an IPv6 address is one source (sourceKey): one
+// allocation, which is the /64 every registry hands one subscriber.
+const ipv6SourceBits = 64
+
+// sourceKey is the address a source is counted as.
+//
+// **An IPv6 source is its /64 and not its address, and that is the whole of
+// the function.** Rotating through the addresses of one allocation is free —
+// any host in a /64 may take any address in it — so an address-keyed bound is
+// no bound against a caller holding one /64: 4,096 of them fill the limiter's
+// own map, and a map that is full refuses the source that is not in it, which
+// is the global denial of service the per-source shape was chosen to avoid
+// (registerLimiter.allow). Counting the prefix makes that rotation one source
+// with one window, at the price of counting the addresses of one allocation
+// together — which is what an allocation is: one subscriber.
+//
+// **A /64 and not a /56**, because refusing a caller that did nothing is the
+// failure this bound is shaped around: the neighbours inside one access
+// network's shorter prefix are strangers to each other, and a bound that counts
+// them together refuses their registrations over a stranger's. What the /64
+// costs instead is map entries — a caller holding a larger allocation holds
+// several /64s, each an entry — and that cost falls on the traffic of whoever
+// is doing the rotating.
+//
+// **An IPv4 address is counted as itself, and so is a v4-mapped one.** The
+// second half is not a detail: `::ffff:198.51.100.7` masked to a /64 is
+// `::/64`, which every IPv4 caller shares, so a prefix applied without
+// unmapping first would put every IPv4 client in the world in one window.
+// Anything that does not parse as an address — an empty header, a peer name —
+// is counted as it stands, which is registerSource's fail-safe direction too.
+func sourceKey(addr string) string {
+	ip, err := netip.ParseAddr(addr)
+	if err != nil {
+		return addr
+	}
+	if ip.Is4() || ip.Is4In6() {
+		return ip.Unmap().String()
+	}
+	prefix, err := ip.Prefix(ipv6SourceBits)
+	if err != nil {
+		return addr
+	}
+	return prefix.Masked().String()
 }
 
 // tooManyRegistrations is the refusal of a source past its window.
@@ -466,18 +518,36 @@ type Swept struct {
 // whichever write arrived first".
 const sweepInterval = 15 * time.Minute
 
+// sweepTimeout bounds a sweep (maybeSweep), which runs on a context no caller
+// can cancel and so needs a bound of its own. It is the order
+// ee/coordinator/sweep.go's finalWriteGrace and auditedCall's auditEntryGrace
+// are of, because it is the same shape: the door's own bound on housekeeping
+// that is not the caller's answer.
+const sweepTimeout = 30 * time.Second
+
 // maybeSweep runs the store's sweep, at most once per sweepInterval, inside the
 // request that triggered it.
 //
-// It is synchronous and it is on the caller's own context, and both are
-// deliberate. A goroutine per trigger would be a second writer running beside
-// the door's own answers with a lifecycle nothing owns, on a platform that may
-// freeze the CPU the moment the response is written; a context of its own would
-// be the same thing with the freeze hidden in it. What a caller pays for it is
-// one sweep per interval at most, and what a caller that disconnects loses is
-// the rest of that one sweep — which is a sweep the next trigger runs again,
-// because the interval is a bound on how often and never a claim that the work
-// is done.
+// **It is synchronous, and it runs on the caller's values without its
+// cancellation.** Synchronous, because a goroutine per trigger would be a
+// second writer running beside the door's own answers with a lifecycle nothing
+// owns, on a platform that may freeze the CPU the moment the response is
+// written — and a context of its own would be the same thing with the freeze
+// hidden in it. Detached from the cancellation, because the sweep is this
+// door's own housekeeping and not the caller's work: on the caller's context, a
+// trigger that disconnected would cancel the sweep *and* spend the interval,
+// so the second bound of the open registration endpoint would be one an
+// attacker could switch off by hanging up — and the cheapest trigger of all is
+// the unauthenticated GET (authorize.go), which anybody can poll and close. The
+// timeout is what the caller pays for that instead: this request waits for the
+// sweep, and the sweep waits for the store for at most sweepTimeout, which is a
+// bound on a janitor and not on an answer that is owed.
+//
+// The instant is written before the work and not after it: a sweep that fails
+// or times out would otherwise be retried by every registration until one of
+// them succeeded, which is the burst the interval exists to prevent. What that
+// buys is at most one sweep per interval, and it is never a claim that the work
+// is done — a sweep a store refused is a sweep the next interval runs again.
 //
 // A failure is a log line and never an answer: this caller asked to register a
 // client, not to hear about the store's janitor, and a registration refused
@@ -487,17 +557,15 @@ func (s *Server) maybeSweep(ctx context.Context) {
 	now := s.now()
 	due := s.sweptAt.IsZero() || now.Sub(s.sweptAt) >= sweepInterval
 	if due {
-		// The instant is written before the work, not after it: a sweep that
-		// fails or is cancelled would otherwise be retried by every
-		// registration until one of them succeeded, which is the burst the
-		// interval exists to prevent.
 		s.sweptAt = now
 	}
 	s.sweepMu.Unlock()
 	if !due {
 		return
 	}
-	swept, err := s.store.SweepExpired(ctx)
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sweepTimeout)
+	defer cancel()
+	swept, err := s.store.SweepExpired(sctx)
 	if err != nil {
 		s.logger.Warn("mcpauth: the record sweep did not finish", "error", err)
 		return
