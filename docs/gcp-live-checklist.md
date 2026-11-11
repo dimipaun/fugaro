@@ -2930,10 +2930,10 @@ fugaro update --firebase-project fugaro-dev --project fugaro
 
 **This is the step the design's "adopting it costs one `update --repo` per repository plus a runner image rollout" describes, and it is two owner steps, not one.** Task 1.4's change is a **job environment** change — `FUGARO_RTDB_URL` and `FUGARO_FIREBASE_API_KEY` — and **the only path that writes a job's environment is `fugaro update --repo`**. Neither of the two commands an operator would reach for carries it:
 
-- `fugaro upgrade` only **reports** drift in the jobs' environment (`internal/cli/upgrade_cloud.go`, `jobConfigCopyNote`: "only fugaro update --repo does"); its `cloud` step is the third of three, and there is no `--cloud` flag — the command is plain `fugaro upgrade`;
+- `fugaro upgrade` only **reports** drift in the jobs' environment (`internal/cli/upgrade_cloud.go`, `jobConfigCopyNote`: "only fugaro update --repo does"); its `cloud` step is one of four, and there is no `--cloud` flag — the command is plain `fugaro upgrade`;
 - `fugaro image refresh` patches a job's **image** through the API and nothing else (`internal/cli/image_refresh_steps.go`, `refreshCloneJobs`).
 
-⚠ **Use `fugaro image refresh` for the image half, not `fugaro upgrade`.** `fugaro upgrade` does three things, and only the third is this step's: besides the cloud step it **rewrites the checkout's `.claude/settings.json`** (its `pin` step — "pinned to this release's tag, shown as a diff and never committed") and **installs or updates the Fugaro plugin in Claude Code at user scope** (its `plugin` step, through the `claude` CLI) — `internal/cli/upgrade.go` is that command's own `Long` text, one paragraph per step: `pin`, `plugin`, `cloud`. `fugaro image refresh` is that third step alone, so it moves neither file and there is nothing to put back. If you run `fugaro upgrade` anyway, step 1's `/tmp/chk49-claude-settings-before.json` is what step 8 compares the checkout's `.claude/settings.json` against, and the plugin's own pin is yours to check by hand (`claude plugin list`, or the marketplace entry in `~/.claude`).
+⚠ **Use `fugaro image refresh` for the image half, not `fugaro upgrade`.** `fugaro upgrade` does four things, and only the cloud step is this step's: besides the cloud step it **installs or updates the Fugaro plugin in Claude Code at user scope** (its `plugin` step, through the `claude` CLI) and **deploys the project's rules generation and its published policy node** (its `rules` and `policy` steps) — `internal/cli/upgrade.go` is that command's own `Long` text, one paragraph per step: `plugin`, `cloud`, `rules`, `policy`. It **writes nothing in the checkout**: the `pin` step an older Fugaro had, which rewrote the checkout's `.claude/settings.json`, went with the pin merge, so a checkout that still carries one carries a leftover and nothing here puts it back. `fugaro image refresh` is the cloud step alone, so it moves no file and there is nothing to put back. If you run `fugaro upgrade` anyway, step 1's `/tmp/chk49-claude-settings-before.json` is what step 8 compares the checkout's `.claude/settings.json` against, and the plugin this machine ends up with is yours to check by hand (`claude plugin list`, or the marketplace entry in `~/.claude`).
 
 So the rollout is: **release** a runner image carrying Task 1.3, then **`fugaro update --repo`** in the sandbox checkout to write the env, then let the image land. A rollout that skips the middle step is a rollout whose runs never see the pointer at all — the job would carry the new image and no `FUGARO_RTDB_URL`, and every run would fall back to the ceiling in its environment, which is exactly the state step 5 is supposed to change.
 
@@ -2942,7 +2942,7 @@ So the rollout is: **release** a runner image carrying Task 1.3, then **`fugaro 
 fugaro update --repo . --project fugaro --plan-only
 fugaro update --repo . --project fugaro
 # (b) the image: this one moves the image and touches no .claude/settings.json
-# and no Claude Code plugin (`fugaro upgrade` would move both)
+# and no Claude Code plugin (`fugaro upgrade` would install that plugin)
 fugaro image refresh --project fugaro
 ```
 
