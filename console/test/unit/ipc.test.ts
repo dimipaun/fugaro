@@ -757,13 +757,17 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is twenty-six argvs, and this surface is the same twenty-six.** (The
+ * **It is twenty-seven argvs, and this surface is the same twenty-seven.** (The
  * enumeration below numbers twenty-two of them: CG9a's `graph --json` landed
  * after it was written and sits between `plan status --json` and
  * `coordinator status --from-store --all --json`, and this plan's
  * `managed status --json` and `project policy show --json` are the two rows
  * after `coordinator intents --all --json`.) CG9b's `graph --watch --json` is
- * the twenty-sixth and sits directly under the read it is a word longer than.
+ * the twenty-sixth and sits directly under the read it is a word longer than,
+ * and the subscriptions plan's S4.2 is the twenty-seventh and the last: the
+ * Project tab's seat estimate, `seats --json`, whose one fixed flag is the
+ * `--json` of every other read here and whose row declares no argument at all --
+ * the 90 days it is measured over are the command's own.
  * The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
@@ -793,7 +797,13 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * here that fixes **no** flag: the dry run's `--dry-run --json` and a confirmed
  * write's `--yes`, which both write phases carry, are the phase the main process
  * decides (`SETTINGS_EDIT_PHASE_WORDS`), not words this table gives a renderer,
- * so what is left is the command alone.
+ * so what is left is the command alone. S4.2's `seats --json` is the
+ * twenty-seventh and the last, and it follows this convention too: the
+ * installation's own `--project` and `[--config]` are main-process state, so the
+ * row here is the command and its one fixed flag. (`licence.read` never appears
+ * in this list at all, and needs no numbering: it is the one row in
+ * `CONSOLE_OPERATIONS` that carries no command, so there is no argv of a child
+ * for a renderer to fill.)
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -870,6 +880,13 @@ const DESIGN_ARGV: readonly string[] = [
   // empty (`src/main/spawn.ts`), which is what makes that true rather than
   // merely stated.
   'models ls --json',
+  // The seat estimate (subscriptions plan S4.2). The row is the whole argv: the
+  // command is `cobra.NoArgs` and the operation declares no argument, so this
+  // file's convention has nothing to take out -- the 90 days the estimate is
+  // measured over are the command's own and no flag moves them -- and the two
+  // project flags are main-process state, exactly as they are for every other
+  // read of this tab.
+  'seats --json',
   // The settings read (the settings-edit plan's C1). The row fixes the command
   // and `--json`; the two project flags are main-process state rather than
   // arguments, which is this file's convention for taking them out, and the row
@@ -1596,6 +1613,11 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // verifier's (`verifyLicenceKey`, S2.4), which refuses this text.
   'licence.read': {},
   'licence.save': { key: 'the key the operator pasted' },
+  // The empty payload again: the seat estimate takes no argument at all
+  // (subscriptions plan S4.2), so the 90 days the command measures back from
+  // and the two tables it prints are its own words -- there is no window, no
+  // project and no day here, which the pin below reads back key by key.
+  'seats.read': {},
 }
 
 const RUN_ID = '20261016-121029-4a1b'
@@ -2078,6 +2100,30 @@ describe('the argument schemas', () => {
     // the command whose document is the policy node alone, F18).
     expect(operationFor('policy.show').command).toBe('project policy show')
     expect(CONSOLE_OPERATIONS.map((row) => row.command)).not.toContain('project show')
+  })
+
+  it('pins `seats.read`’s empty schema, which is the whole of what it may send', () => {
+    // **S4.2's estimate has no argument at all** (the subscriptions plan,
+    // D439), and its emptiness is a privacy claim rather than a tidiness one:
+    // the count is measured over the installation's own records -- the launcher
+    // list, the operator lists, and the run requesters of the last ninety days
+    // -- and every one of those is the command's own reading, so a payload that
+    // could name a day, a window, a project, a run or a person would be
+    // pointing the child at somebody else's records. The ninety days are the
+    // command's; no flag moves them. `seats.read` is also a read of the active
+    // installation's own config and bucket, which is why its row takes the
+    // project flag -- from the screened context and never from a payload
+    // (`src/main/spawn.ts`), and the pin below refuses `project` as a key too.
+    expect(operationFor('seats.read').command).toBe('seats')
+    expect(operationFor('seats.read').flags).toEqual(['--json'])
+    expect(operationFor('seats.read').args).toEqual([])
+    // The empty payload is accepted, and it is the only accepted payload.
+    expect(validateArguments('seats.read', WELL_FORMED['seats.read']).ok).toBe(true)
+    for (const key of ['days', 'window', 'since', 'project', 'config', 'run', 'person']) {
+      const decision = validateArguments('seats.read', { [key]: 'x' })
+      expect(decision.ok, `seats.read accepted ${key}`).toBe(false)
+      expect(decision.ok ? '' : decision.reason).toBe(`seats.read takes no ${key}`)
+    }
   })
 
   it('pins `settings.edit`’s three keys, which are the whole of what a write may send', () => {
@@ -2761,7 +2807,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirty-seven, and no others".
+ * channel. The claim is "these thirty-eight, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2945,6 +2991,12 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // rows here whose operation spawns nothing and keeps a credential.
   ['licence.read', 'readLicence'],
   ['licence.save', 'saveLicence'],
+  // The seat estimate (subscriptions plan S4.2), appended for the reason every
+  // row above was: what the task added must be visible as a diff. It is the
+  // surface's one read whose subject is a contract pricing rule rather than a
+  // running thing -- a count of people -- and it is not withheld in a reduced
+  // mode, because its document carries no dollar of any kind.
+  ['seats.read', 'readSeats'],
 ]
 
 /**
@@ -2975,7 +3027,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these thirty-seven, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these thirty-eight, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2992,11 +3044,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A thirty-second channel: what each task added must stay one row, and the
+    // A thirty-ninth channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const thirtySecond = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(thirtySecond).toContain('fleet.report: a channel this console does not ship')
-    expect(thirtySecond).toContain('38 rows, and this console ships 37')
+    const thirtyNinth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(thirtyNinth).toContain('fleet.report: a channel this console does not ship')
+    expect(thirtyNinth).toContain('39 rows, and this console ships 38')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -3010,7 +3062,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('36 rows, and this console ships 37')
+    expect(withoutTheNewRow).toContain('37 rows, and this console ships 38')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -3025,8 +3077,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the thirty-seven methods and nothing else', () => {
-    // The bridge the window is handed: the thirty-seven methods and the names,
+  it('is frozen, and hands the window a bridge with the thirty-eight methods and nothing else', () => {
+    // The bridge the window is handed: the thirty-eight methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -4200,7 +4252,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: thirty of the surface's thirty-seven operations,
+    // The non-vacuity half: thirty-one of the surface's thirty-eight operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -4253,8 +4305,14 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // the mode to withhold -- and the feed is the read's own child, so a mode
     // that withheld the stream would be withholding a picture rather than a
     // figure. It is reached here with no `visible` at all, which is the poll a
-    // screen makes while the tab is on screen.
-    expect(THE_OPEN_OPERATIONS.length).toBe(30)
+    // screen makes while the tab is on screen. **`seats.read` (S4.2) is the
+    // thirty-first**, and it is here for `models.list`'s reason: the estimate is
+    // a count of **people**, so there is no spent dollar, no notional dollar and
+    // no cap anywhere in its document for the reduced mode to withhold -- the
+    // seats are a contract pricing rule and not a figure of this installation's
+    // spend -- and withholding it would take a panel away from a reduced console
+    // for no figure's sake.
+    expect(THE_OPEN_OPERATIONS.length).toBe(31)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

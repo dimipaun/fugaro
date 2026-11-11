@@ -216,6 +216,7 @@ import {
   renderLicenceOutcome,
 } from './screens/licence'
 import type { LicenceDrawn } from './screens/licence'
+import { SEATS_BUSY, buildSeats, fillSeats } from './screens/seats'
 import { MANAGED_BUSY, buildManagedModel, fillManaged } from './screens/managed'
 import { RETIREMENTS_BUSY, buildRetirementsModel, fillRetirements } from './screens/retirements'
 import type { OperationName } from '../main/ipc'
@@ -272,6 +273,7 @@ import {
   modelsListSupported,
   runsListPageSupported,
   runsSummarySupported,
+  seatsSupported,
 } from '../shared/version'
 import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
 import { NOTICE_HIDE_DETAILS, NOTICE_SHOW_DETAILS } from '../shared/notice'
@@ -492,7 +494,7 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the twenty-one reads the screens make (Task 3.4c; console L5b
+ * ReadBridge is the twenty-two reads the screens make (Task 3.4c; console L5b
  * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
  * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
  * `coordinatorIntents`, console 0.119.0 added `summaryRuns` -- the
@@ -505,7 +507,9 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
  * subscriptions plan's S2.7 added `readLicence`, the licence key's own section of
  * the same tab -- **the one read here that spawns no child at all**, because the
  * console keeps that key itself -- and the graph plan's CG9b added `graphWatch`,
- * the same tab's live feed of the graph document), named one
+ * the same tab's live feed of the graph document, and the subscriptions plan's
+ * S4.2 added `readSeats`, the same tab's advisory seat estimate of who launches
+ * jobs on the installation), named one
  * by one for the reason `CompatibilityBridge` names one: this file should reach
  * for exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -537,9 +541,10 @@ export interface ReadBridge {
   policyShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
   environmentReport(args: Readonly<Record<string, unknown>>): Promise<unknown>
   readLicence(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  readSeats(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the twenty-one reads over the structural bridge. A missing
+/** readBridgeFrom is the twenty-two reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -583,6 +588,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     policyShow: (args) => ask('policyShow', args),
     environmentReport: (args) => ask('environmentReport', args),
     readLicence: (args) => ask('readLicence', args),
+    readSeats: (args) => ask('readSeats', args),
   }
 }
 
@@ -5257,6 +5263,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * line. */
   const projectsLicenceRead = sectionRead({ factory, theme })
 
+  /** projectsSeatsRead is the tab's **ninth** section (the subscriptions plan's
+   * S4.2): the advisory estimate of who launches jobs on this installation,
+   * drawn beside the seats the licence key carries. It reads a command of its
+   * own -- `fugaro seats --json` -- and it is the one section of this tab whose
+   * subject is a **contract pricing rule** rather than a running thing: a count
+   * of people, never a figure of what this installation spent. */
+  const projectsSeatsRead = sectionRead({ factory, theme })
+
   /** leaveProjects ends those sections' busy state when the operator moves to
    * another tab: nothing is in flight for a screen nobody is looking at. */
   leaveProjects = () => {
@@ -5268,6 +5282,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     projectsAccountKeysRead.end()
     projectsCredentialsServiceRead.end()
     projectsLicenceRead.end()
+    projectsSeatsRead.end()
   }
 
   /**
@@ -5365,6 +5380,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * such verb and answers `unknown command "ls"` -- a failure the operator can
      * do nothing about. The floor is asked **before** the read goes out. */
     const modelsTooOld = !modelsListSupported(gate.compatibility.cliVersion ?? '')
+    /** seatsTooOld is whether the CLI in use predates the seat estimate
+     * (`seatsSupported`). `fugaro seats` landed in v0.21.0, and every CLI above
+     * this console's supported set answers `ok`, so a 0.20.x installation is a
+     * CLI the tab reads and one that answers `unknown command "seats"` for this
+     * read -- a failure the operator can do nothing about. The floor is asked
+     * **before** the read goes out, like the models panel's. */
+    const seatsTooOld = !seatsSupported(gate.compatibility.cliVersion ?? '')
     /** model and modelsSentence are what `models ls` last answered on this
      * visit, and `modelsOut` says a read of it is in flight. */
     let models: ModelsListView | null = null
@@ -5445,6 +5467,25 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * is drawn only while the panel that sent it is still the one on screen
      * (`settingsEditor`'s own rule, one section over). */
     let licenceDrawn: LicenceDrawn | null = null
+    /** seats, seatsSentence, seatsOut and seatsAttempt are the seat estimate's
+     * own read (`seats.read`, the subscriptions plan's S4.2): the document
+     * `fugaro seats --json` printed, the CLI's own sentence for a read that was
+     * refused, whether one is in flight and which attempt it was. The document
+     * is held **whole and unread**, for `licence`'s reason: the section reads
+     * its own reply.
+     *
+     * **seatsPainted is what the licence's own landing is checked against**: the
+     * seats panel draws the key's seat count out of the licence section's model,
+     * so a licence that lands after the estimate has been drawn has to be able
+     * to repaint this panel with it -- and only when the panel is on screen and
+     * no read of its own is in flight, which is what keeps a landing from
+     * clearing another read's mark. */
+    let seats: unknown = null
+    let seatsSentence: string | null = null
+    let seatsOut = false
+    let seatsToken = 0
+    let seatsAttempt = 0
+    let seatsPainted = false
     /** bodyModel is the model the body is drawn from, or null when the body holds
      * something that is not one -- a refusal, or nothing yet. The policy and
      * doctor reads repaint the body **only** when it holds a model: a landing
@@ -5548,6 +5589,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // this tab whose read is not a child process.
         if (licenceOut) {
           projectsLicenceRead.mark(licenceToken, drawn.licence, drawn.licenceSlot, LICENCE_BUSY)
+        }
+        // The seat estimate (S4.2), the last host the frame mounts: its mark goes
+        // up on its own section like the eight above, and its read is the one
+        // section of this tab whose child reads the installation's bucket --
+        // every run of the last 90 days, one `task.json` apiece.
+        if (seatsOut) {
+          projectsSeatsRead.mark(seatsToken, drawn.seats, drawn.seatsSlot, SEATS_BUSY)
         }
       }
       return drawn
@@ -5906,6 +5954,35 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       wireLicence(painted)
     }
 
+    /** paintSeats fills the ninth section from what `seats.read` answered, and
+     * from the licence section's own model: the estimate is one document and the
+     * figure it is compared against is the key's, which this section does not
+     * read for itself (`buildSeats` finds the seats row `buildLicence` made, so
+     * the number an operator reads here is the number they read one panel over).
+     *
+     * It is handed both documents as they arrived, because the section reads its
+     * own reply. **It is also what the licence's own landing calls**, so a key
+     * that arrives after the estimate repaints this panel with its seat count --
+     * guarded by `seatsPainted` and `!seatsOut` at that call site, because a
+     * repaint blanks the section and the mark of a read that is still out lives
+     * in a slot inside it. */
+    const paintSeats = (): void => {
+      const drawn = mount(false)
+      clearSection(drawn.seats, drawn.seatsSlot)
+      seatsPainted = true
+      fillSeats(
+        factory,
+        buildSeats({
+          raw: seats,
+          licence: buildLicence({ raw: licence, because: licenceSentence }),
+          because: seatsSentence,
+          tooOld: seatsTooOld,
+          version: gate.compatibility.cliVersion ?? '',
+        }),
+        drawn.seats,
+      )
+    }
+
     /**
      * wireLicence binds the paste: the one control of this section that writes
      * anything.
@@ -6167,6 +6244,42 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // on.
       projectsLicenceRead.settle(licenceToken)
       paintLicence()
+      // The seat estimate is drawn beside this key whatever this read answered
+      // (`seatsPainted` and `!seatsOut`: the panel is on screen and no read of
+      // its own is in flight), because its comparison is the key's seat count --
+      // a licence that just landed is the one fact this section was missing, and
+      // a licence that was **replaced** by a paste is a new figure for it.
+      if (seatsPainted && !seatsOut) paintSeats()
+    }
+
+    /**
+     * loadSeats makes the seat estimate's read, `seats.read`, and draws the
+     * ninth section from it.
+     *
+     * The reply is a `Snapshot` wrapping the CLI's own document (`documentOf`),
+     * and the document is handed to the builder **unread**: the section reads its
+     * own reply (`buildSeats`'s three rules), so a document this build does not
+     * understand is refused by the panel rather than decoded into three empty
+     * tables here. That is the same door the licence section takes, and it is
+     * this change's own choice: no decoder for this document exists, and a
+     * section that draws two figures and two tables checks every member of them
+     * itself.
+     */
+    const loadSeats = async (attempt: number): Promise<void> => {
+      const answer = documentOf(await bridge.readSeats({}))
+      if (seatsAttempt !== attempt) return
+      if (stale(mine)) return
+      seatsOut = false
+      seats = null
+      seatsSentence = null
+      if (!answer.ok) seatsSentence = answer.sentence
+      else seats = answer.data
+      // The mark is taken down through the section helper rather than by the
+      // filler, for the models read's reason: `fillSeats` writes beside the
+      // slot, so nothing else would remove the claim from the host it was made
+      // on.
+      projectsSeatsRead.settle(seatsToken)
+      paintSeats()
     }
 
     /** beginModels starts the second section's read and puts its mark up -- or,
@@ -6282,6 +6395,32 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       void loadLicence(licenceAttempt)
     }
 
+    /** markSeats puts the ninth section's mark up. */
+    const markSeats = (): void => {
+      if (!seatsOut || frame === null) return
+      projectsSeatsRead.mark(seatsToken, frame.seats, frame.seatsSlot, SEATS_BUSY)
+    }
+
+    /**
+     * beginSeats starts the seat estimate's read and puts its mark up -- or,
+     * below the command's floor, makes no read at all and draws the console's own
+     * sentence naming the version this panel needs (`beginModels`' shape). It is
+     * called on every visit, the budget's own read or not, for `beginModels`'s
+     * reason: a cached budget view drawn before anything is awaited is not what
+     * keeps this section waiting.
+     */
+    const beginSeats = (): void => {
+      if (!seatsTooOld) {
+        seatsAttempt += 1
+        seatsOut = true
+        seatsToken = projectsSeatsRead.start()
+      }
+      if (frame === null) mount(true)
+      else markSeats()
+      if (seatsTooOld) paintSeats()
+      else void loadSeats(seatsAttempt)
+    }
+
     /** beginSettings starts the third section's read and puts its mark up. It
      * is called on every visit, the budget's own read or not: a cached budget
      * view drawn before anything is awaited is not what keeps the settings panel
@@ -6332,6 +6471,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // own mark up, and the visit that begins the other reads begins this one
       // too.
       beginLicence()
+      // The seat estimate's read is the sixth of them (S4.2), started after the
+      // frame's own marks for `beginLicence`'s reason exactly.
+      beginSeats()
       void loadManaged(managedAttempt)
       void loadPolicy(policyAttempt)
       void loadDoctor(doctorAttempt)
@@ -6372,6 +6514,17 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       licenceAttempt += 1
       licenceOut = true
       licenceToken = projectsLicenceRead.start()
+      // The seat estimate's read is taken with the rest (S4.2). It is the tab's
+      // one read whose child lists the installation's bucket, so it is the one
+      // that answers last -- and taking its token here is what lets its panel
+      // draw the moment it does, rather than behind the budget's read. Below the
+      // command's floor there is no seats read at all (`seatsTooOld`): the panel
+      // is then drawn by the same branch the models panel uses below its own.
+      if (!seatsTooOld) {
+        seatsAttempt += 1
+        seatsOut = true
+        seatsToken = projectsSeatsRead.start()
+      }
       const fresh = frame === null
       const drawn = mount(true)
       if (!fresh) {
@@ -6382,6 +6535,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         markManaged()
         markCredentialsService()
         markLicence()
+        markSeats()
       }
       void load(token)
       if (modelsTooOld) paintModels()
@@ -6391,6 +6545,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       void loadPolicy(policyAttempt)
       void loadDoctor(doctorAttempt)
       void loadLicence(licenceAttempt)
+      if (seatsTooOld) paintSeats()
+      else void loadSeats(seatsAttempt)
     }
 
     // The view this screen opens on, if this session has already read it, is

@@ -558,7 +558,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Thirty-seven operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Thirty-eight operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -1718,6 +1718,36 @@ export const CONSOLE_OPERATIONS = [
         why: 'the pasted key — the one argument on this surface whose value is a credential, and the only one the console never answers back. It is bounded before anything decodes it and passed nowhere but the verifier; what it can reach is the child’s environment and never an argv.',
       },
     ],
+  },
+  // The Project tab's seat estimate (subscriptions plan S4.2; the read behind
+  // it is `fugaro seats --json`, S4.1, and the rulings are D439, D433 and
+  // T14). It is the console's **thirty-eighth** operation, and it is a read of
+  // core data and nothing else: the command reads this machine's own launcher
+  // and operator lists and the requesters of the last 90 days of runs, sends
+  // nothing, stores nothing and consults no key, licence or server.
+  //
+  // **It is not on a reduced view.** The reduced mode withholds the screens
+  // that read money an operator's runs spent (`REDUCED_VIEW_OPERATIONS`), and
+  // this document carries no money at all: a seat is a contract pricing rule of
+  // the Subscription Terms and not a figure of this installation's spend, and
+  // the estimate the CLI publishes is a count of people. It is not gated by a
+  // lapse either, and for the same reason a read is never gated: only the two
+  // writes that walk an installation out of a lapse carry
+  // `refusedAfterLapse` (`docs/design/lapse-read-only.md`).
+  //
+  // **No argument at all**, the strongest form of this rule's closed schema:
+  // the command takes no positional word, `--json` is a fixed word of the spawn
+  // row and the cloud group's `--project`/`--config` are the installation's --
+  // so there is no field a renderer could fill. The window is the ruling's own
+  // 90 days and no flag moves it: an estimate over a window the caller chose
+  // would be a different count wearing the same name.
+  {
+    name: 'seats.read',
+    method: 'readSeats',
+    command: 'seats',
+    flags: ['--json'],
+    summary: 'the advisory estimate of who launches jobs on this installation, and the identities the estimate cannot count',
+    args: [],
   },
 ] as const satisfies readonly ConsoleOperation[]
 
