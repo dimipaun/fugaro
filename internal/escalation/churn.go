@@ -55,7 +55,10 @@ type Finding struct {
 	// Score is the three anchored axes and the class, which are what the mode's
 	// table reads (rigor.Score). Minor is Blocks' answer for it and never a
 	// scale of this file's own; an unscored finding blocks in every mode, so an
-	// unscored finding is never minor.
+	// unscored finding is never minor. Its class is the other half of the
+	// file-and-class rule, and a class the vocabulary does not know — the zero
+	// Class of a reviewer that named none (D3) — is no half of it: like a
+	// finding with no file, one with no class is matched by its key alone.
 	Score rigor.Score
 }
 
@@ -147,20 +150,25 @@ func churnKeyed(m rigor.Mode) bool { return m == rigor.Startup || m == rigor.Pro
 // sameAsAny reports whether f is a finding an earlier round already raised:
 // the same key, or the same file and class (D1246's rule, D2036).
 //
-// The file half of D1246's rule is asked only of findings that named a file.
-// Two findings with no file are two findings whose reviewer said no more than
-// their class, and "same file" between them is not a fact about either one: a
-// match on a path neither carries would read two unrelated nits as the one
-// unresolved issue and spend rung 2 and D1246's split on it.
+// Both halves of D1246's rule are asked only of two findings the reviewer gave
+// the fact they match on. A path neither named is no evidence that they are one
+// finding, and neither is a class neither stated: two findings the vocabulary
+// cannot read are two findings, not one unresolved issue, and a match on their
+// shared silence would spend rung 2 and D1246's split on a guess. The table
+// answers those rounds on its own terms instead — an unscored finding blocks in
+// every mode, so a comparison that reached them would have answered KindNone
+// anyway.
 //
-// The class is the score's own, so a finding whose reviewer named no class
-// matches only another one that named none — the comparison never widens to
-// the axes, which a re-review re-scores and which therefore say nothing about
-// identity.
+// The class is the score's own, so the comparison never widens to the axes,
+// which a re-review re-scores and which therefore say nothing about identity.
 func sameAsAny(earlier []Round, f Finding) bool {
 	for _, r := range earlier {
 		for _, g := range r.Findings {
-			if g.Key == f.Key || (f.File != "" && g.File == f.File && g.Score.Class == f.Score.Class) {
+			if g.Key == f.Key {
+				return true
+			}
+			if f.File != "" && g.File == f.File &&
+				rigor.KnownClass(f.Score.Class) && g.Score.Class == f.Score.Class {
 				return true
 			}
 		}

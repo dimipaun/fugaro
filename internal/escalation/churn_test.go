@@ -211,6 +211,21 @@ func TestChurnRewordedSameFileClassIsSame(t *testing.T) {
 	}); got != KindSame {
 		t.Errorf("a file-less finding raised again = %q; want %q", got, KindSame)
 	}
+
+	// A class the vocabulary does not know is no class to match on either: the
+	// one file two unscored findings share is not what makes them one finding,
+	// and the table answers these rounds on its own terms — an unscored finding
+	// blocks in every mode, so the answer is the normal path and not rung 2
+	// (D4). The zero Class is what a reviewer that stated none leaves (D3).
+	for _, class := range []rigor.Class{"", "style"} {
+		unscored := []Round{
+			round(rigor.Pro, Finding{Key: "k-1", File: "internal/a.go", Score: rigor.Score{Class: class}}),
+			round(rigor.Pro, Finding{Key: "k-2", File: "internal/a.go", Score: rigor.Score{Class: class}}),
+		}
+		if got := Churn(unscored); got != KindNone {
+			t.Errorf("two findings of one file under class %q = %q; want %q", class, got, KindNone)
+		}
+	}
 }
 
 // TestChurnNoKeyIsNone: a finding carries no key only when the triage stage
