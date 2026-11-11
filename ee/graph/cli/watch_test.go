@@ -37,6 +37,9 @@ package cli
 //     for the two instants the fake cannot produce — the cancel event itself,
 //     and a withdrawal before the opening put ever arrived, which is a document
 //     rather than a wait for a bound that nothing can beat.
+//   - TestWatchOneDeadFeedIsNotClearedByAnotherSubtree: the subtrees of `all`
+//     are separate feeds, so a put on one is no evidence about another and the
+//     document says so per scope rather than per child (H6, §10.6).
 //   - TestWatchRefusedReadIsTerminalAndNamesTheCommand: the listen *refused* —
 //     a 401 or 403 on the subscription itself — ends the child, its sentence
 //     carrying the database's own cause and naming the command that fixes it
@@ -560,17 +563,39 @@ func TestWatchReconnectSendsAFullSnapshotAndBumpsSeq(t *testing.T) {
 	}
 	child.stillRunning(t, 20*testFloor)
 
-	// The transport reconnects on its own, and begins with a full put: the next
-	// document is the whole graph again, with the next sequence.
-	back := sink.next(t, testPatience)
-	if back.Sources[0].State != graph.SourceUp {
-		t.Fatalf("the source after the reconnect is %+v, want it up again", back.Sources[0])
+	// The transport reconnects on its own, and begins with a full put, so the
+	// document that follows is the whole graph again. `all` holds one
+	// subscription per subtree (H6) and the two do not come back in the same
+	// breath, so a document in between is one whose own feed is still over
+	// while the other's is live: every document here is the next sequence, and
+	// the last of them is the whole graph with every source up.
+	subs, err := graph.ScopeSubtrees(graph.Scope{Kind: graph.ScopeAll})
+	if err != nil {
+		t.Fatalf("ScopeSubtrees(all): %v", err)
+	}
+	back := down
+	prev := down
+	for i := 0; ; i++ {
+		if i > len(subs)+1 {
+			t.Fatalf("the sources are %+v after the reconnect, want every one of them up", back.Sources)
+		}
+		back = sink.next(t, testPatience)
+		if back.Seq != prev.Seq+1 {
+			t.Errorf("the document after the reconnect is seq %d, want the next one, %d", back.Seq, prev.Seq+1)
+		}
+		live := true
+		for _, source := range back.Sources {
+			if source.State != graph.SourceUp {
+				live = false
+			}
+		}
+		if live {
+			break
+		}
+		prev = back
 	}
 	if len(back.Nodes) != len(first.Nodes) {
 		t.Errorf("the reconnected snapshot drew %d nodes, want the whole graph's %d", len(back.Nodes), len(first.Nodes))
-	}
-	if back.Seq != down.Seq+1 {
-		t.Errorf("the reconnected snapshot is seq %d, want the next one after the down document, %d", back.Seq, down.Seq+1)
 	}
 }
 
@@ -1160,8 +1185,8 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 		if err := w.observe(coordpath.PathRoot, rtdb.Event{Type: "cancel"}); err != nil {
 			t.Fatalf("the cancel event ended the child with %v, want a scope that is down", err)
 		}
-		if w.down != withdrawnListen {
-			t.Errorf("the scope is down because %q, want %q", w.down, withdrawnListen)
+		if got := w.down[coordpath.PathRoot]; got != withdrawnListen {
+			t.Errorf("the scope is down because %q, want %q", got, withdrawnListen)
 		}
 		if !w.dirty {
 			t.Errorf("the withdrawal left no change pending: nothing would tell a reader the scope is down")
@@ -1233,6 +1258,95 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 		}
 		if doc.Sources[0].State != graph.SourceDown || doc.Sources[0].Reason != withdrawnListen {
 			t.Errorf("the scope is %+v, want it down because %q", doc.Sources[0], withdrawnListen)
+		}
+	})
+}
+
+// TestWatchOneDeadFeedIsNotClearedByAnotherSubtree: `all` holds one
+// subscription per subtree (H6), so each subtree's feed is a fact of its own
+// and the document a reader draws says so per scope: a put on a subtree that is
+// listening is evidence about that subtree and about nothing else. A listen the
+// server withdrew stays over — no subscription is left to deliver the put that
+// would bring it back — while a transport that fell over comes back on its own
+// subtree's next put, and neither of the two may be read as the other's.
+func TestWatchOneDeadFeedIsNotClearedByAnotherSubtree(t *testing.T) {
+	subs, err := graph.ScopeSubtrees(graph.Scope{Kind: graph.ScopeAll})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subs) < 2 {
+		t.Fatalf("`all` covers %v, want at least two subtrees: this test is about one feed being over while another is live", subs)
+	}
+
+	// The child's last read: two scopes, both up, one under each subtree.
+	base := graph.Document{
+		Version: graph.DocumentVersion,
+		Sources: []graph.SourceState{
+			{Source: "coordinator", State: graph.SourceUp},
+			{Source: "orchestrator:o1", State: graph.SourceUp},
+		},
+		Nodes: []graph.Node{}, Edges: []graph.Edge{},
+	}
+
+	// write prints one document, which is all a scope that is down needs: the
+	// read is skipped while a feed is over, and this child has no connection to
+	// read through (snapshot).
+	write := func(t *testing.T, w *watcher) graph.Document {
+		t.Helper()
+		if len(w.down) == 0 {
+			t.Fatalf("every feed is live, so this document is a read and this child has no connection for one")
+		}
+		st, err := graph.NewStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		w.st, w.out = st, &out
+		if err := w.write(context.Background(), time.Now()); err != nil {
+			t.Fatalf("writing the document ended the child with %v", err)
+		}
+		doc, err := graph.ParseDocument(bytes.TrimSpace(out.Bytes()))
+		if err != nil {
+			t.Fatalf("the child wrote a line that is not a document: %v: %s", err, out.String())
+		}
+		return doc
+	}
+
+	t.Run("a withdrawn listen outlives a put on the other subtree", func(t *testing.T) {
+		w := &watcher{scope: graph.Scope{Kind: graph.ScopeAll}, subs: subs, base: base}
+		if err := w.observe(subs[1], rtdb.Event{Type: "cancel"}); err != nil {
+			t.Fatalf("the cancel ended the child with %v, want a scope that is down", err)
+		}
+		if err := w.observe(subs[0], rtdb.Event{Type: "put", Path: "/"}); err != nil {
+			t.Fatalf("the put ended the child with %v", err)
+		}
+		doc := write(t, w)
+		if got := doc.Sources[0]; got.State != graph.SourceUp {
+			t.Errorf("the listening subtree's scope is %+v, want it up", got)
+		}
+		if got := doc.Sources[1]; got.State != graph.SourceDown || got.Reason != withdrawnListen {
+			t.Errorf("the withdrawn listen's scope is %+v, want it down because %q: a put on the other subtree says nothing about this one", got, withdrawnListen)
+		}
+	})
+
+	t.Run("a put clears its own subtree and no other", func(t *testing.T) {
+		w := &watcher{scope: graph.Scope{Kind: graph.ScopeAll}, subs: subs, base: base}
+		for _, sub := range subs {
+			if err := w.observe(sub, rtdb.Event{Type: "error", Err: errors.New("the connection fell over")}); err != nil {
+				t.Fatalf("the transport error on %s ended the child with %v", sub, err)
+			}
+		}
+		// One of them comes back — the transport reconnects on its own and
+		// begins with a full put — and the other has not, yet.
+		if err := w.observe(subs[0], rtdb.Event{Type: "put", Path: "/"}); err != nil {
+			t.Fatalf("the put ended the child with %v", err)
+		}
+		doc := write(t, w)
+		if got := doc.Sources[0]; got.State != graph.SourceUp {
+			t.Errorf("the reconnected subtree's scope is %+v, want it up", got)
+		}
+		if got := doc.Sources[1]; got.State != graph.SourceDown || got.Reason == "" {
+			t.Errorf("the subtree whose transport has not come back is %+v, want it down with a reason", got)
 		}
 	})
 }

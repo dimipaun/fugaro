@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -135,17 +136,26 @@ type watcher struct {
 	// about the document.
 	scope graph.Scope
 	subs  []string
-	// last is the document written most recently. It is what a scope that is
+	// base is the document the last read answered, and what a scope that is
 	// down still draws: the nodes are the last thing the scope said, and the
-	// state beside them is what has changed (H3).
-	last graph.Document
-	// down is why the scope is down, "" while it is up. Two things set it: a
-	// transport that fell over or a read that failed, which the next read
-	// clears, and a listen the server withdrew, which nothing clears while the
-	// child lives because no subscription is left to deliver the put that
-	// would — the scope then stays down exactly as `watch`'s view stays
+	// state beside them is what has changed (H3). A document written because a
+	// scope is down is not kept here: it says nothing new about the scopes that
+	// are live, and one of them would be left carrying the state it had while
+	// its own feed was over.
+	base graph.Document
+	// down is why a subscription's feed is over, by subtree, and empty while
+	// every one of them is live. It is per subtree and not one state for the
+	// child, because the children of `all` hold two subscriptions and one of
+	// them being over says nothing about the other: a put on a live subtree does
+	// not clear a listen the server withdrew on a dead one, and the document a
+	// console draws says so per scope (H6, contract §10.6).
+	//
+	// Two things set one: a transport that fell over, which the subtree's own
+	// next put clears, and a listen the server withdrew, which nothing clears
+	// while the child lives because no subscription is left to deliver the put
+	// that would — that scope then stays down exactly as `watch`'s view stays
 	// offline (contract §10.6).
-	down string
+	down map[string]string
 	// dirty is a change that has not been printed yet, either because it has
 	// just arrived, because the floor has not passed since the last document, or
 	// because the read that would have answered it failed and has to be tried
@@ -182,7 +192,10 @@ func (w *watcher) run(ctx context.Context) error {
 				// is dropped from the select rather than read as an endless
 				// stream of zero events.
 				events = nil
-				w.down, w.dirty = withdrawnListen, true
+				for _, sub := range w.subs {
+					w.feedDead(sub, withdrawnListen)
+				}
+				w.dirty = true
 			} else if err := w.observe(e.subtree, e.ev); err != nil {
 				return err
 			}
@@ -286,7 +299,10 @@ func (w *watcher) first(ctx context.Context, events <-chan streamEvent) error {
 				if ctx.Err() != nil {
 					return nil
 				}
-				w.down, w.dirty = withdrawnListen, true
+				for _, sub := range w.subs {
+					w.feedDead(sub, withdrawnListen)
+				}
+				w.dirty = true
 				return w.write(ctx, time.Now())
 			}
 			switch {
@@ -298,7 +314,8 @@ func (w *watcher) first(ctx context.Context, events <-chan streamEvent) error {
 				// wait for the bound to pass for nothing. The scope is down
 				// from here on, and the other subtrees are still counted.
 				open[e.subtree] = true
-				w.down, w.dirty = withdrawnListen, true
+				w.feedDead(e.subtree, withdrawnListen)
+				w.dirty = true
 			case e.ev.Type == "error" && errors.Is(e.ev.Err, rtdb.ErrPermission):
 				return refusedStream(e.subtree, e.ev.Err)
 			}
@@ -323,7 +340,10 @@ func (w *watcher) first(ctx context.Context, events <-chan streamEvent) error {
 func (w *watcher) observe(subtree string, ev rtdb.Event) error {
 	switch ev.Type {
 	case "put", "patch":
-		w.down, w.dirty = "", true
+		// This subtree's feed is live again — a reconnect delivers a full put —
+		// and no other subtree's is spoken for by it (H6).
+		w.feedLive(subtree)
+		w.dirty = true
 	case "cancel":
 		// The server withdrew the listen — a rule no longer allows it — and the
 		// transport does not reconnect after a cancel, so this child's
@@ -331,7 +351,8 @@ func (w *watcher) observe(subtree string, ev rtdb.Event) error {
 		// (contract §10.6): the listen it was holding stopped being allowed,
 		// which is not the same as this CLI being refused the read it makes, and
 		// it is the read's refusal that ends a child.
-		w.down, w.dirty = withdrawnListen, true
+		w.feedDead(subtree, withdrawnListen)
+		w.dirty = true
 	case "auth_revoked":
 		// The credential the subscription was made with expired. The transport
 		// mints another and reconnects itself, and what follows is a full put,
@@ -342,7 +363,8 @@ func (w *watcher) observe(subtree string, ev rtdb.Event) error {
 		if errors.Is(ev.Err, rtdb.ErrPermission) {
 			return refusedStream(subtree, ev.Err)
 		}
-		w.down, w.dirty = "the database stream is down: "+ev.Err.Error(), true
+		w.feedDead(subtree, "the database stream is down: "+ev.Err.Error())
+		w.dirty = true
 	}
 	return nil
 }
@@ -365,12 +387,7 @@ func (w *watcher) write(ctx context.Context, now time.Time) error {
 	if err := doc.Sanitise(); err != nil {
 		return fcli.RemoteErr(err)
 	}
-	stamped := w.st.Next(doc, now)
-	if err := graph.WriteDoc(w.out, stamped); err != nil {
-		return err
-	}
-	w.last = stamped
-	return nil
+	return graph.WriteDoc(w.out, w.st.Next(doc, now))
 }
 
 // snapshot is the document this instant's read makes, or the last one with its
@@ -392,8 +409,8 @@ func (w *watcher) write(ctx context.Context, now time.Time) error {
 // shows the refusal's sentence as "this CLI has no graph"; a state it draws as a
 // graph that is down.
 func (w *watcher) snapshot(ctx context.Context, now time.Time) (graph.Document, error) {
-	if w.down != "" {
-		return w.downDoc(w.last, w.down), nil
+	if len(w.down) > 0 {
+		return w.downDoc(w.base, w.down), nil
 	}
 	var warned bytes.Buffer
 	// The read's own instant is the age the stream can give (contract §6.22):
@@ -402,41 +419,116 @@ func (w *watcher) snapshot(ctx context.Context, now time.Time) (graph.Document, 
 	doc, err := readGraph(ctx, w.env, w.store, w.db, w.scope, now, now, &warned)
 	switch {
 	case err == nil:
+		w.base = doc
 		return doc, nil
 	case fcli.ExitCode(err) != fcli.ExitUserError:
+		// A read that failed is every source's: the read covers every scope the
+		// child draws, so there is no subtree whose data is still fresh. It is
+		// not kept: the flag makes the next floor read again, and the document
+		// is only what this instant could not answer (snapshot).
 		w.dirty = true
-		return w.downDoc(w.last, "the graph could not be read: "+err.Error()), nil
+		reason := "the graph could not be read: " + err.Error()
+		dead := make(map[string]string, len(w.subs))
+		for _, sub := range w.subs {
+			dead[sub] = reason
+		}
+		return w.downDoc(w.base, dead), nil
 	default:
 		return graph.Document{}, err
 	}
 }
 
+// feedDead marks one subtree's feed as over, and why.
+func (w *watcher) feedDead(subtree, reason string) {
+	if w.down == nil {
+		w.down = make(map[string]string, len(w.subs))
+	}
+	w.down[subtree] = reason
+}
+
+// feedLive marks one subtree's feed as live again, which is what a put on it
+// says: the transport reconnects on its own and each connect begins with a full
+// put, so a subtree that fell over is back the moment one arrives. It says
+// nothing about any other subtree (H6).
+func (w *watcher) feedLive(subtree string) { delete(w.down, subtree) }
+
+// downReason is why the child has a scope that is down at all, and "" when the
+// map holds none: the first dead subtree in the order the child holds them,
+// which is the one a document with no read behind it is named by.
+func (w *watcher) downReason(down map[string]string) string {
+	for _, sub := range w.subs {
+		if reason, ok := down[sub]; ok {
+			return reason
+		}
+	}
+	return ""
+}
+
+// sourceSubtree is the subscription a document's source is read under: the
+// subtree the child holds that covers it. A named scope is covered by its own
+// node when the child subscribed to that node, and otherwise by the subtree
+// that holds it — under `all` every orchestrator scope, named or not, is read
+// under the one /orchestrator subscription (ScopeSubtrees, H6).
+//
+// "" is a source nothing covers, which is a source this child cannot say a feed
+// about: the strings a document carries are a reader's own, and a hand-made one
+// is not this child's. Such a source is left as the last document had it.
+func (w *watcher) sourceSubtree(source string) string {
+	scope, err := graph.ParseScope(source)
+	if err != nil || scope.Kind == graph.ScopeAll {
+		return ""
+	}
+	subs, err := graph.ScopeSubtrees(scope)
+	if err != nil || len(subs) != 1 {
+		return ""
+	}
+	for _, sub := range w.subs {
+		if sub == subs[0] || strings.HasPrefix(subs[0], sub+"/") {
+			return sub
+		}
+	}
+	return ""
+}
+
 // downDoc is the document of a scope that is down: the last thing the scope
-// said, every source marked down and why, and no age, because nothing was
-// re-read (H3, contract §6.22). The nodes stay, so a screen draws the graph it
-// last had and says beside it that it is not being kept up to date.
+// said, the sources whose feed is over marked down and why, and no age on those,
+// because nothing was re-read (H3, contract §6.22). The nodes stay, so a screen
+// draws the graph it last had and says beside it that it is not being kept up to
+// date.
+//
+// Only the sources whose own subtree is over are marked: a child of `all` holds
+// two subscriptions, and one of them being dead is not a fact about the scope
+// the other one carries — a screen keys every node by the source it came from,
+// and a source drawn down while its feed is still delivering would hide a graph
+// that is up to date (H3, H6).
 //
 // Before the child has written anything there is no last graph, and the scope
 // itself is still what is known: one source, down, with the read's own words as
 // its reason and no nodes. That is a scope whose first read failed, which is a
 // document a console draws rather than the child ending with no graph at all —
 // which is the whole of H3, at the one instant a child has no last document.
-//
-// That source is the scope the child was asked for and never the coordinator
-// by default: `all` is a selector and not a source, so it is named by the scope
-// its documents list first (contract §6.22), and a child of `orchestrator:<id>`
-// or `local:<id>` names that scope, which is the only one it holds.
-func (w *watcher) downDoc(last graph.Document, reason string) graph.Document {
+// That source is the scope the child was asked for and never the coordinator by
+// default: `all` is a selector and not a source, so it is named by the scope its
+// documents list first (contract §6.22), and a child of `orchestrator:<id>` or
+// `local:<id>` names that scope, which is the only one it holds.
+func (w *watcher) downDoc(last graph.Document, down map[string]string) graph.Document {
 	doc := last
 	if len(doc.Sources) == 0 {
 		doc = graph.Document{
 			Version: graph.DocumentVersion,
-			Sources: []graph.SourceState{{Source: w.scopeName()}},
-			Nodes:   []graph.Node{},
-			Edges:   []graph.Edge{},
+			Sources: []graph.SourceState{{
+				Source: w.scopeName(), State: graph.SourceDown, Reason: w.downReason(down),
+			}},
+			Nodes: []graph.Node{},
+			Edges: []graph.Edge{},
 		}
+		return doc
 	}
 	for i := range doc.Sources {
+		reason, dead := down[w.sourceSubtree(doc.Sources[i].Source)]
+		if !dead {
+			continue
+		}
 		doc.Sources[i].State = graph.SourceDown
 		doc.Sources[i].Reason = reason
 		// No age is claimed for data that could not be re-read, and none was
