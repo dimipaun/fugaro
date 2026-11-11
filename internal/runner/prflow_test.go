@@ -1190,6 +1190,44 @@ func TestNoDeferralsLeavesTheBodyUnchanged(t *testing.T) {
 	}
 }
 
+// TestPRStatusListsDeferralsAndSaysHowManyAreUnlisted: the record holds a
+// bounded list of what the run deferred, so the section cannot always be the
+// whole count, and a list that stopped at its last line would read as the whole
+// of it. The reader is told how many the record does not hold and how many the
+// run deferred (T-TR9).
+func TestPRStatusListsDeferralsAndSaysHowManyAreUnlisted(t *testing.T) {
+	h := prHarness(t, prCfg(t, 2, ""))
+	deferredAtRunStart(t,
+		runstore.DeferredFinding{
+			Key: "cache-cap", Summary: "no bound on the cache",
+			Reason: "the cap left it unjudged", Source: runstore.TriageSourceCap,
+		},
+		// NewDeferred drops an entry a follow-up cannot be built from and keeps
+		// its count in the total, which is the gap this test renders.
+		runstore.DeferredFinding{Key: "unbounded-retry", Summary: "unbounded retry loop in the fetch", Source: runstore.TriageSourceAgent},
+		runstore.DeferredFinding{
+			Key: "no-timeout", Summary: "the fetch has no timeout",
+			Reason: "doc drift, and a follow-up can add one", Source: runstore.TriageSourceAgent,
+		},
+	)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Deferred == nil || rec.Deferred.Total != 3 || len(rec.Deferred.Findings) != 2 {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	want := "- and 1 finding the record does not list, of 3 findings this run deferred"
+	body := onlyPR(t, h.provider).Body
+	if !strings.Contains(body, want) {
+		t.Errorf("the pull request's status section lacks %q:\n%s", want, body)
+	}
+	raw, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), want) {
+		t.Errorf("the run's report lacks %q:\n%s", want, raw)
+	}
+}
+
 // TestDeferralTextIsEscapedAndRedacted: a deferral's summary and reason are the
 // reviewer's and the judge's words about an untrusted diff, and the record they
 // arrive in is launcher-writable, so neither reaches the pull request's body or

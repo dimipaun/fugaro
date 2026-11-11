@@ -394,9 +394,10 @@ func deferralLines(df *runstore.DeferredFindings) string {
 		// The list is not the whole answer, and it says so rather than passing
 		// its last line off as the last finding the run deferred. The gap is
 		// not always the record's cap: NewDeferred also drops an entry a
-		// follow-up cannot be built from, so the lines are "some of" the total
-		// and never "the first" of it.
-		fmt.Fprintf(&b, "- and %s more; the run's record lists %d of them\n", Plural(df.Total-len(df.Findings), "finding"), len(df.Findings))
+		// follow-up cannot be built from, so what is unlisted is "some of" the
+		// total and never the run's last ones.
+		fmt.Fprintf(&b, "- and %s the record does not list, of %s this run deferred\n",
+			Plural(df.Total-len(df.Findings), "finding"), Plural(df.Total, "finding"))
 	}
 	return b.String()
 }
