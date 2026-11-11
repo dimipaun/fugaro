@@ -13,13 +13,17 @@ import (
 // key (docs/account-aliases/spec.md §1, the owner's ruling of 2026-11-10).
 //
 // It lives in the owner's local project config alone and is never published
-// (D2090): every reader resolves it to its target before it writes anything, so
-// the policy node, the task and the run record keep their formats and no job
-// image in the field ever meets an alias by its own name (F4). This file is the
-// rule and the resolution and nothing else — which keys may name an alias is
-// the key's own business (localcfg's choiceRefProblem) and which account a
-// launch finally holds is the launch's — so the block is inert until a reader
-// resolves through it, which is what the first slice of the plan ships.
+// (D2090): a reader resolves it to its target before it writes the name out
+// anywhere, so the policy node, the task and the run record keep their formats
+// and no job image in the field ever meets an alias by its own name (F4). This
+// file is the rule and the resolution and nothing else: which keys may name an
+// alias is the key's own business (localcfg's choiceRefProblem), and where a
+// name is resolved is the reader's. The publish is the reader that writes the
+// node, so it resolves the two members it copies there; the launch, which
+// holds the account a run is given, and the job set, which mounts it, are
+// AL1's (docs/account-aliases/implementation-plan.md) — and until then the
+// launch refuses a key holding an alias as an undefined account, the direction
+// that spends no credential.
 
 // ResolveAccountAlias is name resolved through aliases: the account the name
 // stands for, and the alias it came through ("" when the name is not an alias).

@@ -13,7 +13,9 @@ import (
 // well, because under oauth it is the default and not a stage key that moves a
 // run. AL0 ships the vocabulary alone: the loader admits the alias, the rules
 // that hold it are applied here, and the keys keep the alias as written — the
-// launch is what resolves it, so these tests pin that the loader does not.
+// readers that write a name out are what resolve it (the publish, in
+// internal/cli; the launch and the job set, AL1), so these tests pin that the
+// loader does not.
 const (
 	aliasAccounts = "claude_accounts:\n    team-a:\n        allow_data_to:\n            - acme/web\n    team-b:\n        allow_data_to:\n            - acme/web\n"
 	aliasBlock    = "claude_account_aliases:\n    reviewer: team-a\n"

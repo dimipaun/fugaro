@@ -194,10 +194,12 @@ type Config struct {
 	// the alias to another account is one edit (docs/account-aliases/spec.md
 	// §1, D2090, D2092, D2093). Only the owner sets them, here, never in
 	// fugaro.yaml, the project layer or the shared config, for claude_accounts'
-	// own reason: an alias is resolved by whoever reads the key, and a key a
-	// launcher could write would be a way around that account's allow_data_to.
-	// The alias never reaches the node, the task or the run record by its own
-	// name — every reader resolves it first — so this block is local config and
+	// own reason: an alias is resolved by whoever writes the name out, and a
+	// key a launcher could write would be a way around that account's
+	// allow_data_to. The alias never reaches the node, the task or the run
+	// record by its own name — the publish resolves the members it copies there
+	// (internal/cli's configAccountValues and project_cmd), and the launch and
+	// the job set resolve what they hold — so this block is local config and
 	// nothing else moves with it.
 	ClaudeAccountAliases map[string]string `yaml:"claude_account_aliases,omitempty"`
 	// Credentials are the installation's named credentials (design

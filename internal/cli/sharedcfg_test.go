@@ -668,6 +668,17 @@ func TestSharedConfigRefusesAliases(t *testing.T) {
 	if !sharedNeverPublished(c) {
 		t.Error("a decoded config carrying claude_account_aliases: is called publishable, so a shared file could carry an alias")
 	}
+	// That fixture is publishable by three of the predicate's arms at once
+	// (registry, claude_accounts and the alias block), so it cannot say which
+	// one answered. This pair does: the alias block alone is refused, and a
+	// config that carries nothing is the control that keeps the arm from being
+	// replaced by a predicate that refuses everything.
+	if !sharedNeverPublished(&localcfg.Config{ClaudeAccountAliases: map[string]string{"reviewer": "team-a"}}) {
+		t.Error("only the alias block is set, and the config is called publishable")
+	}
+	if sharedNeverPublished(&localcfg.Config{}) {
+		t.Error("a config carrying no section at all is called unpublishable, so the check is not the sections it names")
+	}
 }
 
 // TestSharedConfigRefusesImageCatalog: the image catalog is the owner's policy

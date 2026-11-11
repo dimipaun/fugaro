@@ -262,8 +262,9 @@ type SharedAnchor struct {
 // a name the choice keys above may hold in place of an account's own name, so a
 // launcher who could publish one could name an account the shared file never
 // admitted — the same way around the allow-list, written one indirection in. It
-// is the owner's own, resolved by the launch before anything is published, and
-// localcfg.Config.Shared nils it.
+// is the owner's own, and the publish resolves a key that holds one before it
+// writes the node, so what a launcher reads there is the account and never the
+// alias; localcfg.Config.Shared nils it besides.
 //
 // credentials, pools and crafts are that same rule one step further out
 // (docs/model-crafts/reconciliation.md F12, D1628): a credential is the name of
