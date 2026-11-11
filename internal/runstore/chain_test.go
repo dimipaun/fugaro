@@ -119,6 +119,9 @@ func TestChainUsedSumsTheLedgers(t *testing.T) {
 	if got := c.Used(USD); !got.Measured || got.Amount != 4_500_000 {
 		t.Fatalf("Used(usd) = %+v, want 4_500_000 µ$", got)
 	}
+	if got := c.Used(USD); got.Floor != 4_500_000 {
+		t.Fatalf("Used(usd) = %+v, want the same 4_500_000 as its floor: every ledger of this chain was read", got)
+	}
 	if got := c.Remaining(6_000_000, USD); !got.Measured || got.Amount != 1_500_000 {
 		t.Fatalf("Remaining(6 USD) = %+v, want 1_500_000 µ$", got)
 	}
@@ -428,12 +431,20 @@ func TestChainGapChargesTheMissingRunAndKeepsTheRunsItRead(t *testing.T) {
 	}
 	// The time and the rounds come from the records, and the records behind
 	// the hop are gone with it: unmeasured, never the tip's own half hour and
-	// no rounds.
-	if got := c.Used(Time); got.Measured {
-		t.Fatalf("Used(time) = %+v, want it unmeasured: the records behind the hop are gone", got)
+	// no rounds. The figures the read did establish are still handed over as
+	// the floor, which is the tip's own half hour and its rounds and never a
+	// number a caller could state under (D1048).
+	if got := c.Used(Time); got.Measured || got.Floor != 1_800 {
+		t.Fatalf("Used(time) = %+v, want it unmeasured with the 1_800 seconds the readable run holds", got)
 	}
-	if got := c.Used(ReviewRounds); got.Measured {
-		t.Fatalf("Used(review_rounds) = %+v, want it unmeasured: the records behind the hop are gone", got)
+	if got := c.Used(ReviewRounds); got.Measured || got.Floor != 1 {
+		t.Fatalf("Used(review_rounds) = %+v, want it unmeasured with the readable run's one round", got)
+	}
+	if got := c.Used(Tokens); got.Floor != 7_000 {
+		t.Fatalf("Used(tokens) = %+v, want the readable run's 7_000 tokens as the floor", got)
+	}
+	if got := c.Used(USD); got.Floor != 1_500_000 {
+		t.Fatalf("Used(usd) = %+v, want the readable run's 1_500_000 µ$ as the floor, not the charged 6_500_000", got)
 	}
 	if got := c.Remaining(9_000_000, USD); !got.Measured || got.Amount != 2_500_000 {
 		t.Fatalf("Remaining(9 USD) = %+v, want the held figure and the cap taken off it", got)
@@ -466,6 +477,11 @@ func TestChainGapWithNoBoundIsUnmeasured(t *testing.T) {
 	}
 	if got := c.Used(USD); got.Measured || got.Amount != 0 {
 		t.Fatalf("Used(usd) = %+v, want no figure: the runs behind the hop cannot be bounded in dollars", got)
+	}
+	// Unmeasured is not nothing read: the tip's ledger was read, and its
+	// 2_000_000 µ$ is the floor a caller's --used-* may not go under (D1048).
+	if got := c.Used(USD); got.Floor != 2_000_000 {
+		t.Fatalf("Used(usd) = %+v, want the 2_000_000 µ$ the readable run holds as its floor", got)
 	}
 	if got := c.Used(Tokens); got.Measured {
 		t.Fatalf("Used(tokens) = %+v, want it unmeasured too", got)
@@ -505,6 +521,13 @@ func TestChainUnreadableLedgerChargesTheChainBound(t *testing.T) {
 		absent: map[string]bool{chainTip: true},
 	}
 	c := chainOfCaps(t, chainBucket(t), chainTip, f, PerRunCaps{USD: 5_000_000, Tokens: limit})
+	// The dimension is measured because the cap charges the run that could not
+	// be read, and the floor is still the runs that were: the 2_000 tokens of
+	// the two readable ledgers, not the 2_002_000 the charge makes of it
+	// (D1048).
+	if got := c.Used(Tokens); !got.Measured || got.Amount != Amount(limit)+2_000 || got.Floor != 2_000 {
+		t.Fatalf("Used(tokens) = %+v, want the %d the chain is charged with a 2_000 floor", got, limit+2_000)
+	}
 	got := c.Remaining(limit, Tokens)
 	if !got.Measured || got.Amount > 0 {
 		t.Fatalf("Remaining(%d tokens) = %+v, want the chain read as spent, not its budget handed back", limit, got)
@@ -525,6 +548,12 @@ func TestChainUnreadableLedgerWithNoBoundIsUnmeasured(t *testing.T) {
 	c := chainOfCaps(t, b, chainTip, f, PerRunCaps{Tokens: 25_000})
 	if got := c.Used(USD); got.Measured || got.Amount != 0 {
 		t.Fatalf("Used(usd) = %+v, want no figure: the run in flight cannot be bounded in dollars", got)
+	}
+	// The two runs that could be read hold 2_000_000 µ$ between them, which is
+	// the floor rather than nothing: a caller stating less would take the chain
+	// below a figure the database itself holds (D1048, T1).
+	if got := c.Used(USD); got.Floor != 2_000_000 {
+		t.Fatalf("Used(usd) = %+v, want the readable runs' 2_000_000 µ$ as its floor", got)
 	}
 	if got := c.Remaining(9_000_000, USD); got.Measured {
 		t.Fatalf("Remaining(usd) = %+v, want it unmeasured, not the whole limit", got)

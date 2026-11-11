@@ -32,10 +32,21 @@ const (
 // ReviewRounds.
 type Amount float64
 
-// Figure is one dimension of a chain read: the amount, and whether the chain
-// measured it at all.
+// Figure is one dimension of a chain read: the amount, the floor under it that
+// the runs the read could read put there, and whether the chain measured it at
+// all.
 type Figure struct {
 	Amount Amount
+	// Floor is what the runs the read could actually read establish, and it is
+	// the figure a caller's --used-* may not go under (D1048) whichever way the
+	// dimension came back. Where the read measured the dimension it is at or
+	// under Amount — the same sum, with whatever the runs it could not read
+	// were charged on top of it — and where it could not, Amount is nothing to
+	// read while this is still the sum of the runs that were read. A caller who
+	// could state a figure under it could state a zero and take the runs it
+	// could not read off the chain's charge again, which is the whole cap by
+	// the back door (T1, F14).
+	Floor Amount
 	// Measured is false when the chain has no figure for the dimension, and
 	// Amount is then nothing to read rather than a number to trust. It is
 	// false in three cases. With the budget off there is no ledger, and no run
@@ -190,15 +201,17 @@ func (c *Chain) Remaining(limit Amount, dim Dimension) Figure {
 	return Figure{Amount: limit - used.Amount, Measured: true}
 }
 
-// figure is one dimension's reading, and none at all when the dimension is
-// not measured: a sum over the runs that could be read is a lower bound, and
-// a lower bound reported as the figure is the one thing an unmeasured
-// dimension must not hand a reader.
-func figure(a Amount, measured bool) Figure {
+// figure is one dimension's reading: the charge the chain holds, and none at
+// all when the dimension is not measured — a sum over the runs that could be
+// read is a lower bound, and a lower bound reported as the figure is the one
+// thing an unmeasured dimension must not hand a reader. The sum is not thrown
+// away with it: it is the figure's Floor, which is what the read did establish
+// however the dimension came back.
+func figure(amount, floor Amount, measured bool) Figure {
 	if !measured {
-		return Figure{}
+		return Figure{Floor: floor}
 	}
-	return Figure{Amount: a, Measured: true}
+	return Figure{Amount: amount, Floor: floor, Measured: true}
 }
 
 // ErrChainGap is a chain read that stopped at a link whose record the bucket no
@@ -316,6 +329,10 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 	}
 
 	var usd, tokens, seconds, rounds Amount
+	// usdRead and tokensRead are the same sums without what the runs that could
+	// not be read were charged for: the floor a caller's --used-* may not go
+	// under, and so the one figure an unmeasured dimension still hands over.
+	var usdRead, tokensRead Amount
 	unbound := map[Dimension]bool{}
 	// charge is one run whose money could not be read, and what the read
 	// counted for it: the per-run cap where the caller bounds the dimension
@@ -348,7 +365,8 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 		seconds += chainSeconds(rec, now)
 		rounds += Amount(len(rec.Reviews))
 		if ledgers == nil {
-			usd += recordUSD(rec)
+			held := recordUSD(rec)
+			usd, usdRead = usd+held, usdRead+held
 			continue
 		}
 		l, found, err := ledgers.ReadLedger(ctx, s.Slug(), id)
@@ -356,16 +374,17 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 			charge(id, err)
 			continue
 		}
-		usd += Amount(l.Held())
-		tokens += Amount(l.Tokens)
+		held, tk := Amount(l.Held()), Amount(l.Tokens)
+		usd, usdRead = usd+held, usdRead+held
+		tokens, tokensRead = tokens+tk, tokensRead+tk
 	}
 	if gap != "" {
 		charge(gap, ErrChainGap)
 	}
-	c.used[USD] = figure(usd, !unbound[USD])
-	c.used[Tokens] = figure(tokens, ledgers != nil && !unbound[Tokens])
-	c.used[Time] = figure(seconds, gap == "")
-	c.used[ReviewRounds] = figure(rounds, gap == "")
+	c.used[USD] = figure(usd, usdRead, !unbound[USD])
+	c.used[Tokens] = figure(tokens, tokensRead, ledgers != nil && !unbound[Tokens])
+	c.used[Time] = figure(seconds, seconds, gap == "")
+	c.used[ReviewRounds] = figure(rounds, rounds, gap == "")
 	if gap != "" {
 		err := fmt.Errorf("the chain of run %s/%s links to run %s, whose record runs/%s/%s/result.json does not have, so the runs behind it cannot be found: %w", s.Slug(), from, gap, s.Slug(), gap, ErrChainGap)
 		if ledgers == nil {

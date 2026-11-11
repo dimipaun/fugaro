@@ -570,7 +570,7 @@ func chainRemaining(b chainBehind, spec *task.Spec, o *runOptions, warn io.Write
 		}
 	}
 	var err error
-	if used, err = chainUsedRaised(used, o.used, b.limit); err != nil {
+	if used, err = chainUsedRaised(used, o.used, b.limit, enforced); err != nil {
 		return task.Overrides{}, err
 	}
 	for _, d := range chainDimensions() {
@@ -599,19 +599,29 @@ func chainRemaining(b chainBehind, spec *task.Spec, o *runOptions, warn io.Write
 			// would go to this run again, which is the hole F14 names, and the
 			// contract PerRunCaps states for want of a cap is the chain's own
 			// limit for the dimension — no one run of the chain can have held
-			// more than that. So the charge is that limit: a number, favouring
-			// the bound, and never a refusal of its own, which is what D1049
-			// rules out (one failed read is not a stopped chain, and the read is
-			// what fails wherever the database has pruned an old chain's
-			// ledgers). The chain reads as spent with it, and the launch stops
-			// below at the arm every exhausted chain stops at, naming the figures
-			// a chain that really spent everything would name. Where the figure
-			// is knowable the caller's own --used-* is the way past it, accepted
-			// for a dimension the engine could not measure (D1048), and the other
-			// is a raise of the chain's own limit.
-			spent = lim
-			fmt.Fprintf(warn, "note: the chain behind this launch does not measure its %s (%s), and this installation sets no per-run %s cap to charge it; the chain's own %s limit is charged in full instead, so the chain reads as spent unless --used-%s states the figure\n",
-				chainDimensionWord(d), chainMissText(b.chain), chainDimensionWord(d), chainDimensionWord(d), chainDimensionFlag(d))
+			// more than that. So the charge is that limit, and never less than
+			// the runs the read could read: a number, favouring the bound, and
+			// never a refusal of its own, which is what D1049 rules out (one
+			// failed read is not a stopped chain, and the read is what fails
+			// wherever the database has pruned an old chain's ledgers). The
+			// chain reads as spent with it, and the launch stops below at the arm
+			// every exhausted chain stops at, naming the figures a chain that
+			// really spent everything would name.
+			//
+			// Neither way past it is a smaller figure, which is why chainUsedRaised
+			// refuses one (D1048): a --used-* can only raise a charge that already
+			// holds the limit, so it can add nothing here, and the figure it states
+			// is one no run of the chain backs. What does answer is the per-run cap
+			// this installation does not set — with one, the unreadable run is
+			// charged the cap instead of leaving the dimension unmeasured — or a
+			// raise of the chain's own limit in the run that began it (D1061).
+			spent = max(lim, u.Floor)
+			note := fmt.Sprintf("note: the chain behind this launch does not measure its %s (%s), and this installation sets no per-run %s cap to charge the run that could not be read; the chain's own %s limit is charged in full instead, so the chain reads as spent",
+				chainDimensionWord(d), chainMissText(b.chain), chainDimensionWord(d), chainDimensionWord(d))
+			if key := chainPerRunCapKey(d); key != "" {
+				note += fmt.Sprintf(". A per-run cap (%s) charges that run in its place, and raising the chain's limit in the run that began it is the other way past this", key)
+			}
+			fmt.Fprintln(warn, note)
 		case b.chain != nil:
 			// The chain does not measure this dimension: with the budget off
 			// there is no ledger, and no run record carries a whole-run token
@@ -713,13 +723,23 @@ func chainMissText(c *runstore.Chain) string {
 
 // chainUsedRaised is the engine's figures with the caller's --used-* applied
 // (D1048): each one raises its dimension's charge, and one below what the engine
-// read is refused, naming both figures — a caller who could lower a figure could
+// holds is refused, naming both figures — a caller who could lower a figure could
 // state zero and start the chain fresh (T1).
 //
-// A dimension the engine does not measure has no figure to raise, and there the
-// caller's own number is the only one there is: it is accepted, which is the
-// honest use of the knob in a chain whose budget is off (the token dimension,
-// D1051).
+// What the engine holds is the figure's Floor: what it measured where it
+// measured the dimension, and the sum over the runs it could still read where it
+// did not, which is a figure the caller's own number may not understate either.
+// A dimension the enforced chain does not measure is charged the chain's own
+// limit for it (chainRemaining), so under an enforced chain that limit is the
+// floor as well: a --used-* below it would take back a charge the launch is
+// already holding, which is the hole F14 names, and one at or above it changes
+// nothing the chain can pay for. Such a figure is refused rather than applied.
+//
+// A dimension the engine does not measure and no enforced chain charges — the
+// token dimension of a chain whose budget is off (D1051) — has no figure to
+// raise, and there the caller's own number is the only one there is: it is
+// accepted, which is the honest use of the knob in a chain that is a report and
+// not a stop (T10).
 //
 // A --used-* for a dimension the chain does not limit is refused, and the
 // chain's limit is the only one that counts: what the figure raises is the
@@ -727,7 +747,7 @@ func chainMissText(c *runstore.Chain) string {
 // --max-* bounds the run instead — the per-run cap, not a figure the chain
 // holds. Accepting one there would either report a charge nothing carries, or
 // be dropped by the write that fills in each limited dimension.
-func chainUsedRaised(used map[runstore.Dimension]runstore.Figure, u chainUsedFigures, limit task.Overrides) (map[runstore.Dimension]runstore.Figure, error) {
+func chainUsedRaised(used map[runstore.Dimension]runstore.Figure, u chainUsedFigures, limit task.Overrides, enforced bool) (map[runstore.Dimension]runstore.Figure, error) {
 	stated := map[runstore.Dimension]runstore.Amount{}
 	if v := u.usd; v != nil {
 		micros, err := pricing.FromUSD(*v)
@@ -750,18 +770,46 @@ func chainUsedRaised(used map[runstore.Dimension]runstore.Figure, u chainUsedFig
 		if !ok {
 			continue
 		}
-		if _, limited := chainLimitAmount(limit, d); !limited {
+		lim, limited := chainLimitAmount(limit, d)
+		if !limited {
 			return nil, userErr("--used-%s needs a chain limit: the chain this launch is in does not bound its %s spend, so there is no limit for the figure to be charged against. A launch's own --max-%s caps the run and not the chain; leave the flag out, or begin a chain that sets --max-%s",
 				chainDimensionFlag(d), chainDimensionWord(d), chainDimensionFlag(d), chainDimensionFlag(d))
 		}
 		have := used[d]
-		if have.Measured && amount < have.Amount {
-			return nil, userErr("--used-%s %s is below what the engine read for this chain (%s): a caller may only raise what the chain has already used, never lower it. Pass %s or more, or leave the flag out",
-				chainDimensionFlag(d), chainAmountText(d, amount), chainAmountText(d, have.Amount), chainAmountText(d, have.Amount))
+		// max(Amount, Floor) is the engine's own figure however the dimension
+		// came back: a measured figure is at or above its floor, and an
+		// unmeasured one carries the floor alone with no amount at all.
+		floor := max(have.Amount, have.Floor)
+		if !have.Measured && enforced {
+			floor = max(floor, lim)
 		}
-		used[d] = runstore.Figure{Amount: max(amount, have.Amount), Measured: true}
+		if amount < floor {
+			if have.Measured {
+				return nil, userErr("--used-%s %s is below what the engine read for this chain (%s): a caller may only raise what the chain has already used, never lower it. Pass %s or more, or leave the flag out",
+					chainDimensionFlag(d), chainAmountText(d, amount), chainAmountText(d, have.Amount), chainAmountText(d, have.Amount))
+			}
+			return nil, userErr("--used-%s %s is below the charge this chain already holds (%s): the chain's %s spend could not be measured, so the charge is the runs the read could reach and, where the chain limits the dimension, the chain's own %s limit — a charged bound and not a spend somebody read, and a caller may only raise a charge, never lower one. Pass %s or more, or leave the flag out",
+				chainDimensionFlag(d), chainAmountText(d, amount), chainAmountText(d, floor), chainDimensionWord(d), chainDimensionWord(d), chainAmountText(d, floor))
+		}
+		used[d] = runstore.Figure{Amount: max(amount, floor), Floor: floor, Measured: true}
 	}
 	return used, nil
+}
+
+// chainPerRunCapKey is the setting one dimension's per-run cap comes from, as
+// the note that charges a chain's own limit for want of one names it (D1049):
+// the installation's own two figures, which are what chainPerRunCaps reads. The
+// record-backed dimensions have no per-run cap at all — nothing charges them but
+// the records — which is why only a gap leaves one of them unmeasured, and
+// nothing here is named for them.
+func chainPerRunCapKey(d runstore.Dimension) string {
+	switch d {
+	case runstore.USD:
+		return "budget.per_run_usd"
+	case runstore.Tokens:
+		return "budget.max_run_tokens"
+	}
+	return ""
 }
 
 // chainFromWord is how a refusal names the link that put this launch in the
