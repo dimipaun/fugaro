@@ -304,9 +304,19 @@ func (s *Service) adminMint(w http.ResponseWriter, r *http.Request) {
 	// second click that reached the minter would sign and deliver a second key
 	// and then write nothing, which is a key nobody is told about and no line in
 	// the log either (§4.5, TestApprovalMintsOnce).
+	//
+	// An approval keys on the request it answers, which is already a record the
+	// deployment holds. §5.5's Order-Form mint has no such thing — the order is
+	// a document nobody here has seen — so it keys on the render the form came
+	// from: the form in front of the owner submits once and a second submission
+	// of it is the click that already minted, while opening the page again is a
+	// licence of its own. An order form and a seat count alone would make a
+	// re-issue impossible and answer it as a success, which is the one thing a
+	// page that cannot tell the two apart must not do
+	// (TestAnOrderFormMintCanBeIssuedAgain).
 	source := sourceApproval + queued.ID
 	if queued.ID == "" {
-		source = sourceOrder + organisation + ":" + strconv.Itoa(seats)
+		source = sourceOrder + organisation + ":" + strconv.Itoa(seats) + ":" + pageNonce(form.Get("token"))
 	}
 	if _, held, err := s.recorded(ctx, source); err != nil {
 		fail(w, err)
@@ -456,6 +466,16 @@ func (s *Service) pageTokenValid(account, action, token string) bool {
 	return hmac.Equal([]byte(want), []byte(carried))
 }
 
+// pageNonce is the random part of a token the page has already validated: which
+// render a submission came from. It is what an Order-Form mint keys its own
+// idempotency on, and it is the nonce alone rather than the token because a
+// source is rendered on the page and written to the audit line, and the token is
+// the credential that lets the form mint at all.
+func pageNonce(token string) string {
+	nonce, _, _ := strings.Cut(token, ".")
+	return nonce
+}
+
 // pageMAC is the deployment's signature over one token's four fields. The
 // fields are separated by a byte an account, an action and a base64url nonce
 // cannot contain, so no two field lists can be read as one another.
@@ -471,7 +491,8 @@ func (s *Service) pageMAC(account, action, nonce string, expires int64) string {
 // audit writes the page's audit line (§6). It is the mint's own step and it
 // happens before the key is asked for, so a key that exists is a key that was
 // written down; a failure to write it is a failed mint rather than an
-// unrecorded one (TestEveryMintIsAudited).
+// unrecorded one, which is a mint that wrote no line and signed no key
+// (TestAFailedAuditLineFailsTheMint).
 func (s *Service) audit(ctx context.Context, line MintLine) error {
 	if s.auditor == nil {
 		log.Printf("keyservice: %s", line)

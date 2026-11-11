@@ -12,8 +12,11 @@ package keyservice
 // and that the key never appears on the page at all.
 
 import (
+	"errors"
 	"html"
+	"log"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -292,6 +295,102 @@ func TestAdminWithoutASecondFactorMintsNothing(t *testing.T) {
 	}
 }
 
+// TestAdminRefusesAMintTheFactorDidNotConfirm: §6's step-up row and **D455** —
+// the second factor is checked on every minting action, and a code that is
+// missing, unknown, refused or unchecked is a refused mint. Nothing here is
+// about the form: the page's own live token and the owner's own session are in
+// every request, so what the four refusals read is what the factor answered.
+//
+// The failure this holds is the silent one: a guard that fell back on the
+// session when the factor said no would mint any key for any tier on a stolen
+// cookie, and a run whose conclusion is "the page refused it" would read a key.
+func TestAdminRefusesAMintTheFactorDidNotConfirm(t *testing.T) {
+	f := newFixture(t)
+	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a multi-seat trial"}}))
+
+	fields := url.Values{
+		"application": {f.open()[0].ID}, "plan": {paidPlanName}, "seats": {"2"},
+		"term_days": {"365"}, "organisation": {"acme.example"},
+	}
+	// A fresh token each time, so every request below is one the page itself
+	// rendered, and the only thing that differs is the code.
+	mint := func(code string, carried bool) *httptest.ResponseRecorder {
+		form := url.Values{"token": {f.pageToken(ownerAccount, actionMint)}}
+		for name, values := range fields {
+			form[name] = values
+		}
+		if carried {
+			form.Set("step_up", code)
+		}
+		return f.adminPost(RouteAdminMint, form)
+	}
+	refused := func(what string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s answered %d, want 403: %s", what, rec.Code, rec.Body.String())
+		}
+		if got := len(f.recording.keys); got != 0 {
+			t.Errorf("%s minted %d key(s), want none", what, got)
+		}
+		if got := len(f.auditor.lines); got != 0 {
+			t.Errorf("%s wrote %d audit line(s), want none: no key was returned", what, got)
+		}
+		if got := len(f.mail.sent); got != 0 {
+			t.Errorf("%s mailed %d message(s), want none", what, got)
+		}
+		if got := len(f.open()); got != 1 || f.open()[0].Decision != Undecided {
+			t.Errorf("%s changed the queue: %+v", what, f.open())
+		}
+	}
+
+	none := mint("", false)
+	refused("a mint with no code at all", none)
+	if got := len(f.stepUp.asked); got != 0 {
+		t.Errorf("a mint with no code asked the factor %d time(s): an empty field is refused before anything is checked against it", got)
+	}
+	if body := none.Body.String(); !strings.Contains(body, refuseNoStepUp) {
+		t.Errorf("the refusal says %q, want the sentence that names the missing code", body)
+	}
+
+	refused("a mint with a code the factor does not know", mint("000000", true))
+	f.stepUp.accept = false
+	refused("a mint the factor refuses", mint(stepUpCode, true))
+	f.stepUp.accept = true
+	if got := len(f.stepUp.asked); got != 2 {
+		t.Errorf("the factor was asked %d time(s), want two: a code has to reach it to be refused by it (%v)", got, f.stepUp.asked)
+	}
+	if want := ownerAccount + " 000000"; f.stepUp.asked[0] != want {
+		t.Errorf("the factor was asked %q, want %q: the code the form carried, for the account it is a factor for", f.stepUp.asked[0], want)
+	}
+
+	// The factor's own service failing is not a confirmation either, and it is an
+	// answer rather than a refusal: nothing was checked, so nothing is minted.
+	f.stepUp.err = errors.New("the factor is not answering")
+	rec := mint(stepUpCode, true)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("a mint while the factor is failing answered %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.recording.keys); got != 0 {
+		t.Errorf("a mint the factor could not check produced %d key(s), want none: an unchecked factor is not a confirmed one", got)
+	}
+	if got := len(f.auditor.lines); got != 0 {
+		t.Errorf("a mint the factor could not check wrote %d audit line(s), want none", got)
+	}
+	f.stepUp.err = nil
+
+	// And the code the factor does confirm is a mint, which is what makes the
+	// five refusals above the factor's answers rather than the route's silence.
+	if rec := mint(stepUpCode, true); rec.Code != http.StatusSeeOther {
+		t.Fatalf("a confirmed mint answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.recording.keys); got != 1 {
+		t.Errorf("the confirmed mint produced %d key(s), want one", got)
+	}
+	if got := len(f.open()); got != 0 {
+		t.Errorf("the approved request is still in the queue: %+v", f.open())
+	}
+}
+
 // TestEveryMintIsAudited: §6's audit row and Check 173 step 3 — every mint
 // writes one line naming the tier, the seats, the plan and the actor, and it is
 // written **before the key is returned**, so a key that exists is a key that was
@@ -364,6 +463,147 @@ func TestEveryMintIsAudited(t *testing.T) {
 	})
 	if got := len(f.auditor.lines); got != 1 {
 		t.Errorf("an action with no page token wrote %d audit line(s) in all, want one", got)
+	}
+}
+
+// TestAFailedAuditLineFailsTheMint: §6's audit row — the line is written before
+// the key is returned and it is the mint's own step rather than a report about
+// it, so an audit the deployment cannot write is a mint it does not make. The
+// other way round is the failure the row exists to prevent: a key that was
+// signed, mailed and recorded with nothing anywhere saying it was.
+//
+// What a failed mint leaves behind is nothing, so the owner's next click is the
+// same mint rather than a replay of one that never happened.
+func TestAFailedAuditLineFailsTheMint(t *testing.T) {
+	f := newFixture(t)
+	body := f.mintForm(url.Values{
+		"plan": {enterprisePlanName}, "seats": {"40"}, "term_days": {"365"},
+		"organisation": {"order-2026-0041"}, "email": {applicantAddress},
+	})
+
+	f.auditor.err = errors.New("the sink is not answering")
+	if rec := f.adminPost(RouteAdminMint, body); rec.Code != http.StatusInternalServerError {
+		t.Errorf("a mint whose audit line could not be written answered %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.recording.keys); got != 0 {
+		t.Errorf("a mint with no audit line produced %d key(s), want none: the key is the thing that would exist with nothing to account for it", got)
+	}
+	if got := len(f.records()); got != 0 {
+		t.Errorf("a mint with no audit line wrote %d record(s), want none", got)
+	}
+	if got := len(f.mail.sent); got != 0 {
+		t.Errorf("a mint with no audit line mailed %d message(s), want none", got)
+	}
+
+	// And the line being written is what the mint was waiting for: the same
+	// submission is a licence once the sink answers.
+	f.auditor.err = nil
+	if rec := f.adminPost(RouteAdminMint, body); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the same mint once the sink answers answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.auditor.lines); got != 1 {
+		t.Errorf("the mint wrote %d audit line(s), want one", got)
+	}
+	if got := len(f.recording.keys); got != 1 {
+		t.Errorf("the mint produced %d key(s), want one: a failed audit is a mint that did not happen, not one to replay", got)
+	}
+}
+
+// TestThePageWithoutAnAuditSinkWritesTheLineToTheLog: §6's audit row and
+// **D456** — where the line goes is the open decision and that there is one is
+// not, so a deploy that names no Auditor writes it to the process's own log,
+// which is D456(a)'s sink as far as this package can express one. The mint is
+// unaffected: a destination is not a permission.
+func TestThePageWithoutAnAuditSinkWritesTheLineToTheLog(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) { f.deps.Auditor = nil })
+
+	var logged strings.Builder
+	previous := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(previous)
+
+	if rec := f.adminPost(RouteAdminMint, f.mintForm(url.Values{
+		"plan": {enterprisePlanName}, "seats": {"40"}, "term_days": {"365"},
+		"organisation": {"order-2026-0041"}, "email": {applicantAddress},
+	})); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the mint answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.recording.keys); got != 1 {
+		t.Errorf("the mint produced %d key(s), want one", got)
+	}
+	if got := len(f.records()); got != 1 {
+		t.Errorf("the mint wrote %d record(s), want one", got)
+	}
+	if got := len(f.mail.sent); got != 1 {
+		t.Errorf("the mint mailed %d message(s), want one: a key nobody is sent is not a key", got)
+	}
+
+	line := logged.String()
+	for _, named := range []string{"mint ", licence.TierEnterprise, ownerAccount, "order-2026-0041"} {
+		if !strings.Contains(line, named) {
+			t.Errorf("the deployment's log reads %q and does not name %q: a mint with no Auditor is still a mint that was written down", line, named)
+		}
+	}
+}
+
+// TestAnOrderFormMintCanBeIssuedAgain: §5.5's Order-Form mint is a licence for
+// an order nobody here has seen, so what makes one submission one key is the
+// render it came from rather than the order form's name. The same order form and
+// seat count are a licence the owner may have to issue twice — and a record that
+// answered the second as the first mint's own success would leave them with no
+// way to issue it and nothing that says why.
+//
+// What is still one click one key is the click: the browser resubmitting the
+// form the owner has in front of them is the same render, and mints nothing.
+func TestAnOrderFormMintCanBeIssuedAgain(t *testing.T) {
+	f := newFixture(t)
+	fields := func() url.Values {
+		return url.Values{
+			"plan": {enterprisePlanName}, "seats": {"40"}, "term_days": {"365"},
+			"organisation": {"order-2026-0041"}, "email": {"licensing@acme.example"},
+		}
+	}
+
+	form := f.mintForm(fields())
+	if rec := f.adminPost(RouteAdminMint, form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the Order-Form mint answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+
+	// The same form a second time: one render, one click, one key.
+	if rec := f.adminPost(RouteAdminMint, form); rec.Code != http.StatusSeeOther {
+		t.Errorf("re-submitting the form answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.recording.keys); got != 1 {
+		t.Errorf("re-submitting one render minted %d key(s), want one", got)
+	}
+	if got := len(f.auditor.lines); got != 1 {
+		t.Errorf("re-submitting one render wrote %d audit line(s), want one", got)
+	}
+
+	// The re-issue: the owner opens the page again, and the same order form and
+	// seat count is a key of its own rather than the first mint's silence.
+	if page := f.adminGet(); page.Code != http.StatusOK {
+		t.Fatalf("the page answered %d, want 200: %s", page.Code, page.Body.String())
+	}
+	if rec := f.adminPost(RouteAdminMint, f.mintForm(fields())); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the second licence for one order form answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.recording.keys); got != 2 {
+		t.Errorf("the second licence produced %d key(s) in all, want two", got)
+	}
+	if got := len(f.auditor.lines); got != 2 {
+		t.Errorf("the second licence wrote %d audit line(s) in all, want two", got)
+	}
+	if got := len(f.mail.sent); got != 2 {
+		t.Errorf("the second licence mailed %d message(s) in all, want two", got)
+	}
+	first, second := f.auditor.lines[0], f.auditor.lines[1]
+	if first.Source == second.Source {
+		t.Errorf("both licences are recorded as %q: the record cannot tell a re-issue from the mint it repeats", first.Source)
+	}
+	if first.Organisation != second.Organisation || first.Seats != second.Seats {
+		t.Errorf("the two licences name %q/%d and %q/%d, want one order form and seat count issued twice",
+			first.Organisation, first.Seats, second.Organisation, second.Seats)
 	}
 }
 
