@@ -598,7 +598,7 @@ func chainRemaining(b chainBehind, spec *task.Spec, o *runOptions, warn io.Write
 			// ledger could not be read — and the caller's own figure is the way
 			// out: --used-* may state it, and stating what a chain has used is
 			// what the knob is for where the engine cannot read it (D1048).
-			return task.Overrides{}, userErr("%s: the chain's %s spend cannot be established — %s, and this installation sets no per-run %s cap to charge it instead (D1049) — so how much of the chain's %s limit is left is unknown, and continuing would hand this run the whole of it again. State what the chain has already used with --used-%s, or set the per-run cap",
+			return task.Overrides{}, userErr("%s: the chain's %s spend cannot be established — %s, and this installation sets no per-run %s cap to charge it instead (D1049). How much of the chain's %s limit is left is therefore unknown, and continuing would hand this run the whole of it again. State what the chain has already used with --used-%s, or set the per-run cap",
 				chainFromWord(o, spec), chainDimensionWord(d), chainMissText(b.chain), chainDimensionWord(d), chainDimensionWord(d), chainDimensionFlag(d))
 		case b.chain != nil:
 			// The chain does not measure this dimension: with the budget off
