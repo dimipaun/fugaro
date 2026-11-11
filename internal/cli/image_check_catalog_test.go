@@ -732,8 +732,6 @@ func TestCatalogCheckJobRefusesAnEntryAssignedTwice(t *testing.T) {
 	}
 }
 
-// TestCatalogCheckJobNeedsItsSpec: a job that cannot read what to check says
-// so, and submits nothing.
 // TestCatalogCheckReadsTheStagedContextHash: the context trigger's input is the
 // digest the copy staged beside the Dockerfile, read from the runs bucket and
 // never from the repository. An entry whose staged digest is not the one its
@@ -800,6 +798,8 @@ func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
 	}
 }
 
+// TestCatalogCheckJobNeedsItsSpec: a job that cannot read what to check says
+// so, and submits nothing.
 func TestCatalogCheckJobNeedsItsSpec(t *testing.T) {
 	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools"), 5))
 	t.Setenv(catalogCheckSpecEnv, "")
