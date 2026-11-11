@@ -427,10 +427,10 @@ var closedStdinNoFixture = map[string]string{
 	// takes no argument and its bare run is the whole command: it lists the
 	// node the fixture's database holds (none) and the cached briefs of the
 	// machine it runs on, which this harness does not fixture.
-	"fugaro orchestrator ls":        "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
-	"fugaro orchestrator state":     "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
-	"fugaro orchestrator events":    "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
-	"fugaro orchestrator patch":     "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
+	"fugaro orchestrator ls":     "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
+	"fugaro orchestrator state":  "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
+	"fugaro orchestrator events": "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
+	"fugaro orchestrator patch":  "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
 	// The login unit's three commands read this machine's own home and nothing
 	// else, and this world's home has no unit: install is refused before its
 	// typed confirmation (a unit runs code at every login, and the word install
