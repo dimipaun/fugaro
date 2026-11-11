@@ -146,6 +146,62 @@ func TestGitopsRebaseContinueRefusesUnresolvedMarkers(t *testing.T) {
 	}
 }
 
+// TestGitopsRebaseContinueReportsTheNextConflict: a branch of more than one
+// commit can conflict more than once. Resolving the first commit's conflict
+// leaves git on the next one, which conflicts with the base as well, and that
+// continue says ErrRebaseConflict again rather than handing the caller git's
+// own error: the runner's conflict-resolution loop is bounded by reading that
+// sentinel (rebaseResolves), and an error it cannot read as a conflict ends
+// the run as an infrastructure fault, which is retryable and retries into the
+// same conflict. The checkout stays mid-rebase either way, so the next stage
+// finds the conflict; the resolution of the second one finishes the rebase.
+func TestGitopsRebaseContinueReportsTheNextConflict(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "the branch's first\n"})
+	if _, err := repo.CommitAll(ctx, "the first commit"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"b.txt": "the branch's second\n"})
+	if _, err := repo.CommitAll(ctx, "the second commit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Push(ctx, "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	base := advanceBase(t, remote, map[string]string{
+		"a.txt": "the base's first\n",
+		"b.txt": "the base's second\n",
+	})
+	if err := repo.FetchBase(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Rebase(ctx, "main"); !errors.Is(err, ErrRebaseConflict) {
+		t.Fatalf("Rebase err = %v, want ErrRebaseConflict on the first commit", err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "both sides of the first\n"})
+	err := repo.RebaseContinue(ctx)
+	if !errors.Is(err, ErrRebaseConflict) || !repo.RebaseInProgress(ctx) {
+		t.Fatalf("RebaseContinue err = %v, in progress = %v, want ErrRebaseConflict on the second commit's conflict and the rebase left to resolve", err, repo.RebaseInProgress(ctx))
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"b.txt": "both sides of the second\n"})
+	if err := repo.RebaseContinue(ctx); err != nil {
+		t.Fatalf("the second resolution's continue: %v", err)
+	}
+	if repo.RebaseInProgress(ctx) {
+		t.Fatal("the rebase is still in progress after both conflicts were resolved")
+	}
+	head, _ := repo.HeadSHA(ctx)
+	if on, err := repo.IsAncestor(ctx, base, head); err != nil || !on {
+		t.Fatalf("the base %s is an ancestor of %s = %v, %v, want the rebased branch to sit on its base", base, head, on, err)
+	}
+	if body, err := repo.ShowFile(ctx, "HEAD", "b.txt"); err != nil || string(body) != "both sides of the second\n" {
+		t.Fatalf("b.txt = %q, %v, want the second resolution", body, err)
+	}
+}
+
 // TestGitopsRebaseUsesForceWithLease: a rebase rewrites the branch, so the
 // push that carries it is the force-with-lease one and not a fast-forward one
 // — the new head is not a descendant of the head the remote has — while the

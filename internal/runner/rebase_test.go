@@ -31,13 +31,71 @@ func leaveTheConflict(_ *testing.T, _ context.Context, _ agent.Request) (agent.R
 	return agent.Result{}, nil
 }
 
-// resolveTheConflict is a conflict-resolution stage that does the work: it
-// writes the file both sides added with both sides' content, which is what a
-// resolution is.
+// resolveTheFile is a conflict-resolution stage that does the work: it writes
+// the path git stopped on with both sides' content, which is what a resolution
+// is, and nothing else — a stage that touched a path its own conflict has
+// nothing to do with would have that edit carried into the commit being
+// replayed (gitops.RebaseContinue stages the unmerged paths alone).
+func resolveTheFile(name string) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		t.Helper()
+		shell(t, req, "printf 'the base side\\nthe branch side\\n' > "+name)
+		return agent.Result{}, nil
+	}
+}
+
+// resolveTheConflict is resolveTheFile for the one conflict the single-commit
+// branches of the tests below make.
 func resolveTheConflict(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 	t.Helper()
-	shell(t, req, "printf 'the base side\\nthe branch side\\n' > feature.txt")
-	return agent.Result{}, nil
+	return resolveTheFile("feature.txt")(t, ctx, req)
+}
+
+// commitTwice cuts the branch's two commits in one stage: a pull request's
+// branch usually holds more than one, and two of them can conflict with the
+// base on two different paths.
+func commitTwice(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	shell(t, req, "echo one > feature.txt && git add -A && git commit -qm 'Add feature' && echo two > second.txt && git add -A && git commit -qm 'Add second'")
+	return agent.Result{CostUSD: 1}, nil
+}
+
+// TestRecipeRebaseResolvesASecondConflict: the branch a rung-0 run puts back
+// on its base is a pull request's, so it usually holds more than one commit and
+// more than one of them can conflict. Resolving the first leaves git on the
+// next, which the run asks the model about too: what bounds the step is the
+// number of resolutions it buys (rebaseResolves), not the conflicts of the
+// first commit, and a later conflict reaches that bound as the same answer as
+// the first (gitops.RebaseContinue) rather than as a fault of the git call,
+// which the run would end on as retryable. Both resolutions are what the pushed
+// branch carries, and it is pushed once.
+func TestRecipeRebaseResolvesASecondConflict(t *testing.T) {
+	h := followUpHarness(t, "", nil, commitTwice, review("ship", 0))
+	// The base moves on with its own version of both files: each of the two
+	// commits conflicts with it on the path that commit added.
+	commitToRemote(t, h.harness, func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{
+			"feature.txt": "the base's first side\n",
+			"second.txt":  "the base's second side\n",
+		})
+	})
+	pushes := countPushes(t, h.harness)
+	h.followUpRecipe(t, followID, runID, "Put it back on main.", rebaseTask(t))
+	rec, err := h.run(t, resolveTheFile("feature.txt"), resolveTheFile("second.txt"))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("rec = %+v, err = %v; want succeeded/none", rec, err)
+	}
+	if len(h.agent.calls) != 2 {
+		t.Fatalf("%d conflict-resolution stages, want one per conflicting commit", len(h.agent.calls))
+	}
+	if n := pushes(); n != 1 {
+		t.Fatalf("%d pushes, want the rebased branch pushed once", n)
+	}
+	if body := testutil.Git(t, h.remote, "show", rec.PushedHead+":second.txt"); body != "the base side\nthe branch side" {
+		t.Fatalf("second.txt = %q, want the second resolution the replay carries", body)
+	}
+	base := testutil.Git(t, h.remote, "rev-parse", "refs/heads/main")
+	testutil.Git(t, h.remote, "merge-base", "--is-ancestor", base, rec.PushedHead)
 }
 
 // TestRecipeRebaseResolvesAndPushes: a rebase run that resolves its conflict

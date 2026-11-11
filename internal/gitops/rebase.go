@@ -95,7 +95,15 @@ func (r *Repo) RebaseContinue(ctx context.Context) error {
 	env := append(r.processEnv(), "GIT_EDITOR=true")
 	if err := r.gitRun(ctx, env, noHooks, nil, nil, "rebase", "--continue"); err != nil {
 		if r.RebaseInProgress(ctx) {
-			return fmt.Errorf("continuing the rebase: %w", err)
+			// Still unfinished: git stopped again, which for a branch of more
+			// than one commit is the next commit conflicting with the base.
+			// That is the sentinel too, as Rebase's own conflict is — the
+			// caller resolves it or refuses over it — rather than git's error,
+			// which reads as a fault of the call: the runner's loop is bounded
+			// by this reading (rebaseResolves), and an unreadable error there
+			// ends the run as an infrastructure fault, which is retryable and
+			// retries into the same conflict.
+			return fmt.Errorf("continuing the rebase: %w", ErrRebaseConflict)
 		}
 		return err
 	}
