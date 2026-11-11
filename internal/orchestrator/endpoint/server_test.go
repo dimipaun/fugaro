@@ -727,6 +727,69 @@ func TestTheRefusalCarriesNoIdentityHeaders(t *testing.T) {
 	}
 }
 
+// TestCloseEndsAStreamAndReturns is Close's own case, and it is the one the
+// daemon's shutdown depends on (CG13b): a console holds the stream open while
+// the daemon is asked to stop.
+//
+// A stream is idle by nature -- nothing is written while the state stands -- so
+// a handler waiting only on its ticker is one http.Server.Shutdown waits for and
+// never gets: a context with a deadline spends it and answers "context deadline
+// exceeded", and a context without one waits forever, which for this daemon is
+// the shutdown that never completes. Cancelling the server's own context is what
+// makes the handler return, and this case is what holds that: the stream is open
+// and has answered its first event, Close is given a deadline it must not need,
+// and both halves are checked -- Close returns nil, and the reader's stream ends.
+func TestCloseEndsAStreamAndReturns(t *testing.T) {
+	f := newFixture(t)
+	streamCtx, cancelStream := context.WithCancel(context.Background())
+	defer cancelStream()
+	resp, err := f.stream(streamCtx, f.bearer())
+	if err != nil {
+		t.Fatalf("opening the stream: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	events := bufio.NewReader(resp.Body)
+	if _, data := readEvent(t, events); data != f.document(f.current()) {
+		t.Fatalf("the stream did not answer before Close: %s", data)
+	}
+
+	// A deadline the correct Close does not need and the broken one spends.
+	ctx, cancel := context.WithTimeout(context.Background(), closeDeadline)
+	defer cancel()
+	started := time.Now()
+	if err := f.srv.Close(ctx); err != nil {
+		t.Fatalf("Close with a stream open: %v after %s, and a shutdown that waits for an idle stream either fails on its deadline or never returns", err, time.Since(started))
+	}
+
+	// The reader is let go as well, which is the half a console would notice: the
+	// event was the last one, and the read after it ends rather than waits for a
+	// tick that would never be the last.
+	ended := make(chan error, 1)
+	go func() {
+		_, err := events.ReadByte()
+		ended <- err
+	}()
+	select {
+	case err := <-ended:
+		if err == nil {
+			t.Errorf("the stream delivered another byte after Close returned, so it was not ended")
+		}
+	case <-time.After(streamEnds):
+		t.Fatalf("the stream is still open %s after Close returned", streamEnds)
+	}
+}
+
+// closeDeadline is what Close is given in the case above: long enough that a
+// correct shutdown never approaches it -- it waits for one handler that has
+// already been told to stop -- and short enough that a shutdown which waits for
+// the stream fails there instead of at the test's own timeout.
+const closeDeadline = 2 * time.Second
+
+// streamEnds is how long the reader is given to be let go, and it is unrelated
+// to the poll: a stream that is ended is ended by the connection closing, not by
+// the next tick.
+const streamEnds = 5 * time.Second
+
 // TestTheStreamSendsAWholeDocumentPerMovedTick is the stream route's own
 // behaviour, which the token case only reaches: a reader gets the state it
 // connected for at once, then one whole document per tick whose state is not

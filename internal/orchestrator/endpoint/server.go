@@ -53,10 +53,12 @@
 //
 // What answers is the node's own document and nothing else. `GET /state` is
 // the state exactly as `orchestrator.EncodeState` writes it -- byte for byte
-// what `orchestrator/<id>/state` carries -- so one decoder serves the node, the
-// endpoint and the cached brief, and a `schema_version` this release does not
-// read is refused in all three places by the same code (D1359's "the endpoint
-// adds no shape"). What the endpoint adds beyond the node is freshness and two
+// what `orchestrator/<id>/state` carries -- so one decoder serves the node and
+// the endpoint, and a `schema_version` this release does not read is refused in
+// both by the same code (D1359's "the endpoint adds no shape"). The cached brief
+// is not a third: it is `orchestrator.BriefCache`, a shape of its own with a
+// version of its own -- a brief and the time it was written, never a state --
+// read by its own decoder. What the endpoint adds beyond the node is freshness and two
 // facts of its own, and both travel beside the document rather than inside it:
 // the server time of the tick in `X-Fugaro-Tick`, and, for the handshake that
 // proves which process holds this port (CG13b), the id and the start-time nonce
