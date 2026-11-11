@@ -445,6 +445,108 @@ func TestTheIntakeRefusesWhatItsMinterCannotAnswer(t *testing.T) {
 	}
 }
 
+// TestTheMinersRouteRefusesWhatItCannotServe: the minter's one route is the
+// service's entry point, and everything it will not serve is a 400 with nothing
+// signed — the shape the intake's half is written against (§3.2, Check 174).
+// The body is read under a cap because the route is reachable by whoever the
+// platform admits, and a request it cannot read is refused rather than
+// half-read: the only 200 here is the request the intake builds, and the key it
+// answers is one a released verifier accepts.
+func TestTheMinersRouteRefusesWhatItCannotServe(t *testing.T) {
+	f := newFixture(t)
+	encoded, err := json.Marshal(Request{
+		Environment:  Production,
+		Tier:         licence.TierTeam,
+		Features:     []string{"seats"},
+		Seats:        1,
+		Organisation: "acme.example",
+		Plan:         paidPlanName,
+		TermDays:     365,
+	})
+	if err != nil {
+		t.Fatalf("encoding the request the intake builds: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		body   string
+		status int
+	}{
+		{name: "the request the intake builds", body: string(encoded), status: http.StatusOK},
+		{name: "an empty body", body: "", status: http.StatusBadRequest},
+		{name: "a body that is not a request this service reads", body: "tier=team", status: http.StatusBadRequest},
+		{name: "a body carrying a field this service does not know", body: `{"tier":"team","extra":true}`, status: http.StatusBadRequest},
+		{name: "a request the minter will not sign", body: `{"environment":"production","tier":"team-plus","seats":1,"organisation":"acme.example","term_days":365}`, status: http.StatusBadRequest},
+		{name: "a body longer than the route reads", body: strings.Repeat("x", maxRequestBytes+1), status: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spy := &signerSpy{priv: f.signer.priv}
+			minter := Minter{Signer: spy, Keys: f.keys, Environment: Production, Now: f.clock}
+			rec := httptest.NewRecorder()
+			minter.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, RouteMint, strings.NewReader(tc.body)))
+			if rec.Code != tc.status {
+				t.Fatalf("the minter's route answered %d for %s, want %d: %s", rec.Code, tc.name, tc.status, rec.Body.String())
+			}
+			if tc.status == http.StatusOK {
+				if spy.calls != 1 {
+					t.Errorf("the minter's route signed %d key(s) for the request the intake builds, want one", spy.calls)
+				}
+				var minted Minted
+				if err := json.Unmarshal(rec.Body.Bytes(), &minted); err != nil {
+					t.Fatalf("reading the answer back: %v", err)
+				}
+				if _, _, err := licence.VerifyAgainst([]byte(minted.Key), f.now, f.ring); err != nil {
+					t.Errorf("the key the route answered does not verify: %v", err)
+				}
+				return
+			}
+			if spy.calls != 0 {
+				t.Errorf("the minter's route answered %d for %s after asking the key ring %d time(s), want a refusal before the signer is reached", rec.Code, tc.name, spy.calls)
+			}
+			if rec.Body.Len() == 0 {
+				t.Error("the route refused with an empty body, and its words are what the intake's half reads")
+			}
+		})
+	}
+}
+
+// TestTheMetadataServerRefusalsAreNotAToken: the token's source is the
+// platform's and every way it can fail is a refusal, never an empty string
+// presented to the minter as a bearer token — a call made without one is a call
+// the minter's own check refuses, and a token read out of an error's body is no
+// token at all.
+func TestTheMetadataServerRefusalsAreNotAToken(t *testing.T) {
+	answer := func(status int, body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+			w.Write([]byte(body))
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		answer http.HandlerFunc
+	}{
+		{name: "a metadata server that refuses the call", answer: answer(http.StatusForbidden, "the caller is not the instance")},
+		{name: "a metadata server that fails", answer: answer(http.StatusInternalServerError, "")},
+		{name: "a metadata server whose answer cannot be read", answer: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Length", "64")
+			w.Write([]byte("half a token"))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.answer)
+			defer srv.Close()
+			tokens := MetadataTokens{URL: srv.URL, Client: srv.Client()}
+			token, err := tokens.IDToken(context.Background(), "https://minter.example")
+			if err == nil {
+				t.Fatalf("the metadata server's source answered the token %q for %s, want a refusal: a call the minter's check refuses is one the intake must not make", token, tc.name)
+			}
+			if token != "" {
+				t.Errorf("the refusal carries the token %q, want none", token)
+			}
+		})
+	}
+}
+
 // clientSpy is the transport of a RemoteMints call that must never leave the
 // process: what it answers is never read, and its count is what a test reads to
 // say a refusal came before the request rather than after the network declined
