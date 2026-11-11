@@ -2301,9 +2301,8 @@ deploy to the Firebase project created for the website only (D91, D109) — a ru
 change `.github/workflows/`. `docs/pending-workflows/` now holds one pending workflow,
 `docs/pending-workflows/images.yml` — the images workflow's nightly republish of the
 base image skipped when the published tags already name the build (issue #1745), which is the
-running `.github/workflows/images.yml` plus one step and is copied in on its own. The one that
-was staged beside it is not this
-site's either (the credentials service's image leg in `images.yml`, credentials-service plan task C1.14, was copied in on 2026-10-30, the shared package's test job, `shared-tests.yml`, was copied in on 2026-10-22, the
+running `.github/workflows/images.yml` plus one step and is copied in on its own, and it is not
+this site's (the credentials service's image leg in `images.yml`, credentials-service plan task C1.14, was copied in on 2026-10-30, the shared package's test job, `shared-tests.yml`, was copied in on 2026-10-22, the
 mobile app's release workflow, `mobile-release.yml`, and the console's own release
 stream, `console-release-tag.yml`, were copied in on 2026-10-23, and all four are no longer
 staged, and Dependabot's watch over the console's npm dependencies was copied over
