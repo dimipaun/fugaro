@@ -812,3 +812,27 @@ func TestManagedOwnerTerminalDataLossKeepsTheOwnersTerminal(t *testing.T) {
 		})
 	}
 }
+
+// TestManagedOwnerTerminalOrdinaryStepSaysWillDo: a step that no confirmation
+// is asked for does not print the banner a question is shown under. The
+// managed gate prints its own sentence two lines below — "this project is
+// managed, so this step takes no confirmation" — and a ⚠ CONFIRM banner above
+// it says the opposite (the owner's feedback of 2026-11-10). What the step
+// prints instead is the converge's own word for work nobody is asked about:
+// the one its plan view's status uses.
+func TestManagedOwnerTerminalOrdinaryStepSaysWillDo(t *testing.T) {
+	_, e, out, _ := managedTerminalUpdate(t, true, true)
+	e.r.review = &runReview{state: reviewTaken}
+
+	const what = "pins 1 base image(s) to this release's image at the digest its cosign signature was verified for"
+	ok, err := e.r.askOrdinary(what, "")
+	if err != nil || !ok {
+		t.Fatalf("a managed project's own terminal was not let through with nothing typed: %v\n%s", err, out)
+	}
+	if strings.Contains(out.String(), "⚠ CONFIRM") {
+		t.Errorf("a step nothing is asked about printed the confirmation banner:\n%s", out)
+	}
+	if !strings.Contains(out.String(), "will do (project "+initProjectName+", GCP project "+initProject+"): "+what) {
+		t.Errorf("the step does not say in the run's own words what it will do:\n%s", out)
+	}
+}

@@ -816,6 +816,20 @@ func (w runWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// notes is the run's stderr for the lines a stage prints itself rather than
+// through its own writer: the project header every cloud command starts with
+// and the notes a selection carries. They are the same rule as the run's own
+// lines (runWriter) because they land on the same terminal: a stage of a
+// converge selects the config for its own checkout while a step is in flight,
+// and on stdout the frame is drawn at the start of a line it never ends, so a
+// header written between two frames reads as the stage's name run into it.
+func (r *initRun) notes() io.Writer {
+	if r.rep == nil {
+		return r.cmd.ErrOrStderr()
+	}
+	return runWriter{r: r, out: r.cmd.ErrOrStderr()}
+}
+
 // endsLine reports whether a write left the cursor at the start of a line.
 func endsLine(p []byte) bool { return len(p) > 0 && p[len(p)-1] == '\n' }
 
@@ -1011,6 +1025,12 @@ func runInit(r *initRun) error {
 		if r.repLog != nil {
 			defer func() { _ = r.repLog.Close() }()
 		}
+		// The run's stderr is the reporter's too, from here on: a stage that
+		// selects the project config for its own checkout prints the header and
+		// the selection's notes while a step is in flight, and a frame and a
+		// header written on one terminal without the line coming down first
+		// read as one run-together line (see initRun.notes).
+		o.cloud.stderr = r.notes
 		return e.converge(cmd.Context())
 	}
 
@@ -2055,6 +2075,17 @@ func (r *initRun) confirm(what, undone string) error {
 	return nil
 }
 
+// willDo prints the note of a step that no confirmation is asked for, in the
+// words the run has for exactly that: "will do" is the converge's own status
+// for a stage with work to do that nobody is asked about (initflow's
+// stateLabel). The ⚠ CONFIRM banner is what a question is shown under, so the
+// two may not be printed for one step — a managed project's own sentence says
+// no confirmation is taken, two lines under a banner that announced one (the
+// owner's feedback of 2026-11-10).
+func (r *initRun) willDo(what string) {
+	fmt.Fprintf(r.w, "will do (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+}
+
 // confirmNow is the confirmation a step of this run asks now, and it asks
 // nothing: the policy removes the confirmations a person had to type
 // (docs/no-prompt-policy, D1540 and T7), and what answers for the step is what
@@ -2139,20 +2170,20 @@ func (r *initRun) yesRoute() string {
 	return ", or pass --yes once you have read what it does"
 }
 
-// ask shows the banner and reports whether the step is confirmed; without
-// a terminal and without --yes it isn't. In a coding agent's session it is
-// an *initflow.AgentError before anything is shown as confirmed: nothing a
-// run applies is confirmed there.
+// ask reports whether the step is confirmed, under the banner a question is
+// shown under; without a terminal and without --yes it isn't. In a coding
+// agent's session it is an *initflow.AgentError before anything is shown as
+// confirmed: nothing a run applies is confirmed there.
 //
-// The one session that is shown the banner and asked nothing is the owner's
-// own, in a managed project, at the step of the one command whose gate is its
-// own: `fugaro image refresh`'s non-build steps (r.refresh). The banner and
-// the diff above it are the whole of what the owner reads there, the sentence
-// says why, and the step goes on — the ruling of 2026-11-01, and the same
-// shape the plugin wiring's y/N and the IAM removals already have
-// (gateUnderway). Nothing else moves: a project that is not managed, a mark
-// that did not answer and a session with no terminal or with --yes reach the
-// lines below exactly as they always did.
+// The one session that is asked nothing at all is the owner's own, in a managed
+// project, at the step of the one command whose gate is its own: `fugaro image
+// refresh`'s non-build steps (r.refresh). What the owner reads there is the diff
+// above, the step's own note under the run's words for exactly that (willDo),
+// and the sentence that says why — and the step goes on. It is the ruling of
+// 2026-11-01, and the same shape the plugin wiring's y/N and the IAM removals
+// already have (gateUnderway). Nothing else moves: a project that is not
+// managed, a mark that did not answer and a session with no terminal or with
+// --yes reach the lines below exactly as they always did.
 func (r *initRun) ask(what string) (bool, error) {
 	// The banner and the name typed under it are one question: the line in
 	// flight is down across both (initRun.asking), or the frame drawn when the
@@ -2170,15 +2201,20 @@ func (r *initRun) ask(what string) (bool, error) {
 // banner is a note now, not a prompt: what answers for the step is the reader
 // of it (confirmNow), and the only arm that reads is --ask's, which asks the
 // step's own [y/N] through the one sanctioned confirmation helper.
+//
+// The banner is printed only where something follows it that answers for the
+// step: a question, a flag, or a person whose presence is the answer. An arm
+// that asks nothing at all prints the step's note under willDo instead.
 func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
-	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	if r.refresh.asksNothing(r.conditions()) {
+		r.willDo(what)
 		fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 		return true, nil
 	}
+	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	ok, err := r.confirmNow(what + "?")
 	if err != nil {
 		return false, err
