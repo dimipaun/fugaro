@@ -749,11 +749,12 @@ test_a_named_repository_is_the_one_checked_and_a_lone_one_needs_no_name() {
     "named repository: the other one is the pairing case's"
   # And with no argument where the installation's state holds exactly one
   # repository: that one is the sandbox, so the run gets past the naming. It
-  # stops one step later, at the pairing case, which needs a second repository —
-  # which is why the command the owner runs names the repository: a derivation
-  # this check can make is a derivation on an installation that cannot pass the
-  # third claim anyway. What this case reads is that the run got as far as that
-  # stop instead of the refusal to pick.
+  # stops in that same step, with the `installation` row unmeasured, because the
+  # second repository the pairing case needs is not in the state — which is why
+  # the command the owner runs names the repository: a derivation this check can
+  # make is a derivation on an installation that cannot pass the third claim
+  # anyway. What this case reads is that the run got as far as that stop instead
+  # of the refusal to pick.
   BUDGET_REPOS=one
   setup_case derived
   RUN96_UNNAMED=yes
