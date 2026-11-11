@@ -263,6 +263,71 @@ func TestAllDeferredLevelTwoAdvancesToLevelThree(t *testing.T) {
 	}
 }
 
+// TestAReversedDeferralIsNotFiled: the record's deferred block is what took
+// effect when the run ended and not a log of every deferral a judge ever wrote
+// (D1850). Level 2 deferred the finding and ended its level on it; the
+// adversarial round found the same finding again — the key is what says it is
+// the same one — and blocked it, so it is this patch's work after all and no
+// follow-up is filed for it. The log keeps both rounds, and the block is empty.
+func TestAReversedDeferralIsNotFiled(t *testing.T) {
+	cfg := startupCfg(t, 1, "  levels: { l3: { model: senior-model } }\n  adversarial_rounds: 1\n")
+	h := newHarness(t, cfg, nil)
+	rec, err := h.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding()),
+		triageStep("defer"),
+		reviewScored("changes", blockingFinding()),
+		triageStep("block"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review", "triage", "adversarial", "triage") {
+		t.Fatalf("stages = %v, want both levels to have judged the finding", got)
+	}
+	if tr := rec.Triage; tr == nil || len(tr.Rounds) != 2 {
+		t.Fatalf("the record's triage block = %+v, want the log of both rounds", rec.Triage)
+	}
+	if rec.Deferred != nil {
+		t.Errorf("the record's deferred block = %+v, want none: the round that blocks a finding takes its deferral back", rec.Deferred)
+	}
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Errorf("rec = %+v, want a draft on the finding level 3 blocked", rec)
+	}
+}
+
+// TestARepeatedDeferralIsFiledOnce: a finding deferred in two rounds is one
+// follow-up and not two (D1850). The round below leaves the same two findings
+// twice — the fix between them settled neither in the judge's reading — and its
+// blocking finding buys the second round, so the deferred one is placed on
+// twice. The record keeps it once.
+func TestARepeatedDeferralIsFiledOnce(t *testing.T) {
+	h := newHarness(t, startupCfg(t, 2, ""), nil)
+	rec, err := h.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding(), trivialFinding()),
+		triageVerdicts("block", "defer"),
+		fixStep,
+		reviewScored("changes", blockingFinding(), trivialFinding()),
+		triageVerdicts("block", "defer"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Deferred == nil {
+		t.Fatal("the record's deferred block is empty, want the finding both rounds deferred")
+	}
+	if got := rec.Deferred.Total; got != 1 {
+		t.Errorf("the record says the run deferred %d findings, want the one finding it deferred twice", got)
+	}
+	if got := len(rec.Deferred.Findings); got != 1 {
+		t.Errorf("the record holds %d deferrals, want one entry per finding", got)
+	}
+	if d := rec.Deferred.Findings[0]; d.Key != findingKeyOf("feature.txt", trivialSummary) {
+		t.Errorf("the deferral = %+v, want the finding both rounds deferred", d)
+	}
+}
+
 // TestHeldBackLevelReadsTheDeferredSet: the held-back rule reads the deferred
 // set and not the recorded verdict word (F21). A level 2 round whose findings
 // the judge deferred whole does not hold the pull request a draft after level 3
