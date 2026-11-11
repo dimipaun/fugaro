@@ -647,7 +647,7 @@ const MATRIX_REFUSALS = [
   },
   {
     what: 'a group whose title is empty',
-    edit: (yaml) => yaml.replace(/^ {4}title: "Console \(Electron\)"$/m, '    title: ""'),
+    edit: (yaml) => yaml.replace(/^ {4}title: "Console"$/m, '    title: ""'),
     wants: [/title is empty/],
   },
   {
@@ -699,7 +699,7 @@ const MATRIX_REFUSALS = [
   },
   {
     what: 'a key on a row nobody reads',
-    edit: (yaml) => yaml.replace(/^ {8}note: "No plan for email\."$/m, '        note: "No plan for email."\n        nickname: "nope"'),
+    edit: (yaml) => yaml.replace(/^ {8}note: "Alongside Slack and Teams\."$/m, '        note: "Alongside Slack and Teams."\n        nickname: "nope"'),
     wants: [/"nickname"/],
   },
   {

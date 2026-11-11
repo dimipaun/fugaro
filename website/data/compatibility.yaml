@@ -73,7 +73,7 @@ groups:
         note: "A native port is approved through its first slice; the release builds no Windows binary yet."
         evidence: "docs/windows-cli/README.md"
   - id: console
-    title: "Console (Electron)"
+    title: "Console"
     rows:
       - name: "macOS"
         status: supported
@@ -96,7 +96,7 @@ groups:
         note: "The console runs on top of the CLI and inherits its identity; there is no separate console login."
         evidence: "docs/design/desktop-console.md"
   - id: mobile
-    title: "Mobile app (Expo)"
+    title: "Mobile app"
     rows:
       - name: "iOS"
         status: coming-soon
@@ -106,7 +106,7 @@ groups:
       - name: "Android"
         status: coming-soon
         edition: subscription
-        note: "The same Expo codebase as iOS."
+        note: "The same app as iOS."
         evidence: "mobile/app.json"
   - id: agent-harness
     title: "Agent harness"
@@ -197,9 +197,9 @@ groups:
         edition: subscription
         note: "Self-hosted forges are a plan, not a build."
       - name: "Bitbucket Data Center"
-        status: not-planned
+        status: roadmap
         edition: subscription
-        note: "Ruled out: the Bitbucket integration speaks the Cloud API roots only."
+        note: "The Bitbucket integration speaks the Cloud API roots only today."
         evidence: "docs/bitbucket-workspace-token"
   - id: trackers
     title: "Issue trackers"
@@ -233,8 +233,8 @@ groups:
         status: roadmap
         note: "One thread per task, with replies and buttons going back to the agent."
       - name: "Email"
-        status: not-planned
-        note: "No plan for email."
+        status: roadmap
+        note: "Alongside Slack and Teams."
   - id: identity-and-roles
     title: "Identity and roles"
     rows:
