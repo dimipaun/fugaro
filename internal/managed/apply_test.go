@@ -501,6 +501,77 @@ func TestApplyStopsAtARefusedGateAndAppliesNothing(t *testing.T) {
 	if applied := r.applied(t); len(applied) != 0 {
 		t.Errorf("the refused apply still applied something: %v", applied)
 	}
+	// A refusal is recorded too (D1025), and what is recorded is the refusal's
+	// own verdict: an owner whose plan was refused is the reader who wants the
+	// record most, and a record filed as an admission about a plan nothing
+	// applied would be the one answer a reader must not find here.
+	rec := r.rec.recorded(t)
+	if rec.Refuse() == nil {
+		t.Error("the recorded verdict is not a refusal, and the plan was refused: a reader of the record would take this step for one that was applied")
+	}
+	if rec.Warned() {
+		t.Error("the recorded verdict is a warned one, which is the answer for a plan that WAS applied with findings")
+	}
+	if len(rec.Rules()) == 0 {
+		t.Error("the record names no rule, so it does not say what refused the plan")
+	}
+	if rec.Digest() == "" {
+		t.Error("the record carries no digest, and which bytes were judged is the whole point of it (D1022)")
+	}
+}
+
+// A refused plan whose record cannot be written: both sentences reach the
+// caller, the way the CLI gate's admit chains the same pair. What the session
+// acts on is the refusal — nothing was applied, and why — and a command that
+// returned the writer's error alone would leave it with a failure it cannot tell
+// from a refused plan (or, worse, from a broken gate) while D1014's rule is the
+// one that has to be readable in it.
+func TestApplyKeepsTheRefusalWhenTheRecordCannotBeWritten(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	writeErr := errors.New("the audit record could not be written")
+	r.rec.err = writeErr
+	_, err := Apply(context.Background(), r.request(t))
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("failure %v does not reach the gate's own refusal, so nothing can tell a refused plan from a write that broke: %v", err, writeErr)
+	}
+	var refused *RefusedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("failure %v does not carry the verdict that refused", err)
+	}
+	if len(refused.Verdict.Refusals) == 0 {
+		t.Error("the carried refusal lists nothing, so the session reads no reason for the step that was not applied")
+	}
+	if !strings.Contains(err.Error(), planBucket) {
+		t.Errorf("failure %v does not name the change that was refused", err)
+	}
+	if !strings.Contains(err.Error(), writeErr.Error()) {
+		t.Errorf("failure %v does not carry the write's own cause, which is what classifies the exit (an operator's grant, an outage)", err)
+	}
+}
+
+// The other half of the sequence (spec §6): a record that cannot be written
+// AFTER the plan was applied fails the command. The apply landed — the fake's
+// own call log says so — and nothing else in this command's answer could say
+// that a change this run made is unaccounted for, which is D1014's rule and the
+// reason the record is written last.
+func TestApplyFailsWhenTheRecordOfAnAppliedPlanCannotBeWritten(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	r.rec.err = errors.New("the audit record could not be written")
+	_, err := Apply(context.Background(), r.request(t))
+	if err == nil {
+		t.Fatal("an apply whose record could not be written was reported as done")
+	}
+	if errors.Is(err, ErrRefused) {
+		t.Errorf("the failure reads as a refusal, and the plan was admitted and applied: %v", err)
+	}
+	if applied := r.applied(t); len(applied) != 1 {
+		t.Errorf("the fake was asked to apply %v, want the one apply whose record failed", applied)
+	}
+	if recs := r.rec.records(); len(recs) != 0 {
+		t.Errorf("the recorder holds %d verdict(s) after a write that failed, and it appends nothing it could not write: %v", len(recs), recs)
+	}
 }
 
 // The delete list's provenance: an address the applying command's own command

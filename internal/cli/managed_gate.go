@@ -152,9 +152,12 @@ type managedGate struct {
 	facts managedGateFacts
 	// marks is the creation fact the most recent read answered with: the one
 	// readManagedGate made, and then the one admit re-read immediately before
-	// the write (D1024). It is what the record names, so the fact a run acted
-	// under is the one in force at the write and not the one in force when the
-	// session started.
+	// the write (D1024), or the one Record re-read for a step that writes
+	// through internal/managed. It is what the record names, so the fact a run
+	// acted under is the one in force at the write and not the one in force
+	// when the session started; only a read that answered managed replaces it,
+	// so a re-read that answered "not managed", or that did not answer at all,
+	// leaves the fact the step acted under in place.
 	marks managed.MarkFacts
 	// managed is whether both marks were there at readManagedGate.
 	managed bool
@@ -347,6 +350,17 @@ func (g *managedGate) recorded(ctx context.Context) error {
 // withheld because the project stopped being managed afterwards would erase the
 // one trace of an apply that landed. The step is recorded as what it was.
 //
+// A second read that does not answer at all is treated the same way here, for
+// the same reason: the record names the marks this command read before the apply
+// ran, and a failed re-read is a lost refinement rather than a fact to withhold
+// the account over. Failing the step instead would be worse than the gap it
+// closes — the plan is applied by then, so the session would read an error
+// about a write that succeeded and the trail would be missing exactly when an
+// owner needs it (D1014 is about a step whose trail cannot be left, and this
+// one is written). The re-read is what makes the record name the fact in force
+// at the write; where it cannot be made, the fact the step acted under is the
+// one that is true of the step.
+//
 // A gate nobody read, and a project whose marks are not there at all, write
 // nothing (D1025): those steps are an ordinary installation's, whose decisions
 // a person made at a terminal, and there is no managed project for a record to
@@ -356,18 +370,11 @@ func (g *managedGate) Record(ctx context.Context, conv managedmode.Converge) err
 		return nil
 	}
 	fresh, err := managed.ReadMarkFacts(ctx, g.env.s, g.env.crm, g.env.lc.Name, g.env.lc.GCPProject)
-	if err != nil {
-		// A mark that cannot be read is not a permission, and it is not a
-		// record either: the fact in force is the first thing a reader checks
-		// against a run, and a record written without it would name a creation
-		// fact nobody read (Validate refuses one that names none). D1014's rule
-		// is the same one it is everywhere else — a step that cannot leave its
-		// trail fails the command — and the sentence says which read failed so
-		// the operator can fix it.
-		return remote(fmt.Errorf("the creation fact of %s could not be read again for the audit record of this step, so the record of what was applied cannot name the fact it was applied under: %w",
-			safetext.Field(g.env.lc.Name), safetext.FieldErr(err)))
-	}
-	if fresh.Managed {
+	// Where this read answered managed, its answer is the better fact to name;
+	// where it did not — "not managed" or an error, which are the same case
+	// here — the marks the step ran under stay, and the record is written with
+	// them (the paragraph above).
+	if err == nil && fresh.Managed {
 		g.marks = fresh
 	}
 	return g.record(ctx, conv)

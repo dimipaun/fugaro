@@ -543,6 +543,53 @@ func TestManagedGateRecordsTheFactInForceAtTheWrite(t *testing.T) {
 	}
 }
 
+// The record of a step whose marks cannot be read again. The re-read is what
+// makes the record name the fact in force at the write (D1024); where it does
+// not answer at all, the record is written anyway, naming the marks the step ran
+// under — the ones this command read before it acted.
+//
+// `fugaro managed apply` hands its verdict over AFTER the plan is applied
+// (internal/managed's Request.Recorder), so the other answer is the one that
+// must not happen: a re-read that failed would fail a command whose plan has
+// already landed, report it as an error and leave the apply with no record at
+// all. D1014 fails a step whose trail cannot be left; this one is written, with
+// the fact the step acted under, which is the fact that is true of the step.
+func TestManagedGateRecordsTheFactItRanUnderWhenTheReReadFails(t *testing.T) {
+	r := newManagedGateRig(t)
+	gate, err := readManagedGate(context.Background(), r.env(), r.facts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	under := gate.marks.Generation
+	if under == 0 {
+		t.Fatal("the first read placed no generation, so this test cannot tell the two reads apart")
+	}
+	// The read that named the generation above is the one this command made
+	// before it applied; the one the record makes answers 500 — a backend that
+	// did not answer, which is neither of the two codes the read answers "not
+	// managed" to, so ReadMarkFacts returns an error and there is no second
+	// fact to name.
+	r.crm.FailGet(managedPropertyGCP, 500, "INTERNAL", "the label read failed")
+	doc := []byte(`{"version":1,"keys":{"rigor":"standard"}}`)
+	const rule = "every key is in the registry"
+	if err := gate.Record(context.Background(), managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, []string{rule})); err != nil {
+		t.Fatalf("a step whose marks could not be read again left no record, and the plan it accounts for had already been applied: %v", err)
+	}
+	got := r.audits(t)
+	if len(got) != 1 {
+		t.Fatalf("the day holds %d records, want the one verdict this step reached", len(got))
+	}
+	if want := strconv.FormatInt(under, 10); got[0].MarkerGeneration != want {
+		t.Errorf("the record names marker_generation %q, and the fact this step ran under is %q: a failed re-read is not a reason to withhold the account of a step that landed", got[0].MarkerGeneration, want)
+	}
+	if got[0].Verdict != managedmode.AuditAdmitted {
+		t.Errorf("the record's verdict is %q, want %q", got[0].Verdict, managedmode.AuditAdmitted)
+	}
+	if got[0].PlanDigest != gateDigest(doc) {
+		t.Errorf("the record's plan_digest is %q, want the sha256 of the bytes that were judged (%q)", got[0].PlanDigest, gateDigest(doc))
+	}
+}
+
 // A record that could not be written fails the command (D1014), and it fails it
 // with the exit code the cause deserves: a missing grant on the operator's own
 // account is theirs to fix, an outage is not. The fake refuses every write under

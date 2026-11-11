@@ -691,12 +691,22 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		//
 		// The record is written BEFORE the refusal is returned, so a refusal is
 		// recorded too (D1025) — an owner whose plan was refused wants the
-		// record more than anyone — and a record that could not be written is
-		// the command's own error rather than a refusal that hides it (D1014).
-		if err := r.Recorder.Record(ctx, conv); err != nil {
-			return res, err
+		// record more than anyone — and a record that could not be written
+		// fails the command (D1014).
+		//
+		// Both sentences stay in the chain when it does (a %w each), the way
+		// the CLI gate's admit chains the same pair: the refusal is what
+		// errors.Is and errors.As find, so the session still reads why nothing
+		// was applied, and the write's own cause is what classifies the exit —
+		// an operator's missing grant is theirs to fix, an outage is not. A
+		// refusal replaced by the writer's error would leave "nothing was
+		// applied" with no reason, which is the one thing the session has to
+		// act on.
+		refusal := &RefusedError{Verdict: v, Advice: r.advice(v)}
+		if werr := r.Recorder.Record(ctx, conv); werr != nil {
+			return res, fmt.Errorf("%w: %w", refusal, werr)
 		}
-		return res, &RefusedError{Verdict: v, Advice: r.advice(v)}
+		return res, refusal
 	}
 	// The findings are printed before the confirmation and not after the apply,
 	// so the person answering the question answers about the plan they have been
