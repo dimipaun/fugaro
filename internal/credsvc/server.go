@@ -644,7 +644,7 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	for _, ra := range cfg.ReviewAccounts {
 		if ra.Email == "" || ra.Account == "" {
-			return nil, errors.New("credsvc: a review job account with no email or no Claude account binds nothing")
+			return nil, errors.New("credsvc: a review job account with no email or no value on the account axis binds nothing")
 		}
 		// Keyed by the folded email, exactly as the verifier keys its own
 		// review table: the account Verify answers with is the CONFIGURED
@@ -658,7 +658,7 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 		if prev, dup := s.review[folded]; dup {
 			if prev.Account != ra.Account {
-				return nil, errors.New("credsvc: the same review job account is bound to two Claude accounts")
+				return nil, errors.New("credsvc: the same review job account is bound to two values of the account axis")
 			}
 			continue
 		}
