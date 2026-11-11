@@ -222,6 +222,41 @@ func TestCoordinatorServiceIsPublicAndCarriesNoCredential(t *testing.T) {
 	}
 }
 
+// TestTheFrontDoorIsOneInstanceBecauseItsBoundsAreInMemory is the ceiling M12's
+// two per-source bounds depend on, and the review of this branch is why it is
+// pinned here rather than left to the platform's default.
+//
+// The registration endpoint's window and the authorize GET's are counted in the
+// process's own memory (ee/coordinator/mcpauth/register.go, sourceLimiter):
+// nothing in the store holds a source, because a source is an address and the
+// store's whole design is that a reader of it holds nothing about a caller. So
+// the window a source is refused past is one instance's, and the platform's own
+// ceiling — about a hundred instances, scaled by the traffic in front of them —
+// would make the bound a hundred times what the endpoint says: the caller the
+// bound is meant to refuse is the one whose requests buy the instances, and the
+// sweep, which removes a page per run (sweepPage), cannot keep up with writes
+// multiplied by a hundred. One instance is what makes the window the window,
+// and it costs this door nothing a second instance would serve.
+//
+// The mutation this fails on: the scaling block deleted, a max_instance_count
+// of anything but 1, or a min_instance_count above 0 — the last turning the
+// scale-to-zero D196 asks for into an always-on cost.
+func TestTheFrontDoorIsOneInstanceBecauseItsBoundsAreInMemory(t *testing.T) {
+	svc := tfResource(t, tfSource(t, coordinatorTF), "google_cloud_run_v2_service", "coordinator_front_door")
+	block := regexp.MustCompile(`(?s)scaling\s*\{(.*?)\}`).FindStringSubmatch(svc)
+	if block == nil {
+		t.Fatalf("%s: the front door's service has no scaling block, so the platform's own ceiling of about a hundred instances applies and M12's per-source bounds are a hundred windows a minute:\n%s", coordinatorTF, svc)
+	}
+	for _, want := range []struct{ setting, why, re string }{
+		{"max_instance_count = 1", "the platform's own ceiling of about a hundred instances would make each in-memory bound a hundred windows a minute, and the caller the bound refuses is the one whose traffic buys the instances", `(?m)^\s*max_instance_count\s*=\s*1\s*$`},
+		{"min_instance_count = 0", "D196's scale to zero, which a second instance held open would spend for nothing", `(?m)^\s*min_instance_count\s*=\s*0\s*$`},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(block[1]) {
+			t.Errorf("%s: the front door's scaling block does not set %s — %s:\n%s", coordinatorTF, want.setting, want.why, strings.TrimSpace(block[0]))
+		}
+	}
+}
+
 // TestCoordinatorServiceHasItsOwnAccount pins the identity the front door runs
 // as, and the whole of that identity's reach (M4's "its own service account").
 //
@@ -475,6 +510,83 @@ func TestTheStoreBucketIsCreatedAndNeverAdopted(t *testing.T) {
 		}
 		if strings.Contains(src, `data "google_storage_bucket"`) {
 			t.Errorf("%s reads a bucket with a data source: M2 opens only the name this module writes into the installation's outputs, and a data source would read the store out of a bucket somebody else holds (D935, 2026-11-05)", name)
+		}
+	}
+}
+
+// TestTheFrontDoorCarriesItsOwnSwitchAndNothingElseDoes is M12's half of the
+// module: the one entry that turns the door on, and the one place it is
+// written.
+//
+// The switch and the binding are one fact (D934's amendment: off is the
+// absence of the allUsers binding), so the entry is written by the same
+// condition that creates the service — a plan that carried the binding and no
+// entry, or an entry and no binding, would be a door whose two halves disagree
+// about whether it is on.
+//
+// The entry is also the door's whole configuration and not a flag, because
+// three of the four things ee/coordinator's FrontDoor needs are not
+// credentials and none of them is anywhere else in the environment: the origin
+// the authorization server publishes as its identifier, and the two member
+// lists D933 resolves an identity by. The lists are reduced to `user:` entries
+// in the module as well as in the door (D923), so an installation whose lists
+// hold a group or a domain does not publish one to a public service's
+// environment.
+func TestTheFrontDoorCarriesItsOwnSwitchAndNothingElseDoes(t *testing.T) {
+	svc := tfResource(t, tfSource(t, coordinatorTF), "google_cloud_run_v2_service", "coordinator_front_door")
+	entry := "FUGARO_MCP_FRONT_DOOR"
+	if !strings.Contains(svc, `name = "`+entry+`"`) {
+		t.Fatalf("%s: the front door's container sets no %s, so a revision that runs this service mounts no door and answers 404 on every path of it (ee/coordinator's FrontDoor reads exactly this entry)", coordinatorTF, entry)
+	}
+	// The origin is asserted whole rather than by its suffix, because it is the
+	// value a security decision rests on and the only one in the entry that is
+	// not the installation's own data: it is the authorization server's
+	// identifier and the `iss` of every token the door mints, and this template
+	// builds it by hand because the service's own `uri` attribute is computed by
+	// the apply that creates it. A derivation missing the project's *number* —
+	// the platform's URL is <service>-<number>.<region>.run.app, and the number
+	// and not the id is what Cloud Run puts there — would be an origin that
+	// resolves nowhere and a document no client can check, and `run\.app` alone
+	// passes a URL missing the service, the number and the region alike.
+	for _, want := range []struct{ what, re string }{
+		{"the service's own origin, built from the service name, the project's number and the region", `issuer\s*=\s*"https://\$\{var\.mcp_server\.service\}-\$\{data\.google_project\.this\[0\]\.number\}\.\$\{var\.region\}\.run\.app"`},
+		{"the launcher list, reduced to the entries D933 reads", `launchers = local\.front_door_launchers`},
+		{"the operator list, reduced the same way", `operators = local\.front_door_operators`},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(svc) {
+			t.Errorf("%s: the front door's %s entry sets no %s:\n%s", coordinatorTF, entry, want.what, svc)
+		}
+	}
+
+	// The lists are the installation's own, and they are the `user:` entries of
+	// it: the two locals are what the entry renders, so a change that published
+	// the raw lists would be a public service carrying members the door does
+	// not read.
+	code := tfSource(t, coordinatorTF)
+	for _, want := range []struct{ what, re string }{
+		{"the launchers, filtered", `front_door_launchers = \[for m in var\.launchers : m if startswith\(m, "user:"\)\]`},
+		{"the operators, filtered", `front_door_operators = \[for m in var\.operators : m if startswith\(m, "user:"\)\]`},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(code) {
+			t.Errorf("%s: the front door does not build %s: D923 reads exact `user:` entries only, and this entry is on a public service", coordinatorTF, want.what)
+		}
+	}
+
+	// And nothing else in the module writes it, on a container or anywhere
+	// else: the sweep's job is the installation's state reader and holds the
+	// App key and the database, and an entry that turned the door on there
+	// would be a door mounted in the wrong process, which is the one mistake a
+	// single switch written in two places makes possible. variables.tf names it
+	// in the opt-in's own description, which is prose an operator reads rather
+	// than a container's environment, so what is counted is the entry itself.
+	set := regexp.MustCompile(`(?m)^\s*name\s*=\s*"` + entry + `"\s*$`)
+	for name, src := range tfFiles(t) {
+		got := len(set.FindAllString(src, -1))
+		switch {
+		case name == coordinatorTF && got != 1:
+			t.Errorf("%s writes %s %d times, want the front door's one entry", name, entry, got)
+		case name != coordinatorTF && got != 0:
+			t.Errorf("%s sets %s on a container (%d times): the switch belongs on the front door's own service and nowhere else", name, entry, got)
 		}
 	}
 }

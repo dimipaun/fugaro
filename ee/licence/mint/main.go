@@ -31,11 +31,12 @@
 //     reaches stdout: a term past the tier's maximum, a tier the verifier does
 //     not know and an organisation the key does not bind to are refused there.
 //     The rule is the verifier's and is not restated here, which is what keeps
-//     a hand-minted key and the service's one format. The key must also read
-//     `valid` at its own `issued`, which is a rule of the tool's: a claim set
-//     whose `expires` is before its `issued` is a key that has already ended,
-//     and a verifier accepts it -- as an expired key, which is what an expired
-//     key is -- so nothing but this check would catch it.
+//     a hand-minted key and the service's one format. Two more rules are the
+//     tool's own, because no verifier catches either: what it mints must read
+//     `valid` at its own `issued` -- a claim set whose `expires` is before its
+//     `issued` is a key that has already ended, which a verifier accepts as an
+//     expired key -- and it must claim at least one seat, a number D439 leaves
+//     unbounded because seats are compared and shown rather than enforced.
 //   - **The ring is the owner's, not the build's.** The compiled keyring is
 //     empty until S2.9 publishes the owner's production half, and the interim
 //     this tool exists for starts at S3.8, so the tool checks against the public
@@ -84,7 +85,7 @@ func run(args []string, out io.Writer, runner Runner) error {
 	publicKey := flags.String("public-key", "", "the signing key's public half, unpadded base64url of the 32 bytes a keyring entry carries")
 	tier := flags.String("tier", "", "the tier the key is issued for: community, team or enterprise")
 	organisation := flags.String("organisation", "", "the organisation the key binds to: a domain, an individual as an organisation of one, or an Order Form id")
-	seats := flags.Int("seats", 0, "the seats the organisation has: compared and shown, never enforced (D439)")
+	seats := flags.Int("seats", 0, "the seats the organisation has, at least one: compared and shown, never enforced (D439)")
 	features := flags.String("features", "", "the paid features the key turns on, comma-separated")
 	days := flags.Int("days", 0, "the term the key covers, in days from today: a renewal covers the term that begins where its predecessor ends, so it passes that term plus the 30 days the predecessor still has")
 	project := flags.String("project", "", "the GCP project the signing key lives in")
@@ -122,7 +123,7 @@ func run(args []string, out io.Writer, runner Runner) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("missing %s: a key text is an id, a claim set, and a signature over it through a KMS key's signing API", strings.Join(missing, ", "))
 	}
-	// The tool's one input rule, and it is about the claim set's sense rather
+	// The tool's first input rule, and it is about the claim set's sense rather
 	// than its length: a term of no days leaves a key that has already ended,
 	// which the verifier accepts -- its rule bounds a key's length -- so the
 	// tool is the only place it can be caught.
@@ -138,6 +139,17 @@ func run(args []string, out io.Writer, runner Runner) error {
 	// may be given stays the verifier's rule to state.
 	if int64(*days) > maxDays {
 		return fmt.Errorf("-days is %d, and a term that long cannot be counted: the longest term this tool can hold is %d days, and the verifier is where the ceiling anyone mints under is stated", *days, maxDays)
+	}
+	// The second input rule, and the same shape: seats are what the organisation
+	// bought (docs/licensing/licence-key.md, the claim set's row), an individual
+	// being an organisation of one (T15), so a key that claims none is a key
+	// nobody means to mint. The verifier does not catch it -- D439 makes seats
+	// compared and shown rather than enforced, so it bounds no number -- and the
+	// console draws the seat count it reads, so zero is shown to whoever holds
+	// the key instead of refused. The flag's own default is zero, which is where
+	// the silence bites: a mint that left -seats out would claim it.
+	if *seats <= 0 {
+		return errors.New("-seats must be the organisation's seat count, and at least one: a key that claims no seats is not one anyone means to mint")
 	}
 	term := time.Duration(*days) * 24 * time.Hour
 

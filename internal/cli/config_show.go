@@ -207,7 +207,7 @@ func configLayerAnchor(ctx context.Context) (data []byte, inCheckout bool, err e
 	if lc == nil || lc.Name == "" || lc.GCPProject == "" {
 		return nil, false, userErr("not inside a git checkout, and no project config is selected: run this from the repository's checkout, or set $FUGARO_PROJECT or $FUGARO_CONFIG to the installation whose published layer you want (fugaro config list names them)")
 	}
-	anchor, err := yaml.Marshal(map[string]string{"project": lc.Name, "gcp_project": lc.GCPProject})
+	anchor, err := anchorOfProject(lc)
 	if err != nil {
 		return nil, false, err
 	}

@@ -66,6 +66,62 @@ import (
 // still see none of the README's citations.
 var mcpPlainCitationRE = regexp.MustCompile("[A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|ts|tf|tmpl|yaml|yml)`?:[0-9]+")
 
+// mcpAnyCitationRE finds any cited path carrying a line -- backticked or not,
+// a range or a single number. It is not a check; it is what tells a shortened
+// reference which file it continues, the way a reader takes one.
+var mcpAnyCitationRE = regexp.MustCompile("`?([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|ts|tf|tmpl|yaml|yml)):(\\d+(?:-\\d+)?)`?")
+
+// mcpShortCitationRE finds the shortened reference: a line with no path beside
+// it, backticked. `internal/budget/rules/rules.go:552`, read at `:573` is one
+// citation written in two halves, and the second half is a number that moved
+// with the first one's file.
+var mcpShortCitationRE = regexp.MustCompile("`:(\\d+(?:-\\d+)?)`")
+
+// mcpRulesCitedPath is the one file this folder's claims about the database
+// rules all stand on. Every rules work edits it, so a number into it is stale
+// the week after it is written unless something reads what the number lands on.
+const mcpRulesCitedPath = "internal/budget/rules/rules.go"
+
+// mcpRulesCitation is one citation of the folder into that file, held to the
+// line it names: cited is written exactly as the document writes it, and anchor
+// is the text those lines have to carry.
+type mcpRulesCitation struct {
+	doc    string // the document that makes the citation
+	claim  string // what the citation is there for
+	cited  string // the line or range it names
+	anchor string // text that line or range carries
+}
+
+// mcpRulesCitations are those citations: ONE ENTRY PER CITATION, in the order
+// the documents write them, so a claim cited twice appears twice. The check
+// below counts the two sides, because the claim is that every citation into
+// this file is read rather than that the file is cited: a citation added
+// without an entry fails, and an entry no citation is left for fails too.
+//
+// None of these carries the shape csrCitationRE knows. A range
+// (`rules.go:505-506`) ends in a number the pattern does not accept, and the
+// shortened half of a citation (`:573`) carries no path at all -- and
+// csrCensusRE, which is the floor the older check is measured against, misses
+// both for the same reason. So these citations resolved to nothing and were
+// checked by nothing while their numbers moved: `rules.go:517` had been
+// `userClaim`, and the twelve lines the workspaces work merged into
+// Generate() made it a comment. The anchors are what makes the number and the
+// claim the same fact again.
+var mcpRulesCitations = []mcpRulesCitation{
+	{mcpSpec, "the `mu` claim binds nothing against a minter, which is §8's residual risk in the rules' own words", "505-506", "binds nothing"},
+	{mcpSpec, "`USER` is what `coordinator/` still grants and `mcpauth` deliberately does not", "529", "const userClaim"},
+	{mcpSpec, "the residual risk's own words again, quoted in §8", "505-506", "binds nothing"},
+	{mcpReconciled, "`USER` defined as a signed-in, device-allow-listed person", "529", "const userClaim"},
+	{mcpReconciled, "the `mu` claim binds nothing against a minter", "505-506", "binds nothing"},
+	{mcpReconciled, "the pairing session's own claim is `PAIRING`", "552", "const pairingClaim"},
+	{mcpReconciled, "the `PAIRING` case that reads it", "573", `case "PAIRING":`},
+	{mcpReconciled, "the device allowlist `PathDevices`", "470", "const PathDevices"},
+	{mcpReconciled, "the `USER` claim that requires the allowlist", "529", "const userClaim"},
+	{mcpReconciled, "whoever can sign for the project chooses the uid and every claim in it", "494-499", "chooses both the uid"},
+	{mcpPlan, "the claim M7's coordinator subtree is fenced by", "529", "const userClaim"},
+	{mcpPlan, "`config/admin` is readable by no client token, the fact the exposure argument rests on", "57-59", "config/admin by nobody with a"},
+}
+
 const (
 	mcpReadme     = "docs/mcp-server/README.md"
 	mcpSpec       = "docs/mcp-server/spec.md"
@@ -133,33 +189,35 @@ const (
 	// and M8's sit on theirs. M7's clause is the same shape: the resource server
 	// and the tool registry are built and the tasks after it are not,
 	// and naming M7 built says nothing about a merge, for the reason M5's
-	// clause does not. Its clause carries an exception of its own -- the
+	// clause does not. Its clause carried an exception of its own -- the
 	// reading of the installation's published state, which is where D933's two
-	// lists come from: identity.go holds the Roster seam and no task of the
-	// plan implements it over that state, so a line saying M7 were built whole
-	// would claim a control the tree does not perform. The exception is
-	// disclosed in full in §11 of the spec and its own section of the plan,
-	// which the disclosure test below pins. M10's clause was that shape until
+	// lists come from: identity.go held the Roster seam and no task of the
+	// plan implemented it over that state, so a line saying M7 were built whole
+	// would have claimed a control the tree did not perform. M12 is the task
+	// that closed it, the reading being `roster.go` over the entry the
+	// installation's own module renders onto the front door's revision, and
+	// the clause moved with it. M10's clause was that shape until
 	// M4's store half landed: the audit, the record and the revocation are
 	// built, and the store they are at rest in is M2's bucket-backed one, whose
-	// bucket and single grant in an installation are M4's store half — so M10
+	// bucket and single grant in an installation are M4's store half -- so M10
 	// stood "built except the store", and it is the one clause the store half
 	// closed rather than added. A line that still carried it would be false in
 	// the direction that matters least (a task described as owing less than it
 	// does), which is why it is named here as removed rather than left to look
-	// like an oversight. M8's is the same shape once more: the four read tools are built and
-	// no binary registers them, and the wiring that would serve them is carried
-	// by no task of this plan -- M5b gated it and is built, so the gate is met
-	// and the exception is named for what is missing rather than for what
-	// waits: a line saying M8 were built whole would claim a reach no process
-	// has. M9's clause
+	// like an oversight. M8's was the same shape once more: the four read tools
+	// were built and no binary registered them, and the wiring that would serve
+	// them was carried by no task of this plan -- M5b gated it and is built, so
+	// the gate was met and the exception was named for what was missing rather
+	// than for something that was still waited on. M12 is that wiring, so both
+	// exceptions closed together, and the line names M12 built with what it
+	// carries rather than M7 and M8 with what they owed. M9's clause
 	// names a second fact beside "not started", because the task it was waiting
 	// on stopped existing: the launch-override fence was ruled on twice on
 	// 2026-11-09 -- built as a split launcher role first, and declined later the
 	// same day -- so M9 waits on M4 and M7 alone and no task of the plan builds a
 	// fence. A line that still said M9 waited on one would name a task the plan
 	// removed and a control the tree does not have.
-	mcpStatus = "**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged on `main`; the front door M4 creates is OFF on every installation until a release writes the flag that turns it on, `fugaro update --mcp-server` (D934); M5 is built and M5b is built with it — the paired-device approval the owner ruled a task of its own on 2026-11-07 — and what is built of it is the endpoint's half: the authorize POST takes the device's act as a shape of its own, the ID token is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's first requirement is not met — the endpoint cannot tell a paired device from any other holder of one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no task of this plan; M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M8 is built except the wiring that would serve its four read tools, which no binary has and no task of this plan carries; M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.**"
+	mcpStatus = "**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged on `main`; the front door M4 creates is OFF on every installation until a release writes the flag that turns it on, `fugaro update --mcp-server` (D934); M5 is built and M5b is built with it — the paired-device approval the owner ruled a task of its own on 2026-11-07 — and what is built of it is the endpoint's half: the authorize POST takes the device's act as a shape of its own, the ID token is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's first requirement is not met — the endpoint cannot tell a paired device from any other holder of one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of the flow's binding rendered and no launcher reading the page, is built nowhere and carried by M12b, which M12 waits on; M12 is built — the front door mounted on the service, the reading of the installation's published state its lists come from, M8's four read tools served from a binary and the two bounds the open registration endpoint is accepted under are all its — and the door stays dormant until an installation turns it on, which no release writes the flag for yet (D934), because a build without M12b's delivery refuses to enable it (D2126); M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.**"
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }
@@ -219,7 +277,7 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 		"The table is the evidence this clearance stands on",
 		"Counsel was not asked about the transitive set and has cleared nothing",
 		"§6 check 1 is met",
-		"M5b is a hard prerequisite before any binary links the front door",
+		"M5b is a hard prerequisite before the front door is served",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("%s does not state %q: the owner cleared D921's dependency set himself on 2026-11-07, that clearance is an artifact rather than a run's word, and the file that records it is the only thing this tree has that answers reconciliation.md §6 check 1",
@@ -467,14 +525,19 @@ func TestDocsMCPServerNamesWhatItDesigns(t *testing.T) {
 // each record, and it hashes with a plain unkeyed sha256 and writes no MAC
 // (M2's row, merged on `main` before this branch); the open registration
 // endpoint is accepted under a per-source rate limit and a sweep that no task of
-// the plan carries; the loser of a rotation race is answered inside a grace
+// the plan carried until the owner wrote M12 (and that M12 built); the loser of a rotation race is answered inside a grace
 // window, and the endpoint refuses it instead; and the approve step is meant to
 // read an identity out of the launcher and operator lists, which M7 reads at the
 // MCP endpoint and the approve step still does not -- the reading of the
 // published state those lists live in being M7's own exception, and the four
-// read tools M8 builds being registered on no binary being M8's. Each exception
-// is disclosed in the section that carries it, and the clause the status line
-// carries for it is pinned to a sentence, so that neither can be dropped alone.
+// read tools M8 builds being registered on no binary being M8's, and both of
+// those M12 closed. Each exception is disclosed in the section that carries it,
+// and the clause the status line carries for it is pinned to a sentence, so that
+// neither can be dropped alone. What M12 closed is pinned the same way and for
+// the same reason: the record of the gap -- who was owed it, what carried it and
+// what the code does now -- is the sentence a later edit has to keep, so a
+// document cannot quietly drop the fact that the bound was the wiring task's
+// before it was anybody's.
 // A document that asserted any of them as a fact would be a security document
 // promising a control the code does not perform -- so what is pinned is the
 // caveat itself, in the file a reader meets first, and the section that carries
@@ -487,28 +550,34 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		"The keyed hashes and the MACs the store is specified to write",
 		"Both are designed and not built",
 		"the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:503`)",
-		// And the two bounds, with the owner named as the one who assigns them
-		// and the wiring task named as the carrier until he does.
-		"Who owns the two bounds the open registration endpoint is accepted under",
-		"What is owed is the owner's assignment",
-		"the task that mounts this package on a binary carries both bounds and deletes `TestNoBinaryLinksTheFrontDoorYet`",
+		// And the two bounds: what was owed, who answered it, and what the task
+		// that carried them built. The record is the sentence, because the growth
+		// §8 accepts was accepted unbounded while no task carried them.
+		"The two bounds the open registration endpoint is accepted under",
+		"the owner was owed the assignment of them",
+		"until it came the bound was the wiring task's",
+		"That task is M12",
+		"with the guard deleted and replaced by `TestTheFrontDoorIsServedOnlyWhenEnabled`",
 		// And M5b's own: the endpoint's half is built, M-a's first requirement is
 		// stated as not met, and the delivery of a flow to the paired device is
 		// not -- the half the endpoint waits for and no task of the plan carries.
 		// The status line names both as M5b's exceptions and this is the section
 		// behind that clause.
 		"**and neither is the delivery of a flow to the paired device**",
-		"**Neither is carried by any task of this plan**",
+		"M-a's first requirement, that the approval is the paired device's, is not met on",
+		"**The delivery is M12b's**",
+		"**and M12 refuses to enable a door without it**",
 		// And the one M7 itself leaves unbuilt: the reading of the published
 		// state its two lists come from. The seam is in the tree and the
 		// reading is not, so the section names both and names its carrier.
 		"Where the front door's own two lists are read from",
-		"no implementation of that interface over the published state is in the tree and no task of this plan carries one",
-		"the wiring task that mounts this package on a binary owes this reading beside the two bounds above",
+		"the design says the installation's published state, and the reading is M12's",
+		"no implementation of that interface over the published state was in the tree and no task of this plan carried one",
+		"`ee/coordinator/mcpauth/roster.go` reads the entry the installation's own module renders onto the front door's revision",
 		// And the one M8 itself leaves unserved: the four read tools are
 		// built and registered on no binary, so the wiring that would serve
 		// them is named, and with it where the slugs it needs come from.
-		"The four read tools M8 builds are registered on no binary",
+		"the only callers of `RegisterReadTools` and `NewProjectRuns` are this package's own tests and the front door's own wiring",
 		"`FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service",
 		// And the two halves of the flow the review of this branch found
 		// promised: the grace window a lost rotation race is answered in, and
@@ -533,29 +602,37 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 	// M8's exception is a claim about the code, and one the tests of the
 	// package it is about would otherwise falsify: they construct the reach and
 	// register the tools on it, which "called by nobody, constructed nowhere"
-	// stopped being true of. The clause names the tests as the only callers, and
-	// it is read in both documents that carry it -- the spec a reader meets
-	// first and the plan a task is written from -- because a claim about what
-	// the tree does is the one thing here that code can go and check.
+	// stopped being true of. The clause names its callers -- this package's own
+	// tests while the door was dormant, and M12's wiring beside them now -- and
+	// it is read in both documents that carry it, the spec a reader meets first
+	// and the plan a task is written from, because a claim about what the tree
+	// does is the one thing here that code can go and check.
+	const callers = "the only callers of `RegisterReadTools` and `NewProjectRuns` are this package's own tests and the front door's own wiring"
 	for _, path := range []string{mcpSpec, mcpPlan} {
-		if !strings.Contains(flattenDoc(readDoc(t, path)), "nothing outside this package's own tests calls `RegisterReadTools` or constructs `NewProjectRuns`") {
-			t.Errorf("%s no longer says that nothing but this package's own tests calls `RegisterReadTools` or constructs `NewProjectRuns`: the read reach M8 adds is reach no binary has until the wiring task lands, and a sentence that stopped saying which callers exist would read as a reach something has", path)
+		if !strings.Contains(flattenDoc(readDoc(t, path)), callers) {
+			t.Errorf("%s no longer says that %s: the read reach M8 adds is served by the front door's own command and by nothing else, and a sentence that stopped naming the callers would read as a reach something else has", path, callers)
 		}
 	}
 
 	rec := flattenDoc(readDoc(t, mcpReconciled))
 	for _, want := range []string{
-		"### The two bounds no task carries",
+		"### The two bounds, and the task that carries them",
 		"the store hashes with a plain unkeyed sha256",
 		"raised as a finding rather than closed by an edit here",
+		// And the §4a paragraph the owner's answer added, which is where the
+		// record of the gap and of the task that closed it lives beside the
+		// finding it answered.
+		"**The owner answered it on 2026-11-11 — the task that carries both bounds is M12, and it is built.**",
 		// And M7's own exception, stated where §4a says what every built task
-		// still owes: the seam is merged and the reading behind it is nobody's.
-		"nothing in the tree implements it over that state, because no task of the plan carries the reading",
+		// still owes: the seam is merged and the reading behind it was nobody's.
+		"nothing in the tree implemented it over that state, because no task of the plan carried the reading",
+		"the owner wrote one on 2026-11-11 and it is built: M12 below",
 		// And M8's, in the same place and the same shape: the four read tools
 		// are built and served by no binary, and the wiring that would serve
 		// them is carried by no task of the plan -- M5b gated it and is built,
 		// so what is missing is the wiring and not the approval.
-		"no binary registers them, which is the wiring no task of this plan carries",
+		"no binary registered them, which was the wiring no task of this plan carried",
+		"**M12 is that wiring, and it is built**",
 	} {
 		if !strings.Contains(rec, want) {
 			t.Errorf("%s does not state %q: each gap is raised there as a finding for the owner to assign, and a reconciliation that dropped one would leave the caveat in the spec with nothing behind it", mcpReconciled, want)
@@ -563,12 +640,21 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 	}
 
 	// And the clause in the status line every file carries, which is where a
-	// reader meets M8's exception first: it is pinned here so that dropping it
-	// is an edit to a sentence a test reads rather than one the line carries
-	// alone, the sections above being what the clause points a reader at.
+	// reader meets M12 first: it is pinned here so that dropping it is an edit to
+	// a sentence a test reads rather than one the line carries alone, the sections
+	// above being what the clause points a reader at. What it has to keep is what
+	// M12 carries and the two facts that make it dormant -- the door serves
+	// nothing without an installation's own switch, and a build without M12b's
+	// delivery refuses to enable one at all.
+	const built = "M12 is built — the front door mounted on the service, the reading of the installation's published state its lists come from, M8's four read tools served from a binary and the two bounds the open registration endpoint is accepted under are all its"
+	const dormant = "and the door stays dormant until an installation turns it on, which no release writes the flag for yet (D934), because a build without M12b's delivery refuses to enable it (D2126)"
 	for _, path := range mcpFolderDocs() {
-		if !strings.Contains(flattenDoc(readDoc(t, path)), "M8 is built except the wiring that would serve its four read tools") {
-			t.Errorf("%s carries no clause for M8's exception: the four read tools are registered on no binary, and a status line saying M8 were built whole would claim a reach no process has", path)
+		flat := flattenDoc(readDoc(t, path))
+		if !strings.Contains(flat, built) {
+			t.Errorf("%s carries no clause for what M12 built: the front door is mounted on the service with the reading, the four read tools and the two bounds its, and a status line that dropped that would read as a wiring nobody wrote", path)
+		}
+		if !strings.Contains(flat, dormant) {
+			t.Errorf("%s does not say the door is dormant and why: it serves nothing until an installation writes the switch and a build that can deliver the flow exists, and a status line that dropped that would read as a door an owner can turn on today", path)
 		}
 	}
 }
@@ -581,6 +667,13 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 // gate file is the one file of the folder that cites no line at all -- it stands
 // on the table, which is a document rather than a line of code -- so the demand
 // that a file cite something is made of the files that stand on the tree.
+//
+// Existing is the floor and not the demand: the folder's citations into
+// internal/budget/rules/rules.go are then read at the line they name
+// (mcpRulesCitations), because a number that resolves to a comment is a
+// citation that passed the check above while holding nothing. The twelve lines
+// the workspace family added to Generate() moved every citation below it, and
+// the one test that read its cited text caught one of them.
 func TestDocsMCPServerCitationsResolve(t *testing.T) {
 	bare := csrBareNames(t)
 	for _, path := range mcpFolderDocs() {
@@ -608,6 +701,113 @@ func TestDocsMCPServerCitationsResolve(t *testing.T) {
 		t.Logf("%s: %d backticked citations carrying a line, against a census of %d path-looking tokens with one, and %d written without backticks",
 			path, len(matches), census, len(mcpPlainCitationRE.FindAllString(doc, -1)))
 	}
+	// Then the citations into the rules file, read rather than only resolved:
+	// a line that exists and carries something else is the one failure the
+	// check above cannot see.
+	mcpCheckRulesCitations(t)
+}
+
+// mcpCheckRulesCitations reads every citation the folder makes into
+// internal/budget/rules/rules.go and holds it to the text it names, then counts
+// both sides of the table: a citation with no entry behind it is unchecked, and
+// an entry with no citation left is a pin that has outlived the claim it was
+// written for. The counts are per citation and not per document, because a
+// document cited three times with one anchor behind it is one citation held and
+// two that are not.
+func mcpCheckRulesCitations(t *testing.T) {
+	t.Helper()
+	lines := coordinatorFileLines(t, mcpRulesCitedPath)
+	if lines == nil {
+		return
+	}
+	held := map[string]int{}
+	for _, c := range mcpRulesCitations {
+		held[c.doc+" "+c.cited]++
+		lo, hi := mcpCitedRange(t, c)
+		if lo == 0 {
+			continue
+		}
+		if hi > len(lines) {
+			t.Errorf("%s cites %s:%s for %s, but the file holds %d lines: a citation past the end names a line that is not there",
+				c.doc, mcpRulesCitedPath, c.cited, c.claim, len(lines))
+			continue
+		}
+		if body := strings.Join(lines[lo-1:hi], "\n"); !strings.Contains(body, c.anchor) {
+			t.Errorf("%s cites %s:%s for %s, and those lines carry no %q (%s): a citation whose number moved reads as checked while it holds nothing, so the number and the claim behind it have to be the same fact",
+				c.doc, mcpRulesCitedPath, c.cited, c.claim, c.anchor, strings.Join(lines[lo-1:hi], " "))
+		}
+	}
+	seen := map[string]int{}
+	for _, doc := range mcpFolderDocs() {
+		for _, cited := range mcpRulesCitationsIn(readDoc(t, doc)) {
+			seen[doc+" "+cited]++
+		}
+	}
+	for key, cited := range seen {
+		switch entries := held[key]; {
+		case entries == 0:
+			t.Errorf("%s cites %s at %s and mcpRulesCitations holds no entry for it: cite the line that carries the claim and name it there, or the next edit to the file moves the number and nothing notices",
+				strings.Fields(key)[0], mcpRulesCitedPath, key[strings.Index(key, " ")+1:])
+		case entries < cited:
+			t.Errorf("%s cites %s at %s %d times and mcpRulesCitations holds %d entries for it: one entry holds one citation, and a citation with none behind it is read by nothing",
+				strings.Fields(key)[0], mcpRulesCitedPath, key[strings.Index(key, " ")+1:], cited, entries)
+		}
+	}
+	for key, entries := range held {
+		if seen[key] < entries {
+			t.Errorf("mcpRulesCitations holds %d entries for %s at %s and the folder cites it %d times: delete the entries no citation is left for, or the next citation of that range is checked against a claim the file has stopped making",
+				entries, strings.Fields(key)[0], key[strings.Index(key, " ")+1:], seen[key])
+		}
+	}
+	t.Logf("%s: %d citations into %s, each read at the line it names", strings.Join(mcpFolderDocs(), ", "), len(mcpRulesCitations), mcpRulesCitedPath)
+}
+
+// mcpCitedRange turns one entry's citation into the line range it names.
+func mcpCitedRange(t *testing.T, c mcpRulesCitation) (int, int) {
+	t.Helper()
+	lo, hi := c.cited, c.cited
+	if cut := strings.Index(c.cited, "-"); cut >= 0 {
+		lo, hi = c.cited[:cut], c.cited[cut+1:]
+	}
+	from, err := strconv.Atoi(lo)
+	if err != nil {
+		t.Errorf("%s cites %s:%s, whose line is not a number: %v", c.doc, mcpRulesCitedPath, c.cited, err)
+		return 0, 0
+	}
+	to, err := strconv.Atoi(hi)
+	if err != nil {
+		t.Errorf("%s cites %s:%s, whose range is not two numbers: %v", c.doc, mcpRulesCitedPath, c.cited, err)
+		return 0, 0
+	}
+	return from, to
+}
+
+// mcpRulesCitationsIn returns the line or range every citation into the rules
+// file names, in the order the text writes them: the full `path:line` form, and
+// the shortened `:line` that continues the last path named before it -- which
+// is how the folder writes a second citation of one file, and how a reader
+// takes it. A shortened reference is attributed to the file named nearest above
+// it, so a `:573` after a `rules.json.tmpl:10-13` belongs to the template and
+// not to the rules.
+func mcpRulesCitationsIn(text string) []string {
+	var out []string
+	last := ""
+	for _, line := range strings.Split(text, "\n") {
+		at := 0
+		for _, m := range mcpAnyCitationRE.FindAllStringSubmatchIndex(line, -1) {
+			last = line[m[2]:m[3]]
+			at = m[1]
+			if last == mcpRulesCitedPath {
+				out = append(out, line[m[4]:m[5]])
+			}
+		}
+		for _, m := range mcpShortCitationRE.FindAllStringSubmatch(line[at:], -1) {
+			if last == mcpRulesCitedPath {
+				out = append(out, m[1])
+			}
+		}
+	}
+	return out
 }
 
 // mcpCheckCitation resolves one cited file and line to a line of this tree.

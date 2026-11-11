@@ -42,7 +42,8 @@
               "properties": {
                 "coder": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
                 "reviewer": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
-                "background": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" }
+                "background": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
+                "vision": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" }
               }
             },
             "crafts": {
@@ -199,7 +200,7 @@
     "security": {
       "type": ["object", "null"],
       "additionalProperties": false,
-      "description": "What every repository of the project treats as security-sensitive (docs/security-classification, D1501): the rows a run matches the changed paths against to decide whether the change reaches the adversarial review level, and always_level_3, which asks for that level for every change of every repository. A top-level key of the layer file, like governance and ab and unlike defaults: a security: under defaults: would be replaced whole by a repository's own block, which is the one direction D1506 forbids — read here, the layer's rows and the repository's meet only in the union, where the layer's come first. A repository may not write always_level_3 (only the layer's own block carries it). Fugaro 0.22.0 decodes this block and validates it — in this file and in fugaro.yaml — but no run reads either half yet: what a run matches, and what `fugaro security paths` prints, is still the engine's floor of 43 rows, so the union (the engine's floor, then this block, then the repository's) and always_level_3 arrive with later releases. Until then the two keys declare rows and levels nothing reaches. What the key costs today is the image gate: a job image older than 0.22.0 decodes the layer file and fugaro.yaml strictly and refuses the key whole at bootstrap, so writing it here needs every job image of the project on 0.22.0.",
+      "description": "What every repository of the project treats as security-sensitive (docs/security-classification, D1501): the rows a run matches the changed paths against to decide whether the change reaches the adversarial review level, and always_level_3, which asks for that level for every change of every repository. A top-level key of the layer file, like governance and ab and unlike defaults: a security: under defaults: would be replaced whole by a repository's own block, which is the one direction D1506 forbids — read here, the layer's rows and the repository's meet only in the union, where the layer's come first. A repository may not write always_level_3 (only the layer's own block carries it). Fugaro 0.22.0 decodes this block and validates it — in this file and in fugaro.yaml — and the readers are what resolve them into the one list in force, the union (the engine's floor, then this block, then the repository's): a run matches the changed paths against it, `fugaro security paths` prints it and `fugaro doctor` counts it, each row carrying the layer it came from. always_level_3's forced level is what still arrives with a later release, so until then the block declares a level nothing reaches. What the key still costs is the image gate: a job image older than 0.22.0 decodes the layer file and fugaro.yaml strictly and refuses the key whole at bootstrap, so writing it here needs every job image of the project on 0.22.0.",
       "properties": {
         "patterns": {
           "type": ["array", "null"],

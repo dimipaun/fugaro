@@ -32,12 +32,19 @@ import (
 // admits is a coding agent's, and a gate that session could open on its own
 // command line or in its own environment would have handed back the refusal it
 // exists to answer. The fields are unexported, the zero value refuses, and the
-// only way to hold an admitted Converge is one of the two constructors below.
+// only way to hold an admitted Converge is one of the constructors below.
 // They are not proof that a read happened — `check.go` says the same of
 // CheckedInventory, and it is true here for the same reason: a caller that
 // constructs a clean verdict by hand is lying about a read, no type in this
 // package can prevent it, and the tests that pin the WIRING, that a command
 // reads the gate before it writes, are what catch it.
+//
+// Why a third verdict exists (D1545). The managed gate is audit-only for
+// content: a document whose refusals are all content ones is RECORDED AND
+// APPLIED rather than stopped, so a step's verdict is no longer just admitted
+// or refused. ConvergeWarned is that third answer, and its own class rule is
+// the same one: it may not admit a Typed step either, because the money and
+// the permanent are what D1026 refuses whatever the document looks like.
 //
 // Why the class rule lives inside Refuse and nowhere else (D1026): a Typed step
 // is money or permanent, and a document cannot carry a plan for it, so no clean
@@ -80,6 +87,14 @@ type Converge struct {
 	// admitted is the verdict itself, and false is its zero value: every
 	// Converge that ConvergeAdmitted did not build refuses.
 	admitted bool
+	// warnings are the gate's content findings (D1545): the rules that fired
+	// about WHAT the document contains, which the gate recorded and warned
+	// about rather than stopping. They are non-empty only on a Converge that
+	// ConvergeWarned built, and a non-empty list is what lets such a Converge
+	// proceed without being admitted — the step is applied with the finding
+	// recorded, not because the document passed. Like rules, they are bounded
+	// where they are rendered, since a rule's words can quote a plan.
+	warnings []string
 }
 
 // ConvergeAdmitted is the way to say the rules ran over the document and none
@@ -99,6 +114,21 @@ func ConvergeAdmitted(doc []byte, class initflow.ConfirmClass, rules []string) C
 // a command in the set fails on it rather than writing.
 func ConvergeRefused(doc []byte, class initflow.ConfirmClass, rules []string) Converge {
 	return Converge{digest: convergeDigest(doc), class: class, rules: slices.Clone(rules)}
+}
+
+// ConvergeWarned is D1545's third answer: the gate recorded content findings
+// about the document and did not refuse it, so the step proceeds with them
+// recorded and reported rather than admitted — the owner reads what left the
+// cover tables instead of a step that "passed". The caller passes the bytes IT
+// read, the rules that were applied, and the warnings the gate raised (the
+// content findings, one per rule), so the audit record and the sentence carry
+// both.
+//
+// It is not a weaker admission: Refuse reads it as one, because D1545's ruling
+// is that the content findings do not stop a step. The class rule is unchanged,
+// so a Typed step is still refused — a warning is not a way past D1026.
+func ConvergeWarned(doc []byte, class initflow.ConfirmClass, rules []string, warnings []string) Converge {
+	return Converge{digest: convergeDigest(doc), class: class, rules: slices.Clone(rules), warnings: slices.Clone(warnings)}
 }
 
 // ErrNotConverged is the refusal of a step the gate did not admit. It is a
@@ -122,17 +152,19 @@ var ErrNotConverged = errors.New("the managed gate did not admit this step")
 const NotConverged = "a managed project applies the steps this gate judged and no others, so nothing is written here: no person is being asked, and no flag, variable or mark reaches past the gate (D1012)"
 
 // Refuse is the gate's whole behaviour: nil only when a verdict admitted the
-// document AND the step's class is one a plan gate judges. It is the FIRST
-// thing a command in the set reads — before its first write, and before any
-// argument of a write is built — so a Converge that was never built refuses
-// however it is called.
+// document OR recorded warnings about it (D1545, ConvergeWarned) AND the
+// step's class is one a plan gate judges. It is the FIRST thing a command in
+// the set reads — before its first write, and before any argument of a write is
+// built — so a Converge that was never built refuses however it is called.
 //
 // The two ways to a refusal are one predicate on purpose: a caller cannot ask
 // "was the plan admitted" and act on that answer, because the answer the class
 // rule gives is the refusal (D1026), and the classes the stage table refuses a
-// --yes for never become agent-runnable because a plan looks clean.
+// --yes for never become agent-runnable because a plan looks clean. A warned
+// step is the same predicate's other half: it is not admitted, but it is not
+// refused either, and the warnings it holds are what a caller reports.
 func (c Converge) Refuse() error {
-	if c.admitted && c.class == initflow.YesOrTyped {
+	if (c.admitted || len(c.warnings) > 0) && c.class == initflow.YesOrTyped {
 		return nil
 	}
 	return fmt.Errorf("%w: %s — %s", ErrNotConverged, NotConverged, c.refusedBy())
@@ -140,18 +172,22 @@ func (c Converge) Refuse() error {
 
 // refusedBy is what the refusal names after NotConverged, so a reader acts on
 // it without re-deriving it from the verdict: the class rule where the class is
-// what refused, and the rules that fired where the verdict is. One of the two
-// branches always applies when Refuse has returned an error, so the sentence
-// never ends in a bare dash; the rules are rendered through safetext's own
-// listing because a rule's words can quote a plan, and an address, a newline or
-// a screenful of someone else's text in this sentence would be this program
-// printing it to the session it is refusing.
+// what refused, and the verdict where it is — the rules that refused, the
+// warnings a step carried without being admitted, or the fact that nothing
+// admitted it. One of the branches always applies when Refuse has returned an
+// error, so the sentence never ends in a bare dash; the rules and the warnings
+// are rendered through safetext's own listing because either can quote a plan,
+// and an address, a newline or a screenful of someone else's text in this
+// sentence would be this program printing it to the session it is refusing.
 func (c Converge) refusedBy() string {
 	why := make([]string, 0, 2)
 	if !c.admitted {
-		if len(c.rules) == 0 {
+		switch {
+		case len(c.warnings) > 0:
+			why = append(why, "nothing admitted it, and the gate recorded "+safetext.FieldListLine(c.warnings)+" as a warning")
+		case len(c.rules) == 0:
 			why = append(why, "no rule of this step's document admitted it")
-		} else {
+		default:
 			why = append(why, "refused by "+safetext.FieldListLine(c.rules))
 		}
 	}
@@ -173,6 +209,20 @@ func (c Converge) Digest() string { return c.digest }
 // it holds by writing to the slice it handed in or to the one it read back, and
 // the refusal that printed them printed what the gate held.
 func (c Converge) Rules() []string { return slices.Clone(c.rules) }
+
+// Warnings are the content findings the gate recorded and did not refuse on
+// (D1545), as a copy: empty on an admitted or refused Converge, and non-empty
+// only on one ConvergeWarned built. A caller reports them — the audit record
+// holds them (audit.go) and the apply prints them — so a step that proceeded
+// leaves a trail of what left the cover tables rather than passing silently.
+func (c Converge) Warnings() []string { return slices.Clone(c.warnings) }
+
+// Warned reports whether the gate recorded content findings about this
+// document instead of admitting it (D1545): false on an admitted Converge,
+// whose rules all passed, and true on a step that proceeds with warnings. It
+// is the fact AuditRecordFor reads to write the "warned" verdict, so it is the
+// one place a record and a command agree that a step was applied with findings.
+func (c Converge) Warned() bool { return len(c.warnings) > 0 }
 
 // convergeDigest is the document's bytes, hex-encoded sha256: the digest the
 // gate carries of the exact bytes it read, and the one D1022's record is

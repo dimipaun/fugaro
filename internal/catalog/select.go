@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // DockerTag is the tag that claims a Docker daemon (D1149). It is one
@@ -298,56 +299,346 @@ func Choose(j Job) (Choice, error) {
 	return Choice{Entry: covering[0]}, nil
 }
 
-// Applies reports whether the project's catalog is what decides a workflow's
-// job image at all. Three workflows are not the catalog's: one that keeps its
-// own image definition (image: or dockerfile:) runs the image the project
-// builds for that repository and never a catalog entry (D1155); a clone
-// workflow runs the installation's base image; and a shared workflow's image
-// is a shared dependency-layer digest no catalog entry produces. A repository
-// that names no entry and needs no tag is the catalog's only when the project
-// marks a default — "nothing: it uses the project default" is the spec's rule
-// (§3.1 step 3) — which is also what leaves an installation whose catalog is
-// not yet curated exactly as it was (F1).
+// Source is where the image a job runs comes from: which of the four answers
+// the resolver can give (D1900). It is what a caller switches on, because each
+// one is a different image reference and only two of them are a catalog
+// entry's.
+type Source string
+
+const (
+	// SourceCatalog is an entry of the project's image catalog: the resolver's
+	// answer for a job the project's images are what decide.
+	SourceCatalog Source = "catalog"
+	// SourceRepo is the image this project builds for the repository itself.
+	// It is the answer only where the project has no image for the job at all
+	// — no catalog entry and no map entry — which is the state an installation
+	// that has not curated its catalog is in (D1900, O4 b).
+	SourceRepo Source = "repo"
+	// SourceBase is the installation's base image, which a checkout: clone
+	// job runs directly: there is no per-repository derived image for it
+	// (design generic-tool.md §2, G3).
+	SourceBase Source = "base"
+	// SourceShared is the shared dependency-layer image a checkout: shared
+	// job runs. Like SourceBase it is not a catalog entry's, and the digest is
+	// one only the operator's machine writes onto the job (design
+	// forge-authorship-images/shared-images.md §6, C8b1), so a caller holding
+	// no such digest uses the repository's own tag as it does today.
+	SourceShared Source = "shared"
+)
+
+// ImageRequest is one job's question to the resolver: which image the job
+// runs, and whether the project's image selection decides it at all.
 //
-// The first of the three is this tree's truth for as long as the two keys are
-// read where a workflow file is parsed: such a repository still runs the image
-// the project builds for it, so routing its job to a catalog entry would drop
-// the image it was written for while the build that makes it still runs.
-//
-// Both halves of a selection ask this: the deploy-time job spec, which fixes
-// the job's image (F7), and the launcher, which judges the image again against
-// the backend it picks (D1149). A workflow one of them judged by the catalog
-// and the other did not would be refused for an entry it does not run, or
-// asked for a Docker socket it never needed, so the predicate lives here and
-// not twice.
-func Applies(c config.Catalog, w config.Workflow) bool {
-	if !MayApply(w) {
-		return false
-	}
-	if w.ImageName == "" && len(w.Needs) == 0 {
-		_, ok := Default(c)
-		return ok
-	}
-	return true
+// It is the whole input of the selection, so that the deploy-time job spec,
+// the launcher, doctor and the image commands all ask the same question of the
+// same facts (F21): whether a workflow's job runs a project image, and which
+// one, must not depend on which command asked.
+type ImageRequest struct {
+	// Catalog is the project's effective catalog: this machine's configuration
+	// when it states one, the published node's otherwise (localcfg's keep
+	// rule, D1140). nil when the project has neither.
+	Catalog *config.Catalog
+	// ImageMap is the project's repo-to-image map (D1906): the entry each
+	// repository's jobs run, keyed by canonical repository name. nil when the
+	// project maps none.
+	ImageMap map[string]string
+	// Canonical is the job's repository, as a person spells it ("Acme/App");
+	// the map is read under its canonical form, which is the form the map's
+	// keys are validated in (ValidImageMap).
+	Canonical string
+	// Workflow is the workflow whose job this is.
+	Workflow config.Workflow
+	// Backend is the backend the job runs on: the docker tag is a claim the
+	// rule checks against it and not an image property (D1149).
+	Backend Backend
 }
 
-// MayApply is the half of Applies that does not read the catalog: whether w is
-// a workflow a catalog can speak for at all — one that runs an image built for
-// it, and not one that brings an image definition of its own or a checkout kind
-// whose job holds no repository source. It is for a caller holding a catalog it
-// could not read, where the one clause Applies would ask of that catalog —
-// whether it marks a default entry — is exactly what is not known, and a
-// workflow that names nothing runs the default's image when it does. Such a
-// caller treats a workflow as the catalog's when MayApply says so; the three
-// kinds it refuses are not the catalog's in any state.
+// Selection is the resolver's answer: where the image comes from, the catalog
+// entry it is when it is one, and what to say about the keys it went past.
+type Selection struct {
+	Source Source
+	// Entry is the catalog entry the job runs, the zero value whenever Source
+	// is not SourceCatalog.
+	Entry config.Entry
+	// Reference is true when the project's configuration named this exact
+	// entry for the job — the workflow's own image_name:, or the project's map
+	// (D1155, D1906) — and false when the tag-cover rule chose it from the
+	// tags the job needs or from the catalog's default.
+	//
+	// A caller that judges the image a job is deployed with needs the
+	// difference: a reference is a claim about that job, while a choice from
+	// tags is a claim about the tags, which the deployed entry is checked
+	// against by coverage instead (run.go's catalogDockerAsk).
+	Reference bool
+	// Warnings are the deploy-time sentences about this workflow's image
+	// (D1146, D1900), in order; empty when there is nothing to say.
+	Warnings []string
+}
+
+// Images is how a caller spells the three image references a Selection can
+// name: it holds the references the resolver must not know — the
+// installation's base image, the repository's own tag, and how a catalog entry
+// becomes a registry reference (internal/infra's repoCtx.catalogImage, which
+// only a caller that holds the registry mapping can compute).
+type Images struct {
+	Base    string
+	Repo    string
+	Catalog func(config.Entry) string
+}
+
+// Image is the image reference the selection names. A caller has to state all
+// three of Images: the resolver's answer is the same everywhere, and the
+// references it is written in are the caller's own.
+func (s Selection) Image(im Images) string {
+	switch s.Source {
+	case SourceCatalog:
+		return im.Catalog(s.Entry)
+	case SourceBase:
+		return im.Base
+	}
+	return im.Repo
+}
+
+// JobImage is the one resolver (IS1, F3): the image one job runs, in the order
+// the project's configuration states it — a repository's catalog reference,
+// the project's map, the catalog's default entry — and the repository's own
+// image when the project names none of them.
+//
+// A repository's definition keys are ignored here, whatever the project says
+// (D1900, T1 reading b): `image:`, `dockerfile:` and `rebuild:` describe an
+// image this project builds for the repository, which nothing runs while the
+// project has one of its own for the job, so each written key is named once in
+// a warning. A repository's *reference* to the catalog is not one of them: a
+// pin is the entry the job runs and `needs:` is what the tag-cover rule
+// chooses by, both as they are today.
+//
+// The order is this way round because it is the narrow end of D1900: the
+// project's own answer is the map, the map is overridden by a repository that
+// states one of its own, and a project that states neither a map entry nor a
+// default leaves the job on the image it runs today rather than refusing it —
+// the state an installation that has not curated its catalog is in, which
+// `fugaro update` has to converge through (O4 b, the HARD RULE on update).
+//
+// The default is the one answer that can be an entry this job cannot run — a
+// prebuilt image holds no checkout of this repository, which a baked job's
+// image has to (D1191, infra's unbuiltOnBaked), and a docker-tagged one wants
+// a daemon the job's backend has not got (D1149). A workflow that wrote an
+// image definition of its own then keeps the image it runs today, with a
+// warning saying so: the alternative is a refusal on a configuration that
+// deploys, which is a second command for the person running `fugaro update`
+// and the state O4 b exists to keep out. A workflow that wrote none is left
+// to the refusal, because there is no image of its own to keep.
+func JobImage(req ImageRequest) (Selection, error) {
+	w := req.Workflow
+	switch w.Checkout {
+	case config.CheckoutClone:
+		return Selection{Source: SourceBase}, nil
+	case config.CheckoutShared:
+		return Selection{Source: SourceShared}, nil
+	}
+	sel := Selection{}
+	switch {
+	case w.ImageName != "" || len(w.Needs) > 0:
+		// The repository's own reference to the catalog, which beats the map
+		// (T1 b): a pin is used as it is and needs: are what the rule chooses
+		// by. Neither is asked of a project that has no catalog at all.
+		if req.Catalog == nil {
+			return Selection{Source: SourceRepo}, nil
+		}
+		e, err := req.choose(w.ImageName)
+		if err != nil {
+			return Selection{}, err
+		}
+		sel = Selection{Source: SourceCatalog, Entry: e.Entry, Reference: w.ImageName != "", Warnings: warnOnly(e.Warn)}
+	default:
+		name, mapped := req.mappedEntry()
+		if req.Catalog == nil {
+			// A project that publishes no catalog has nothing for the map to
+			// point into, so the map is not yet a claim about any job: the
+			// repository keeps its own image as it does with no default (O4 b),
+			// which is the state a map written before the catalog is built in.
+			// A map naming an entry the project's catalog does not hold is
+			// refused below, where there is a catalog to be wrong about.
+			return Selection{Source: SourceRepo}, nil
+		}
+		switch {
+		case mapped:
+			e, err := req.choose(name)
+			if err != nil {
+				if errors.Is(err, ErrUnknownEntry) {
+					return Selection{}, UnknownMappedEntryError(req.Canonical, name)
+				}
+				return Selection{}, err
+			}
+			sel = Selection{Source: SourceCatalog, Entry: e.Entry, Reference: true}
+		default:
+			marked, ok := Default(*req.Catalog)
+			if !ok {
+				// No default to run and nothing naming one: the repository
+				// keeps the image this project builds for it (O4 b).
+				return Selection{Source: SourceRepo}, nil
+			}
+			if why := req.cannotRun(marked); why != "" && definesOwnImage(w) {
+				return Selection{Source: SourceRepo, Warnings: []string{defaultSetAside(w, marked, why)}}, nil
+			}
+			e, err := req.choose("")
+			if err != nil {
+				return Selection{}, err
+			}
+			sel = Selection{Source: SourceCatalog, Entry: e.Entry}
+		}
+	}
+	sel.Warnings = append(sel.Warnings, ignoredRepoKeys(w, sel.Entry)...)
+	return sel, nil
+}
+
+// definesOwnImage reports whether w states an image this project builds for
+// its repository: the two definition keys D1900 sets aside while the project
+// gives the job an image, and — where the project's default is an entry the
+// job cannot run — the image the job keeps.
+//
+// rebuild: is not one of them. It asks for the image a workflow's definition
+// produces to be rebuilt on a schedule, so a workflow that wrote only rebuild:
+// has no image of its own that could be kept, and it is not the key the
+// fallback is about.
+func definesOwnImage(w config.Workflow) bool {
+	return !w.Image.IsZero() || w.Dockerfile != ""
+}
+
+// cannotRun names why this job cannot run entry, "" when it can. It is the
+// resolver's own reading of the two conditions the job-spec builder refuses a
+// job on: a source kind no Fugaro build writes an image from (D1191) and a
+// docker-tagged entry on a backend with no daemon (D1149). Both are conditions
+// of the project's configuration, which the resolver sees the same way every
+// caller does (F21), and neither is the answer's here: what JobImage does with
+// them is the default branch's, where a repository's own image is available.
+func (req ImageRequest) cannotRun(e config.Entry) string {
+	if !BuildsImage(e) {
+		return "its source is a prebuilt image, which holds no checkout of this repository"
+	}
+	if (Job{Backend: req.Backend}).carriesDocker(e) {
+		return "it is tagged " + DockerTag + ", which needs a backend with a Docker daemon"
+	}
+	return ""
+}
+
+// defaultSetAside is the warning a job carries when the project's default is
+// put aside for it: it names the key that is doing the work instead, so the
+// person reading the run knows which image their job starts on and why it is
+// not the one the project marks.
+func defaultSetAside(w config.Workflow, e config.Entry, why string) string {
+	key := "dockerfile:"
+	if !w.Image.IsZero() {
+		key = "image:"
+	}
+	return fmt.Sprintf("this workflow's %s is what its job runs: the project's image catalog gives its job the image of the default entry %s, which this job cannot run because %s, so the catalog's default is set aside for this job (D1900)", key, e.Name, why)
+}
+
+// choice is the selection's call into the tag-cover rule: req's catalog, the
+// one repository, and the entry it pins — the workflow's own image_name:, or
+// the entry the map gives it.
+func (req ImageRequest) choose(pin string) (Choice, error) {
+	return Choose(Job{
+		Catalog: *req.Catalog,
+		Repos:   []Repo{{Slug: req.Canonical, Pin: pin, Needs: req.Workflow.Needs}},
+		Backend: req.Backend,
+	})
+}
+
+// mappedEntry is the entry the project's map gives req's repository, if it
+// gives it one. A name that is not a repository — a slug this package cannot
+// canonicalize — is no mapping rather than an error: the map is keyed by
+// canonical names, and nothing here is asked about a string that is not one.
+func (req ImageRequest) mappedEntry() (string, bool) {
+	if len(req.ImageMap) == 0 {
+		return "", false
+	}
+	c, err := task.CanonicalRepo(req.Canonical)
+	if err != nil {
+		return "", false
+	}
+	name, ok := req.ImageMap[c]
+	return name, ok && name != ""
+}
+
+// warnOnly is a rule warning as a one-element list, empty for none.
+func warnOnly(w string) []string {
+	if w == "" {
+		return nil
+	}
+	return []string{w}
+}
+
+// ignoredRepoKeys names each repository-level key the selection went past
+// (D1900): one warning per key, because the person's fix is per key — a
+// workflow that carries both an image: block and a dockerfile: is two edits —
+// and because the run's own report is where they read it.
+//
+// Only the keys that describe an image are here. `rebuild:` is one of them
+// although it describes no image: it asks for a per-repository image to be
+// rebuilt on a schedule, and a job that runs no such image has nothing for the
+// rebuild to reach.
+func ignoredRepoKeys(w config.Workflow, e config.Entry) []string {
+	keys := []struct {
+		written bool
+		name    string
+	}{
+		{!w.Image.IsZero(), "image:"},
+		{w.Dockerfile != "", "dockerfile:"},
+		{rebuildWritten(w.Rebuild), "rebuild:"},
+	}
+	var out []string
+	for _, k := range keys {
+		if !k.written {
+			continue
+		}
+		out = append(out, fmt.Sprintf("this workflow's %s is ignored: the project's image catalog gives its job the image of the entry %s (D1900)", k.name, e.Name))
+	}
+	return out
+}
+
+// rebuildWritten reports whether a workflow's rebuild: asks for anything the
+// daily image check would act on. The block is compared with its own defaults
+// rather than read as a whole, because a resolved workflow carries the
+// defaults whether or not the file wrote them (internal/config's loader): what
+// this answers is "did a person write this key", which is what the warning is
+// about.
+func rebuildWritten(r config.Rebuild) bool {
+	def := config.Rebuild{}.Defaults()
+	return (r.Check != "" && r.Check != def.Check) ||
+		(r.MaxAge.Set && r.MaxAge.Duration != def.MaxAge.Duration) ||
+		(r.Lockfiles != nil && !*r.Lockfiles) ||
+		(r.Base != nil && !*r.Base) ||
+		len(r.Paths) > 0
+}
+
+// UnknownMappedEntryError refuses a repository the project's image_map points
+// at an entry its catalog does not hold. It is not a pin's refusal
+// (UnknownEntryError) although it is the same kind of mistake: the map is
+// written by a command and published, so the sentence names the map, which is
+// where the person's fix is.
+func UnknownMappedEntryError(repo, name string) error {
+	return fmt.Errorf("%w: the image_map of this project points %s at %q, which its image catalog does not hold; fugaro image ls lists the entries the catalog has, and fugaro image map set changes the mapping",
+		ErrUnknownEntry, repo, name)
+}
+
+// MayApply reads neither the catalog nor the map: whether req is a job the
+// image selection could speak for at all — a baked checkout, whose image is
+// one this project builds or a catalog entry's, and not a clone or shared
+// checkout, whose image is the installation's own. It is for a caller holding
+// a project whose image selection it could not read, where what JobImage would
+// ask — whether the catalog marks a default, whether the map names this
+// repository — is exactly what is not known, and a workflow that names nothing
+// runs a project image when the node says so. Such a caller treats the
+// workflow as the selection's when MayApply says so; the two checkout kinds it
+// refuses are not the selection's in any state.
+//
+// Whether the selection is what decides a job whose configuration IS readable
+// is JobImage's own answer and not a second reading of the same keys: a caller
+// asks it and switches on Source, and a selection it refuses is not one the
+// catalog decides.
 func MayApply(w config.Workflow) bool {
-	if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared {
-		return false
-	}
-	if !w.Image.IsZero() || w.Dockerfile != "" {
-		return false
-	}
-	return true
+	return w.Checkout != config.CheckoutClone && w.Checkout != config.CheckoutShared
 }
 
 // Default is the entry the catalog marks as its default, and whether it

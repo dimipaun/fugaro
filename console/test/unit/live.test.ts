@@ -695,12 +695,15 @@ describe('the row model', () => {
   })
 
   it('takes a run\'s rigor from the join by id, and draws no chip without one', () => {
-    // Owner request 2026-10-25. **The mode is not in the live frame**: the frame
-    // is `JSONRun`, which carries no rigor block, so the row's mode is joined
-    // from `runs ls --json` by run id (`shared/rigor.ts`'s `rigorIndex`) and the
-    // caller is what makes the join. A run the index does not know is a run with
-    // no chip -- never another run's mode -- which is what the default argument
-    // (`NO_RIGOR`) gives every caller that has not made one.
+    // Owner request 2026-10-25. **The row's rigor is the join, not the frame**:
+    // the frame's `JSONRun` carries the run's mode and the layer that set it
+    // (rigor-modes plan T1.7, CLI 0.23.0) and nothing else of the block, and the
+    // console reads a run's rigor through one reader for all three screens that
+    // draw it (`shared/rigor.ts`), so the row's is joined from `runs ls --json`
+    // by run id (`rigorIndex`) and the caller is what makes the join. A run the
+    // index does not know is a run with no chip -- never another run's mode --
+    // which is what the default argument (`NO_RIGOR`) gives every caller that
+    // has not made one.
     const frame = theLastFrame()
     const index = new Map([
       [OAUTH_RUN, { mode: 'pro', from: 'repo', areas: [] }],

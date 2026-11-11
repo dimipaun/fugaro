@@ -66,6 +66,21 @@ locals {
   # hide: an opt-in with no coordinator, which would otherwise plan nothing and
   # say nothing.
   mcp_server_on = var.mcp_server != null && local.coordinator_on
+
+  # The two lists the front door resolves an identity by (D933), reduced to the
+  # entries it reads. It is the installation's own list and not one machine's
+  # config (finding M-f): var.launchers and var.operators are what an operator
+  # applied to this installation, and the entry below is rendered onto the
+  # revision's own environment, which a caller, a token and a run cannot reach.
+  # The reduction is D923's — only exact `user:` entries — and it is the same
+  # one credentials.tf makes for its read mint, one file over. What it buys is
+  # that the entry carries the names the door reads and nothing else: a `domain:`
+  # or a `group:` member an operator put on the installation's list is not
+  # published to a public service's environment, and the door's own reading
+  # reduces the entries a second time (roster.go's userEntries) so that a
+  # hand-edited revision is held to the same rule.
+  front_door_launchers = [for m in var.launchers : m if startswith(m, "user:")]
+  front_door_operators = [for m in var.operators : m if startswith(m, "user:")]
 }
 
 resource "google_service_account" "coordinator" {
@@ -440,8 +455,21 @@ resource "google_cloud_run_v2_service" "coordinator_front_door" {
     # installation pays for around the clock. The concurrency and rate limits
     # that bound a caller's cost are the front door's own and are enforced at
     # M9's single launch point, not here.
+    #
+    # **And one instance at most, which is what makes the two per-source bounds
+    # the bounds the docs state.** They are counted in the process's own memory
+    # (register.go, sourceLimiter), so the window a source is refused past is
+    # one instance's — and the platform's own ceiling of about a hundred
+    # instances is scaled by the caller's traffic, which makes the caller under
+    # the bound the one buying the instances: a single source would get a
+    # hundred windows a minute on each of the two open writes, which is a rate
+    # nobody set and no sweep can keep up with. A second instance buys this door
+    # nothing it cannot serve from the first: it answers one person's sign-in
+    # and a small team's tool calls, and a cold start is what a caller pays for
+    # either way.
     scaling {
       min_instance_count = 0
+      max_instance_count = 1
     }
 
     containers {
@@ -499,6 +527,36 @@ resource "google_cloud_run_v2_service" "coordinator_front_door" {
       env {
         name  = "FUGARO_COORDINATOR_REPOS"
         value = jsonencode(var.coordinator.repos)
+      }
+      # D934's switch as the process reads it, and the door's whole
+      # configuration beside it (M12). The entry is the one thing that turns
+      # the door on and it is written by the same condition as the account, the
+      # service and the allUsers binding: "off" is the absence of the binding
+      # (the amendment of 2026-11-04) and the absence of this entry together,
+      # which is one fact rendered twice rather than a second switch. A
+      # revision without it mounts no route at all (ee/coordinator's FrontDoor)
+      # and answers exactly what this service answered before M12.
+      #
+      # Its value is a JSON document and not a flag, because the door needs
+      # three things and none of them is a credential: the ORIGIN this service
+      # answers on (the authorization server's identifier and the audience of
+      # every token it mints — Cloud Run's deterministic service URL, built
+      # from the service name, the project's number and the region, all three
+      # of which this template holds), and the installation's two member lists
+      # in the reduced form above.
+      #
+      # The URL is Cloud Run's deterministic one and the template builds it
+      # itself, because the service's own `uri` attribute is computed by the
+      # apply that creates this resource: an entry naming it would be the
+      # service depending on itself, which Terraform refuses. The project's
+      # number comes from budget.tf's own data source, which is read here too.
+      env {
+        name = "FUGARO_MCP_FRONT_DOOR"
+        value = jsonencode({
+          issuer    = "https://${var.mcp_server.service}-${data.google_project.this[0].number}.${var.region}.run.app"
+          launchers = local.front_door_launchers
+          operators = local.front_door_operators
+        })
       }
 
       # The port is left unnamed, and that is the HTTP/1.1 default: Cloud Run's

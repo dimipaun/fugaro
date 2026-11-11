@@ -320,6 +320,34 @@ for (const edition of COMPATIBILITY_EDITIONS) {
     margin-top: var(--space-sm);
   }
 
+  /* One column grid for every table on the page: the Status column starts at the same place in
+     a table with an Edition column and in one without, because the name column is the width
+     that is left after the two fixed ones and a table with no Edition column gives that room
+     to Status. A phone keeps the browser's own sizing, since `base.css` narrows a table to the
+     viewport there and fixed columns would leave the name no room. */
+  @media (min-width: 48rem) {
+    .compat-table {
+      table-layout: fixed;
+      width: 100%;
+    }
+
+    .compat-table thead th:first-child {
+      width: calc(100% - 22rem);
+    }
+
+    .compat-table .compat-what {
+      max-width: none;
+    }
+
+    .compat-table thead th:nth-child(2) {
+      width: 13rem;
+    }
+
+    .compat-table thead th:nth-child(3) {
+      width: 9rem;
+    }
+  }
+
   .compat-what {
     /* The name column is the widest of the three, and the browser's own column sizing gives it
        whatever the notes need: this is the ceiling that keeps a one-word name's row from being
