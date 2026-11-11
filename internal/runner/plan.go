@@ -266,19 +266,22 @@ func recipeHasStep(rcp *recipe.Recipe, kind recipe.StepKind) bool {
 // there is no loop for a level to join and no review step for one to be held
 // to — the branch it pushes is reviewed by a run of its own (G13, D2043).
 //
-// Level 3's step is not inserted into a recipe whose review hands the run over
-// (recipe.Step.HandOver, E5): that review is where the run ends, so a step
-// after it is one the run would never walk — and the recipe's own grammar
-// refuses the pair outright ("hand_over ends the run at the review: no
-// adversarial step may follow it", recipe.Parse), which an insert must not
-// undo. The escalation's `escalate` is one pass and one verdict on every mode,
-// Critical included, where this level's step is otherwise inserted by default.
+// Neither level's step is inserted into a recipe whose review hands the run
+// over (recipe.Step.HandOver, E5). After that review level 3's step is one the
+// run would never walk — the recipe's own grammar refuses the pair outright
+// ("hand_over ends the run at the review: no adversarial step may follow it",
+// recipe.Parse), which an insert must not undo — and before it level 1's step
+// is the inner loop such a recipe is defined without: one coding pass, one
+// review pass of the model the recipe names, which is what the escalation's
+// `escalate` is for on every mode, Critical included (where level 3's step is
+// otherwise inserted by default) and with agent.first_line_review on (where
+// level 1's is).
 func planRecipe(rcp *recipe.Recipe, levels config.Levels) []recipe.Step {
 	if rcp.Mode != recipe.ModeImplement || recipe.UsesRebase(rcp) {
 		return rcp.Steps
 	}
 	out := make([]recipe.Step, 0, len(rcp.Steps)+2)
-	if levelOn(levels, policy.LevelL1) && resolvedLevel(levels, policy.LevelL1).Inserted {
+	if levelOn(levels, policy.LevelL1) && resolvedLevel(levels, policy.LevelL1).Inserted && !recipe.UsesHandOver(rcp) {
 		out = append(out, recipe.Step{Kind: recipe.StepFirstLine})
 	}
 	for _, s := range rcp.Steps {
