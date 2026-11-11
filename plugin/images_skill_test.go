@@ -87,7 +87,7 @@ func TestImagesSkillNamesRealCommands(t *testing.T) {
 		"fugaro image ls",      // what the catalog holds today
 		"fugaro image build",   // the only build there is: Cloud Build, never local
 		"fugaro settings set",  // the bake switch
-		"fugaro validate",      // the Dockerfile and the file, before a build
+		"fugaro doctor",        // the installation, and the catalog's own state
 	} {
 		if !slices.Contains(named, want) {
 			t.Errorf("the skill never names %q, which is one of the commands its flow is made of (named: %v)", want, named)
@@ -164,8 +164,9 @@ var (
 	// credential. An ARG is in the image's build history and an ENV is in the
 	// layer, and neither can be taken back out.
 	secretArgRE = regexp.MustCompile(`(?i)^\s*(ARG|ENV)\s+\S*(TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|CREDENTIAL|_KEY)\b`)
-	// secretCopyRE copies a file that holds one into the image.
-	secretCopyRE = regexp.MustCompile(`(?i)^\s*COPY\b[^\n]*(token|secret|password|passwd|credential|key|\.netrc|\.git-credentials)`)
+	// secretCopyRE copies a file that holds one into the image: a registry
+	// dotfile, a key, an ssh directory, a credential file by its own name.
+	secretCopyRE = regexp.MustCompile(`(?i)^\s*COPY\b[^\n]*(token|secret|password|passwd|credential|\.npmrc|\.yarnrc|\.netrc|id_rsa|\.ssh)`)
 	// userinfoURLRE is a clone URL carrying a credential in its own text:
 	// https://user:token@host/repo. The catalog refuses one when it reads the
 	// Dockerfile (IS11b), and a skill must not teach one either.
