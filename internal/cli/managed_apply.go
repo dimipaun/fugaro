@@ -181,6 +181,17 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	})
 }
 
+// managedApplySubcommand is the command as a person types it after the program's
+// name, which is what the gate's facts (and so the audit record's `command`
+// field) name. It is read off cobra's own matched path rather than written as
+// this command's literal because two commands drive managedApplyWith — `fugaro
+// managed apply` and the `fugaro restore` that ends in it (restoreManagedApply)
+// — and a record filed under the other one's name is a record of a command
+// nobody ran, in the one object an owner greps months later.
+func managedApplySubcommand(cmd *cobra.Command) string {
+	return strings.Join(strings.Fields(cmd.CommandPath())[1:], " ")
+}
+
 // managedApplyWith is managedApply's body: the whole sequence, printing its one
 // step through the reporter newRep opens where the apply's own work starts. A
 // nil newRep is a caller with no reporter at all, which prints as this command
@@ -303,7 +314,7 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 	// database, and a question asked here would be a new refusal for a command
 	// the ruling did not touch.
 	mg, err := readManagedGate(ctx, managedGateEnv{lc: lc, s: c.Storage, crm: c.CRM}, managedGateFacts{
-		Subcommand:  "managed apply",
+		Subcommand:  managedApplySubcommand(cmd),
 		Argv:        os.Args[1:],
 		Declined:    "nothing was applied",
 		AgentMarker: conds.Agent,

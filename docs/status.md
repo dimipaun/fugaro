@@ -26,7 +26,7 @@ As of 2026-11-11, read from `main`, the open pull requests and each plan's task 
 | vision-model | 1/9 | V1 merged (#2305); V0 open (#2304); V2 to V8 not started; owner Checks 520 and 521 not run |
 | subscriptions | about 18/51 | about 21 tasks, among them S6.3 (#2277) and S3.2 (draft #2283); 10 owner-run; S6.2 merged (#2279) |
 | workspaces | 8/10 | W7 (#2275), W9; W3 (#1947) and W6 (#2105) merged |
-| no-prompt-policy | 11/17 | T9 (draft #2232) to T13; owner T14; T4 (#2084), T7 (#1984) and T15 merged, and `update` asks nothing (#2082) |
+| no-prompt-policy | 12/17 | T10 to T13; owner T14; T4 (#2084), T7 (#1984), T9 (#2232) and T15 merged, and `update` asks nothing (#2082). The owner's ruling of 2026-11-11 puts `fugaro managed apply` in the managed converge set so it writes the audit record (T9's own reach, recorded in [managed-agent-converge](managed-agent-converge/reconciliation.md) §3 and in the plan's T9 section) |
 | image-setup-skill | 9/14 | IS1 (draft #2170), IS8b (draft #2171, waits on O3); IS2, IS12, IS13 not started; IS3, IS4, IS5, IS7, IS8, IS9, IS10, IS11 and IS11b merged |
 | diagnose-agent | 7/10 | T-DG8 to T-DG10; T-DG6 (#2244) and T-DG7 (#2138) merged |
 | periodic-reviews | 7/14 | R7 to R12; owner Checks 136 and 340 |
