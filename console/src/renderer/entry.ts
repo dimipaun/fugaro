@@ -2467,11 +2467,12 @@ export const LIVE_POLL_MS = 1000
 /**
  * LIVE_RIGOR_TTL_MS is how long the Live screen's rigor join is kept: 15,000 ms.
  *
- * The mode on a Live row is a **join**, not a frame field: `watch --json`
- * answers `JSONRun`, which carries no rigor block, so the mode comes from
- * `runs ls --json` and is matched to the row by run id (`rigorIndex`,
- * `shared/rigor.ts`). That read is a CLI invocation of its own, and it is
- * deliberately **not** the poll's: the poll runs at `LIVE_POLL_MS`, and a
+ * The mode on a Live row is a **join**: `watch --json` answers `JSONRun`, whose
+ * own `mode`/`from` are the run's mode and layer and nothing else of its rigor
+ * block, so the block comes from `runs ls --json` and is matched to the row by
+ * run id (`rigorIndex`, `shared/rigor.ts`). That read is a CLI invocation of
+ * its own, and it is deliberately **not** the poll's: the poll runs at
+ * `LIVE_POLL_MS`, and a
  * `runs ls` every second would be sixty invocations a minute for a fact that is
  * written once, at the run's bootstrap.
  *
