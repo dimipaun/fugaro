@@ -1,11 +1,11 @@
 # A Docker-capable compute backend: workloads on Compute Engine VMs
 
-> **Built and selectable; not yet run against a real project.** `fugaro init
-> --provision-batch` no longer refuses on the 0.9.5 line (`internal/cli`'s
+> **Not shipped, and not in 0.9.0.** `fugaro init --provision-batch` no longer
+> refuses on the 0.9.5 line (`internal/cli`'s
 > `batchProvisionShipped` is true, plan Task 9): the reaper role this backend's
 > compute module creates is the five permissions Google defines, so its
-> provisioning can complete. And `backend: cloud-batch` is a name
-> `internal/localcfg` accepts since the plan's Task 10, which is the same task
+> provisioning can complete, and on that same line `backend: cloud-batch` is a
+> name `internal/localcfg` accepts since the plan's Task 10 — which is the task
 > that makes `fugaro doctor` the gate in front of it: an installation that
 > selects the backend is refused until the provisioning, IAM, logs, cost and
 > reaper checks pass. Nothing in this document has been measured on an
