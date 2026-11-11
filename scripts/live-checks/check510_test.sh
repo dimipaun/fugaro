@@ -807,6 +807,11 @@ test_happy_path() {
   expect_contains "$out" "FACT condition-delete-allow: PASS" "happy path: the conditioned delete"
   expect_contains "$out" "FACT condition-delete-deny: PASS" "happy path: the refused delete"
   expect_contains "$out" "FACT create-conditioned: REPORT" "happy path: the conditioned create, a reading and not a criterion"
+  # The control reading is read against the row after it, so the refusal's own
+  # message has to reach the block: the row is worthless as a control if the
+  # placeholder stands in for what Secret Manager said.
+  expect_contains "$out" "Permission 'secrets.create' denied on resource" "happy path: the conditioned create's refusal carries the API's own message"
+  expect_absent "$out" "the refusal carried no message in its body" "happy path: the placeholder is not printed in place of a refusal that carried a message"
   expect_contains "$out" "FACT create-conditioned-outside: REPORT" "happy path: the conditioned create outside the prefixes"
   expect_contains "$out" "FACT create-unconditioned: REPORT" "happy path: the unconditioned create, the control reading"
   expect_contains "$out" "so there is no name fence to write and the unconditioned create stays" "happy path: F30's create half holding leaves the grant as planned"

@@ -636,6 +636,7 @@ step_delete() {
 
 step_create() {
   local name="${PROBE_U_PREFIX}maked-${STAMP}"
+  local detail
   # The conditioned create, aimed at the prefix the condition itself names. It is
   # a REPORT and not a criterion, because the answer is not this check's to grade:
   # F30 said the check is made on the project, where the secret does not exist
@@ -658,7 +659,8 @@ step_create() {
       ;;
     403)
       CREATE_CONDITIONED=refused
-      fact create-conditioned REPORT "secretmanager.secrets.create was REFUSED with 403 even for a name the condition names (${api_detail:-the refusal carried no message in its body}): F30's reading — create is checked on the project, so a conditioned create admits nothing — held in this run, which is not what the owner's 2026-11-11 run measured. A reading for the owner, not a criterion: it is what create-conditioned-outside below is read against"
+      detail=$(api_detail)
+      fact create-conditioned REPORT "secretmanager.secrets.create was REFUSED with 403 even for a name the condition names (${detail:-the refusal carried no message in its body}): F30's reading — create is checked on the project, so a conditioned create admits nothing — held in this run, which is not what the owner's 2026-11-11 run measured. A reading for the owner, not a criterion: it is what create-conditioned-outside below is read against"
       ;;
     *)
       unmeasured create-conditioned "secretmanager.secrets.create on a fugaro_u_ name answered ${API_STATUS} and not 200 or 403: $(api_detail) — the row did NOT measure what a conditioned grant does with a create"
