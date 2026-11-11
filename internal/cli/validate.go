@@ -1946,9 +1946,10 @@ func newValidateCmd() *cobra.Command {
 				// Task 8 step 4, design §4.4; computeCheckoutProblems is where
 				// the three are put together, and the comment there is why
 				// they are not two calls). The Batch ones return nothing for
-				// every other project: the backend name they are about is
-				// refused by internal/localcfg until the enable task, so no
-				// installation reaches them today. The recipe they read is the
+				// every other project: the backend name they are about is one
+				// config validation accepts since the enable (Task 10), so an
+				// installation that names it really reaches them. The recipe
+				// they read is the
 				// one this checkout resolves the way a launch would
 				// (agent.recipe, else the default): its mode is what decides
 				// whether a run of this repository produces artifacts, which

@@ -252,12 +252,13 @@ func openCloudFor(ctx context.Context, lc *localcfg.Config) (*cloudEnv, error) {
 // no entry here fails closed, naming the entries there are, rather than
 // falling back to Cloud Run.
 //
-// The Batch entry is registered and never selected: internal/localcfg refuses
-// `backend: cloud-batch` until the task that turns it on (design
-// compute-backend.md §8.1), so no installation reaches it. It is wired here
-// and not in a test because the seam's second implementation has to be opened
-// from an installation's own facts -- its run account, its network, its
-// recorded socket gid -- and this is the only place that holds them.
+// The Batch entry is reached exactly as the Cloud Run one is: by a project
+// config that names it, which internal/localcfg accepts since the enable
+// (design compute-backend.md §8.1 task 9) and whose doctor gate Task 10 puts in
+// front of it. It is wired here and not in a test because the seam's second
+// implementation has to be opened from an installation's own facts -- its run
+// account, its network, its recorded socket gid -- and this is the only place
+// that holds them.
 func cloudOpeners(lc *localcfg.Config, runOpts gcp.Options) map[string]backend.Opener {
 	return map[string]backend.Opener{
 		backend.CloudRun: func(ctx context.Context) (backend.Backend, error) { return gcp.New(ctx, runOpts) },

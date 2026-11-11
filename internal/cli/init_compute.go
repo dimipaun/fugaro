@@ -17,9 +17,8 @@ import (
 
 // The compute stage: the Batch backend's installation-level provisioning
 // (design docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6). It is the
-// owner's step, and it is behind --provision-batch: what it changes is not
-// what an installation needs, `backend: cloud-batch` stays refused by config
-// validation until the enable task (§8.1 task 9), and a run that never asks
+// owner's step, and it is behind --provision-batch: what it creates is money
+// and infrastructure `fugaro update` does not apply, and a run that never asks
 // for it never reaches this root.
 //
 // It is money and it is permanent — a preloaded boot image's Cloud Build, a

@@ -34,9 +34,9 @@ import (
 // routes a Batch job's lines (Task 4, merged), so nothing here touches
 // logging.
 //
-// Nothing in this file is reachable from a run: `backend: cloud-batch` stays
-// refused by config validation until the enable task (§8.1 task 9), and the
-// stage that applies the root is behind its own flag.
+// Nothing in this file is reachable from a run: the stage that applies the
+// root is behind its own flag, so provisioning is the owner's step on a real
+// terminal and never something an update or a launch triggers.
 
 // StatePrefixCompute is where the compute root's state lives in the state
 // bucket: a prefix of its own, so neither root ever reads or writes the

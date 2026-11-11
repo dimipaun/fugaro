@@ -16,12 +16,10 @@ import (
 // 8 step 4, design compute-backend.md §4.4).
 //
 // Every one of them fires only for an installation whose project config selects
-// backend: cloud-batch, and internal/localcfg refuses that name until the
-// enable task (Task 10). So nothing here changes any path an installation takes
-// today -- the plan's Global Constraint 12 -- and Task 10 is what makes these
-// lines reachable. The one that outlives that enable is the artifact refusal
-// (Global Constraint 13): Task 10 lifts the backend-name refusal and must leave
-// that one standing.
+// backend: cloud-batch -- a name config validation accepts since the enable
+// (Task 10), so these are checks a real installation meets. The artifact
+// refusal is the one that is not about the backend name at all (Global
+// Constraint 13): the enable lifted that name and left this refusal standing.
 //
 // The artifact boundary has two arms and this file is only one of them. This
 // arm is offline and per-checkout, so it judges the recipe this checkout
@@ -62,8 +60,7 @@ import (
 // are about a backend no other installation selects, and about an installation
 // whose project is the one the file is being judged for -- and it is
 // deliberately a pure function of the project config, the fugaro.yaml and the
-// recipe the checkout resolves, so it is testable without a project (the
-// backend name cannot be selected in this build).
+// recipe the checkout resolves, so it is testable without a project.
 //
 // The project guard is the one budgetProblems, providerProblems, cascadeProblems
 // and computeProblems carry: a config selected for another project is not this
