@@ -484,9 +484,10 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
   `roadmap_move` tool) and **P9b** (the writer), in `docs/coordinator/implementation-plan.md`. It
   builds against a fake front door; **it moves a real task only once coordinator P9e serves the
   tools, and P9e waits on the MCP plan's M12, the front door mounted on a binary (the owner's ruling
-  of 2026-11-11, that plan's D2119)** — and on that plan's open D2124 (whether the front door's
-  database write stays the database-wide role D2118's answer gives it). The token is P9f's login
-  (D2122, answered). This replaces "the coordinator's record on `main`", which no task carried
+  of 2026-11-11, that plan's D2119), which waits on M12b, the sign-in flow delivered to the paired
+  phone (D2126)**. A move is queued by the front door and applied by a non-public job running as the
+  coordinator's account (D2118, D2124), so the command prints the request and then its outcome. The
+  token is P9f's login (D2122, answered). This replaces "the coordinator's record on `main`", which no task carried
   until 2026-11-11. Ruling (a) stands: option 1 now, the write with the record. The option-2 file
   list above is kept only as the declined alternative.
 - **Commit:** `roadmap: move a task between releases, compare-and-set`
@@ -548,8 +549,8 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 wait on the coordinator's record, which is **coordinator P9a–P9g** since 2026-11-11: GV4.1 builds on
 P9a and shows data once plans are published (P9c); GV3.1 builds on P9f and moves a real task only
 once P9e serves the front door's roadmap tools — which waits on the MCP plan's **M12** (the front
-door mounted on a binary, the owner's ruling of 2026-11-11) and on the coordinator plan's open
-D2124–D2126.
+door mounted on a binary, the owner's ruling of 2026-11-11), which waits on **M12b**; the
+coordinator plan's one open decision is D2127 (M12b's binding).
 
 **Edges** (from "Depends on"): GV1.1→GV1.6; GV1.2→GV1.6; GV1.3→GV1.6; GV1.4→GV1.6; GV1.3→GV1.7;
 GV1.4→GV1.5; GV0.1→GV2.2; GV1.6→GV2.1; GV2.1→GV2.3; GV2.2→GV2.3; GV1.6→GV2.5; GV2.1→GV2.5;
@@ -567,7 +568,7 @@ P9a→GV4.1 (P9c for real data).
 | L3 | GV2.3, GV2.5 |
 | L4 | GV2.4 |
 | L5 | GV2.6 (OWNER-RUN) |
-| blocked | GV3.1 → GV3.2 and GV4.1 (the coordinator's record, rulings (a) and (d): coordinator P9a–P9g; its open D2124–D2126; and the MCP plan's M12) |
+| blocked | GV3.1 → GV3.2 and GV4.1 (the coordinator's record, rulings (a) and (d): coordinator P9a–P9g; its open D2127; and the MCP plan's M12 and M12b) |
 
 **Critical path:** GV1.1 → GV1.6 → GV2.1 → GV2.3 → GV2.4 → GV2.6 (six tasks). GV1.2, GV1.3 and
 GV1.4 start chains of the same length into GV1.6; the smallest id decides the tie (C8), so the
