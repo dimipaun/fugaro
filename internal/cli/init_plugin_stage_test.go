@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/claudeplugin"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -16,6 +18,65 @@ const settingsWithOthers = `{
   "permissions": { "allow": ["Bash(go test:*)"] },
   "extraKnownMarketplaces": { "acme": { "source": { "source": "github", "repo": "acme/tools" } } },
   "enabledPlugins": { "acme@acme": true },
+  "model": "sonnet"
+}
+`
+
+// pinnedAmongOthers is a checkout the release before this one left: the two
+// entries the merge wrote, beside a repository's own marketplace, its own
+// plugin and its own keys — in the layout that merge wrote the whole file in
+// (what pluginwire's pretty renders, which is what the removal re-renders the
+// file as), so the lines nothing asked about have to come out as the bytes they
+// were.
+const pinnedAmongOthers = `{
+  "permissions": {
+    "allow": [
+      "Bash(go test:*)"
+    ]
+  },
+  "extraKnownMarketplaces": {
+    "acme": {
+      "source": {
+        "source": "github",
+        "repo": "acme/tools"
+      }
+    },
+    "fugaro": {
+      "source": {
+        "source": "github",
+        "repo": "dimipaun/fugaro",
+        "ref": "v0.1.0"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "acme@acme": true,
+    "fugaro@fugaro": true
+  },
+  "model": "sonnet"
+}
+`
+
+// pinnedAmongOthersGone is that file after the removal, byte for byte: the two
+// entries gone, their parent keys kept because each still holds something, and
+// only the commas the removal leaves behind changed.
+const pinnedAmongOthersGone = `{
+  "permissions": {
+    "allow": [
+      "Bash(go test:*)"
+    ]
+  },
+  "extraKnownMarketplaces": {
+    "acme": {
+      "source": {
+        "source": "github",
+        "repo": "acme/tools"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "acme@acme": true
+  },
   "model": "sonnet"
 }
 `
@@ -163,6 +224,183 @@ func TestInitPluginStageLeavesAPinItCannotRemoveAlone(t *testing.T) {
 				t.Errorf("the machine's own install did not happen: %+v\n%s", res.Stages, out)
 			}
 		})
+	}
+}
+
+// U5's migration, and the reason no release may carry U2 without it (#2235): a
+// checkout the release before this one pinned converges under fugaro update
+// alone, and the staleness line every command printed about it — the one U2
+// could not clear — is gone when the run ends. The two entries go, every other
+// key and entry comes out byte for byte as it was, nothing is committed, and a
+// second run finds no pin left to take out (spec §8).
+//
+// The machine's own install is already this release's, which is the state the
+// migration exists for: a repository whose teammates have run fugaro update has
+// the pin and nothing else to do about it. The removal is then the whole of the
+// stage's work, and that is not this run moving the checkout — no job image is
+// rebuilt for taking two entries out of a settings file.
+func TestInitPluginStageRemovesThePinAnOlderFugaroLeft(t *testing.T) {
+	const release = "0.5.1"
+	releaseBuild(t, release)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall(release), argsInstall...)
+	settings := wiringCheckout(t, pinnedAmongOthers)
+	checkoutFile(t, filepath.Join(cfg, "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"id":"fugaro@fugaro","version":"`+release+`","scope":"user","enabled":true}]}}`)
+
+	// The line the update has to clear, before the run: .claude/settings.json
+	// pins the release before this one, and this binary is the next one.
+	if line := staleLine(pluginwire.Status(settings, release, installedPlugins())); !strings.Contains(line, "pinned in .claude/settings.json is 0.1.0, this is 0.5.1") {
+		t.Fatalf("the fixture is not a stale pin, so the run cannot show it clearing one: %q", line)
+	}
+
+	e, out := stageEngine(t, "", &initOptions{yes: true})
+	useFakeClaude(t, f)
+	res := runPlugin(t, e)
+	st := res.Stages[0]
+	if st.State != initflow.Changed || !strings.Contains(st.Detail, "removed the "+pluginwire.PluginID+" pin from") {
+		t.Fatalf("the stage reads %+v, want the pin taken out:\n%s", st, out)
+	}
+	// The diff is the two entries going and the commas behind them, and the
+	// sentence about what the repository loses is printed with it.
+	for _, want := range []string{
+		`  -     "fugaro": {`,
+		`  -         "ref": "v0.1.0"`,
+		`  -     "fugaro@fugaro": true`,
+		removalLoss(),
+		"review it with git diff and commit it like any change",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the run does not print %q\n%s", want, out)
+		}
+	}
+	if got := upgradeRead(t, settings); got != pinnedAmongOthersGone {
+		t.Errorf("the checkout after the removal:\n%s\nwant:\n%s", got, pinnedAmongOthersGone)
+	}
+	// The checkout is not moved by this: the plugin this release installs was
+	// already the machine's, so nothing here is a reason to rebuild a job image.
+	if e.checkoutBehind {
+		t.Errorf("taking the pin out alone put the checkout behind, and the flag buys a billable image rebuild (U5):\n%s", out)
+	}
+	// The line every command printed about the checkout, and the whole of the
+	// reason this task is the gate U2 waits behind, is clear.
+	if line := staleLine(pluginwire.Status(settings, release, installedPlugins())); line != "" {
+		t.Errorf("the run left the staleness line it exists to clear: %q", line)
+	}
+
+	// Nothing is removed twice (spec §8): a second run has no pin to offer, and
+	// the file it wrote is not written again.
+	e, out = stageEngine(t, "", &initOptions{yes: true})
+	useFakeClaude(t, f)
+	res = runPlugin(t, e)
+	if d := res.Stages[0].Detail; strings.Contains(d, "removes the "+pluginwire.PluginID+" pin") {
+		t.Errorf("a second run offers the removal of a pin that is gone: %q", d)
+	}
+	if got := upgradeRead(t, settings); got != pinnedAmongOthersGone {
+		t.Errorf("the second run rewrote the file:\n%s", got)
+	}
+}
+
+// U5 in a coding agent's session: the same run, the same --yes, and the diff is
+// printed while nothing is written. The pin is a write into a file the
+// repository commits, it is the user's to decide, and no flag or environment
+// variable gets around the refusal (spec §8) — the marker is read first, before
+// --yes, and nothing unsets it. What the session may do it does: the install
+// half still runs, so the machine's plugin reaches this release either way.
+func TestInitPluginStageRemovalWritesNothingInAnAgentSession(t *testing.T) {
+	const release = "0.5.1"
+	releaseBuild(t, release)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall(release), argsInstall...)
+	settings := wiringCheckout(t, pinnedAmongOthers)
+	checkoutFile(t, filepath.Join(cfg, "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"id":"fugaro@fugaro","version":"`+release+`","scope":"user","enabled":true}]}}`)
+	e, out := stageEngine(t, "", &initOptions{yes: true})
+	useFakeClaude(t, f)
+	// The coding agent's session, marked after stageEngine cleared the markers:
+	// the run's own read of them is what refuses the write.
+	t.Setenv("CLAUDECODE", "1")
+
+	res := runPlugin(t, e)
+	if got := upgradeRead(t, settings); got != pinnedAmongOthers {
+		t.Errorf("a coding agent's session wrote %s:\n%s", settings, got)
+	}
+	for _, want := range []string{
+		`  -     "fugaro": {`,
+		`  -         "ref": "v0.1.0"`,
+		removalLoss(),
+		initflow.AgentRefusal("CLAUDECODE"),
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the session does not print %q\n%s", want, out)
+		}
+	}
+	if len(res.Left) != 1 || res.ExitCode() != 1 {
+		t.Fatalf("the removal was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
+	}
+	// The line to run is the one the removal is in — `fugaro update`, which the
+	// user's own terminal runs — and not the machine-side route.
+	if l := res.Left[0]; l.Stage != initflow.Plugin || !slices.Contains(l.Commands, selfCommand()+" update") {
+		t.Errorf("the session hands back %+v, want the command that takes the pin out", l)
+	}
+	// What the session may do, it does: the machine's plugin is installed.
+	if stateOf(res, "plugin") != initflow.Changed ||
+		!slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser(release)) }) {
+		t.Errorf("the install half was left behind with the write it may not make: %+v\n%s", res.Stages, out)
+	}
+}
+
+// The project-scope install a checkout can carry shadows the machine's own in
+// a session opened there (claudeplugin.Effective), and the removal has nothing
+// to do with it: it is Claude Code's own record of what it installed, written
+// by Claude Code when the folder was trusted at the pin the checkout carried,
+// and no fugaro code writes that file. So the removal takes the two entries out
+// of .claude/settings.json and leaves the record exactly as it was — and the
+// install that applies in this checkout is still the project-scope one, which
+// is a leftover of the pin and not this stage's to take out. Reported, not
+// fixed (U5): pruning it would be a write into somebody else's file.
+func TestInitPluginStageRemovalLeavesTheProjectScopeInstallAlone(t *testing.T) {
+	const release = "0.5.1"
+	releaseBuild(t, release)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall(release), argsInstall...)
+	settings := wiringCheckout(t, pinnedAmongOthers)
+	dir := filepath.Dir(filepath.Dir(settings))
+	record := `{"version":2,"plugins":{"fugaro@fugaro":[` +
+		`{"id":"fugaro@fugaro","version":"0.1.0","scope":"project","projectPath":"` + dir + `"},` +
+		`{"id":"fugaro@fugaro","version":"` + release + `","scope":"user","enabled":true}]}}`
+	recordPath := filepath.Join(cfg, "plugins", "installed_plugins.json")
+	checkoutFile(t, recordPath, record)
+
+	e, out := stageEngine(t, "", &initOptions{yes: true})
+	useFakeClaude(t, f)
+	res := runPlugin(t, e)
+	if st := res.Stages[0]; st.State != initflow.Changed || !strings.Contains(st.Detail, "removed the "+pluginwire.PluginID+" pin from") {
+		t.Fatalf("the stage reads %+v, want the pin taken out:\n%s", st, out)
+	}
+	if got := upgradeRead(t, settings); got != pinnedAmongOthersGone {
+		t.Errorf("the checkout after the removal:\n%s", got)
+	}
+	if got := upgradeRead(t, recordPath); got != record {
+		t.Errorf("the removal rewrote Claude Code's own record of installed plugins:\n%s\nwant:\n%s", got, record)
+	}
+	// The shadow is still there after the pin is gone: the install that applies
+	// in this checkout is the project-scope one, which is what a session opened
+	// here loads.
+	var file struct {
+		Plugins map[string][]claudeplugin.Install `json:"plugins"`
+	}
+	if err := json.Unmarshal([]byte(record), &file); err != nil {
+		t.Fatal(err)
+	}
+	if got := claudeplugin.Effective(dir, file.Plugins[pluginwire.PluginID]); got != "0.1.0" {
+		t.Errorf("the install that applies in the checkout is %q, want the project-scope 0.1.0 the pin left behind", got)
 	}
 }
 
