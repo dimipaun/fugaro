@@ -178,6 +178,7 @@ var exemptListings = map[string]exemptListing{
 // commands a later task moves onto the reporter, and the reason says so rather
 // than hiding them behind the word "listing".
 var exemptAnswers = map[string]string{
+	"ab":                     "a paid name this build carries no code for: the stub refuses and prints one line",
 	"accounts":               "prints its own help: the reading is the accounts ls beside it",
 	"accounts pool":          "prints its own help: the work is in the ls, add and rm subcommands beside it",
 	"accounts pool add":      "writes one pool into this machine's project config, and prints the entry it wrote",
@@ -199,6 +200,7 @@ var exemptAnswers = map[string]string{
 	"image rm":               "removes one catalog entry from this machine's project config, and prints what it dropped",
 	"issue dismiss":          "marks one issue as not worth filing, and prints the mark it wrote",
 	"issue submit":           "shows the issue it would file on GitHub, and files it under --ask",
+	"issue sync":             "uploads this machine's saved issues, printing its own account of the batch by hand",
 	"models add":             "writes the claim, the price and the allow-list entry, and prints what it wrote",
 	"models rm":              "drops the claim, the price and the allow-list entry, and prints what it dropped",
 	"models use":             "writes one repository's own config in its working tree, and prints the line it wrote",
@@ -213,6 +215,7 @@ var exemptAnswers = map[string]string{
 	"recipes publish":        "publishes one recipe to the project, printing its own account of the write by hand",
 	"report":                 "a paid name this build carries no code for: the stub refuses and prints one line",
 	"review":                 "launches a review in a job of its own, and prints the run it started",
+	"rigor set":              "writes one rigor mode into this machine's project layer file, and prints the row it wrote",
 	"runs digest":            "writes a closed period's report into the repository's docs tree, and prints where it landed",
 	"secrets":                "prints its own help: the work is in the set, ls and rm subcommands beside it",
 	"settings set":           "writes one setting into one of the three documents, and prints the row it wrote",
