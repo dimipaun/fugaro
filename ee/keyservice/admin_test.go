@@ -592,7 +592,7 @@ func TestAnOrderFormMintCanBeIssuedAgain(t *testing.T) {
 		t.Errorf("the second licence produced %d key(s) in all, want two", got)
 	}
 	if got := len(f.auditor.lines); got != 2 {
-		t.Errorf("the second licence wrote %d audit line(s) in all, want two", got)
+		t.Fatalf("the second licence wrote %d audit line(s) in all, want two", got)
 	}
 	if got := len(f.mail.sent); got != 2 {
 		t.Errorf("the second licence mailed %d message(s) in all, want two", got)
