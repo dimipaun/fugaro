@@ -50,6 +50,53 @@ func TestAgentActorCannotResolveAPersonDecision(t *testing.T) {
 	}
 }
 
+// TestTheCallLedgersNameIsTheDaemonsToWrite is the other half of the summary's
+// filter: a decision whose id carries DecisionCallID is left out of what a
+// person and a session are shown, and out of what they carry away. A name a
+// reader hides is a name nothing else may use — asked under it by a class that
+// is not the daemon, a real question would be a question nobody is ever shown,
+// and the reader would have no way to tell it from the loop's own bookkeeping.
+// The reservation is the one applyDecisionAdd makes, so this pins it to the
+// same constant the filter reads rather than to a convention either side could
+// drift from.
+//
+// Mutation: drop the DecisionCallID guard from applyDecisionAdd and every
+// class below writes its question into the state; the daemon's own record
+// still lands, so the guard is not refusal for its own sake.
+func TestTheCallLedgersNameIsTheDaemonsToWrite(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	s := stateWithAQueuedItem(t, now)
+	ask := func(id string) orchestrator.Op {
+		return orchestrator.Op{Op: orchestrator.OpDecisionAdd, Decision: &orchestrator.DecisionOp{
+			ID: id, Question: "Which of the two should this wait for?", WaitingOn: orchestrator.OnPerson,
+		}}
+	}
+
+	for _, class := range []orchestrator.Class{orchestrator.Session, orchestrator.DecisionAgent, orchestrator.Person} {
+		_, err := applyAs(t, s, class, "session:20261107-090000-abcd", now, ask(orchestrator.DecisionCallID+"forged"))
+		if !errors.Is(err, orchestrator.ErrActorNotAllowed) {
+			t.Fatalf("a %s actor asked a real question under the ledger's name: err = %v, want %v", class, err, orchestrator.ErrActorNotAllowed)
+		}
+	}
+	if len(s.Decisions) != 0 {
+		t.Fatalf("a refused write still asked: %+v", s.Decisions)
+	}
+
+	// What the name buys: the reader hides a decision carrying it, so the
+	// refusal above is what keeps the hidden name from being a place to put a
+	// question. Anyone's ordinary question still lands — the fence is the name,
+	// not the op.
+	s = mustApply(t, s, orchestrator.Daemon, orchestrator.DecisionCallID+"20261107T090000Z", now, ask(orchestrator.DecisionCallID+"20261107T090000Z"))
+	s = mustApply(t, s, orchestrator.DecisionAgent, "session:20261107-090000-abcd", now, ask("ask-ci-flake"))
+	summary := orchestrator.Summarize(s)
+	if strings.Contains(summary, "decide-call-") {
+		t.Errorf("the summary prints the ledger's own record:\n%s", summary)
+	}
+	if !strings.Contains(summary, "ask-ci-flake") {
+		t.Errorf("the summary hides a question an agent asked:\n%s", summary)
+	}
+}
+
 // TestUnknownOpIsRefused is G1 at the wire: an agent's patch is data, so the
 // vocabulary it may name is closed, and an op outside it — or one carrying a
 // payload its kind does not take — is refused rather than read as the nearest

@@ -346,6 +346,13 @@ var consoleReadPaths = map[string]bool{
 	// the command runs in -- and it writes nothing, the remembered checkouts
 	// included, so the console may spawn it.
 	"fugaro craft ls": true,
+	// The seat estimate (the subscriptions plan's S4.2; D439 and its console
+	// half): who launches jobs on this installation and the identities the
+	// estimate cannot count, as one closed document. It is the one read here
+	// whose child lists the runs bucket -- one `task.json` per run of the
+	// command's own 90-day window -- and it writes nothing, the remembered
+	// checkouts included, so the console may spawn it.
+	"fugaro seats": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,

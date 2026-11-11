@@ -298,7 +298,7 @@ func TestSpentApprovalAtIsBookkeepingAndSurvivesMigrate(t *testing.T) {
 		t.Fatalf("the spent approval marker came back as %v", back.WorkItems[0].SpentApprovalAt)
 	}
 
-	previous := bytes.Replace(raw, []byte(`"schema_version":1`), []byte(`"schema_version":0`), 1)
+	previous := bytes.Replace(raw, []byte(`"schema_version":2`), []byte(`"schema_version":0`), 1)
 	raised, err := orchestrator.DecodeState(previous)
 	if err != nil {
 		t.Fatalf("a document from the previous schema version carrying a spent approval did not decode: %v", err)
@@ -405,13 +405,15 @@ func TestSchemasMatchTheStructs(t *testing.T) {
 			file: "orchestrator-state.schema.json",
 			root: reflect.TypeOf(orchestrator.State{}),
 			defs: map[string]reflect.Type{
-				"work_item": reflect.TypeOf(orchestrator.WorkItem{}),
-				"approval":  reflect.TypeOf(orchestrator.Approval{}),
-				"decision":  reflect.TypeOf(orchestrator.Decision{}),
-				"fact":      reflect.TypeOf(orchestrator.Fact{}),
-				"archived":  reflect.TypeOf(orchestrator.Archived{}),
-				"intent":    reflect.TypeOf(orchestrator.Intent{}),
-				"counters":  reflect.TypeOf(orchestrator.Counters{}),
+				"work_item":  reflect.TypeOf(orchestrator.WorkItem{}),
+				"escalation": reflect.TypeOf(orchestrator.Escalation{}),
+				"transition": reflect.TypeOf(orchestrator.Transition{}),
+				"approval":   reflect.TypeOf(orchestrator.Approval{}),
+				"decision":   reflect.TypeOf(orchestrator.Decision{}),
+				"fact":       reflect.TypeOf(orchestrator.Fact{}),
+				"archived":   reflect.TypeOf(orchestrator.Archived{}),
+				"intent":     reflect.TypeOf(orchestrator.Intent{}),
+				"counters":   reflect.TypeOf(orchestrator.Counters{}),
 			},
 		},
 		{
@@ -420,6 +422,8 @@ func TestSchemasMatchTheStructs(t *testing.T) {
 			extra: []string{"op"},
 			defs: map[string]reflect.Type{
 				"work_item_op": reflect.TypeOf(orchestrator.WorkItemOp{}),
+				"escalation":   reflect.TypeOf(orchestrator.Escalation{}),
+				"transition":   reflect.TypeOf(orchestrator.Transition{}),
 				"intent_op":    reflect.TypeOf(orchestrator.IntentOp{}),
 				"approve_op":   reflect.TypeOf(orchestrator.ApproveOp{}),
 				"archive_op":   reflect.TypeOf(orchestrator.ArchiveOp{}),
@@ -519,7 +523,7 @@ func checkFreshStateMatchesTheSchema(t *testing.T, sch *jsonschema.Schema) {
 
 // TestSpecDigestCoversEveryFieldButTheBookkeepingList is what makes an
 // approval mean one spec and not another. Every field that describes the work
-// moves the digest when it changes, the six bookkeeping fields move it not at
+// moves the digest when it changes, the seven bookkeeping fields move it not at
 // all, and the two sets together are every field of the struct — so a field
 // added to a work item is digested by default and only leaves the digest on
 // purpose. That is what an edit to a brief, a repository or a dependency does:
@@ -529,7 +533,7 @@ func checkFreshStateMatchesTheSchema(t *testing.T, sch *jsonschema.Schema) {
 // digest stops moving for it; add one to bookkeepingFields by mistake and the
 // same assertion fails from the other side.
 func TestSpecDigestCoversEveryFieldButTheBookkeepingList(t *testing.T) {
-	want := []string{"approved", "attempts", "note", "phase", "run_id", "spent_approval_at"}
+	want := []string{"approved", "attempts", "escalation", "note", "phase", "run_id", "spent_approval_at"}
 	got := orchestrator.BookkeepingFields()
 	sort.Strings(got)
 	if !slices.Equal(got, want) {
@@ -625,6 +629,88 @@ func TestRetentionKeepsStateUnderTheCap(t *testing.T) {
 	}
 	if len(kept.Facts) >= len(s.Facts) {
 		t.Fatalf("retention kept all %d facts of a node that was over the target", len(kept.Facts))
+	}
+}
+
+// TestRetentionKeepsTheDecisionsTheCountReads pins the window retention
+// protects to the window the call count reads, at the boundary where the two
+// can part. A resolved decision is un-evictable because the count is derived
+// from the decisions the document carries (countedDecision), so what retention
+// may drop is exactly what DecisionCalls already ignores — the day now falls
+// in, whose first instant belongs to it. A window that started later, or a
+// rolling one of a different length, would let retention drop a decision the
+// daily cap still counts: the count falls with it, and the loop is handed
+// calls the cap has already spent.
+//
+// Mutation: read RetentionWindow again instead of the day and the decision
+// from just before midnight is protected, so it is still there when the drop
+// assertion runs; move the boundary to dayStart(now)+1h and the decision at
+// midnight goes with the earlier one, which the survival assertion catches
+// before the count equality below can.
+func TestRetentionKeepsTheDecisionsTheCountReads(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	midnight, hour := now.Truncate(24*time.Hour), now.Truncate(time.Hour)
+	answered := func(id string, at time.Time) orchestrator.Decision {
+		return orchestrator.Decision{
+			ID:         id,
+			Question:   strings.Repeat("q", orchestrator.MaxQuestionRunes),
+			WaitingOn:  orchestrator.OnPerson,
+			At:         at,
+			Answer:     strings.Repeat("a", orchestrator.MaxAnswerRunes),
+			By:         orchestrator.Person,
+			ResolvedAt: ptr(at.Add(time.Second)),
+		}
+	}
+
+	s := stateWithAQueuedItem(t, now)
+	s.Decisions = []orchestrator.Decision{
+		// The newest decision the day's count leaves out, and the oldest one it
+		// reads: midnight itself is inside the day, a second earlier is not. The
+		// first is the room retention may spend, the second is off limits.
+		answered("ask-just-before", midnight.Add(-time.Second)),
+		answered("ask-midnight", midnight),
+		answered("ask-this-hour", hour),
+		{
+			ID: "ask-open", Question: "does the sweep keep its own script?",
+			WaitingOn: orchestrator.OnPerson, At: now.Add(-time.Minute),
+		},
+	}
+	long := strings.Repeat("filler ", 250)
+	for i := range 12 {
+		w := workItemOf(intentItemID(i))
+		w.Phase = orchestrator.PhaseDone
+		w.Brief = long
+		s.WorkItems = append(s.WorkItems, w)
+	}
+	s.Facts = map[string]orchestrator.Fact{}
+	for i := range orchestrator.MaxFacts {
+		s.Facts[factKey(i)] = orchestrator.Fact{Value: strings.Repeat("v", orchestrator.MaxFactValueRunes), By: orchestrator.Daemon}
+	}
+	if !orchestrator.OverCap(s) {
+		t.Fatalf("the state this test built is %d bytes and inside the target, so retention has nothing to do", stateBytes(t, s))
+	}
+
+	// The count first, on its own side of the boundary: midnight is read, a
+	// second before it is not, and the open question is counted like any other
+	// decision — the count bounds the money rather than the answers.
+	if got := orchestrator.DecisionCalls(s, now); got.DecisionsDay != 3 || got.DecisionsHour != 1 {
+		t.Fatalf("the call counts are %+v, want 3 today (midnight, this hour, the open question) and 1 in the hour", got)
+	}
+
+	kept := orchestrator.Retain(s, now)
+	if _, ok := kept.Decision("ask-just-before"); ok {
+		t.Error("retention kept a decision from before the day the count reads, which is the room the node needed")
+	}
+	for _, id := range []string{"ask-midnight", "ask-this-hour", "ask-open"} {
+		if _, ok := kept.Decision(id); !ok {
+			t.Fatalf("retention dropped %s, and making room must never take a decision the count reads", id)
+		}
+	}
+	if want, got := orchestrator.DecisionCalls(s, now), orchestrator.DecisionCalls(kept, now); want != got {
+		t.Fatalf("retention moved the call counts from %+v to %+v, and making room must never raise what a cycle has left", want, got)
+	}
+	if _, err := orchestrator.EncodeState(kept); err != nil {
+		t.Fatalf("the state retention produced is not one this release reads back: %v", err)
 	}
 }
 

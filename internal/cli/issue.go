@@ -16,15 +16,17 @@ import (
 // saved on this machine — the record and its local store are internal/issues
 // (T-IS1).
 //
-// The folder is the user's own state directory: `list`, `show` and `dismiss`
-// are reads and one local write, and resolve no credential, no project and no
-// bucket. `mine` is the one that reaches the cloud (T-IM6): it reads the
-// project's own store and, on the way, uploads this machine's pending records
-// — which is why the parent's help says so rather than promising that nothing
-// here is uploaded. `submit` builds the post from the record and files it with
-// the person's own `gh`. `dismiss` refuses in a coding agent's session even
-// though it writes no cloud record (D1730): the dismissal it makes is what a
-// steered agent would use to bury a real bug.
+// An issue is the project's once it has a number, so the commands that name one
+// read and write the project's store as well (F13): `sync` uploads this
+// machine's pending records, `list` and `show` refresh from the store, and
+// `dismiss` sets a numbered issue aside there. All of it is best effort — a run
+// with no project, no credential or no network still answers with this
+// machine's own files — and all of it is a cloud write, so a coding agent's
+// session uploads nothing, reads the local files alone and is refused the two
+// commands whose subject is the store (F10, D1734). `dismiss` refuses in a
+// session even for a local-only issue (D1730): the dismissal it makes is what a
+// steered agent would use to bury a real bug. `submit` builds the post from the
+// record and files it with the person's own `gh`.
 func newIssueCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "issue",
@@ -33,21 +35,27 @@ func newIssueCmd() *cobra.Command {
 			"An issue is one Markdown file under the user's state directory, holding\n" +
 			"the whole issue: a strict header and the diagnosis' own words. `list`\n" +
 			"shows what is saved, `show` prints one, `dismiss` sets one aside so\n" +
-			"nothing is filed for it, and `mine` reads the project's own store for\n" +
-			"the issues this user reported. An issue is named by its local ID\n" +
-			"(`local-<run stem>`) until it has been uploaded, and by its number\n" +
-			"(`#0007`) from then on; `show`, `dismiss` and `submit` take either.\n\n" +
+			"nothing is filed for it, `sync` uploads the ones this machine has not\n" +
+			"uploaded yet, and `mine` reads the project's own store for the issues\n" +
+			"this user reported. An issue is named by its local ID (`local-<run\n" +
+			"stem>`) until it has been uploaded, and by its number (`#0007`) from\n" +
+			"then on; `show`, `dismiss` and `submit` take either.\n\n" +
 			"`submit` shows exactly what would be filed on GitHub — the post and the\n" +
 			"sha256 of its bytes — and files nothing until `--ask` is answered with a\n" +
 			"yes at your own terminal; without `gh`, it prints how to install it and\n" +
 			"a new-issue link holding the same post instead.\n\n" +
-			"Nothing `list`, `show` or `dismiss` does leaves this machine. `mine` —\n" +
-			"and `list --mine`, which is the same read — is the one that does: it\n" +
-			"uploads this machine's own pending records to the project's store on the\n" +
-			"way to listing them. Either way the text of a record is printed as data:\n" +
-			"it comes from log text this machine did not write.",
+			"An issue belongs to the project, not to one machine: once it has been\n" +
+			"uploaded it is the project's store that says where it stands, so `list`\n" +
+			"shows the whole team's issues and `show` prints the project's copy. To\n" +
+			"get there, `sync` uploads this machine's own pending records to the\n" +
+			"project's store, and `list`, `show` and `mine` — and `list --mine`,\n" +
+			"which is the same read — do the same on the way to answering; a run\n" +
+			"that cannot reach the store answers from the files here and says why.\n" +
+			"Nothing is uploaded in a coding agent's session, and `sync` and\n" +
+			"`dismiss` are refused there. Either way the text of a record is printed\n" +
+			"as data: it comes from log text this machine did not write.",
 	}
-	cmd.AddCommand(newIssueListCmd(), newIssueShowCmd(), newIssueDismissCmd(), newIssueMineCmd(), newIssueSubmitCmd())
+	cmd.AddCommand(newIssueListCmd(), newIssueShowCmd(), newIssueDismissCmd(), newIssueSyncCmd(), newIssueMineCmd(), newIssueSubmitCmd())
 	return cmd
 }
 
@@ -72,7 +80,14 @@ func issueRef(i issues.Issue) string {
 	if i.Number == 0 {
 		return i.LocalID
 	}
-	return fmt.Sprintf("#%04d", i.Number)
+	return issueRefOfNumber(i.Number)
+}
+
+// issueRefOfNumber is that spelling for a number with no record in hand: the
+// store's own reader answers with a number before there is a record to print,
+// and a line about one is written in the same shape as a row.
+func issueRefOfNumber(n int) string {
+	return fmt.Sprintf("#%04d", n)
 }
 
 // issueRefArg is a reference as the store takes it: the `#` that marks a

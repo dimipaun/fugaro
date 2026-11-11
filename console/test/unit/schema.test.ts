@@ -488,6 +488,13 @@ const FULL_LIVE_RUN: JSONDoc = Object.freeze({
   models: 'claude-sonnet-4-5-20250929 / claude-opus-4-1',
   recipe: 'console-text-path',
   auth: 'oauth',
+  // CLI 0.23.0 (rigor-modes plan T1.7): the mode the run resolved and the
+  // layer that decided it, both always present on a live row — `-` is what a
+  // run under rules that predate the two children writes. Accepted, not read
+  // from this row: the Live screen's chip joins the run list's block to a run
+  // by id (`shared/rigor.ts`), and nothing draws these yet.
+  mode: 'critical',
+  from: 'area',
   notional: true,
   spent_usd: 12.5,
   age_seconds: 1761,

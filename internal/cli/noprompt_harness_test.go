@@ -271,27 +271,36 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// answer, which is the whole of what a closed stdin can be shown here. The
 	// same reference in both is the point — neither leaf may ask a question of a
 	// missing issue.
-	"fugaro issue dismiss":        {args: []string{"local-update-20261107183012-1"}},
-	"fugaro issue show":           {args: []string{"local-update-20261107183012-1"}},
-	"fugaro logs":                 {args: []string{"run-1"}},
-	"fugaro managed apply":        {args: []string{"root"}},
-	"fugaro managed flag":         {args: []string{"proj-1234"}},
-	"fugaro managed unflag":       {args: []string{"proj-1234"}},
-	"fugaro models add":           {args: []string{"claude-x"}},
-	"fugaro models rm":            {args: []string{"claude-x"}},
-	"fugaro models search":        {args: []string{"x"}},
-	"fugaro models use":           {args: []string{"a", "b", "c"}},
-	"fugaro pair revoke":          {args: []string{"--uid", "uid-1"}},
-	"fugaro project repos add":    {args: []string{"acme/app"}},
-	"fugaro project repos rm":     {args: []string{"acme/app"}},
-	"fugaro recipes publish":      {args: []string{"slug"}},
-	"fugaro recipes show":         {args: []string{"slug"}},
-	"fugaro recipes validate":     {args: []string{"slug"}},
-	"fugaro restore":              {args: []string{"proj-2", "root"}},
-	"fugaro review show":          {args: []string{"run-1"}},
-	"fugaro run":                  {args: []string{"do something"}},
-	"fugaro secrets rm":           {args: []string{"NAME"}},
-	"fugaro secrets set":          {args: []string{"NAME"}},
+	"fugaro issue dismiss":     {args: []string{"local-update-20261107183012-1"}},
+	"fugaro issue show":        {args: []string{"local-update-20261107183012-1"}},
+	"fugaro logs":              {args: []string{"run-1"}},
+	"fugaro managed apply":     {args: []string{"root"}},
+	"fugaro managed flag":      {args: []string{"proj-1234"}},
+	"fugaro managed unflag":    {args: []string{"proj-1234"}},
+	"fugaro models add":        {args: []string{"claude-x"}},
+	"fugaro models rm":         {args: []string{"claude-x"}},
+	"fugaro models search":     {args: []string{"x"}},
+	"fugaro models use":        {args: []string{"a", "b", "c"}},
+	"fugaro pair revoke":       {args: []string{"--uid", "uid-1"}},
+	"fugaro project repos add": {args: []string{"acme/app"}},
+	"fugaro project repos rm":  {args: []string{"acme/app"}},
+	"fugaro recipes publish":   {args: []string{"slug"}},
+	"fugaro recipes show":      {args: []string{"slug"}},
+	"fugaro recipes validate":  {args: []string{"slug"}},
+	"fugaro restore":           {args: []string{"proj-2", "root"}},
+	"fugaro review show":       {args: []string{"run-1"}},
+	"fugaro run":               {args: []string{"do something"}},
+	"fugaro secrets rm":        {args: []string{"NAME"}},
+	"fugaro secrets set":       {args: []string{"NAME"}},
+	// The rigor write reaches its own edit through the layer file the seed writes:
+	// the mode it sets ranks above what the file resolves to, so the fixture is the
+	// ordinary write and not the sensitive one, and the sentence naming the key is
+	// the proof the run got past the vocabulary and the file.
+	"fugaro rigor set": {
+		args:    []string{"critical"},
+		reaches: "set defaults.rigor.default to critical in",
+		seed:    closedStdinRigorLayerSeed,
+	},
 	"fugaro settings get":         {args: []string{"a.b"}},
 	"fugaro stats runs":           {args: []string{"--project", "proj-1234"}},
 	"fugaro user add":             {args: []string{"someone@example.com"}},
@@ -328,6 +337,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 // that would do more. `fugaro review` and `fugaro pair` refuse from inside
 // their bodies, in sentences of their own, which the run's own error carries.
 var closedStdinNoFixture = map[string]string{
+	"fugaro ab":                "refuses: the edition is not in this build",
 	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
 	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
@@ -360,16 +370,22 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro image selftest":    "reads its spec from the closed stdin and returns on the EOF",
 	"fugaro image status":      "prints the no-project-config refusal",
 	"fugaro image survey":      "prints the no-project-config refusal",
+	"fugaro intake serve":      "refuses without FUGARO_GCP_PROJECT in its own environment",
 	"fugaro issue list":        "reads this machine's issue folder, which holds nothing in this world, and prints no row",
 	"fugaro issue submit":      "sweeps the issues that are waiting, and this world's issue folder holds none: it prints that nothing is pending",
 	"fugaro issue mine":        "reads no store here: this world's credential lookup is refused before the bucket is opened, so it prints the notes of a machine whose shared state could not be read and no row",
+	"fugaro issue sync":        "uploads this machine's issue folder, which holds nothing in this world: the store it uploads to opens, and the run prints that nothing is pending",
 	"fugaro managed status":    "prints the no-project-config refusal",
 	"fugaro models ls":         "prints the built-in list with no project selected",
 	// The orchestrator family reads and writes the state its project's daemon
 	// keeps. state and events are driven to their read here — the fixture's
 	// database holds no node yet, which is the empty case both are written for
 	// — and patch refuses its missing -f before it selects anything, because
-	// the document it applies is the whole of what it has to be handed.
+	// the document it applies is the whole of what it has to be handed. ls
+	// takes no argument and its bare run is the whole command: it lists the
+	// node the fixture's database holds (none) and the cached briefs of the
+	// machine it runs on, which this harness does not fixture.
+	"fugaro orchestrator ls":        "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
 	"fugaro orchestrator state":     "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
 	"fugaro orchestrator events":    "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
 	"fugaro orchestrator patch":     "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
@@ -437,12 +453,6 @@ type closedStdinUnreachedAsk struct {
 // named removes the ask, and the commit that removes it has to delete this entry
 // too, or the marker check below fails.
 var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
-	// managed apply asks from inside an apply: the question carries a saved
-	// plan's hash and counts, so it takes a planned root this world has none of.
-	"fugaro managed apply": {
-		file: "managed_apply.go", marker: "func managedAsk(cmd *cobra.Command, lc *localcfg.Config)",
-		task: "T9", why: "asks inside an apply, which needs a saved plan this world does not build",
-	},
 	// The refresh's own two cloud steps — the base pin and the daily image check
 	// job's config — ask from inside the run, and reaching one needs the jobs and
 	// the registry this world does not fake. Its billable builds asked here too
@@ -631,6 +641,17 @@ func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\npools:\n  - name: claude-pool\n    members:\n      - team-a\n")
+}
+
+// closedStdinRigorLayerSeed gives the world the file `fugaro rigor set` edits:
+// this machine's own project layer file, carrying the world's own anchors
+// (project aurora, GCP project proj-1234, which is what the world's config
+// names) and the mode the fixture's raise is measured against. Without it the
+// command refuses the missing file — D830's step 4, naming `fugaro update` —
+// which is a refusal before the write and not the write this fixture is for.
+func closedStdinRigorLayerSeed(t *testing.T, _ *budgetFixture) {
+	t.Helper()
+	settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  rigor:\n    default: pro\n")
 }
 
 // closedStdinWorkflowSeed makes the world's own directory a checkout of a

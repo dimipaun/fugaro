@@ -163,6 +163,10 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/modules/firebase/apis.tf",
 		"gcp/modules/firebase/firebase.tf",
 		"gcp/modules/firebase/iam.tf",
+		// The member's read of this project's database (W7): the one grant
+		// `fugaro update` makes to a workspace, in the file that holds the
+		// role, the binding and the variable the pin travels under.
+		"gcp/modules/firebase/workspace_access.tf",
 		"gcp/modules/firebase/outputs.tf",
 		"gcp/roots/firebase/main.tf",
 		"gcp/roots/firebase/variables.tf",
@@ -626,7 +630,15 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 		for _, typ := range []string{"google_project_iam_member", "google_service_account_iam_member", "google_project_iam_custom_role"} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
 				for _, bad := range []string{"google_service_account.signer.member", "google_service_account.signer.email", "serviceAccount:", "roles/storage", "roles/run."} {
-					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_"))) {
+					// The three names whose blocks may name a serviceAccount:
+					// the history and coordinator accounts (the FP's own
+					// sweeper and its writer) and the member's pinned
+					// workspace account (workspace_access.tf, W7), which is
+					// the one principal from outside this installation. The
+					// workspace's exception is its exact address and not a
+					// name prefix, so no later block whose name merely
+					// contains workspace_ can borrow it.
+					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_") || blk.name == "google_project_iam_member.workspace_read")) {
 						t.Errorf("%s: %s mentions %s", path, blk.name, bad)
 					}
 				}
@@ -641,6 +653,54 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 	if n == 0 {
 		t.Error("no file under gcp/modules/firebase")
 	}
+}
+
+// The Firebase root's own half of W7's grant. What the binding IS — the one
+// read-only role and the one member — is pinned by the module's runs in
+// roots/firebase/tests/firebase.tftest.hcl, but a root run's assertions cannot
+// reach into a child module (that file says so), so the line that carries the
+// member's pinned workspace account from the root's variable to the module's is
+// pinned here. A root that dropped it would leave every one of those runs green
+// and the member in no workspace.
+func TestFirebaseRootPassesTheWorkspacePinToTheModule(t *testing.T) {
+	const path = "gcp/roots/firebase/main.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := moduleBody(path, stripComments(string(b)), "firebase")
+	if !ok {
+		t.Fatalf("%s: no module \"firebase\" block", path)
+	}
+	if !hasAttr(body, "workspace_service_account", "var.workspace_service_account") {
+		t.Errorf("%s: the module \"firebase\" block does not pass workspace_service_account, so the account a member's own config pins never reaches the read-only role (W7)", path)
+	}
+
+	// And the root declares the variable the pass-through reads: one without the
+	// other is a plan that fails, or a pin nothing acts on.
+	vb, err := fs.ReadFile(FS, "gcp/roots/firebase/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^variable\s+"workspace_service_account"\s*\{`).MatchString(stripComments(string(vb))) {
+		t.Error("gcp/roots/firebase/variables.tf does not declare workspace_service_account, which roots/firebase/main.tf passes to the module")
+	}
+}
+
+// moduleBody is the body of a `module "<name>" { ... }` block, or false when
+// the source declares none. It is the module-call twin of resourceBlocks: same
+// comment stripping, same brace matching.
+func moduleBody(path, code, name string) (string, bool) {
+	m := regexp.MustCompile(`(?m)^\s*module\s+"` + regexp.QuoteMeta(name) + `"\s*\{`).FindStringIndex(code)
+	if m == nil {
+		return "", false
+	}
+	open := m[1] - 1
+	end := matchBrace(code, open)
+	if end < 0 {
+		return "", false
+	}
+	return code[open+1 : end], true
 }
 
 // Nobody may act as the history account (it holds firebasedatabase.admin on
@@ -1584,6 +1644,15 @@ var (
 	// service (iam.tf). Its own reach is that row and the operators'
 	// token-creator grant on the account, which is what makes it a member
 	// expression worth admitting by name here rather than by shape.
+	// var.workspace_service_account is the member's own workspace_pin's
+	// account, and the Firebase root's one grant to it is the read-only
+	// database role (modules/firebase/workspace_access.tf, W7). It is the ONE
+	// member expression here that is a principal outside this installation:
+	// the pin names a workspace, which is another project's Fugaro
+	// installation, so it is admitted by name and readable in the plan rather
+	// than by shape. The binding itself is not covered — the managed cover
+	// admits no project-level IAM — so it is the member's own typed
+	// confirmation that admits it.
 	//
 	// "allUsers" is deliberately NOT on this list, and the absence is the
 	// point: D920's public invoker binding is one resource in one file, and a
@@ -1597,7 +1666,7 @@ var (
 	// The narrowing is not what makes the plan covered either:
 	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
 	// update whose plan carries this grant asks its own typed confirmation.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -2128,6 +2197,26 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
 					if !slices.Contains(credentialsDatabasePermissions, p[1]) {
 						t.Errorf("%s: %s holds %s: the service's database role is its two data permissions and nothing else (no lifecycle, no list)", path, blk.name, p[1])
+					}
+				}
+				continue
+			}
+			// The member's workspace read role (modules/firebase/
+			// workspace_access.tf, W7): the one knowing exception that holds a
+			// firebasedatabase permission in the Firebase module, and it holds
+			// exactly ONE — the instance's read. It is the read half of the
+			// credentials service's own role, split out rather than reused so
+			// that the write (instances.update, a lifecycle-free but
+			// whole-database write) is not bound to the workspace's account at
+			// all. TestMemberUpdateBindsNoWriteOnTheMembersDatabase is the
+			// exact pin.
+			if blk.name == "google_project_iam_custom_role.workspace_read" {
+				if !strings.HasPrefix(path, "gcp/modules/firebase/") {
+					t.Errorf("%s: %s is not in the Firebase module", path, blk.name)
+				}
+				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+					if !slices.Contains(tf.WorkspaceReadPermissions, p[1]) {
+						t.Errorf("%s: %s holds %s: the member's workspace read role is the instance's read and nothing else", path, blk.name, p[1])
 					}
 				}
 				continue

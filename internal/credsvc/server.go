@@ -101,6 +101,15 @@ func routeAct(path string) (purpose, credential string) {
 		// acts apart, and it is the field an operator greps: a person's read is
 		// not a run's mint even though both are signed with the one key.
 		return PurposeGitHubRead, config.GitHubAppKeySecret
+	case MergeMintPath:
+		// The merge mint issues from the SAME credential the two mints above
+		// issue from — the App key in the bundle — and names it here for their
+		// reason: it is the endpoint's own name for what it signs with, known
+		// before the bundle is read and after it alike. The purpose is what tells
+		// the three acts apart (E16, D2049): a daemon's merge token is not a
+		// run's mint and not a person's read, even though all three are signed
+		// with the one key.
+		return PurposeMergeMint, config.GitHubAppKeySecret
 	case SlipPath:
 		// A grant's line names the launcher and no credential: the act is a
 		// request for a run's grant and not an issuance, so there is no name of
@@ -180,7 +189,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, SlipPath, SlipClaimPath:
+	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, SlipPath, SlipClaimPath:
 		return true
 	}
 	return false
@@ -418,6 +427,13 @@ type Verifier interface {
 	// GitHub read is the person's alone, because the coordinator job holds the
 	// App credential itself and mints its own read-only token with it.
 	VerifyPersonCaller(ctx context.Context, tok string) (string, error)
+	// VerifyOrchestrator admits the caller of the merge mint (mergemint.go,
+	// E16): the installation's orchestrator daemon, and nothing else. It is a
+	// class of its own against one more list — the orchestrator accounts — and
+	// its audience is this service's own URL alone: the daemon mints for the
+	// service with --audiences, and the token a person's own credentials produce
+	// (GcloudAudience) is refused here whatever list it was matched against.
+	VerifyOrchestrator(ctx context.Context, tok string) (string, error)
 	// VerifyLauncher admits the caller of the grant route (DS1.3, D1938), which
 	// presents a token and no Request for the same reason as the three above:
 	// the path is answered ahead of RequestFromHTTP. A launcher is a person on
@@ -533,6 +549,11 @@ type Server struct {
 	// not the store's: the store is what the record IS, and this is what one
 	// process last read of it.
 	slips *slipCache
+	// mergeMints is the merge mint's per-repository rate limit (E16, D2049). It
+	// is this service's own memory, like the slip cache, and for a stronger
+	// reason: what it bounds is a daemon looping on one endpoint, and a node
+	// under creds/ would be a second writer of a fact nothing else reads.
+	mergeMints *mergeMintRate
 }
 
 // NewServer validates cfg and returns the service.
@@ -611,7 +632,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), audit: audit, slips: newSlipCache()}
+	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), audit: audit, slips: newSlipCache(), mergeMints: newMergeMintRate(cfg.Now)}
 	for _, ja := range cfg.JobAccounts {
 		if ja.Email == "" || ja.Slug == "" || ja.Repo == "" {
 			return nil, errors.New("credsvc: a job account with no email, slug or repository binds nothing")
@@ -714,7 +735,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+SlipPath+" and "+SlipClaimPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+SlipPath+" and "+SlipClaimPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -743,6 +764,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// readGitHubReadRequest, and the run-identity headers are refused by
 		// name inside the handler.
 		s.githubRead(ctx, w, r)
+		return
+	}
+	if r.URL.Path == MergeMintPath {
+		// The fifth route answered before the shared parse, and the orchestrator
+		// daemon's reason is the other four's (E16, D2049): the daemon is not a
+		// run of this installation and holds no run identity, so RequestFromHTTP
+		// would refuse the call — for the missing identity headers — before the
+		// daemon class ever read the token. Its own read of the body is
+		// readMergeMintRequest, and the run-identity headers are refused by name
+		// inside the handler.
+		s.mergeMint(ctx, w, r)
 		return
 	}
 	if r.URL.Path == SlipPath {

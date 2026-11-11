@@ -70,8 +70,8 @@ func Guard(p *Plan, allowDelete []string) error {
 // modes: the advice is one sentence, and the sentences beside it are not
 // advice but the reason.
 func GuardWith(p *Plan, allowDelete []string, advice string) error {
-	return guardWith(p, advice, func(rc ResourceChange) (bool, string) {
-		return slices.Contains(allowDelete, rc.Address), ""
+	return guardWith(p, advice, func(rc ResourceChange) verdict {
+		return verdict{ok: slices.Contains(allowDelete, rc.Address)}
 	})
 }
 
@@ -94,8 +94,9 @@ func GuardWith(p *Plan, allowDelete []string, advice string) error {
 // same items — the entry's own answer is added as the reason beside the
 // actions, so the person reads what the plan removes.
 func GuardEntries(p *Plan, entries []DeleteEntry, advice string) error {
-	return guardWith(p, advice, func(rc ResourceChange) (bool, string) {
-		return Approves(entries, rc)
+	return guardWith(p, advice, func(rc ResourceChange) verdict {
+		ok, why := Approves(entries, rc)
+		return verdict{ok: ok, why: why}
 	})
 }
 
@@ -120,29 +121,67 @@ func GuardEntries(p *Plan, entries []DeleteEntry, advice string) error {
 // moved here from another address is refused whatever either list says, and the
 // advice is the caller's.
 func GuardEntriesWithAddresses(p *Plan, entries []DeleteEntry, addresses []string, advice string) error {
-	return guardWith(p, advice, func(rc ResourceChange) (bool, string) {
+	return guardWith(p, advice, func(rc ResourceChange) verdict {
 		ok, why := Approves(entries, rc)
 		if ok || why != "" {
-			return ok, why
+			return verdict{ok: ok, why: why}
 		}
-		return slices.Contains(addresses, rc.Address), ""
+		return verdict{ok: slices.Contains(addresses, rc.Address)}
 	})
 }
 
-// admit is what decides one removal: whether the list the caller holds admits
-// it, and, when it does not, the reason to print beside the change's actions.
-// An empty reason is the list's own "the address is not on it", which is the
-// item shape Guard has always written for that case.
-type admit func(rc ResourceChange) (bool, string)
+// verdict is what one removal's rule answers about a change that removes an
+// object: whether the list the caller holds admits it (ok), the reason to print
+// beside the change's actions when it does not (why, "" for the list's own "the
+// address is not on it" — the item shape Guard has always written for that
+// case), and whether nothing admitted it but it is TAKEN rather than refused
+// (warn, which D1545 sets for a content removal the managed gate now records
+// and warns about instead of stopping).
+type verdict struct {
+	ok   bool
+	why  string
+	warn bool
+}
 
-// guardWith is the walk Guard, GuardWith and GuardEntries share, so the three
-// cannot drift about what a removal is, which removals no list clears, or how
-// a refusal reads.
-func guardWith(p *Plan, advice string, admits admit) error {
+// judge is one removal's rule: what it answers about a change that removes an
+// object. Guard, GuardWith, GuardEntries and GuardEntriesWithAddresses each
+// build one over their own list, and GuardManaged builds the one D1545 and
+// D1551 leave the managed apply.
+type judge func(rc ResourceChange) verdict
+
+// guardWith is the refusal Guard, GuardWith and GuardEntries share, so the
+// three cannot drift about what a removal is, which removals no list clears, or
+// how a refusal reads. It is guardWalk's refusals with the head and the advice
+// wrapped around them, unchanged; a nil plan is the one refusal guardWalk does
+// not wrap.
+func guardWith(p *Plan, advice string, judges judge) error {
 	if p == nil {
 		return errors.New("guard: no plan")
 	}
-	var refused []string
+	refused, _ := guardWalk(p, judges)
+	if len(refused) == 0 {
+		return nil
+	}
+	head := fmt.Sprintf("the plan would delete or replace %d resource(s), or do something the guard doesn't know; nothing was applied", len(refused))
+	if advice == "" {
+		return fmt.Errorf("%s:\n  %s", head, strings.Join(refused, "\n  "))
+	}
+	return fmt.Errorf("%s. %s:\n  %s", head, advice, strings.Join(refused, "\n  "))
+}
+
+// guardWalk is the walk Guard, GuardWith and GuardEntries share, and the one
+// GuardManaged reads for both of its answers: every removal the judges refuse,
+// and — beside them — the ones a judge neither admits nor refuses but takes
+// with a warning (verdict.warn, D1545). The refused items are the plan's own
+// words in the shapes Guard has always written: "<addr> (<actions>)" for a
+// removal no list names, and "<addr> (<actions>): <why>" when a rule gives a
+// reason. A warned item is written in those same two shapes, so a reader parses
+// it exactly as a refusal and only its half of the answer says which it is. A
+// nil plan is one refusal, "guard: no plan", and no warnings.
+func guardWalk(p *Plan, judges judge) (refused, warned []string) {
+	if p == nil {
+		return []string{"guard: no plan"}, nil
+	}
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
 		// The address and the actions are the plan's words, and a plan is
@@ -173,14 +212,31 @@ func guardWith(p *Plan, advice string, admits admit) error {
 		if !slices.Contains(acts, "delete") {
 			continue
 		}
-		ok, why := admits(rc)
+		r := judges(rc)
 		switch {
-		case ok && removesUnderAnotherAddress(rc):
+		case r.ok && removesUnderAnotherAddress(rc):
 			// A listed address names what may be removed at that address,
 			// never an object moved there from another one.
 			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, movedRemovalReason(rc)))
-		case ok:
-		case why == "":
+		case r.ok:
+		case r.warn && !removesUnderAnotherAddress(rc):
+			// Nothing admits this removal, and it is a content one D1545 takes
+			// rather than refuses — a delete or a replace of a classified,
+			// non-data-bearing type (D1551): recorded and warned, not stopped.
+			// It is written in the same two shapes a refusal is: the actions
+			// alone when no list names the address, and the actions with the
+			// delete rule's own sentence beside them when a list does name it
+			// and its entry does not approve the object the plan removes (an
+			// entry bound to another object, a before view that identifies
+			// nothing). The sentence is the reader's — it is what the owner has
+			// to change — and the cover writes it for the same removal too, so
+			// the two halves of the gate say one thing about one change.
+			item := fmt.Sprintf("%s (%s)", addr, said)
+			if r.why != "" {
+				item = fmt.Sprintf("%s (%s): %s", addr, said, r.why)
+			}
+			warned = append(warned, item)
+		case r.why == "":
 			// The list does not name this address: the item Guard has always
 			// written, with the actions and nothing beside them.
 			refused = append(refused, fmt.Sprintf("%s (%s)", addr, said))
@@ -197,17 +253,75 @@ func guardWith(p *Plan, advice string, admits admit) error {
 			// to another object and whose removal was not moved (below).
 			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, movedRemovalReason(rc)))
 		default:
-			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, why))
+			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, r.why))
 		}
 	}
-	if len(refused) == 0 {
-		return nil
-	}
-	head := fmt.Sprintf("the plan would delete or replace %d resource(s), or do something the guard doesn't know; nothing was applied", len(refused))
-	if advice == "" {
-		return fmt.Errorf("%s:\n  %s", head, strings.Join(refused, "\n  "))
-	}
-	return fmt.Errorf("%s. %s:\n  %s", head, advice, strings.Join(refused, "\n  "))
+	return refused, warned
+}
+
+// GuardManaged is the managed apply's delete rule as D1545 and D1551 leave it:
+// the removals it returns are the ones that still REFUSE — a data-bearing type,
+// an unclassified type, an object moved here from another address, a change
+// with no actions or an action the guard does not know — and the removals it
+// returns as warnings are the ones the gate now takes: a delete or a replace of
+// a classified, non-data-bearing type that neither the owner's delete list nor
+// the caller's addresses admit. It is GuardEntriesWithAddresses' own rule — the
+// owner's entries first (Approves), then the caller's addresses — with D1545's
+// ruling on top: a removal neither admits is no longer refused for what the
+// plan contains, so it is warned instead, while D1551 keeps the two directions
+// that do refuse. A data-bearing type's objects are data a delete would destroy
+// (reconciliation's table), and an unclassified type is one nobody has decided
+// — a type added to allowedTypes later, which RefusesRemovalType refuses until
+// somebody classifies it. warn is set only when neither list admits the
+// removal, so an entry or an address that admits one still admits it whatever
+// its type — and a list that NAMES the address without approving the object the
+// plan removes (an entry bound to another object, a before view that identifies
+// nothing) does not admit it either, which is why the delete rule's own sentence
+// is a warning for a type D1551 leaves to D1545 and a refusal for a type it
+// protects. The cover routes the same sentence the same way (managed_cover.go's
+// addRemoval), so one removal is never refused by this half of the gate and
+// warned about by the other.
+//
+// The warning is not silent, and that is the point of the two answers: a warned
+// removal is printed beside the refusals and recorded (D1545's AuditRecord), so
+// the cover tables stay a tripwire that tells the owner what left them rather
+// than vanishing. The caller prints both lists and stops only for the refusals.
+//
+// A nil plan is one refusal, "guard: no plan", and no warnings — the same one
+// line guardWith has always written, so a caller that carries it whole is
+// unchanged.
+func GuardManaged(p *Plan, entries []DeleteEntry, addresses []string) (refused, warned []string) {
+	return guardWalk(p, func(rc ResourceChange) verdict {
+		ok, why := Approves(entries, rc)
+		if ok {
+			return verdict{ok: true}
+		}
+		// why is the delete rule's own sentence — the list names this address
+		// for another object, or the plan's before view identifies nothing —
+		// and where it lands follows the type, exactly as it does in the cover
+		// (managed_cover.go's addRemoval): a refusal for a type D1551 protects,
+		// and one of D1545's warnings, the sentence beside the actions, for a
+		// type it does not. Refusing it whatever the type is what put one
+		// removal in the verdict's refusals AND in its warnings. The caller's
+		// own addresses are read below and not before it, which is the order
+		// this rule has always had: an entry that names the address is an
+		// answer about the object the plan removes, and a list of addresses is
+		// not one.
+		if why != "" {
+			if RefusesRemovalType(rc.Type) {
+				return verdict{why: why}
+			}
+			return verdict{warn: true, why: why}
+		}
+		if slices.Contains(addresses, rc.Address) {
+			return verdict{ok: true}
+		}
+		// Neither list names the address at all: the delete rule has no
+		// sentence about the object, so the item is the bare actions of a
+		// refusal — and D1545's warning, with no reason beside it, for a type
+		// D1551 does not protect.
+		return verdict{warn: !RefusesRemovalType(rc.Type)}
+	})
 }
 
 // Listable is the addresses Guard refuses only because allowDelete does not

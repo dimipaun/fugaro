@@ -178,11 +178,17 @@ supplies the value, and fails at once (no read attempted when stdin is not a ter
 
 **F15 — The audit record is not tamper-proof, and warnings reach only the acting session.** `AuditRecordFor` /
 `WriteAudit` (`internal/managed/audit.go`) write the record with the operator's own credentials to the project's
-bucket, which is not versioned. Under audit-only the record and the warning are the whole control: whoever
-applies can delete the record, and the warning prints to the session that applied. Consequence: T2 states it;
-plan T9 adds bucket versioning or an append-only object naming for the record (a Terraform change in the
-installation module) and sends the warning to `doctor` as well as to the session — or the owner accepts the
-weaker record (T2).
+bucket, which carried no versioning when this finding was written. Under audit-only the record and the warning
+are the whole control: whoever applies can delete the record, and the warning prints to the session that
+applied. Consequence: T2 states it; plan T9 adds bucket versioning or an append-only object naming for the
+record (a Terraform change in the installation module) and sends the warning to `doctor` as well as to the
+session — or the owner accepts the weaker record (T2). **Ruled the first arm (2026-11-07), and both halves
+landed with T9:** the installation module's bucket is versioned
+(`deploy/terraform/gcp/modules/installation/bucket.tf:25-27`), so a deletion leaves a noncurrent version of the
+record instead of erasing it, and `fugaro doctor` reads the warning the session was printed. Versioning does
+not separate the record's writer from its eraser — the apply runs as the operator, whose own credentials hold
+`objectAdmin` there — so what it buys is that erasure needs that role, which is what `internal/managed/audit.go`
+says in its own words.
 
 **F16 — Every form of loosening a cap, not only `budget set`.** `budget set` raising a cap (`confirmTyped`),
 `budget resume` (`confirmTyped`), the policy/settings ceilings `PerRunUSD`/`PerDayUSD` (the `Typed` class today:
@@ -284,8 +290,9 @@ today; a task adds it (T3).
 `.claude/rules/terraform.md` leans on ("a role granted to a new kind of principal is not covered until you add
 it on purpose"; "Never widen those tables to make a plan pass"), and that the credentials-service rule and
 `SECURITY.md` describe. Under audit-only a plan that grants an unexpected IAM role to an unexpected principal
-applies. **The audit record is not tamper-proof** (written with operator credentials to an unversioned bucket,
-F15) and the warning is printed only to the acting session, so a hostile agent can apply, then erase the record
+applies. **The audit record is not tamper-proof** (written with operator credentials into the project's bucket,
+where T9's versioning turns a deletion into a noncurrent version rather than stopping one, F15) and the warning
+is printed only to the acting session, so a hostile agent can apply, then erase the record
 (F20). The independent review of IAM, cover and credentials grants (in-run level 3) is the only pre-apply
 control, and it reviews code, not each plan. **RULED 2026-11-07: choice (a)** — accept, harden the record
 (versioning, `doctor` reads) and rewrite the rules to say the table is a tripwire (T9, T13); that level-3 review

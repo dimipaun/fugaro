@@ -255,6 +255,8 @@ reading a document will meet.
 | `models` | string | — | no | measured, a pre-rendered pair |
 | `recipe` | string | — | **yes** | absent before the run reports one |
 | `auth` | string | — | no | the run's auth mode, from the live registry entry. `oauth` means `spent_usd` is notional: such a run has no gateway, so `budget.AgentEntry.Spent` is its whole notional total (`snapshotEntry`, `internal/budget/registry.go`), while a cascade run's row carries the billed part its gateway charged and leaves its tier-A dollars to the notional counters (`notional_usd`) |
+| `mode` | string | — | no | the **rigor mode** the run resolved and is running at (`runstore.RigorRecord.Mode`, through the run's own registry entry — `budget.AgentEntry.Mode`, which the runner writes from its record at bootstrap and again at every moment that folds a new one in, so a live row follows a mid-run raise). It is **the same value** `runs ls --json`'s `rigor.mode` prints and the record keeps: one resolution, shown in two windows. **CLI 0.23.0.** Always present, `"-"` when the entry carries none — a run under rules that predate the child, which the run then goes without (the rules' `$other` refuses the whole entry for a child they do not know, so the field's arrival cost a rules deploy; `fugaro update` is the whole of it) — which is **"not recorded", never a mode the CLI picked**. Not an authority: no policy, admission or budget rule reads a feed value (design §5.1 rule 2), and the console's own live chip joins the run list's block by id today, so a reader that takes this one must not draw both |
+| `from` | string | — | no | the **layer that decided `mode`** (`internal/rigor`'s `Layer`: `area`, `repo`, `project`, `default` or `request`, D24): `area` for a rule the run's paths matched, then the repository's, the project's, Fugaro's built-in default, and the run's own request. Always present with `mode` and `"-"` with it — the two are one value, and a reader that has one has the other. **CLI 0.23.0.** A word from the CLI's own table, never text a job wrote, and never an authority |
 | `notional` | bool | — | no | **the availability state of `spent_usd`**: true when `spent_usd` is a subscription's list price, which for a live row is `auth == "oauth"` (`internal/watch/build.go`). It is a fact about this **live** row, never a reading of a recorded run's `model_basis`: a recorded run's split is `model_notional_usd` (C1.16/P12 — a cascade run the plan served in full has an api-list basis and billed nothing) |
 | `spent_usd` | `*float64` | USD | no | **null = unavailable** |
 | `age_seconds` | `*float64` | seconds | no | **null = unavailable** |
@@ -2810,8 +2812,8 @@ parse of either.
 | --- | --- | --- | --- | --- |
 | `at` | string | never | never | when the command ran, in UTC, RFC 3339 to the second. It is the record's own time and never the listing's order |
 | `command` | string | never | never | the command as a person types it (`fugaro config publish`), which is the record's own name for it and not its argv. Bounded text |
-| `verdict` | string | never | never | the gate's own answer about the judged plan: `admitted` or `refused`. **A refusal is a record an owner reads most**, so it is drawn beside an admission and never instead of it |
-| `identity` | string | never | never | the account the write ran as: the deployer account for a managed apply, the operator's own elsewhere. Bounded text |
+| `verdict` | string | never | never | the gate's own answer about the judged plan: `admitted`, `warned` or `refused`. **A refusal is a record an owner reads most**, so it is drawn beside an admission and never instead of it. `warned` is D1545's middle answer — the gate recorded the plan's content findings and the write went through — and the findings themselves do not reach this document: the rules the gate fired are the record's own, and the bound below keeps them out, so a screen draws the verdict with no reason beside it |
+| `identity` | string | never | never | the account the write ran as: the command's own answer where it names one, and otherwise the credentials in force (the operator's own). Bounded text |
 | `plan_digest` | string | never | never | the sha256 of the exact document the gate judged, so a reader compares the record against a plan rather than believing a summary of it |
 
 **What is never in it, and it is the whole of the bound: the argv.** The record
@@ -2988,22 +2990,41 @@ provider, so this is the hand-edited entry and not the ordinary one. **The plan
 scope keeps its checkout and its card**; the new scopes are what the dropdown
 adds beside it (D1356).
 
-**`--source` selects the scope, and the set is closed.** `all` is the default and
-is the union of the scopes that exist — today the coordinator alone —
-`coordinator` is the stored view, and `orchestrator:<id>` and `local:<id>` are
-**refused with "no orchestrator is installed in this build"** until CG4 and CG5
-register their readers: an honest refusal, never an empty graph, because a screen
-must be able to tell "nothing here" from "not asked". The value reaches argv from
-the renderer, so the CLI refuses everything but the closed set below **before it
-reads anything** (H1), and the console sends only a value a previous read listed
-(F21):
+**`--source` selects the scope, and the set is closed.** `all` is the default
+and is the union of the scopes that exist — the coordinator's stored view, and
+one scope per orchestrator the project's database holds or this machine has a
+cached brief for (CG4's rule, D1358) — `coordinator` is the stored view alone,
+`orchestrator:<id>` is one orchestrator's state node, and `local:<id>` is the
+same node read as one this machine's daemon drives, falling back to its cached
+brief when there is none (CG5). **An id the project's database does not hold is
+refused**, naming the scope and `fugaro orchestrator ls` — and so is a
+`local:<id>` this machine has no cached brief for and whose node cannot be read —
+because a screen must be able to tell "nothing here" from "not asked", and never
+answered with an empty document, which is the same shape a scope with no work in
+it prints. **Existence is the question that listing answers** — a key under
+`/orchestrator/<id>` — and never whether a state node was written: `orchestrator
+run` writes the lease node before the cycle that saves a state, so an id it lists
+whose state node is not there yet is a scope that is **down**, in `all` and named
+on the command line alike, rather than a scope dropped from the document or
+refused over it. **A cache file this release cannot read is the warning of a read
+that still answers**, and not a refusal: the ids the project's database holds are
+read as the orchestrators they are, the ids only that cache knew about are left
+out of the document, and `warnings` carries the one sentence naming the file. A
+`local:<id>` asked for by name is the other thing: it asked for that very brief,
+so it is refused over it. The cache is `local:`'s own fallback and never the
+orchestrator scope's:
+`orchestrator:<id>` reads the node through the caller's credential, and a
+machine that happened to have a brief for that id cannot answer the scope that
+asks the project (D1358). The value reaches argv from the renderer, so the CLI
+refuses everything but the closed set below **before it reads anything** (H1),
+and the console sends only a value a previous read listed (F21):
 
 | Value | What it names |
 | --- | --- |
-| `all` | every scope that exists: today the coordinator's stored view, and the orchestrator scopes as they are built |
+| `all` | every scope that exists: the coordinator's stored view, and one scope per orchestrator the database holds or this machine runs (CG4's union) |
 | `coordinator` | the coordinator's stored view: every repository it has reconciled (§6.13), with no checkout |
-| `orchestrator:<id>` | one orchestrator's node under `orchestrator/` — **refused today**, CG4's reader |
-| `local:<id>` | one local orchestrator, read through its node and its cache file — **refused today**, CG5's reader |
+| `orchestrator:<id>` | one orchestrator's state node under `orchestrator/`, read through the caller's own credential (D1357) |
+| `local:<id>` | one orchestrator this machine's daemon drives: the same node, and the cached brief when the node is not there (CG5, D1358) |
 
 An id is one lower-case letter or digit, then up to 39 more of those or a hyphen,
 and nothing else. So a leading `-` (which would reach argv as a flag), a path
@@ -3027,7 +3048,7 @@ one entry of `sources`:
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `source` | string | never | never | the source this state is about (`graph.Scope.String`): `coordinator`, `orchestrator:<id>` or `local:<id>`, and **never `all`** — `all` is a selector and not a source, so a read that selected it (`graph --json`'s default) writes one entry per scope that exists, each named for itself, which today is one `coordinator` entry. It is the source half of every `key` that came from it, and a value a console may send back as `--source` |
+| `source` | string | never | never | the source this state is about (`graph.Scope.String`): `coordinator`, `orchestrator:<id>` or `local:<id>`, and **never `all`** — `all` is a selector and not a source, so a read that selected it (`graph --json`'s default) writes one entry per scope that exists, each named for itself: the coordinator's stored view first, then one per orchestrator id, in id order. A project with no orchestrator and nothing cached answers with the one `coordinator` entry and nothing else. It is the source half of every `key` that came from it, and a value a console may send back as `--source` |
 | `state` | string | never | never | one of the four words below. **The whole answer**, so a screen draws it as a word and never as a colour alone (H3, H10) |
 | `as_of` | string | never | **yes** | RFC 3339; when this source's data was last known good. **Null when there is no such time**, which is a source that has never read: null is not "now", and a screen must not draw an age from it — it draws one from this field when it is set, and never from `generated_at`. **The coordinator's stored view carries no time of its own** — it is a function of its inputs, which is why the Coordinator screen claims no age for it (CG2) — so a caller that read the views without knowing when the sweep stored them has none to give and prints null, and **`graph --json`, a one-shot read, is that caller**: its coordinator scope has a null `as_of` and is never stale by age. The stream (CG7) is the caller that knows its own read's time and can fill it; the sweep's own marker is a separate fact and not this field |
 | `reason` | string | never | never | why, in words, when the state is not `up`; `""` when it is. The read's own sentence, sanitised like every other string here, and the field a screen shows **beside** the state rather than instead of it |
@@ -3069,14 +3090,14 @@ exit** (H3): the read answered, and this entry is its answer.
   in both cases: a screen draws the state and the reason, never a partial graph.
 
 **A refused read is the other case, and it is terminal.** An invalid `--source`
-(H1), or a scope this build does not have (`orchestrator:` and `local:` before
-CG4 and CG5), is an error with a non-zero exit and **no document at all**, naming
-the command — which is what the console reads as "this CLI has no graph" and
-answers by keeping the plan scope and a refusal sentence (T3, CG10). A repository
-whose `repos` entry names no provider is refused the same way (above), and so is
-a database the scope's read could not reach — an IAM refusal, a connection that
-failed: those reads made no answer at all, where `unreadable` is an answer this
-build cannot read and a `down` source is one that answered with nothing stored.
+(H1), or a scope the database holds nothing for (above), is an error with a
+non-zero exit and **no document at all**, naming the command — which is what
+the console reads as "this CLI has no graph" and answers by keeping the plan
+scope and a refusal sentence (T3, CG10). A repository whose `repos` entry names
+no provider is refused the same way (above), and so is a database the scope's
+read could not reach — an IAM refusal, a connection that failed: those reads
+made no answer at all, where `unreadable` is an answer this build cannot read
+and a `down` source is one that answered with nothing stored.
 A refusal and a `down` source are told apart by exactly that: one is a process
 that printed nothing and failed, the other is a document with the state in it.
 
@@ -3134,11 +3155,18 @@ and the next `seq` rather than a delta — the client restarts its own subscript
 and each connect begins with a full `put` of the subtree (`rtdb.Client.Stream`)
 — so a reader never has to ask what it missed.
 
-**One subscription per scope.** The child subscribes to **one** `coordinator/`
-subtree per scope it covers, shared across that scope's nodes rather than opened
-once per node (H6, F12): an RTDB stream is a held connection, and the console
-runs this one only while the Graph tab is visible and counts it in
-`MAX_LIVE_FEEDS` (CG9b, CG11).
+**One subscription per scope subtree.** The child subscribes to **one** node per
+scope subtree it covers, shared across that scope's nodes rather than opened once
+per node (H6, F12): `all` covers two — `/coordinator` and `/orchestrator` — a
+single orchestrator scope covers that id's own node under the second, and
+`coordinator` covers the first alone (`graph.ScopeSubtrees`). An RTDB stream is a
+held connection, and the console runs these only while the Graph tab is visible
+and counts them in `MAX_LIVE_FEEDS` (CG9b, CG11). **The first document waits for
+every subtree's own opening `put`** — the transport's proof that the listen is
+live (rtdb.Client.Stream) — so a subtree that is slow to connect is in the first
+snapshot rather than in a second one, and a subtree that withdraws before its put
+is a scope that is `down` in that first document rather than a wait that never
+ends.
 
 ### 6.23 `fugaro security paths --json` — the list in force, and the answer per path
 
@@ -3247,13 +3275,14 @@ checkout does not hold is the `error` above rather than a guess at another
 document.
 
 **A read that did not answer is not an exit, and it is not a silent floor
-either.** The one thing this slice reads at the ref is the repository's own
-`fugaro.yaml`, for `project`; a repository that has none at its base — one being
-onboarded — still gets an answer, because the list in force is the floor alone
-here and the floor is compiled in. So the document is printed with `error` set
-and the command exits zero, §6.21's own rule for a state that is the answer, and
-the table a person reads says the same thing on stderr beside it: what it printed
-is the floor, and the repository's own rows are not in it.
+either.** The one thing this reads at the ref is the repository's own
+`fugaro.yaml`, for `project` and for its own rows; a repository that has none at
+its base — one being onboarded — still gets an answer, because a file that names
+no project names no layer either, and the list in force is then the floor alone
+and the floor is compiled in. So the document is printed with `error` set and the
+command exits zero, §6.21's own rule for a state that is the answer, and the
+table a person reads says the same thing on stderr beside it: what it printed is
+the floor, and neither the repository's own rows nor a project layer's are in it.
 
 **What is not in it, and it is the whole of the bound: the session.** The
 document carries the caller's own `--check` paths and nothing else of the machine
@@ -3277,10 +3306,25 @@ console's spawn list, and that is D1514's deferral rather than an oversight: the
 console draws no screen from this document yet, and this section exists because
 §6 is where a document a console could read is written down.
 
-**This slice is the floor alone** (D1504, D1519). No project key and no
-repository key exists yet, so every row's `source` is `floor` and there is one
-layer to merge; SC7 and SC8 add the two keys, SC9 re-points this read at the one
-resolution, and the shape above does not move for any of them.
+**The three layers, and where the two written ones are read** (SC9, D1506,
+D1511). The list in force is `config.SecurityPatterns`' one resolution: the
+engine's floor, the project layer's rows and the repository's own, unioned by row
+name, so a repository with no `security:` key gets its project's rows and the
+floor's, a project with no key gets the floor, and no later layer can take a row
+an earlier one wrote away. Every row carries the `source` above. The
+repository's own rows are read out of its `fugaro.yaml` **at the base ref**, out
+of the checkout's own object database — the same read that answers `project`
+above. The project layer's are read out of this machine's **cached copy** of the
+published layer (`modelsLayer`, the offline read `fugaro models ls` makes) and
+never out of the bucket it lives in. A machine that holds no cached layer for the
+project therefore prints the floor's rows and the repository's without the
+project's, and no member above can carry that: the command says it on stderr, in
+both forms of the document. It is the one place this read can differ from a
+run's, and the run is the control — it resolves the published layer itself,
+while this document is the advisory read. A row a layer writes under a name an
+earlier layer's row already spends is not in force either, and it is said on
+stderr the same way (`config.SecurityIgnoredRow`, D1506): the row is what its
+author believes and the list in force is not.
 
 ## 7. The CLI gaps, settled against the code
 
@@ -3380,7 +3424,7 @@ table against the live constructors.
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   thirty-seven is today's**), and no other argv that writes is reachable
+   thirty-eight is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1

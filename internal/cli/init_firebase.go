@@ -28,8 +28,20 @@ const printVarsUngatedFirebase = "--print-vars is ungated and makes no cloud cal
 
 // firebaseVars is the installation's and the Firebase root's tfvars as one
 // JSON object, for --print-vars.
+//
+// It carries the workspace pin's account for the same reason the apply does: a
+// member whose config names a workspace has the read bound to that account, and
+// a printed document that dropped the key would disagree with the installation
+// it stands for — the reading of it an owner cannot trust. The pin is in the
+// local config, so it needs no cloud call (what --print-vars by design makes
+// none of), unlike the history and coordinator accounts, which come from an
+// apply's outputs and are therefore absent here.
 func (r *initRun) firebaseVars(inst []byte, spec infra.InstallationSpec, lc *localcfg.Config) ([]byte, error) {
-	fs, err := infra.Firebase(spec, infra.FirebaseInputs{FP: r.o.firebaseProject(), BudgetAdmins: r.budgetAdmins(lc)})
+	fs, err := infra.Firebase(spec, infra.FirebaseInputs{
+		FP:                      r.o.firebaseProject(),
+		BudgetAdmins:            r.budgetAdmins(lc),
+		WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount,
+	})
 	if err != nil {
 		return nil, initErr(err)
 	}
@@ -171,7 +183,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 		counts := infra.CountPlan(plan)
 		// The managed gate first, and the guard and the confirmation only when it
 		// does not admit this plan (D1016, update_managed.go).
-		gated, err := r.gateStep(ctx, t, imports, r.coverOf(r.coverReasonsFirebase), nil)
+		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil)
 		if err != nil {
 			return plan, err
 		}
@@ -249,7 +261,11 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	}
 	// Refused here, before the first apply, whatever the installation module
 	// accepts.
-	if _, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc)}); err != nil {
+	// Every input the apply below passes is passed here too, the workspace pin's
+	// account included: this call is the gate that runs before the installation
+	// root is applied, so a value the Firebase root would refuse has to be
+	// refused here rather than after an apply has already touched the state.
+	if _, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount}); err != nil {
 		return initErr(err)
 	}
 
@@ -318,7 +334,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return err
 	}
-	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount})
+	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount})
 	if err != nil {
 		return initErr(err)
 	}

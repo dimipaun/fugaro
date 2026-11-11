@@ -14,6 +14,7 @@ import (
 	"gocloud.dev/gcerrors"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -143,6 +144,19 @@ func TestMain(m *testing.M) {
 			panic("fugaro: test tried to open a real gs:// project layer bucket: " + url + "; use a bucket_url: file:// fixture or override layerBucketOpener")
 		}
 		return blobx.Open(ctx, url)
+	}
+	// A switched-on launch asks the installation's credentials service for the
+	// run's slip, and that call presents the launcher's own Google ID token to
+	// the URL a fixture made up: an https host that is not there, reached
+	// through the dead proxy above, after a gcloud that may or may not be on
+	// this machine's PATH. Answering it here with the one answer that needs no
+	// fixture to change — a service that does not serve the route, which is the
+	// version skew and leaves the launch reading exactly the environment it
+	// read before the slip existed — keeps every other test out of that
+	// exchange entirely. A test about the slip itself replaces this
+	// (run_slip_test.go).
+	slipGrant = func(context.Context, string, credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+		return credsvc.SlipGrantResponse{}, errSlipRouteAbsent
 	}
 	// The fake gh of the watch tests links to one wrapper, run once here
 	// before any test can fork (testutil.FakeCommand).

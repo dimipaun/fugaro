@@ -8,12 +8,14 @@ the endpoint's half: the authorize POST takes the device's act as a shape of its
 is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's
 first requirement is not met — the endpoint cannot tell a paired device from any other holder of
 one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of
-the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no
-task of this plan; M7 is built except the reading of the installation's published state its lists
-come from, which no task of this plan carries; M8 is built except the wiring that would serve its
-four read tools, which no binary has and no task of this plan carries; M9 is not started, and the
-launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of
-2026-11-09); this folder approves no task.** The owner's
+the flow's binding rendered and no launcher reading the page, is built nowhere and carried by M12b,
+which M12 waits on; M12 is built — the front door mounted on the service, the reading of the
+installation's published state its lists come from, M8's four read tools served from a binary and the
+two bounds the open registration endpoint is accepted under are all its — and the door stays dormant
+until an installation turns it on, which no release writes the flag for yet (D934), because a build
+without M12b's delivery refuses to enable it (D2126); M9 is not started, and the launch-override
+fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09);
+this folder approves no task.** The owner's
 spec of 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled against the code
 here; [reconciliation.md](reconciliation.md) §4 puts fifteen decisions (D920–D934) in front of the
 owner, each with the recommendation first and the cost of the alternative — and **all fifteen were
@@ -61,7 +63,7 @@ continue** — M1's spend-type finding is **M9's to close**, which is where the 
 found the same defect (`ee/coordinator/mcpauth/limits.go:298`). **The tree has gone past that**:
 **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4 are merged on `main`** — M4's first half
 (#1716) being its account, the front door service and its public invoker binding
-(`deploy/terraform/gcp/modules/installation/coordinator.tf:324`, `:388`, `:536`), and its store half
+(`deploy/terraform/gcp/modules/installation/coordinator.tf:339`, `:403`, `:581`), and its store half
 being the bucket its records live in and the one binding that names them
 (`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **M5 and M5b, M7, M8 and M10 are
 built**, each apart from the half behind it: M5 and M5b together — the endpoint's half, with M-a's

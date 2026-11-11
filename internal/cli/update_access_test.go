@@ -915,7 +915,7 @@ func TestAPromotionInTheNodeNamesItself(t *testing.T) {
 			t.Errorf("a run whose raised role was not confirmed applied the installation: %q\n%s", calls, all)
 		}
 	})
-	t.Run("a managed project's gate refuses it", func(t *testing.T) {
+	t.Run("a managed project's gate records it", func(t *testing.T) {
 		r, db := accessRig(t, nil, nil, []string{ops}, nil)
 		db.Set(accesslib.PathNode, node)
 		r.managedRuns(t, initProjectName, initProject)
@@ -924,18 +924,18 @@ func TestAPromotionInTheNodeNamesItself(t *testing.T) {
 		r.setPlanAt(t, "installation", grantChange("runs_object_admin", ops, "roles/storage.objectAdmin", "create"))
 		t.Setenv(agentMarkers[0], "1")
 		got, err := updateRun(t, r, "update", "--yes")
-		if err == nil {
-			t.Fatalf("a managed project's gate admitted the role the node raised a member to:\n%s", got)
+		if err != nil {
+			t.Fatalf("a managed project's gate refused a content rule D1545 makes a tripwire: %v\n%s", err, got)
 		}
-		// The refusal's own rule, not just the member's name: the name is in the run
-		// either way — the roles step's warning says it — and what has to hold is
-		// that the gate refused the grant for the cover's reason, the member not
-		// being on the review screen at the role the plan grants them.
-		if !strings.Contains(got, "refused by cover: grants to "+ops+", who is not on the review screen") {
-			t.Errorf("the gate's refusal does not name the cover's own reason for refusing the member:\n%s", got)
+		// D1545 (T9): the cover tables record and warn rather than refuse, so
+		// what has to hold is that the gate's record names the member for the
+		// cover's own reason — not being on the review screen at the role the
+		// plan grants them — under the tripwire's own line.
+		if !strings.Contains(got, gateContentWarning) {
+			t.Errorf("the gate applied the raised role without its tripwire line:\n%s", got)
 		}
-		if n := len(r.ran(t, "apply")); n != 0 {
-			t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
+		if !strings.Contains(got, "grants to "+ops+", who is not on the review screen") {
+			t.Errorf("the gate's record does not name the cover's own reason for the member:\n%s", got)
 		}
 	})
 	t.Run("the installation held the member as an admin", func(t *testing.T) {

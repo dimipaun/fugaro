@@ -132,7 +132,7 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 			p, err := github.New(github.Options{Owner: owner, Repo: name, AppID: appID, PrivateKey: key, BaseURL: vars[EnvGitHubAPIURL], HTTP: hc, Warn: warn})
 			return p, []string{pemData}, err
 		default:
-			return nil, nil, fmt.Errorf("unknown git provider %q (want %s or %s)", kind, gitprov.KindGitHub, gitprov.KindBitbucket)
+			return nil, nil, fmt.Errorf("unknown git provider %q (want %s)", kind, strings.Join(gitprov.Kinds, " or "))
 		}
 	}
 }

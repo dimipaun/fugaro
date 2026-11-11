@@ -89,7 +89,7 @@ sentence turns on, for the reason `docs/coordinator/README.md` gives for its own
 | "all shepherding state must live in Firebase" (open item) | Runs bucket objects carry the shepherding record; RTDB carries the budget heartbeat and the counters; Firestore carries the daily rollover | **Answered in §2** |
 | "Every job has an owner, which determines the spending cap" | Caps are keyed to the repository slug and the project-global node (`internal/budget/model.go` `Caps`, `RepoCaps`, `GlobalCaps`, `Caps.PerRun`); no cap is keyed to a person or a service identity | **Wrong** (#18, D18) |
 | "the credentials … from the security service" | `docs/credentials-service/` is a document; the run's own budget identity exists and is sealed (`internal/budget/token/` `Seal`, `Unseal`, `Claims`, `UID`) | **Gap, blocked** (#21, D4) |
-| "carries PRs through to merge" | `docs/design/v1.md` §2, non-goals: *"Auto-merge. Fugaro never merges."* `internal/gitprov/gitprov.go`'s `Provider` has `EnsurePR`, `ApplyReady`, `PullRequest`, `Comments` and no merge | **Wrong** (#22, D18) |
+| "carries PRs through to merge" | `docs/design/v1.md` §2, non-goals: *"Auto-merge. Fugaro never merges."* — **amended 2026-11-10 by `docs/outer-loop-escalation`: the non-goal now reads "No merge outside the orchestrator's gated rule"** — `internal/gitprov/gitprov.go`'s `Provider` has `EnsurePR`, `ApplyReady`, `PullRequest`, `Comments` and no merge | **Wrong** (#22, D18) |
 | "approving a merge" as a locked action | The only merge path is the paired-device one: `shared/confirm/index.js` `DESTRUCTIVE_VERBS`, the rules' `action` node, `internal/mailbox/message.go` `Action`; its executor is plan task P6.7 and is not built | **Exists as schema only** (#23, D7) |
 | "checks the verified email against the project allowlist" | The allowlist is the **device node** `config/admin/devices/$uid` (`internal/budget/rules/rules.go` `userClaim`; mobile D166); keyed to a Firebase uid, not an email | **Wrong** (#31, D6) |
 | "Google SSO and Microsoft SSO are supported, and email and password …" | No public sign-in provider exists: `internal/cli/init_firebase.go`'s `refusePublicSignUp` refuses the configuration, and `internal/infra/identityplatform.go`'s `PublicSignUp` is what reads it; the web key is restricted to `identitytoolkit`/`securetoken` (`deploy/terraform/gcp/modules/firebase/firebase.tf`) | **Wrong** (#32, D6) |
@@ -371,7 +371,9 @@ capability the service's own plan does not have (it has no issuance API for thir
 D4 and D18.
 
 **#22 — Fugaro never merges, and the spec's orchestrator does. — Wrong.**
-`docs/design/v1.md` §2, non-goals: *"Auto-merge. Fugaro never merges."*; the provider
+`docs/design/v1.md` §2, non-goals: *"Auto-merge. Fugaro never merges."* — **amended 2026-11-10 by
+`docs/outer-loop-escalation`: the non-goal now reads "No merge outside the orchestrator's gated
+rule"**; the provider
 interface `internal/gitprov/gitprov.go`'s `Provider` exposes `EnsurePR`, `ApplyReady`,
 `PullRequest`, `Comments` — no merge; the CLI registers no merge command
 (`internal/cli/root.go`). *Consequence:* the spec's opening sentence (*"carries PRs through to

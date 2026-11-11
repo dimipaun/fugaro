@@ -47,7 +47,7 @@ The 0.6.0 guard `config publish --executable-changes` is a CLI check. It binds o
 | Project Owners and Editors | `roles/storage.legacyBucketOwner` through GCS's convenience bindings (`projectOwner:`/`projectEditor:`), plus their project-level roles | GCS default; `internal/gcpfake/gcs.go` `ConvenienceBindings` models it |
 | Project Viewers | the convenience read bindings, which `fugaro init` removes (`infra.RemoveProjectViewers`) | `internal/infra/statebucket.go` |
 
-The bucket has `uniform_bucket_level_access = true` and `public_access_prevention = "enforced"`. It has **no versioning** and no retention policy (`modules/installation/bucket.tf`). The Terraform state is in a separate bucket, where only operators hold `objectAdmin`.
+The bucket has `uniform_bucket_level_access = true` and `public_access_prevention = "enforced"`. It **is versioned** (`modules/installation/bucket.tf:25-27`), which is the managed audit record's own control: D1545 (the ruling of 2026-11-07) makes that record what stands in for the person who would have read the plan, and an unversioned bucket let whoever applied erase it in place. The noncurrent versions the deletion of `runs/`, `cache/`, `locks/`, `tokens/` and `issues/` objects leaves are purged after 7 days (`bucket.tf:85-93`, `var.bucket_lifecycle.noncurrent_days`), so the bucket does not grow for ever, and `fugaro/` — where the record lives — has no such rule. There is no retention policy. The Terraform state is in a separate bucket, where only operators hold `objectAdmin`.
 
 People are made operators or admins by `fugaro init --operator/--admin`, stored in the local config's `terraform.operators` and `terraform.admins`. A new config defaults both to the person running `init` ([gcp-setup.md](../gcp-setup.md), "Setup checks these for you"). So on a one-person installation, which is the case for both of the owner's installations, every operator is also an admin.
 
@@ -366,7 +366,7 @@ An operator's own coding agent with the operator's ADC can also write `fugaro/` 
 
 ## 11. Verified from the code, and not verified (live checklist)
 
-**Verified from the code** (§2): the grants, the object paths and their writers, the absence of launcher writes outside `runs/`, `tokens/` and `issues/`, gocloud's 403 mapping, the guard's missing condition check, and the bucket's uniform access with no versioning or retention.
+**Verified from the code** (§2): the grants, the object paths and their writers, the absence of launcher writes outside `runs/`, `tokens/` and `issues/`, gocloud's 403 mapping, the guard's missing condition check, the bucket's uniform access, and its versioning with the noncurrent-version purge the rules state, and no retention policy.
 
 **Verified live earlier, by analogy:** a prefix condition with `objectUser` allows writes and deletes under the prefix and denies writes, reads and listing elsewhere, for the job account (check 7).
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -16,18 +17,30 @@ import (
 var installedPlugins = pluginwire.DefaultInstalledPlugins
 
 // updateSkillsOutput is `update-skills --json`.
+//
+// Every member keeps its meaning ("A field never changes meaning", CLAUDE.md),
+// and the merge's deletion (D949, U2 of
+// docs/plugin-user-scope/implementation-plan.md) is what that leaves visible:
+// settings is the checkout's own .claude/settings.json; changed is whether this
+// command wrote it, and ref is the tag it pinned it to — neither is set any
+// more, because nothing in the checkout is written, and a member moved onto
+// another question would make a reader outside this binary draw a wrong figure
+// with no error. What the command did to the machine's own install is the
+// step's line and the report below; snippet and disabled are what the deleted
+// merge would have printed and honoured, and nothing sets them either.
 type updateSkillsOutput struct {
-	Checkout bool   `json:"checkout"`           // false outside a checkout: only the snippet
-	Settings string `json:"settings,omitempty"` // the settings file
-	Changed  bool   `json:"changed"`            // written (with --check: not written, would change)
-	Ref      string `json:"ref,omitempty"`      // the tag it pins to
+	Checkout bool   `json:"checkout"`           // false outside a checkout: nothing is read and nothing installed
+	Settings string `json:"settings,omitempty"` // the checkout's settings file
+	Changed  bool   `json:"changed"`            // the settings file was written (with --check: not written, would change); false now that nothing writes one
+	Ref      string `json:"ref,omitempty"`      // the tag the settings file pins to; absent now that nothing pins one
 	Note     string `json:"note,omitempty"`
 	Snippet  string `json:"snippet,omitempty"`
 	Foreign  string `json:"foreign,omitempty"`  // the marketplace repository when it is not dimipaun/fugaro
-	Disabled bool   `json:"disabled,omitempty"` // the repository disables the plugin; left so
+	Disabled bool   `json:"disabled,omitempty"` // the repository disables the plugin
 	Error    string `json:"error,omitempty"`
 	// Notices are what else the settings file says (hooks, permissions, other
-	// plugins...), shown before the file is blessed.
+	// plugins...), shown with --check so the file a pin lives in is read, not
+	// just detected.
 	Notices []string `json:"notices,omitempty"`
 	// NoticesNote says the notices are not exhaustive; set whenever they are shown.
 	NoticesNote string             `json:"notices_note,omitempty"`
@@ -37,45 +50,49 @@ type updateSkillsOutput struct {
 
 func newUpdateSkillsCmd() *cobra.Command {
 	var (
-		check     bool
-		allowFork bool
-		dir       string
-		asJSON    bool
+		check  bool
+		dir    string
+		asJSON bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update-skills [--check] [--dir D] [--json]",
-		Short: "Pin the Fugaro plugin in the repository's .claude/settings.json to this release",
-		Long: `update-skills merges the Fugaro plugin's marketplace and its enablement into the
-checkout's .claude/settings.json, pinned to this binary's release tag (a dev
-build writes no pin). Every other key is kept; a fork's marketplace
-repository is kept and only its ref moves; a file that is not valid JSON is
-never rewritten; a changed file is re-indented to two spaces. A marketplace
-that names another repository than dimipaun/fugaro is reported with a
-warning and left alone unless --allow-fork says it is yours (then only its ref
-moves); a plugin the repository sets to false stays disabled. It shows the diff and writes the file; it never commits:
-review it with git diff. It needs no credentials, no network and no
-Terraform. Outside a checkout it prints the settings to add.
+		Short: "Install or update the Fugaro plugin in your own Claude Code",
+		Long: `update-skills installs the Fugaro plugin in Claude Code at user scope, or updates
+the install it finds there, through the claude CLI on PATH: a fixed set of
+claude plugin commands, never with -y, with the marketplace declared at this
+binary's release tag. It writes nothing in the checkout — the plugin is this
+machine's, and no repository's settings are merged into any more (D949) — and
+it needs no credentials and no Terraform. Without claude on PATH it prints the
+slash commands to type in Claude Code instead. Running Claude Code sessions
+apply the new version after a restart.
 
---check writes nothing: it prints how the pin compares with this binary (and
-with the plugin installed on this machine when Claude Code's record is
-readable) and exits 1 on any warning state (outdated, newer, unpinned,
-foreign, not wired, installed differs); "not installed" and "cannot
-compare" are informational.`,
+--check writes nothing and runs no claude command: it prints how the plugin
+installed on this machine compares with this binary, and the pin a checkout
+that still carries one holds — the merge that wrote those pins is gone, so a
+pin an older fugaro left is read here (and by fugaro doctor's plugin-pin
+check). It exits 1 on any warning state (outdated, newer, unpinned, foreign,
+not wired, installed differs); "not installed" and "cannot compare" are
+informational.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runUpdateSkills(cmd, dir, check, allowFork, asJSON)
+			return runUpdateSkills(cmd, dir, check, asJSON)
 		},
 	}
 	f := cmd.Flags()
-	f.BoolVar(&check, "check", false, "print the state and exit 1 unless it is ok (informational states pass); write nothing")
-	f.BoolVar(&allowFork, "allow-fork", false, "move the ref of a marketplace repository other than dimipaun/fugaro (a fork you host) to this release's tag")
+	f.BoolVar(&check, "check", false, "print the state and exit 1 unless it is ok (informational states pass); write nothing and run no claude command")
 	f.StringVar(&dir, "dir", ".", "a directory in the checkout")
 	f.BoolVar(&asJSON, "json", false, "print machine-readable output")
 	return cmd
 }
 
-func runUpdateSkills(cmd *cobra.Command, dir string, check, allowFork, asJSON bool) error {
+func runUpdateSkills(cmd *cobra.Command, dir string, check, asJSON bool) error {
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
+	// In --json mode the human output goes to stderr, so the document on stdout
+	// stays one JSON object even when claude's own step has something to say.
+	w := io.Writer(out)
+	if asJSON {
+		w = errOut
+	}
 	emit := func(o updateSkillsOutput) error {
 		if !asJSON {
 			return nil
@@ -90,24 +107,19 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, allowFork, asJSON bo
 			fmt.Fprintf(out, format, a...)
 		}
 	}
-	// fail reports a refusal: the message and the snippet on stderr (a JSON
-	// object on stdout in --json), exit 1, the file untouched.
-	fail := func(o updateSkillsOutput, err error, snippet bool) error {
+	// fail reports a refusal: the JSON object on stdout in --json, the message
+	// through the returned error, exit 1.
+	fail := func(o updateSkillsOutput, err error) error {
 		o.Error = err.Error()
-		if snippet {
-			o.Snippet = pluginwire.Snippet(Version)
-		}
-		if !asJSON {
-			if snippet {
-				fmt.Fprintf(errOut, "the file was not changed; fix it, or merge this in by hand:\n\n%s", o.Snippet)
+		if asJSON {
+			if e := emit(o); e != nil {
+				return e
 			}
-		} else if e := emit(o); e != nil {
-			return e
 		}
 		return &ExitError{Code: ExitUserError, Err: err}
 	}
-	// warnFork says it loudly, in every output mode: the file points agents at
-	// someone else's plugin repository.
+	// warnFork says it loudly, in every output mode: the checkout's settings
+	// point agents at someone else's plugin repository.
 	warnFork := func(repo string) {
 		fmt.Fprintf(errOut, "WARNING: the %q marketplace in this repository's settings is %s, not %s. Its skills are not Fugaro's; Claude Code can install that plugin for anyone who trusts the folder. Check it is yours.\n", pluginwire.Marketplace, repo, pluginwire.Repo)
 	}
@@ -116,73 +128,41 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, allowFork, asJSON bo
 	}
 	loc, ok := pluginwire.Locate(dir)
 	if !ok {
-		snippet := pluginwire.Snippet(Version)
-		say("%s is not in a checkout (no .git above it), so there is nothing to update.\nTo wire the plugin by hand, merge this into the repository's .claude/settings.json:\n\n%s", pluginwire.Printable(dir), snippet)
+		say("%s is not in a checkout (no .git above it), so there is no repository to install the plugin from.\n", pluginwire.Printable(dir))
 		if check {
-			return fail(updateSkillsOutput{}, fmt.Errorf("%s is not in a checkout", pluginwire.Printable(dir)), false)
+			return fail(updateSkillsOutput{}, fmt.Errorf("%s is not in a checkout", pluginwire.Printable(dir)))
 		}
-		return emit(updateSkillsOutput{Snippet: snippet})
+		return emit(updateSkillsOutput{})
 	}
+	report := pluginwire.Status(loc.Settings, Version, installedPlugins())
 	if check {
-		r := pluginwire.Status(loc.Settings, Version, installedPlugins())
-		say("%s\n", describeReport(loc.Settings, r))
-		o := updateSkillsOutput{Checkout: true, Settings: loc.Settings, Report: &r, Notices: pluginwire.NoticesFor(loc.Settings)}
-		for _, n := range o.Notices {
-			say("heads-up: %s\n", n)
-		}
-		say("heads-up: %s\n", pluginwire.NoticesCaveat)
+		say("%s\n", describeReport(loc.Settings, report))
+		o := updateSkillsOutput{Checkout: true, Settings: loc.Settings, Report: &report, Notices: pluginwire.NoticesFor(loc.Settings)}
+		say("%s", pluginwire.NoticeText(o.Notices))
 		o.NoticesNote = pluginwire.NoticesCaveat
-		if r.Pin == pluginwire.Foreign {
-			o.Foreign = r.Repo
-			warnFork(r.Repo)
+		if report.Pin == pluginwire.Foreign {
+			o.Foreign = report.Repo
+			warnFork(report.Repo)
 		}
 		if err := emit(o); err != nil {
 			return err
 		}
-		if r.Worst() == pluginwire.SeverityWarning {
-			return &ExitError{Code: ExitUserError, Err: fmt.Errorf("the Fugaro plugin wiring is %s", joinStates(r.States()))}
+		if report.Worst() == pluginwire.SeverityWarning {
+			return &ExitError{Code: ExitUserError, Err: fmt.Errorf("the Fugaro plugin wiring is %s", joinStates(report.States()))}
 		}
 		return nil
 	}
-	ch, err := pluginwire.Plan(loc.Settings, Version, allowFork)
-	var fe *pluginwire.ForeignError
-	var fk *pluginwire.ForkError
-	switch {
-	case errors.Is(err, pluginwire.ErrDev):
-		snippet := pluginwire.Snippet(Version)
-		say("This is a dev build of fugaro, which has no release tag to pin the plugin to, so nothing was written.\nWith a release build this adds to %s:\n\n%s", loc.Settings, snippet)
-		return emit(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Snippet: snippet})
-	case errors.As(err, &fk):
-		warnFork(pluginwire.Printable(fk.Repo))
-		return fail(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Foreign: pluginwire.Printable(fk.Repo)}, err, false)
-	case errors.As(err, &fe):
-		return fail(updateSkillsOutput{Checkout: true, Settings: loc.Settings}, err, true)
-	case pluginwire.IsInvalid(err):
-		return fail(updateSkillsOutput{Checkout: true, Settings: loc.Settings}, err, true)
-	case err != nil:
-		return err
+	// The machine-side half: fugaro upgrade's own plugin step, the same
+	// function the plugin stage runs, which installs or updates the plugin in
+	// the user's own Claude Code at user scope.
+	u := &upgradeCtx{cmd: cmd, w: w, loc: loc}
+	step := pluginStep(cmd.Context(), u)
+	if step.state == stepFailed {
+		return fail(updateSkillsOutput{Checkout: true, Settings: loc.Settings}, errors.New(step.reason))
 	}
-	if ch.Foreign != "" {
-		warnFork(ch.Foreign)
-	}
-	if ch.Note != "" {
-		fmt.Fprintf(errOut, "note: %s\n", ch.Note)
-	}
-	if !ch.Changed {
-		say("%s already wires the Fugaro plugin pinned to %s; nothing to do.\n%s", loc.Settings, ch.Tag, ch.NoticeText())
-	} else {
-		say("%s\n%s%s", loc.Settings, ch.Diff(), ch.NoticeText())
-		if err := ch.Apply(); err != nil {
-			return err
-		}
-		say("Updated %s to pin the Fugaro plugin at %s. Review it with git diff and commit it like any change.\n%s", loc.Settings, ch.Tag, pluginRefresh)
-	}
-	r := pluginwire.Status(loc.Settings, Version, installedPlugins())
-	if r.Pin == pluginwire.Foreign || ch.Disabled {
-		say("%s\n", describeReport(loc.Settings, r))
-	}
-	say("%s", pluginFirstRun)
-	return emit(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Changed: ch.Changed, Ref: ch.Tag, Note: ch.Note, Foreign: ch.Foreign, Disabled: ch.Disabled, Notices: ch.Notices, NoticesNote: pluginwire.NoticesCaveat, Report: &r})
+	say("%s\n", step.reason)
+	report = pluginwire.Status(loc.Settings, Version, installedPlugins())
+	return emit(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Report: &report})
 }
 
 func joinStates(ss []pluginwire.State) string {

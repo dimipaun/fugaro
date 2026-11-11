@@ -563,6 +563,30 @@ schedule the service compares **its own count** against the **member's ledger**,
 disagreement beyond a stated bound is **reported**. The member's gateway reads the headroom and stops
 a run early; it never decides the cap.
 
+**What this task's files are, and the piece they are not.** The eleven files below are the meter and
+its pins, the reconciliation alarm, the headroom's shape and the member's Terraform binding. **The
+service's own calling path is not among them**: `internal/credsvc/forward.go`, where a call the
+service pays for is made, is not one of the eleven, and nothing in that file reserves before the call,
+settles on the response's usage, refuses a call whose settle failed or writes the headroom header. So
+a release that merged W7 alone would carry the cap's whole machinery and enforce none of it: every
+shared-credential call is served unmetered, no member is told what room is left, and the ceiling
+refuses nothing. **The read grants before anything reads through it**: `workspace_access.tf` binds the
+workspace's account to the member's **entire** database (Realtime Database IAM has no path scope), and
+the run that applies it for real at the member's owner's terminal is `fugaro update
+--firebase-project <the member's own Firebase project>` — the Firebase root is the only root that
+carries the module and its stage skips without that flag, so the plain `fugaro update` the join
+handoff prints (`fugaro workspace add`, `internal/cli/workspace.go`) binds nothing, and the wiring
+below has to take that handoff too or every member reads as unreadable to the alarm the day it is
+wired. Its only consumer meanwhile is the reconciliation alarm — whose `budget.ReconcileWorkspace` has
+no non-test caller either, its schedule among the wiring below. The
+wiring is the interface stated above and **no task of this plan owns it** — not
+W6 (the workspace's second deployment and its identity), not W8 (the stop and `fugaro workspace cap`),
+not W9 (the docs) — so it needs **a task of its own** before the cap binds anything, and the W7 pull
+request reports it rather than half-landing it: the reservation's worst case per call, the member a
+call resolved to, the settle on the response's usage with the call refused when that write fails, and
+the header written on an answer that is already going out are behavior, which the fix round after a
+review may not add.
+
 **The basis is the meter, and the ledger keeps its own cap.** The service's reservation-then-settle
 transaction is what the workspace's cap is measured against, so the figure is taken where the money is
 spent rather than reconstructed afterwards — the old rollup basis read the *last good* rollup and
@@ -610,9 +634,16 @@ IAM widening in the set the gate **never** covers (`docs/managed-agent-converge/
 says the gate can only narrow (§2, D1026). So the stage does not run under the
 plan gate's admission: it falls back to its own typed confirmation, which a coding agent's session
 cannot give, and the member's owner runs it at their own terminal — once per member, at the moment
-they join the workspace. That is the design and not a limitation: an IAM binding that widened a
-project's access on the strength of a clean plan is the one thing the gate exists to prevent, and
-this task's binding is exactly that shape.
+they join the workspace. The mechanism is worth stating, because it is one step short of the refusal
+above: the binding is planned by the Firebase root, and that root is planned only by `fugaro update
+--firebase-project`, a flag that shapes the installation rather than converging it as it is
+(`internal/cli/init.go`'s `installationFlags`) — and a shaped run keeps **no gate at all**
+(`initRun.gateable`), so this plan is never handed to the cover in the first place. The refusal above
+is what would answer if a later shape of the grant were ever judged; the typed confirmation is what
+applies it meanwhile, and `TestUpdateFirebaseProjectKeepsItsOwnConfirmationOnAManagedProject` pins
+both halves of that on the run itself. That is the design and not a limitation: an IAM binding that
+widened a project's access on the strength of a clean plan is the one thing the gate exists to
+prevent, and this task's binding is exactly that shape.
 
 **Files (11):** `internal/credsvc/workspace_cap.go`, `internal/credsvc/workspace_cap_test.go`,
 `internal/budget/workspace.go`, `internal/budget/workspace_test.go`,
