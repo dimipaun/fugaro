@@ -24,10 +24,53 @@ type hotfixRepo struct {
 	bump  string // the commit on main that set the plugin to 0.12.1
 }
 
+// notesFile is the file the hotfix fixture's fix changes, numbered lines so
+// that a commit can change one and leave the ones around it as context -- which
+// is what makes the patch-id of a pick worth comparing without the diff's
+// context (scripts/hotfix-commits.sh): main rewords "line four", the fix
+// changes "line six", two lines below it, and the pick onto the branch is then
+// clean with the branch's surrounding lines under it.
+const notesFile = `line one
+line two
+line three
+line four
+line five
+line six
+line seven
+line eight
+line nine
+line ten
+`
+
+// rewriteLine replaces one line of path's content with another, failing the
+// test rather than silently changing nothing.
+func rewriteLine(t *testing.T, path, from, to string) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Replace(string(b), from, to, 1)
+	if content == string(b) {
+		t.Fatalf("rewriting %s: %q is not in it:\n%s", path, from, b)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newHotfixRepo(t *testing.T) *hotfixRepo {
 	t.Helper()
 	r := newReleaseRepo(t)
 	git := func(args ...string) string { return strings.TrimSpace(testutil.Git(t, r.local, args...)) }
+
+	// The file the fix changes, committed before the tag so that it is on the
+	// line's floor as well as on main.
+	if err := os.WriteFile(filepath.Join(r.local, "notes.txt"), []byte(notesFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "--quiet", "-m", "notes: a file with lines to change")
 
 	// The line shipped from main: v0.12.0 tags the seed, and main's plugin is
 	// still the fixture's 0.11.4 there -- the bump is the hotfix's own commit.
@@ -35,12 +78,21 @@ func newHotfixRepo(t *testing.T) *hotfixRepo {
 	git("push", "--quiet", "origin", "refs/tags/v0.12.0")
 	first := git("rev-parse", "v0.12.0^{commit}")
 
+	// main moves on beside the fix before the fix lands, which is the ordinary
+	// shape of a hotfix: the branch is cut from the line's last tag, so the fix
+	// is picked onto a tree where the lines around it are not the ones it was
+	// written against. "line four" is inside the three lines of context the fix's
+	// own diff carries, so a patch-id taken with that context would not be the
+	// fix's on the branch while the change under the trailer still is.
+	rewriteLine(t, filepath.Join(r.local, "notes.txt"), "line four\n", "line four, reworded on main\n")
+	git("add", "-A")
+	git("commit", "--quiet", "-m", "notes: reword a line beside the fix")
+	git("push", "--quiet", "origin", "main")
+
 	// The fix, merged to main first through a PR as usual: what --fix names, and
 	// what the gate's ancestry rule and verify-release.sh's trailer check read
 	// main for.
-	if err := os.WriteFile(filepath.Join(r.local, "fix.txt"), []byte("the fix\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	rewriteLine(t, filepath.Join(r.local, "notes.txt"), "line six\n", "line six, fixed\n")
 	git("add", "-A")
 	git("commit", "--quiet", "-m", "fix: the thing that was wrong")
 	git("push", "--quiet", "origin", "main")
@@ -295,6 +347,42 @@ func TestHotfixRefusesABranchThatIsNotThisLines(t *testing.T) {
 	}
 }
 
+// TestHotfixRefusesAHandResolvedPickBeforeTagging: the rule
+// scripts/verify-release.sh holds the pushed tag to is run on the branch while
+// it is still a branch (scripts/hotfix-commits.sh, one copy for both), so a
+// pick resolved by hand -- the trailer stays, the change under it does not --
+// is refused with no tag created and nothing pushed, rather than after the tag
+// is out, where it cannot be moved and the release is stranded.
+func TestHotfixRefusesAHandResolvedPickBeforeTagging(t *testing.T) {
+	r := newHotfixRepo(t)
+	git := func(args ...string) string { return strings.TrimSpace(testutil.Git(t, r.local, args...)) }
+	// The branch as a resumed run finds it on origin: the fix picked with -x,
+	// with another change amended under the same trailer, and the release's own
+	// text committed on top -- so the pick is the only thing wrong with it.
+	git("checkout", "--quiet", "-b", "release/0.12", "v0.12.0")
+	git("cherry-pick", "-x", r.fix)
+	rewriteLine(t, filepath.Join(r.local, "notes.txt"), "line six, fixed\n", "line six, resolved by hand\n")
+	git("add", "-A")
+	git("commit", "--quiet", "--amend", "--no-edit")
+	git("push", "--quiet", "origin", "release/0.12")
+	git("checkout", "--quiet", "main")
+	commitHotfixText(t, r, "0.12.1")
+	pushed := testutil.Git(t, r.bare, "rev-parse", "release/0.12")
+
+	res := runHotfix(t, r, r.state(t), "0.12.1", "--fix", r.fix)
+	res.requireFailureContaining(t, "whose trailer names "+r.fix)
+	res.requireFailureContaining(t, "no tag was created")
+	if refExists(t, r.bare, "refs/tags/v0.12.1") {
+		t.Error("the refused run pushed the tag")
+	}
+	if after := testutil.Git(t, r.bare, "rev-parse", "release/0.12"); after != pushed {
+		t.Errorf("the refused run pushed the branch: origin has %s, was %s", after, pushed)
+	}
+	if n := worktrees(t, r.local); n != 1 {
+		t.Errorf("the refused run left %d worktrees behind", n-1)
+	}
+}
+
 // TestHotfixRefusesADirtyTree: the same precondition the ordinary release has.
 func TestHotfixRefusesADirtyTree(t *testing.T) {
 	r := newHotfixRepo(t)
@@ -372,8 +460,16 @@ func TestHotfixHappyPath(t *testing.T) {
 	if n := strings.Count(body, "(cherry picked from commit"); n != 2 {
 		t.Errorf("release/0.12 carries %d cherry-picks, want the fix and the bump:\n%s", n, body)
 	}
-	if out := testutil.Git(t, r.bare, "show", "release/0.12:fix.txt"); out != "the fix" {
-		t.Errorf("the fix's content is not on the branch: %q", out)
+	// The fix's own line is on the branch, and the line main reworded beside it
+	// is not: the pick carries the change and nothing else, so the branch holds
+	// the tag's surrounding line, not main's. That is why the patch-id under the
+	// trailer is taken from the changed lines alone.
+	branchNotes := testutil.Git(t, r.bare, "show", "release/0.12:notes.txt")
+	if !strings.Contains(branchNotes, "line six, fixed") {
+		t.Errorf("the fix's content is not on the branch:\n%s", branchNotes)
+	}
+	if !strings.Contains(branchNotes, "line four\n") {
+		t.Errorf("the branch does not carry the line beside the fix as the tag has it:\n%s", branchNotes)
 	}
 	if refExists(t, r.bare, "refs/tags/v0.12.1") {
 		t.Error("the first run tagged the branch: the release's text is not on it yet")

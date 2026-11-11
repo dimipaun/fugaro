@@ -72,6 +72,9 @@ repo_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
 . scripts/retry.sh
 . scripts/versions.sh
+# The rule scripts/verify-release.sh holds a patch tag's own commits to, run in
+# run_hotfix while the branch is still a branch (scripts/hotfix-commits.sh).
+. scripts/hotfix-commits.sh
 
 yes=0
 dry_run=0
@@ -545,6 +548,19 @@ $missing_text"
     text_stop=""
   fi
   tip=$(git -C "$hotfix_scratch/tree" rev-parse HEAD)
+  # The rule scripts/verify-release.sh holds the pushed tag to, run here while
+  # the branch is still a branch: a commit that is neither a clean pick of a
+  # commit on origin/main nor one of the release's own three files is refused
+  # there, after the tag is pushed, where it cannot be moved and the release is
+  # stranded. A branch resumed from origin is where this finds one -- a pick
+  # someone resolved by hand keeps the pick's trailer while carrying a change
+  # main does not have, which its patch-id alone catches (scripts/hotfix-commits.sh
+  # is the one copy of the rule, so this check and that verification agree).
+  if ! commits_err=$(hotfix_commits_check "$tag" "$tip" 2>&1 >/dev/null); then
+    printf '%s\n' "$commits_err" >&2
+    echo "no tag was created: a commit the tag would carry cannot be vouched for, and scripts/verify-release.sh refuses the same commit on the pushed tag, where it can no longer be fixed. Land the change on main as a PR and name it with --fix, or rebuild the branch from the line's last tag (git push origin --delete $branch) and re-run \"$rerun\" (docs/release.md, \"Hotfix releases\")" >&2
+    return 1
+  fi
   if [ "$dry_run" = 1 ]; then
     cat <<EOF
 
