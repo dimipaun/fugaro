@@ -8,18 +8,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/ee/coordinator"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 )
 
@@ -531,50 +530,152 @@ func TestNoAnswerOfThisServerIsCacheable(t *testing.T) {
 	}
 }
 
-// TestNoBinaryLinksTheFrontDoorYet is the guard the open registration endpoint
-// owes: it ships with neither of the two bounds spec.md §8 relies on — no
-// per-source rate limit, and no expiry or sweep behind the registration the
-// endpoint writes — so the exposure is latent only while nothing a binary
-// builds reaches this package. The owner's ruling of 2026-11-07 added the
-// second half of what a task that wires the front door owes: M5 is built
-// dormant, and the paired-device approval M-a asks for is M5b, a task of its
-// own and a hard prerequisite (implementation-plan.md §3). M5b is built, and
-// what it built is the endpoint's half — the approving act as a shape of its
-// own, the spent ID token and the family's age — **while M-a's first
-// requirement is not met**: the act is proved by the ID token and not by a key
-// the device holds, so a page that rendered a flow approves it with the same two
-// posts any holder of a session token can send, and the endpoint cannot tell it
-// from a paired device (spec.md §3, §8; H1's accepted residual risk). So the
-// wiring task owes the bounds, the delivery and a device binding this endpoint
-// does not perform: nothing renders a QR of the flow's binding and no launcher
-// reads the page, and the key that would bind the act to a device is in no task
-// (spec.md §11). A task that wires the front door deliberately deletes this test
-// and carries those with it; until then, a non-test file that names
-// this package fails here rather than turning the exposure reachable in a release
-// nobody re-read the paragraph for.
-func TestNoBinaryLinksTheFrontDoorYet(t *testing.T) {
-	const pkg = "github.com/dimipaun/fugaro/ee/coordinator/mcpauth"
-	root := filepath.Join("..", "..", "..")
-	for _, dir := range []string{"cmd", "internal", "ee"} {
-		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			if strings.Contains(string(data), pkg) {
-				t.Errorf("%s links the MCP front door, which mounts an open registration endpoint with neither a rate limit nor a sweep; a task that wires it carries those two bounds, the delivery of a flow to the paired device — which nothing builds — and the device binding this endpoint cannot perform, since a page that rendered a flow can approve it with a session token, and deletes this guard", path)
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("walking %s: %v", dir, err)
+// TestTheFrontDoorIsServedOnlyWhenEnabled is M12's red step, and it replaces
+// the guard this file used to carry (TestNoBinaryLinksTheFrontDoorYet, deleted
+// by this task): the door is mounted on the service the process runs when, and
+// only when, the installation's own switch says so (D934), and what is asserted
+// here is the difference between the two states at the HTTP surface.
+//
+// The "off" half is what every installation runs today and what this service
+// served before M12: a mux with nothing on it, so every path of the door —
+// both metadata documents, the four endpoints and the MCP endpoint — is a 404,
+// which is a shape a stranger cannot tell from a service that does not exist.
+// The "on" half is the same paths answering as the door: the metadata document
+// as a document naming this installation as the issuer, the MCP endpoint with
+// the 401 that says a token is wanted rather than with the 404 that says
+// nothing is there, and the open registration endpoint as an endpoint.
+//
+// The wiring this drives is coordinator.FrontDoor, which is what the command
+// calls (ee/coordinator/cli/coordinator_serve.go) — the two halves are asserted
+// through it rather than through Mount, because the switch is the thing under
+// test here and Mount is the thing it turns on.
+func TestTheFrontDoorIsServedOnlyWhenEnabled(t *testing.T) {
+	ts := newTestServer(t)
+	ask := func(h http.Handler, method, path string, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
 		}
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	paths := []string{
+		ProtectedResourcePath,
+		AuthorizationServerPath,
+		RegisterPath,
+		AuthorizePath,
+		TokenPath,
+		RevokePath,
+		MCPPath,
+	}
+
+	dormant, err := coordinator.FrontDoor(coordinator.FrontDoorSpec{})
+	if err != nil {
+		t.Fatalf("the front door that was never turned on was refused: %v", err)
+	}
+	for _, path := range paths {
+		if rec := ask(dormant.Handler(), http.MethodGet, path, ""); rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s on a front door that is off answered %d (%s); want 404: an installation with no switch on serves exactly what this service served before M12, and a door that answered anything else would be a door nobody turned on",
+				path, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+	}
+
+	// The same paths, on the front door the switch turns on. The server below
+	// is this package's own — the real one, mounted through FrontDoor exactly
+	// as the process mounts it.
+	serving, err := coordinator.FrontDoor(coordinator.FrontDoorSpec{
+		Enabled:   true,
+		Delivered: true,
+		Door:      ts.Server,
+	})
+	if err != nil {
+		t.Fatalf("an enabled front door with the delivery was refused: %v", err)
+	}
+	rec := ask(serving.Handler(), http.MethodGet, AuthorizationServerPath, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s on an enabled front door answered %d (%s); want the metadata document", AuthorizationServerPath, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	var doc struct {
+		Issuer string `json:"issuer"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("the metadata document is not JSON: %v", err)
+	}
+	if doc.Issuer != testIssuer {
+		t.Errorf("the metadata document names %q as the issuer; want %q: the document is built from the configuration the door was opened with, which is the installation's own URL", doc.Issuer, testIssuer)
+	}
+	// The MCP endpoint is the one path where the two states differ in a way a
+	// client acts on: 401 is "present a token", 404 is "there is no door here
+	// at all", and a door that answered the first while switched off would be
+	// a door that had been switched on.
+	if rec := ask(serving.Handler(), http.MethodPost, MCPPath, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`); rec.Code != http.StatusUnauthorized {
+		t.Errorf("POST %s on an enabled front door answered %d (%s); want 401 with the challenge", MCPPath, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	// And the open registration endpoint is an endpoint: the door that is on
+	// is the whole door, and the bounds M12 carries with it (register.go) are
+	// what make serving this one affordable.
+	if rec := ask(serving.Handler(), http.MethodPost, RegisterPath, `{"redirect_uris":["`+testClientRedirect+`"],"client_name":"an editor"}`); rec.Code != http.StatusCreated {
+		t.Errorf("POST %s on an enabled front door answered %d (%s); want the registration", RegisterPath, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// TestReadToolsServeOnlyTheProjectsRepositories is the second half of what the
+// switch turns on: the registry a front door is handed is the one it serves
+// (WithTools), and the four read tools M8 builds answer for this installation's
+// own repositories and for nothing else in the bucket — one bucket holds every
+// repository somebody launched from this project, and the repository list the
+// wiring reads is FUGARO_COORDINATOR_REPOS, the same list the sweep reconciles.
+//
+// It is here rather than in M8's own file because what it asserts is the
+// wiring's: the tools reach the door through the registry the process hands it
+// and through no other path, and a token's own filter is applied on top of the
+// reach rather than instead of it.
+func TestReadToolsServeOnlyTheProjectsRepositories(t *testing.T) {
+	f := newRunsFixture(t)
+	f.seedRun(testSlug, testRunID, &runstore.Record{Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady}, nil)
+	f.seedRun(testOtherSlug, testOtherRunID, &runstore.Record{Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady}, nil)
+	rt := newResourceServer(t, WithTools(f.reg))
+	token := rt.seededToken(t, testIdentity)
+
+	rec := rt.rpc(t, token, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	answer := wantResult(t, rec)
+	var listed struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(answer.Result, &listed); err != nil {
+		t.Fatalf("tools/list's result is not the shape MCP asks for: %v (%s)", err, answer.Result)
+	}
+	served := make([]string, 0, len(listed.Tools))
+	for _, tool := range listed.Tools {
+		served = append(served, tool.Name)
+	}
+	for _, want := range []string{"get_task_status", "stream_logs", "get_result", "list_tasks"} {
+		if !slices.Contains(served, want) {
+			t.Errorf("tools/list names %v; want the read tool %q among them: the registry the process hands the door is the one it serves, and the wiring registers M8's four tools on it", served, want)
+		}
+	}
+
+	// The call reaches the project's own repositories and nothing else in the
+	// bucket: the other project's run is newer than this one's, so a listing
+	// that leaked it would name it.
+	rec = rt.rpc(t, token, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_tasks","arguments":{}}}`)
+	text, isError := wantToolText(t, wantResult(t, rec))
+	if isError {
+		t.Fatalf("list_tasks answered an error through the front door: %s", text)
+	}
+	var rows []taskStatus
+	if err := json.Unmarshal([]byte(text), &rows); err != nil {
+		t.Fatalf("list_tasks answered text that is not its own JSON: %v (%s)", err, text)
+	}
+	if len(rows) != 1 || rows[0].RunID != testRunID || rows[0].Repo != testSlug {
+		t.Errorf("list_tasks through the front door named %v; want this project's own run %s alone", rows, testRunID)
+	}
+	if strings.Contains(text, testOtherSlug) || strings.Contains(text, testOtherRunID) {
+		t.Errorf("list_tasks answered another project's run: %s", text)
 	}
 }
 
