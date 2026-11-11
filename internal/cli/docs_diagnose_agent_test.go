@@ -144,6 +144,10 @@ func TestDocsDiagnoseAgentStatusAndChecks(t *testing.T) {
 // "not run" would read as a pass nobody earned. The census of the register's
 // highest written section is not read here: it stays 511, since 410 to 412 are
 // below it (docs_check340_test.go pins that number against the register).
+//
+// Their position is not asserted: the three sit after Check 511 and before the
+// forge block, because docs_forge_checks_test.go holds its own five last in the
+// register, so a block written after them is the one thing that pin forbids.
 func TestDocsDiagnoseAgentChecksAreRegistered(t *testing.T) {
 	checklist := readDoc(t, "docs/gcp-live-checklist.md")
 	for _, n := range []string{"410", "411", "412"} {
