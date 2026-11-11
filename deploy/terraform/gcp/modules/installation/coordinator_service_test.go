@@ -222,6 +222,41 @@ func TestCoordinatorServiceIsPublicAndCarriesNoCredential(t *testing.T) {
 	}
 }
 
+// TestTheFrontDoorIsOneInstanceBecauseItsBoundsAreInMemory is the ceiling M12's
+// two per-source bounds depend on, and the review of this branch is why it is
+// pinned here rather than left to the platform's default.
+//
+// The registration endpoint's window and the authorize GET's are counted in the
+// process's own memory (ee/coordinator/mcpauth/register.go, sourceLimiter):
+// nothing in the store holds a source, because a source is an address and the
+// store's whole design is that a reader of it holds nothing about a caller. So
+// the window a source is refused past is one instance's, and the platform's own
+// ceiling — about a hundred instances, scaled by the traffic in front of them —
+// would make the bound a hundred times what the endpoint says: the caller the
+// bound is meant to refuse is the one whose requests buy the instances, and the
+// sweep, which removes a page per run (sweepPage), cannot keep up with writes
+// multiplied by a hundred. One instance is what makes the window the window,
+// and it costs this door nothing a second instance would serve.
+//
+// The mutation this fails on: the scaling block deleted, a max_instance_count
+// of anything but 1, or a min_instance_count above 0 — the last turning the
+// scale-to-zero D196 asks for into an always-on cost.
+func TestTheFrontDoorIsOneInstanceBecauseItsBoundsAreInMemory(t *testing.T) {
+	svc := tfResource(t, tfSource(t, coordinatorTF), "google_cloud_run_v2_service", "coordinator_front_door")
+	block := regexp.MustCompile(`(?s)scaling\s*\{(.*?)\}`).FindStringSubmatch(svc)
+	if block == nil {
+		t.Fatalf("%s: the front door's service has no scaling block, so the platform's own ceiling of about a hundred instances applies and M12's per-source bounds are a hundred windows a minute:\n%s", coordinatorTF, svc)
+	}
+	for _, want := range []struct{ setting, why, re string }{
+		{"max_instance_count = 1", "the platform's own ceiling of about a hundred instances would make each in-memory bound a hundred windows a minute, and the caller the bound refuses is the one whose traffic buys the instances", `(?m)^\s*max_instance_count\s*=\s*1\s*$`},
+		{"min_instance_count = 0", "D196's scale to zero, which a second instance held open would spend for nothing", `(?m)^\s*min_instance_count\s*=\s*0\s*$`},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(block[1]) {
+			t.Errorf("%s: the front door's scaling block does not set %s — %s:\n%s", coordinatorTF, want.setting, want.why, strings.TrimSpace(block[0]))
+		}
+	}
+}
+
 // TestCoordinatorServiceHasItsOwnAccount pins the identity the front door runs
 // as, and the whole of that identity's reach (M4's "its own service account").
 //

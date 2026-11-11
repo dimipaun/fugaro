@@ -342,15 +342,17 @@ MCP client registers before any person has signed in. Openness is bound by four 
   kind; this design keeps the example out of the code, because a vendor's callback URL baked into a
   self-hosted product is a URL that goes stale in somebody else's release cycle.
 
-**The rate limit and the expiry are not built.** The registration endpoint that ships with M5
+**The rate limit and the expiry are not built by M5.** The registration endpoint that ships with M5
 refuses nothing by rate and sweeps nothing: it writes one record per registration, so the audit
 holds, but there is no limiter in front of it, no sweep, and no read-time bound either — a
 registration carries the time it was made and nothing compares that against anything, so a
-registration stays a client for as long as the store holds it. **Both bounds belong to no task of
-the plan**, M5 builds the endpoint and neither bound, and this paragraph names the gap and raises it
-to the owner rather than closing it here ([reconciliation.md](reconciliation.md) §4a). The flow's
-own two records, the pending request and the code, are the pair M5 does bound on read: each refuses
-its record once its TTL has passed, and the sweep all three shapes wait for is what is missing.
+registration stays a client for as long as the store holds it. **Both bounds belonged to no task of
+the plan**, M5 builds the endpoint and neither bound, and this paragraph named the gap and raised it
+to the owner rather than closing it here ([reconciliation.md](reconciliation.md) §4a) — **and the
+owner answered it on 2026-11-11: M12 built both, and the window the authorize GET writes under
+beside them** (§11). The flow's own two records, the pending request and the code, are the pair M5
+does bound on read: each refuses its record once its TTL has passed, and the sweep all three shapes
+wait for is what M12 writes.
 
 **The flow, end to end** (the owner's §"Auth flow", with the places this design changes it — none
 of them the endpoints, all of them what happens at them):
@@ -1010,10 +1012,14 @@ endpoint is reachable by anyone and writes a record, so it is rate-limited and a
 registration is worthless until a person consents (§3). The residual risk the design accepts is
 record growth by an unauthenticated caller, bounded by the rate limit and by registration records
 being expirable; the risk it does not accept is a registration that grants a token by itself.
-**Neither bound is built in M5** (§3, "The rate limit and the expiry are not built"), and no task of
-the plan carries either: until a limiter and a sweep land, the growth this paragraph calls
-accepted-by-bounds is accepted unbounded, and a registration has no lifetime at all — nothing yet
-bounds how many of them a stranger may leave behind.
+**Neither bound is built in M5** (§3, "The rate limit and the expiry are not built by M5"), and no
+task of the plan carried either until the owner wrote M12 on 2026-11-11: until a limiter and a sweep
+landed, the growth this paragraph calls accepted-by-bounds was accepted unbounded, and a
+registration had no lifetime at all — nothing bounded how many of them a stranger might leave
+behind. **M12 landed both, and the authorize GET's own window and the sweep's page beside them**
+(§11) — so this growth is bounded per source and per interval and not in total: the window answers a
+loop from one address, not a flood spread thin over many, and the direction the sweep errs in when
+it cannot keep up is keeping records rather than losing them.
 
 **An agent caller.** The hardest case, and the reason §7 refuses a token without limits. An agent
 cannot be asked to notice that a tool result looks wrong, and it will happily follow an instruction
@@ -1254,12 +1260,27 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   registrations, the pending requests and the codes the open shapes leave behind are removed once
   their own lifetime has passed (`SweepExpired`, `RegistrationTTL`, the sweep triggered by the two
   unauthenticated writes; `TestRegistrationsExpireAndAreSwept`), with the guard deleted and replaced
-  by `TestTheFrontDoorIsServedOnlyWhenEnabled`. **Neither bound is the caller's to switch off, and
-  neither counts a value the caller chooses.** The sweep runs on the values of the request that
-  triggered it without that request's cancellation and under a bound of its own, so a trigger that
-  hangs up cannot spend the interval with a sweep that never ran — the unauthenticated GET has no
-  rate limit and is the cheapest trigger there is (`ee/coordinator/mcpauth/register.go`,
-  `maybeSweep`; `TestTheSweepOutlivesTheCallerThatTriggeredIt`) — and **a source is the allocation an
+  by `TestTheFrontDoorIsServedOnlyWhenEnabled`. **The reviews of this branch found the pair
+  incomplete, and each hole was a bound whose own subject decided it**, which is why the list below
+  is longer than the two: the authorize GET writes one pending request per call and had no window of
+  its own, so one registered client was enough to loop the cheaper of the two open writes and the
+  sweep's page was the only thing between it and the store — **it carries the same per-source window
+  the registration endpoint does**, one whose whole interval is one page of the sweep
+  (`authorizeWindow`, `ee/coordinator/mcpauth/authorize.go`;
+  `TestAFloodOfRequestsFromOneSourceIsBoundedAndSwept`), **and the sweep reads a prefix a page at a
+  time rather than whole** (`sweepPage`, `listUpTo`;
+  `TestTheSweepReadsAPrefixAPageAtATime`), because a run that cannot list its prefix inside its own
+  bound removes nothing at all; **and the front door is pinned to one instance**, since both windows
+  are counted in the process's own memory and the platform's default ceiling of about a hundred
+  instances would have been scaled by the very traffic the window refuses
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf`,
+  `TestTheFrontDoorIsOneInstanceBecauseItsBoundsAreInMemory`). **Neither bound is the caller's to
+  switch off, and neither counts a value the caller chooses.** The sweep runs on the values of the
+  request that triggered it without that request's cancellation and under a bound of its own, so a
+  trigger that hangs up cannot spend the interval with a sweep that never ran — and the trigger that
+  is cheapest to reach, the unauthenticated GET, is now bounded by that same window
+  (`ee/coordinator/mcpauth/register.go`, `maybeSweep`;
+  `TestTheSweepOutlivesTheCallerThatTriggeredIt`) — and **a source is the allocation an
   address is in and not the address**: an IPv6 caller is counted as its `/64`, because the addresses
   inside one allocation are free to rotate through and an address-keyed bound would fill the
   limiter's own map from one host, which refuses every source that is not already in it

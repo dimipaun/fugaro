@@ -455,8 +455,21 @@ resource "google_cloud_run_v2_service" "coordinator_front_door" {
     # installation pays for around the clock. The concurrency and rate limits
     # that bound a caller's cost are the front door's own and are enforced at
     # M9's single launch point, not here.
+    #
+    # **And one instance at most, which is what makes the two per-source bounds
+    # the bounds the docs state.** They are counted in the process's own memory
+    # (register.go, sourceLimiter), so the window a source is refused past is
+    # one instance's — and the platform's own ceiling of about a hundred
+    # instances is scaled by the caller's traffic, which makes the caller under
+    # the bound the one buying the instances: a single source would get a
+    # hundred windows a minute on each of the two open writes, which is a rate
+    # nobody set and no sweep can keep up with. A second instance buys this door
+    # nothing it cannot serve from the first: it answers one person's sign-in
+    # and a small team's tool calls, and a cold start is what a caller pays for
+    # either way.
     scaling {
       min_instance_count = 0
+      max_instance_count = 1
     }
 
     containers {

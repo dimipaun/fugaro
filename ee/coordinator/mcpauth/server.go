@@ -119,10 +119,13 @@ type Server struct {
 	audit    *Auditor
 	now      func() time.Time
 	logger   *slog.Logger
-	// registrations is M12's per-source bound on the open registration
-	// endpoint, and it is a value here rather than a caller's: the bound is
-	// the endpoint's own and there is nothing to configure it from.
-	registrations *registerLimiter
+	// registrations and authorizations are M12's per-source bounds, one for
+	// each of the two unauthenticated writes of the flow — the registration
+	// endpoint and the authorize GET — and they are values here rather than a
+	// caller's: each bound is its endpoint's own and there is nothing to
+	// configure either from.
+	registrations  *sourceLimiter
+	authorizations *sourceLimiter
 	// sweepMu and sweptAt are the sweep's own two fields (maybeSweep): when
 	// the last trigger ran, and the lock that makes one trigger's decision the
 	// one the next sees. The instant is read and written under the lock and
@@ -249,7 +252,9 @@ func NewServer(cfg Config, store Store, verifier *Verifier, opts ...ServerOption
 	}
 	s := &Server{
 		cfg: cfg, store: store, verifier: verifier, tools: NewRegistry(),
-		now: time.Now, logger: slog.Default(), registrations: newRegisterLimiter(),
+		now: time.Now, logger: slog.Default(),
+		registrations:  newSourceLimiter(registerWindow, registerPerWindow),
+		authorizations: newSourceLimiter(authorizeWindow, authorizePerWindow),
 	}
 	for _, o := range opts {
 		o(s)

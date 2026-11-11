@@ -828,3 +828,144 @@ func TestTheSweepOutlivesTheCallerThatTriggeredIt(t *testing.T) {
 		t.Errorf("%s survived the sweep its own trigger ran: a caller that hangs up cancels the request and not the door's housekeeping, or the second bound of this endpoint is one an attacker switches off by disconnecting", requestPrefix+abandoned)
 	}
 }
+
+// TestAFloodOfRequestsFromOneSourceIsBoundedAndSwept is this branch's review
+// finding on the *other* unauthenticated write of the flow, and it is the twin
+// of TestRegistrationIsRateLimitedPerSource: the authorize GET records one
+// pending request per call, one registered client is enough to loop it, and the
+// sweep removes a page an interval apart — so without a bound of its own the
+// store grew at whatever rate the caller's script ran at, and every claim that
+// M12 carries the second bound was a claim about a sweep that could not keep up
+// with writes nothing bounded.
+//
+// **The two facts asserted here are one bound between them**: a source is
+// refused past its window on this endpoint exactly as it is on the
+// registration one, and everything one source may write inside a sweep
+// interval — every window of it, filled to its own bound — is what one sweep
+// run removes. The second is why the window's figure and the sweep's page are
+// one decision (authorizePerWindow, sweepPage): a bound above the page, or a
+// page below the bound, would leave one interval's writes behind for the
+// interval after.
+func TestAFloodOfRequestsFromOneSourceIsBoundedAndSwept(t *testing.T) {
+	ctx := t.Context()
+	now := testNow
+	clock := func() time.Time { return now }
+	ts := newTestServerClocked(t, testConfig(), clock, clock, nil)
+	clientID, _ := ts.register(t, "a client a stranger loops", testClientRedirect)
+	const source = "198.51.100.7"
+	query := authorizeQuery(clientID, testClientRedirect)
+
+	// Every window of one interval, each filled to its own bound and then
+	// refused once more. The clock moves a window at a time and every request
+	// below is made inside the interval, so the sweep the first request
+	// triggers is the only one the server runs while this loop does.
+	windows := int(sweepInterval / authorizeWindow)
+	written := 0
+	for w := range windows {
+		for i := range authorizePerWindow {
+			if rec := ts.authorizeFrom(t, query, source); rec.Code != http.StatusOK {
+				t.Fatalf("request %d of window %d answered %d (%s); want the consent page: this is the traffic one source is allowed, not the traffic it is refused", i+1, w+1, rec.Code, strings.TrimSpace(rec.Body.String()))
+			}
+			written++
+		}
+		rec := ts.authorizeFrom(t, query, source)
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("request %d of window %d answered %d (%s); want 429: the GET writes a record per call, and a source with no window is a store growing at the caller's rate", authorizePerWindow+1, w+1, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+		if got := rec.Header().Get("Retry-After"); got == "" {
+			t.Error("the refusal carries no Retry-After: the bound is a window, and a person whose sign-in was refused has nothing to do about it")
+		}
+		if body := rec.Body.String(); strings.Contains(body, source) {
+			t.Errorf("the refusal quotes the source: a refusal is not a place an address is written down, and one caller's answer is not another's to read")
+		}
+		if w == 0 {
+			// Inside the interval, so this request triggers no sweep of its
+			// own: what it shows is that the bound is one source's and not
+			// everybody's, since a global bound would let one address stop
+			// every other person's sign-in.
+			if other := ts.authorizeFrom(t, query, "192.0.2.44"); other.Code != http.StatusOK {
+				t.Errorf("another source answered %d (%s) while a different source was past its window; want the consent page", other.Code, strings.TrimSpace(other.Body.String()))
+			}
+			written++
+		}
+		now = now.Add(authorizeWindow)
+	}
+
+	// What one source may write in an interval, plus the one request another
+	// source made, and what one sweep run removes: the same page, because the
+	// window's figure was chosen so that it is.
+	now = now.Add(RequestTTL + time.Minute)
+	swept, err := ts.store.SweepExpired(ctx)
+	if err != nil {
+		t.Fatalf("SweepExpired: %v", err)
+	}
+	if swept.Requests != written {
+		t.Errorf("one sweep run removed %d requests; want all %d: one source's whole interval is inside one page (%d), and a page the sweep cannot cover is an interval's writes outliving the interval", swept.Requests, written, sweepPage)
+	}
+	if written > sweepPage {
+		t.Errorf("the flood wrote %d records in one interval; want at most one page (%d): past the page the sweep falls behind by a page each interval, and the prefix grows without end", written, sweepPage)
+	}
+	for key := range ts.store.objects(t) {
+		if strings.HasPrefix(key, requestPrefix) {
+			t.Errorf("the sweep left %s: every record here passed its own moment before the run, and what a bound admits is what the sweep has to remove", key)
+		}
+	}
+}
+
+// TestTheSweepReadsAPrefixAPageAtATime is the other half of the same finding:
+// the sweep's own cost. A prefix is read a page at a time and never whole
+// (sweepPage), which is what keeps a run inside its own bound once a prefix has
+// grown past one page — and a run that does not finish inside that bound
+// removes nothing at all, so a prefix nobody can read whole would be a prefix
+// the sweep never touches again.
+//
+// **Resuming is what the deletions are.** There is no cursor and no state: a
+// run removes what its page holds, the records that are gone have left the
+// list, and the next run's page is therefore the records after them — while a
+// page of records whose moment has not passed yet is a page the interval after
+// that removes, which is the direction this sweep errs in everywhere else.
+func TestTheSweepReadsAPrefixAPageAtATime(t *testing.T) {
+	ctx := t.Context()
+	now := testNow
+	fs := newFakeStoreOver(t, func() time.Time { return now }, nil)
+	store := fs.Store
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	total := sweepPage + 3
+	for i := range total {
+		must(store.PutRequest(ctx, Request{
+			ID:        fmt.Sprintf("a-flow-a-stranger-abandoned-%04d", i),
+			ExpiresAt: now.Add(-time.Minute),
+		}))
+	}
+	const live = "a-flow-waiting-for-its-consent"
+	must(store.PutRequest(ctx, Request{ID: live, ExpiresAt: now.Add(time.Minute)}))
+
+	first, err := store.SweepExpired(ctx)
+	must(err)
+	if first.Requests != sweepPage {
+		t.Errorf("the first run removed %d of %d expired requests; want exactly one page (%d): a run reads a page and deletes what is in it, or the run's cost is the prefix's and a prefix past one page never finishes a run at all", first.Requests, total, sweepPage)
+	}
+	second, err := store.SweepExpired(ctx)
+	must(err)
+	if second.Requests != total-sweepPage {
+		t.Errorf("the second run removed %d requests; want the %d the first page did not hold: the deletion is the cursor, so the next run starts where the last one stopped", second.Requests, total-sweepPage)
+	}
+	third, err := store.SweepExpired(ctx)
+	must(err)
+	if third != (Swept{}) {
+		t.Errorf("the third run removed %+v; want nothing: what is left is one flow whose moment has not passed", third)
+	}
+	held := fs.objects(t)
+	if _, ok := held[requestPrefix+live]; !ok {
+		t.Errorf("the run that removed the last of the expired records took %s with it: a page is a page of the prefix, and the records on it are removed by their own moment and not by their position", requestPrefix+live)
+	}
+	if len(held) != 1 {
+		t.Errorf("the store holds %d records after three runs; want the one live flow", len(held))
+	}
+}

@@ -50,11 +50,21 @@ import (
 //
 // **And the endpoint is bounded twice, which is what spec.md §8 asks of an open
 // registration endpoint** (M12, reconciliation.md §4a): a source is limited in
-// how many registrations it may make (registerLimiter), and every record the
+// how many registrations it may make (sourceLimiter), and every record the
 // endpoint writes has a lifetime the store reaches by prefix whether or not
 // anybody ever asks for it again (RegistrationTTL, SweepExpired below). The two
 // are one decision and not two features: what makes openness affordable is that
 // neither a single source nor a single record can be used to fill the store.
+//
+// **The other unauthenticated write of the flow carries the same pair**, and
+// the review of this branch is why it does: the authorize GET writes one
+// pending request per call and needed only one registered client to be looped,
+// so a sweep with a fixed budget per interval could not keep up with writes
+// nothing bounded — and the sweep's own page is sized against that window
+// (authorizeWindow, sweepPage). What holds for the registration endpoint holds
+// for it: a bound on what one source may write per interval, and a sweep that
+// removes what is admitted inside the interval after it, are the same two facts
+// whichever of the two doors the traffic arrives at.
 
 const (
 	// maxClientNameBytes bounds the name a client gives itself. The name is a
@@ -104,8 +114,9 @@ type registrationResponse struct {
 	Scope                   string   `json:"scope"`
 }
 
-// The per-source bound spec.md §8 asks for (M12). Its figures are the shape and
-// the owner's to set, like every other lifetime and ceiling in this package.
+// The per-source bounds spec.md §8 asks for (M12), one for each of the two
+// unauthenticated writes of the flow. Their figures are the shape and the
+// owner's to set, like every other lifetime and ceiling in this package.
 const (
 	// registerWindow is the period one source's registrations are counted
 	// over, and registerPerWindow how many of them are admitted in it. Ten a
@@ -114,18 +125,33 @@ const (
 	// fills the store at a rate the sweep below clears.
 	registerWindow    = time.Minute
 	registerPerWindow = 10
-	// maxRegisterSources bounds the limiter's own map. A limiter that grew
-	// one entry per source would be a record in memory that a stranger
-	// chooses the size of, which is the same class of unbounded write the
-	// limit exists to refuse — and a source cannot choose how many entries it
-	// holds: the value it may send is the one the platform's front end
-	// overwrites or appends to, and the key is that address — or, for IPv6,
-	// the one /64 an allocation gives it, however many addresses in it the
-	// caller rotates through (registerSource, sourceKey).
-	maxRegisterSources = 4096
+	// authorizeWindow is the same period on the GET that records a pending
+	// request, and authorizePerWindow how many of those one source is admitted
+	// in it. Thirty a minute is a person signing in — with a retry, a second
+	// tab, a browser that re-requests — by a wide margin, and it is the figure
+	// the sweep's own page is sized against: thirty a minute for one interval
+	// is four hundred and fifty records, which is less than one page of the
+	// sweep (sweepPage), so what one source may write in an interval is what
+	// one sweep run removes. A shared address pays for this bound the way it
+	// pays for the registration endpoint's, and the direction of that cost is
+	// the fail-safe one: a person at a busy address waits a moment, where an
+	// unbounded loop leaves the store to somebody else's script.
+	authorizeWindow    = time.Minute
+	authorizePerWindow = 30
+	// maxSources bounds each limiter's own map. A limiter that grew one entry
+	// per source would be a record in memory that a stranger chooses the size
+	// of, which is the same class of unbounded write the limit exists to
+	// refuse — and a source cannot choose how many entries it holds: the value
+	// it may send is the one the platform's front end overwrites or appends
+	// to, and the key is that address — or, for IPv6, the one /64 an
+	// allocation gives it, however many addresses in it the caller rotates
+	// through (registerSource, sourceKey).
+	maxSources = 4096
 )
 
-// registerLimiter is one counting window per source, in memory.
+// sourceLimiter is one counting window per source, in memory, and it is the
+// shape both unauthenticated writes of the flow are bounded by: the
+// registration POST (registerWindow) and the authorize GET (authorizeWindow).
 //
 // **In memory and not in the store, and the difference is a decision.** A
 // bound that survives a restart would have to be a record per source in the
@@ -133,67 +159,74 @@ const (
 // cover: a source is an IP address, it is personal data the moment it is
 // written down, and the bucket's whole design is that a reader of it holds
 // nothing about a caller. What is lost by keeping it in memory is a restart's
-// worth of counting, which an attacker can only reach by making the door
-// restart — and a door that is restarting is not registering clients.
+// worth of counting — and, for the same reason, the count is one *instance's*:
+// the front door is capped at a single instance, which is what makes this
+// window the window the docs state (coordinator.tf), because with the
+// platform's own ceiling an attacker's traffic would buy it an instance per
+// window. What it can reach by making the door restart is a fresh window for
+// itself, and a door that is restarting is not serving clients.
 //
 // The window is per source and not global on purpose: a global bound would let
-// one source refuse everybody else's registration, which is a denial of
-// service with this door's own help.
-type registerLimiter struct {
-	mu   sync.Mutex
-	seen map[string]registerWindowState
+// one source refuse everybody else's write, which is a denial of service with
+// this door's own help.
+type sourceLimiter struct {
+	window    time.Duration
+	perWindow int
+	mu        sync.Mutex
+	seen      map[string]sourceWindowState
 }
 
-type registerWindowState struct {
+type sourceWindowState struct {
 	start time.Time
 	count int
 }
 
-func newRegisterLimiter() *registerLimiter {
-	return &registerLimiter{seen: map[string]registerWindowState{}}
+func newSourceLimiter(window time.Duration, perWindow int) *sourceLimiter {
+	return &sourceLimiter{window: window, perWindow: perWindow, seen: map[string]sourceWindowState{}}
 }
 
-// allow reports whether one more registration from source is admitted at now,
-// and counts it when it is. A source the map has never seen starts its window
-// here; a window that has run out starts again.
+// allow reports whether one more write from source is admitted at now, and
+// counts it when it is. A source the map has never seen starts its window here;
+// a window that has run out starts again.
 //
 // A map that is full of live windows refuses the new source rather than
-// evicting one of them: the entries are held for at most a minute each, the
-// refusal is temporary, and dropping a live entry to make room would be
-// handing a caller the ability to reset somebody else's window — which is
-// exactly the denial of service the per-source shape is chosen to avoid.
-func (l *registerLimiter) allow(source string, now time.Time) bool {
+// evicting one of them: the entries are held for one window each, the refusal
+// is temporary, and dropping a live entry to make room would be handing a
+// caller the ability to reset somebody else's window — which is exactly the
+// denial of service the per-source shape is chosen to avoid.
+func (l *sourceLimiter) allow(source string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if w, ok := l.seen[source]; ok && now.Sub(w.start) < registerWindow {
-		if w.count >= registerPerWindow {
+	if w, ok := l.seen[source]; ok && now.Sub(w.start) < l.window {
+		if w.count >= l.perWindow {
 			return false
 		}
 		w.count++
 		l.seen[source] = w
 		return true
 	}
-	if len(l.seen) >= maxRegisterSources {
+	if len(l.seen) >= maxSources {
 		l.evict(now)
-		if len(l.seen) >= maxRegisterSources {
+		if len(l.seen) >= maxSources {
 			return false
 		}
 	}
-	l.seen[source] = registerWindowState{start: now, count: 1}
+	l.seen[source] = sourceWindowState{start: now, count: 1}
 	return true
 }
 
 // evict drops the windows that have run out, which is the only eviction that
 // can never hand a caller a reset: a source with a live window keeps it.
-func (l *registerLimiter) evict(now time.Time) {
+func (l *sourceLimiter) evict(now time.Time) {
 	for source, w := range l.seen {
-		if now.Sub(w.start) >= registerWindow {
+		if now.Sub(w.start) >= l.window {
 			delete(l.seen, source)
 		}
 	}
 }
 
-// registerSource is which source one registration is counted against.
+// registerSource is which source one write of the flow is counted against, on
+// either of the two endpoints that have a bound (register.go, authorize.go).
 //
 // **It is the rightmost entry of X-Forwarded-For, or the peer address when
 // there is no header** — and the choice between the two ends of that header is
@@ -518,6 +551,28 @@ type Swept struct {
 // whichever write arrived first".
 const sweepInterval = 15 * time.Minute
 
+// sweepPage is how many records one sweep run examines in each prefix, and it
+// is the second half of what makes the sweep keep up (the first being the
+// windows above).
+//
+// **A prefix is read a page at a time and never whole.** The listing and the
+// per-record reads and deletes are what a run costs, so a prefix of any size
+// costs at most one page of them — which is what keeps a run inside
+// sweepTimeout once a prefix has grown, and a run that does not finish inside
+// its bound removes nothing at all. The page is also a page the *next* run
+// resumes from without a cursor: what a run removed has left the list, so the
+// next run's page is the records after it — and a page whose records are all
+// live is a page that does not move until they are not, which is the same
+// direction this sweep errs in everywhere else: the cost of a page that
+// examines nothing is one page per interval, and the cost of the records behind
+// it is their own lifetime.
+//
+// It is bigger than what one source may write in one interval on either open
+// endpoint, which is the figure that matters: thirty authorize requests a
+// minute for one interval is four hundred and fifty records (authorizeWindow),
+// so the writes the window admits are the writes one run removes.
+const sweepPage = 500
+
 // sweepTimeout bounds a sweep (maybeSweep), which runs on a context no caller
 // can cancel and so needs a bound of its own. It is the order
 // ee/coordinator/sweep.go's finalWriteGrace and auditedCall's auditEntryGrace
@@ -610,7 +665,7 @@ func (r records) SweepExpired(ctx context.Context) (Swept, error) {
 		return swept, err
 	}
 	now := r.clock()
-	keys, err := r.objs.list(ctx, clientPrefix)
+	keys, err := r.objs.listUpTo(ctx, clientPrefix, sweepPage)
 	if err != nil {
 		return swept, err
 	}
@@ -714,7 +769,7 @@ func (r records) families(ctx context.Context) (map[string]bool, map[string]Fami
 // is left: the marker of a record written before this field existed decodes
 // with the zero time, and the sweep is not the place to guess.
 func (r records) sweepSingleUse[T expiring](ctx context.Context, prefix string, now time.Time, families map[string]Family) (int, error) {
-	keys, err := r.objs.list(ctx, prefix)
+	keys, err := r.objs.listUpTo(ctx, prefix, sweepPage)
 	if err != nil {
 		return 0, err
 	}

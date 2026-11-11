@@ -733,9 +733,9 @@ kept while the family it names is in the store and inside both of that family's 
 other two holes either bound had**, and both were the same shape — a bound that its own subject
 decides. The sweep ran inside the request that triggered it and on that request's own context, so a
 trigger that disconnected cancelled the sweep *and* spent the interval, and the cheapest trigger of
-all is the unauthenticated GET, which has no rate limit: a caller polling it could have kept the
-sweep from ever running. It now runs on the trigger's values without its cancellation and under a
-bound of its own (`maybeSweep`; `TestTheSweepOutlivesTheCallerThatTriggeredIt`). And a source was the
+all was the unauthenticated GET, which had no rate limit of its own: a caller polling it could have
+kept the sweep from ever running. It now runs on the trigger's values without its cancellation and
+under a bound of its own (`maybeSweep`; `TestTheSweepOutlivesTheCallerThatTriggeredIt`). And a source was the
 address itself, which one caller holding a `/64` may take any of for free: ten registrations a
 minute per address is a map reached in seconds, and a limiter whose map is full refuses the source
 that is not in it — the global denial of service the per-source shape exists to avoid, offered by the
@@ -751,6 +751,39 @@ writes that entry (D934), and a build without M12b's device delivery refuses to 
 the bounds**: the reading of the installation's published state (`ee/coordinator/mcpauth/roster.go`,
 `TestTheRosterIsReadFromThePublishedState`, `TestOnlyExactUserEntriesAdmit`) and the wiring that
 serves M8's four read tools (`TestReadToolsServeOnlyTheProjectsRepositories`).
+
+**The later review of this branch found the pair's own two holes, and neither was a bound's subject
+deciding it — both were a bound missing where the writes were.** **The authorize GET is the second
+unauthenticated write of the flow and had no window of its own**: it records one pending request per
+call, one registered client is enough to loop it, and the only thing between that loop and the store
+was the sweep, which runs at most once an interval, stops after `sweepTimeout`, and read and deleted
+one object at a time — so a flood wrote tens of thousands of records where one run removed a few
+hundred, and once the prefix had grown past what the run could list inside its own bound every run
+failed and removed nothing. Every claim this section and spec.md §11 make about the second bound was
+then a claim about a sweep that could not keep up with writes nothing bounded. **The GET now carries
+the same per-source window the registration endpoint does** (`authorizeWindow`,
+`authorizePerWindow`; `ee/coordinator/mcpauth/authorize.go`;
+`TestAFloodOfRequestsFromOneSourceIsBoundedAndSwept`), and the window's figure and the sweep's page
+are one decision: what one source may write in one interval — every window of it, filled to its own
+bound — is what one sweep run removes (`sweepPage`). **And the sweep reads a prefix a page at a time
+rather than whole** (`objects.listUpTo`, `sweepPage`; `TestTheSweepReadsAPrefixAPageAtATime`), so a
+run's cost is its page's and not the prefix's, and resuming needs no cursor because the deletion is
+the cursor: what a run removed has left the list, and the next run's page is the records after it.
+**What the page is not is a bound on a flood spread over sources, and what it is not is complete in
+one run**: a page whose records are all live does not move until they are not, so a prefix growing
+faster than a page per interval outgrows the sweep however the page is chosen, and a source's window
+bounds one source and not many. What the sweep still reads whole is the family prefix, whose
+completeness two of its judgements need (a registration is kept while a family names it, and a spent
+code's marker while its family is revocable). **The other finding was
+the same pair seen from the platform**: each window is counted in the process's own memory — one
+instance's worth of counting, which `register.go` says and this section's "per-source bound" now
+says with it — and the front door's scaling block set no ceiling, so Cloud Run's own default of
+about a hundred instances, scaled by the caller's traffic, would have made each bound a hundred
+windows a minute. **The front door is now pinned to one instance**
+(`deploy/terraform/gcp/modules/installation/coordinator.tf`, the scaling block;
+`TestTheFrontDoorIsOneInstanceBecauseItsBoundsAreInMemory`), which costs this door nothing a second
+instance would serve, because the door holds no per-caller state a second instance would have to
+share: what one instance holds is the limiter's map and the sweep's clock.
 
 ### The owner's ruling of 2026-11-07: M5b, and the licence table
 

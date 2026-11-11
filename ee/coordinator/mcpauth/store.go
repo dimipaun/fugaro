@@ -61,11 +61,16 @@ const (
 	//
 	// Both are also written before a person has proved anything: the request
 	// is written by the unauthenticated GET, so a stranger with a loop leaves
-	// one behind per iteration until its TTL passes. The TTL is a bound on
-	// what the record is read as, and M12's sweep is the bound on what is
-	// stored (register.go, SweepExpired): an expired record is refused by the
-	// read that judges it and removed by the sweep, so a loop leaves nothing
-	// behind that outlives the sweep's own interval.
+	// one behind per iteration until its TTL passes. What bounds that is three
+	// things and not one, because a loop is bounded by rate and a store is
+	// bounded by housekeeping, and neither works alone (M12, register.go): the
+	// write is bounded per source (authorizeWindow, registerWindow), the TTL
+	// is what the record is *read* as — an expired record is refused by the
+	// read that judges it — and the sweep removes what the window admitted
+	// (SweepExpired), a page per run, so what a loop can put here is what the
+	// interval after it takes away. A sweep that outran no write and a write
+	// no sweep could keep up with are the same failure seen from two sides,
+	// which is what the review of this branch found on the GET.
 	requestPrefix = PathPrefix + "requests/"
 	codePrefix    = PathPrefix + "codes/"
 )
@@ -566,6 +571,12 @@ type objects interface {
 	replace(ctx context.Context, key string, data []byte, gen int64) (newGen int64, err error)
 	delete(ctx context.Context, key string) error
 	list(ctx context.Context, prefix string) (keys []string, err error)
+	// listUpTo is the first limit keys under one prefix, which is how the
+	// sweep reads a prefix it cannot afford to read whole (sweepPage): the
+	// cost of a sweep run has to be a page's and not the prefix's, or a
+	// prefix that has grown past what one run can list makes every run
+	// exceed its own bound and remove nothing.
+	listUpTo(ctx context.Context, prefix string, limit int) (keys []string, err error)
 }
 
 func newRecords(objs objects) Store { return records{objs: objs} }
