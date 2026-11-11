@@ -40,6 +40,7 @@ Subcommands:
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
+- `fugaro estimate` -- Reprice one run's recorded tokens on another model
 - `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
@@ -2184,6 +2185,59 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
 | `--strict` | bool | `false` | no | fail on a stale, unpinned, foreign or unwired plugin (CI mode) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro estimate`
+
+Reprice one run's recorded tokens on another model
+
+Reprice one run on another model: the token counts the run recorded, priced
+at the named model's list rates. Nothing is run and nothing is written.
+
+The figure is an ESTIMATE and not the run's bill: it reprices the recorded
+tokens and nothing else, so what a repricing cannot reproduce is left out.
+A call that passed a long-context tier was priced per call, web searches are
+priced apart from the tokens, and a charge settled from a reservation, one
+recorded as unreconciled and a call whose usage could not be read are not in
+the counts at all. The estimate assumes the run would have taken the same
+cache ratio.
+
+The run is named with --run, or found the way `runs ls --pr` finds one: --pr N
+over one repository (--repo, or the local config's only one) and the last
+90d unless --since says otherwise. A pull request with several runs is not
+one figure: they are listed, and one is named with --run.
+
+The model is a row of the price table this project prices runs from -- the
+built-in catalog, with the owner's model_prices over it -- named by its exact
+ID or one of that row's aliases: no prefixes, and no guess at what a nickname
+meant. A model the table has no row for is refused with the IDs it has. The
+date of the table the figure was priced from is printed beside it, and a
+table past its own check window warns.
+
+A run whose record carries no per-model token counts -- one that never
+finalized, or one that finalized before this binary recorded them -- is
+refused: there is nothing to reprice, and no total is estimated in its place.
+
+Usage: `fugaro estimate`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for estimate |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--model` | string | "" | no | the model to price the run's tokens at (a price table model ID) |
+| `--pr` | int | `0` | no | the pull request whose run to reprice (needs one repository) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository a --pr lookup reads (owner/name, or a path inside its checkout) |
+| `--run` | string | "" | no | the run to reprice (<run-id>, <slug>/<run-id>, or an ending) |
+| `--since` | string | `90d` | no | with --pr, only runs started within this long (90d, 36h, 90m; 0 for all) |
 
 Subcommands:
 
