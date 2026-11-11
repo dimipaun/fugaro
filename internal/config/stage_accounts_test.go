@@ -82,7 +82,12 @@ func TestCheckStageAccountMixIsTheB0Ruling(t *testing.T) {
 		{name: "oauth names one account", auth: "oauth", stages: map[string]string{"review": "acme-overflow"}},
 		{name: "oauth names none", auth: "oauth", stages: nil},
 		// "Never under another auth": neither vertex nor cascade reaches a Claude
-		// OAuth credential, so an account there could never be used.
+		// OAuth credential, so an account there could never be used. Under
+		// cascade the readers of the machine's own keys drop the operator's
+		// project-wide accounts before asking this function
+		// (CascadeSkippedStageAccounts), so a cascade row here is a *declared*
+		// account of the run's own and not the state a cascade repository
+		// usually reaches.
 		{name: "vertex refused", auth: "vertex", stages: map[string]string{"review": "acme-overflow"},
 			want: [][]string{{"stages.review.claude_account", "this run's is vertex"}}},
 		{name: "cascade refused", auth: "cascade", stages: map[string]string{"review": "acme-overflow"},
@@ -115,6 +120,47 @@ func TestCheckStageAccountMixIsTheB0Ruling(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCascadeSkippedStageAccountsIsTheCascadeExemption is the rule Check 191
+// asked for: the account-choice keys are the *operator's* project-wide default
+// for the stages they name, so a cascade repository of the same project — the
+// one auth whose credential comes from the credentials service's own tiers —
+// is not refused for keys it never wrote. Every other auth keeps the map it
+// passed, so the refusal under vertex is the caller's own.
+func TestCascadeSkippedStageAccountsIsTheCascadeExemption(t *testing.T) {
+	deklared := map[string]string{"review": "acme-overflow", "adversarial": "acme-personal"}
+	for _, auth := range []string{"api-key", "oauth", "vertex", ""} {
+		got, note := CascadeSkippedStageAccounts(auth, deklared)
+		if note != "" {
+			t.Errorf("auth %q: note = %q, want none", auth, note)
+		}
+		if len(got) != len(deklared) || got["review"] != "acme-overflow" || got["adversarial"] != "acme-personal" {
+			t.Errorf("auth %q: stages = %v, want the caller's own map", auth, got)
+		}
+	}
+	// A project that names no stage account says nothing: the note is about
+	// keys the operator wrote, and a cascade repository of a project without
+	// them must not be told about a rule it never met.
+	for _, none := range []map[string]string{nil, {}, {"review": ""}} {
+		got, note := CascadeSkippedStageAccounts(AuthCascade, none)
+		if note != "" {
+			t.Errorf("stages %v: note = %q, want none", none, note)
+		}
+		if len(got) != len(none) {
+			t.Errorf("stages %v: got %v, want the caller's own map", none, got)
+		}
+	}
+	// Under cascade every declared stage is skipped, sorted, and the sentence
+	// is the one the launch and `fugaro validate` print.
+	got, note := CascadeSkippedStageAccounts(AuthCascade, deklared)
+	if len(got) != 0 {
+		t.Errorf("cascade stages = %v, want none: no account of the project's reaches a cascade run", got)
+	}
+	want := "project stage accounts do not apply to a cascade repository: adversarial, review skipped"
+	if note != want {
+		t.Errorf("note = %q, want %q", note, want)
 	}
 }
 

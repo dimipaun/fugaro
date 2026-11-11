@@ -259,7 +259,7 @@ type run struct {
 	// fugaro.yaml during the run changes neither.
 	spend  Spend
 	policy policy.Effective
-	// govLayers are the three layers the policy merge consumed, kept as they
+	// govLayers are the four layers the policy merge consumed, kept as they
 	// were handed to it: the effective policy cannot say which of them asked
 	// for a governance key, and a build whose hook ignores governance resolves
 	// none of them, so the layers themselves are what "somebody wrote this"

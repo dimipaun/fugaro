@@ -518,10 +518,17 @@ func firstOf(q url.Values, names ...string) string {
 	return ""
 }
 
-// requestedScopes reads the scope parameter against D927's closed vocabulary,
-// and answers the whole vocabulary when the client asked for none: an
-// authorization request with no scope asks for the default, and the default
-// here is what the front door mints.
+// requestedScopes reads the scope parameter against the closed vocabulary, and
+// answers DefaultScopes when the client asked for none: an authorization
+// request with no scope asks for the default, and the default here is what the
+// front door mints.
+//
+// The default is DefaultScopes and not the vocabulary (R1). The two were one
+// list while the vocabulary was the task pair; with the state pair in it, a
+// default read off the vocabulary would hand every sign-in that named no scope
+// the scope that writes the orchestrator's state — which is D1227's own reason
+// for the split, read one step further: a `tasks:write` token must not silently
+// become a state editor, and neither must a token that asked for nothing.
 //
 // A scope outside the vocabulary is refused and named rather than dropped. A
 // server that ignored one would leave its holder believing it holds a
@@ -529,7 +536,7 @@ func firstOf(q url.Values, names ...string) string {
 func requestedScopes(raw string) ([]string, error) {
 	fields := strings.Fields(raw)
 	if len(fields) == 0 {
-		return slices.Clone(ScopeVocabulary), nil
+		return slices.Clone(DefaultScopes), nil
 	}
 	out := make([]string, 0, len(fields))
 	for _, s := range fields {
