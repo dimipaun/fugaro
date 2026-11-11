@@ -14,8 +14,8 @@ D2034 an Escalation section in the one digest; D2035 rung 0 is a cloud rebase ru
 R4; D2037 Critical and non-Routine wait for a person; **D2041 the daemon may ready a draft and merge it (not the
 recommendation)**; D2042 an item's approval covers its ladder runs. D2046 (default off for `ready_drafts`) awaits confirmation. Resolutions D2038-D2040 and D2043-D2045 stand unless overturned at review.
 
-External prerequisites (not tasks here): O0-O4 and O6 of `docs/stateless-orchestrator` are merged; **O7, O8 and O14** are not
-(`docs/status.md`: 10 of 19), and this plan's R3/R4 executor (E10b) owns the merge and the split, so O14 is **re-scoped to read
+External prerequisites (not tasks here): O0-O4 and O6 of `docs/stateless-orchestrator` are merged; **O8 and O14** are not
+(`docs/status.md`: 10 of 19; O7 is merged), and this plan's R3/R4 executor (E10b) owns the merge and the split, so O14 is **re-scoped to read
 the ladder** when it is approved (E0 records that); the runner filling `TriageEntry.Key` (the field exists, #2215) is needed by
 E9; the daily digest of `docs/periodic-reviews` (R7-R12, not built) is needed by E12.
 
@@ -42,21 +42,21 @@ Inputs and failure modes the spec implies and no task would otherwise test; each
 
 | # | Constraint | Pinned by |
 | --- | --- | --- |
-| G1 | The merge judge can never cause a merge, and an absent verdict is a veto: a judge run that fails, times out, runs out of budget or returns malformed output blocks the merge (D2044); a diff containing instructions to merge changes nothing. | E6, E10b, Check 541 |
+| G1 | The merge judge can never cause a merge, and an absent verdict is a veto: a judge run that fails, times out, runs out of budget or returns malformed output blocks the merge (D2044). It can be talked out of a veto by a hostile diff, so the deterministic gate is the only fence and the judge is never part of it. | E6, E10b, Checks 540, 541 |
 | G2 | One head SHA end to end: the findings, path set, CI read (`Checks(number, sha)`), `MarkReady` and `Merge` all carry the SHA that was reviewed or judged; each re-reads the head and refuses on a mismatch; a provider with no expected-head precondition on merge refuses to merge (F24). | E8, E10b |
 | G3 | Thresholds, `cost_ceiling` and `ready_drafts` are never settable by a repository file or the project layer (loosening authority); they are local-only. Grades are the one exception: the project layer defines them and a repository file cannot. | E2, E3 |
-| G4 | Each rung transition is idempotent across a daemon crash (audit id `<subject>:<transition>`) and bounded: at most one R2 attempt, one R0 per head SHA, R4 never relaunches the same spec. | E7, E10a |
+| G4 | Each rung transition is idempotent across a daemon crash (audit id `<subject>:<transition>`) and bounded: at most one R2 attempt, at most two R0 runs per item, R4 never relaunches the same spec. | E7, E10a |
 | G5 | An unset grade, an unreadable record, a missing CI read or an unknown mode refuses and asks (fail closed to recommend-only), never a default. | E2, E10a |
 | G6 | Importance sorts and notifies; it never approves a follow-up (D1226, F21). | E11 |
-| G7 | "Blocks others" is computed each tick from `DependsOn` of **approved** items only (an unapproved item an agent added cannot halve a PR's thresholds); a cycle or a 32+ edge fan-out (`MaxDependsOn`) does not loop or panic. | E1, E10a |
+| G7 | "Blocks others" is computed each tick from `DependsOn` of **approved** items only, where a spent approval still counts as approved (an unapproved item an agent added cannot halve a PR's thresholds); a cycle or a 32+ edge fan-out (`MaxDependsOn`) does not loop or panic. | E1, E10a |
 | G8 | The ledger and the digest never hold a secret, a prompt or a diff; only rung, reason code, counters, times, run and PR ids. | E7, E12 |
 | G9 | Cost ceiling reads the sum of the item's own run records (the chain's figure where a chain exists); a restart cannot reset it. | E1, E10a, E11 |
 | G10 | A non-Routine path set, a critical finding or a high finding in a security path never auto-merges in any mode (D1245, D1247, D2037). | E10b |
-| G12 | Only the daemon writes the escalation block: it is in `applyUpsert`'s daemon-only set (`patch.go`), so an agent-class actor cannot steer an item into R3; and it is in `bookkeepingFields`, so a ledger write never changes `SpecDigest`. | E7 |
-| G13 | R0 never merges directly (D2043): a merge is eligible only at a head covered by a scored review verdict, with the path set computed at that head; a conflict-resolved R0 head gets a `review-only` run first and the judge only adds vetoes. | E10b |
-| G14 | A merge never bypasses branch protection: no admin or bypass flag, and the call refuses when the installation token's actor is on the base's bypass list or the list cannot be read (D2045, F26). | E8, E10b |
-| G15 | The ladder's launches are covered by the item's approval and bounded by the cost ceiling; `ApprovalAttempts` counts normal runs only; nothing the ladder files is approved (D2042, F21). | E10a, E11 |
 | G11 | A task's `model_grade` is one of the two names the project layer defines and resolves only to what that layer says; it cannot name a raw model or credential, and an unset grade refuses. | E4 |
+| G12 | Only the daemon writes the escalation block (a CLI-level property: a session holding the person's credential can write the node, so E10b re-derives the gate from the records and never trusts the ledger's rung): it is in `applyUpsert`'s daemon-only set (`patch.go`), so an agent-class actor cannot steer an item into R3; and it is in `bookkeepingFields`, so a ledger write never changes `SpecDigest`. | E7 |
+| G13 | R0 never merges directly (D2043): a merge is eligible only at a head covered by a scored review verdict, with the path set computed at that head; every R0 head gets a `review-only` run first and the judge only adds vetoes. | E10b |
+| G14 | A merge never bypasses branch protection: no admin or bypass flag, and the call refuses when the installation token's actor is on the base's bypass list or the list cannot be read (D2045, F26). | E8, E10b |
+| G15 | The ladder's launches are covered by the item's approval and bounded by their counts (R0 at most twice, one R2, one review-only per rebased head, one judge), with the cost ceiling an optional extra; `ApprovalAttempts` counts normal runs only; nothing the ladder files is approved (D2042, F21). | E10a, E11 |
 
 ## Slices
 
@@ -107,14 +107,14 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 
 ### E2. Model grades in the project layer
 
-- **Files:** `schemas/project-layer.schema.json`, `internal/projectpolicy/` (the decoded layer and its validator),
+- **Files:** `schemas/project-layer.schema.json`, `internal/projectpolicy/` (the decoded layer, its validator and `version.go`),
   `internal/policy/merge.go` (a grade is project-only: a later layer that names one goes to `Ignored`),
   `internal/settings/registry.go` (the key and its description), tests beside each.
 - **Interfaces:** produces `ModelGrades{Strong, Strongest}` (each a model plus its credential or pool, validated exactly as a
   craft's). **Schema/rules/config:** adds `defaults.model_grades.{strong,strongest}` (`defaults` is closed, `additionalProperties: false` and `DisallowUnknownFields`, so this **bumps `projectpolicy.Version`** with its `update` migration, and a test proves a run in flight on the previous version keeps working).
 - **Tests:** `TestProjectLayerModelGrades`, `TestPolicyMergeGradesProjectOnly`, `TestGradeUnsetIsRefusal`,
   `TestGradeWithoutPriceRefused` (a model must have a known price when a budget is on), `TestPolicyPreviousVersionConverges`, `TestRunInFlightSurvivesPolicyBump`.
-- **Command:** `go test ./internal/projectpolicy/ ./internal/policy/ ./internal/settings/ -run 'Grade|Converges' -count=1`.
+- **Command:** `go test ./internal/projectpolicy/ ./internal/policy/ ./internal/settings/ -run 'Grade|Converges|InFlight' -count=1`.
 - **Depends on:** none. **Commit:** `feat(policy): model grades strong and strongest in the project layer (E2)`.
 - **Red step:** `TestPolicyMergeGradesProjectOnly` fails while a repo `fugaro.yaml` can set a grade.
 - **Note:** a grade named in a repo file goes to `Ignored` (the policy-merge convention), where the thresholds in E3 are refused
@@ -124,7 +124,7 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 ### E3. The local keys
 
 - **Files:** `internal/localcfg/escalation.go` (new), `internal/localcfg/localcfg.go` (one decode hook),
-  `internal/settings/registry.go`, tests (the load-time refusal lives in `internal/localcfg/escalation.go`, not in
+  `internal/settings/registry.go`, `internal/cli/settings_write.go`, tests (the load-time refusal lives in `internal/localcfg/escalation.go`, not in
   `internal/orchestrator/validate.go`, which E7 owns).
 - **Interfaces:** consumes `escalation.Thresholds` (E1) and the registry (E2). Produces the keys
   `escalation.r2_after_hours`, `escalation.r2_after_attempts`, `escalation.r3_after_hours`,
@@ -135,12 +135,12 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 - **Schema/rules/config:** local config only; **refused at load** when set in the project layer or a repo `fugaro.yaml`
   (the D1244 pattern, G3). (`orchestrator.triage_after` never shipped, so nothing is retired in code; E0 changes the docs.) Turning
   `ready_drafts` on, lowering a threshold or raising `cost_ceiling` is a loosening and is **refused from a coding agent's
-  session**, like the existing `agentSession` floor refusals.
+  session** by the settings writer, like the existing floor refusals.
 - **Tests:** `TestEscalationKeysDefaultsPerMode`, `TestEscalationKeysRefusedInProjectLayer`, `TestEscalationKeysRefusedInRepo`,
-  `TestEscalationReadyDraftsDefaultsOff`, `TestEscalationKeysRefusedFromAgentSession`.
+  `TestEscalationReadyDraftsDefaultsOff`, `TestEscalationKeysRefusedFromAgentSession` (a courtesy beside the existing refusals in `internal/cli/settings_write.go`, not a fence: a session can edit the local file itself; the fence is that these keys only matter to the local daemon).
 - **Command:** `go test ./internal/localcfg/ ./internal/settings/ -run 'Escalation' -count=1`.
 - **Depends on:** E1, E2 (the registry file). **Commit:** `feat(localcfg): the local escalation keys (E3)`.
-- **Red step:** `TestEscalationKeysRefusedInProjectLayer` fails while the project decoder accepts the key.
+- **Red step:** `TestEscalationKeysRefusedInRepo` fails while a repository `fugaro.yaml` can carry the key (the project layer's strict decoder already refuses it).
 - **Reviewer tier:** opus + mandatory independent review (the keys hold merge authority).
 
 ### E4. A task names a model grade, and carries a follow-up importance
@@ -160,19 +160,21 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 ### E5. The `escalate` and `rebase` recipes
 
 - **Files:** `internal/recipe/catalog/escalate.yaml`, `internal/recipe/catalog/rebase.yaml` (both new),
-  `internal/recipe/stages.go`, `schemas/recipe.schema.json` (a `hand_over` flag: end the run at the review with the verdict
+  `internal/recipe/stages.go`, `internal/recipe/catalog_test.go` (the pinned name list), `schemas/recipe.schema.json` (a `hand_over` flag: end the run at the review with the verdict
   recorded, no fix), `internal/runner/recipe.go`, `internal/gitops/rebase.go` (new; reuses the existing force-with-lease push, `PushExisting`, and adds the rebase step the `rebase` recipe needs), `docs/recipes.md`, `internal/cli/recipes_skew.go` (the three recipe names, `escalate`, `rebase`, `merge-judge`, with their "Needs fugaro X.Y.Z" gate), tests.
 - **Interfaces:** `escalate` = coder, one review (`max_rounds: 1`), `hand_over: true`; `rebase` = rebase onto the base, resolve
   conflicts, re-run the tests, push, no review (R0). A `rebase` run that cannot resolve a conflict ends refused with a reason.
 - **Schema/rules/config:** recipe `version: 1` unchanged (new optional step flag); the catalog ships in the image.
 - **Tests:** `TestRecipeEscalateOnePass`, `TestRecipeHandOverSkipsFix`, `TestRecipeRebaseStagesOrder`,
-  `TestRecipeCatalogLints`, `TestRecipeRebaseRefusesOnUnresolvedConflict` (in `internal/runner/runnertest`).
-- **Command:** `go test ./internal/recipe/ ./internal/runner/ -run 'Escalate|Rebase|HandOver|Catalog' -count=1`.
+  `TestRecipeCatalogLints`, `TestRecipeRebaseRefusesOnUnresolvedConflict` (in `internal/runner/runnertest`), `TestGitopsRebaseConflictRefuses`, `TestGitopsRebaseUsesForceWithLease`.
+- **Command:** `go test ./internal/recipe/ ./internal/runner/... ./internal/gitops/ -run 'Escalate|Rebase|HandOver|Catalog' -count=1`.
 - **Depends on:** none. **Commit:** `feat(recipe): escalate and rebase recipes (E5)`.
 - **Red step:** `TestRecipeHandOverSkipsFix` fails while findings after the one review launch a fix.
 - **Reviewer tier:** opus + mandatory independent review (recipes and prompts).
 
 ### E8. The provider's ready, merge and checks calls
+
+**Blocked until the owner rules O5 (the merge credential's route, F28).** `Checks` and the marker do not need it; `MarkReady` and `Merge` do.
 
 - **Files:** `internal/gitprov/gitprov.go` (`MarkReady(ctx, number, expectedHeadSHA)`, `Merge(ctx, number, expectedHeadSHA)`,
   `Checks(ctx, number, sha)`), `internal/gitprov/github/`, `internal/gitprov/bitbucket/`, `internal/gitprov/fake/`,
@@ -194,12 +196,11 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 ### E7. The ledger in the orchestrator state
 
 - **Files:** `internal/orchestrator/state.go` (an optional `Escalation` block on an item: rung, entered-at, outer attempts,
-  transitions `[{from,to,reason,at,head_sha}]`, bounded; the block is added to `bookkeepingFields`, G12), `patch.go` (the block
+  transitions `[{from,to,reason,at,head_sha}]`, bounded; the block is added to `bookkeepingFields`, G12; `Migrate` is rewritten, since it only raises version 0 to 1 today), `patch.go` (the block
   joins `applyUpsert`'s daemon-only set), `validate.go`, `schemas/orchestrator-state.schema.json`,
   `schemas/orchestrator-patch.schema.json`, tests. The deployed RTDB rules do not pin the node's shape, so no rules change.
 - **Interfaces:** consumes `escalation.Rung` (E1). **Schema/rules/config:** adds one block and bumps `schema_version` to 2 with a
-  `Migrate` that `fugaro update` runs on a daemon's existing state (the decoder is closed and a reader above its version stops, so
-  the old state must be migrated, not left); the phase machine is unchanged; transitions are append-only through the typed patch.
+  `Migrate` that **the daemon runs on its own state at start-up** (`fugaro update` no longer touches the node; the decoder is closed and a reader above its version stops, so the old state must be migrated, not left); the phase machine is unchanged; transitions are append-only through the typed patch.
 - **Tests:** `TestStateEscalationRoundTrip`, `TestPatchEscalationAppendOnly`, `TestValidateEscalationBounds`,
   `TestStateV1MigratesToV2`, `TestOldDaemonStopsOnNewerVersion`, `TestEscalationNotInSpecDigest` (a ledger write keeps the approval), `TestAgentActorCannotWriteEscalation` (G12), `TestLedgerHoldsNoPromptOrDiff` (G8), `TestStatePreviousVersionConverges`.
 - **Command:** `go test ./internal/orchestrator/ -run 'Escalation|Migrates|OldDaemon|Converges|NoPrompt|AgentActor' -count=1`.
@@ -252,14 +253,14 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 
 ### E12. The digest's Escalation section
 
-- **Files:** `internal/digest/escalation.go` (new, in the periodic-reviews digest package), `internal/budget/rules/rules.json.tmpl`
+- **Files:** `internal/digest/escalation.go` (new, in the periodic-reviews digest package), `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/marker.go` (`OrchestratorRulesVersion`)
   (a read grant for the reports job's account on the ledger's escalation block only, F27, with its rules-version bump and its `update`
   step), tests. Added to whichever `docs/periodic-reviews` task lands the daily digest.
 - **Interfaces:** consumes the ledger (E7) and the run chain's cost. Produces the section, 24 hours and 7 days: PRs per rung,
   median time to merge per rung, rung 3 merges, "reverted within 7 days" as the regression proxy (O1), follow-ups from rung 3
   and how many closed, churn detections, longest open PRs, hours and cost past R1, and threshold suggestions as text.
 - **Schema/rules/config:** one optional block. **Tests:** `TestDigestEscalationSection`, `TestDigestEscalationRegressionProxyIsRevert`,
-  `TestDigestEscalationSuggestsLowerWhenNoRegressions`, `TestDigestEscalationHoldsNoSecret` (G8), `TestRulesReportsJobReadsEscalationOnly`.
+  `TestDigestEscalationSuggestsLowerWhenNoRegressions`, `TestDigestEscalationHoldsNoSecret` (G8), `TestRulesReportsJobReadsEscalationOnly`. The digest is per repository; the block carries the item's `repo`, and the reports job's RTDB identity is named from `docs/periodic-reviews` E4 by this task's first step (UNVERIFIED).
 - **Command:** `go test ./internal/digest/ ./internal/budget/... -run 'DigestEscalation|RulesReportsJob' -count=1`.
 - **Depends on:** E7; external R7-R12. **Commit:** `feat(report): an Escalation section in the daily digest (E12)`.
 - **Red step:** `TestDigestEscalationSection` fails with no section.
@@ -273,7 +274,7 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 - **Schema/rules/config:** new `--json` format with its own version.
 - **Tests:** `TestEscalationLsJSONSchema`, `TestEscalationShowTransitions`, `TestEscalationReadsNoWrite`, `go test
   ./plugin/... -run Skill` (command named in a skill must exist).
-- **Command:** `go test ./internal/cli/ -run 'Escalation|Docs' -count=1`.
+- **Command:** `go test ./internal/cli/ ./plugin/... -run 'Escalation|Docs|Skill' -count=1`.
 - **Depends on:** E7, E6 (both write `schemas/schemas_test.go`). **Commit:** `feat(cli): fugaro escalation ls and show (E13)`.
 - **Red step:** `TestEscalationLsJSONSchema` fails with no command.
 - **Reviewer tier:** standard.
@@ -290,15 +291,17 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
   `TestTickCriticalPathHalvesAndUsesStrongest`, `TestTickCrashMidRungIsIdempotent`, `TestTickUnsetGradeRefuses` (G5),
   `TestTickDependsOnCycleDoesNotLoop` (G7), `TestTickCostCeilingEscalates`, `TestTickWritesTransitionMarker`, `TestTickLaunchesWithinTheItemsApproval` (G15), `TestTickUnapprovedDependsOnDoesNotHalve` (G7), `TestTickR0AtMostTwicePerItem`.
 - **Command:** `go test ./internal/orchestrator/ -run 'TestTick' -count=1`.
-- **Depends on:** E3, E4, E5, E7, E8, E9, E11; external O7, O8 (as O14 requires). **Commit:** `feat(orchestrator): walk rungs 0 to 2 (E10a)`.
+- **Depends on:** E3, E4, E5, E7, E8, E9, E11; external O8 (as O14 requires). **Commit:** `feat(orchestrator): walk rungs 0 to 2 (E10a)`.
 - **Red step:** `TestTickR2OnceThenR3Or4` fails while a second R2 launches.
 - **Reviewer tier:** opus + mandatory independent review.
 
 ### E10b. The executor, rungs 3 and 4, merge and human gate
 
+**Its merge and ready half is blocked until the owner rules O5 (F28); the judge, the human gate and the split are not.**
+
 - **Files:** `internal/orchestrator/escalate_merge.go` (new), `internal/orchestrator/escalate_split.go` (new),
   `internal/orchestrator/notify.go` (kind `merged-needs-review`), tests; extends only through the hook E10a adds.
-- **Interfaces:** consumes E6, E8, E10a, `internal/orchestrator/sensitivity`. R3: launch the judge (an absent, failed or late verdict is a veto, D2044); a merge is eligible only at a head covered by a scored review verdict, so a conflict-resolved R0 head gets a `review-only` run at that head first and the judge only adds vetoes (D2043); recompute the D1245 gate (run
+- **Interfaces:** consumes E6, E8, E10a, `internal/orchestrator/sensitivity`. R3: launch the judge (an absent, failed or late verdict is a veto, D2044); a merge is eligible only at a head covered by a scored review verdict, so every R0 head gets a `review-only` run at that head first and the judge only adds vetoes (D2043); recompute the D1245 gate (run
   terminal, commits, CI green via `Checks`, `Classify` is `Routine` for the whole path set, no critical or high-in-security
   finding); at the head SHA that was judged, **if `escalation.ready_drafts` is on** ready a draft, then `Merge` with that SHA,
   file every open finding as a follow-up with `importance`, notify for Pro and Hotfix. A veto, a non-Routine path set,
@@ -315,7 +318,7 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 
 ### E14. Docs, skill, release notes
 
-- **Files:** `docs/outer-loop-escalation/README.md`, `docs/recipes.md` (readiness paragraph: the daemon may ready a draft under D2041), `README.md` (the "Fugaro itself never merges" line), `SECURITY.md` and `website/content/security.md` (where they say it), `docs/status.md` (row moves with merges, in the sweep, not in a task's own PR), `plugin/skills/working/SKILL.md` (the ladder in one paragraph, the commands), `docs/releases/` notes per its README
+- **Files:** `docs/outer-loop-escalation/README.md`, `docs/recipes.md` (readiness paragraph: the daemon may ready a draft under D2041), `README.md` (the "Fugaro itself never merges" line), `SECURITY.md` and `website/content/security.md` (where they say it),  `plugin/skills/working/SKILL.md` (the ladder in one paragraph, the commands), `docs/releases/` notes per its README
   (`### For operators`: run `fugaro update`; it asks nothing new; the daemon restarts into its own state migration to version 2, `escalation.ready_drafts` is off, and the App needs the merge permission, O4), `website/data/release-summaries.yaml` (no backticks).
 - **Tests:** `go test ./internal/cli/ -run Docs -count=1`; `go test ./plugin/... -count=1`; `npm run check` in `website/` if
   website content changed. **Command:** the first of these.
@@ -340,10 +343,10 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 Edges, from the "Depends on" lines:
 
 E1 ← none; E2 ← none; E5 ← none; E8 ← none; E0 ← none (after the owner confirms T1, T3);
-E3 ← E1, E2; E4 ← E2; E7 ← E1; E9 ← E1 (+ T-TR3); E11 ← E4;
+E3 ← E1, E2; E4 ← E2, E5 (`recipes_skew.go`); E7 ← E1; E9 ← E1 (+ T-TR3); E11 ← E4;
 E6 ← E4, E5; E12 ← E7 (+ R7-R12); E13 ← E7, E6;
 E10a ← E3, E4, E5, E7, E8, E9, E11; E10b ← E6, E8, E10a;
-E14 ← E10b, E12, E13; E15 ← E10b.
+E14 ← E10b, E12, E13; E15 ← E10b (not E14; it needs a released CLI, so it runs after the release that carries E14).
 
 | Level | Tasks (concurrent) |
 | --- | --- |
@@ -371,7 +374,9 @@ E14 ← E10b, E12, E13; E15 ← E10b.
 | `internal/orchestrator/tick.go`, `escalate_launch.go` | E10a (3) only; `hooks.go` is never touched |
 | `internal/orchestrator/notify.go` | E10b (4) only |
 | `internal/orchestrator/state.go`, `patch.go`, `validate.go` | E7 (1) only |
-| `internal/recipe/stages.go` | E5 (0), E6 (2) |
+| `internal/recipe/stages.go`, `internal/recipe/catalog_test.go` | E5 (0), E6 (2) |
+| `internal/projectpolicy/version.go` | E2 (0) only |
+| `internal/cli/settings_write.go` | E3 (1) only |
 | `internal/runner/routing.go` | E4 (1), E6 (2) |
 | `internal/orchestrator/intent.go` | E11 (2) only |
 | `internal/gitops/rebase.go` | E5 (0) only |
@@ -385,7 +390,7 @@ E14 ← E10b, E12, E13; E15 ← E10b.
 | `internal/escalation/*` | E1 (0), E9 (1); different files in the package (`churn.go`) |
 | `internal/gitprov/*` | E8 (0) only |
 | `internal/cli/root.go`, `website/content/cli-reference.md` | E13 (3) only; **external** O9, O11, O13, O14 also regenerate the reference |
-| `docs/status.md` | this plan's own PR (the row), then E14 (5) |
+| `docs/status.md` | this plan's own PR (the row); moved by whoever merges a task, not by a task |
 | `docs/recipes.md` | E5 (0), E14 (5) |
 
 Two conflicts the table found while drafting, and their fix (already applied in the Files above): **E3 and E7 both write `internal/orchestrator/validate.go` at level 1.** E3 moves

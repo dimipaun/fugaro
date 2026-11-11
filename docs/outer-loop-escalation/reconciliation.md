@@ -52,7 +52,7 @@ under the operator's login by a consumer not built (`docs/mobile`, D169). D1245 
 on a narrow gate. Consequence: D2030 (answered): only the orchestrator daemon merges, only under D1245's gate; the rigor mode
 chooses who is told and who must approve, never whether the gate applies. The spec's rows read accordingly (below).
 
-**F4 (Rule). A model must not authorize a merge.** D1244/D1245 rejected "merge on a model's judgement of the diff". The
+**F4 (Rule). A model must not authorize a merge.** The judge's input is hostile, so an injected diff may talk the judge out of its veto; the deterministic gate is the only fence, and the judge adds a veto only on top of it. D1244/D1245 rejected "merge on a model's judgement of the diff". The
 diff is attacker-influenced input (a hostile run, a hostile dependency). Consequence: D2031 (answered): the merge judge is a
 model that can **only veto** and classify follow-ups; eligibility is decided by deterministic code before and after it.
 
@@ -156,7 +156,7 @@ sorts and notifies only.
 
 **F22 (Rule/Gap). The stalled PR is a draft, and D1245 merges only a ready PR.** A run that hits its cap ends a draft;
 readiness is the runner's and is not configurable (`docs/recipes.md`). Consequence: D2041 (answered, **not the recommendation**):
-the daemon may mark a draft ready (`gitprov` `ApplyReady`) and then merge, when the judge does not veto and the D1245 gate
+the daemon may mark a draft ready (`gitprov` `MarkReady`, E8) and then merge, when the judge does not veto and the D1245 gate
 passes at the head SHA. This is a **new write authority for the daemon** and an amendment of D1245's "the PR is ready"
 condition (T3). The gate is evaluated against the exact head SHA that is readied and merged, and the merge call carries that
 SHA, so a push in between refuses it.
@@ -164,7 +164,7 @@ SHA, so a push in between refuses it.
 **F23 (Rule). The ladder launches runs nobody approved.** D1226: a cycle spawns only the recipe named in an approved item, and
 `ApprovalAttempts = 2` (`internal/orchestrator/state.go`) is what one approval covers. R0, R2 and the judge are extra launches
 with another recipe and a stronger model grade, each spending money. Consequence: D2042 (answered): the approval of an item
-covers its ladder runs (R0 per head, one R2, one judge), bounded per item by the cost ceiling; `ApprovalAttempts` counts normal
+covers the ladder's runs, **one list**: R0 (at most two per item), R1 runs beyond the two an approval already covers, one R2, one `review-only` run per rebased head, one judge; the counts are the bound, and `escalation.cost_ceiling` (no default) bounds the cost where a person sets it; `ApprovalAttempts` counts normal
 runs only. This amends D1226 visibly (T4).
 
 **F24 (Wrong in an earlier draft). Provider calls.** `ApplyReady` only adds reviewers and labels on a PR already made ready; it
@@ -186,6 +186,15 @@ adapter's own mint with the App key, or the credentials service), never a person
 An App can sit on a ruleset's bypass list, so "no admin flag" is not "no bypass". Consequence: D2045 is amended: the daemon's
 ready and merge calls use the same installation `TokenSource` as the runs, E8 refuses when the actor is on the base's bypass list
 or the list cannot be read, and the App needs the permission to merge, which is an owner step (O4, Check 540 states it).
+
+**F28 (Gap, blocks E8 and E10b). The merge credential has no route.** `github.ServiceTokens` needs the run's Firebase ID token
+and the job's identity (`internal/gitprov/github/apptoken.go`), and the only person-class route, `internal/credsvc/githubread.go`,
+"never mints a write". The daemon holds no `gitprov`. Any write mint the daemon can reach with the person's own Google credential
+is equally reachable by a coding-agent session on the same machine, which would then hold a merge-capable token and skip the gate.
+Consequence: open item O5 for the owner, and E8's `MarkReady` and `Merge` and all of E10b stay blocked until it is ruled: (a) a
+new credentials-service route and caller class for a gated, audited merge mint, (b) the App key on the owner's machine, or (c)
+the ladder never merges and always raises `waiting_on: person` (D2030's other option, so the plan's merge half would not be
+built). The rest of the plan (R0-R2, the judge as an advisor, the ledger, importance, the digest) does not need it.
 
 **F27 (Gap). The digest job cannot read the ledger.** The ledger sits in each person's `orchestrator/<id>/state` node
 (`.read: "USER"`), and the reports job (periodic-reviews E4) is granted read on `runs/` and write on `reports/` only. Consequence:
@@ -211,8 +220,8 @@ D2030-D2037, D2041 and D2042 are the owner's answers, given in this conversation
 | D2038 | Cost and time source (F7). | Resolution, one defensible answer: the run chain, not a new meter. | stated, no question |
 | D2039 | Grade keys and defaults (F8). | Resolution: `model_grades.strong|strongest` in the project layer; no built-in model; an unset grade makes the rung refuse and ask. | stated, no question |
 | D2040 | Follow-up importance (F12). | Resolution: one optional field `importance` on the follow-up block; a deterministic rule when no judge ran. | stated, no question |
-| D2042 | What covers the ladder's extra launches (F23)? | The item's approval covers every run the ladder launches (R0, R1 runs beyond the two an approval already covers, one R2, one judge), bounded by the cost ceiling. Cost: one approval authorizes a costlier model for that item. Alternatives: each rung needs its own approval; a local switch `auto_launch`. | **Approval covers the ladder**, 2026-11-10 (the recommendation). D1226 is amended. |
-| D2043 | May rung 0 merge a rebased head (review finding)? | Resolution, one defensible answer: **never directly.** A merge is eligible only at a head covered by a scored review verdict (with severities, so the gate's "no critical finding" is not fed by the judge), with the path set computed at that head. A conflict-resolved R0 head gets a `review-only` run at that head first; the judge then adds vetoes only. | stated, no question |
+| D2042 | What covers the ladder's extra launches (F23)? | The item's approval covers every run the ladder launches (R0 at most twice, R1 runs beyond the two an approval already covers, one R2, one `review-only` per rebased head, one judge); the counts are the bound, the cost ceiling an optional extra. Cost: one approval authorizes a costlier model for that item. Alternatives: each rung needs its own approval; a local switch `auto_launch`. | **Approval covers the ladder**, 2026-11-10 (the recommendation). D1226 is amended. |
+| D2043 | May rung 0 merge a rebased head (review finding)? | Resolution, one defensible answer: **never directly.** A merge is eligible only at a head covered by a scored review verdict (with severities, so the gate's "no critical finding" is not fed by the judge), with the path set computed at that head. **Every** R0 head (the rebase run is an agent and can push anything) gets a `review-only` run at that head first; the judge then adds vetoes only. | stated, no question |
 | D2044 | A judge that fails, times out or returns nothing (review finding)? | Resolution: an absent, failed, malformed or late verdict is a **veto** (blocked), never a merge. | stated, no question |
 | D2045 | Merge credential and branch protection (review finding)? | Resolution: the daemon merges and readies through `gitprov` with the installation token its `TokenSource` mints (F26), never an admin or bypass merge; a base whose protection it cannot satisfy, or whose bypass list it cannot read, refuses and raises `waiting_on: person`. `README.md`, `SECURITY.md`, `docs/design/v1.md` and D13's pages say "Fugaro never merges" and are amended (E0, E14). | stated, no question |
 | D2046 | Does `escalation.ready_drafts` ship off (T3)? | My own design call layered on D2041: **default off**, so the owner switches the new authority on once after Check 540. Cost: the stalled-draft case stays with a person until then. | **Recommended default, awaiting the owner's confirmation** (T3). |
@@ -238,20 +247,23 @@ D2038-D2040 and D2043-D2046 are resolutions or defaults the owner may overturn a
    owner's of 2026-11-10 and are recorded as amendments in both places (the plan edits those rows with a pointer); confirm that
    the amendment, not the older text, stands.
 2. **T2: the merge judge is a model on a trust boundary the owner has twice ruled "no model".** D2031 limits it to a veto. A
-   veto still lets a prompt-injected diff *block* its own merge, which is safe; it does not let it *allow* one. Check 541 probes
-   this live. Confirm that a veto-only judge is acceptable on the stack's security tier.
+   veto still lets a prompt-injected diff *block* its own merge, which is safe, but an injected diff may also *suppress* the judge's
+   veto: the gate (Routine paths, green CI at the head, a scored review, no critical finding) is the only fence, and the judge is not
+   one. Check 541 tests the gate with a non-Routine path set; Check 540 holds the judge's own behaviour. Confirm that a veto-only judge is acceptable on the stack's security tier.
 3. **O1: "regressions traced to merges" is a proxy (F14).** Confirm "a revert in 7 days" is enough.
 4. **O2: console dashboard** is out of this plan (a console plan of its own); confirm.
-5. **O3 (F25):** the ladder merges only `Routine` (docs and website) PRs and, with no CI on Fugaro's own repository, none there; decide
+6. **O3 (F25):** the ladder merges only `Routine` (docs and website) PRs and, with no CI on Fugaro's own repository, none there; decide
    whether to widen D1234's allowlist or let the ladder dispatch CI. **O4 (F26):** the GitHub App needs the permission to merge and
-   must not sit on a ruleset bypass list; an owner step.
+   must not sit on a ruleset bypass list; an owner step. **O5 (F28):** rule the merge credential's route (a, b or c); E8 and E10b
+   wait for it. A repository that requires reviews on its base refuses the App's merge, so such a repository always ends
+   `waiting_on: person`.
 5. **T3: D2041 against D1245 and `docs/recipes.md`.** D1245 merges a ready PR and readiness is "unchanged and not
    configurable". D2041 gives the daemon the right to ready a draft. The two are reconciled by the head-SHA binding and the
    unchanged gate (Routine paths, green CI, no critical finding, judge not vetoing), but D1245's text and the recipes page both
    say readiness is the runner's. State which wins: the plan implements D2041, amends both pages in E0, and keeps the readying
    behind a local switch `escalation.ready_drafts` (default **off**, so the owner turns authority on once, after Check 540).
    Confirm the switch default; without it the ladder is built and inert for drafts.
-6. **T4: D2042 amends D1226** (a person's approval covers one recipe). Confirm the amended text: an approval covers the item's
+7. **T4: D2042 amends D1226** (a person's approval covers one recipe). Confirm the amended text: an approval covers the item's
    ladder runs under the cost ceiling, and nothing the ladder files is approved (F21).
 
 ## UNVERIFIED
