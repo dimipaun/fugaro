@@ -61,12 +61,16 @@ const (
 	//
 	// Both are also written before a person has proved anything: the request
 	// is written by the unauthenticated GET, so a stranger with a loop leaves
-	// one behind per iteration until its TTL passes. The TTL is a bound on
-	// what the record is *read* as and not on what is stored — nothing in
-	// this tree sweeps an expired request or code, RevokeFamily being the
-	// store's only delete — and that is the deferral Client.CreatedAt records
-	// too. No task of the plan carries it, so it is raised as a finding for
-	// the owner rather than left to look assigned.
+	// one behind per iteration until its TTL passes. What bounds that is three
+	// things and not one, because a loop is bounded by rate and a store is
+	// bounded by housekeeping, and neither works alone (M12, register.go): the
+	// write is bounded per source (authorizeWindow, registerWindow), the TTL
+	// is what the record is *read* as — an expired record is refused by the
+	// read that judges it — and the sweep removes what the window admitted
+	// (SweepExpired), a page per run, so what a loop can put here is what the
+	// interval after it takes away. A sweep that outran no write and a write
+	// no sweep could keep up with are the same failure seen from two sides,
+	// which is what the review of this branch found on the GET.
 	requestPrefix = PathPrefix + "requests/"
 	codePrefix    = PathPrefix + "codes/"
 )
@@ -82,6 +86,15 @@ var (
 	// because that is exactly what it is now — one delete took the family
 	// and every token in it (D930).
 	ErrTokenNotFound = errors.New("mcpauth: no token with that hash")
+	// ErrFamilyAged is a family past one of its own two bounds, read at the
+	// rotation (M5b). It is an ErrTokenNotFound — a token of an aged family
+	// resolves to nothing, exactly as one of a revoked family does, and that
+	// is the reading every caller already has — and it is a sentinel of its
+	// own because the two are different events: a revoke is somebody ending
+	// the family, an age is the family's own lifetime running out, and a
+	// client told its family was revoked goes looking for a thief where there
+	// is none.
+	ErrFamilyAged = fmt.Errorf("mcpauth: the token family is past its lifetime: %w", ErrTokenNotFound)
 	// ErrClientNotFound is a client id no registration wrote.
 	ErrClientNotFound = errors.New("mcpauth: no client with that id")
 	// ErrFamilyNotFound is a family that is not in the store: one that was
@@ -112,6 +125,17 @@ var (
 	// from ErrRequestNotFound because the two are different events: one is a
 	// stranger's guess, the other is a replay of a page this server issued.
 	ErrRequestUsed = errors.New("mcpauth: the authorize request was already answered")
+	// ErrRequestApproved is a paired device's act naming a flow that a device
+	// has already approved (M5b). One flow is approved once: a second approval
+	// would be a second identity for a code that is minted once, and the
+	// record's own identity is what the code acts for, so the first one stands
+	// and the second is refused rather than written over it.
+	ErrRequestApproved = errors.New("mcpauth: the authorize request was already approved")
+	// ErrIDTokenSpent is an ID token presented at a second approval (M5b). The
+	// spend is what makes a leaked token one approval rather than one per
+	// replay until it expires, so the second use is refused as the token it is
+	// — not as a flow, and not as a sign-in that failed to verify.
+	ErrIDTokenSpent = errors.New("mcpauth: the ID token has already approved a flow")
 	// ErrCodeNotFound is an authorization code that resolves to nothing: one
 	// that was never issued, or one whose record is gone.
 	ErrCodeNotFound = errors.New("mcpauth: no such authorization code")
@@ -146,18 +170,15 @@ type Client struct {
 	// SecretHash is sha256 of the client secret, hex, empty for a client
 	// that holds none. The secret itself is returned once, at registration.
 	SecretHash string `json:"secret_hash"`
-	// CreatedAt is when the registration was written. It is the field a
-	// lifecycle reads, and it is deliberately the only thing here that
-	// anticipates one: spec.md §8 bounds an open registration endpoint's
-	// residual risk by a per-source rate limit and by these records being
-	// expirable, and neither bound is implemented in this package or anywhere
-	// else in this tree. No task of the plan carries either one — the
-	// M10 entry is the audit record and revocation — so both are recorded in
-	// reconciliation.md §4a as a finding for the owner to assign. Until one
-	// lands the exposure is latent only because no binary mounts these
-	// routes yet: the record carries the timestamp that lifecycle will read
-	// and nothing here enforces it. The flow's two records are in the same
-	// position and are named on requestPrefix above.
+	// CreatedAt is when the registration was written, and it is the field the
+	// registration's own lifetime is read from: spec.md §8 bounds an open
+	// registration endpoint's residual risk by a per-source rate limit and by
+	// these records being expirable, and M12 is the task that carries both —
+	// the limit at the endpoint and the expiry in the sweep
+	// (register.go, RegistrationTTL). What the sweep leaves alone is a
+	// registration a family still names, so an installation's client list
+	// holds the clients that are in use rather than every client that ever
+	// registered.
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -186,7 +207,39 @@ type Family struct {
 	RefreshHash string `json:"refresh_hash"`
 	// CreatedAt is when the family was minted.
 	CreatedAt time.Time `json:"created_at"`
+	// LastUsedAt is when this family last rotated, and it is the idle bound's
+	// own field (M5b's fourth requirement). It is written by the rotation and
+	// by nothing else — the mint that opens a family leaves it zero, which the
+	// bound reads as CreatedAt — because the thing the bound is about is a
+	// chain nothing has extended for a while, and only a rotation extends one.
+	LastUsedAt time.Time `json:"last_used_at,omitempty"`
 }
+
+// The two bounds a refresh family ages by (M5b's fourth requirement, spec.md §6
+// and §8).
+//
+// **The figures are the owner's to set.** The requirement M-a and the review of
+// M5 raised is that a family's exposure *ends* rather than outliving the ID
+// token's hour by an unbounded amount: the approval is bound to a device's
+// session, and until this task the family that approval left behind had no
+// lifetime at all — `AccessTokenTTL` was the package's only expiry and a
+// refresh token's is the zero time (spec.md §8). What the tree carries until he
+// answers is a shape: an absolute bound on one chain's whole life and an idle
+// bound on a chain nothing has extended, both read at the rotation, which is
+// the only place a family is used.
+const (
+	// FamilyTTL is how long a family lives from the mint, however busy it is.
+	// It is the bound that ends the exposure a leaked ID token leaves behind:
+	// a device's session approves one flow, and the chain that flow opened
+	// stops being extendable after this.
+	FamilyTTL = 30 * 24 * time.Hour
+	// FamilyIdleTTL is how long a family may go un-rotated. It is the bound a
+	// leaked refresh token runs into: an attacker's rotations keep the family
+	// inside FamilyTTL only for as long as they keep using it, and a chain
+	// nobody touches — the one a client that stopped using it left behind —
+	// ends here.
+	FamilyIdleTTL = 7 * 24 * time.Hour
+)
 
 // TokenKind says which half of a family's pair a record is.
 type TokenKind string
@@ -198,6 +251,14 @@ const (
 	// KindRefresh is a refresh token: the long-lived half, whose lifetime is
 	// the family's rotation and revocation rather than an expiry.
 	KindRefresh TokenKind = "refresh"
+	// KindIDToken is the record of a spent Firebase ID token: the sign-in a
+	// paired device's approval carried, written by M5b so that the same token
+	// cannot approve a second flow (spec.md §8). It is a kind of its own and
+	// not a kind the front door reads a bearer out of: the value is never one
+	// this server issued, so a record of it that resolved as an access or a
+	// refresh token would be a Firebase token this door acted on, which is the
+	// one thing spec.md §8 says it will not do.
+	KindIDToken TokenKind = "id_token"
 )
 
 // TokenRecord is one token at rest: its hash, the family it belongs to,
@@ -236,10 +297,11 @@ type TokenRecord struct {
 // Everything the approval decides is taken from here and never from the
 // approval itself: the approval carries the binding, the flow's number and the
 // proof of the sign-in, and an approval that could name its own redirect URI
-// would be an approval to send a code somewhere the person was never shown. The
-// identity is the one thing that is not here — it is what the approval's ID
-// token attests, so it is settled when the approval arrives and read by the
-// handler that writes the code.
+// would be an approval to send a code somewhere the person was never shown.
+// The identity is here too, and it is the one field of the flow that arrives
+// later: it is what the approving act's ID token attests (M5b), so it is
+// settled when that act is recorded and read by the page's answer, which mints
+// the code.
 type Request struct {
 	// ID is the flow's own id and the binding the consent must carry.
 	ID string `json:"id"`
@@ -268,6 +330,36 @@ type Request struct {
 	Scopes []string `json:"scopes"`
 	// ExpiresAt is when the flow stops waiting for its consent.
 	ExpiresAt time.Time `json:"expires_at"`
+	// Approval is the approval this flow's act recorded, written when that
+	// act arrives and nil until then (M5b). It is a field of this
+	// record rather than a record of its own, and that is the third
+	// requirement's whole mechanism: an approval that lives on the flow cannot
+	// be moved to another client, another redirect URI or another state,
+	// because there is nowhere else to put it. The code is minted only for a
+	// flow whose record carries one.
+	Approval *Approval `json:"approval,omitempty"`
+}
+
+// Approval is the approval one act recorded for one flow (M5b), before any code
+// existed: what proves it is the ID token the act carried, and not a key the
+// device holds (approval.go's header).
+//
+// It holds a hash and never the ID token itself (D922), exactly as a token
+// record does, so a reader of the store cannot present what it reads — and the
+// identity it proved, because that is what the code and the family the flow
+// mints act for (D923, D933).
+type Approval struct {
+	// IDTokenHash is sha256 of the ID token whose act this was, hex. It is
+	// written here beside the flow for the same reason the token's own spend
+	// record exists: the two together are what says which sign-in approved
+	// which flow, and neither holds the value.
+	IDTokenHash string `json:"id_token_hash"`
+	// Identity is the exact `user:` entry the device's sign-in proved, which
+	// is what the minted code carries (verifySignIn).
+	Identity string `json:"identity"`
+	// ApprovedAt is when the device's act was recorded, read from the server's
+	// own clock at the endpoint rather than from the store's.
+	ApprovedAt time.Time `json:"approved_at"`
 }
 
 // Code is one authorization code at rest (M5): the hash of the value that was
@@ -361,6 +453,20 @@ type Store interface {
 	// reason RotateRefresh is — the read that decides has to be the write
 	// that spends it.
 	TakeRequest(ctx context.Context, id string) (Request, error)
+	// GetRequest reads a pending authorize request without spending it, and is
+	// what M5b's two steps judge a flow by before either of them writes: the
+	// device's act checks the flow's number and its expiry, and the page's
+	// answer asks whether the flow carries an approval at all. A request that
+	// was answered is refused with ErrRequestUsed, so a caller cannot read a
+	// spent record as a pending one.
+	GetRequest(ctx context.Context, id string) (Request, error)
+	// ApproveRequest records a paired device's approval on a pending request
+	// and answers the record as it now stands (M5b). It reads and writes in
+	// the same act, matched against the generation it read, so an approval
+	// that lands as the flow is being answered is a conflict rather than a
+	// write over a spent record, and two devices' acts on one flow are one
+	// approval and one refusal (ErrRequestApproved).
+	ApproveRequest(ctx context.Context, id string, ap Approval) (Request, error)
 	// PutCode writes an authorization code, and refuses a hash that is
 	// already there. The code value is random, so its hash is written once.
 	PutCode(ctx context.Context, c Code) error
@@ -389,6 +495,16 @@ type Store interface {
 	// audit record is where D920's audit is at rest (D935), and the tool that
 	// serves it is the only reader of it a caller has (D933).
 	GetAudit(ctx context.Context, identity string) (AuditRecord, error)
+	// SweepExpired removes the records whose own lifetime has passed (M12's
+	// second bound, spec.md §8): a registration no family names, and the two
+	// single-use records of the flow once the moment each carries has been
+	// reached, spent or not. It is one method of the store and not a caller's
+	// loop over the reads above for the same reason RotateRefresh is: the
+	// prefixes it reaches are this store's layout, which a caller outside it
+	// would be holding. What it removed comes back for the log, and what it
+	// could not decide comes back as an error rather than as a partial sweep
+	// reported as a whole one (register.go is where it lives).
+	SweepExpired(ctx context.Context) (Swept, error)
 }
 
 // TokenHash is sha256 of a token value, hex: what the store keys a record by
@@ -424,7 +540,16 @@ func NewID() (string, error) {
 
 // records is the record layer: the key layout and the encoding above, over
 // whatever backend a store's own file supplies.
-type records struct{ objs objects }
+type records struct {
+	objs objects
+	// now is the clock a family's two bounds are read against (M5b). It is a
+	// field here rather than an instant a caller passes because the call that
+	// judges a family's age is RotateRefresh's, whose signature is the token
+	// endpoint's (mint.go), and because a caller that passed the instant would
+	// be a caller deciding on one instant and swapping the family at another.
+	// A store built without one is the process's own clock.
+	now func() time.Time
+}
 
 // objects is what a backend gives the record layer, and it is exactly the four
 // conditional operations internal/blobx offers. A backend that cannot do a
@@ -432,14 +557,46 @@ type records struct{ objs objects }
 // rotation is a compare-and-swap, and a store that quietly turned one into a
 // read-modify-write would reintroduce exactly the race D930's replay
 // detection is counting on.
+//
+// list is the fifth, and it is here for the sweep alone: the records M12
+// expires are found by prefix rather than by id, because the whole point of
+// the bound is the record nobody asks for — a client no flow names and a
+// request a stranger's loop abandoned are exactly the ones no caller can look
+// up. It answers keys and no generations: every read the sweep makes is
+// followed by an unconditional delete, with the record's own expiry as the
+// only precondition there is.
 type objects interface {
 	read(ctx context.Context, key string) (data []byte, gen int64, err error)
 	create(ctx context.Context, key string, data []byte) (gen int64, err error)
 	replace(ctx context.Context, key string, data []byte, gen int64) (newGen int64, err error)
 	delete(ctx context.Context, key string) error
+	list(ctx context.Context, prefix string) (keys []string, err error)
+	// listUpTo is the first limit keys under one prefix, which is how the
+	// sweep reads a prefix it cannot afford to read whole (sweepPage): the
+	// cost of a sweep run has to be a page's and not the prefix's, or a
+	// prefix that has grown past what one run can list makes every run
+	// exceed its own bound and remove nothing.
+	listUpTo(ctx context.Context, prefix string, limit int) (keys []string, err error)
 }
 
 func newRecords(objs objects) Store { return records{objs: objs} }
+
+// newRecordsAt is newRecords over a clock a caller owns, which is how a test
+// reaches the family's two bounds without waiting for a month: nothing else
+// reads a clock in this layer, and every other expiry this package has is the
+// server's own.
+func newRecordsAt(objs objects, now func() time.Time) Store {
+	return records{objs: objs, now: now}
+}
+
+// clock is the store's instant, and the process's own when no caller supplied
+// one (newRecords).
+func (r records) clock() time.Time {
+	if r.now == nil {
+		return time.Now()
+	}
+	return r.now()
+}
 
 func (r records) PutClient(ctx context.Context, c Client) error {
 	if err := keySegment(c.ID); err != nil {
@@ -538,6 +695,17 @@ func (r records) LookupByHash(ctx context.Context, hash string) (TokenRecord, er
 	if err != nil {
 		return TokenRecord{}, err
 	}
+	// A record that names no family is not a token of this front door's: the
+	// one record written that way is a spent ID token's (M5b, KindIDToken), and
+	// it resolves to nothing here rather than reaching the family read below
+	// with an empty id. A caller that presented a Firebase ID token as a bearer
+	// gets the answer a token that was never minted gets, which is the answer
+	// spec.md §8 wants it to get: a Firebase token is never an access token and
+	// never a grant, and a lookup that resolved one would be the door reading
+	// the identity of a token it did not issue.
+	if rec.FamilyID == "" {
+		return TokenRecord{}, fmt.Errorf("mcpauth: hash %s: %w", hash, ErrTokenNotFound)
+	}
 	// The family is read for one reason: revocation is a delete of it, so a
 	// record whose family is gone is a record that was revoked, and it has
 	// to read as one that never existed.
@@ -567,9 +735,11 @@ func (r records) LookupByHash(ctx context.Context, hash string) (TokenRecord, er
 // the token was already rotated away, so the family is revoked and
 // ErrRefreshReplay is returned; the compare-and-swap lost a race with another
 // writer, so ErrConflict is returned and the family is left exactly as the
-// winner left it; or the family is one no token could be issued from, which is
-// refused before the swap rather than after it. A lost race is never a
-// revocation, and a refusal never leaves the family half-written.
+// winner left it; the family is past one of its own two bounds, so
+// ErrFamilyAged is returned before anything else of it is inspected (M5b); or
+// the family is one no token could be issued from, which is refused before the
+// swap rather than after it. A lost race is never a revocation, and a refusal
+// never leaves the family half-written.
 func (r records) RotateRefresh(ctx context.Context, presentedHash, nextRefreshHash string) (Family, error) {
 	rec, err := r.lookupRecord(ctx, presentedHash)
 	if err != nil {
@@ -587,6 +757,23 @@ func (r records) RotateRefresh(ctx context.Context, presentedHash, nextRefreshHa
 	}
 	if err != nil {
 		return Family{}, err
+	}
+	// The family's own two bounds, read before anything of it is inspected
+	// (M5b's fourth requirement). A family past either of them is over, and it
+	// is answered as a family that is gone rather than as a family that may not
+	// rotate: ErrFamilyAged is an ErrTokenNotFound, so the caller's whole
+	// vocabulary for a token whose family is not there still reads it, and the
+	// token endpoint answers it with the terminal invalid_grant a client acts
+	// on instead of the 5xx that would invite it to present the same token
+	// again — described as the age it is rather than as the revoke that
+	// endpoint's ErrTokenNotFound arm describes.
+	//
+	// The replay check below is deliberately after this one. A family that has
+	// aged is not a family a theft signal is worth raising on — the read that
+	// decides is the age — and the revoke the replay would perform is of a
+	// family whose tokens are already worthless.
+	if fam.aged(r.clock()) {
+		return Family{}, fmt.Errorf("mcpauth: family %q: %w", fam.ID, ErrFamilyAged)
 	}
 	if presentedHash != fam.RefreshHash {
 		// The theft signal: this family rotated past the token being
@@ -617,10 +804,37 @@ func (r records) RotateRefresh(ctx context.Context, presentedHash, nextRefreshHa
 
 	next := fam
 	next.RefreshHash = nextRefreshHash
+	// The idle bound's own field: this rotation is the family being used, and
+	// the write below is where that is recorded. It is set from the store's
+	// instant, which is the same instant the bounds above were read at, so a
+	// rotation cannot be judged at one time and stamped with another.
+	next.LastUsedAt = r.clock()
 	if err := r.PutFamily(ctx, next, gen); err != nil {
 		return Family{}, err
 	}
 	return next, nil
+}
+
+// aged reports whether a family is past either of its two bounds at now: the
+// absolute one every family has (FamilyTTL) and the idle one a chain nothing
+// has extended runs into (FamilyIdleTTL).
+//
+// A family the mint has just opened has no LastUsedAt — nothing has rotated it
+// — and the idle bound reads CreatedAt for it, because the two are the same
+// instant at that point and a zero time read literally would make every family
+// as old as the calendar. A CreatedAt that is zero is a record no build of this
+// package wrote, and it is refused rather than read as "never": the bounds
+// exist to end an exposure, and a family whose age is unknown is one that
+// cannot be shown to be inside them.
+func (f Family) aged(now time.Time) bool {
+	if now.Sub(f.CreatedAt) > FamilyTTL {
+		return true
+	}
+	last := f.LastUsedAt
+	if last.IsZero() {
+		last = f.CreatedAt
+	}
+	return now.Sub(last) > FamilyIdleTTL
 }
 
 // lookupRecord reads one token record by its hash and nothing else. The family
@@ -694,6 +908,71 @@ func (r records) TakeRequest(ctx context.Context, id string) (Request, error) {
 	return req, nil
 }
 
+// GetRequest reads one pending authorize request without spending it. The two
+// refusals are the two TakeRequest names — a flow that is not there and a flow
+// that was answered — and an id that cannot be one key segment is the first of
+// them, for the reason TakeRequest gives: this is the read a public POST
+// reaches with a value a stranger typed.
+func (r records) GetRequest(ctx context.Context, id string) (Request, error) {
+	req, _, err := r.readRequest(ctx, id)
+	return req, err
+}
+
+// ApproveRequest records a paired device's approval on a pending request, and
+// it is a read and a write that have to share their read for the same reason
+// every other conditional write here does: the flow the approval is written to
+// is the flow the read saw, or the approval belongs to a flow that is gone.
+func (r records) ApproveRequest(ctx context.Context, id string, ap Approval) (Request, error) {
+	req, gen, err := r.readRequest(ctx, id)
+	if err != nil {
+		return Request{}, err
+	}
+	if req.Approval != nil {
+		// One flow, one approval: the identity in this record is what the code
+		// and the family the flow mints act for, so a second device's act is
+		// refused rather than written over the first.
+		return Request{}, fmt.Errorf("mcpauth: the authorize request %q: %w", id, ErrRequestApproved)
+	}
+	req.Approval = &ap
+	data, err := json.Marshal(req)
+	if err != nil {
+		return Request{}, fmt.Errorf("mcpauth: encoding the approved authorize request: %w", err)
+	}
+	if _, err := r.objs.replace(ctx, requestPrefix+id, data, gen); err != nil {
+		if errors.Is(err, errChanged) {
+			return Request{}, fmt.Errorf("mcpauth: the authorize request %q changed under the approval: %w", id, ErrConflict)
+		}
+		return Request{}, err
+	}
+	return req, nil
+}
+
+// readRequest is the read both of the above stand on: one pending request and
+// the generation it was read at. A record the consume has already replaced is
+// answered as an answered flow, because that is what it is — the marker is a
+// record that is there and is not a request any more, and reading it as a
+// pending one would be answering a flow twice.
+func (r records) readRequest(ctx context.Context, id string) (Request, int64, error) {
+	if keySegment(id) != nil {
+		return Request{}, 0, ErrRequestNotFound
+	}
+	data, gen, err := r.objs.read(ctx, requestPrefix+id)
+	switch {
+	case errors.Is(err, errMissing):
+		return Request{}, 0, ErrRequestNotFound
+	case err != nil:
+		return Request{}, 0, err
+	}
+	if isConsumed(data) {
+		return Request{}, 0, ErrRequestUsed
+	}
+	var req Request
+	if err := decode(data, &req); err != nil {
+		return Request{}, 0, fmt.Errorf("%s: %w", requestPrefix+id, err)
+	}
+	return req, gen, nil
+}
+
 func (r records) PutCode(ctx context.Context, c Code) error {
 	if err := keySegment(c.Hash); err != nil {
 		return err
@@ -765,7 +1044,10 @@ func (r records) BindCodeFamily(ctx context.Context, hash, familyID string) erro
 	if !isConsumed(data) {
 		return fmt.Errorf("mcpauth: code %s is not spent, so there is no exchange to bind a family to", hash)
 	}
-	marker, err := json.Marshal(spentRecord{Consumed: true, FamilyID: familyID})
+	// The expiry consume wrote is carried across this rewrite: the marker is
+	// the same record under the same key either way, and losing the moment it
+	// stops being readable would put it beyond the sweep that removes it.
+	marker, err := json.Marshal(spentRecord{Consumed: true, FamilyID: familyID, ExpiresAt: spentMarkerIn(data).ExpiresAt})
 	if err != nil {
 		return fmt.Errorf("mcpauth: encoding the spent code %s: %w", hash, err)
 	}
@@ -778,18 +1060,48 @@ func (r records) BindCodeFamily(ctx context.Context, hash, familyID string) erro
 // spentRecord is the marker a single-use record is replaced by when it is spent.
 // FamilyID is empty for every record but a code: it is what BindCodeFamily adds
 // afterwards, and it is the one thing a replay of a spent record is read for.
+//
+// **The marker is written rather than the record deleted** so that the second
+// presentation of a code or a binding is a refusal that says so, instead of an
+// absence a reader cannot tell from a record that never existed — and so that
+// the spend is one generation-matched write, which is what makes it single-use
+// under two simultaneous callers rather than one behind a race.
 type spentRecord struct {
 	Consumed bool   `json:"consumed"`
 	FamilyID string `json:"family_id,omitempty"`
+	// ExpiresAt is the moment the record this marker replaced stopped being
+	// readable, carried over out of it by consume and kept across
+	// BindCodeFamily's rewrite. It is here for M12's sweep and it is the only
+	// reason the field is written: a marker holds no fields of the record it
+	// replaced, so without it a spent record would be an object with no
+	// lifetime at all. It is the moment the sweep may remove the record from,
+	// and not always the moment it does: a spent code whose marker names a
+	// family that can still be revoked is kept past it, because the marker is
+	// the only record a replay of that code acts on (sweepSingleUse).
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
-// consumedBytes is what a single-use record is replaced by when it is spent. It
-// is written rather than deleted so that the second presentation of a code or a
-// binding is a refusal that says so, instead of an absence a reader cannot tell
-// from a record that never existed — and so that the spend is one
-// generation-matched write, which is what makes it single-use under two
-// simultaneous callers rather than one write behind a race.
-var consumedBytes = []byte(`{"consumed":true}`)
+// expiring is the half of a single-use record the sweep reads: the moment the
+// record stops being usable, which is what decides whether it is still a
+// record at all. Request and Code are the two shapes, and the sweep is written
+// over the interface rather than over either of them because the two are
+// removed by one rule.
+type expiring interface{ expiresAt() time.Time }
+
+func (r Request) expiresAt() time.Time { return r.ExpiresAt }
+func (c Code) expiresAt() time.Time    { return c.ExpiresAt }
+
+// expiryOf is the moment the record consume just decoded stops being readable,
+// for the marker it leaves in its place. A value that is not one of the two
+// shapes above is marked with the zero time, which the sweep reads as "no
+// expiry to sweep by" and leaves where it is: the wrong direction to be wrong
+// in here is deleting a record whose lifetime nobody stated.
+func expiryOf(into any) time.Time {
+	if e, ok := into.(expiring); ok {
+		return e.expiresAt()
+	}
+	return time.Time{}
+}
 
 // errConsumed is the record layer's own answer for a single-use record that was
 // already spent. TakeRequest and ConsumeCode name it for their own callers, the
@@ -820,7 +1132,11 @@ func (r records) consume(ctx context.Context, key string, into any) ([]byte, err
 	if err := decode(data, into); err != nil {
 		return nil, fmt.Errorf("%s: %w", key, err)
 	}
-	if _, err := r.objs.replace(ctx, key, consumedBytes, gen); err != nil {
+	marker, err := json.Marshal(spentRecord{Consumed: true, ExpiresAt: expiryOf(into)})
+	if err != nil {
+		return nil, fmt.Errorf("mcpauth: encoding the spent record %s: %w", key, err)
+	}
+	if _, err := r.objs.replace(ctx, key, marker, gen); err != nil {
 		if errors.Is(err, errChanged) {
 			return nil, errConsumed
 		}
@@ -829,15 +1145,19 @@ func (r records) consume(ctx context.Context, key string, into any) ([]byte, err
 	return nil, nil
 }
 
-// isConsumed reports whether an object is the marker consume leaves. It reads
-// one field and ignores the rest on purpose: the alternative is a decode that
-// has to know which record shape it was looking at, and a spent record is the
-// one thing this store reads without knowing what it used to be.
-func isConsumed(data []byte) bool {
-	var marker struct {
-		Consumed bool `json:"consumed"`
+// isConsumed reports whether an object is the marker consume leaves.
+func isConsumed(data []byte) bool { return spentMarkerIn(data).Consumed }
+
+// spentMarkerIn decodes the marker consume leaves. It decodes into the marker
+// type and not into the shape the record used to be: a spent record is the one
+// thing this store reads without knowing what it was, so every unknown field
+// of the bytes is ignored on purpose rather than refused as it is by decode.
+func spentMarkerIn(data []byte) spentRecord {
+	var marker spentRecord
+	if err := json.Unmarshal(data, &marker); err != nil {
+		return spentRecord{}
 	}
-	return json.Unmarshal(data, &marker) == nil && marker.Consumed
+	return marker
 }
 
 // get reads and decodes one record, answering the backend's own errMissing for

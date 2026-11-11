@@ -93,7 +93,7 @@ this repository writes down.
 **VERIFIED — the tree already has the precedent that states it, and the guard that reads it.** The MCP
 front door, the one other always-on endpoint this installation deploys, pins it explicitly:
 
-- `deploy/terraform/gcp/modules/installation/coordinator.tf:443-445` —
+- `deploy/terraform/gcp/modules/installation/coordinator.tf:458-460` —
   `scaling { min_instance_count = 0 }`, under a comment that gives the reason in the same words the
   owner's ruling does ("a public endpoint nobody calls costs nothing, and a cold start is what a caller
   waits for rather than what the installation pays for around the clock").
@@ -565,7 +565,7 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
   `scripts/gen-golden-plans.sh`, never by hand.
 - **Interfaces:** `google_cloud_run_v2_service.credentials` states, in a `scaling` block on the
   **template**, `min_instance_count = 0` and a `max_instance_count`. The precedent is the MCP front
-  door's own block (`coordinator.tf:443-445`), and the numbers are chosen rather than copied: the
+  door's own block (`coordinator.tf:458-460`), and the numbers are chosen rather than copied: the
   **minimum is 0** because that is the owner's cost claim made checkable, and the **maximum is bounded**
   because an unbounded service is the other half of a cost the owner did not consent to — a runaway
   caller, or a retry storm, scales this service as far as Cloud Run allows. The plan proposes
@@ -1508,7 +1508,7 @@ which is the class of decision this file does not make for the owner. **The owne
 |---|---|---|---|
 | V1 | Secret Manager's price per **active secret version** per month | §1.3's "one active version" is the only Secret Manager line this ruling adds, and the number is the whole of it | Google's published price list, read by the owner. **Nothing in this tree states a price**, and this file does not invent one |
 | V2 | Artifact Registry's price per GB per month of storage, and its free allowance | §1.3's cached-image line | the same |
-| V3 | Cloud Run's price per request and per CPU/allocation-second, and that a zero-minimum service has **no** idle charge | The owner's own reason for the ruling ("a Cloud Run service that scales to zero costs nothing idle"). **The scale-to-zero behaviour is not in this tree** — what is in this tree is the MCP front door's `min_instance_count = 0` and a comment saying why (`coordinator.tf:443`) | Cloud Run's published documentation and price list, read by the owner; and, once DON3 lands, **Check 94 read back on a real installation** |
+| V3 | Cloud Run's price per request and per CPU/allocation-second, and that a zero-minimum service has **no** idle charge | The owner's own reason for the ruling ("a Cloud Run service that scales to zero costs nothing idle"). **The scale-to-zero behaviour is not in this tree** — what is in this tree is the MCP front door's `min_instance_count = 0` and a comment saying why (`coordinator.tf:458`) | Cloud Run's published documentation and price list, read by the owner; and, once DON3 lands, **Check 94 read back on a real installation** |
 | V4 | That the Cloud Run provider's default for `min_instance_count` really is `0` | §1.2 rests on it: the gap is that the tree states nothing, so the *default* is what decides today | The provider's schema, read by the owner. The tree does not state it, and DON3's whole point is that the tree should not have to |
 | V5 | Whether a **managed** project's `fugaro update` applies its own installation root | §3 DON6 cannot be written until this is known, and it is a fact about the managed convergence path rather than about this ruling | Read out of `internal/cli/upgrade_cloud.go` and the managed path **by DON6's own red step**, which is why that task determines rather than assumes it |
 | V6 | That the compressed size of the credentials image is materially below its ~60 MB uncompressed size | §1.3's "smaller again" | The image's manifest, read by the owner (`docker buildx imagetools inspect`). The **uncompressed** size is VERIFIED in the tree (`images/credentials_test.go:209-220`) and this row is only about the compressed figure |

@@ -480,10 +480,13 @@ func TestPropagationRetryAppliesNothingUnderTheFailedAttemptsAdmission(t *testin
 	r := updateManagedRig(t)
 	updating(t, r)
 	// The first attempt's plan is one the installation's own cover admits; the
-	// plan the retry is handed grants the credentials service to a principal
-	// the installation's modules do not grant, which the cover refuses.
+	// plan the retry is handed carries an authoritative IAM binding beside the
+	// account, which the cover refuses outright. The grant the retry used to be
+	// handed cannot be what stops it any more: the grant table is content, so
+	// since D1545 the gate records an out-of-table grant and warns rather than
+	// refusing (T9), and only the integrity half stops a step.
 	admitted := credentialsAccountChanges()[:1]
-	refused := credentialsAccountChanges()
+	refused := append(credentialsAccountChanges(), iamBindingCreate())
 	admittedJSON := map[string]any{"stdout": planJSON(t, admitted...)}
 	refusedJSON := map[string]any{"stdout": planJSON(t, refused...)}
 	r.script["plan@installation"] = map[string]any{"exit": 2}

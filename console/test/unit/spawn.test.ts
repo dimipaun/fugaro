@@ -167,7 +167,10 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * the two commands the plan's CM3 put on `consoleReadPaths`), and the graph
  * plan's feed, CG9b's `graph.watch`, the twenty-fourth -- the same `graph`
  * command as CG9a's read above, exactly as `logs`'s and `settings`'s two rows
- * are one command each. The
+ * are one command each, and the subscriptions plan's S4.2's seat estimate,
+ * `seats.read`, the twenty-fifth -- a read of the active installation's own
+ * config and its bucket, so it takes the project flag like every other read of
+ * a project. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -200,6 +203,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'managed.status',
   'policy.show',
   'run.launch',
+  'seats.read',
 ]
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
@@ -511,7 +515,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: twenty-six argvs, twenty-four commands, twenty-four of them with --project', () => {
+  it('fixes the design allow-list exactly: twenty-seven argvs, twenty-five commands, twenty-five of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -539,7 +543,11 @@ describe('the spawn table and the argv it builds', () => {
     // and its published policy node -- and both are rows whose whole argv is
     // their own words: neither command has a positional word and both declare no
     // argument at all, which is what keeps a caller from naming a project, a
-    // generation or a day (`src/main/ipc.ts`). The Go
+    // generation or a day (`src/main/ipc.ts`). The subscriptions plan's S4.2
+    // added the seat estimate, `seats --json` -- the Project tab's advisory
+    // count of who launches jobs, whose whole argv is its own two words and the
+    // installation's: the 90 days it is measured over are the command's own and
+    // no flag moves them, so a caller can name nothing. The Go
     // side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
@@ -578,12 +586,16 @@ describe('the spawn table and the argv it builds', () => {
       // own words, filled from the chosen installation like every other row's.
       'managed status --json',
       'project policy show --json',
+      // The seat estimate (subscriptions plan S4.2): the Project tab's advisory
+      // read, whose argv is the command, its one fixed flag and the
+      // installation's two words -- there is no argument for a caller to fill.
+      'seats --json',
       'run --task-file - --json',
     ])
     // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
-    // are twenty rows plus one: `logs` has two rows, `--json` and `--url`, and
-    // neither of them may be the one that forgets --project -- and `settings`
-    // has two as well, the read and the edit.
+    // are twenty-one rows plus one: `logs` has two rows, `--json` and `--url`,
+    // and neither of them may be the one that forgets --project -- and
+    // `settings` has two as well, the read and the edit.
     // A word is a flag or a separator if it begins with `-`, which is what
     // keeps the launch's literal `-` -- the argv word that means "read the task
     // from stdin" -- out of the command path it is compared as.
@@ -612,10 +624,11 @@ describe('the spawn table and the argv it builds', () => {
         'coordinator intents',
         'managed status',
         'project policy show',
+        'seats',
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(24)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(25)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -1090,6 +1103,45 @@ describe('the spawn table and the argv it builds', () => {
     // omits the installation's caps (F18), so the row this surface carries has
     // to be that command's.
     expect(SPAWN_COMMANDS.map((row) => row.words.slice(0, 3).join(' '))).toContain('project policy show')
+  })
+
+  it('spawns the seats estimate as its command, `--json` and nothing else', () => {
+    // **S4.2's row, word for word** (the subscriptions plan; the design
+    // allow-list's `seats --json`). It is the managed reads' shape again -- the
+    // argv is the row's own words and the caller fills none of them -- and the
+    // emptiness is what keeps the estimate an estimate *of this installation*:
+    // the ninety days, the launcher list and the requesters are the command's
+    // own reading, so a payload that could name a day, a window or a person
+    // would be pointing the child at records that are not the window's. Spelled
+    // out here rather than read off the row, so a change to the row is a
+    // failing test.
+    expect(argvFor('seats.read', {}, safeContext({ project: 'chosen' }))).toEqual([
+      'seats',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === 'seats.read')
+    expect(row?.args).toEqual([])
+    expect(row?.dirFlag).toBe(false)
+    // A key the row does not declare never reaches an element, which is the rule
+    // that keeps a payload from smuggling a flag in -- and the words the CLI
+    // owns but this console fills from the chosen installation rather than from
+    // a payload (`--project`, `--config`) are keys on no row either, so a
+    // payload that names one is refused like any other.
+    for (const key of ['days', 'window', 'since', 'project', 'config', 'run', 'person', 'json']) {
+      expect(
+        () => argvFor('seats.read', { [key]: 'x' }, safeContext()),
+        `seats.read accepted ${key}`,
+      ).toThrow(/does not declare/)
+    }
+    // The argv's whole flag list is the row's one word plus the console's own
+    // `--project`: no credential, no host, no path and no other command's flag.
+    expect(
+      argvFor('seats.read', {}, safeContext({ project: 'chosen' })).filter((word) =>
+        word.startsWith('--'),
+      ),
+    ).toEqual(['--json', '--project'])
   })
 
   it('emits one array element per value, in the operation’s own order', () => {

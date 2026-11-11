@@ -295,6 +295,16 @@ var jsonCases = map[string]jsonCase{
 			return []string{"orchestrator", "events"}
 		},
 	},
+	"orchestrator ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := lsFixture(t)
+			seedOrchestratorNode(t, f, "aurora")
+			seedOrchestratorLease(t, f, "aurora", "macbook", orchestratorTestNow)
+			seedBriefCache(t, "aurora", orchestratorTestNow)
+			return []string{"orchestrator", "ls"}
+		},
+	},
 	"orchestrator patch": {
 		run: func(t *testing.T) []string {
 			f := newOrchestratorFixture(t)
