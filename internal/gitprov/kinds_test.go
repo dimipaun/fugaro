@@ -1,6 +1,7 @@
 package gitprov
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -174,9 +175,18 @@ func TestEveryKindSwitchIsInventoried(t *testing.T) {
 		}
 	}
 	for rel := range forgeKindGoSites {
-		if _, ok := found[rel]; !ok {
-			t.Errorf("forgeKindGoSites lists %s, which names no forge kind any more: drop the row, or restore the file to %s", rel, strings.Join(namesIn(names), ", "))
+		if _, ok := found[rel]; ok {
+			continue
 		}
+		// ee/ is deleted before the core-without-ee job builds and tests the
+		// untagged core, so a row under a tree this checkout does not carry at
+		// all is skipped: the row is not stale, the directory is simply not
+		// here. A row whose own directory IS here and whose file is not is a
+		// stale row like any other.
+		if absentTree(root, rel) {
+			continue
+		}
+		t.Errorf("forgeKindGoSites lists %s, which names no forge kind any more: drop the row, or restore the file to %s", rel, strings.Join(namesIn(names), ", "))
 	}
 	for _, site := range forgeKindNonGoSites {
 		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(site.path)))
@@ -189,6 +199,15 @@ func TestEveryKindSwitchIsInventoried(t *testing.T) {
 				site.path, site.what, site.needle)
 		}
 	}
+}
+
+// absentTree reports whether a row points into a part of the tree this checkout
+// does not carry at all: the file is not there AND neither is its directory.
+// The whole-directory case is CI's core-without-ee job, which deletes ee/ and
+// then builds and tests the untagged core; the one-file case is a stale row.
+func absentTree(root, rel string) bool {
+	_, err := os.Stat(filepath.Join(root, filepath.Dir(filepath.FromSlash(rel))))
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // kindConst is one `Kind* = "…"` constant of this package.
