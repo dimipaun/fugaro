@@ -812,6 +812,69 @@ func TestDoctorOfflineReadsNoBucket(t *testing.T) {
 	}
 }
 
+// TestDoctorOfflineImageConfigNamesOnlyComparedWorkflows: the skips name the
+// checks that exist. An image-config-<workflow> check is emitted for a
+// workflow whose per-workflow build record the ordinary run compares, and that
+// is not every workflow in the file: one that builds from a dockerfile: is
+// never compared (the hash covers a tree's blob), and one the project's image
+// catalog gives an image to is judged by its entry's record instead
+// (imageConfigWorkflows). Naming them here listed checks that no run has, and
+// the default view's "N checks not run by `--offline`" counted them.
+//
+// The catalog is the one this machine's own config states — the half of the
+// image selection --offline can read — so the pinned workflow is one this test
+// can expect to be left out; the node's half of that selection is the residual
+// the flag reports rather than guesses at.
+//
+// Mutation (run, restore): return every workflow name from
+// doctorOfflineWorkflows (drop imageConfigWorkflows), and this test fails on
+// both the check list and the count.
+func TestDoctorOfflineImageConfigNamesOnlyComparedWorkflows(t *testing.T) {
+	r := newDoctorRig(t)
+	isolateCache(t)
+	addLocalLines(t, r, doctorCatalogFixture)
+	const yaml = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+		"git: { provider: github }\nworkflows:\n" +
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n" +
+		"  baked: { dockerfile: .fugaro/baked.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n" +
+		"  pinned: { image_name: go, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	dir := gitCheckout(t, t.TempDir(), yaml)
+	t.Chdir(dir)
+	doctorCleanState(t, r, dir)
+	out, _, err := execute(t, "doctor", "--offline", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o struct {
+		Checks []doctorOfflineCheck `json:"checks"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	named := map[string]bool{}
+	for _, c := range o.Checks {
+		named[c.ID] = true
+	}
+	if !named["image-config-app"] {
+		t.Errorf("--offline does not name image-config-app, the workflow the ordinary run compares:\n%s", out)
+	}
+	for _, id := range []string{"image-config-baked", "image-config-pinned"} {
+		if named[id] {
+			t.Errorf("--offline names %s: no run emits that check for that workflow, so --all would list a check that does not exist", id)
+		}
+	}
+	// The count on the screen is the checks that exist: cli-version and the
+	// three policy checks are the only other skips this rig has (base-image
+	// answers from the local config).
+	view, _, err := execute(t, "doctor", "--offline")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, view)
+	}
+	if !strings.Contains(view, "5 checks not run by `--offline`") {
+		t.Errorf("the default view does not count exactly the five skipped checks:\n%s", view)
+	}
+}
+
 // TestDoctorPluginIsOffline: --plugin never touches the cloud: with a local
 // installation pointing at fakes, not one request reaches them, and no
 // installation or credentials are needed at all.

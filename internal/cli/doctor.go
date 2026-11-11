@@ -755,14 +755,21 @@ func doctorOfflineChecks(ctx context.Context, o cloudOptions, loc pluginwire.Loc
 }
 
 // doctorOfflineWorkflows are the workflow names the checkout's own config
-// resolves to with the cache alone: the offline run records one skipped
-// image-config-<workflow> check per name, because the ID carries the name and
-// nothing else in this run can supply it. The layer is resolved with
-// layerOptions.Offline, which reads the cache and never the bucket, so this
-// stays inside the flag's promise. A config that does not resolve names none:
-// the ordinary run emits no image-config-<workflow> check for such a checkout
-// either (doctorLayerChecks needs a valid fugaro.yaml and a resolved file), so
-// silence here is the same silence and not a second one.
+// resolves to with the cache alone, for which the ordinary run emits an
+// image-config-<workflow> check: the offline run records one skipped check per
+// name, because the ID carries the name and nothing else in this run can
+// supply it. The layer is resolved with layerOptions.Offline, which reads the
+// cache and never the bucket, so this stays inside the flag's promise, and the
+// names are imageConfigWorkflows' — the predicate the ordinary run judges
+// those checks by — over the image selection this run can read
+// (offlineImageConfigWorkflows). Not every workflow of the file is one of
+// them: a workflow that builds from a dockerfile: and one the project's image
+// catalog gives an image to never get an image-config- check at all, so naming
+// them here listed checks that do not exist and counted them in the default
+// view's "N checks not run by --offline". A config that does not resolve names
+// none: the ordinary run emits no image-config-<workflow> check for such a
+// checkout either (doctorLayerChecks needs a valid fugaro.yaml and a resolved
+// file), so silence here is the same silence and not a second one.
 func doctorOfflineWorkflows(ctx context.Context, loc pluginwire.Location, inCheckout bool, lc *localcfg.Config) []string {
 	if !inCheckout {
 		return nil
@@ -775,7 +782,7 @@ func doctorOfflineWorkflows(ctx context.Context, loc pluginwire.Location, inChec
 	if err != nil || rf.Cfg == nil {
 		return nil
 	}
-	return slices.Sorted(maps.Keys(rf.Cfg.Workflows))
+	return offlineImageConfigWorkflows(ctx, loc.Root, rf.Cfg, lc)
 }
 
 // doctorOrchestratorUnit reports the login unit that runs the orchestrator

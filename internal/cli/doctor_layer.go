@@ -367,6 +367,74 @@ func imageCatalogUnreadCheck(lc *localcfg.Config, cfg *config.Config, catErr err
 		Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 }
 
+// imageConfigWorkflows are the workflows an image-config-<name> check is
+// emitted for: every workflow of cfg except the two a per-workflow build
+// record is never compared for.
+//
+// A workflow that builds from a dockerfile: is never one of them: the hash the
+// check compares covers the Dockerfile's own blob, which needs a tree this run
+// does not have.
+//
+// A workflow the project's image catalog speaks for is not one either
+// (catalogImageChecks judges those by their entry's record): the per-workflow
+// record compared here is not the image its jobs start on, and the fix the
+// check would name, `fugaro image build --workflow`, builds an image those
+// jobs never run. Whether the catalog speaks for it is workflowCatalogEntry's
+// own answer, over the catalog and map the caller resolved.
+//
+// One predicate, two callers, so that the checks `doctor --offline` records a
+// skip for are the checks that exist: the offline run cannot read the record
+// (that is what the skip says), but which workflows have one at all is a fact
+// of the file on disk, and this is where both runs read it.
+func imageConfigWorkflows(cfg *config.Config, cat *config.Catalog, imap map[string]string, catUnknown bool, repo string, be catalog.Backend) []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		w := cfg.Workflows[name]
+		if w.Dockerfile != "" {
+			continue
+		}
+		if _, ok := workflowCatalogEntry(cat, imap, catUnknown, repo, w, be); ok {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// offlineImageConfigWorkflows are the image-config-<workflow> skips `fugaro
+// doctor --offline` records for a resolved checkout: imageConfigWorkflows'
+// own list, over the selection this run can read.
+//
+// That selection is the catalog and the repo-to-image map this machine's own
+// project config states — the two that win over the published node's wherever
+// they are stated (localcfg's keep rules, D1140 and D1906) and that cost no
+// bucket — and the backend the catalog's docker rule is read against. A config
+// that states neither is read as no selection and not as an unknown, which is
+// the choice the skip list turns on: offline cannot tell a project with no
+// catalog from one whose catalog lives in the node, and the unknown reading
+// would leave every baked workflow unjudged and unsaid — the silent pass the
+// classes exist to prevent — where this one still names a check the ordinary
+// run may hold. The node's half of the selection is the residual, and it is
+// reported rather than guessed at.
+func offlineImageConfigWorkflows(ctx context.Context, root string, cfg *config.Config, lc *localcfg.Config) []string {
+	cat, imap, be := (*config.Catalog)(nil), map[string]string(nil), catalog.CloudRun
+	if lc != nil {
+		cat, imap, be = lc.ImageCatalogEffective(nil), lc.ImageMapEffective(nil), catalog.Backend(lc.Backend())
+	}
+	// The repository's own name is read only for a map that could point at an
+	// entry (the only thing that reads it), and under the guard every other
+	// consumer of it applies (doctorLayerChecks): the checkout's raw
+	// .git/config is not trusted by name, and a name this run cannot establish
+	// leaves the map half unjudged, which keeps the skip.
+	repo := ""
+	if len(imap) > 0 {
+		if oi, ok := readOrigin(ctx, root); ok && !oi.Rewritten {
+			repo = oi.Repo
+		}
+	}
+	return imageConfigWorkflows(cfg, cat, imap, false, repo, be)
+}
+
 // imageConfigChecks names each workflow (with a generated image) whose build
 // record's image-config hash is not the hash of what it resolves to now:
 // typically a profile's base or image settings changed.
@@ -380,6 +448,10 @@ func imageCatalogUnreadCheck(lc *localcfg.Config, cfg *config.Config, catErr err
 // `fugaro update`, and sending the owner back to it for an image it does not
 // build is a loop they have already run.
 //
+// The workflows it judges are imageConfigWorkflows', which is the same list
+// `doctor --offline` records its skips from: the flag says which checks it did
+// not run, so it has to name the checks that exist and no others.
+//
 // cat is the catalog the job spec resolves (doctorLayerChecks), never the
 // local config's alone: a workflow the published node's catalog speaks for is
 // as much the catalog's as one this file's own catalog names. catUnknown is
@@ -388,14 +460,7 @@ func imageCatalogUnreadCheck(lc *localcfg.Config, cfg *config.Config, catErr err
 // their jobs run the derived image — so the two nils are not one state.
 func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, repo, slug string, cfg *config.Config, res *config.Resolution, cat *config.Catalog, imap map[string]string, catUnknown bool) []doctorCheck {
 	var out []doctorCheck
-	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		w := cfg.Workflows[name]
-		if _, ok := workflowCatalogEntry(cat, imap, catUnknown, repo, w, catalog.Backend(env.lc.Backend())); ok {
-			continue
-		}
-		if w.Dockerfile != "" {
-			continue // its hash covers the Dockerfile's blob, which needs a tree
-		}
+	for _, name := range imageConfigWorkflows(cfg, cat, imap, catUnknown, repo, catalog.Backend(env.lc.Backend())) {
 		data, _, err := rb.Read(ctx, imagecheck.RecordKey(slug, name))
 		if err != nil {
 			continue
