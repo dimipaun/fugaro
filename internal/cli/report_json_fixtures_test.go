@@ -380,6 +380,13 @@ var jsonCases = map[string]jsonCase{
 	"review show": {
 		why: "the read needs a review run's artifact, which the fixture would have to fake a coordinator job to produce",
 	},
+	"rigor floor show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			jsonCloud(t)
+			return []string{"rigor", "floor", "show"}
+		},
+	},
 	"run": {
 		run: func(t *testing.T) []string {
 			jsonCloud(t)
