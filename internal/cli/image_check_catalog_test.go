@@ -799,10 +799,10 @@ func TestCatalogCheckJobRefusesAnEntryAssignedTwice(t *testing.T) {
 // digest is the record's is a skip, and the fingerprint the entry's check.json
 // keeps carries the staged value, and the rebuild it submits is the entry's own
 // build, pinned to the staged commit and digest — all four of which the bucket
-// read is the only source of. Nothing on this path opens a git provider, and the opener
-// below fails the test if one is ever reached: the digest is read from the
-// bucket precisely so this job keeps the credential-less shape the comment on
-// its Lockfiles: false states (D1401, reconciliation §4.6).
+// read is the only source of. Nothing on this path opens a git provider, and
+// the opener below fails the test if one is ever reached: the digest is read
+// from the bucket precisely so this job keeps the credential-less shape the
+// comment on its Lockfiles: false states (D1401, reconciliation §4.6).
 func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
 	was := openCatalogProvider
 	openCatalogProvider = func([]string, func(string)) (string, gitprov.Opener, error) {

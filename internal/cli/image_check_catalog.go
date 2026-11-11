@@ -375,9 +375,8 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 // fugaro image build <entry> sends, with the definition this run read and the
 // commit the entry's record names — or, for an entry that names a build
 // context, the commit and digest the copy staged with it, which is what its
-// rebuild is pinned to. The account is r's, and
-// CatalogBuildSpec.check refuses any other, so the job's own account is never
-// the one a build runs as.
+// rebuild is pinned to. The account is r's, and CatalogBuildSpec.check refuses
+// any other, so the job's own account is never the one a build runs as.
 func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catalogCheckRepo, slug string, ev catalogEvaluation) (id, status string, err error) {
 	rec := ev.rec
 	if rec == nil {

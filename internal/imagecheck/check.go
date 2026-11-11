@@ -395,10 +395,9 @@ type CatalogDecision struct {
 // workflow check evaluates them: force, the definition the last build read,
 // the build context it read, the template the build would run, the base, the
 // baked repository's dependency files, then the image's age. Every trigger
-// that fires is recorded, and the
-// reasons keep that order, so a night when both the definition and the base
-// moved records catalog-definition before base. It makes no calls: the caller
-// reads everything first.
+// that fires is recorded, and the reasons keep that order, so a night when
+// both the definition and the base moved records catalog-definition before
+// base. It makes no calls: the caller reads everything first.
 //
 // An entry is backed off exactly as a workflow is (backOffDecision): when a
 // trigger fires and the last build of these very inputs is known, a build
