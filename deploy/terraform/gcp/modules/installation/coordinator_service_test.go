@@ -478,3 +478,70 @@ func TestTheStoreBucketIsCreatedAndNeverAdopted(t *testing.T) {
 		}
 	}
 }
+
+// TestTheFrontDoorCarriesItsOwnSwitchAndNothingElseDoes is M12's half of the
+// module: the one entry that turns the door on, and the one place it is
+// written.
+//
+// The switch and the binding are one fact (D934's amendment: off is the
+// absence of the allUsers binding), so the entry is written by the same
+// condition that creates the service — a plan that carried the binding and no
+// entry, or an entry and no binding, would be a door whose two halves disagree
+// about whether it is on.
+//
+// The entry is also the door's whole configuration and not a flag, because
+// three of the four things ee/coordinator's FrontDoor needs are not
+// credentials and none of them is anywhere else in the environment: the origin
+// the authorization server publishes as its identifier, and the two member
+// lists D933 resolves an identity by. The lists are reduced to `user:` entries
+// in the module as well as in the door (D923), so an installation whose lists
+// hold a group or a domain does not publish one to a public service's
+// environment.
+func TestTheFrontDoorCarriesItsOwnSwitchAndNothingElseDoes(t *testing.T) {
+	svc := tfResource(t, tfSource(t, coordinatorTF), "google_cloud_run_v2_service", "coordinator_front_door")
+	entry := "FUGARO_MCP_FRONT_DOOR"
+	if !strings.Contains(svc, `name = "`+entry+`"`) {
+		t.Fatalf("%s: the front door's container sets no %s, so a revision that runs this service mounts no door and answers 404 on every path of it (ee/coordinator's FrontDoor reads exactly this entry)", coordinatorTF, entry)
+	}
+	for _, want := range []struct{ what, re string }{
+		{"the service's own origin, built from the service name, the project's number and the region", `run\.app`},
+		{"the launcher list, reduced to the entries D933 reads", `launchers = local\.front_door_launchers`},
+		{"the operator list, reduced the same way", `operators = local\.front_door_operators`},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(svc) {
+			t.Errorf("%s: the front door's %s entry sets no %s:\n%s", coordinatorTF, entry, want.what, svc)
+		}
+	}
+
+	// The lists are the installation's own, and they are the `user:` entries of
+	// it: the two locals are what the entry renders, so a change that published
+	// the raw lists would be a public service carrying members the door does
+	// not read.
+	code := tfSource(t, coordinatorTF)
+	for _, want := range []struct{ what, re string }{
+		{"the launchers, filtered", `front_door_launchers = \[for m in var\.launchers : m if startswith\(m, "user:"\)\]`},
+		{"the operators, filtered", `front_door_operators = \[for m in var\.operators : m if startswith\(m, "user:"\)\]`},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(code) {
+			t.Errorf("%s: the front door does not build %s: D923 reads exact `user:` entries only, and this entry is on a public service", coordinatorTF, want.what)
+		}
+	}
+
+	// And nothing else in the module writes it, on a container or anywhere
+	// else: the sweep's job is the installation's state reader and holds the
+	// App key and the database, and an entry that turned the door on there
+	// would be a door mounted in the wrong process, which is the one mistake a
+	// single switch written in two places makes possible. variables.tf names it
+	// in the opt-in's own description, which is prose an operator reads rather
+	// than a container's environment, so what is counted is the entry itself.
+	set := regexp.MustCompile(`(?m)^\s*name\s*=\s*"` + entry + `"\s*$`)
+	for name, src := range tfFiles(t) {
+		got := len(set.FindAllString(src, -1))
+		switch {
+		case name == coordinatorTF && got != 1:
+			t.Errorf("%s writes %s %d times, want the front door's one entry", name, entry, got)
+		case name != coordinatorTF && got != 0:
+			t.Errorf("%s sets %s on a container (%d times): the switch belongs on the front door's own service and nowhere else", name, entry, got)
+		}
+	}
+}
