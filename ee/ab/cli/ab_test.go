@@ -185,7 +185,13 @@ func TestABCommandRatesComeFromTheCachedLayer(t *testing.T) {
 	if rate := abRow(t, doc, "startup").Recommendation.ExchangeRate; rate != 0.25 {
 		t.Errorf("with no layer cached the Startup rate reads %v, want the shipped 0.25", rate)
 	}
-	abWarning(t, doc, "no project layer is cached")
+	note := abWarning(t, doc, "no project layer is cached")
+	// The advice names a command that reads the layer the bucket holds and
+	// caches it. `fugaro models ls` reads that cache alone and would leave a
+	// reader exactly where this warning found them.
+	if !strings.Contains(note, "fugaro config layer") {
+		t.Errorf("the no-cache warning reads %q, want it to name `fugaro config layer`, which fills the cache", note)
+	}
 
 	// The project's own layer: Startup's allowance is raised, so a pair that
 	// costs a quarter more is inside it rather than outside.

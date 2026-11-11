@@ -193,7 +193,7 @@ func abRecords(objs []fcli.RunRecord) ([]runstore.Record, int) {
 func abRateSource(project string) (map[rigor.Mode]float64, string) {
 	entry, ok := localcfg.LoadLayerCache(os.Getenv, project)
 	if !ok {
-		return nil, "no project layer is cached on this machine, so every mode's exchange rate is the figure Fugaro ships (run a command that reads the layer, such as `fugaro models ls`, to report the project's own ab.exchange_rate)"
+		return nil, "no project layer is cached on this machine, so every mode's exchange rate is the figure Fugaro ships (run `fugaro config layer`: it reads the layer the bucket holds for this project and caches it, and this command then reports the project's own ab.exchange_rate)"
 	}
 	layer, problems := config.ParseProjectLayer([]byte(entry.YAML), config.LayerAnchor{Project: project, GCPProject: entry.GCPProject})
 	if layer == nil || len(problems) > 0 {
