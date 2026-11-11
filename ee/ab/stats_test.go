@@ -146,6 +146,41 @@ func TestClopperPearsonKnownValues(t *testing.T) {
 	}
 }
 
+// TestSignTestNegativePanics holds the one guard between a report and a figure
+// no pair produced. A count below zero is a caller's bug -- the pairs are
+// counted, so nothing in the report path can hand one over -- and the answer
+// would otherwise be a plausible-looking interval drawn from a sample that does
+// not exist, which is exactly the failure a reader of a range cannot see. The
+// panic is contract, not an accident of the arithmetic, so it is pinned: a
+// later "tidy-up" that clamps the count to zero would turn the loudest possible
+// answer into the quietest one.
+func TestSignTestNegativePanics(t *testing.T) {
+	for _, c := range []struct {
+		wins, losses int
+	}{
+		{-1, 0},
+		{0, -1},
+		{-1, -1},
+		{MinRuns, -1},
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("SignTest(%d, %d) answered instead of panicking: a figure drawn from a pair count that cannot happen would be published as if a pair had produced it",
+						c.wins, c.losses)
+				}
+			}()
+			SignTest(c.wins, c.losses)
+		}()
+	}
+	// The boundary itself is not a bug: no pair at all is a readable state and
+	// must keep answering, so a guard that panics on zero would refuse the one
+	// thin group the rule is written to report on.
+	if p, lo, hi := SignTest(0, 0); p != 1 || lo != 0 || hi != 1 {
+		t.Errorf("SignTest(0, 0) = (%v, %v, %v), want (1, 0, 1)", p, lo, hi)
+	}
+}
+
 // binomTailBelow is P(X <= k) for X ~ Binomial(n, p), computed the plain way:
 // exact integer coefficients and floating-point powers. It exists so the
 // defining equations above are checked against a second, independent reading of
