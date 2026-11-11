@@ -1,6 +1,6 @@
 # G3.1 — every secrets-flow claim in the security text, checked against the code
 
-**Status: done 2026-11-11, verification only. Four gaps, each with wording for the owner to approve;
+**Status: done 2026-11-11, verification only. Five gaps, each with wording for the owner to approve;
 `SECURITY.md` is untouched.** Plan: [implementation-plan.md](implementation-plan.md) G3.1.
 Reconciliation: [reconciliation.md](reconciliation.md) R4 ("the SECURITY work is a verification task
 (F3), and the owner approves any wording change").
@@ -20,15 +20,16 @@ server, redaction, the bucket grants, the Terraform that mounts and grants them)
 
 It does **not** re-derive the threat model, and it does not restate the accepted limits — those are
 the owner's rulings and they are quoted in the document itself. It does not touch `SECURITY.md`:
-where a sentence is wrong or incomplete, the gap below carries replacement wording for the owner to
-approve. `website/content/security.md` is generated (`go run ./internal/clidoc`) and is not edited
-by hand here; a wording change lands once, in `SECURITY.md`, and is regenerated in the same PR.
+where a sentence is wrong or incomplete, the matching gap below carries replacement wording for the
+owner to approve. `website/content/security.md` is generated (`go run ./internal/clidoc`) and is not
+edited by hand here; a wording change lands once, in `SECURITY.md`, and is regenerated in the same PR.
 
 ## The site's security page makes no claim of its own
 
-`website/src/pages/security.astro` renders two whole sections of `SECURITY.md` — "In short" (all six
-bullets) and "Reporting a vulnerability" (`sectionLines`, `:165`; the summary list, `:727-729`) — and
-its four diagram facts and two diagram lines are each proved against the document by `quoted()`
+`website/src/pages/security.astro` renders two whole sections of `SECURITY.md` — "In short" (all
+seven bullets, `SECURITY.md:5-11`) and "Reporting a vulnerability" (`sectionLines`, `:165`; the summary
+list, `:727-729`; `website/test/security.mjs:191` counts the same seven) — and its four diagram facts
+and two diagram lines are each proved against the document by `quoted()`
 (`:370`), which fails the build for any phrase `SECURITY.md` does not carry. Three Go tests
 (`internal/cli/docs_website_security_test.go`: byte-identity at `:81`, the headings at `:106`, "adds
 no sentence of its own" at `:142`) and `website/test/security.mjs` hold the page to that. **So every
@@ -52,18 +53,18 @@ row is folded into it.
 | `:8` "Vertex has no dollar cap in any mode" | holds | Vertex takes the OAuth token path with no ledger; `vertex` under `enforce` is refused outright — `internal/runner/gateway.go:789-791` (`VertexBudgetRefusal`) |
 | `:69` the gateway is on for `observe`/`enforce` with `api-key`, and for `vertex` under `observe`; it gets a gateway token instead of the real key | holds | `internal/runner/routing.go:292-298` (`GatewayOn`: `api-key`, `vertex`, `cascade`; `observe`/`enforce`) |
 | `:69` "the gateway pins the models and charges every call against the caps" | holds | The pin and the ledger are the gateway's own request path; the pin is also exported and reused by the service (`internal/credsvc/request.go:107`, `gateway.RequestRefusal`) |
-| `:69` "**With the credentials service on, the keys are out of the job entirely**" | holds | The mount and the accessor drop together — `deploy/terraform/gcp/modules/workflow/sa.tf:188-191` (mounts) and `:148-151` (accessors), both keyed off `local.is_service_held` (`:137`, model names `:89-90`) |
+| `:69` "**With the credentials service on, the keys are out of the job entirely**" | holds | The switch is on only where `agent.auth` is `cascade` — `internal/infra/spec.go:287-289` (`CredentialsServiceServes`), read at `:661` and handed to the workflow module at `:1472` — and a `cascade` workflow mounts no model credential at all: `SecretMounts`' `case "cascade"` is empty by decision (`internal/infra/spec.go:1063-1072`, held by `TestCascadeMountsNoOAuthToken`). Its account's accessor is kept off a model secret by the same switch — `deploy/terraform/gcp/modules/workflow/sa.tf:135-138` (`is_service_held` covers the model names `:89-90` and the `FUGARO_PROVIDER_KEY_` prefix) and `:148-151` (`job_secret_names`, one member per mounted secret) |
 | `:93` job → gateway → service → upstream on a switched-on repository | holds | The launch sets `FUGARO_CREDENTIALS_SERVICE_URL` — `internal/cli/run.go:4593-4618`; the runner reads it and builds a service upstream — `internal/runner/gateway.go:100`, `:367`, `:392-396` (`Kind: gateway.KindService`) |
 | `:93` the deploy alone changes no run: the switch needs the bundle to hold a model credential **and** the repository's root re-applied with the switch on, and a non-`cascade` repository is never switched on | holds | The three conditions are one function — `internal/infra/spec.go:287-289` (`CredentialsServiceServes(installed, ready, auth)`); the record `ready` is written only by a reading that parsed the bundle and found a credential — `internal/cli/init_credentials.go:191-199`; the launcher re-reads all three live — `internal/cli/run.go:4601-4614` |
 | `:95` "the only Fugaro runtime identity with access to model credentials", with the build account, operators and Project Owners named as the others | holds | The service account's one secret grant is the bundle — `deploy/terraform/gcp/modules/installation/credentials.tf:169-181`; the build account's is `repo.build_secrets` — `deploy/terraform/gcp/modules/repo/build.tf:15-20`; operators add and list versions (`roles/storage.objectAdmin` on the runs bucket, `deploy/terraform/gcp/modules/installation/iam.tf:268`) and read no value |
 | `:97` one secret, strict schema, oversize and unknown key refused, read at `latest` with a short cache, one `secretAccessor`, no prefix condition over the model secrets, never printed | holds | `internal/credsvc/bundle.go:858-870` (empty and oversize refused before the parse); the single grant is `credentials.tf:174-181`; `fugaro creds set`/`creds ls` are owner-only and print no value — `internal/cli/creds.go:103-124` (`credsOwnerOnly`) |
-| `:103` "The drop is also not per workflow … so a switched-on repository mounts no model credential in any of its jobs" | holds | The mount predicate is auth-blind: `sa.tf:137` drops every `model_secret_env_names` entry and every `FUGARO_PROVIDER_KEY_*` mount whenever `var.credentials_service` is set |
+| `:103` "The drop is also not per workflow … so a switched-on repository mounts no model credential in any of its jobs" | holds | The mount set is a function of the repository's one `agent.auth` — `internal/infra/spec.go:1063` (the agent block is one block for every workflow, `:1055`) — and the switch is on only where that auth is `cascade` (`:287-289`, `:661`), where no model mount is declared at all (`:1063-1072`) |
 | `:105` the OAuth-token invariant (an OAuth token only to Anthropic's own endpoint) | holds | `internal/gateway/oauth_test.go:206` (`TestOAuthNeverSentToProviderRoute`) and `internal/gateway/export_test.go:53` (`TestExportedAttachRefusesOAuthOnProviderRoute`); the service's tier A rides the same rule — nothing in `internal/credsvc` builds a provider base URL of its own |
-| `:107` unreachable halts, never falls back; no fallback path in the gateway | holds | The cascade upstream is built only from the service URL (`internal/runner/gateway.go:367-396`); no in-job key is reachable on a switched-on repository, which is the mount drop above |
+| `:107` unreachable halts, never falls back; no fallback path in the gateway | holds | The cascade upstream is built only from the service URL (`internal/runner/gateway.go:367-396`); no in-job key is reachable on a switched-on repository, because a `cascade` workflow mounts none (`internal/infra/spec.go:1063-1072`) — the sentence's own "a `cascade` workflow there has no model credential mounted to reach for" |
 | `:121` "the service is wired as of 0.10.1", `FUGARO_CREDENTIALS_SERVICE_URL` is the one name the runner's cascade upstream and the keyless GitHub path both read | holds | `internal/runner/gateway.go:100`; `internal/gitprov/providers/providers.go:37`, `:117` (the keyless open is `if vars[EnvCredentialsServiceURL] != ""`) |
 | `:122` the GitHub App key does not move off the job in this release: `config.ServiceHeldSecretNames` is empty until Check 96 | holds | `internal/config/providers.go:575` (`= []string{}`); the module mirrors it — `sa.tf:102`; the two spellings are held together by `deploy/terraform/terraform_test.go:4841` |
 | `:123` the five launch refusals for a `cascade` launch | holds | `internal/cli/run.go:3123` (`cascadeLaunchRefusal`), including "publishes no `budget.allowed_models`", which is the service's own fail-closed rule — `internal/credsvc/request.go:71-76` |
-| `:205` a `cascade` run has no model key in `/proc` to read, so its calls all go through the gateway | holds | As `:70`/`:103` above: nothing is mounted and no accessor is held |
+| `:205` a `cascade` run has no model key in `/proc` to read, so its calls all go through the gateway | holds | As `:69`/`:103` above: nothing is mounted (`internal/infra/spec.go:1063-1072`) and no accessor is held (`sa.tf:148-151`) |
 
 ### The credentials service's database reach and its refusals
 
@@ -78,7 +79,7 @@ row is folded into it.
 | `:111` "Until that outcome exists, the identity's own `fx` claim (at most 30 days past the mint) is **the only bound on a replayed identity**" | holds | The accepted replay bound, stated at `:115` and unchanged by the code |
 | `:113` "**The service's own cap check is ADVISORY.** … the binding cap stays the in-job gateway's ledger" | **partly — gap G3** | The advisory half is right and the binding-cap half is right. What the sentence also promises — "the service may read a cap and refuse a call over it" — is not built: no code path in `internal/credsvc` reads a spend figure or a per-run cap. The service's own per-call rule is the project's model allow-list pin, and it fails closed for a project that publishes none — `internal/credsvc/request.go:71-76`, `:135-139` (`requestModels` returns `p.Budget.AllowedModels` and nothing else) |
 | `:115` the launcher's reach and the replay bounds are accepted limits | holds | Stated as limits, and no code claims to close them |
-| `:117` egress is unchanged; what changes is the size of what egress can take | holds | The job's environment on a switched-on repository carries no model credential (the mount drop), and the identity is the run's own |
+| `:117` egress is unchanged; what changes is the size of what egress can take | holds | The job's environment on a switched-on repository carries no model credential (the `cascade` case above: none is mounted — `internal/infra/spec.go:1063-1072`), and the identity is the run's own |
 | `:185` the runner mints no in-job token on a switched-on repository, and the App key's own copy stays mounted until the flip | holds | `internal/gitprov/providers/providers.go:117` (keyless open); the mount survives because the list is empty — `internal/config/providers.go:575` + `sa.tf:188-191` |
 | `:131` on a proxied repository the runner reads no token at all and the credential helper answers with none, while the mount survives until the flip | holds | `internal/config/providers.go:637` (`ProxiedGitSecretNames = []string{}`); `deploy/terraform/gcp/modules/workflow/sa.tf:121`, `:131`; the two spellings are held together by `deploy/terraform/terraform_test.go:4967` |
 
@@ -112,16 +113,16 @@ row is folded into it.
 | `:68` the GitHub App pre-check and `fugaro image build <entry>` read a credential on the machine, announced in one line before the read | holds | Both are the operator's own terminal paths, and the announcement is the `warn` the run prints |
 | `:68` "The rest read the credentials service's bundle document … `fugaro creds set`, `fugaro creds ls` and `fugaro doctor --check-bitbucket-token` are the commands that maintain and report on it" | **partly — gap G1** | `fugaro doctor --check-bitbucket-token` is gated and parses the document — `internal/cli/doctor.go:534-536` → `internal/cli/doctor_brokering.go:669-708`. But `fugaro setup` and `fugaro update` also read the document, and they are not in the list — `internal/cli/init_credentials.go:141-199` (`credentialsBundleReady`: `store.access` then `credsvc.ParseBundle`), called from the repository door (`internal/cli/init.go:4163`) and the installation-wide backfill (`internal/cli/init.go:2661`, `internal/cli/init_firebase.go:448`) |
 | `:68` none of those reads happens in a coding agent's session, and they are refused there | holds | `internal/cli/init_credentials.go:142-149` refuses on the agent marker and on the run marker; the same fence has its own test (`TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess`, `internal/cli/managed_test.go:898`) |
-| `:69` with the gateway on, model keys stay out of the agent's environment | holds | `internal/agent/env.go:173-174` and `:350-351` |
+| `:69` with the gateway on, model keys stay out of the agent's environment | holds | With a gateway the real key is registered for redaction and never put in the agent's environment — `internal/agent/env.go:175-187`, with a declared secret of that name skipped at `:213-221` — and what the agent gets instead is the gateway's token: `:241-243` → `:350-351` (`out["ANTHROPIC_API_KEY"] = g.Token`). (`:173-174` is the gateway-*off* branch, the `:8` row above) |
 | `:71` logs are isolated in their own bucket and redacted of every mounted secret, including common encodings, and redaction is best effort | holds | `internal/redact/redact.go:808-817` (the std, raw-std, URL and raw-URL base64 encodings of the secret); `internal/agent/redact.go:17-22` states the best-effort boundary in the code's own words |
 | `:60` the render step runs with the run's own environment, secrets included, and the runner builds those names only when `!r.review` | holds | `internal/runner/runner.go:2786-2791`; the render command comes from the runner's in-memory workflow and `runRender` is deliberately not a `verify.LoadSettings` caller — `internal/runner/artifact.go:237-256` |
 | `:184` the agent shares the container and its user with the runner and can read the runner's environment through `/proc`, including the App key, the real model and provider keys, and the job's service account through the metadata server | holds | `images/smoke.sh:120-123` pins PID 1 for the same reason the reach exists; the metadata server is reachable from the container |
-| `:189` on a switched-on repository the model-key item is empty for every workflow, whatever its `agent.auth`; the one exception is a proxied repository's git token, whose mounted copy is still reachable until the flip | holds | The mount drop is auth-blind (`sa.tf:137`) and the proxied list is empty (`internal/config/providers.go:637`) |
+| `:189` on a switched-on repository the model-key item is empty for every workflow, whatever its `agent.auth`; the one exception is a proxied repository's git token, whose mounted copy is still reachable until the flip | holds, and the sentence's *explanation* does not — **gap G5** | The assertion holds: the switch is on only for a `cascade` repository (`internal/infra/spec.go:287-289`, `:661`) and a `cascade` workflow mounts no model credential (`:1063-1072`). Its stated reason is not the code — no code removes a model mount (`internal/infra/readiness.go:275-278`) and an `oauth`/`api-key` repository is never switched on, so the "`agent.auth`-blind drop" describes a case that cannot arise. The proxied half: `internal/config/providers.go:637` |
 | `:195` "With budget off there is no managed file and no routing check at all" | **partly — gap G4** | The routing check is gateway-gated (`internal/runner/runner.go:4365-4369`, and `checkSettingsRouting` returns early — `internal/runner/agentenv.go:459-462` with `internal/runner/gateway.go:754-766`), so "no routing check" holds. "No managed file" does not: a **review-mode** run writes a posture-only managed settings file with the gateway off — `internal/runner/agentenv.go:384-389` (`if gw == nil && !r.review && account == "" { return nil }`) |
 | `:197` a launcher can mint a budget identity for any repository | holds | Every launcher and operator mints on the signer account alone — `deploy/terraform/gcp/modules/firebase/iam.tf:34-41`, whose role is the custom one carrying exactly `iam.serviceAccounts.signJwt` (`:18-24`) |
 | `:198` a launcher can override a job's environment, including `FUGARO_RTDB_URL` and `FUGARO_FIREBASE_API_KEY` | holds | A launch carries extra `NAME=value` variables merged into the execution's environment — `internal/backend/backend.go:124-133`; the mitigations are the ones the bullet names |
 | `:203` the base branch is protected only by the operator's branch protection | holds | The runner pushes only `fugaro/<run-id>` (`internal/gitops/checkpoint.go:54`), while the token itself carries contents write (`internal/gitprov/github/apptoken.go:91-93`) |
-| `:207` a shared project job's bucket grant cannot name one slug: the condition covers the whole of `runs/`, `cache/` and `locks/`, and read-only `tokens/` (`objectViewer`, never `objectUser`) | holds | `internal/infra/projectjobs.go:48-53` (`BucketCondition`, `TokenCondition`); the installation's launcher/reader conditions are `iam.tf:283` and `:299-317` |
+| `:207` a shared project job's bucket grant cannot name one slug: the condition covers the whole of `runs/`, `cache/` and `locks/`, and read-only `tokens/` (`objectViewer`, never `objectUser`) | holds | The conditions are built from the prefix list — `internal/backend/gcp/names.go:498-501` (`JobBucketPrefixes`: `runs`, `cache`, `locks`), `:548-554` (`ProjectBucketCondition`) and `:712-714` (`ProjectTokenBucketCondition`, `tokens/`) — carried on the job as two fields — `internal/infra/projectjobs.go:44-52`, written at `:201-206` — and applied as `roles/storage.objectUser` (`deploy/terraform/gcp/modules/project/sa.tf:40-49`) and `roles/storage.objectViewer` (`:61-77`, one `tokens/`-only clause, refused otherwise) |
 | `:208` a project job holds its Claude account's OAuth token from the start of every run, and each account job's service account holds `secretAccessor` on its own account's secret and no other | holds | `internal/infra/projectjobs.go:56-68` (one job and account per (profile, provider, account)); the static mount is `projectAccountMount` — `:667`, the account's own container `:687-700`, the platform variable `:701` |
 | `:212` the swap to the credentials service changes the mount and nothing else; it is not done in this release | holds | The phase-3 module carries no switch input at all — no `credentials_service` variable in `deploy/terraform/gcp/modules/project/*.tf` — which is why `:103`'s shared-job exception is stated |
 | `:224` the metadata server is reachable, by the agent and by every container it starts | holds | The runner reads the job's own token from it — `internal/runner/gateway.go:111` (`defaultMetadataHost`); the container is not fenced from it |
@@ -129,9 +130,11 @@ row is folded into it.
 
 ## The gaps
 
-Four. Each is a sentence the code does not back as written, with replacement wording for the owner
-to approve; the third and fourth are wording only, the first two are completeness. Nothing here is a
-hole in the design: none of the four makes a run reach a credential it should not.
+Five. Each is a sentence the code does not back as written, with replacement wording for the owner
+to approve; the first two are completeness, the last three are wording. Nothing here is a hole in the
+design: none of the five makes a run reach a credential it should not. G5 is the one whose factual
+assertion holds and whose stated reason does not — it is listed because a reader plans from the
+reason.
 
 ### G1 — the list of commands that read the bundle document is short by two
 
@@ -248,7 +251,7 @@ service's latitude rather than of its code.
 (`internal/runner/runner.go:4365`, and `checkSettingsRouting` returns early on `r.routingKnob()`,
 `internal/runner/agentenv.go:459-462`, `internal/runner/gateway.go:754-766`). "No managed file" does
 not: `writeManagedSettings` is called before every stage whatever the budget is, and its early
-return needs the gateway **and** a non-review stage **and** no stage account —
+return needs **no** gateway (`gw == nil`) **and** a non-review stage **and** no stage account —
 `internal/runner/agentenv.go:384-389`. A review-mode run with the budget off therefore does write a
 managed settings file: the review posture (managed hooks, no project MCP server, settings sources
 from the user and managed levels alone, `:407-412`), with none of the gateway's routing variables in
@@ -262,6 +265,47 @@ file is absent.
 > — a review-mode run still gets one, for the review posture alone — so a committed
 > `.claude/settings.json` can send the agent's calls, and the key, anywhere.
 
+### G5 — the reason given for "the second item is empty" is not the mechanism
+
+**The sentence** (`SECURITY.md:189`, in "What one run's agent can reach"):
+
+> **On a repository whose root has been re-applied with the credentials service's switch on, the
+> second item is empty for every workflow of a per-repository job, whatever its `agent.auth`**: the
+> switch removes the model mounts, not the workflow's auth — the drop is `agent.auth`-blind by
+> construction, so an `oauth` or `api-key` workflow of such a repository mounts no model key for the
+> agent to read either, and only a `cascade` run has the service attach one to each call (see "The
+> credentials service" above).
+
+**What the code does.** The assertion is right — a switched-on repository's per-repository job holds
+no model key — but not for the reason the sentence gives, and the case it reasons about cannot arise.
+
+- **The switch is on only where `agent.auth` is `cascade`.** One function decides it,
+  `internal/infra/spec.go:287-289` (`installed && ready && auth == config.AuthCascade`); it is read
+  when a repository's plan is built (`:661`) and what it answers is what the workflow module's
+  `credentials_service` variable carries (`:1472`, `repoCredentialsService`). An `oauth` or `api-key`
+  repository's variable is null, which is D147's "with it off nothing changes".
+- **There is no model-mount drop for the switch to perform.** The module's `job_mounts` drops the
+  GitHub App key (its list is empty) and a proxied repository's git credential, and says in its own
+  comment why the model mounts are not there: "Only the App key goes here, and not the model
+  credentials" (`deploy/terraform/gcp/modules/workflow/sa.tf:188-191`, reason at `:165-174`). Go's own
+  drop names the same two families and records the deferral: "The MODEL credentials' mounts are
+  deliberately not dropped here yet: C1.20 is the task that drops them"
+  (`internal/infra/readiness.go:275-278`, the loop at `:279-299`).
+- **What makes the item empty is that a `cascade` workflow declares no model mount at all.**
+  `SecretMounts`' `case "cascade"` has an empty body on purpose — "the empty body is the decision" —
+  and it is the case the switch's own condition selects, so a switched-on repository's job has
+  nothing to remove and no `oauth` or `api-key` workflow exists beside it for a drop to be blind
+  about (`internal/infra/spec.go:1061-1072`, held by `TestCascadeMountsNoOAuthToken`).
+
+**Proposed wording** (keeps the assertion and the pinned facts, replaces the explanation):
+
+> **On a repository whose root has been re-applied with the credentials service's switch on, the
+> second item is empty for every workflow of a per-repository job**: the switch is on only for a
+> `cascade` repository, and a `cascade` workflow declares no model credential at all — there is no
+> mount for the switch to remove, so it is the repository's `agent.auth` that decides this and not the
+> workflow, and a repository whose auth is `oauth` or `api-key` is never switched on and keeps the
+> model key its job mounts. Only a `cascade` run has the service attach one to each call.
+
 ### What each wording has to move with it
 
 The docs tests pin sentences, so a wording change is not one edit. Checked one gap at a time:
@@ -272,20 +316,21 @@ The docs tests pin sentences, so a wording change is not one edit. Checked one g
 | G2 (`:35`) | the paragraph's heading sentence, verbatim — `internal/cli/docs_project_wide_git_test.go:119` (`TestSecurityMdStatesTheProjectScopeDefault`, `:104`); the wording below keeps it word for word and rewrites only the two clauses beside it, which no test carries | `go run ./internal/clidoc` |
 | G3 (`:113`) | the word `ADVISORY` — `internal/cli/docs_security_test.go:450` (in `TestSecurityMdStatesTheCredentialsService`, `:371`); both wordings above keep it | `go run ./internal/clidoc` |
 | G4 (`:195`) | the sentence itself, verbatim — `internal/cli/docs_security_test.go:40` (in `TestSecurityMdStatesTheModelAndItsLimits`, `:17`), so the pinned string changes in the same PR | `go run ./internal/clidoc` |
+| G5 (`:189`) | none — no test carries a phrase from that sentence | `go run ./internal/clidoc` |
 
-Two rules hold for all four:
+Two rules hold for all five:
 
 - **`website/content/security.md` is regenerated whatever the section is.** It is `SECURITY.md`
   byte for byte below a generated header, and a test fails on any drift
   (`internal/cli/docs_website_security_test.go:81`), so `go run ./internal/clidoc` runs in the
   same PR even for a "Known limits" sentence the page does not render.
 - **`website/test/security.mjs` is not in the way.** The page renders two sections, "In short" and
-  "Reporting a vulnerability", and none of the four gaps is in either — so no website test pins
+  "Reporting a vulnerability", and none of the five gaps is in either — so no website test pins
   the changed text. The one website-side consequence is the regenerated byte copy above.
 - **A new backticked name has to be a real one.** `TestSecurityMdStatesTheModelAndItsLimits` checks
   every `` `[A-Z][A-Z0-9_]{2,}` `` token the document carries against the environment variables the
   code actually sets or passes (`internal/cli/docs_security_test.go:79-86`), so a wording that
-  introduces one has to name a variable that exists. None of the four wordings above adds one.
+  introduces one has to name a variable that exists. None of the five wordings above adds one.
 
 ## Checked, and not a gap
 
@@ -320,7 +365,9 @@ file (or to the owner as a trivial commit).
 2. **G1 and G2 need no decision, only an approval of wording** — both are completeness. The G2
    wording keeps the paragraph's pinned heading sentence word for word, and neither rewrites a
    clause any test carries, so landing them is one edit to `SECURITY.md` plus
-   `go run ./internal/clidoc` for the page, in one PR.
+   `go run ./internal/clidoc` for the page, in one PR. G5 is the same — no decision, and no pinned
+   string moves — but it is the one that changes what the document *says the code does*, so it is the
+   one worth the owner's eyes rather than an editor's.
 3. **G4 is the one wording that moves a pinned string**: the sentence it rewrites is pinned verbatim
    in `internal/cli/docs_security_test.go:40`, so that want-list entry changes in the same PR (the
    pinned fact stays — a run with the budget off still cannot have its calls rerouted — and only the
