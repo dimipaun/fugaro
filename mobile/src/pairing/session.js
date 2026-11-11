@@ -115,12 +115,14 @@ export const SESSION_STATES = Object.freeze({
 });
 
 /** Whether an attempt is in flight: from the moment `begin` is entered until
- * the attempt is refused, expired or delivered. Nothing else may start, cancel
- * or end a session in one of these states, because everything the attempt is
- * made of -- the scan, the key pair, the account id -- is this object's, and a
- * second caller in the window would be writing one attempt's material with
- * another's. Each of the three is a place where the session is suspended on an
- * await: the exchange, the listener, and the two store writes. */
+ * the attempt is refused, expired or delivered. `begin` refuses to start a
+ * second one in any of these states, because everything the attempt is made of
+ * -- the scan, the key pair, the account id -- is this object's, and a second
+ * caller in the window would be writing one attempt's material with another's.
+ * `cancel` acts in one of the three, `watching`, where the listener is the
+ * whole of the attempt and stopping it is what the button does; the other two
+ * are suspended on an await over those same variables (the exchange and the
+ * write, the two store writes) and are refused there (`cancel`'s own reason). */
 const IN_FLIGHT = Object.freeze([SESSION_STATES.STARTING, SESSION_STATES.WATCHING, SESSION_STATES.STORING]);
 
 /** How this module refuses, on top of the payload's and the delivery's codes:
@@ -480,16 +482,22 @@ export function createPairingSession({ x25519, random, clock, database, auth, st
    * Give up: stop the listener and forget the key. The pairing node is the
    * CLI's to delete, and the phone has nothing to write.
    *
-   * A session that is `storing` is not cancellable, and the answer is the
-   * snapshot as it stands: the delivery has arrived and its two items are
-   * already landing, so there is nothing here to take back -- and resetting the
-   * account id mid-write is what would put this account's token and MAC key
-   * under the next one. The screen draws no Cancel button in that state
-   * (`screen.js`), and a caller that asks anyway is told the truth by the
-   * snapshot rather than by a refusal that would read as a failed pairing.
+   * Only a `watching` session can be given up on. The other two in-flight
+   * states are suspended on an await over this object's own variables -- the
+   * exchange and the write (`starting`), the two store writes (`storing`) --
+   * and resetting them here would hand the resumed `begin` a scan, a key pair
+   * or an account id that is not the one it began with: in `storing`, this
+   * account's token and MAC key would land under the next account; in
+   * `starting`, the request node would be written under a key the code on
+   * screen was never derived from, or the resumed step would read a variable
+   * that is now null and report a port failure that never happened. So the
+   * answer there is the snapshot as it stands, which is also the truth: the
+   * attempt is still running. The screen draws no Cancel button in either state
+   * (`screen.js`), and a caller that asks anyway is told that rather than being
+   * handed a refusal that would read as a failed pairing.
    */
   function cancel() {
-    if (state === SESSION_STATES.STORING) return snapshot();
+    if (state === SESSION_STATES.STARTING || state === SESSION_STATES.STORING) return snapshot();
     if (stop !== null) {
       stop();
       stop = null;

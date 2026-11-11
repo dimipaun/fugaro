@@ -92,7 +92,15 @@ const REFUSAL_SENTENCES = Object.freeze({
   [SESSION_CODES.SIGN_IN_REFUSED]: 'The pairing token was not accepted. Start a new pairing on your computer.',
   [SESSION_CODES.IDENTITY_MISMATCH]: 'The installation answered as something else. Start a new pairing on your computer.',
   [SESSION_CODES.WATCH_REFUSED]: 'The phone could not watch for the delivery. Check the connection and try again.',
-  [SESSION_CODES.STORE_REFUSED]: 'The phone could not store the credential. Nothing was saved.',
+  // Neither of the two store sentences says "nothing was saved", and that is
+  // deliberate: `session.js` writes the account's tuple first and its two items
+  // after (`delivered`), so a store that fails on an item leaves the tuple in
+  // the owner's list with no credential under it -- an installation that is
+  // listed and cannot be used. "Nothing was saved" would be a false claim about
+  // a state the owner can see, and the refusal that follows a retry (a second
+  // pairing is refused for the label it holds, `DUPLICATE_ID`) would be the
+  // first thing to contradict it.
+  [SESSION_CODES.STORE_REFUSED]: 'The phone could not store the credential. This pairing is not complete.',
   // The two refusals that are the owner's list rather than the pairing. Without
   // a sentence of their own they would fall into the payload's, which tells the
   // owner a QR the CLI generated correctly is one this app cannot use -- and
@@ -100,7 +108,7 @@ const REFUSAL_SENTENCES = Object.freeze({
   // (`session.js`'s `storeRefusal`).
   [SESSION_CODES.DUPLICATE_ID]: 'This phone already has an installation with that name. Start a new pairing and use a different name.',
   [SESSION_CODES.DUPLICATE_INSTALLATION]: 'This installation is already paired on this phone, under another name.',
-  [SESSION_CODES.PORT_FAILED]: 'Something on the phone failed. Nothing was saved.',
+  [SESSION_CODES.PORT_FAILED]: 'Something on the phone failed. This pairing is not complete.',
   [SESSION_CODES.ALREADY_STARTED]: 'A pairing is already in progress.',
 });
 
@@ -132,7 +140,8 @@ export function stateSentence(snapshot) {
   // a difference they act on, and a sentence of its own for it would be a
   // fourth thing to say about one pairing. What the states do not share is the
   // button, and that is the session's business: a press during `starting` or
-  // `storing` is refused, and a `cancel` during `storing` is (`session.js`).
+  // `storing` is refused, and a `cancel` there is answered with the snapshot
+  // rather than acted on (`session.js`).
   if (
     snapshot.state === SESSION_STATES.STARTING ||
     snapshot.state === SESSION_STATES.WATCHING ||

@@ -172,9 +172,14 @@ export function validateDatabaseUrl(url, gcpProject) {
  * cannot drift.
  */
 export function databaseHostsFor(url, gcpProject) {
-  const hosts = [`${String(gcpProject).toLowerCase()}-default-rtdb.firebaseio.com`];
+  const project = String(gcpProject).toLowerCase();
+  const hosts = [`${project}-default-rtdb.firebaseio.com`];
   const host = hostOf(url);
-  if (host !== null && REGIONAL_HOST.test(host)) hosts.push(host);
+  // The regional spelling is this project's only when the database's own label
+  // is the project's -- the guard `validateDatabaseUrl` makes before it accepts
+  // one. Without it this list would name another installation's database as one
+  // of this project's, which is the drift the doc above says cannot happen.
+  if (host !== null && REGIONAL_HOST.test(host) && host.startsWith(`${project}-default-rtdb.`)) hosts.push(host);
   return Object.freeze(hosts);
 }
 

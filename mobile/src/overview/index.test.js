@@ -126,11 +126,17 @@ test('the door’s tree carries no credential and no total across installations'
     },
   ];
   const shown = render(Screen({ overview: overview.overviewTiles({ installations }), current: 'laptop' }));
-  // 42.5 is the two spends added up (D170), and a credential is a value a
-  // screenshot must never hold.
+  // The tree really does draw figures -- so the negatives below are about what
+  // is *absent* from a tree that draws, not about a tree that draws nothing.
+  assert.equal(shown.some((one) => one.includes('32.5')), true);
+  // 42.5 is the two spends added up (D170); and the two values the store holds
+  // about an account that are not for a screen -- its auth uid and its Firebase
+  // project id -- stay off it. A credential proper never reaches a tile at all:
+  // `tiles.test.js` pins the tile's field set exactly, which is what makes that
+  // structural rather than hoped for here.
   assert.equal(shown.some((one) => one.includes('42.5')), false);
-  assert.equal(shown.some((one) => one.includes('test-device-token')), false);
-  assert.equal(shown.some((one) => one.includes('macKey')), false);
+  assert.equal(shown.some((one) => one.includes('uid-1')), false);
+  assert.equal(shown.some((one) => one.includes('fp-1')), false);
 });
 
 test('a missing port is refused at construction, not at the first utterance', () => {

@@ -567,6 +567,45 @@ test('a second Pair before the first finishes is refused, not interleaved', asyn
   assert.deepEqual(draws, [0x22], 'the second press never reached the key pair');
 });
 
+test('a Cancel during the exchange does not take the attempt apart', async () => {
+  // The screen draws Cancel only while a session is `watching`, but the session
+  // is what a caller sequences on, and a Cancel during the exchange would reset
+  // the scan, the key pair and the account id *while `begin` is suspended on
+  // that await*: the resumed step would read a scan that is now null (a
+  // `TypeError`, reported as a port failure that never happened) or, if a second
+  // scan started in the window, would write the request node under the second
+  // attempt's key -- one node, written exactly once, that nothing can pair
+  // against. So the cancel answers the snapshot and the attempt finishes with
+  // the key whose code is on screen.
+  const auth = {
+    async signIn() {
+      await null;
+      return { ok: true, uid: UID };
+    },
+  };
+  const { session, database } = makeSession({ auth, random: randomPort(0x31) });
+  const started = session.start(scanned(), { id: 'laptop' });
+  assert.equal(session.snapshot().state, SESSION_STATES.STARTING);
+  const code = session.snapshot().code;
+  assert.equal(typeof code, 'string');
+
+  assert.equal(session.cancel().state, SESSION_STATES.STARTING, 'a session that is starting is not cancellable');
+  const again = await session.start(scanned(), { id: 'tablet' });
+  assert.equal(again.ok, false, 'and the attempt it did not cancel is still in flight');
+  assert.equal(again.code, SESSION_CODES.ALREADY_STARTED);
+
+  const finished = await started;
+  assert.equal(finished.ok, true, JSON.stringify(finished));
+  assert.equal(finished.session.state, SESSION_STATES.WATCHING);
+  assert.equal(finished.session.code, code, 'the code on screen is the key that was written');
+  const phonePublic = nodeX25519.getPublicKey(new Uint8Array(32).fill(0x31));
+  assert.equal(fingerprint(phonePublic), code);
+  assert.equal(database.writes.length, 1, 'one attempt, one request node');
+  assert.equal(database.writes[0].value.key, encodeDeviceKey(phonePublic));
+  assert.equal(database.watched.length, 1, 'and one listener');
+  assert.equal(database.stopped, 0, 'which the cancel did not stop');
+});
+
 test('a Cancel or a new scan cannot land between the delivery and its store', async () => {
   // The delivery's two writes are awaits, and Cancel is drawn while a session
   // is `watching` (`screen.js`), so the window is a real one. Without a state

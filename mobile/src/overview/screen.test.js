@@ -158,6 +158,10 @@ test('the screen draws one section per installation, with its own figures', () =
 test('the screen draws no summed total anywhere (D170)', () => {
   const props = { overview: twoTiles(), current: 'laptop' };
   const shown = render(screen, props);
+  // Both installations' spends are on screen, so the absence of their sum
+  // below is about the sum and not about a tree that draws nothing.
+  assert.equal(shown.some((one) => one.includes('spend 10')), true);
+  assert.equal(shown.some((one) => one.includes('spend 32.5')), true);
   // 42.5 is 10 + 32.5, the two installations' spends. It is the number a header
   // row would print, and it is nowhere in the tree -- not as a string, and not
   // as any part of one.

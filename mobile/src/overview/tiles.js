@@ -184,10 +184,13 @@ export function overviewTiles({ installations, nowMs } = {}) {
  * Whether a tile's named figure carries a number, rather than a state saying
  * there is none.
  *
- * The screen asks this rather than reading `.state` itself, so the two cannot
- * disagree about what "a number" means -- and `isEmpty` is `availability.js`'s
- * own answer to that question, so a later sixth state is one edit there rather
- * than a hunt through a render function here.
+ * The question is answered by `feed/availability.js`'s own `isEmpty` rather
+ * than by reading `.state` here, so "a number" has one definition in this app
+ * and a later sixth state is one edit there rather than a hunt through a
+ * render function. It is the boolean half of what `shown()` does for a screen:
+ * `overview/screen.js` prints through `shown()`, and a caller that wants the
+ * answer rather than the text -- "is there a figure to draw at all" -- asks
+ * this.
  */
 export function hasFigure(tile, field) {
   if (tile === null || typeof tile !== 'object') return false;

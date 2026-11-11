@@ -59,9 +59,11 @@ export { API_KEY_MAX_LENGTH, databaseHostsFor, validateDatabaseUrl } from './con
  * version byte (§8) and every wire format in this tree. */
 export const PAYLOAD_VERSION = 1;
 
-/** The longest QR this app will look at, in code units. The real payload is
- * under 400 characters; this is a bound rather than a preference (§4.4's
- * reasoning about a hostile string reaching a native bridge unbounded). */
+/** The longest QR this app will look at, in code units. A real payload is a
+ * little over a kilobyte -- `internal/cli/pair.go` says so where it prints the
+ * code -- and most of that is the pairing token below; this is a bound rather
+ * than a preference (§4.4's reasoning about a hostile string reaching a native
+ * bridge unbounded). */
 export const PAYLOAD_MAX_LENGTH = 4096;
 
 /** The longest the pairing token may be: a signed JWT, which is an RS256
@@ -113,6 +115,17 @@ export const PAYLOAD_FIELDS = Object.freeze([
 // class, and the reason is the same: the QR carries no whitespace, and
 // trimming would validate a different string from the one that was scanned.
 const CONTROL_OR_SPACE = /[\u0000- \u007f]/;
+
+// A name this module is willing to put in a refusal. The walk below names the
+// field it did not recognise -- the payload's own text, since the key is the
+// QR's -- and only when it is a name the CLI could have written. `CONTROL_OR_
+// SPACE` bounds the control characters and the length is bounded by
+// `PAYLOAD_MAX_LENGTH`, but neither refuses a code point above 0x7f: a
+// right-to-left override or a zero-width space is legal inside a JSON string
+// and legal in this text, and a name carrying one is not a name to hand back.
+// (`envelope.js` holds the same rule for the delivery node, whose keys the
+// rules leave unconstrained and unbounded.)
+const ECHOABLE_FIELD = /^[!-~]{1,64}$/;
 
 // The fields this module judges on its own are printable ASCII: a uid is
 // base64url, an instant is RFC3339, a token is base64url segments. Anything
@@ -180,7 +193,8 @@ export function readScannedPayload(text) {
   // The field set first, then the fields: a payload carrying something this
   // build does not know is refused whole, and never partially read.
   for (const key of Object.keys(raw)) {
-    if (!PAYLOAD_FIELDS.includes(key)) return refuse(PAYLOAD_CODES.UNKNOWN_FIELD, key);
+    if (PAYLOAD_FIELDS.includes(key)) continue;
+    return refuse(PAYLOAD_CODES.UNKNOWN_FIELD, ECHOABLE_FIELD.test(key) ? key : undefined);
   }
   for (const field of PAYLOAD_FIELDS) {
     if (!Object.prototype.hasOwnProperty.call(raw, field)) return refuse(PAYLOAD_CODES.MISSING_FIELD, field);

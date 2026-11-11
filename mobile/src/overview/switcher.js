@@ -27,7 +27,8 @@
 // store's own -- so "the previous account was torn down first" is
 // `store.switchTo`'s tested property rather than a second implementation of it.
 // This module adds no close, no open and no listener of its own: it is a
-// translation, and `index.test.js`'s scan is what keeps it one.
+// translation, and `switcher.test.js`'s registry trace is what keeps it one --
+// a switch this module refuses leaves the trace empty.
 //
 // **A switch is spoken, not typed, and the difference is not a formality.** The
 // router requires the wake word (D164), so an utterance that is not the app's
@@ -50,7 +51,6 @@ import { COMMAND, ROUTE, routeUtterance } from '../../../shared/command/index.js
  * a caller that gets `name-not-configured` should be able to act on the
  * router's own vocabulary rather than on a translation of it. */
 export const SWITCH_CODES = Object.freeze({
-  NOT_A_STORE: 'not-a-store',
   NOT_A_ROUTE: 'not-a-route',
   NOT_A_SWITCH: 'not-a-switch',
   NO_SUCH_ACCOUNT: 'no-such-account',

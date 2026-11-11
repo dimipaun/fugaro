@@ -28,7 +28,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { PAYLOAD_CODES, PAYLOAD_VERSION, PAYLOAD_MAX_LENGTH, readScannedPayload } from './payload.js';
+import { PAYLOAD_CODES, PAYLOAD_VERSION, PAYLOAD_MAX_LENGTH, databaseHostsFor, readScannedPayload } from './payload.js';
 
 /** A pairing uid in the one canonical spelling: `p~`, then 32 bytes of
  * unpadded base64url whose last character carries the two bits this encoding
@@ -115,6 +115,17 @@ test('the JSON is an object with exactly the contract’s fields, once each', ()
   // A field the contract does not name is refused rather than ignored: the
   // reader would otherwise store a payload whose other half it never read.
   assert.equal(codeOf(scanned({ extra: 'x' })), PAYLOAD_CODES.UNKNOWN_FIELD);
+  // The refusal names the field so a reader can find it, and that name is the
+  // payload's own text: it is echoed only when it is a name the CLI could have
+  // written. A key carrying a right-to-left override is legal inside a JSON
+  // string and legal in this text -- neither `CONTROL_OR_SPACE` nor the length
+  // bound refuses it -- so without the rule the app's own refusal would hold a
+  // stranger's string.
+  const hostile = readScannedPayload(scanned().replace('}', ',"\u202egnp.txt\u2028":1}'));
+  assert.equal(hostile.code, PAYLOAD_CODES.UNKNOWN_FIELD);
+  assert.equal('field' in hostile, false, 'a name that is not one is not echoed');
+  assert.equal(JSON.stringify(hostile).includes('gnp.txt'), false);
+  assert.equal(readScannedPayload(scanned({ extra: 'x' })).field, 'extra', 'a name the CLI could write is named');
   for (const field of ['project', 'gcp_project', 'database_url', 'api_key', 'token', 'uid', 'expires_at', 'v']) {
     const payload = JSON.parse(scanned());
     delete payload[field];
@@ -239,6 +250,19 @@ test('the database URL is judged against the project, by shared/url’s validato
   // point at it.
   const refused = readScannedPayload(scanned({ database_url: 'https://evil.example/' }));
   assert.equal(refused.field, 'database_url');
+  // The hosts a refusal would name are the same derivation the validator made,
+  // which is what `config.js`'s `databaseHostsFor` promises: this project's
+  // legacy spelling, plus the regional one **when it is this project's**. The
+  // second call is the one that would drift -- a regional host whose database
+  // label is another project's is another installation's database, and the
+  // validator refuses it a few lines above.
+  assert.deepEqual(databaseHostsFor('https://fp-1234-default-rtdb.europe-west1.firebasedatabase.app', 'fp-1234'), [
+    'fp-1234-default-rtdb.firebaseio.com',
+    'fp-1234-default-rtdb.europe-west1.firebasedatabase.app',
+  ]);
+  assert.deepEqual(databaseHostsFor('https://fp-9999-default-rtdb.europe-west1.firebasedatabase.app', 'fp-1234'), [
+    'fp-1234-default-rtdb.firebaseio.com',
+  ]);
 });
 
 test('the project’s own name is bounded text, and it is what the host is derived from', () => {

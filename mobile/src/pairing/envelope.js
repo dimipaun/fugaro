@@ -72,6 +72,17 @@ export const ENVELOPE_MAX_CHARS = 4096;
  * watches; the envelope's bytes are the `sealed` string inside it. */
 export const DELIVERY_NODE_FIELDS = Object.freeze(['v', 'sealed']);
 
+// A name this module is willing to put in a refusal. The node has no `.validate`
+// in the rules, so its keys are whatever the writer chose: unbounded in length
+// and free in characters, and anyone holding database write on the delivery
+// child is a writer the header's threat model already names. The refusal for an
+// unknown key names it so a reader can find it, and that name is the *node's*
+// text -- so it is echoed only when it is a name the CLI could have written.
+// This is `payload.js`'s "no refusal echoes the text it refused" one carrier
+// over, and the payload does not need it because the whole QR is bounded and
+// printable ASCII before any field is read.
+const ECHOABLE_FIELD = /^[!-~]{1,64}$/;
+
 /** How this module refuses. */
 export const ENVELOPE_CODES = Object.freeze({
   NOT_BYTES: 'not-bytes',
@@ -147,7 +158,8 @@ export function readDeliveryNode(node) {
     return refuse(ENVELOPE_CODES.NOT_A_NODE, 'delivery');
   }
   for (const field of Object.keys(node)) {
-    if (!DELIVERY_NODE_FIELDS.includes(field)) return refuse(ENVELOPE_CODES.UNKNOWN_FIELD, `delivery.${field}`);
+    if (DELIVERY_NODE_FIELDS.includes(field)) continue;
+    return refuse(ENVELOPE_CODES.UNKNOWN_FIELD, ECHOABLE_FIELD.test(field) ? `delivery.${field}` : 'delivery');
   }
   for (const field of DELIVERY_NODE_FIELDS) {
     if (!Object.prototype.hasOwnProperty.call(node, field)) return refuse(ENVELOPE_CODES.MISSING_FIELD, `delivery.${field}`);
