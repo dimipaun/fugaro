@@ -88,6 +88,37 @@ func TestDecisionAgentRunsWithTheAgentDenyRules(t *testing.T) {
 	}
 }
 
+func TestTheDecisionChildRunsWithNothingOfTheMachine(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"structured":`+theAnswer+`}]}`)
+	r := &decide.Runner{Agent: decide.Claude{Bin: bin}, Now: testNow, Models: testModels()}
+	if _, err := r.Decide(context.Background(), decide.Request{
+		State: theState(t, nil), ItemID: "wi-1", Paths: []string{"docs/x.md"},
+	}); err != nil {
+		t.Fatalf("the decision ended as %v", err)
+	}
+	args := testutil.FakeClaudeCalls(t, bin)[0].Args
+
+	if got := flagValue(t, args, "--tools"); got != "" {
+		t.Errorf("the child was launched with the tools %q, want none", got)
+	}
+	// The person's own machine: their user level carries their hooks, their
+	// plugins, their MCP servers and their permission rules, and the project
+	// level below it is the checkout the daemon happens to be sitting in.
+	if got := flagValue(t, args, "--setting-sources"); got != "" {
+		t.Errorf("the child was launched with --setting-sources %q, want no level at all", got)
+	}
+	for _, flag := range []string{"--strict-mcp-config", "--no-session-persistence"} {
+		if !slices.Contains(args, flag) {
+			t.Errorf("the child was launched without %s", flag)
+		}
+	}
+	for _, flag := range []string{"--dangerously-skip-permissions", "--permission-mode", "--session-id", "--resume", "--add-dir"} {
+		if slices.Contains(args, flag) {
+			t.Errorf("the child was launched with %s, which this call has no reason to carry", flag)
+		}
+	}
+}
+
 func TestEmptyCycleCountsAsFailed(t *testing.T) {
 	ctx := context.Background()
 
