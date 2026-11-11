@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -225,6 +226,145 @@ func TestListShowsWholeTeamsIssues(t *testing.T) {
 	}
 	if strings.Contains(out, local.LocalID) {
 		t.Errorf("an issue that reached the store still prints its local id:\n%s", out)
+	}
+}
+
+// showField is one header field of `issue show`'s output, or "" when the record
+// printed no such field. A field is read by its name rather than by its column,
+// so the padding printIssue lays it out with is not what a test depends on.
+func showField(out, name string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if rest, ok := strings.CutPrefix(line, name+":"); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
+}
+
+// TestShowPrintsTheProjectsCopy: the store is the truth about an issue that has
+// a number (F13), so `show` prints the project's copy and not the file this
+// machine wrote when the failure happened. The two are made to disagree on the
+// status alone — the one field a teammate's dismissal moves — so a `show` that
+// answered with the file here would print `pending` for an issue the project
+// says is set aside.
+func TestShowPrintsTheProjectsCopy(t *testing.T) {
+	rig := newMineRig(t)
+	local := mineRec("1", "sig-a")
+	up := rig.upload(local, rig.caller)
+	local.Number, local.Uploaded = up.Number, true
+	rig.save(local)
+	if err := issues.SetSharedStatus(context.Background(), rig.bucket, up.Number, issues.StatusDismissed, rig.now); err != nil {
+		t.Fatalf("setting the shared status: %v", err)
+	}
+
+	out, errOut, err := rig.run("issue", "show", mineRefOf(up.Number))
+	if err != nil {
+		t.Fatalf("issue show: %v\n%s%s", err, out, errOut)
+	}
+	if got := showField(out, "status"); got != string(issues.StatusDismissed) {
+		t.Errorf("show prints status %q, want the project's %q — this machine's file says %q", got, issues.StatusDismissed, local.Status)
+	}
+	if got := showField(out, "reporter"); got != rig.caller {
+		t.Errorf("show prints reporter %q, want the project's %q", got, rig.caller)
+	}
+}
+
+// TestShowAndDismissReachATeammatesIssue: every row of `list` is a name the
+// commands take (F23), and a teammate's issue has no file here — the project's
+// store is where it is read. `show` prints it and `dismiss` sets it aside
+// there, so a row of the whole team's listing is never a dead end.
+func TestShowAndDismissReachATeammatesIssue(t *testing.T) {
+	rig := newMineRig(t)
+	mate := mineRec("1", "sig-mate")
+	mate.Summary = "the run stops on the second step"
+	mateUp := rig.upload(mate, "user:bo@example.test")
+	ref := mineRefOf(mateUp.Number)
+
+	out, errOut, err := rig.run("issue", "show", ref)
+	if err != nil {
+		t.Fatalf("issue show %s: %v\n%s%s", ref, err, out, errOut)
+	}
+	if !strings.Contains(out, mate.Summary) {
+		t.Errorf("show %s printed no issue:\n%s", ref, out)
+	}
+	if got := showField(out, "reporter"); got != "user:bo@example.test" {
+		t.Errorf("show %s prints reporter %q, want the project's record", ref, got)
+	}
+
+	out, errOut, err = rig.run("issue", "dismiss", ref)
+	if err != nil {
+		t.Fatalf("issue dismiss %s: %v\n%s%s", ref, err, out, errOut)
+	}
+	if !strings.Contains(out, "Dismissed "+ref) {
+		t.Errorf("dismiss does not name the issue it set aside:\n%s", out)
+	}
+	shared, err := issues.SharedIssue(context.Background(), rig.bucket, mateUp.Number)
+	if err != nil {
+		t.Fatalf("reading the shared issue: %v", err)
+	}
+	if shared.Status != issues.StatusDismissed {
+		t.Errorf("the project's copy is %q, want %q", shared.Status, issues.StatusDismissed)
+	}
+	// Nothing was written here: the issue is a teammate's, and this machine has
+	// no file of it to move.
+	if _, err := rig.store.Get(ref); err == nil {
+		t.Errorf("dismiss left a file for %s, an issue this machine has none of", ref)
+	}
+
+	// A local ID is a name only this machine has, so a reference that is not a
+	// number is answered here or not at all: nothing is opened to ask.
+	opens := rig.opens
+	if _, _, err := rig.run("issue", "dismiss", "local-update-20261101120000-9"); err == nil {
+		t.Error("dismiss answered for a local ID this machine has no file of")
+	}
+	if rig.opens != opens {
+		t.Errorf("dismiss of a local ID opened the project's store %d time(s)", rig.opens-opens)
+	}
+}
+
+// TestListSkipsAnotherProjectsRecords: the issues folder is one for the whole
+// machine, so it can hold a record another project's store gave a number to
+// (F8b). That record is not this project's issue and its number is not this
+// listing's to print — and `show` of the number does not answer with it either,
+// which is the half that would otherwise hand a reader the wrong issue under a
+// reference the listing printed.
+func TestListSkipsAnotherProjectsRecords(t *testing.T) {
+	rig := newMineRig(t)
+	foreign := mineRec("1", "sig-other")
+	foreign.Installation = mineOtherInstallation()
+	foreign.Number, foreign.Uploaded = 4, true
+	foreign.Summary = "another project's failure"
+	rig.save(foreign)
+	// This project's own issue, so the listing has something to keep: it is
+	// already uploaded, so the listing's upload pass has nothing to do with it.
+	own := mineRec("2", "sig-a")
+	own.Number, own.Uploaded = 1, true
+	rig.save(own)
+
+	out, errOut := rig.listing()
+	if errOut != "" {
+		t.Errorf("a listing that reached the store printed %q on stderr", errOut)
+	}
+	if row := syncRow(out, mineRefOf(foreign.Number)); row != nil {
+		t.Errorf("the listing prints another project's record as this project's row: %q", row)
+	}
+	if strings.Contains(out, foreign.Summary) {
+		t.Errorf("the listing prints another project's summary:\n%s", out)
+	}
+	if row := syncRow(out, mineRefOf(own.Number)); row == nil {
+		t.Errorf("the listing drops this project's own issue:\n%s", out)
+	}
+
+	if _, _, err := rig.run("issue", "show", mineRefOf(foreign.Number)); err == nil {
+		t.Error("show answered with another project's record")
+	}
+	if _, _, err := rig.run("issue", "dismiss", mineRefOf(foreign.Number)); err == nil {
+		t.Error("dismiss answered with another project's record")
+	}
+	if got, err := rig.store.Get(strconv.Itoa(foreign.Number)); err != nil {
+		t.Fatalf("another project's record is not where it was: %v", err)
+	} else if got.Status != issues.StatusPending {
+		t.Errorf("a refused dismiss left another project's record %q", got.Status)
 	}
 }
 

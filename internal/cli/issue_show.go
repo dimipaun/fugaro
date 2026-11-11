@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,10 +30,13 @@ func newIssueShowCmd() *cobra.Command {
 			"An issue that has been uploaded is printed as the project's store has\n" +
 			"it: the store is the truth once an issue has a number (F13), so a\n" +
 			"teammate's dismissal, or a fix the update pass recorded, shows here\n" +
-			"rather than the copy this machine wrote when the failure happened. This\n" +
-			"machine's own pending issues are uploaded first, as `list` does. A run\n" +
-			"that cannot reach the store prints this machine's own copy and says why\n" +
-			"on stderr.\n\n" +
+			"rather than the copy this machine wrote when the failure happened. A\n" +
+			"number also names a teammate's issue, which this machine has no file\n" +
+			"of: the rows `list` prints are the whole team's, and a reference that\n" +
+			"is a number is read from the project's store (F23). This machine's own\n" +
+			"pending issues are uploaded first, as `list` does. A run that cannot\n" +
+			"reach the store prints this machine's own copy and says why on stderr\n" +
+			"— or, for a number it has no file of, refuses.\n\n" +
 			"Nothing is uploaded in a coding agent's session, and the project is not\n" +
 			"read (F10, D1734).\n\n" +
 			"--json prints the record itself, in the shape\n" +
@@ -57,11 +61,10 @@ func runIssueShow(cmd *cobra.Command, ref string, asJSON bool) error {
 		store.Installation = sh.installation
 	}
 	sh.uploadPending(ctx, store)
-	i, err := store.Get(issueRefArg(ref))
+	i, err := issueRecordForShow(ctx, sh, store, issueRefArg(ref))
 	if err != nil {
 		return userErr("nothing was shown: %v", err)
 	}
-	i = refreshIssue(ctx, sh, i)
 	// The lines about what could not be reached go to stderr: stdout is the
 	// record, and a note inside it would read as one of its fields.
 	for _, n := range sh.notes {
@@ -75,6 +78,34 @@ func runIssueShow(cmd *cobra.Command, ref string, asJSON bool) error {
 		return writeJSON(cmd.OutOrStdout(), doc)
 	}
 	return printIssue(cmd.OutOrStdout(), i)
+}
+
+// issueRecordForShow is the record `show` prints for a reference: this
+// machine's own file, refreshed from the project's store when it has a number
+// (F13) — and, for a number this machine has no file of, the project's record
+// itself (F23). The second half is what makes the rows of `list` names a person
+// can act on: a teammate's issue has no file here, and the store is where it is
+// read.
+//
+// A file here that carries the number for another project is passed over, with
+// a line: the number is this project's, and the row a listing prints for it is
+// this project's issue (F8b). The line is the refusal when the store has no
+// record of the number either, because the only other record this machine has
+// of it is the one that was passed over.
+func issueRecordForShow(ctx context.Context, sh *issueShared, store *issues.Store, ref string) (issues.Issue, error) {
+	i, err := store.Get(ref)
+	if err == nil {
+		if i.Number != 0 && issueOtherProjects(i, sh.installation) {
+			err = errors.New(issueRef(i) + " here is another project's record")
+		} else {
+			return refreshIssue(ctx, sh, i), nil
+		}
+	}
+	fromStore, ok := sharedIssueRef(ctx, sh, ref)
+	if !ok {
+		return issues.Issue{}, err
+	}
+	return fromStore, nil
 }
 
 // refreshIssue answers with the record to print for i: the project's copy when

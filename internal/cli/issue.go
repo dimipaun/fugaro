@@ -80,7 +80,14 @@ func issueRef(i issues.Issue) string {
 	if i.Number == 0 {
 		return i.LocalID
 	}
-	return fmt.Sprintf("#%04d", i.Number)
+	return issueRefOfNumber(i.Number)
+}
+
+// issueRefOfNumber is that spelling for a number with no record in hand: the
+// store's own reader answers with a number before there is a record to print,
+// and a line about one is written in the same shape as a row.
+func issueRefOfNumber(n int) string {
+	return fmt.Sprintf("#%04d", n)
 }
 
 // issueRefArg is a reference as the store takes it: the `#` that marks a

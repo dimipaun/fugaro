@@ -2820,6 +2820,12 @@ every machine. A store that cannot be reached is a line on stderr and
 the dismissal here stands; a store that answers and refuses — the issue
 is filed, or a teammate has decided it — refuses the command.
 
+A number also names a teammate's issue, which this machine has no file
+of: the rows `list` prints are the whole team's, so a reference that is
+a number and no file here is read from the project's store and set
+aside there (F23). A store that cannot be reached is then the refusal
+rather than a line, there being nothing here to set aside instead.
+
 An issue that has already been filed is refused: it is open on GitHub,
 and setting it aside here would not close it.
 
@@ -2851,7 +2857,12 @@ by its number. A row names the issue the way `show`, `dismiss` and
 `submit` take it, with the class the diagnosis gave it, where it stands,
 and its one-line summary. Where the project's copy and this machine's
 file disagree, the project's is printed: the store is the truth once an
-issue is uploaded (F13).
+issue is uploaded (F13), and a number is what `show` and `dismiss` read
+from the store when this machine has no file of the issue.
+
+A record this machine's folder holds for another project is not a row:
+the folder is one for the whole machine, and another project's issue is
+not this project's, nor is its number this listing's to print (F8b).
 
 Listing uploads this machine's own pending issues first, exactly as
 `mine` does: the same failure reported twice is one issue, and the one
@@ -2946,10 +2957,13 @@ machine did not write, so no escape sequence in it reaches the terminal.
 An issue that has been uploaded is printed as the project's store has
 it: the store is the truth once an issue has a number (F13), so a
 teammate's dismissal, or a fix the update pass recorded, shows here
-rather than the copy this machine wrote when the failure happened. This
-machine's own pending issues are uploaded first, as `list` does. A run
-that cannot reach the store prints this machine's own copy and says why
-on stderr.
+rather than the copy this machine wrote when the failure happened. A
+number also names a teammate's issue, which this machine has no file
+of: the rows `list` prints are the whole team's, and a reference that
+is a number is read from the project's store (F23). This machine's own
+pending issues are uploaded first, as `list` does. A run that cannot
+reach the store prints this machine's own copy and says why on stderr
+— or, for a number it has no file of, refuses.
 
 Nothing is uploaded in a coding agent's session, and the project is not
 read (F10, D1734).

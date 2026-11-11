@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -93,6 +94,72 @@ func (s *issueShared) why() string {
 		return "the project's store could not be reached"
 	}
 	return strings.TrimPrefix(s.notes[0], "note: ")
+}
+
+// issueProjectName is the name of the project this machine's issues belong to,
+// and nothing else. It reads the checkout and the local config, so it reaches
+// no credential and no bucket, and a command that only has to tell this
+// project's records from another's (F8b) needs no more than this: `dismiss` of
+// an issue this machine has a file of is a local write, and it must not open a
+// cloud client to find that out.
+//
+// A run that names no project answers with the empty name, which no record
+// carries, so nothing is another project's and every record is kept — the same
+// answer openIssueShared gives.
+func issueProjectName(ctx context.Context) string {
+	lc, err := mineProject(ctx)
+	if err != nil {
+		return ""
+	}
+	return issues.Digest(lc.BucketURL())
+}
+
+// issueOtherProjects reports whether a record this machine's folder holds
+// belongs to another project (F8b). The folder is one for the whole machine, so
+// a record stamped with a name that is not this project's is another project's
+// issue: its number came from that project's store, and printing it or
+// resolving a reference to it here would answer with the wrong issue.
+//
+// A record that names no installation is kept, and so is every record of a run
+// that names no project: the first was saved before there was a field to stamp,
+// and the second has nothing to attribute anything to. This is `mine`'s rule,
+// deliberately — the listing and the store reads answer with the same rows —
+// and `issueForeign` is the stricter half of it, for the one command that
+// publishes.
+func issueOtherProjects(i issues.Issue, installation string) bool {
+	return i.Installation != "" && installation != "" && i.Installation != installation
+}
+
+// issueNumber is the number a reference names, and whether it names one at all.
+// A number is the project's and a local ID is this machine's alone, so the two
+// are told apart before anything is opened or read (F20), and a reference that
+// is not a number never reaches a store.
+func issueNumber(ref string) (int, bool) {
+	n, err := strconv.Atoi(ref)
+	return n, err == nil && n >= 1
+}
+
+// sharedIssueRef reads the issue a numbered reference names from the project's
+// store. It is the one path by which `show` and `dismiss` reach an issue this
+// machine has no file of, which is every row of the listing that is a
+// teammate's: the store is the truth about an issue that has a number (F13),
+// and a number is what the listing prints.
+//
+// A reference that is not a number names a local ID, and a local ID is a name
+// only this machine has, so it is answered from the folder here or not at all.
+// The number is read as a number and validated by the store's own reader before
+// any key is built from it (F20).
+func sharedIssueRef(ctx context.Context, sh *issueShared, ref string) (issues.Issue, bool) {
+	n, numbered := issueNumber(ref)
+	if !numbered || sh.bucket == nil {
+		return issues.Issue{}, false
+	}
+	i, err := issues.SharedIssue(ctx, sh.bucket, n)
+	if err != nil {
+		sh.notes = append(sh.notes, "note: the project's issue "+issueRefOfNumber(n)+" could not be read ("+oneLine(err.Error())+")")
+		return issues.Issue{}, false
+	}
+	return i, true
 }
 
 // uploadPending is the one call to SyncPending in this package: this machine's

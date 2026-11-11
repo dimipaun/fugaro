@@ -26,7 +26,11 @@ func newIssueListCmd() *cobra.Command {
 			"`submit` take it, with the class the diagnosis gave it, where it stands,\n" +
 			"and its one-line summary. Where the project's copy and this machine's\n" +
 			"file disagree, the project's is printed: the store is the truth once an\n" +
-			"issue is uploaded (F13).\n\n" +
+			"issue is uploaded (F13), and a number is what `show` and `dismiss` read\n" +
+			"from the store when this machine has no file of the issue.\n\n" +
+			"A record this machine's folder holds for another project is not a row:\n" +
+			"the folder is one for the whole machine, and another project's issue is\n" +
+			"not this project's, nor is its number this listing's to print (F8b).\n\n" +
 			"Listing uploads this machine's own pending issues first, exactly as\n" +
 			"`mine` does: the same failure reported twice is one issue, and the one\n" +
 			"still waiting here has to reach the store before it can be shown beside\n" +
@@ -90,7 +94,7 @@ func runIssueList(cmd *cobra.Command, asJSON bool) error {
 	for _, n := range sh.notes {
 		fmt.Fprintln(cmd.ErrOrStderr(), n)
 	}
-	rows := issueRows(all, shared)
+	rows := issueRows(all, shared, sh.installation)
 	out := cmd.OutOrStdout()
 	if asJSON {
 		docs := make([]map[string]any, 0, len(rows))
@@ -130,12 +134,23 @@ func runIssueList(cmd *cobra.Command, asJSON bool) error {
 // the project's listing is what it is, and dropping a local file would hide the
 // issue its owner is waiting on.
 //
+// A file this machine's folder holds for another project is not one of them
+// (F8b): the folder is one for the whole machine, and its record carries a
+// number another project's store gave it, so printing it would show a row whose
+// reference names a different issue than the row a reader read. The rule is
+// `mine`'s, deliberately the same one — a record that names no installation is
+// kept, because it was saved before there was a field to stamp, and a run that
+// names no project keeps everything, having nothing to attribute anything to.
+//
 // The order is the store's own: the issues with no number yet — this machine's,
 // the ones a person has to look at — first, then the numbered ones ascending.
-func issueRows(local []issues.Issue, shared []issues.SharedRow) []issues.Issue {
+func issueRows(local []issues.Issue, shared []issues.SharedRow, installation string) []issues.Issue {
 	var unnumbered []issues.Issue
 	numbered := make(map[int]issues.Issue, len(local)+len(shared))
 	for _, i := range local {
+		if issueOtherProjects(i, installation) {
+			continue
+		}
 		if i.Number == 0 {
 			unnumbered = append(unnumbered, i)
 			continue
