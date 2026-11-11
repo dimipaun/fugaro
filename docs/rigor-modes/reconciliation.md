@@ -843,7 +843,10 @@ bitbucket-credentials folder's pin over the credentials-service runbook's
 read-consumer section, moved the table's pin row from 120 to 121.
 Amended 2026-11-10: `internal/cli/docs_bitbucket_security_test.go`, the same
 folder's pin over SECURITY.md's section for the read mint and its two caller
-classes, moved it from 121 to 122.) They
+classes, moved it from 121 to 122.
+Amended 2026-11-11: `internal/cli/docs_forge_checks_test.go`, the
+forge-authorship-images plan's pin over the register's Checks 230, 231, 232, 234
+and 235 (X1), moved the table's row from 123 to 124.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
