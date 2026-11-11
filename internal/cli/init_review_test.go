@@ -1252,3 +1252,36 @@ func TestFirebaseCoverSplitKeepsAnUnverifiedProjectIntegrity(t *testing.T) {
 		t.Errorf("the step's whole answer %q is not its two halves %q + %q", whole, integrity, content)
 	}
 }
+
+// TestStepCoverWithNoSplitRefusesItsWholeAnswer is stepCover's other
+// fail-closed branch (D1545): a step cover built without a split — the shape
+// coverOf never makes, since it takes the reasons and the split together off
+// the same review, and the shape a constructor that took one without the other
+// would make — has no way to tell the two kinds apart, so the gate reads its
+// whole answer as the reasons that still refuse. The other direction, the whole
+// answer as CONTENT, is a plan every reason of this step's own cover is applied
+// past with only a warning kept (D1549), which is the one thing the split must
+// never do: it costs a rule. The missing cover is the same branch with both
+// fields nil, and its own sentence is refused the same way rather than read as
+// "nothing to refuse".
+// Mutation (run, restore): return nil, c.NotCovered(p, imports) in
+// stepCover.NotCoveredSplit and the integrity assertion below fails.
+func TestStepCoverWithNoSplitRefusesItsWholeAnswer(t *testing.T) {
+	const reason = "module.installation.google_cloud_run_v2_job.runner (create): the step's own rule"
+	for name, c := range map[string]stepCover{
+		"a cover that answers and cannot split": {notCovered: func(*tf.Plan, []tf.ImportKey) []string { return []string{reason} }},
+		"a cover the gate was never given":      {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			integrity, content := c.NotCoveredSplit(&tf.Plan{}, nil)
+			if len(content) != 0 {
+				t.Errorf("a step cover that cannot split warned about %q: a reason the gate cannot read as content is one it must refuse (D1549)", content)
+			}
+			if want := c.NotCovered(&tf.Plan{}, nil); len(want) == 0 {
+				t.Fatal("the cover answered nothing, so this test is not about the branch it means to pin")
+			} else if !reflect.DeepEqual(integrity, want) {
+				t.Errorf("integrity = %q, want the cover's whole answer %q", integrity, want)
+			}
+		})
+	}
+}

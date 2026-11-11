@@ -60,6 +60,20 @@ type judgesNothing struct{}
 
 func (judgesNothing) NotCovered(*tf.Plan, []tf.ImportKey) []string { return nil }
 
+// refusesWhole is a cover that refuses every plan, cannot tell D1545's two
+// kinds apart, and that the owner's delete list CAN be handed to: it is the
+// cover that reaches splitCover the other way, as the value WithDeleteEntries
+// returned, which is where a cover that dropped the split on the way back would
+// land its whole answer in the wrong half. Its reason is shaped like the gates'
+// own items, so the refusal it becomes carries an address.
+type refusesWhole struct{}
+
+func (refusesWhole) NotCovered(*tf.Plan, []tf.ImportKey) []string {
+	return []string{planBucket + " (create): this cover refuses every plan and cannot tell the two kinds apart"}
+}
+
+func (refusesWhole) WithDeleteEntries([]tf.DeleteEntry) tf.Deletable { return refusesWhole{} }
+
 // cover is the scope-and-attribute gate of the managed project the tests judge
 // for: the installation's tf.Cover with the inputs the review would have
 // shown. It is the real gate, and the refusals below are its own.
@@ -437,6 +451,41 @@ func TestGateWarnsTheReviewCoverFindingWhenTheGuardAdmits(t *testing.T) {
 	}
 	if !strings.Contains(ref.Why, "outside the installation's modules") {
 		t.Errorf("the cover warning for %s carries %q, want its type rule", planVM, ref.Why)
+	}
+}
+
+// splitCover's fail-closed fallback is what keeps D1545 from turning a refusal
+// into a warning: a cover that answers NotCovered but not NotCoveredSplit
+// cannot say which of its reasons are content, and the gate reads its whole
+// answer as the reasons that still refuse (D1549). The other direction — the
+// whole answer as CONTENT — admits exactly the plan the cover refused, with the
+// refusal recorded as a warning and applied past, which is the one thing this
+// branch exists to prevent. Both ways into the fallback are here, since a cover
+// that dropped the split on the way back from the owner's delete list is the
+// second.
+// Mutation (run, restore): return c.NotCovered(p, imports), nil as the CONTENT
+// half in splitCover, and every assertion below fails.
+func TestACoverThatCannotSplitIsRefusedWhole(t *testing.T) {
+	r := newRig(t)
+	// A create the guard admits, so the refusal the verdict carries is the
+	// cover's own and nothing else.
+	r.show(t, bucket(planBucket))
+	for name, c := range map[string]Cover{
+		"the cover the gate was handed":            refuseAll{},
+		"the cover the delete list came back from": refusesWhole{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := gate(t, r, spec(t, r, c))
+			if v.OK {
+				t.Fatalf("a cover that cannot tell content from integrity admitted the plan it refused: %+v", v.Warnings)
+			}
+			if len(v.Warnings) != 0 {
+				t.Errorf("the cover's whole answer was warned about rather than refused (D1549): %+v", v.Warnings)
+			}
+			if want := refusals(coverGate, c.NotCovered(r.plan(t), nil)); !slices.Equal(v.Refusals, want) {
+				t.Errorf("refusals = %+v, want the cover's whole answer as refusals %+v", v.Refusals, want)
+			}
+		})
 	}
 }
 

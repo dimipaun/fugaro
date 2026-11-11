@@ -1066,7 +1066,9 @@ func (a deployerAccess) TokenCreator(ctx context.Context, account, member string
 // managedBudgetGate makes the apply-time budget read and turns it into the gate
 // the apply runs behind (Task 4.4). It is the one place the managed apply — and
 // a restore, which applies through this command's own path (Task 5.2) — opens
-// that gate, and every way of not answering with an amount leaves it closed.
+// that gate, and every way of not answering with an amount leaves it closed but
+// one: a managed creation fact that records none opens it with a warning rather
+// than a refusal (T9, D1545, managed.ApplyGate's last branch).
 //
 // The read is internal/infra/managed.ReadBudget and never IsManaged alone: what
 // the gate needs is the amount the creation fact records, and ReadBudget is the
@@ -1080,8 +1082,9 @@ func (a deployerAccess) TokenCreator(ctx context.Context, account, member string
 // creation that recorded none (the marker's version 1) or not a managed
 // creation at all, and its own one-line reason does not say which; IsManaged is
 // the same read over the same object asking the other question, and it is made
-// only in that case, and only so the refusal names the right one of the two.
-// Nothing is applied either way.
+// only in that case, and only so the two answers are told apart: the managed
+// one opens the gate with the warning that the fact records no amount, and the
+// other leaves it closed with the refusal (T9, D1545).
 func managedBudgetGate(ctx context.Context, c *infra.Clients, lc *localcfg.Config) (managedmode.Enable, managedmode.Fact, error) {
 	var s *storage.Service
 	var r *crm.Service
@@ -1093,9 +1096,11 @@ func managedBudgetGate(ctx context.Context, c *infra.Clients, lc *localcfg.Confi
 
 // managedBudgetGateOf is managedBudgetGate for a named GCP project rather than
 // the selected config's: `fugaro restore` asks it of the NEW project right
-// after the creation, so a creation that wrote no valid version-2 marker stops
-// before the checkout line moves. One function, so the restore's check and
-// the apply's gate are the same read and the same decision.
+// after the creation, so a creation whose fact the apply would refuse stops
+// before the checkout line moves — a fact that records no amount is not one of
+// those, since it opens the gate with a warning (T9, D1545). One function, so
+// the restore's check and the apply's gate are the same read and the same
+// decision.
 func managedBudgetGateOf(ctx context.Context, s *storage.Service, r *crm.Service, name, gcpProject string) (managedmode.Enable, managedmode.Fact, error) {
 	answer, err := managed.ReadBudgetAnswer(ctx, s, r, name, gcpProject)
 	read := managedmode.BudgetRead{
