@@ -70,12 +70,39 @@ func TestAdmitTakesTheFirstChallengerThatPasses(t *testing.T) {
 	if !ok || model != admitChallenger || why != "" {
 		t.Fatalf("Admit = %q %v %q, want %q admitted with no reason", model, ok, why, admitChallenger)
 	}
-	// A Claude model is the champion's own route and needs no provider, no
-	// allow_data_to and no price row: the checks are about egress, and a
-	// direct model is where every run already goes.
+	// A well-formed Claude ID needs no provider, no allow_data_to and no
+	// price row: the checks are about egress, and Claude goes direct. A
+	// project layer cannot name one today — validateAB holds every challenger
+	// to config.CheckModelPattern, which refuses a "claude-*" ID as a claim on
+	// Claude models — so the challengers of a real installation are provider
+	// models; the case is here because it is what the checks answer, and the
+	// bare alias a layer *can* name is refused below (TestAdmitRefusesAlias).
 	model, ok, why = Admit(admitConfig(), admitLayer(admitClaudeAlt), admitRepo, nil, nil)
 	if !ok || model != admitClaudeAlt || why != "" {
 		t.Errorf("a direct model was refused: %q %v %q", model, ok, why)
+	}
+}
+
+// TestAdmitRefusesAlias is the pin rule of a run under a budget, asked at
+// launch: config.CheckPins refuses an alias coder ("opus is an alias: with a
+// budget, name a model ID"), and a sampled run always has a budget (D573), so
+// an alias challenger would be halted at bootstrap — after its daily pair slot
+// and a job execution were spent. It is refused here instead, and it is the
+// only Claude-direct challenger a layer can carry, since config.CheckModelPattern
+// refuses a "claude-*" ID.
+func TestAdmitRefusesAlias(t *testing.T) {
+	for _, model := range []string{"opus", "sonnet", "haiku", "default", "best"} {
+		if got, ok, why := Admit(admitConfig(), admitLayer(model), admitRepo, admitProviders(), admitPrices()); ok || got != "" || why != ReasonVariant {
+			t.Errorf("%s: Admit = %q %v %q, want no model and %q", model, got, ok, why, ReasonVariant)
+		}
+	}
+	// The refusal is the alias rule and not a ":" variant alone: a "-latest"
+	// pointer is an alias too, and the plain ID a run may name is not.
+	if got, ok, why := Admit(admitConfig(), admitLayer("claude-opus-5-5-latest"), admitRepo, nil, nil); ok || got != "" || why != ReasonVariant {
+		t.Errorf("a -latest pointer: Admit = %q %v %q, want %q", got, ok, why, ReasonVariant)
+	}
+	if got, ok, why := Admit(admitConfig(), admitLayer(admitClaudeAlt), admitRepo, nil, nil); !ok || got != admitClaudeAlt {
+		t.Errorf("a plain Claude ID: Admit = %q %v %q, want it admitted", got, ok, why)
 	}
 }
 
@@ -170,6 +197,36 @@ func TestAdmitNeedsEnforceForProvider(t *testing.T) {
 	}
 }
 
+// TestAdmitNeedsAPIKeyForProvider is D556's "the job already mounting the
+// route's key", asked at launch. The runner refuses a provider-claimed coder
+// pin under vertex, oauth or cascade (config.CheckProviderAuth): a Claude
+// subscription token is never sent to another provider, vertex serves Claude
+// only, and a cascade run's calls are carried by whatever credential the
+// cascade chose. A challenger there would be halted at bootstrap, so it is
+// refused here, and it is asked before the mode for the runner's own reason:
+// which credential the run holds comes before which mode it runs in.
+func TestAdmitNeedsAPIKeyForProvider(t *testing.T) {
+	for _, auth := range []string{"vertex", "oauth", "cascade"} {
+		cfg := admitConfig()
+		cfg.Agent.Auth = auth
+		if model, ok, why := Admit(cfg, admitLayer(admitChallenger), admitRepo, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNeedsAPIKey {
+			t.Errorf("auth %q: Admit = %q %v %q, want no model and %q", auth, model, ok, why, ReasonNeedsAPIKey)
+		}
+	}
+	// A direct model under the same credential needs no provider key, and
+	// nothing about the challenger's credential is the champion's own check:
+	// the champion's pins are refused by validate, not here.
+	cfg := admitConfig()
+	cfg.Agent.Auth = "oauth"
+	if model, ok, why := Admit(cfg, admitLayer(admitClaudeAlt), admitRepo, admitProviders(), admitPrices()); !ok || model != admitClaudeAlt || why != "" {
+		t.Errorf("a direct model under oauth was refused: %q %v %q", model, ok, why)
+	}
+	cfg.Budget.Mode = "observe"
+	if _, _, why := Admit(cfg, admitLayer(admitChallenger), admitRepo, admitProviders(), admitPrices()); why != ReasonNeedsAPIKey {
+		t.Errorf("under oauth and observe the reason is %q, want %q: the credential is asked before the mode", why, ReasonNeedsAPIKey)
+	}
+}
+
 // TestAdmitSkipsBitbucket pins the v1 limit A2.1 states: a challenger's clone
 // needs a read-only installation token, and Bitbucket has none, so a Bitbucket
 // repository is never sampled however good its challenger is.
@@ -192,10 +249,11 @@ func TestAdmitNeedsAChallenger(t *testing.T) {
 }
 
 // TestAdmitAgreesWithTheProviderPolicy holds the reason vocabulary to the rule
-// it classifies: the checks Admit makes for a challenger are
-// config.CheckProviderPolicy's, and the closed reason is a second reader of
-// them, so the two must answer the same question the same way. A model the
-// policy refuses is never admitted, and one it admits is admitted here.
+// it classifies: a provider reason is config.CheckProviderPolicy's own
+// refusal, read a second time, so the two must answer the same question the
+// same way. Every model here is one no other check refuses (a plain ID, the
+// champion's credential and an enforced budget), so a disagreement can only be
+// this pair's.
 func TestAdmitAgreesWithTheProviderPolicy(t *testing.T) {
 	cfg, providers, prices := admitConfig(), admitProviders(), admitPrices()
 	for _, model := range []string{admitChallenger, "openai/gpt-9", "deepseek/chat-x:free", "deepseek/unpriced", admitClaudeAlt} {

@@ -42,13 +42,25 @@ const (
 	// allow_data_to that does not name the repository (F18, D556).
 	ReasonUnrouted = "unrouted"
 	// ReasonVariant is a challenger spelled as a variant (a ":" suffix) or as
-	// an alias, rather than the plain vendor/model ID the price table and the
-	// gateway route by.
+	// an alias, rather than the plain model ID the price table and the gateway
+	// route by. Both halves matter: a provider's variant is refused by the
+	// provider policy, and a bare alias ("opus", "sonnet") is refused by the
+	// pin rule a run under a budget applies to its coder, so neither could run
+	// as an arm however the checks below came out.
 	ReasonVariant = "variant"
 	// ReasonUnpriced is a challenger the price table cannot price: the run's
 	// gateway charges every call from that table, so an unpriced model is
 	// refused rather than guessed at.
 	ReasonUnpriced = "unpriced"
+	// ReasonNeedsAPIKey is a provider-served challenger under a credential
+	// that cannot carry a provider's key: an oauth token is a Claude
+	// subscription credential that is never sent to another provider, vertex
+	// serves Claude only, and a cascade run's calls are carried by whatever
+	// credential the cascade chose. Only an api-key run may send a call to
+	// another provider, so a challenger there is one the run would refuse
+	// (config.CheckProviderAuth, F18, D556's "the job already mounting the
+	// route's key").
+	ReasonNeedsAPIKey = "needs-api-key"
 	// ReasonNeedsEnforce is a provider-served challenger under a budget mode
 	// that is not enforce: the gateway holds the provider's key and routes the
 	// call, so without it the call would go to Anthropic (F18).
@@ -60,8 +72,15 @@ const (
 // and passes, for this repository, the checks a run's own model passes — the
 // repository's allowed_models, the provider policy (a route claims the model,
 // that route's allow_data_to names the repository, and the ID is plain and
-// priced) and the budget gateway a provider's calls need (D556, F18). No
-// challenger reaches a provider this repository could not already use.
+// priced), the pin rule a run under a budget applies to its coder (an explicit
+// model ID, never an alias), the credential that may carry a provider's key,
+// and the budget gateway a provider's calls need (D556, F18). No challenger
+// reaches a provider this repository could not already use.
+//
+// Every one of them is a check the run itself makes at bootstrap, which is the
+// point: a challenger admitted here that the run would refuse there would burn
+// a daily pair slot (config.AB.MaxPairs) and a job execution to produce a
+// refusal instead of an arm.
 //
 // ok is false with one of the reasons above when nothing is admitted, and the
 // caller then launches the champion alone: a pair is never started for a
@@ -108,6 +127,21 @@ func Admit(cfg config.Config, layer config.AB, repo string, providers map[string
 		agent := challengerAgent(cfg.Agent, c)
 		if ps := config.CheckProviderPolicy(agent, nil, repo, providers, prices); len(ps) > 0 {
 			refuse(providerReason(c, repo, providers, prices))
+			continue
+		}
+		// The provider policy answers for the models it is about: a name with
+		// no route and no "/" is not its business, and that is where Claude
+		// Code's own aliases live ("opus", "sonnet", "haiku"). A run under a
+		// budget refuses such a coder pin (config.CheckPins, "is an alias:
+		// with a budget, name a model ID"), and a sampled run always has a
+		// budget (D573), so an alias challenger is refused here rather than
+		// halted there.
+		if pricing.IsAlias(c) {
+			refuse(ReasonVariant)
+			continue
+		}
+		if ps := config.CheckProviderAuth(agent, providers); len(ps) > 0 {
+			refuse(ReasonNeedsAPIKey)
 			continue
 		}
 		if ps := config.CheckProviderGateway(agent, "", providers, budgetMode(cfg)); len(ps) > 0 {
