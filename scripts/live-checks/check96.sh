@@ -159,11 +159,18 @@ SCRATCH=""
 SCRATCH_MARKER=".chk96-mine"
 SCRATCH_REMOVED=no
 PRINTED=""
-# The uids this run really created — one per run identity it exchanged — so the
-# `restore` line can name the ones a stopped run left behind. A uid is added
-# only after the exchange answered an ID token: before that there is no user to
-# delete.
+# The uids this run may have created — one per run identity it exchanged — so
+# the `restore` line can name the ones a stopped run left behind. A uid goes in
+# before the exchange is attempted and not after it answered: the user is made
+# BY the exchange, so a lost answer is a user that exists and that no uid
+# recorded after the answer would ever name.
 UIDS_CREATED=()
+# The read-back's count, set only by a read-back that happened: empty says the
+# user list was never read, which is not the same fact as a list read and found
+# to hold none of them, and the `restore` line says which of the two it is.
+SURVIVORS_READ=""
+# How many of the deletions answered 200, for the same line.
+DELETED_N=0
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk96.XXXXXXXX") || die "Check 96 cannot make a scratch directory"
@@ -217,14 +224,24 @@ restore_detail() {
   else
     dir="the scratch directory is STILL THERE, at $SCRATCH — remove it yourself"
   fi
-  local users left
+  # Three facts and not two, because they are three: the list was read back and
+  # holds none of them, the list was read back and holds some, or the list was
+  # never read at all — and that last one is neither of the others. A line that
+  # called it "read back absent" after a read that failed, or after survivors
+  # were found, or "no user was created" for an exchange whose answer was lost,
+  # is a sentence about a read nobody made.
+  local users left delete_call
+  delete_call="curl -sS --config - -X POST \"https://identitytoolkit.googleapis.com/v1/projects/${FB:-<firebase-project>}/accounts:delete\" with an Authorization header from 'gcloud auth print-access-token' and the data {\"localId\":\"<uid>\"}"
   if [ "${#UIDS_CREATED[@]}" -eq 0 ]; then
-    users="no run identity was exchanged, so no Firebase Auth user of this check's was created"
-  elif [ "${SURVIVORS_DONE:-no}" = yes ]; then
-    users="the run identities it expired were deleted and read back absent"
+    users="no run identity was minted, so no Firebase Auth user of this check's was created"
+  elif [ -z "$SURVIVORS_READ" ]; then
+    left=${UIDS_CREATED[*]}
+    users="the run identity users were attempted and the project's own user list was NOT read back ($DELETED_N of ${#UIDS_CREATED[@]} deletions answered 200), so whether they exist is unread rather than absent: the uids this check may have created are $left, and this is the call that deletes each of them — $delete_call"
+  elif [ "$SURVIVORS_READ" = 0 ]; then
+    users="the run identity users were deleted ($DELETED_N of ${#UIDS_CREATED[@]} answered 200) and the project's own user list was read back holding none of their uids"
   else
     left=${UIDS_CREATED[*]}
-    users="the run identity users STILL EXIST (uids: $left) — the run stopped before the last step, and this is the call that deletes each: curl -sS --config - -X POST \"https://identitytoolkit.googleapis.com/v1/projects/${FB:-<firebase-project>}/accounts:delete\" with an Authorization header from 'gcloud auth print-access-token' and the data {\"localId\":\"<uid>\"}"
+    users="the project's own user list was read back and still holds $SURVIVORS_READ of the uids this check may have created ($left): this is the call that deletes each of them — $delete_call"
   fi
   printf '%s; %s; the one thing it cannot take back is the installation token the mint answered: GitHub expires it inside the hour, this check never wrote it anywhere, and a second run mints a second one' "$dir" "$users"
 }
@@ -744,6 +761,18 @@ identity() { # identity VARNAME SLUG RUN — sets VARNAME in THIS shell
   chmod 600 "$SCRATCH/custom.jwt" 2>/dev/null || true
   jwt=$(cat "$SCRATCH/custom.jwt")
   rm -f "$SCRATCH/custom.jwt" "$SCRATCH/claims.json"
+  # Recorded BEFORE the exchange is attempted, because the user is created by
+  # the exchange and not by its answer: the POST reaching Identity Toolkit and
+  # its response being lost (a curl timeout, a connection reset) is a run of
+  # this check that created a user and heard nothing back, so a uid recorded
+  # only once an ID token came back would leave that user out of the `restore`
+  # line and out of the cleanup -- an orphan nobody knows about. A uid recorded
+  # whose exchange never reached the service is the harmless direction: the
+  # delete of a user that is not there answers an error, the read-back count is
+  # still the row's assertion, and the `restore` line says the list was not read
+  # back rather than claiming the user is gone.
+  uid=$(reader uid "$slug" "$run")
+  UIDS_CREATED+=("$uid")
   resp=$(printf 'url = "%s"\nheader = "Content-Type: application/json"\ndata = "{\\"token\\":\\"%s\\",\\"returnSecureToken\\":true}"\n' \
     "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=$FIREKEY" "$jwt" |
     curl -sS --config - 2>"$SCRATCH/exchange.err") || {
@@ -758,8 +787,6 @@ identity() { # identity VARNAME SLUG RUN — sets VARNAME in THIS shell
   }
   resp=""
   [ -n "$tok" ] || { say "the exchange answered no ID token"; return 1; }
-  uid=$(reader uid "$slug" "$run")
-  UIDS_CREATED+=("$uid")
   # Written into the caller's own variable, never echoed: a command substitution
   # would run this function in a subshell and the uid just recorded -- the one
   # that says which users the `restore` line has to name if the run stops -- with
@@ -880,7 +907,7 @@ step_audit() {
   repository=$(field_of repository "$ans")
   ghs=$(field_of ghs "$ans")
   if [ "$lines" = 1 ] && [ "$statuses" = ok ] && [ "$credential" = github-app-key ] && [ "$purpose" = mint ] && [ -z "$tier" ] && [ "$repository" = "$SLUG" ] && [ "$ghs" = 0 ]; then
-    fact audit PASS "the service's log carries exactly one audit line for this run: credential github-app-key (the name, never a value), purpose mint, no tier (the App key is not a model credential, and a tier on a mint is refused rather than written), status ok, repository $repository, caller the verified job account, and no line anywhere in it carrying the installation token's own prefix"
+    fact audit PASS "the service's log carries exactly one audit line for this run: credential github-app-key (the name, never a value), purpose mint, no tier (the App key is not a model credential, and a tier on a mint is refused rather than written), status ok, repository $repository, and no line anywhere in it carrying the installation token's own prefix"
   else
     fact audit FAIL "the service's audit line for this run is not the one this claim is about: $lines line(s), status $statuses, credential $credential, purpose $purpose, tier '$tier', repository $repository, token-prefix occurrences $ghs. Expected exactly 1 line, status ok, credential github-app-key, purpose mint, no tier, repository $SLUG and no token in it anywhere: the service's log is where a mint is recorded, and it records the credential's name"
   fi
@@ -976,26 +1003,57 @@ step_survivors() {
   for uid in ${UIDS_CREATED[@]+"${UIDS_CREATED[@]}"}; do
     code=$(printf 'url = "https://identitytoolkit.googleapis.com/v1/projects/%s/accounts:delete"\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\ndata = "{\\"localId\\":\\"%s\\"}"\n' \
       "$FB" "$at" "$uid" | curl -sS --config - -o /dev/null -w '%{http_code}') || code="curl-failed"
-    if [ "$code" = 200 ]; then deleted=$((deleted + 1)); fi
+    if [ "$code" = 200 ]; then
+      deleted=$((deleted + 1))
+      DELETED_N=$deleted
+    fi
     say "deleted the run identity user $uid: status $code"
   done
+  # A second access token for the read-back, read the same way and checked the
+  # same way as the first one: a token fetched inside the pipeline below (a
+  # command substitution whose status the pipeline discards) would go out as an
+  # empty bearer, and Identity Toolkit answers that 401 with a JSON error
+  # document that carries no `users` at all -- which the read-back would count
+  # as zero survivors. That is a PASS for a user list nobody read.
+  at=$(gcloud auth print-access-token 2>"$SCRATCH/at2.err") || stop "no second access token for the project's own Identity Toolkit API, so the user list this run created in cannot be read back"
+  [ -n "$at" ] || stop "gcloud answered no second access token"
+  local page token="" read_back left=0 pageleft code
+  # EVERY page of it, and the read's own status with it: the list is paged
+  # (`nextPageToken`), so a run whose users land past the first page would be
+  # read as a project holding none of them -- the one verdict this row exists
+  # to give. The page token is not a credential; it is a position in a list.
+  while :; do
+    local url="https://identitytoolkit.googleapis.com/v1/projects/$FB/accounts:batchGet?maxResults=1000"
+    if [ -n "$token" ]; then url="$url&pageToken=$token"; fi
+    page=$(printf 'url = "%s"\nheader = "Authorization: Bearer %s"\n' "$url" "$at" | curl -sS --config - -w '\n%{http_code}') \
+      || stop "the project's user list could not be read back, so this run cannot say whether what it created is gone"
+    code=${page##*$'\n'}
+    page=${page%$'\n'*}
+    [ "$code" = 200 ] || stop "the project's own user list was read back with HTTP $code rather than 200, so whether what this run created is gone is not an answer this check has: it is not a pass, and the row would otherwise read an unauthenticated or refused document as a project holding none of them"
+    # The reader's status, not sed's: the count it prints is the whole assertion of
+    # this row, and a list this check cannot parse would otherwise read back as the
+    # empty string — a document that was never read scored as a count. It fails
+    # closed (an empty count is not zero, so the row FAILs), and the FAIL's own
+    # sentence would name no number at all, which is why the read stops the run
+    # instead: a list that cannot be read is a fact this check cannot tell.
+    read_back=$(printf '%s' "$page" | reader uids "${UIDS_CREATED[@]+"${UIDS_CREATED[@]}"}") \
+      || stop "the project's user list is not the document this check reads, so whether what this run created is gone cannot be read back"
+    pageleft=$(field_of left "$read_back")
+    [ -n "$pageleft" ] || stop "the project's user list was read back and carries no count: this row's assertion is that count, and it cannot be taken from a document that does not carry one"
+    left=$((left + pageleft))
+    # Read into a variable rather than through `field_of`'s own pipeline: the
+    # status of the reader is what says the page was understood, and a page this
+    # check could not parse would otherwise read as the last one -- a run whose
+    # users are on page two would be scored against page one and pass.
+    local nextans
+    nextans=$(printf '%s' "$page" | reader nextpage) || stop "the project's user list is not the document this check reads, so whether it has another page cannot be read"
+    token=$(field_of next "$nextans")
+    [ -n "$token" ] || break
+  done
   at=""
-  local answer read_back left
-  answer=$(printf 'url = "https://identitytoolkit.googleapis.com/v1/projects/%s/accounts:batchGet?maxResults=1000"\nheader = "Authorization: Bearer %s"\n' "$FB" "$(gcloud auth print-access-token 2>/dev/null)" | curl -sS --config -) \
-    || stop "the project's user list could not be read back, so this run cannot say whether what it created is gone"
-  # The reader's status, not sed's: the count it prints is the whole assertion of
-  # this row, and a list this check cannot parse would otherwise read back as the
-  # empty string — a document that was never read scored as a count. It fails
-  # closed (an empty count is not zero, so the row FAILs), and the FAIL's own
-  # sentence would name no number at all, which is why the read stops the run
-  # instead: a list that cannot be read is a fact this check cannot tell.
-  read_back=$(printf '%s' "$answer" | reader uids "${UIDS_CREATED[@]+"${UIDS_CREATED[@]}"}") \
-    || stop "the project's user list is not the document this check reads, so whether what this run created is gone cannot be read back"
-  left=$(field_of left "$read_back")
-  [ -n "$left" ] || stop "the project's user list was read back and carries no count: this row's assertion is that count, and it cannot be taken from a document that does not carry one"
-  SURVIVORS_DONE=yes
+  SURVIVORS_READ=$left
   if [ "$left" = 0 ]; then
-    fact survivors PASS "the two run identity users this check exchanged were deleted ($deleted of ${#UIDS_CREATED[@]} answered 200) and the project's own user list holds 0 of their uids: nothing this check created survives it"
+    fact survivors PASS "the two run identity users this check exchanged were deleted ($deleted of ${#UIDS_CREATED[@]} answered 200) and the project's own user list was read back — every page of it, on a 200 — holding 0 of their uids: nothing this check created survives it"
   else
     fact survivors FAIL "the project's user list still holds $left of the uids this check created ($deleted of ${#UIDS_CREATED[@]} deletions answered 200): the read-back IS the assertion, and a survivor is a failure this check reports rather than leaves"
   fi
@@ -1196,7 +1254,8 @@ write_files() {
 
 It prints a fixed vocabulary and never a document -- `name=`, `project=`,
 `region=`, `repo=`, `slug=`, `service=`, `url=`, `job=`, `sa=`, `appid=`,
-`present`, `absent`, `yes`, `no`, `lines=3` -- so what reaches the block is the
+`present`, `absent`, `yes`, `no`, `lines=3`, `next=<page token>` -- so what
+reaches the block is the
 check's own words about what it read. Two subcommands are exceptions, both of
 them deliberate and both of them never printed by the script:
 
@@ -1595,6 +1654,15 @@ def cmd_uids(wanted):
     print("left=%d" % left)
 
 
+def cmd_nextpage():
+    """One page of the user list: the position of the page after it, empty when
+    this was the last one. The list is paged, and a reader that only ever looked
+    at the first page would take a project whose users are on a later one for a
+    project holding none of them -- which is this row's PASS."""
+    doc = load()
+    print("next=%s" % (doc.get("nextPageToken") or ""))
+
+
 def main(argv):
     if not argv:
         fail("no subcommand")
@@ -1641,6 +1709,8 @@ def main(argv):
         cmd_count()
     elif cmd == "uids":
         cmd_uids(rest)
+    elif cmd == "nextpage":
+        cmd_nextpage()
     else:
         fail("unknown subcommand %s" % cmd)
 

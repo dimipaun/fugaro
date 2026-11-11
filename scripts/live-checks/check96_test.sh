@@ -168,6 +168,19 @@ auth)
     printf 'IDTOKEN-CALLER-%s\n' "${sa##*@}"
     ;;
   print-access-token)
+    # The check takes one of these to delete the two users it created and a
+    # second one to read the project's user list back. A case that wants the
+    # second one to fail sets FAKE96_ACCESS_TOKEN_FAIL=second: the failure a run
+    # meets is gcloud refusing, and the read-back that follows it is the shape
+    # this case exists for.
+    n=0
+    [ -f "$FAKE96_DIR/token-called" ] && n=$(cat "$FAKE96_DIR/token-called")
+    n=$((n + 1))
+    printf '%s\n' "$n" >"$FAKE96_DIR/token-called"
+    if [ "${FAKE96_ACCESS_TOKEN_FAIL:-}" = second ] && [ "$n" -ge 2 ]; then
+      printf 'fake gcloud: print-access-token refused\n' >&2
+      exit 1
+    fi
     printf 'ACCESS-TOKEN-FIXTURE\n'
     ;;
   *) printf 'fake gcloud: unknown auth verb %s\n' "${2:-}" >&2; exit 64 ;;
@@ -251,6 +264,14 @@ body=""
 code=200
 case "$url" in
 *accounts:signInWithCustomToken*)
+  if [ "${FAKE96_EXCHANGE_LOST:-no}" = yes ]; then
+    # The POST reaches Identity Toolkit and its answer is lost: the user is
+    # created and this check hears nothing, which is the one shape in which a
+    # uid recorded only after a token came back would leave an orphan the
+    # `restore` line never names.
+    printf 'curl: (56) connection reset by peer\n' >&2
+    exit 56
+  fi
   # The custom token the check signed carries the uid; the ID token answers with
   # it, so every mint call below can be told which repository's identity it is.
   uid=$(printf '%s' "$data" | sed -n 's/.*FAKEJWT\.\([^.]*\)\..*/\1/p')
@@ -320,7 +341,29 @@ case "$url" in
   body='{}'
   ;;
 *accounts:batchGet*)
-  if [ -n "${FAKE96_BATCHGET_NOT_JSON:-}" ]; then
+  if [ -z "$auth" ]; then
+    # No bearer at all. Identity Toolkit answers that with 401 and a JSON error
+    # document that carries no `users`, so a read-back that went out with an
+    # empty token counts zero survivors out of a list nobody read.
+    code=401
+    body='{"error":{"code":401,"message":"Request had invalid authentication credentials."}}'
+  elif [ "${FAKE96_BATCHGET_PAGES:-no}" = yes ]; then
+    # A paged project: the first page holds none of this run's uids and says
+    # there is another page, the second one holds them. A read-back that stopped
+    # at the first page would pass a project that still has both users.
+    case "$url" in
+    *pageToken=page2*) body=$(python3 - "$FAKE96_DIR/deleted" <<'PY'
+import json, sys
+try:
+    uids = [l.strip() for l in open(sys.argv[1]) if l.strip()]
+except FileNotFoundError:
+    uids = []
+print(json.dumps({"users": [{"localId": u} for u in uids]}))
+PY
+    ) ;;
+    *) body='{"users":[],"nextPageToken":"page2"}' ;;
+    esac
+  elif [ -n "${FAKE96_BATCHGET_NOT_JSON:-}" ]; then
     # The user list read back as something this check cannot parse. The row's
     # whole assertion is the count out of this document, so a case wants it to
     # stop the run rather than to read back as an empty count.
@@ -1098,6 +1141,56 @@ test_a_user_list_that_cannot_be_read_back_stops_the_run() {
   expect_contains "$out" "the project's user list is not the document this check reads" "a user list that cannot be read back: what stopped the run"
 }
 
+test_a_read_back_without_a_token_is_not_a_pass() {
+  setup_case notoken
+  # The read-back's own access token, refused by gcloud. The token used to be
+  # fetched inside the pipeline that posts it, so the failure was discarded: the
+  # call went out with an empty bearer, the fake answers that 401 with a JSON
+  # error document (as Identity Toolkit does), the document carries no `users`,
+  # and the row counted zero survivors out of a list nobody read — a PASS for
+  # the row whose whole assertion is that count.
+  RUN96_ENV=(FAKE96_ACCESS_TOKEN_FAIL=second)
+  run96
+  expect_status "$status" 2 "a read-back with no token"
+  expect_contains "$out" "FACT survivors: FAIL — not reached" "a read-back with no token: the row was never measured"
+  expect_absent "$out" "FACT survivors: PASS" "a read-back with no token: the PASS a list nobody read used to get"
+  expect_contains "$(cat "$dir/err")" "second access token" "a read-back with no token: what stopped the run"
+}
+
+test_a_user_list_whose_second_page_holds_the_survivors_is_read_through() {
+  setup_case paged
+  # The list is paged and the uids this run created are on the second page. A
+  # read-back that stopped at the first page read a project holding none of them
+  # as a project with no survivors — and this row's verdict is exactly that
+  # count, so the page it did not read is the finding it did not report.
+  RUN96_ENV=(FAKE96_SURVIVOR=yes FAKE96_BATCHGET_PAGES=yes)
+  run96
+  expect_status "$status" 1 "a survivor on the second page"
+  expect_contains "$out" "FACT survivors: FAIL — " "a survivor on the second page: the row"
+  expect_contains "$out" "still holds 2 of the uids" "a survivor on the second page: what the read-back found, both uids and not the first page's none"
+  # And the restore line is about the read that happened: survivors were read
+  # back, so it must not say they were read back absent.
+  local restore_line
+  restore_line=$(printf '%s\n' "$out" | sed -n 's/^FACT restore: //p')
+  expect_absent "$restore_line" "read back holding none of their uids" "a survivor on the second page: the restore line a run with survivors must not print"
+  expect_contains "$restore_line" "still holds 2 of the uids this check may have created" "a survivor on the second page: the restore line"
+}
+
+test_an_exchange_whose_answer_was_lost_names_its_user() {
+  setup_case lostanswer
+  # The exchange POST reaches Identity Toolkit and its answer is lost, so the
+  # user exists and this check holds no ID token for it. A uid recorded only
+  # after a token came back left that user out of the cleanup and out of the
+  # `restore` line, which then said no user of this check's was created.
+  RUN96_ENV=(FAKE96_EXCHANGE_LOST=yes)
+  run96
+  expect_status "$status" 2 "an exchange whose answer was lost"
+  expect_contains "$out" "FACT restore: PASS — " "an exchange whose answer was lost: the restore line"
+  expect_contains "$out" "r~$SANDBOX_SLUG~" "an exchange whose answer was lost: the uid the run may have created"
+  expect_absent "$out" "no Firebase Auth user of this check's was created" "an exchange whose answer was lost: the claim that nothing was created"
+  expect_contains "$out" "accounts:delete" "an exchange whose answer was lost: the call that removes it"
+}
+
 test_a_line_that_carries_a_token_is_dropped_and_reported() {
   setup_case scan
   # A detail that carries the token's prefix: the block must print the run
@@ -1211,6 +1304,9 @@ t test_a_mint_that_answered_and_left_no_line_is_a_fail
 t test_an_outsider_that_is_answered_is_the_finding
 t test_a_user_that_survived_the_deletions_is_a_fail
 t test_a_user_list_that_cannot_be_read_back_stops_the_run
+t test_a_read_back_without_a_token_is_not_a_pass
+t test_a_user_list_whose_second_page_holds_the_survivors_is_read_through
+t test_an_exchange_whose_answer_was_lost_names_its_user
 t test_a_scratch_directory_that_cannot_be_removed_is_a_fail
 t test_a_line_that_carries_a_token_is_dropped_and_reported
 t test_xtrace_is_refused
