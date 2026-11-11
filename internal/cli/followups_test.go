@@ -982,7 +982,7 @@ func TestOlderLauncherRefusesFollowUpFields(t *testing.T) {
 				"needs a job image whose runner knows " + followUpKnows,
 				"fugaro " + followUpSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/app --workflow web",
+				"fugaro update in its checkout",
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%v lacks %q", err, want)

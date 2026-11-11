@@ -409,9 +409,13 @@ func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, rep
 			continue
 		}
 		reason := imageConfigReason(res, name)
+		// The daily image check was this warning's rebuild path, and D1900
+		// disabled it with every other repo-level image command: what is left is
+		// the images stage of `fugaro update`, which rebuilds a repository's own
+		// image when its base image moves and no other setting reaches it.
 		out = append(out, doctorCheck{ID: "image-config-" + name, Severity: "warning",
 			Problem: fmt.Sprintf("workflow %s's job image was built from other image settings than it resolves to now (%s)", name, reason),
-			Fix:     "the daily image check rebuilds it; to do it now: fugaro image build --workflow " + name})
+			Fix:     "fugaro update rebuilds this repository's own image when its base image moves; the daily image check that rebuilt it on any other settings change is disabled"})
 	}
 	return out
 }
