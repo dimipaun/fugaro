@@ -6680,6 +6680,23 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	sameSet(t, "mode", sourceValues(t, "internal/budget/model.go", readDoc(t, "internal/budget/model.go"),
 		`Mode\w+ = "([a-z]+)"`), tsList(t, scrub, `\bmode: \[([^\]]*)\]`, "VOCAB.mode"))
 
+	// The rigor mode a live run carries and the layer that decided it (rigor
+	// modes plan T1.7: internal/watch/json.go's JSONRun.Mode/.From, filled from
+	// the registry entry the run writes out of its own record, so the scrub's
+	// two lists are what a document can carry and not a vocabulary anyone may
+	// choose). The modes are internal/rigor's own five. The layers are its
+	// `Layers` minus `reached`: that is the resolver's answer to a later moment
+	// asking again -- "hold what you already have" (D22) -- and the fold keeps
+	// the earlier, narrower layer instead, so a record's `from` is never it
+	// (internal/runstore's KnownRigorFrom). Both carry the `-`
+	// internal/watch/build.go's `dash` writes for an entry that has neither.
+	sameSet(t, "rigor mode", append(sourceValues(t, "internal/rigor/mode.go",
+		readDoc(t, "internal/rigor/mode.go"), `Mode = "([a-z]+)"`), "-"),
+		tsList(t, scrub, `\brigorMode: \[([^\]]*)\]`, "VOCAB.rigorMode"))
+	sameSet(t, "rigor from", append(without(sourceValues(t, "internal/rigor/resolve.go",
+		readDoc(t, "internal/rigor/resolve.go"), `Layer = "([a-z]+)"`), "reached"), "-"),
+		tsList(t, scrub, `\brigorFrom: \[([^\]]*)\]`, "VOCAB.rigorFrom"))
+
 	// The connection reasons the CLI writes itself: internal/watch/state.go sets
 	// one beside each kind it invents -- "access refused" for a permission
 	// error, "connecting" before the first event. The third branch is the
