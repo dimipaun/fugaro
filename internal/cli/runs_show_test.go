@@ -320,17 +320,25 @@ func TestRunsShowJSONMatchesTheSchema(t *testing.T) {
 	if got.Version != 1 {
 		t.Errorf("version = %d, and the document's first version is 1", got.Version)
 	}
-	if got.Repo != "acme/app" || got.Run != showTip {
-		t.Errorf("the document is about %s/%s, want acme/app/%s", got.Repo, got.Run, showTip)
+	// Repo is the repository's own name and Run is <storage-slug>/<run-id> —
+	// the pair runview.Row and launchResult carry — while the chain is a bare
+	// run id, the chain being one repository's runs (D1045).
+	if got.Repo != "acme/app" || got.Run != appSlug+"/"+showTip {
+		t.Errorf("the document is about %s/%s, want acme/app and %s/%s", got.Repo, got.Run, appSlug, showTip)
 	}
 	if got.Chain != showRoot || got.RunCount != 3 || !got.Enforced {
 		t.Errorf("chain = %q, %d runs, enforced = %v, want %q and its three runs, enforced", got.Chain, got.RunCount, got.Enforced, showRoot)
 	}
+	// The amounts are the engine's own figures, unconverted: micro-dollars for
+	// the money — the unit the ledger, the caps and every other document count
+	// in (runs summary's spent_micros) — whole tokens, seconds, a count. The
+	// launch reply carries this same block (D1056), so the two documents print
+	// one number for one figure and a conversion in one of them would be drift.
 	want := []struct {
 		dim                  string
 		limit, used, remains float64
 	}{
-		{"usd", 4, 2.25, 1.75},
+		{"usd", 4_000_000, 2_250_000, 1_750_000},
 		{"tokens", 800000, 550000, 250000},
 		{"time", 2700, 900, 1800},
 		{"review_rounds", 4, 2, 2},
