@@ -176,13 +176,17 @@ var yamlMeta = map[string]Row{
 	// The vision slot (V1, D2003) is the one model key with no fallback: a
 	// stage whose own model cannot read an image keeps it rather than running
 	// agent.model, which is exactly the text-only model that must not answer
-	// one. The owner is the models family as the three rows above are, so
-	// `fugaro models use vision <id>` is the command a write is pointed at
-	// (D2013), the fourth role name that command's list gains.
+	// one. The models family owns it as it owns the three rows above — the
+	// slot's checks are that command's (D2013: priced, a route opens it to this
+	// repository, no whitespace), which a generic scalar write does not make —
+	// and the fourth role name reaches `models use` in V6 of docs/vision-model.
+	// Until it does, this row's refusal names the family that will write the
+	// key, and the key is written by hand — in fugaro.yaml, or in the project
+	// layer's own file for every repository of it.
 	"agent.models.vision": {
 		Owner:   "models",
 		Default: unset("none: a stage whose own model cannot read an image keeps it"),
-		Doc:     "docs/multi-model.md",
+		Doc:     docVision,
 	},
 	// The four crafts (docs/model-crafts/spec.md §3), the spec's own table
 	// read back: the coder and the senior review are what a run cannot do
@@ -435,6 +439,12 @@ const (
 	// DEFAULT column and the schema's keyDefaults, and a spec of the section's
 	// own would be the document that takes the rows over.
 	docTroubleshoot = "docs/troubleshoot-issue/implementation-plan.md"
+	// docVision is the document that states the vision slot (docs/vision-model)
+	// and the command that will write it. It is the work's plan rather than
+	// docs/multi-model.md, the three roles' own document, for docOrchestrator's
+	// reason: the slot is named there and nowhere else yet, and V8's documents
+	// take the row over.
+	docVision = "docs/vision-model/implementation-plan.md"
 	// docTriage is the document that states the triage stage and the switch
 	// that turns it off (D1854, D1851). It is the work's plan for
 	// docOrchestrator's reason: the stage, its default and the switch's home on
@@ -534,7 +544,7 @@ var layerRows = []Row{
 	// repository of the project, and a layer that leaves it out leaves each
 	// repository's own row to decide — including the empty answer, which is
 	// the one slot whose empty answer is not the layer's model.
-	layerRow("defaults.agent.models.vision", "none: a stage whose own model cannot read an image keeps it", "models", docModels),
+	layerRow("defaults.agent.models.vision", "none: a stage whose own model cannot read an image keeps it", "models", docVision),
 	// The crafts' models are the layer's to set, as the three models rows
 	// above are; their access is not, and the row says so rather than leaving
 	// the layer's reader to find out at publish time (config.Scopes refuses
