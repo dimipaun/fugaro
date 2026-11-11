@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"gocloud.dev/blob/memblob"
+
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -42,16 +44,22 @@ func inflightRun(t *testing.T, launch, node string, accounts map[string]projectp
 	for _, stage := range config.MixedAccountStages {
 		stages[stage] = node
 	}
+	bucket := memblob.OpenBucket(nil)
+	t.Cleanup(func() { _ = bucket.Close() })
+	// A mixed api-key run is a per-repository job, not a project job
+	// (checkProjectJobAccount's own note): the repository its allow-lists are
+	// written about is the one its slug derives, which is what the guard reads.
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &run{
 		cfg: &config.Config{Agent: config.Agent{Auth: "api-key",
 			Models: config.ModelRoles{Coder: "vendor/model-a", Reviewer: "claude-opus-5"}}},
 		spend: Spend{Mode: "enforce"},
 		spec:  &task.Spec{Version: 1, RunID: "20261111-090000-abcd", Repo: "acme/app", Ref: "main", OAuthToken: launch},
-		// The job the launch landed on names its provider, which is how a
-		// project job tells this run which repository its allow-lists are
-		// written about (projectpolicy.Canonical).
-		job: jobTriple{Profile: "standard", Provider: "github"},
 		d: Deps{Env: parent, Log: slog.New(slog.NewTextHandler(log, nil)),
+			Store:               runstore.Open(bucket, slug, "20261111-090000-abcd"),
 			ManagedSettingsPath: filepath.Join(t.TempDir(), "managed-settings.json")},
 		rec: &runstore.Record{Version: 1, RunID: "20261111-090000-abcd"},
 		env: env,
