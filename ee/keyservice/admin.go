@@ -350,16 +350,25 @@ func (s *Service) adminMint(w http.ResponseWriter, r *http.Request) {
 	//
 	// An approval keys on the request it answers, which is already a record the
 	// deployment holds. §5.5's Order-Form mint has no such thing — the order is
-	// a document nobody here has seen — so it keys on the render the form came
-	// from: the form in front of the owner submits once and a second submission
-	// of it is the click that already minted, while opening the page again is a
-	// licence of its own. An order form and a seat count alone would make a
-	// re-issue impossible and answer it as a success, which is the one thing a
-	// page that cannot tell the two apart must not do
-	// (TestAnOrderFormMintCanBeIssuedAgain).
+	// a document nobody here has seen — so it keys on the licence the form asked
+	// for and on the render it came from: the form in front of the owner submits
+	// once and a second submission of it is the click that already minted, while
+	// opening the page again is a licence of its own. An order form and a seat
+	// count alone would make a re-issue impossible and answer it as a success,
+	// which is the one thing a page that cannot tell the two apart must not do
+	// (TestAnOrderFormMintCanBeIssuedAgain) — and the licence is the plan, the
+	// seats, the term and the address, so a form the owner edits into asking for
+	// a different licence is that licence rather than the first mint's record,
+	// which would answer 303 with no key, no mail, no line and no record
+	// (TestAdminOrderFormMintsOncePerLicence).
 	source := sourceApproval + queued.ID
 	if queued.ID == "" {
-		source = sourceOrder + organisation + ":" + strconv.Itoa(seats) + ":" + pageNonce(form.Get("token"))
+		source = sourceOrder + organisation +
+			":" + strconv.Itoa(seats) +
+			":" + plan.Name +
+			":" + strconv.Itoa(term) +
+			":" + to +
+			":" + pageNonce(form.Get("token"))
 	}
 	if _, held, err := s.recorded(ctx, source); err != nil {
 		fail(w, err)

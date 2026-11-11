@@ -990,6 +990,77 @@ func TestAnOrderFormMintCanBeIssuedAgain(t *testing.T) {
 	}
 }
 
+// TestAdminOrderFormMintsOncePerLicence: what makes one submission of the form
+// one key is the form the owner has in front of them, and what that form asks
+// for is the licence — the plan with the tier in it, the seats, the term and the
+// address. A source built from the render and two of those fields let a second
+// submission from the same render that asked for a **different** licence take
+// the first mint's record: answered 303 as a success, with no key, no mail, no
+// audit line and no record, which is a licence the owner believes they granted
+// (§5.5).
+func TestAdminOrderFormMintsOncePerLicence(t *testing.T) {
+	f := newFixture(t)
+	fields := func() url.Values {
+		return url.Values{
+			"plan": {enterprisePlanName}, "seats": {"40"}, "term_days": {"365"},
+			"organisation": {"order-2026-0041"}, "email": {"licensing@acme.example"},
+		}
+	}
+	// One render: the token is the page's own, and a test that minted a new one
+	// per submission would be submitting from a page the owner does not hold.
+	render := f.mintForm(fields())
+	if rec := f.adminPost(RouteAdminMint, render); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the Order-Form mint answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+
+	want := 1
+	for _, tc := range []struct {
+		name string
+		edit func(url.Values)
+	}{
+		{"another plan", func(v url.Values) { v.Set("plan", paidPlanName) }},
+		{"another term", func(v url.Values) { v.Set("term_days", "90") }},
+		{"another seat count", func(v url.Values) { v.Set("seats", "5") }},
+		{"another address", func(v url.Values) { v.Set("email", "second@acme.example") }},
+	} {
+		form := url.Values{}
+		for k, v := range render {
+			form[k] = append([]string(nil), v...)
+		}
+		tc.edit(form)
+		want++
+		if rec := f.adminPost(RouteAdminMint, form); rec.Code != http.StatusSeeOther {
+			t.Fatalf("%s answered %d, want 303: %s", tc.name, rec.Code, rec.Body.String())
+		}
+		if got := len(f.recording.keys); got != want {
+			t.Errorf("%s minted nothing: %d key(s) in all, want %d", tc.name, got, want)
+		}
+		if got := len(f.auditor.lines); got != want {
+			t.Errorf("%s wrote %d audit line(s) in all, want %d", tc.name, got, want)
+		}
+		if got := len(f.records()); got != want {
+			t.Errorf("%s wrote %d record(s) in all, want %d", tc.name, got, want)
+		}
+	}
+
+	// And the form the owner holds, submitted twice, is one click: the same
+	// fields are the same licence.
+	if rec := f.adminPost(RouteAdminMint, render); rec.Code != http.StatusSeeOther {
+		t.Errorf("re-submitting the form answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.recording.keys); got != want {
+		t.Errorf("re-submitting the form minted %d key(s) in all, want %d", got, want)
+	}
+
+	seen := map[string]bool{}
+	for _, record := range f.records() {
+		if seen[record.Source] {
+			t.Errorf("two licences are recorded as %q: the record cannot tell them apart", record.Source)
+		}
+		seen[record.Source] = true
+	}
+}
+
 // burstGate is how long one mint waits for the burst it is part of. It is the
 // window a burst of the page's actions arrives inside, and a mint that arrives
 // alone waits it out rather than waiting for clicks that are not coming.

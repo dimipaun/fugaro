@@ -367,11 +367,14 @@ Subscriptions" path with the seats the form names, and the `organisation` claim 
 rather than a domain (S2.1's claim table). Nothing here is self-serve, and the per-tier limits and
 the audit line of §6 apply to these mints exactly as they do to an approval.
 
-They mint once by the render rather than by the order. An approval has a request id to be idempotent
-by (§4.5) and an Order Form is a document the service has never seen, so one submission of the form
-the owner is looking at is one key and the same order form and seat count are a licence the owner
-issues again by opening the page again — which a source built from the order form and the seats alone
-would refuse and then answer as a success (`TestAnOrderFormMintCanBeIssuedAgain`).
+They mint once by the licence the form asks for, and by the render it came from. An approval has a
+request id to be idempotent by (§4.5) and an Order Form is a document the service has never seen, so
+the source is what the form asked for — the plan with its tier, the seats, the term and the address
+the key is mailed to — together with the render the owner is looking at: submitting that form twice is
+one key, opening the page again is a licence of its own, and editing the form into asking for another
+licence is that licence, rather than the first mint's record answering it as a success while minting
+nothing (`TestAnOrderFormMintCanBeIssuedAgain`, `TestAdminOrderFormMintsOncePerLicence`). A source of
+the order form and the seats alone would refuse a re-issue and answer it as a success.
 
 ## 6. The admin page and the manual queue
 
@@ -395,6 +398,13 @@ The person is the project's **owner account** and not a list, because there is e
 and the page mints the Licensor's keys; whether a second person may ever hold it is part of **D455**.
 The store the page reads holds applicants' free text, which is why escaping is a design rule here and
 not a template's business (§9.1's row 8).
+
+D455 owes the factor's **rate** as well as its kind. The step-up is asked for on every minting action
+and nothing throttles the asking, while the intake's own forms are rate-limited: a session an attacker
+holds can submit codes as fast as it can open connections, and every wrong one costs it nothing but a
+403, so what the factor is worth rests on how hard the code is to guess rather than on how few tries
+it gets. Whether the gate is the factor's own (a TOTP implementation's lockout) or a throttle of the
+page's is part of what D455 decides; this design names neither, and the page does not implement one.
 
 ## 7. Abuse, privacy and the small print
 
