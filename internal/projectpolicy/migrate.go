@@ -199,11 +199,15 @@ func Migrate(raw []byte) ([]byte, []Change, error) {
 // refuses such a node — which is right where the reader DECIDES by it, since a
 // node no version of this reader understands is not one to enforce — and wrong
 // where the reader only asks a question about it, because the answer becomes
-// "no policy" over the node every installation holds. Both callers read the
-// node through this function instead (internal/credsvc's Shared,
-// internal/cli's policyReadsLive), and neither writes anything back: the node
-// is the CLI's to migrate, and a second writer of the installation's policy is
-// what the publish path's single-writer rule forbids.
+// "no policy" over the node every installation holds. Both readers reach the
+// node through this function — the service through
+// DecodeCarriedForwardShapeFree below, which is this one behind a floor, and the
+// CLI's in-flight line through it directly (internal/cli's policyReadsLive) —
+// and neither writes anything back: the node is the CLI's to migrate, and a
+// second writer of the installation's policy is what the publish path's
+// single-writer rule forbids. A reader that SERVES the node and cannot write it
+// carries from ShapeFreeFloor up and no lower, because a carry is only as good
+// as what the bytes it produces say.
 //
 // Only the direction the chain can carry is carried. A node ahead of this
 // binary, or one below the chain's first step, comes back with the refusal
@@ -225,6 +229,59 @@ func DecodeCarriedForward(raw []byte) (*Policy, bool, error) {
 		return pol, found, err
 	}
 	return Decode(migrated)
+}
+
+// ShapeFreeFloor is the oldest policy version a node may be carried forward
+// from in memory by the reader that serves it, and it is deliberately not the
+// chain's first step.
+//
+// The chain reaches version 3 (Migratable(3), migrators[3]), and the step it
+// takes from there is shape-only: migrateV3ToV4 edits the version field and
+// nothing else, because version 4 changed what a reader must ENFORCE and not
+// the node's shape. What the node it produces is missing is what no step can
+// write, and it is the reason that bump was a republish: bitbucket_token is
+// DERIVED at publish from the project's local config (DeriveBitbucketToken), so
+// a version-3 node carried forward in memory becomes a version-4 document
+// claiming an enforcement the operator never published, with the list its
+// Bitbucket credential is bounded by absent. The move for such a node is the
+// republish migrateV3ToV4's own note names (bitbucketRepublishNote), and only
+// the operator's `fugaro update` can make it.
+//
+// From 4 up, every step's whole input is the node — migrateV4ToV5 reads the
+// pools it marks out of the node it was handed, and is told nothing — so a
+// carry in memory states exactly what the operator's own migration writes. A
+// bump that adds a step needing data from outside the node (the local config,
+// the network, another installation) moves this floor to the version that step
+// WRITES, because the node behind it becomes one no reader may serve before the
+// operator's own move. That is where 4 comes from: the step below it, 3 → 4, is
+// the one whose node needs the republish, and
+// TestShapeFreeFloorIsTheVersionAfterTheRepublishBump is where that sentence is
+// a test.
+const ShapeFreeFloor = 4
+
+// DecodeCarriedForwardShapeFree is DecodeCarriedForward behind ShapeFreeFloor:
+// the read of a process that SERVES the published node and can never write it —
+// internal/credsvc, deployed by `fugaro update` ahead of the stage that
+// migrates the node — so a carry in memory that states more than the
+// installation published is not one it may make.
+//
+// DecodeCarriedForward is right for the writer's own process, which carries the
+// node forward to ask a QUESTION about it and then migrates it for real
+// (internal/cli's policyReadsLive, whose answer only decides what the update's
+// in-flight line says about the policy stage): a version-3 node there is one the
+// same command is about to rewrite, so the question is put to the document the
+// chain produces and the service re-reads a moment later. A service cannot
+// rewrite it, so a version-3 node is refused here with Decode's own answer —
+// the refusal its caller would have had without the attempt, which is the
+// fail-closed direction for a reader that decides by the node. At the floor and
+// above, this is DecodeCarriedForward exactly, with everything that function
+// documents: one version behind, in memory, nothing written back.
+func DecodeCarriedForwardShapeFree(raw []byte) (*Policy, bool, error) {
+	v, err := nodeVersion(raw)
+	if err != nil || v < ShapeFreeFloor {
+		return Decode(raw)
+	}
+	return DecodeCarriedForward(raw)
 }
 
 // nodeVersion reads the version off a node without decoding it, and refuses

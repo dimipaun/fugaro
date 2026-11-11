@@ -13,7 +13,7 @@ import (
 // empty entry and `**`, and a cap of -5, none of which D982's pattern checks,
 // D983's cap or the count and length bounds would let through.
 //
-// The version bump to 5 landed with the pools' owner marker (the 0.22.0
+// The version bump to 5 landed with the pools' owner marker (the 0.23.0
 // release), ahead of this block, so the node below is written at the current
 // version — and the tripwire below pins that version: 5 is taken, so AR0's own
 // bump is 5 → 6, the step it adds to migrate.go beside migrateV4ToV5, and the

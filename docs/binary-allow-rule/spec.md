@@ -296,7 +296,7 @@ block is a member `buildProjectPolicy` fills like `review_floor`, so:
   (behind its own confirmation), so a node that carries `binaries` and an image that reads it arrive
   in one command.
 - **The policy version moves 5 → 6** (§D990 — the recommendation; the owner did not rule on it). 5 is
-  taken: it landed with the pools' owner and roster (secrets-brokering's DS3.1, the 0.22.0 release),
+  taken: it landed with the pools' owner and roster (secrets-brokering's DS3.1, the 0.23.0 release),
   so this design's bump is the one after it and `TestABinariesNodeIsNotReadYet`'s tripwire pins
   `Version == 5` until it lands.
   `VersionSince` gains its row (`6: "0.20.0"`, the slot of §4 of the plan), and

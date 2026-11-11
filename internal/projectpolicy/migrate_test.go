@@ -390,6 +390,43 @@ func TestEveryOlderVersionHasAMigratorOrARefusal(t *testing.T) {
 	}
 }
 
+// TestShapeFreeFloorIsTheVersionAfterTheRepublishBump: ShapeFreeFloor is how
+// far back a reader may carry a node when it serves that node and cannot write
+// it, and it is deliberately one version above the chain's first step. The step
+// from the floor down is shape-only, and the node it produces is one a version-4
+// reader enforces the Bitbucket token block by — a block only a republish can
+// put there, which TestMigrateReportsTheBitbucketRepublish says in the step's
+// own words. Carrying it in memory would hand a service a policy the operator
+// never published, so the floor is the version that block arrived in
+// (VersionSince[4]), and a change that makes a step need something the node does
+// not hold moves the floor with it.
+func TestShapeFreeFloorIsTheVersionAfterTheRepublishBump(t *testing.T) {
+	if ShapeFreeFloor != 4 {
+		t.Fatalf("ShapeFreeFloor = %d: version 4 is the version the Bitbucket token block arrived in (VersionSince[4]), and the step below it is the one whose node needs a republish", ShapeFreeFloor)
+	}
+	if !Migratable(ShapeFreeFloor - 1) {
+		t.Errorf("Migratable(%d) = false: the chain does carry the version below the floor — a floor that coincided with the chain's first step would be that step's rule and not this one, which is the service's", ShapeFreeFloor-1)
+	}
+	// The floor is the reader's rule and not the chain's, and the two readers on
+	// either side of it are the two functions: the CLI's carries the version
+	// below the floor forward because its own next stage rewrites the node, and
+	// the service's refuses it because nothing it can do puts the block there.
+	below := []byte(`{"version":3,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`)
+	if carried, found, err := DecodeCarriedForward(below); err != nil || !found || carried.Version != Version {
+		t.Errorf("DecodeCarriedForward(a version-%d node) = (%v, %v, %v), want it carried to version %d: the writer's own reader answers a question about a node its next stage migrates", ShapeFreeFloor-1, carried, found, err, Version)
+	}
+	var ve *VersionError
+	if p, found, err := DecodeCarriedForwardShapeFree(below); !errors.As(err, &ve) || !found {
+		t.Errorf("DecodeCarriedForwardShapeFree(a version-%d node) = (%v, %v, %v), want the refusal Decode gives for a node that is there", ShapeFreeFloor-1, p, found, err)
+	}
+	// The version at the floor is carried like any other, so the refusal is the
+	// floor and not the service refusing everything it did not publish itself.
+	at := []byte(`{"version":4,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`)
+	if p, found, err := DecodeCarriedForwardShapeFree(at); err != nil || !found || p.Version != Version {
+		t.Errorf("DecodeCarriedForwardShapeFree(a version-%d node) = (%v, %v, %v), want it carried to version %d", ShapeFreeFloor, p, found, err, Version)
+	}
+}
+
 // TestMigratedPoolStaysLegacyOpen: the pools a version-4 node carries are the
 // pools the installation serves from, and D1942 keeps them serving exactly whom
 // they served before the upgrade. A pool that names no owner is one written

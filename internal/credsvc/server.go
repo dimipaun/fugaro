@@ -493,10 +493,20 @@ func (p RTDBPolicy) Shared(ctx context.Context) (*projectpolicy.Policy, bool, er
 	// two this binary meets a node its own strict Decode refuses — and every
 	// cascade model call and every proxied Bitbucket request of a run in flight
 	// would be refused with it, which is what the update may never do to a run
-	// in flight (CLAUDE.md's HARD RULE). DecodeCarriedForward applies the
-	// migration the CLI would have written to the bytes in memory, for this
+	// in flight (CLAUDE.md's HARD RULE). DecodeCarriedForwardShapeFree applies
+	// the migration the CLI would have written to the bytes in memory, for this
 	// reader alone, and writes nothing back: the node is the CLI's to migrate.
-	return projectpolicy.DecodeCarriedForward(raw)
+	//
+	// It is the shape-free variant and not DecodeCarriedForward, and that is
+	// this service's own limit: it has no way to make the operator's republish
+	// and no way to write the node at all, so it may serve a carried node only
+	// where the carry states what the operator's migration would state. A
+	// version-3 node is refused for the reason that bump was a republish — its
+	// derived Bitbucket block is in no node for the carry to find
+	// (projectpolicy.ShapeFreeFloor, migrateV3ToV4's republish note) — while the
+	// CLI's own reader of the node, which is the process that migrates it for
+	// real, still carries one forward.
+	return projectpolicy.DecodeCarriedForwardShapeFree(raw)
 }
 
 func (p RTDBPolicy) Admissions(ctx context.Context, slug string) (*projectpolicy.RepoPolicy, bool, error) {

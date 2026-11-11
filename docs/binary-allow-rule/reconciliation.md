@@ -283,7 +283,7 @@ the diff finalize already holds is the reading.
 
 **D990 — the policy version.** **Recommended (not ruled on 2026-11-04):** **bump
 `projectpolicy.Version` 5 → 6** (the recommendation read 4 → 5 when it was written; 5 landed with
-the pools' owner and roster, secrets-brokering's DS3.1 in the 0.22.0 release, so this design's bump
+the pools' owner and roster, secrets-brokering's DS3.1 in the 0.23.0 release, so this design's bump
 is the one after it), add
 `VersionSince[6] = "0.20.0"` (the slot, implementation-plan.md §4), and carry the convergence test
 the HARD RULE asks for. A version-5

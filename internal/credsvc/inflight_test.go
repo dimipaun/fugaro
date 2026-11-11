@@ -113,17 +113,27 @@ func TestCascadeIsServedWhileThePolicyNodeIsOneReleaseBehind(t *testing.T) {
 	}
 }
 
-// The other direction, unchanged: a node from below the chain's first step, or
-// one ahead of this binary, is refused. Carrying a node forward is what the
-// service does for the release it is the successor of, not a general
-// tolerance, and a node newer than this binary is one no reading of it here
-// can be trusted.
+// The other direction, unchanged: a node from below the shape-free floor, below
+// the chain's first step, or ahead of this binary, is refused. Carrying a node
+// forward is what the service does for the release it is the successor of, not
+// a general tolerance, and a node newer than this binary is one no reading of it
+// here can be trusted.
+//
+// The version-3 case is the floor rather than the chain: the chain carries a
+// version-3 node (migrators[3]) and the CLI's own reader does, but this service
+// SERVES the node and can never write it, so it may only carry a node whose
+// migration needs nothing from outside it. Version 4 is the version whose
+// Bitbucket token block is derived at publish from the project's local config,
+// which is why that bump was a republish: a version-3 node carried here would
+// come back as a version-4 document claiming an enforcement the operator never
+// published (projectpolicy.ShapeFreeFloor).
 func TestServiceStillRefusesANodeItIsNotTheSuccessorOf(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		doc  string
 	}{
 		{"a node ahead of this binary", `{"version": 99, "budget": {"mode": "off"}}`},
+		{"a node below the shape-free floor", `{"version": 3, "budget": {"mode": "off"}}`},
 		{"a node below the chain's first step", `{"version": 2, "budget": {"mode": "off"}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

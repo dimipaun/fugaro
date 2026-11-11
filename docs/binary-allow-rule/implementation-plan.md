@@ -126,7 +126,7 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   bound** (`MaxAreaPattern`, 200) that `Area.Validate` adds, and the cap's positivity and ceiling),
   `internal/projectpolicy/policy.go` (the member, `knownTopLevelKeys`),
   `internal/projectpolicy/version.go` (`Version = 6`, `VersionSince[6] = "0.20.0"` — **5 is taken**:
-  it landed with the pools' owner and roster, secrets-brokering's DS3.1 in the 0.22.0 release, so
+  it landed with the pools' owner and roster, secrets-brokering's DS3.1 in the 0.23.0 release, so
   this design's bump is 5 → 6), and the three
   test files `binaries_test.go` (its `Version != 5` tripwire retargeted and then deleted with the
   test), `policy_test.go`, `version_test.go`.
