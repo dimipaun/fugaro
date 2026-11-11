@@ -404,22 +404,33 @@ func layerSelected(row settings.Row, want []string) bool {
 // be true of some of its rows, which is what `config`'s was for the six
 // orchestrator rows and the two nudge thresholds until this task moved them to
 // the owners that carry them.
+//
+// `project policy` is that shape's fourth entry and not a file's: the
+// orchestrator block is stated in the machine's own config like the two nudge
+// thresholds beside it, and what its sentence names is the command that carries
+// it from there to the node every run of the project is held to
+// (buildProjectPolicy copies lc.Orchestrator into it). It is a token of its own
+// rather than `project` because that token is a family of the write's map: a row
+// naming it is refused by name of `fugaro project`, and the read prints the bare
+// command D1178 asks a sentence in place of, for keys no `fugaro project`
+// subcommand edits.
 var settingsOwnerCommands = map[string]string{
-	"settings set": "fugaro settings set",
-	"models":       "fugaro models",
-	"rigor":        "fugaro rigor set",
-	"rigor floor":  "fugaro rigor floor",
-	"accounts":     "fugaro accounts",
-	"secrets":      "fugaro secrets",
-	"project":      "fugaro project",
-	"workspace":    "fugaro workspace",
-	"image map":    "fugaro image map",
-	"setup":        "fugaro setup, which writes the installation's own facts",
-	"update":       "fugaro update, which writes the installation's own generations",
-	"budget":       "fugaro setup, which writes the installation's own budget backend",
-	"config":       "fugaro config publish, which carries the layer file the key is stated in",
-	"config init":  "fugaro config init, which writes the repository's own file",
-	"config local": "fugaro update, which writes the machine's own config the key is stated in",
+	"settings set":   "fugaro settings set",
+	"models":         "fugaro models",
+	"rigor":          "fugaro rigor set",
+	"rigor floor":    "fugaro rigor floor",
+	"accounts":       "fugaro accounts",
+	"secrets":        "fugaro secrets",
+	"project":        "fugaro project",
+	"workspace":      "fugaro workspace",
+	"image map":      "fugaro image map",
+	"setup":          "fugaro setup, which writes the installation's own facts",
+	"update":         "fugaro update, which writes the installation's own generations",
+	"budget":         "fugaro setup, which writes the installation's own budget backend",
+	"config":         "fugaro config publish, which carries the layer file the key is stated in",
+	"config init":    "fugaro config init, which writes the repository's own file",
+	"config local":   "fugaro update, which writes the machine's own config the key is stated in",
+	"project policy": "fugaro project policy publish, which carries the local config's orchestrator block to the project's node",
 }
 
 // settingsOwnerDefaultToken is the registry's owner for a key no family and no

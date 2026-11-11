@@ -937,25 +937,29 @@ var localRows = []Row{
 	// own max_parallel, which is why the sentence names that key rather than a
 	// number.
 	//
-	// Owner `project` for triage's reason: the block is stated in the local
-	// config and `fugaro project policy publish` is what carries it to the
-	// node every run of the project is held to (buildProjectPolicy copies
+	// Owner `project policy`, not `project`: the block is stated in the local
+	// config and `fugaro project policy publish` is what carries it to the node
+	// every run of the project is held to (buildProjectPolicy copies
 	// lc.Orchestrator into the node, and policyCeilingValues spells these six
-	// members back out of it). It was `config` until G12, whose read printed
-	// that token's sentence — the layer file `fugaro config publish` carries —
-	// beside a row whose own target_layer is `local`, a file the publish never
-	// reads.
-	locTighten("orchestrator.max_running", "the person's max_parallel", "project", docOrchestrator),
-	locTighten("orchestrator.batch_size", "10 (policy.DefaultBatchSize)", "project", docOrchestrator),
-	locTighten("orchestrator.spawn_per_minute", "2 (policy.DefaultSpawnPerMinute)", "project", docOrchestrator),
-	locTighten("orchestrator.spawn_per_hour", "12 (policy.DefaultSpawnPerHour)", "project", docOrchestrator),
-	locTighten("orchestrator.spawn_per_day", "60 (policy.DefaultSpawnPerDay)", "project", docOrchestrator),
+	// members back out of it), which is triage's fact above. The token is this
+	// block's own because `project` is one of settingsFamilyCommands: a row
+	// naming it is refused by name of `fugaro project` — a wording of the
+	// write's that this task does not touch — and the read prints that bare
+	// command, which D1178 asks a sentence in place of for a key no subcommand
+	// edits. It was `config` until G12, whose read printed that token's
+	// sentence — the layer file `fugaro config publish` carries — beside a row
+	// whose own target_layer is `local`, a file the publish never reads.
+	locTighten("orchestrator.max_running", "the person's max_parallel", "project policy", docOrchestrator),
+	locTighten("orchestrator.batch_size", "10 (policy.DefaultBatchSize)", "project policy", docOrchestrator),
+	locTighten("orchestrator.spawn_per_minute", "2 (policy.DefaultSpawnPerMinute)", "project policy", docOrchestrator),
+	locTighten("orchestrator.spawn_per_hour", "12 (policy.DefaultSpawnPerHour)", "project policy", docOrchestrator),
+	locTighten("orchestrator.spawn_per_day", "60 (policy.DefaultSpawnPerDay)", "project policy", docOrchestrator),
 	// The one key of the block that is not a count: a class the map does not
 	// carry is at its floor, which is the bottom of the order for a routine
 	// decision and the top for a security-sensitive one (policy.ValidOrchestrator
 	// refuses a name outside the order and a model under the class's floor, so
 	// the classes' two ends are the two answers an absent key can take).
-	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "project", docOrchestrator),
+	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "project policy", docOrchestrator),
 
 	loc("repos.*.provider", "none", "project", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "project", docSetup),

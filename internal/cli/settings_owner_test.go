@@ -158,6 +158,61 @@ func TestSettingsOwnerFileCarriersNameTheCommandThatCarriesTheFile(t *testing.T)
 	}
 }
 
+// TestSettingsOwnerMovesLeaveTheRefusalAlone is what keeps an owner move inside
+// this task's contract — the registry's owner strings, and nothing of the write's.
+// The write's refusal is built from the same token: settingsFamilyCommands is
+// keyed by it (settings_set.go), so a row moved onto a family's token is refused
+// in that family's name, and the read's word for that token is the family's bare
+// command. Neither is this task's to change.
+//
+// The six orchestrator ceilings are why the pin exists: one commit of this branch
+// gave them the `project` token, which is a family's, so
+// `fugaro settings set orchestrator.max_running 8` answered `orchestrator.
+// max_running is written by fugaro project, not by the generic path` — a refusal
+// about a key no `fugaro project` subcommand edits, where before this task the
+// same write answered the allowlist's own words. The rule is asked of every row
+// the fixture moves, not of the six, so a later move onto a family token is red
+// in the same place.
+//
+// The wildcard spellings are left out, as everywhere else: their literal `*` is
+// refused by the map rule whatever the row's owner, and it is their concrete
+// spellings a write lands on.
+func TestSettingsOwnerMovesLeaveTheRefusalAlone(t *testing.T) {
+	for _, tc := range settingsOwnerChanges {
+		if strings.Contains(tc.key, "*") {
+			continue
+		}
+		_, err := settingsWriteRow(tc.key)
+		if err == nil {
+			continue // the generic path's own: only the read's word moved
+		}
+		for token, command := range settingsFamilyCommands {
+			if strings.Contains(err.Error(), "is written by "+command) {
+				t.Errorf("%s: this task moves its owner to %q, and the write refuses the key in %s's name (`%s`): the write's map is keyed by the same token, so an owner moved onto one changes a refusal this task does not touch (D853, D1178)", tc.key, tc.now, command, token)
+			}
+		}
+	}
+
+	// The six, by name, refused in the words the write used before this task:
+	// the allowlist's own refusal rather than a family's. A move onto another
+	// family token is the loop above's; this is the pin a reading of the fixture
+	// cannot give, because it says which wording the keys keep.
+	for _, key := range []string{
+		"orchestrator.max_running", "orchestrator.batch_size",
+		"orchestrator.spawn_per_minute", "orchestrator.spawn_per_hour",
+		"orchestrator.spawn_per_day", "orchestrator.decision_model_per_class",
+	} {
+		_, err := settingsWriteRow(key)
+		if err == nil {
+			t.Errorf("%s: the generic path writes it, and its owner names the command that carries it (D1178)", key)
+			continue
+		}
+		if !strings.Contains(err.Error(), "is not a key the generic path writes") {
+			t.Errorf("%s: the write refuses it in %v, and a row this task moves is refused by the allowlist's words, not a family's (D1178, D853)", key, err)
+		}
+	}
+}
+
 // TestSettingsRefusedRowsNameNoGenericWriter is the pair a reader cannot draw:
 // the console prints `written by <owner>, not by the generic path` on a
 // `writable: false` row, so a refused row that names the generic writer says in
@@ -219,10 +274,14 @@ func TestSettingsRefusedRowsNameNoGenericWriter(t *testing.T) {
 // The rest of the table is this task's own `config` token under review: a row of it
 // whose key is stated in the machine's own config rather than in the layer file
 // printed a sentence about a file it is not in. The six orchestrator ceilings
-// name `fugaro project`, which is what carries them to the published node
-// (`buildProjectPolicy` copies the local block into it), and the two nudge
-// thresholds name `config local`, the machine's own file, which `fugaro update`
-// writes — the same shape `config` and `config init` name for their files.
+// name `project policy`, the token whose words are `fugaro project policy
+// publish` carrying the local block to the node (`buildProjectPolicy` copies it
+// there), and the two nudge thresholds name `config local`, the machine's own
+// file, which `fugaro update` writes — the same shape `config` and `config init`
+// name for their files. Neither the six nor the two name `project`, which is a
+// token of the write's own map: that would refuse the keys by name of
+// `fugaro project`, a wording of the write's this task does not touch, and print
+// the bare command D1178 asks a sentence in place of.
 var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"base_branch", "config", "settings set"},
 	{"budget.max_run_tokens", "budget", "settings set"},
@@ -236,12 +295,12 @@ var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"layer.project", "settings set", "config"},
 	{"layer.version", "settings set", "config"},
 	{"max_parallel", "config", "settings set"},
-	{"orchestrator.batch_size", "config", "project"},
-	{"orchestrator.decision_model_per_class", "config", "project"},
-	{"orchestrator.max_running", "config", "project"},
-	{"orchestrator.spawn_per_day", "config", "project"},
-	{"orchestrator.spawn_per_hour", "config", "project"},
-	{"orchestrator.spawn_per_minute", "config", "project"},
+	{"orchestrator.batch_size", "config", "project policy"},
+	{"orchestrator.decision_model_per_class", "config", "project policy"},
+	{"orchestrator.max_running", "config", "project policy"},
+	{"orchestrator.spawn_per_day", "config", "project policy"},
+	{"orchestrator.spawn_per_hour", "config", "project policy"},
+	{"orchestrator.spawn_per_minute", "config", "project policy"},
 	{"planning.decoupling", "settings set", "config"},
 	{"profile", "settings set", "config init"},
 	{"project", "settings set", "config init"},
