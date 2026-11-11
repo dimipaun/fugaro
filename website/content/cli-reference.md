@@ -2762,21 +2762,27 @@ Read the issues saved on this machine.
 An issue is one Markdown file under the user's state directory, holding
 the whole issue: a strict header and the diagnosis' own words. `list`
 shows what is saved, `show` prints one, `dismiss` sets one aside so
-nothing is filed for it, and `mine` reads the project's own store for
-the issues this user reported. An issue is named by its local ID
-(`local-<run stem>`) until it has been uploaded, and by its number
-(`#0007`) from then on; `show`, `dismiss` and `submit` take either.
+nothing is filed for it, `sync` uploads the ones this machine has not
+uploaded yet, and `mine` reads the project's own store for the issues
+this user reported. An issue is named by its local ID (`local-<run
+stem>`) until it has been uploaded, and by its number (`#0007`) from
+then on; `show`, `dismiss` and `submit` take either.
 
 `submit` shows exactly what would be filed on GitHub — the post and the
 sha256 of its bytes — and files nothing until `--ask` is answered with a
 yes at your own terminal; without `gh`, it prints how to install it and
 a new-issue link holding the same post instead.
 
-Nothing `list`, `show` or `dismiss` does leaves this machine. `mine` —
-and `list --mine`, which is the same read — is the one that does: it
-uploads this machine's own pending records to the project's store on the
-way to listing them. Either way the text of a record is printed as data:
-it comes from log text this machine did not write.
+An issue belongs to the project, not to one machine: once it has been
+uploaded it is the project's store that says where it stands, so `list`
+shows the whole team's issues and `show` prints the project's copy. To
+get there, `sync` uploads this machine's own pending records to the
+project's store, and `list`, `show` and `mine` — and `list --mine`,
+which is the same read — do the same on the way to answering; a run
+that cannot reach the store answers from the files here and says why.
+Nothing is uploaded in a coding agent's session, and `sync` and
+`dismiss` are refused there. Either way the text of a record is printed
+as data: it comes from log text this machine did not write.
 
 Usage: `fugaro issue`
 
@@ -2789,10 +2795,11 @@ Flags:
 Subcommands:
 
 - `fugaro issue dismiss` -- Mark an issue as not worth filing
-- `fugaro issue list` -- List the issues saved on this machine
+- `fugaro issue list` -- List the project's issues, and the ones this machine has not uploaded yet
 - `fugaro issue mine` -- List the issues this user reported, from the project's store
 - `fugaro issue show` -- Print one issue: its number (#0007) or its local ID
 - `fugaro issue submit` -- Show what would be filed on GitHub, and file it with --ask
+- `fugaro issue sync` -- Upload the issues this machine saved and has not uploaded yet
 
 ## `fugaro issue dismiss`
 
@@ -2805,6 +2812,13 @@ its local ID `local-<run stem>`, the same argument `show` takes. The
 status is written in the issue's own file and nothing else changes: the
 record stays where it is, so a listing still shows what was set aside
 and who did it, and nothing is filed.
+
+An issue is the project's, so one that has already been uploaded is set
+aside in the project's store as well (F13): a teammate's listing shows
+it as dismissed, and the decision does not have to be made again on
+every machine. A store that cannot be reached is a line on stderr and
+the dismissal here stands; a store that answers and refuses — the issue
+is filed, or a teammate has decided it — refuses the command.
 
 An issue that has already been filed is refused: it is open on GitHub,
 and setting it aside here would not close it.
@@ -2826,16 +2840,25 @@ This command has no subcommands.
 
 ## `fugaro issue list`
 
-List the issues saved on this machine
+List the project's issues, and the ones this machine has not uploaded yet
 
-List the issues saved on this machine, one row each.
+List the issues the project holds, one row each.
 
-A row names the issue the way `show` and `dismiss` take it —
-its number once it has been uploaded, its local ID before — with the
-class the diagnosis gave it, where it stands, and its one-line summary.
-A plain listing uploads nothing and files nothing: it is this
-machine's own folder, read. --mine writes, exactly as `mine` does:
-it uploads this machine's own pending issues before it lists them.
+An issue is the project's, not one machine's (spec 4b), so the rows are
+the whole team's: the ones this machine saved and has not uploaded yet,
+named by their local ID, and every issue of the project's store, named
+by its number. A row names the issue the way `show`, `dismiss` and
+`submit` take it, with the class the diagnosis gave it, where it stands,
+and its one-line summary. Where the project's copy and this machine's
+file disagree, the project's is printed: the store is the truth once an
+issue is uploaded (F13).
+
+Listing uploads this machine's own pending issues first, exactly as
+`mine` does: the same failure reported twice is one issue, and the one
+still waiting here has to reach the store before it can be shown beside
+the team's. A run that cannot reach the store lists this machine's own
+records alone and says why on stderr, which leaves the table itself
+clean for a reader and a script.
 
 --mine lists the issues this user reported to the project instead: the
 same rows `fugaro issue mine` prints, from the same read, so the two
@@ -2843,6 +2866,9 @@ commands answer with one listing (F12). --all goes with --mine and only
 with it: this machine's own folder keeps every record until it is
 deleted, and the 30-day rule is about the project's issues, not about
 the files here.
+
+Nothing is uploaded in a coding agent's session: the rows are this
+machine's own records and the project is not read (F10, D1734).
 
 --json prints the records themselves, in the shape
 schemas/issue-record.schema.json describes — or, with --mine, the
@@ -2917,6 +2943,17 @@ uploaded. The header a listing shows and the body a person reads are
 printed as data: the text came from a diagnosis that read log text this
 machine did not write, so no escape sequence in it reaches the terminal.
 
+An issue that has been uploaded is printed as the project's store has
+it: the store is the truth once an issue has a number (F13), so a
+teammate's dismissal, or a fix the update pass recorded, shows here
+rather than the copy this machine wrote when the failure happened. This
+machine's own pending issues are uploaded first, as `list` does. A run
+that cannot reach the store prints this machine's own copy and says why
+on stderr.
+
+Nothing is uploaded in a coding agent's session, and the project is not
+read (F10, D1734).
+
 --json prints the record itself, in the shape
 schemas/issue-record.schema.json describes.
 
@@ -2965,6 +3002,38 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--ask` | bool | `false` | no | show the preview and file it after a yes at your own terminal |
 | `-h`, `--help` | bool | `false` | no | help for submit |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue sync`
+
+Upload the issues this machine saved and has not uploaded yet
+
+Upload this machine's own pending issues to the project's store.
+
+An issue is saved on the machine that hit the failure and uploaded
+afterwards, so a run that was offline or that died before the upload
+leaves it here. This is the command that retries those: each one takes
+the project's next number, is renamed to it, and — when a teammate
+already reported the same failure — is attached to their issue as one
+more occurrence instead of becoming a second one.
+
+An issue that cannot be uploaded stays where it is and is named in one
+line, and the next run retries it: nothing here deletes an issue or
+files one on GitHub.
+
+A coding agent's session may not run this: uploading is a write to the
+project's store, and a person runs `fugaro issue sync` (F10).
+
+Usage: `fugaro issue sync`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for sync |
 
 Subcommands:
 

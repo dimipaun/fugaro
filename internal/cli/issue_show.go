@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"time"
 
@@ -24,6 +26,15 @@ func newIssueShowCmd() *cobra.Command {
 			"uploaded. The header a listing shows and the body a person reads are\n" +
 			"printed as data: the text came from a diagnosis that read log text this\n" +
 			"machine did not write, so no escape sequence in it reaches the terminal.\n\n" +
+			"An issue that has been uploaded is printed as the project's store has\n" +
+			"it: the store is the truth once an issue has a number (F13), so a\n" +
+			"teammate's dismissal, or a fix the update pass recorded, shows here\n" +
+			"rather than the copy this machine wrote when the failure happened. This\n" +
+			"machine's own pending issues are uploaded first, as `list` does. A run\n" +
+			"that cannot reach the store prints this machine's own copy and says why\n" +
+			"on stderr.\n\n" +
+			"Nothing is uploaded in a coding agent's session, and the project is not\n" +
+			"read (F10, D1734).\n\n" +
 			"--json prints the record itself, in the shape\n" +
 			"schemas/issue-record.schema.json describes.",
 		Args: cobra.ExactArgs(1),
@@ -34,13 +45,27 @@ func newIssueShowCmd() *cobra.Command {
 }
 
 func runIssueShow(cmd *cobra.Command, ref string, asJSON bool) error {
+	ctx := cmd.Context()
 	store, err := openIssueStore()
 	if err != nil {
 		return err
 	}
+	agent := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
+	sh := openIssueShared(ctx, agent)
+	defer sh.Close()
+	if sh.installation != "" {
+		store.Installation = sh.installation
+	}
+	sh.uploadPending(ctx, store)
 	i, err := store.Get(issueRefArg(ref))
 	if err != nil {
 		return userErr("nothing was shown: %v", err)
+	}
+	i = refreshIssue(ctx, sh, i)
+	// The lines about what could not be reached go to stderr: stdout is the
+	// record, and a note inside it would read as one of its fields.
+	for _, n := range sh.notes {
+		fmt.Fprintln(cmd.ErrOrStderr(), n)
 	}
 	if asJSON {
 		doc, err := issueJSON(i)
@@ -50,6 +75,25 @@ func runIssueShow(cmd *cobra.Command, ref string, asJSON bool) error {
 		return writeJSON(cmd.OutOrStdout(), doc)
 	}
 	return printIssue(cmd.OutOrStdout(), i)
+}
+
+// refreshIssue answers with the record to print for i: the project's copy when
+// there is one to read, and this machine's own otherwise (F13).
+//
+// An issue with no number has never been uploaded, so there is nothing to
+// refresh from and the file here is the only record of it. A store that cannot
+// be read is the same answer with a line saying so: a person asking to see an
+// issue gets the issue, never a refusal.
+func refreshIssue(ctx context.Context, sh *issueShared, i issues.Issue) issues.Issue {
+	if sh.bucket == nil || i.Number == 0 {
+		return i
+	}
+	cur, err := issues.SharedIssue(ctx, sh.bucket, i.Number)
+	if err != nil {
+		sh.notes = append(sh.notes, "note: the project's copy of "+issueRef(i)+" could not be read ("+oneLine(err.Error())+"), so this machine's own record is printed")
+		return i
+	}
+	return cur
 }
 
 // issueURLShape is the one shape a stored URL is printed in: the GitHub issue
