@@ -206,8 +206,9 @@ not a pass: the audit line is the other half of the reading.
 **Exit codes.** `0` is every criterion that was measured holding. `1` is a measured criterion that did
 not hold, or a guard that stopped the check before it ran. `2` is the check not being able to
 **measure** — a tool is missing, the ended-run probe could not be set up (the node could not be
-written, did not read back, or its write landed with the service's own lines holding nothing for it),
-or no secret carries the label the accessor row is read from. A key
+written, did not read back, its write landed with the service's own lines holding nothing for it, its
+record names no forwarder of this execution, or its call was never handed to the service), or no
+secret carries the label the accessor row is read from. A key
 the run never reached reads `FAIL — not reached`.
 
 ## If it stops before the end
@@ -290,17 +291,47 @@ knowing by name:
   release paragraph above, and run the check again with the release that carries it and a job image
   built from it. Read the service's own lines for the probe yourself first (`gcloud logging read`,
   `jsonPayload.run`): a line there makes this the finding below instead.
+- **The probe's record names no forwarder of this execution** (`ended-identity: FAIL`, exit `2`) — the
+  probe wrote nothing and left the service's own lines empty, and its record holds no sentence about
+  this execution's forwarder, so its first call was not one this row can read: either its git traffic
+  went to Bitbucket itself (the same release-and-image case as above — a runner without the proxy
+  pushes with the job's own mounted token, and one that got no further than a refused model call is
+  the gateway's constant in the record, `unverified_run_identity`, which is a **model** call and not
+  the bootstrap git traffic this row reads), or the run got past its checkout, where the row measures
+  nothing. Read the record yourself (`fugaro diagnose <slug>/<run id>`) and the service's own lines
+  (`gcloud logging read`, `jsonPayload.run`), and run the check again on the release whose runner
+  carries the proxy.
+- **The probe's first call was never handed to the service** (`ended-identity: FAIL`, exit `2`) — the
+  call reached this execution's forwarder and was answered `502` (the listener's own answer for a
+  forward it could not make) or with no HTTP status a git command could read: nothing about the ended
+  identity was measured. Read the service's own lines and the record, and run the check again when the
+  service answers.
 - **`ended-identity: FAIL` on a launched probe** — one of two readings, and the row's detail says
   which. **The service's own lines name the probe**: a call that reaches any route of the service is
   audited before it is answered, while an identity refusal is answered before there is a route at all,
   so a line for the ended run is the service having **served** a call of a run that had ended — this is
-  the finding the row exists for. **Or the probe's own record carries no identity refusal**: a run
-  whose outcome is written is refused at its first call (`RunEnded`), and the type its record carries
-  for that refusal is `unverified_run_identity`. The service's own sentence ("the run has ended: its
-  outcome is written") is **never** relayed to the run — the gateway that forwards the call answers the
-  agent with a constant of its own naming the type (D143; Check 95 records the same by hand) — so the
-  sentence is not the reading, and a row that looked for it could never pass. Either way: run `fugaro
-  diagnose <slug>/<run id>` and read the service's own lines before anything else.
+  the finding the row exists for. **Or the service answered the probe's first call with a status other
+  than `403`**: `403` is what an identity refusal is answered with, and a `503` is `state_unavailable`
+  — the service could not read the run's outcome, so the ended-run refusal was never reached. Either
+  way: run `fugaro diagnose <slug>/<run id>` and read the service's own lines before anything else.
+
+**What the row reads, and why no wire type is in it.** The probe is a **proxied** run, so its first
+call is not a model call: the runner sends every Bitbucket URL to this execution's own loopback
+forwarder before anything else and opens the checkout through it (`internal/runner`'s
+`credentialVars`, `startProxiedGit`, `openCheckout`), and the gateway that makes the model calls starts
+only after that checkout is open. The service refuses that git call before there is a route at all, and
+**git prints the URL it could not access and the status it was answered, never the body** — the
+service's refusals are `application/json` (`internal/credsvc/wire.go`) — so the run's record carries
+git's own sentence, naming the forwarder (`/v1/bitbucket/proxy/`, a loopback endpoint derived per
+execution) and the `403`. That is what `ended-identity: PASS` reads, together with nothing written and
+no line in the service's own: the call went to the service and was refused, and the ended identity
+reached no route. The service's own sentence ("the run has ended: its outcome is written") is **never**
+relayed to any run (D143), and the gateway's constant naming the type is what a **model** call's
+refusal reads as — so neither the sentence nor the wire type is the reading, and a row that looked for
+either in the record or the log could never pass. What no reading can separate: the service answers an
+ended run and a run whose identity is otherwise unverifiable with the same status and the same wire
+type, so the `403` is read with the check's own setup — the same launcher launched the working run of
+the same repository minutes earlier, and that run was served.
 
 ## What is left behind
 

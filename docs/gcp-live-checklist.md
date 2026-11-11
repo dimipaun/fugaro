@@ -11775,12 +11775,22 @@ on `refused=yes` and on the service's audit line for that call's class (`other_r
 `tag_ref`, `ref_delete`, `other_pull_request`, `call_not_allowed` — a merge and `/workspaces` are the two
 `call_not_allowed` attempts); `review-run` (a **review-only** run launched with `--pr`, the working run's
 own pull request — a review-mode recipe reviews a pull request and needs exactly one, and such a run has
-no branch of its own, so its push is refused and audited under `no_run_branch`); `ended-identity`; and the
+no branch of its own, so its push is refused and audited under `no_run_branch`); `ended-identity` (the
+probe's record, the service's own lines and what it wrote, read together: **nothing written, no line for
+the probe in the service's own log, and the record's own sentence naming this execution's forwarder
+(`/v1/bitbucket/proxy/`) and the `403` an identity refusal is answered with** is the pass — the probe's
+first call is the bootstrap git traffic through its own loopback forwarder, not a model call, and git
+prints the URL and the status it was answered and never the body, so no wire type and none of the
+service's sentence is in the record; a line for the probe is the service having **served** a call of an
+ended run, the finding this row exists for, and any other status on that first call — `503` is
+`state_unavailable` — is a call the ended-run refusal never reached); and the
 `restore` and `scratch-removed` rows. **Exit 0** is every
 criterion that was measured holding, **1** is a measured criterion that did not hold or a guard that
 stopped the check, and **2** is the check not being able to measure — a missing tool, the
 credentials-service switch the `proxied` row could not be read from, or the ended-run probe that could
-not be set up (the node could not be written). A key the run never reached reads `FAIL — not reached`; a
+not be set up (the node could not be written or did not read back, its record names no forwarder of this
+execution, or its first call was never handed to the service). A key the run never reached reads `FAIL —
+not reached`; a
 key that could not be measured reads `FAIL` with the reason in its own detail, and nothing was launched.
 
 **Restore.** The scratch directory, and the one Realtime Database node the check wrote by hand — deleted

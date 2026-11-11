@@ -126,12 +126,14 @@
 #             N). Exit 0: every criterion that was measured held. 1: a measured
 #             criterion did not hold, or a guard stopped the check before it
 #             could run. 2: the check could not measure — a tool is missing, the
-#             ended-run probe could not be set up (or its write landed with the
-#             service's own lines holding nothing for it, which is a reading
-#             about a path that never reached the service), or no container
-#             carries the label the accessor row is read from. In the block, a
-#             key the run never reached reads `FAIL — not reached`, which is a
-#             row that was NOT measured.
+#             ended-run probe could not be set up, its write landed with the
+#             service's own lines holding nothing for it, its record names no
+#             forwarder of this execution (a runner whose release carries no
+#             proxy, which is a reading about a path that never reached the
+#             service), its call was never handed to the service, or no
+#             container carries the label the accessor row is read from. In the
+#             block, a key the run never reached reads `FAIL — not reached`,
+#             which is a row that was NOT measured.
 #
 # A NOTE ON WHAT IS NEVER PRINTED: no credential value, no token and no
 # authorization header reaches this script's stdout, its stderr, the block or
@@ -365,9 +367,20 @@ policy   argv: the `project policy show --json` document, a repository. Prints
          every repository of that workspace.
 run      argv: the listing's file, a run id. Prints that run's row field by
          field, `found=no` when the listing does not hold it, and — for a run
-         the record halted — the halt's own reason and detail, which is where
-         the gateway's constant about a refusal is written down (the service's
-         own sentence never reaches the run, D143).
+         the record halted — the halt's own reason and detail. Two derived
+         fields say where the run's FIRST call went, read off the record's own
+         words: `forwarder=` yes when they name this execution's loopback
+         forwarder (the `/v1/bitbucket/proxy/` route a proxied run's git traffic
+         is rewritten to, which is the URL git quotes back in its own failure
+         sentence), and `answer=` the HTTP status that sentence carries, `-`
+         when it carries none. A run's first call is refused before any route
+         and git prints the status and never the body — the service's refusals
+         are application/json (internal/credsvc/wire.go's WriteWireError) — so
+         a git refusal can never name the wire type; and the service's own
+         sentence never reaches the run at all (D143), so the gateway's
+         constant is what a MODEL call's refusal reads as. The two are told
+         apart by where the sentence points: the forwarder of this execution,
+         or nothing of this run's.
 attempts argv: a log file. Prints one `attempt=` line per CHK191 attempt the
          throwaway run reported. Only those lines are printed and every field is
          cut to a short plain-word shape: a log is a run's own words.
@@ -414,6 +427,18 @@ import re
 import sys
 
 WORD = re.compile(r"[^A-Za-z0-9._:@/+-]")
+
+# FORWARDER_PATH is the route a proxied run's git traffic is rewritten to on
+# this execution's own loopback listener (internal/runner's credentialVars
+# installs the url.<forwarder>.insteadOf rewrite, and internal/gateway's
+# GitForward serves this prefix and nothing else). A git command that fails
+# against it prints the URL it could not access, so a run's record names the
+# endpoint exactly when its git traffic went through the forwarder.
+FORWARDER_PATH = "/v1/bitbucket/proxy/"
+
+# GIT_STATUS is the status git prints for an HTTP failure: the sentence, never
+# the body, which is why a refusal's wire type is not in any git message.
+GIT_STATUS = re.compile(r"returned error: (\d{3})")
 
 
 def word(v, cap=80):
@@ -642,6 +667,11 @@ elif cmd == "run":
                 print("halt_reason=%s" % word(halt.get("reason"), 40))
             if halt.get("detail"):
                 print("halt_detail=%s" % text(halt.get("detail"), 200))
+        said = " ".join([str(row.get("reason") or ""),
+                         str(halt.get("detail") or "") if isinstance(halt, dict) else ""])
+        print("forwarder=%s" % ("yes" if FORWARDER_PATH in said else "no"))
+        m = GIT_STATUS.search(said)
+        print("answer=%s" % (m.group(1) if m else "-"))
         break
     else:
         print("found=no")
@@ -1439,43 +1469,47 @@ TASK_EOF
 # hand-write of exactly the node a run's own end writes), because the whole
 # point is that no call of the run's own can put it in that state.
 #
-# What this row can read, and what no check can. The service's refusal sentence
-# is never relayed to the run (D143): the gateway that forwards the call answers
-# the agent with a constant of its own (internal/gateway/service.go's
-# refusalDetail — "the credentials service refused this run's identity
-# (unverified_run_identity)") and the run's record carries THAT, so a reading
-# that looks for the service's own words in the run's log finds nothing on any
-# correct installation, whatever the service said. What the row reads instead is
-# three things, none of them the service's sentence:
+# The probe is a proxied run, so its FIRST call is not a model call. The runner
+# installs the insteadOf rewrite that sends every Bitbucket URL to this
+# execution's forwarder before anything else and opens the checkout through it
+# (internal/runner's credentialVars, startProxiedGit, openCheckout), and the
+# gateway that makes the model calls starts after that checkout has already been
+# opened. The service refuses that git call before there is a route at all
+# (403 unverified_run_identity, zero audit lines —
+# bitbucketproxy_test.go's TestBitbucketRouteEndedRun), and git prints the URL
+# it could not access and the status it was answered, never the body: the
+# service's refusals are application/json (internal/credsvc/wire.go's
+# WriteWireError), so the wire type is nowhere in the run.
 #
-#   - the run's own record: halted, with the refusal's WIRE TYPE named in the
-#     halt (unverified_run_identity). That is the type the ended-run refusal is
-#     answered with — RunEnded is an unverified identity and has no type of its
-#     own (internal/credsvc/auth.go, server.go's refuseIdentity) — and it is the
-#     same type the gateway writes for it, so the run's own half of the reading
-#     is that its first call was refused as an identity rather than served;
+# What this row reads, and what no reading can:
+#
+#   - the run's own record: git's own failure sentence, naming this execution's
+#     forwarder (the /v1/bitbucket/proxy/ route, a loopback endpoint derived per
+#     execution) and the STATUS the service answered it with. forwarder=yes with
+#     403 is the reading this row wants: the run's first call was handed to
+#     the credentials service and refused as an identity. forwarder=no means the
+#     run's git traffic went somewhere else — a runner whose release carries no
+#     proxy pushes with the job's own mounted token (the mount Check 192's flip
+#     takes off it, proxySince, internal/cli/recipes_skew.go: 0.22.0), and a run
+#     that got past its checkout was refused at a call this row does not
+#     measure — so that case is unmeasured rather than a FAIL;
 #   - nothing written to the repository: no push, no pull request;
 #   - the service's OWN lines for the run: none at all. A call that reaches any
 #     route of the service writes exactly one audit line, written before the
 #     answer is handed over (internal/credsvc/bitbucketproxy.go's contract, and
 #     the model path's), while an identity refusal is answered before there is a
-#     route at all and writes none (bitbucketproxy_test.go's
-#     TestBitbucketRouteEndedRun pins 403 with zero audit lines). So a line for
-#     this run is the ended identity having reached a route, which is the hole
-#     this row exists for.
+#     route at all and writes none. So a line for this run is the ended identity
+#     having reached a route, which is the hole this row exists for, and a write
+#     that LANDED with no line is the same setup case as forwarder=no — the
+#     write did not go through the service.
 #
-# Which is why a write that LANDED is read twice. With a line for the run it is
-# that hole — the proxy served an ended identity, and no refusal can be
-# unaudited (an act the service cannot record is not made). WITHOUT one it is
-# not a reading about the service at all: this repository's job still mounts its
-# own Bitbucket token (the mount Check 192's flip takes off it), so a runner
-# that does not carry the proxy pushes with that token the old way, and the
-# repository's git traffic never reaches the service. That is the check's own
-# setup and not the proxy — the release under test must be one whose runner
-# serves the proxy (proxySince, internal/cli/recipes_skew.go: 0.22.0, the first
-# tag that carries it) — so that case is unmeasured rather than a FAIL.
+# The one thing no reading can separate: the service answers an ended run and a
+# run whose identity is otherwise unverifiable with the same status and the same
+# wire type, and its own sentence reaches nobody (D143), so a 403 here is read
+# together with the check's own setup — the same launcher launched the working
+# run of the same repository minutes earlier, and that run was served.
 step_ended_identity() {
-  local task=$SCRATCH/task-ended.md slug day at got row reason detail halted pushed pr said lines rid
+  local task=$SCRATCH/task-ended.md slug day at got row reason detail pushed pr said lines rid forwarder answer why
   rid=$(run_id ended)
   day=$(( $(date -u +%s) / 86400 ))
   slug=$(field_of run "$(row_of work)")
@@ -1541,12 +1575,28 @@ TASK_EOF
     unmeasured ended-identity "the probe (${rid}) was launched with its outcome already written and it pushed=${pushed:-unread} with pr=${pr:-none}, while the service's own lines hold nothing for it at all — so that write did not go through the credentials service: this repository's job still mounts its own Bitbucket token (the mount Check 192's flip takes off it) and the runner that pushed used it the old way. The row measures nothing about the service. What it says is that the release under test is not one whose RUNNER carries the proxy (proxySince, internal/cli/recipes_skew.go: 0.22.0 — 0.21.0 holds the service's half and was cut without the runner's), or that the repository's job image predates it (the launch gate only warns about an image built from no released tag). Read the service's own lines for ${rid} yourself first (gcloud logging read, jsonPayload.run=\"${rid}\"): a line there makes this the hole the row exists for; then run the check again with the release that carries the runner half and an image built from it"
     return 0
   fi
-  halted=$(field_of halt_reason "$row")
-  printf '%s %s' "$reason" "$detail" | grep -q 'unverified_run_identity' || {
-    fact ended-identity FAIL "the probe (${rid}, its outcome written BEFORE the launch) ended status=$(field_of status "$row") without the credentials service's identity refusal in its own record — no 'unverified_run_identity' in the halt it was stopped with (${halted:-no halt}) or in its reason (${reason:-none}) — and it pushed nothing: a run whose outcome is written is refused at its first call (RunEnded), and the type its own record carries for that refusal is unverified_run_identity (the service's sentence itself never reaches the run, D143; Check 95 records the same by hand). This row therefore measured no refusal of the ended identity — either the write-once outcome no longer ends an identity, or the run was stopped by something else before that refusal was reached (a job-identity refusal, or a state the service could not read: state_unavailable). Run 'fugaro diagnose ${slug}/${rid}' and read the service's own lines (gcloud logging read, jsonPayload.run=\"${rid}\") before anything else"
+  forwarder=$(field_of forwarder "$row")
+  answer=$(field_of answer "$row")
+  if [ "$forwarder" != yes ]; then
+    unmeasured ended-identity "the probe (${rid}) was launched with its outcome already written, wrote nothing and left the service's own lines empty — and its record names no forwarder of this execution, so its first call was not one this row can read: ${reason:-no reason}${detail:+ (halt detail: $detail)}. A proxied run's git traffic is rewritten to this execution's loopback endpoint (/v1/bitbucket/proxy/), and git's own failure sentence quotes that URL back; a record that names it for no call of this run's says the run's git traffic went to Bitbucket itself — a runner whose release carries no proxy pushes with the job's own mounted token (proxySince, internal/cli/recipes_skew.go: 0.22.0, the first tag whose runner serves it), which is the check's own setup and not a reading about the service — or that the run got past its checkout, where this row measures nothing. Read the record yourself ('fugaro diagnose ${slug}/${rid}') and the service's own lines (gcloud logging read, jsonPayload.run=\"${rid}\"), and run the check again on the release whose runner carries the proxy"
     return 0
-  }
-  fact ended-identity PASS "the probe (${rid}) was launched with its outcome already written, its first call was refused as an identity — its own record carries the halt ${halted}: $(printf '%s' "$reason" | head -c 160), the wire type the service's ended-run refusal is answered with (RunEnded is an unverified identity and the service's sentence never reaches the run, D143) — it pushed nothing and opened no pull request, and the service's own lines hold no line for it at all: an ended run reached no route"
+  fi
+  case "$answer" in
+  "-" | 502)
+    why="502, this execution's own forwarder answering for a forward it could not make (internal/gateway's GitForward.fail)"
+    [ "$answer" = "-" ] && why="nothing a git command could read as an answer — its sentence carries no HTTP status at all"
+    unmeasured ended-identity "the probe (${rid}) was launched with its outcome already written and its first call reached this execution's forwarder, which answered ${why} rather than the credentials service's own answer, so the call was never handed over and nothing about the ended identity was measured. Read the service's own lines (gcloud logging read, jsonPayload.run=\"${rid}\") and the record ('fugaro diagnose ${slug}/${rid}'), and run this check again when the service answers"
+    return 0
+    ;;
+  403) ;;
+  *)
+    why=""
+    [ "$answer" = 503 ] && why="A 503 is state_unavailable: the service could not read the run's outcome, so the ended-run refusal was never reached — the same fact a model call reads when the state cannot be read. "
+    fact ended-identity FAIL "the probe (${rid}) was launched with its outcome already written and the service answered its first call — the bootstrap git traffic, which reached this execution's forwarder — with ${answer} rather than 403, the status an identity refusal is answered with (internal/credsvc/wire.go's StatusUnverified). ${why}So this row measured no refusal of the ended identity. Read the service's own lines (gcloud logging read, jsonPayload.run=\"${rid}\"), the record ('fugaro diagnose ${slug}/${rid}') and that run's log before anything else"
+    return 0
+    ;;
+  esac
+  fact ended-identity PASS "the probe (${rid}) was launched with its outcome already written, and its first call — the bootstrap git traffic, which is what a proxied run reaches the service with before there is a gateway to make a model call — was refused: its own record carries git's own sentence, $(printf '%s' "$reason" | head -c 200), naming this execution's forwarder and the 403 an identity refusal is answered with. The service's refusals are application/json and git prints no body, so no wire type can be in a record (and the service's own sentence reaches no run, D143); what the row reads instead is that the call went to the service and was refused, it pushed nothing and opened no pull request, and the service's own lines hold no line for it at all: an ended run reached no route"
 }
 
 run_191() {
