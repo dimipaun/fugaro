@@ -483,9 +483,10 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 - **Depends on:** **coordinator P9f** (the login and the `roadmap` group) and, through it, **P9d** (the
   `roadmap_move` tool) and **P9b** (the writer), in `docs/coordinator/implementation-plan.md`. It
   builds against a fake front door; **it moves a real task only once coordinator P9e serves the
-  tools, and P9e waits on the front door's wiring task, which no plan has written yet (that plan's
-  open D2119)** — and on its open D2118 (how a front-door write reaches the database) and D2122 (how
-  the CLI holds the token). This replaces "the coordinator's record on `main`", which no task carried
+  tools, and P9e waits on the MCP plan's M12, the front door mounted on a binary (the owner's ruling
+  of 2026-11-11, that plan's D2119)** — and on that plan's open D2124 (whether the front door's
+  database write stays the database-wide role D2118's answer gives it). The token is P9f's login
+  (D2122, answered). This replaces "the coordinator's record on `main`", which no task carried
   until 2026-11-11. Ruling (a) stands: option 1 now, the write with the record. The option-2 file
   list above is kept only as the declined alternative.
 - **Commit:** `roadmap: move a task between releases, compare-and-set`
@@ -535,7 +536,7 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
   `docs/coordinator/implementation-plan.md`, and GV2.3; it builds against fixtures. It shows real
   data once a plan has been **published** (P9c, the push model: `fugaro coordinator roadmap publish`
   from any checkout, through the front door) and releases and edges written (P9f), which needs a
-  served front door (P9e, waiting on that plan's open D2119). This replaces "the coordinator's record
+  served front door (P9e, waiting on the MCP plan's M12). This replaces "the coordinator's record
   (0.11.0) carrying tasks", which no task carried until 2026-11-11.
 - **Commit:** `graph: cross-plan and cross-stream edges from the project record`
 - **Red step:** a fixture with a cross-plan edge renders no edge before the change.
@@ -544,10 +545,11 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 ## 5. Parallel execution
 
 **External gates:** none on Slices 0–2 since the owner's rulings of 2026-10-22. GV3.1 and GV4.1
-wait on the coordinator's record, which is **coordinator P9a–P9f** since 2026-11-11: GV4.1 builds on
+wait on the coordinator's record, which is **coordinator P9a–P9g** since 2026-11-11: GV4.1 builds on
 P9a and shows data once plans are published (P9c); GV3.1 builds on P9f and moves a real task only
-once P9e serves the front door's roadmap tools — which waits on the front door's wiring task, written
-by no plan yet (that plan's open D2119), and on its open D2118 and D2122.
+once P9e serves the front door's roadmap tools — which waits on the MCP plan's **M12** (the front
+door mounted on a binary, the owner's ruling of 2026-11-11) and on the coordinator plan's open
+D2124–D2126.
 
 **Edges** (from "Depends on"): GV1.1→GV1.6; GV1.2→GV1.6; GV1.3→GV1.6; GV1.4→GV1.6; GV1.3→GV1.7;
 GV1.4→GV1.5; GV0.1→GV2.2; GV1.6→GV2.1; GV2.1→GV2.3; GV2.2→GV2.3; GV1.6→GV2.5; GV2.1→GV2.5;
@@ -565,7 +567,7 @@ P9a→GV4.1 (P9c for real data).
 | L3 | GV2.3, GV2.5 |
 | L4 | GV2.4 |
 | L5 | GV2.6 (OWNER-RUN) |
-| blocked | GV3.1 → GV3.2 and GV4.1 (the coordinator's record, rulings (a) and (d): coordinator P9a–P9f; its open D2118–D2123; and the front door's wiring task, D2119) |
+| blocked | GV3.1 → GV3.2 and GV4.1 (the coordinator's record, rulings (a) and (d): coordinator P9a–P9g; its open D2124–D2126; and the MCP plan's M12) |
 
 **Critical path:** GV1.1 → GV1.6 → GV2.1 → GV2.3 → GV2.4 → GV2.6 (six tasks). GV1.2, GV1.3 and
 GV1.4 start chains of the same length into GV1.6; the smallest id decides the tie (C8), so the
@@ -612,5 +614,5 @@ CLI with `plan status` (GV1.6): the console shows "not available" against an old
 
 Independent console and mobile release workflows (the "Release Names" work, F6); the coordinator's
 record and its front door (coordinator P3–P8, and the record's tasks, releases and cross-plan edges,
-coordinator P9a–P9f); any Markdown plan scraper (F3); cancel and retry
+coordinator P9a–P9g, and the MCP plan's M12); any Markdown plan scraper (F3); cancel and retry
 (D34, unchanged).
