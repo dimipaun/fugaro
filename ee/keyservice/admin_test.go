@@ -542,6 +542,147 @@ func TestAdminRefusesAMintForARequestThatIsNotInTheQueue(t *testing.T) {
 	}
 }
 
+// TestAdminRefusesAMintForAPlanThePageDoesNotOffer: the plan field is a name the
+// deploy offers rather than one the form chose, and it is what the whole mint is
+// read out of — the tier, the features, the seats and the term. A name with
+// nothing behind it resolves to an empty plan, so a mint that went through would
+// be a key with no tier for the verifier to read and a record naming a plan
+// nobody sold (D454's caps are per tier: there is no cap to charge a key with no
+// tier to).
+func TestAdminRefusesAMintForAPlanThePageDoesNotOffer(t *testing.T) {
+	f := newFixture(t)
+
+	for _, name := range []string{"enterprise-plus", "0", "Enterprise"} {
+		rec := f.adminPost(RouteAdminMint, f.mintForm(url.Values{
+			"plan": {name}, "seats": {"40"}, "term_days": {"365"},
+			"organisation": {"acme.example"}, "email": {"licensing@acme.example"},
+		}))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("a mint naming the plan %q answered %d, want 400: %s", name, rec.Code, rec.Body.String())
+		}
+		if body := strings.TrimSpace(rec.Body.String()); body != refusePlan {
+			t.Errorf("a mint naming the plan %q was refused with %q, want the sentence that names the plan", name, body)
+		}
+	}
+	if got := f.signer.calls; got != 0 {
+		t.Errorf("a mint naming a plan the page does not offer signed %d time(s), want none", got)
+	}
+	if got := len(f.mintedKeys()); got != 0 {
+		t.Errorf("a mint naming a plan the page does not offer produced %d key(s), want none", got)
+	}
+	if got := len(f.auditor.lines); got != 0 {
+		t.Errorf("a mint naming a plan the page does not offer wrote %d audit line(s), want none", got)
+	}
+	if got := len(f.records()); got != 0 {
+		t.Errorf("a mint naming a plan the page does not offer recorded %d issuance(s), want none", got)
+	}
+	if got := len(f.mail.sent); got != 0 {
+		t.Errorf("a mint naming a plan the page does not offer mailed %d message(s), want none", got)
+	}
+
+	// The plan the page does offer is the mint those refusals held back, so what
+	// they read is the name and not the route.
+	if rec := f.adminPost(RouteAdminMint, f.mintForm(url.Values{
+		"plan": {enterprisePlanName}, "seats": {"40"}, "term_days": {"365"},
+		"organisation": {"acme.example"}, "email": {"licensing@acme.example"},
+	})); rec.Code != http.StatusSeeOther {
+		t.Fatalf("a mint under the page's own plan answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.mintedKeys()); got != 1 {
+		t.Errorf("a mint under the page's own plan produced %d key(s), want one", got)
+	}
+}
+
+// TestAdminRefusesAMintWithNoSeatsOrTerm: the numbers a key is issued with, when
+// neither the form nor the plan names one. What the form leaves out falls back
+// on the plan, and a plan without its own seats and term is one this deploy can
+// hold — `New` refuses a plan it cannot name or a tier no key is issued for, and
+// the numbers are the form's to carry — so the guard is the last thing between
+// such a plan and a licence issued for no seats and no days at all.
+func TestAdminRefusesAMintWithNoSeatsOrTerm(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.cfg.PagePlans = append(f.cfg.PagePlans, Plan{
+			Name: "enterprise-unstated", Tier: licence.TierEnterprise,
+			Features: []string{"seats"},
+		})
+	})
+
+	rec := f.adminPost(RouteAdminMint, f.mintForm(url.Values{
+		"plan": {"enterprise-unstated"}, "organisation": {"acme.example"},
+		"email": {"licensing@acme.example"},
+	}))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("a mint with no seats and no term answered %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != refuseFields {
+		t.Errorf("a mint with no seats and no term was refused with %q, want the sentence that names what a mint needs", body)
+	}
+	if got := f.signer.calls; got != 0 {
+		t.Errorf("a mint with no seats and no term signed %d time(s), want none: nothing was issued for zero days", got)
+	}
+	if got := len(f.mintedKeys()); got != 0 {
+		t.Errorf("a mint with no seats and no term produced %d key(s), want none", got)
+	}
+	if got := len(f.auditor.lines); got != 0 {
+		t.Errorf("a mint with no seats and no term wrote %d audit line(s), want none", got)
+	}
+	if got := len(f.mail.sent); got != 0 {
+		t.Errorf("a mint with no seats and no term mailed %d message(s), want none", got)
+	}
+
+	// The same plan mints once the form carries the numbers, which is what the
+	// page's own form always does.
+	if rec := f.adminPost(RouteAdminMint, f.mintForm(url.Values{
+		"plan": {"enterprise-unstated"}, "seats": {"40"}, "term_days": {"365"},
+		"organisation": {"acme.example"}, "email": {"licensing@acme.example"},
+	})); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the same plan with the form's own numbers answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(f.mintedKeys()); got != 1 {
+		t.Errorf("the mint that carried its numbers produced %d key(s), want one", got)
+	}
+}
+
+// TestAdminRefusesADeclineForARequestThatIsNotInTheQueue: the decline's half of
+// the same read — the id it names is what the answer is written **to**. A form
+// naming no request has nothing to answer, and what a decline of nothing would
+// write is an application of its own into the store the queue is drawn from: a
+// row with no id, no address and no request behind it, with the page answering
+// 303 for a decision on nobody's request.
+func TestAdminRefusesADeclineForARequestThatIsNotInTheQueue(t *testing.T) {
+	f := newFixture(t)
+	answerBody(t, f.post(RouteRequest, url.Values{"email": {applicantAddress}, "request": {"a multi-seat trial"}}))
+	open := f.open()
+	if len(open) != 1 {
+		t.Fatalf("the manual form left %d open request(s), want one", len(open))
+	}
+
+	for _, id := range []string{"a-request-that-was-never-made", "app-00000000-0000-4000-8000-000000000000"} {
+		rec := f.adminPost(RouteAdminDecide, f.decideForm(id))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("a decline of the unknown request %q answered %d, want 404: %s", id, rec.Code, rec.Body.String())
+		}
+		if body := strings.TrimSpace(rec.Body.String()); body != refuseUnknown {
+			t.Errorf("a decline of %q was refused with %q, want the sentence that names the missing request", id, body)
+		}
+	}
+	held := f.queued()
+	if len(held) != 1 || held[0].ID != open[0].ID || held[0].Decision != Undecided {
+		t.Errorf("a decline for a request that is not there wrote one: %+v", held)
+	}
+
+	// The request the queue does hold is still the owner's to decline.
+	if rec := f.adminPost(RouteAdminDecide, f.decideForm(open[0].ID)); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the request the queue holds answered %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if got := f.open(); len(got) != 0 {
+		t.Errorf("the declined request is still in the queue: %+v", got)
+	}
+	if got := len(f.mintedKeys()); got != 0 {
+		t.Errorf("a decline minted %d key(s), want none", got)
+	}
+}
+
 // TestEveryMintIsAudited: §6's audit row and Check 173 step 3 — every mint
 // writes one line naming the tier, the seats, the plan and the actor, and it is
 // written **before the key is returned**, so a key that exists is a key that was
