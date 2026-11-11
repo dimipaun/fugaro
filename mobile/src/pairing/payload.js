@@ -98,7 +98,7 @@ export const PAYLOAD_CODES = Object.freeze({
 /** The fields the payload carries, exactly. An object with any other key is
  * refused: this app reads the ones it knows, and a payload with a field it
  * does not know is a payload written by something else. */
-const PAYLOAD_FIELDS = Object.freeze([
+export const PAYLOAD_FIELDS = Object.freeze([
   'v',
   'project',
   'gcp_project',
