@@ -95,11 +95,18 @@ type LaunchFlags struct {
 // Eligible reports whether a launch is one D558 samples: a first run of a
 // code task, at POC to Critical, whose run ID nobody chose.
 //
-// recipeMode is the resolved recipe's mode (recipe.ModeImplement,
-// recipe.ModeReview, recipe.ModeArtifact), and "" for a launch that left the
-// recipe to the runner, which resolves the repository's own default — an
-// implement recipe. mode is the rigor mode the launch resolved
-// (rigor.Resolve), which is always one of rigor.Modes.
+// recipeMode is the mode of the recipe the launch resolved — recipe.ModeImplement,
+// recipe.ModeReview or recipe.ModeArtifact. An empty one is not an implement
+// recipe by default: it is a launch that resolved none, which is the launch
+// the runner chooses for (runnerChooses: no recipe in the task, not a
+// follow-up, no checkout here to read one from), and the runner then takes
+// agent.recipe from the repository's own fugaro.yaml at the ref, else the
+// catalog default. Nothing constrains that value to mode: implement — the
+// file may name the repository's own review or artifact recipe — so the mode
+// is unprovable when the launch is decided, and unprovable fails closed, the
+// way the --attach path refuses the same input for the same reason. mode is
+// the rigor mode the launch resolved (rigor.Resolve), which is always one of
+// rigor.Modes.
 //
 // Both halves of the rule are read here: the flags and the resolved mode the
 // launcher knows, and the fields the task carries. The second half is not
@@ -119,12 +126,16 @@ func Eligible(spec task.Spec, recipeMode string, mode rigor.Mode, flags LaunchFl
 	if !rigor.Known(mode) || mode == rigor.Hotfix {
 		return false
 	}
-	// A code task: an implement recipe. A review run's deliverable is a
-	// comment on somebody else's pull requests, and an artifact run's is a
-	// file set in the run's bucket; neither makes the change a champion's
-	// pull request carries, so neither is a pair anything could score.
+	// A code task: an implement recipe, resolved. A review run's deliverable
+	// is a comment on somebody else's pull requests, and an artifact run's is
+	// a file set in the run's bucket; neither makes the change a champion's
+	// pull request carries, so neither is a pair anything could score. A
+	// launch that resolved no recipe is here too, and an unknown mode with
+	// it: the mode such a launch will really run is the runner's to pick from
+	// the repository's own file at the ref, so it is not this launch's to
+	// spend a pair on.
 	switch recipeMode {
-	case "", recipe.ModeImplement:
+	case recipe.ModeImplement:
 	default:
 		return false
 	}

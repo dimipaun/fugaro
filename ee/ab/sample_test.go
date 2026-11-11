@@ -134,32 +134,37 @@ func TestSampledRateMatchesOverManyIDs(t *testing.T) {
 }
 
 // TestEligibleAllowsAFirstCodeRun is the positive half of D558: a first run
-// of a code task, at POC to Critical, is what a project samples. A launch
-// that resolved no recipe carries none, and the runner reads the repository's
-// own file at the ref, which an implement recipe is by default.
+// of a code task, at POC to Critical, whose launch resolved an implement
+// recipe, is what a project samples.
 func TestEligibleAllowsAFirstCodeRun(t *testing.T) {
 	spec := firstRun()
 	for _, mode := range []rigor.Mode{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical} {
-		for _, recipeMode := range []string{"", recipe.ModeImplement} {
-			if !ab.Eligible(spec, recipeMode, mode, ab.LaunchFlags{}) {
-				t.Errorf("Eligible(a first run of a code task, recipe %q, mode %s) = false: a first run of a code task at POC to Critical is exactly what D558 samples",
-					recipeMode, mode)
-			}
+		if !ab.Eligible(spec, recipe.ModeImplement, mode, ab.LaunchFlags{}) {
+			t.Errorf("Eligible(a first run of a code task, recipe %q, mode %s) = false: a first run of a code task at POC to Critical is exactly what D558 samples",
+				recipe.ModeImplement, mode)
 		}
 	}
 }
+
+// modePtr pins a recipe mode in a case below, the empty one included: a case
+// that says nothing about the recipe leaves it nil and stands for a launch
+// that resolved an implement recipe.
+func modePtr(s string) *string { return &s }
 
 // TestEligibleExcludesFollowUpsRetriesAttemptsReviewArtifactDigest is D558's
 // other half, case by case: a follow-up continues a pull request rather than
 // making a first attempt, a retry re-launches the task of the run before it,
 // an attempts batch is already several runs of one task, and a review,
 // artifact or report recipe is not a code task at all — a pair drawn from
-// any of them compares two unlike things or counts one task twice.
+// any of them compares two unlike things or counts one task twice. A launch
+// that resolved no recipe is out with them: the runner takes that mode from
+// the repository's own file at the ref, so at launch nobody can say whether
+// the run is a code task, and a pair is not spent on what cannot be proven.
 func TestEligibleExcludesFollowUpsRetriesAttemptsReviewArtifactDigest(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		mutate     func(*task.Spec)
-		recipeMode string
+		recipeMode *string
 		flags      ab.LaunchFlags
 	}{
 		{
@@ -194,7 +199,7 @@ func TestEligibleExcludesFollowUpsRetriesAttemptsReviewArtifactDigest(t *testing
 		},
 		{
 			name:       "a review recipe",
-			recipeMode: recipe.ModeReview,
+			recipeMode: modePtr(recipe.ModeReview),
 		},
 		{
 			name:   "a review run's pull requests",
@@ -202,7 +207,15 @@ func TestEligibleExcludesFollowUpsRetriesAttemptsReviewArtifactDigest(t *testing
 		},
 		{
 			name:       "an artifact recipe",
-			recipeMode: recipe.ModeArtifact,
+			recipeMode: modePtr(recipe.ModeArtifact),
+		},
+		{
+			name:       "a launch that resolved no recipe",
+			recipeMode: modePtr(""),
+		},
+		{
+			name:       "a recipe mode outside the vocabulary",
+			recipeMode: modePtr("bogus"),
 		},
 		{
 			name:   "an artifact run's mode in the task",
@@ -227,9 +240,9 @@ func TestEligibleExcludesFollowUpsRetriesAttemptsReviewArtifactDigest(t *testing
 		if tc.mutate != nil {
 			tc.mutate(&spec)
 		}
-		recipeMode := tc.recipeMode
-		if recipeMode == "" {
-			recipeMode = recipe.ModeImplement
+		recipeMode := recipe.ModeImplement
+		if tc.recipeMode != nil {
+			recipeMode = *tc.recipeMode
 		}
 		if ab.Eligible(spec, recipeMode, rigor.Pro, tc.flags) {
 			t.Errorf("Eligible(%s, mode pro) = true, want false: D558 samples first runs of code tasks only, and a pair drawn from anything else compares two unlike attempts or counts one task twice",
