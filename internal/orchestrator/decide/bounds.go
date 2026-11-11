@@ -119,8 +119,15 @@ const callRecordPrefix = "decide-call-"
 // Resolved, it is un-evictable only while the caps still count it
 // (countedDecision), and it leaves the document with the window.
 //
-// What it costs is bounded by the caps themselves: at most CallsPerDay records
-// can be written in a day, and each is a name, one line and two stamps.
+// What it costs is bounded by the caps, but not by one day of them: the caps
+// count calendar days while this record is un-evictable for the rolling window
+// retention keeps it over (orchestrator.Retain), so a window straddling
+// midnight holds two days' tails at once — up to twice CallsPerDay records,
+// which at the ~194 bytes one measures is ~15 KiB of the 16 KiB the document is
+// allowed (MaxStateBytes) before a single work item, fact or question is in it.
+// That is the price of the count living in the document, and the reason this
+// ledger wants the node the spec's own logical shape gives it: a `decisions`
+// subcollection, so frequent updates touch small documents.
 func recordCall(s orchestrator.State, itemID string, at time.Time) (orchestrator.State, error) {
 	id := freeCallID(s)
 	p := orchestrator.Patch{BaseRev: s.Rev, Ops: []orchestrator.Op{

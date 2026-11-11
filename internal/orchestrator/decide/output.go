@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -70,8 +71,11 @@ func ParseAnswer(raw json.RawMessage) (Answer, error) {
 	if err := dec.Decode(&a); err != nil {
 		return Answer{}, fmt.Errorf("%w: %s", ErrAnswerShape, safetext.OneLine(err.Error()))
 	}
-	if dec.More() {
-		return Answer{}, fmt.Errorf("%w: the answer carries more than one document", ErrAnswerShape)
+	// The token-and-EOF check the rest of this tree's strict decoders make
+	// (orchestrator.DecodeState, DecodePatch) rather than Decoder.More, which
+	// answers "no more" for a trailing `]` or `}` and would let one through.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return Answer{}, fmt.Errorf("%w: the answer is not one JSON document, there is more after it", ErrAnswerShape)
 	}
 	if a.Reasoning == "" {
 		return Answer{}, fmt.Errorf("%w: the answer carries no reasoning", ErrAnswerShape)

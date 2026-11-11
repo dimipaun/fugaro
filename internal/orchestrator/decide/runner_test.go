@@ -430,6 +430,21 @@ func TestTheDecisionAndItsReasoningAreWrittenToTheAuditLog(t *testing.T) {
 	}
 }
 
+func TestAnAnswerWithSomethingAfterItIsRefused(t *testing.T) {
+	// One JSON document, like every other wire format in this tree: the check is
+	// the token-and-EOF one the state and patch decoders make rather than
+	// json.Decoder.More, which answers "no more" when the next byte is a `]` or a
+	// `}` — the two tails it would otherwise let through.
+	for _, tail := range []string{"]", "}", "{}", "junk"} {
+		if _, err := decide.ParseAnswer(json.RawMessage(theAnswer + tail)); !errors.Is(err, decide.ErrAnswerShape) {
+			t.Errorf("an answer with %q after it ended as %v, not ErrAnswerShape", tail, err)
+		}
+	}
+	if _, err := decide.ParseAnswer(json.RawMessage(theAnswer)); err != nil {
+		t.Errorf("a well-formed answer ended as %v", err)
+	}
+}
+
 func TestEveryOpThePromptShowsIsOneThisReleaseReads(t *testing.T) {
 	// The prompt is the only place a model can read an op's shape: the output
 	// schema asks for opaque objects, ParseAnswer decodes strictly, and a
