@@ -89,6 +89,38 @@ func TestBundleCarriesNoIdentifier(t *testing.T) {
 		})
 	}
 
+	// The pair's own spellings are the layer under the shape scan: what it
+	// catches is what the scan does not, and these are the cases only it
+	// answers. Both matter for the same reason — the scan is a guess at a
+	// shape, while an identifier the pair itself carries is an identifier
+	// whatever it looks like.
+	t.Run("the exact spelling is the only catcher", func(t *testing.T) {
+		// A pair ID is opaque by contract (the task validates it as non-blank
+		// and nothing else) and its producer is unwritten, so this one is not
+		// run-shaped and no shape scan can see it. It is quoted here in
+		// another case, which is what folding the comparison buys.
+		if _, _, err := Bundle(champPatch("+// pair Bundle-Pair-1\n"+diffBody), challPatch(diffBody), "bundle-pair-1"); !errors.Is(err, ErrIdentified) {
+			t.Fatalf("a diff quoting the pair ID in another case: Bundle err = %v, want %v", err, ErrIdentified)
+		}
+		// A run ID task mints today but does not have to mint tomorrow. The
+		// shape scan is a guess at task's pattern, so an arm's own run ID is
+		// refused by its exact spelling — the layer that survives the guess
+		// being wrong — and these two arms carry shapes it does not know.
+		oddID := Patch{RunID: "20260101T120000Z-abcd", Branch: "fugaro/20260101T120000Z-abcd", Diff: "+// run 20260101T120000Z-abcd\n" + diffBody}
+		oddBranch := Patch{RunID: "20260101T120000Z-abcd", Branch: "fugaro/experiment-7", Diff: "+// pushed to fugaro/experiment-7\n" + diffBody}
+		for _, tc := range []struct {
+			name  string
+			patch Patch
+		}{
+			{"this arm's run ID", oddID},
+			{"this arm's branch", oddBranch},
+		} {
+			if _, _, err := Bundle(tc.patch, challPatch(diffBody), champRunID); !errors.Is(err, ErrIdentified) {
+				t.Fatalf("a diff quoting %s, which no shape scan knows: Bundle err = %v, want %v", tc.name, err, ErrIdentified)
+			}
+		}
+	})
+
 	// The shape the shape scan searches for is spelled out of task, whose own
 	// pattern is unexported: this is what holds the two together. A run ID
 	// task itself mints has to be one the scan finds, and it is checked as
