@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/intake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // The fixture's installation: a credentials service URL in the shape Cloud Run
@@ -66,6 +67,63 @@ func fakeIntakeCalls(t *testing.T, reply func(c secretsIntakeCall)) *[]intakeSee
 	}
 	t.Cleanup(func() { secretsIntakeDo = prev })
 	return seen
+}
+
+// intakeJSONCase is one of the intake families' --json fixtures
+// (report_json_fixtures_test.go): the rig is the installation's own config —
+// the credentials service whose address the intake's own is read from — and the
+// one seam every call goes through, so the run reaches the document the command
+// prints with no service, no token and no value on the wire.
+func intakeUserJSONCase(verb, stdin string, reads bool) jsonCase {
+	return intakeJSONCase(intake.ScopeUser, verb, stdin, reads)
+}
+
+func intakeSharedJSONCase(verb, stdin string, reads bool) jsonCase {
+	return intakeJSONCase(intake.ScopeShared, verb, stdin, reads)
+}
+
+func intakeJSONCase(scope intake.Scope, verb, stdin string, reads bool) jsonCase {
+	argv := []string{"secrets", intakeScopeWord(scope), verb}
+	if verb != "ls" {
+		argv = append(argv, "github-token")
+	}
+	return jsonCase{
+		stdin: stdin,
+		reads: reads,
+		run: func(t *testing.T) []string {
+			intakeFixture(t)
+			fakeIntakeCalls(t, intakeAnswerFor(scope))
+			return argv
+		},
+	}
+}
+
+// intakeAnswerFor fills whichever of the intake's three answers the verb asked
+// for, the way the route the command called would have: the document is the
+// service's own (internal/intake), so what --json prints is what the intake
+// would have written.
+func intakeAnswerFor(scope intake.Scope) func(c secretsIntakeCall) {
+	return func(c secretsIntakeCall) {
+		switch out := c.Out.(type) {
+		case *intake.SecretAnswer:
+			*out = intake.SecretAnswer{ID: intakeTestID(scope), Version: "3", Created: true}
+		case *intake.ListAnswer:
+			*out = intake.ListAnswer{Secrets: []intake.ListedSecret{
+				{ID: intakeTestID(scope), Name: "github-token", Scope: scope, Created: time.Date(2026, 3, 4, 5, 6, 0, 0, time.UTC)},
+			}}
+		case *intake.DeleteAnswer:
+			*out = intake.DeleteAnswer{Deleted: []string{intakeTestID(scope)}}
+		}
+	}
+}
+
+// intakeTestID is the secret ID one scope's grammar builds for the name the
+// fixtures store, which is what the intake answers with.
+func intakeTestID(scope intake.Scope) string {
+	if scope == intake.ScopeShared {
+		return secretname.ProjectPrefix + "github-token"
+	}
+	return secretname.UserPrefix + "1234_github-token"
 }
 
 // TestLsPrintsNamesAndDates: `fugaro secrets user ls` and its `shared` twin ask

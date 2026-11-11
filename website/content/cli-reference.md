@@ -6119,6 +6119,8 @@ Subcommands:
 - `fugaro secrets ls` -- List the project's (or, with --repo, a repository's) secrets: names, scope and versions, never values
 - `fugaro secrets rm` -- Withdraw a project secret: delete its Secret Manager container and its config entry
 - `fugaro secrets set` -- Store a secret's value, read from stdin or a hidden prompt, as a new version
+- `fugaro secrets shared` -- Store, list and remove the secrets the project shares (an admin's)
+- `fugaro secrets user` -- Store, list and remove the secrets you own
 
 ## `fugaro secrets allow`
 
@@ -6434,6 +6436,258 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | work on one repository's own copy, given as owner/name or a path inside its checkout (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide |
 | `--yes` | bool | `false` | no | confirm the policy write without a prompt (outside a coding agent's session) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets shared`
+
+Store, list and remove the secrets the project shares (an admin's)
+
+Usage: `fugaro secrets shared`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for shared |
+
+Subcommands:
+
+- `fugaro secrets shared ls` -- List the secrets under this prefix: names and dates, never values
+- `fugaro secrets shared rm` -- Remove a secret this prefix holds
+- `fugaro secrets shared set` -- Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+## `fugaro secrets shared ls`
+
+List the secrets under this prefix: names and dates, never values
+
+List the installation's intake's containers under this prefix: the names and
+the dates they were made, and no version's value. The intake has no route that
+answers a value at all, so this command cannot print one whatever it is asked.
+
+Scope: the project's own prefix, fugaro_p_<name>, which the intake serves
+to an admin on the installation's derived admin list and to nobody else
+(D1935, D1940). A caller who is not on it is refused by the intake, by name,
+and nothing is written.
+
+Usage: `fugaro secrets shared ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets shared rm`
+
+Remove a secret this prefix holds
+
+Remove the container NAME through the installation's intake: the container and
+every version in it, which is the only way back from a value stored under a
+name that was meant for something else.
+
+Scope: the project's own prefix, fugaro_p_<name>, which the intake serves
+to an admin on the installation's derived admin list and to nobody else
+(D1935, D1940). A caller who is not on it is refused by the intake, by name,
+and nothing is written.
+
+Usage: `fugaro secrets shared rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets shared set`
+
+Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+Store the value of NAME through the installation's secrets intake, as a new
+version: the container is created if it doesn't exist, and a second call with
+the same name rotates it.
+
+The value is read only from stdin: pipe or redirect it in (fugaro secrets shared set
+github-token < token-file), or, when stdin is a terminal, paste it at a hidden
+prompt. It is never taken from an argument, a flag or the environment, and
+never printed. One trailing newline (\n or \r\n) is dropped, and the command
+says so. Values must be 4 bytes to 64 KiB, on one line except for
+github-app-key (a PEM, which must be redirected from a file), and a one-line
+value may not start or end with whitespace. Ctrl-C at the prompt stores nothing
+and restores the terminal.
+
+The value travels to the intake and is written there by the intake's own
+account: this command sends it over the installation's own endpoint, with the
+person's own Google ID token as the caller, and holds no write of its own in
+Secret Manager.
+
+Scope: the project's own prefix, fugaro_p_<name>, which the intake serves
+to an admin on the installation's derived admin list and to nobody else
+(D1935, D1940). A caller who is not on it is refused by the intake, by name,
+and nothing is written.
+
+The installation's intake is deployed by `fugaro update`: an installation whose
+release predates it, or one whose deployment does not answer the intake's
+routes, is refused with that command as the whole upgrade.
+
+Usage: `fugaro secrets shared set NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets user`
+
+Store, list and remove the secrets you own
+
+Usage: `fugaro secrets user`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for user |
+
+Subcommands:
+
+- `fugaro secrets user ls` -- List the secrets under this prefix: names and dates, never values
+- `fugaro secrets user rm` -- Remove a secret this prefix holds
+- `fugaro secrets user set` -- Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+## `fugaro secrets user ls`
+
+List the secrets under this prefix: names and dates, never values
+
+List the installation's intake's containers under this prefix: the names and
+the dates they were made, and no version's value. The intake has no route that
+answers a value at all, so this command cannot print one whatever it is asked.
+
+Scope: your own prefix, fugaro_u_<your account id>_<name>. The owner is
+taken from the identity token this command presents and never from anything
+this command says about itself, so no caller can write under another person's
+prefix (R3, R12).
+
+Usage: `fugaro secrets user ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets user rm`
+
+Remove a secret this prefix holds
+
+Remove the container NAME through the installation's intake: the container and
+every version in it, which is the only way back from a value stored under a
+name that was meant for something else.
+
+Scope: your own prefix, fugaro_u_<your account id>_<name>. The owner is
+taken from the identity token this command presents and never from anything
+this command says about itself, so no caller can write under another person's
+prefix (R3, R12).
+
+Usage: `fugaro secrets user rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets user set`
+
+Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+Store the value of NAME through the installation's secrets intake, as a new
+version: the container is created if it doesn't exist, and a second call with
+the same name rotates it.
+
+The value is read only from stdin: pipe or redirect it in (fugaro secrets user set
+github-token < token-file), or, when stdin is a terminal, paste it at a hidden
+prompt. It is never taken from an argument, a flag or the environment, and
+never printed. One trailing newline (\n or \r\n) is dropped, and the command
+says so. Values must be 4 bytes to 64 KiB, on one line except for
+github-app-key (a PEM, which must be redirected from a file), and a one-line
+value may not start or end with whitespace. Ctrl-C at the prompt stores nothing
+and restores the terminal.
+
+The value travels to the intake and is written there by the intake's own
+account: this command sends it over the installation's own endpoint, with the
+person's own Google ID token as the caller, and holds no write of its own in
+Secret Manager.
+
+Scope: your own prefix, fugaro_u_<your account id>_<name>. The owner is
+taken from the identity token this command presents and never from anything
+this command says about itself, so no caller can write under another person's
+prefix (R3, R12).
+
+The installation's intake is deployed by `fugaro update`: an installation whose
+release predates it, or one whose deployment does not answer the intake's
+routes, is refused with that command as the whole upgrade.
+
+Usage: `fugaro secrets user set NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 

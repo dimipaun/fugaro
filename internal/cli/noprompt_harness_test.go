@@ -343,6 +343,14 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro run":                 {args: []string{"do something"}},
 	"fugaro secrets rm":          {args: []string{"NAME"}},
 	"fugaro secrets set":         {args: []string{"NAME"}},
+	// The intake's two families take the same NAME as the pair above, and their
+	// bodies are reached the same way: the name is the whole of what stands
+	// between a bare run and the command's own body, which is where the
+	// refusal this world's project selection produces comes from.
+	"fugaro secrets shared rm":  {args: []string{"NAME"}},
+	"fugaro secrets shared set": {args: []string{"NAME"}},
+	"fugaro secrets user rm":    {args: []string{"NAME"}},
+	"fugaro secrets user set":   {args: []string{"NAME"}},
 	// The rigor write reaches its own edit through the layer file the seed writes:
 	// the mode it sets ranks above what the file resolves to, so the fixture is the
 	// ordinary write and not the sensitive one, and the sentence naming the key is
@@ -473,6 +481,10 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro runs summary":           "prints the no-project-config refusal",
 	"fugaro secrets":                "is a name for set, ls and rm: a bare run prints its own usage and returns",
 	"fugaro secrets ls":             "prints the no-project-config refusal",
+	"fugaro secrets shared":         "is a name for set, ls and rm: a bare run prints its own usage and returns",
+	"fugaro secrets shared ls":      "prints the no-project-config refusal",
+	"fugaro secrets user":           "is a name for set, ls and rm: a bare run prints its own usage and returns",
+	"fugaro secrets user ls":        "prints the no-project-config refusal",
 	"fugaro security paths":         "refuses from inside its body: it answers only for the checkout it stands in, and this world's directory names no origin repository",
 	"fugaro settings":               "prints the registry's every row with no project selected, which is the whole of what a bare run does",
 	"fugaro seats":                  "reads the selected project's records for an advisory estimate, and this world selects no project",
