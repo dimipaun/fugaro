@@ -470,7 +470,8 @@ D1244-D1247 are written (BF2, 2026-11-08); **D1248-D1249 are reserved and unused
 **BF2's long-run triage rule (2026-11-08, D1244-D1247).** A run may outlive its usefulness without failing: BF1 (the runner finalizes with its open
 findings at 80% of the budget, so such a run ends "completed with open findings" rather than failed) is exactly the case, and a finished run that nobody
 triages costs the person the time D1221 exists to save. The rule is **code, never a model**; the threshold is the person's own key
-(`orchestrator.triage_after`, default `2h`, under the 3h default budget); the three reads are the run's record, the pull request's state **and its CI
+(`orchestrator.triage_after`, default `2h`, under the 3h default budget) — **amended 2026-11-10: the threshold is the per-mode ladder table of
+`docs/outer-loop-escalation` (D2032), and `orchestrator.triage_after` was never built**; the three reads are the run's record, the pull request's state **and its CI
 state**, and **BF1's findings file** — of which the CI read is new code, because nothing in the tree reads a pull request's checks today (D1244); the
 merge needs positive evidence (commits, a green CI, **a whole changed-path set inside the routine allowlist**, no critical finding, none high in a
 security path) and **fails closed** without it — into the **recommend-only** outcome, tried before the two outcomes that act, which merges, cancels and restarts nothing, so an input nobody could

@@ -531,6 +531,16 @@ func TestDocsStatelessOrchestratorLadderAmendmentsAreRecorded(t *testing.T) {
 	if !strings.Contains(plan, "Amended by `docs/outer-loop-escalation`") {
 		t.Errorf("%s: O14 is not re-scoped to read the ladder", soPlan)
 	}
+	// The amendment is restated in two summaries that sit far from the row it
+	// changes, and each restatement needs its own pointer: a reader who lands
+	// on the summary instead of the row otherwise takes the retired key for the
+	// live threshold.
+	if !strings.Contains(plan, "**replaced by D2032 of `docs/outer-loop-escalation`, and the key was never built: O14's note below says how**") {
+		t.Errorf("%s: the D1244-D1247 decisions-summary row still presents the retired key as the threshold", soPlan)
+	}
+	if !strings.Contains(rec, "`docs/outer-loop-escalation` (D2032), and `orchestrator.triage_after` was never built") {
+		t.Errorf("%s: the BF2 summary paragraph still presents the retired key as the threshold", soReconciled)
+	}
 	if strings.Contains(readme, "triage_after") {
 		t.Errorf("%s: the README still names the retired key as the threshold a run fires on", soReadme)
 	}
