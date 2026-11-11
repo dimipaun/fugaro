@@ -326,16 +326,15 @@ export function createVoiceSession({
    * would not stop is a microphone that may still be open, and it is no reason
    * to leave the port running -- the foreground service and the Live Activity --
    * for a session this module has already reported as over.
+   *
+   * The stop is queued with every other screen call, so a resume whose `start()`
+   * is still in flight when the session ends cannot land after it.
    */
   function startTeardown(reason) {
     if (closing) return teardown;
     closing = true;
     teardown = (async () => {
-      try {
-        await screen.stop();
-      } catch {
-        failure = failureFor(SESSION_CODES.END_FAILED);
-      }
+      await closeTheMicrophone(SESSION_CODES.END_FAILED);
       if (begun) {
         try {
           await native.end(reason);
@@ -352,18 +351,19 @@ export function createVoiceSession({
   }
 
   /**
-   * Close the microphone for §4's pause, and record it if it will not close.
+   * Close the microphone, and record it if it will not close.
    *
    * A rejection here is a microphone that may still be open, so it is not
-   * swallowed; it is not §5's `error` event either, which would end the session
-   * a pause is not ending. The caller reads it off the snapshot.
+   * swallowed; it is not §5's `error` event either, which would end a session
+   * that a pause is not ending. The caller reads it off the snapshot, and the
+   * code says which of the two reasons it was.
    */
-  function closeTheMicrophone() {
+  function closeTheMicrophone(code) {
     return queueScreenWork(async () => {
       try {
         await screen.stop();
       } catch {
-        failure = failureFor(SESSION_CODES.PAUSE_FAILED);
+        failure = failureFor(code);
       }
     });
   }
@@ -383,10 +383,17 @@ export function createVoiceSession({
    * Run one screen call behind whatever screen call is already in flight, and
    * keep it where `settle` waits for it.
    *
-   * A pause and the resume that ends it can arrive while the first call is still
-   * running -- P3.4's `stop()` and `start()` both answer asynchronously -- and
-   * the order they were asked for is the order the microphone has to see, so the
-   * second waits for the first rather than racing it.
+   * Every screen call a pause, a resume or a teardown makes goes through here,
+   * the teardown's `stop()` included. A pause and the resume that ends it can
+   * arrive while the first call is still running -- P3.4's `stop()` and `start()`
+   * both answer asynchronously -- and so can a hang-up, which is the teardown's
+   * `stop()`. The order they were asked for is the order the microphone has to
+   * see: a resume whose `start()` is still in flight when the session ends would
+   * otherwise open the microphone *after* the teardown that closed it, and the
+   * session would be over with nothing left that could close it. (`start()`'s
+   * own opening of the screen is the one call that is not queued here: it is the
+   * session's first, it is the caller's to await, and a refusal is that caller's
+   * answer rather than a failure on the snapshot.)
    */
   function queueScreenWork(work) {
     const previous = screenWork;
@@ -413,7 +420,7 @@ export function createVoiceSession({
    * -- reach neither the screen nor the microphone.
    */
   function followThePause(before, after) {
-    if (LIVE.includes(before) && PAUSED.includes(after)) closeTheMicrophone();
+    if (LIVE.includes(before) && PAUSED.includes(after)) closeTheMicrophone(SESSION_CODES.PAUSE_FAILED);
     else if (PAUSED.includes(before) && LIVE.includes(after)) openTheMicrophone();
   }
 
@@ -551,11 +558,7 @@ export function createVoiceSession({
       // went on to open is closed here, after the start it raced, and the caller
       // is told the session did not start.
       if (OVER.includes(current.state)) {
-        try {
-          await screen.stop();
-        } catch {
-          failure = failureFor(SESSION_CODES.END_FAILED);
-        }
+        await closeTheMicrophone(SESSION_CODES.END_FAILED);
         await settle();
         return refuse(SESSION_CODES.START_FAILED);
       }
@@ -563,7 +566,7 @@ export function createVoiceSession({
       // this start opened and a session that must not be listening: the pause
       // closed a screen that had not started yet.
       if (PAUSED.includes(current.state)) {
-        closeTheMicrophone();
+        closeTheMicrophone(SESSION_CODES.PAUSE_FAILED);
         await settle();
         return apply({ type: 'started' });
       }

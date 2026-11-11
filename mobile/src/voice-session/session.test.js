@@ -180,6 +180,9 @@ function lockedClient() {
  * The screen is handed on wrapped in one counted method: P1.2's `releaseLease`
  * on a lease that is already back is a no-op, so the *count* is the only way
  * "the lease goes back exactly once" can be seen.
+ *
+ * @param {number} [options.holdScreenStartAfter] how many of the screen's starts
+ *   to let through before `holdScreenStart` holds them (0: every one)
  */
 function harness({
   refuseStart = false,
@@ -192,6 +195,7 @@ function harness({
   holdEnd = null,
   holdSetMuted = null,
   holdScreenStart = null,
+  holdScreenStartAfter = 0,
   client = null,
 } = {}) {
   const audioIn = new FakeAudioIn();
@@ -216,6 +220,7 @@ function harness({
     switch: INTERRUPT_SWITCH.ON,
   });
   let releases = 0;
+  let screenStarts = 0;
   const screen = {
     ...built,
     releaseLease: () => {
@@ -224,9 +229,12 @@ function harness({
     },
     // P3.4's pipeline opens the microphone behind this, so holding or refusing
     // it is how the window between `native.start()` answering and the
-    // microphone being open is put in a test's hands.
+    // microphone being open is put in a test's hands. `holdScreenStartAfter`
+    // lets the session's own start through first, which is what a *resume*
+    // needs: the start under test is the one the resume makes.
     start: async () => {
-      if (holdScreenStart !== null) await holdScreenStart.promise;
+      screenStarts += 1;
+      if (holdScreenStart !== null && screenStarts > holdScreenStartAfter) await holdScreenStart.promise;
       if (refuseScreenStart) throw new Error('the capture path would not start');
       return built.start();
     },
@@ -609,6 +617,34 @@ test('a session that ends while the microphone is opening closes it again', asyn
   assert.deepEqual(await begun, { ok: false, code: SESSION_CODES.START_FAILED, field: null });
   assert.equal(h.audioIn.running(), false, 'the microphone the raced start opened is closed again');
   assert.equal(h.session.state().state, 'ended');
+});
+
+test('a resume racing a hang-up does not leave the microphone open', async () => {
+  // A route pause resumes on an explicit action, and the screen's start is
+  // asynchronous. A hang-up arriving while that start is in flight is the same
+  // shape as the windows above -- except that here the two screen calls are on
+  // different paths, so the teardown's `stop()` has to be ordered behind the
+  // resume's `start()` rather than racing it: otherwise the start lands last and
+  // the session is over with the microphone open.
+  const opening = gate();
+  const h = harness({ holdScreenStart: opening, holdScreenStartAfter: 1 });
+  await h.session.start();
+  await h.session.dispatch({ type: 'routeChanged', route: 'speaker', unsafe: true });
+  assert.equal(h.session.state().state, 'paused_route');
+  assert.equal(h.audioIn.running(), false, 'the pause closed it');
+
+  const resuming = h.session.resume();
+  await settle();
+  assert.equal(h.audioIn.running(), false, 'the resume is still opening the microphone');
+
+  const ending = h.session.hangUp();
+  await settle();
+  opening.open();
+  await resuming;
+  await ending;
+
+  assert.equal(h.session.state().state, 'ended');
+  assert.equal(h.audioIn.running(), false, 'the microphone the raced resume opened is closed again');
 });
 
 test('a pause that arrives while the microphone is opening leaves it closed', async () => {
