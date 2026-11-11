@@ -19,7 +19,7 @@ func TestUpgradeSkill(t *testing.T) {
 		"The handed-over command stays theirs.",
 		"never look for a flag or another command that would let this session apply those writes",
 		"Never edit `.claude/settings.json`", "brew upgrade dimipaun/tap/fugaro", "restart",
-		"Exit 1 means something is stale", "never pass `--allow-fork`",
+		"Exit 1 means something is stale", "you never change which marketplace this machine trusts",
 		"Nothing in this skill's frontmatter can limit which commands it runs: the three-command rule above is an instruction, not a permission, and the user's own Claude Code permission settings are what bound it.",
 	} {
 		if !strings.Contains(skill, want) {

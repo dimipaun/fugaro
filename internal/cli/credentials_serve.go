@@ -1071,16 +1071,25 @@ func credentialsHTTPServer(ctx context.Context, h http.Handler, errw io.Writer) 
 // non-zero exit from a revision the platform is replacing anyway is a log
 // line that says a healthy shutdown failed.
 func serveUntilStop(ctx context.Context, ln net.Listener, srv *http.Server, errw io.Writer) error {
+	return serveUntilStopAs(ctx, ln, srv, errw, "credentials service")
+}
+
+// serveUntilStopAs is serveUntilStop with the process's own name in the lines
+// it writes, for the second process that serves over the same host shape (the
+// intake, intake_serve.go): the two revisions' logs are one stream in Cloud
+// Logging, and a line that called both of them the credentials service would
+// be an operator reading the wrong process.
+func serveUntilStopAs(ctx context.Context, ln net.Listener, srv *http.Server, errw io.Writer, name string) error {
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ln) }()
-	fmt.Fprintf(errw, "credentials service: listening on %s\n", ln.Addr())
+	fmt.Fprintf(errw, "%s: listening on %s\n", name, ln.Addr())
 	select {
 	case err := <-done:
 		// Serve returned on its own: the listener failed or was closed under
 		// it. Either way the service is not serving, and the process must not
 		// pretend otherwise.
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return remote(fmt.Errorf("the credentials service stopped: %w", err))
+			return remote(fmt.Errorf("the %s stopped: %w", name, err))
 		}
 		return nil
 	case <-ctx.Done():
@@ -1088,7 +1097,7 @@ func serveUntilStop(ctx context.Context, ln net.Listener, srv *http.Server, errw
 	shutCtx, cancel := context.WithTimeout(context.Background(), serveShutdownGrace)
 	defer cancel()
 	if err := srv.Shutdown(shutCtx); err != nil {
-		fmt.Fprintf(errw, "credentials service: shutdown did not drain every call in %s: %v\n", serveShutdownGrace, err)
+		fmt.Fprintf(errw, "%s: shutdown did not drain every call in %s: %v\n", name, serveShutdownGrace, err)
 	}
 	return nil
 }

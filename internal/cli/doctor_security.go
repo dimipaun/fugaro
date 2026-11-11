@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
@@ -12,9 +13,9 @@ import (
 // The security list in force, as doctor says it (F11, D1513): which patterns a
 // run of this repository escalates on, how many of them the engine's floor
 // holds and how many a project layer or the repository wrote, and the one
-// thing about that list the reader has to fix — a written row that matches
-// nothing in the base, which escalates nothing and so does not do what its
-// author thinks (D1503's second half).
+// thing about that list the reader has to fix — a row this repository's own
+// file wrote that matches nothing in the base, which escalates nothing and so
+// does not do what its author thinks (D1503's second half).
 //
 // Counts and names, never a value: a pattern is a path glob the reader wrote
 // in their own config, so doctor prints it back the way it prints any other
@@ -33,7 +34,12 @@ import (
 // most repositories do not have (internal/creds/**, mobile/**), so measuring it
 // would put a finding on nearly every screen in a repository with nothing wrong
 // in it — and the reader could not repair it, since the floor is not theirs to
-// edit. A row a person wrote is the row a person can fix.
+// edit. The project layer's rows are in the same state for the same reason: the
+// layer is shared by every repository of the project, so a row naming a tree
+// this repository does not have is the ordinary case, and the fix the finding
+// asks for — drop the row — would take it away from the repository that does
+// have that tree. A row this repository's own file wrote is the row its reader
+// can fix.
 const (
 	doctorSecurityID       = "security-list"
 	doctorSecurityUnusedID = "security-list-unused"
@@ -41,33 +47,81 @@ const (
 
 // doctorSecurityChecks is the check doctor runs in a checkout: the list in
 // force there, and the written row that matched nothing in its base.
+//
+// The two written layers are read offline and at the base branch (D1518): the
+// repository's own rows out of its fugaro.yaml at the default branch's ref, and
+// the project layer's out of this machine's cached copy of the published layer
+// (modelsLayer). A project layer's rows are missing from the count in two states,
+// which this check cannot tell apart from a project that wrote none: this machine
+// holds no cached layer for the project, or the cached one is not the base file's
+// — a layer applies only to a file that names its project and gcp_project
+// (config.ProjectLayer.Applies, the rule a run's ResolveConfig decides Applied
+// by), and counting the rows of a layer no run of this checkout applies would
+// report a list in force that is not the run's. Neither state is doctor's to
+// leave unsaid, and neither is said here: doctor is an offline read (SC4), the
+// first is the floor's own count moving, and the `project-layer` line beside this
+// one is where a layer's state is reported (doctorLayerChecks: "no project layer
+// applies to this checkout" is what an unanchored file gets).
+//
+// A row the matcher refuses is not in the count either: securityBaseFile drops
+// it before this check sees the block, so that measuring a written row against
+// the base's tree cannot be made to cost what the row's own text costs
+// (securityMatchable, and sensitivity.Match's own note). The file that writes one
+// is the `fugaro-yaml` line's subject, over the working copy's file — and a
+// base-branch file that differs from it is `fugaro security paths`' to report,
+// which names the row and sensitivity.Pattern.Validate's reason. This check says
+// nothing about it rather than measuring a row no run holds.
 func doctorSecurityChecks(ctx context.Context, root string) []doctorCheck {
-	// Slice 1 (D1519): the list in force is the engine's floor alone — the
-	// keys that write a list exist and are validated, and no run reads one yet
-	// — so nothing is written and no base is read. SC9 re-points this at
-	// config.SecurityPatterns' one resolution, which is where the project's and
-	// the repository's rows come from; the closure below is what reads the base
-	// then.
-	return doctorSecurityListChecks(sensitivity.Floor(), nil, func() (string, []string) {
-		ref := defaultBranchRef(ctx, root)
-		paths, ok := doctorSecurityBaseTree(ctx, root, ref)
-		if !ok {
-			return "", nil
-		}
-		return ref, paths
-	})
+	return doctorSecurityListChecks(
+		func() (*config.Security, *config.ProjectLayer) {
+			ref := defaultBranchRef(ctx, root)
+			if ref == "" {
+				return nil, nil
+			}
+			project, gcpProject, own, _, reason := securityBaseFile(ctx, root, ref)
+			if reason != "" {
+				// The repository's own file is not one this reader can read, or
+				// writes a block no run holds: there are no rows of the
+				// repository's, and no project to read a layer for either, so the
+				// list in force is the floor.
+				return nil, nil
+			}
+			// The cached layer is read by project name, and a run applies a layer
+			// only to a file whose project: and gcp_project: are the layer's own
+			// (config.ProjectLayer.Applies, the rule ResolveConfig's Applied is):
+			// counting a layer this base file does not anchor to would report rows
+			// in the list in force that no run of this checkout escalates on.
+			layer := modelsLayer(project)
+			if !layer.Applies(project, gcpProject) {
+				return own, nil
+			}
+			return own, layer
+		},
+		func() (string, []string) {
+			ref := defaultBranchRef(ctx, root)
+			paths, ok := doctorSecurityBaseTree(ctx, root, ref)
+			if !ok {
+				return "", nil
+			}
+			return ref, paths
+		})
 }
 
-// doctorSecurityListChecks is the check over a list in force: floor is the
-// engine's rows, written the project's and the repository's, and baseTree
-// answers the base branch's ref and its committed paths — lazily, since a list
-// nothing was written to has no row of the reader's to measure and costs no
-// git read at all. An answer of no ref at all — a checkout with no default
-// branch, or a tree this checkout could not read — says the floor alone: there
-// is no tree to measure a row against, and a finding nobody can check is worse
-// than none.
-func doctorSecurityListChecks(floor, written []sensitivity.Pattern, baseTree func() (string, []string)) []doctorCheck {
-	out := []doctorCheck{doctorSecurityInForce(floor, written)}
+// doctorSecurityListChecks is the check over the list in force: layers answers
+// the two lists a person wrote — the repository's own block and the project
+// layer, either of which may be nil — and baseTree answers the base branch's ref
+// and its committed paths. Both are lazy, and the tree listing is the one that
+// has to be: a list nothing was added to carries no row of the reader's to
+// measure, so it costs no git read over the base at all.
+//
+// An answer of no ref at all — a checkout with no default branch, or a tree this
+// checkout could not read — says the floor alone: there is no tree to measure a
+// row against, and a finding nobody can check is worse than none.
+func doctorSecurityListChecks(layers func() (*config.Security, *config.ProjectLayer), baseTree func() (string, []string)) []doctorCheck {
+	own, layer := layers()
+	list := config.SecurityPatterns(own, layer).List()
+	out := []doctorCheck{doctorSecurityInForce(list)}
+	written := doctorSecurityWritten(list)
 	if len(written) == 0 {
 		return out
 	}
@@ -93,13 +147,37 @@ func doctorSecurityListChecks(floor, written []sensitivity.Pattern, baseTree fun
 	return append(out, doctorSecurityUnused(unused, ref))
 }
 
+// doctorSecurityWritten is the rows of the list in force this reader can fix, in
+// the list's own order: the repository's own, and no other layer's. The floor's
+// rows are not the reader's to edit, and a project layer's row is not either: it
+// is shared by every repository of the project, and the fix this finding asks
+// for — drop the row — would take it away from the repositories that do have the
+// tree it names. Both layers are counted by the line beside this one and neither
+// is measured (D1503's finding is over a row written for the tree it is measured
+// against).
+func doctorSecurityWritten(list config.SecurityList) []sensitivity.Pattern {
+	var written []sensitivity.Pattern
+	for _, row := range list {
+		if row.Source == config.SecuritySourceRepo {
+			written = append(written, row.Pattern)
+		}
+	}
+	return written
+}
+
 // doctorSecurityInForce is the measurement: the list in force by counts, and
-// where each count comes from. The project's rows and the repository's are one
-// count here, because slice 1 can hold rows from neither: SC9 takes the one
-// resolution's per-layer lists and gives each its own.
-func doctorSecurityInForce(floor, written []sensitivity.Pattern) doctorCheck {
-	problem := fmt.Sprintf("the security list in force is %s: %s from the engine's floor, and %s written by this project or by this repository",
-		doctorSecurityPatternCount(len(floor)+len(written)), doctorSecurityPatternCount(len(floor)), doctorSecurityPatternCount(len(written)))
+// where each count comes from. The floor's rows and the two layers' are three
+// counts rather than one, because a reader who is missing a whole layer's rows —
+// a project whose layer this machine holds no cached copy of — has to be able to
+// see the count that would have moved.
+func doctorSecurityInForce(list config.SecurityList) doctorCheck {
+	count := map[config.SecuritySource]int{}
+	for _, row := range list {
+		count[row.Source]++
+	}
+	problem := fmt.Sprintf("the security list in force is %s: %s from the engine's floor, %s written by this project's layer, and %s written by this repository",
+		doctorSecurityPatternCount(len(list)), doctorSecurityPatternCount(count[config.SecuritySourceFloor]),
+		doctorSecurityPatternCount(count[config.SecuritySourceProject]), doctorSecurityPatternCount(count[config.SecuritySourceRepo]))
 	return doctorCheck{
 		ID:       doctorSecurityID,
 		OK:       true,
@@ -109,8 +187,8 @@ func doctorSecurityInForce(floor, written []sensitivity.Pattern) doctorCheck {
 	}
 }
 
-// doctorSecurityUnused is D1503's finding: the rows a person wrote that no
-// path in ref matches.
+// doctorSecurityUnused is D1503's finding: the rows this repository wrote that
+// no path in ref matches.
 func doctorSecurityUnused(rows []sensitivity.Pattern, ref string) doctorCheck {
 	names := make([]string, len(rows))
 	for i, r := range rows {

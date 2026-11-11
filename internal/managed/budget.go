@@ -29,14 +29,21 @@ import (
 //
 // That is why this read REFUSES rather than compares. The apply gate Task 3.1
 // ships closed opens — and only opens — when the project's creation fact was
-// read and it records an amount and a currency. A managed project whose
-// creation recorded no amount (the marker's version 1: a creation before Task
-// 4.2, or one that was not managed), a marker that cannot be read, one this
-// build cannot parse, one of a version it does not know and one naming another
-// project all leave the gate closed, each with its own sentence. Every failure
-// is a refusal and never a fall-through: nothing here reads a missing amount
-// as an unlimited one, and nothing here falls back to the old behaviour, which
-// was to apply with no budget control at all.
+// read and it answers with an amount and a currency: a marker that cannot be
+// read, one this build cannot parse, one of a version it does not know, one
+// naming another project and a project that is not managed at all all leave the
+// gate closed, each with its own sentence. Every one of those failures is a
+// refusal and never a fall-through: nothing here reads a missing amount as an
+// unlimited one, and nothing here falls back to the old behaviour, which was to
+// apply with no budget control at all.
+//
+// The one case D1545 takes is the managed creation fact that records no amount
+// (the marker's version 1): the project IS managed, so the read answered the
+// question it was asked, and what is missing is only the evidence that the
+// owner chose a budget — which the owner can add at their own terminal. That
+// case opens the gate with a WARNING (Enable.warning) rather than a refusal,
+// because D1545 makes the managed gate audit-only for what a plan contains and
+// this is the same kind of finding: recorded and told, not stopped.
 //
 // The read itself is not made here. It is internal/infra/managed.ReadBudget —
 // the same read as IsManaged, over the same object and the same project-number
@@ -117,10 +124,13 @@ type BudgetRead struct {
 //
 // The order of the cases is the order of the reads: an error first (a read
 // that did not answer is not an apply), then the amount itself — which is what
-// opens the gate and the only thing that does — then the two ways of having no
-// amount. Every branch returns a closed Enable, so there is no path through
-// this function that opens the gate on anything but a read that answered with
-// a usable pair.
+// opens the gate on the evidence the owner chose a budget — then the two ways
+// of having no amount. Every branch but the last returns a closed gate: a read
+// that errored, a recorded figure the marker's own rule refuses, and a project
+// that is not managed. The last is D1545's one exception — a managed creation
+// fact that records no amount, which opens the gate with a warning instead
+// (Enable.Warning, printed by Apply and carried on Result), because the project
+// is managed and only the evidence of a chosen budget is missing.
 func ApplyGate(r BudgetRead) (Enable, error) {
 	b := Budget{Amount: r.Amount, Currency: r.Currency}
 	switch {
@@ -157,16 +167,22 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 		// Managed, and the creation fact records no amount: the marker's
 		// version 1, which is a creation before Task 4.2 or a creation that
 		// was not managed (an ordinary `fugaro setup --create-project`, whose
-		// WriteMarker call passes no budget). The sentence says what is true
-		// in this release, and since Task 6.1 there IS a way for such a
-		// project to get an amount: the owner's own command, at their own
-		// terminal, which replaces this marker's version-1 fact with the one
-		// that records the amount the owner states (managed.WriteFlag).
+		// WriteMarker call passes no budget). D1545 takes this case with a
+		// WARNING rather than a refusal: the read answered that the project is
+		// managed, and what it lacks is the evidence that the owner chose a
+		// budget — which the owner can add at their own terminal — so the apply
+		// proceeds, the gate opens with the warning, and the session reads what
+		// the project is missing and what its owner can do about it (Apply
+		// prints Enable.Warning, and Result carries it). The other cases above
+		// are unchanged: a read that errored, an invalid recorded figure and a
+		// project that is not managed all still leave the gate closed, so the
+		// fail-closed direction is kept for every failure that is not this one.
 		reason := safetext.Field(r.Reason)
 		if reason == "" {
 			reason = "the creation fact records no amount"
 		}
-		return Enable{}, fmt.Errorf("%w: %s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC`, typed at their own terminal, which replaces this creation fact with the version that records the amount — or a managed project is created with one: `fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID`",
-			ErrNotEnabled, safetext.Field(r.Project), reason)
+		warning := fmt.Sprintf("%s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC`, typed at their own terminal, which replaces this creation fact with the version that records the amount — or a managed project is created with one: `fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID`; this apply proceeds on that warning and keeps no audit record of it",
+			safetext.Field(r.Project), reason)
+		return Enable{read: true, warning: warning}, nil
 	}
 }

@@ -238,8 +238,8 @@ of the markers above it is an agent's session like theirs, and a pipe, --json,
 --non-interactive and --yes behave exactly as they did. A run that writes this
 machine's local config from an installation that already exists (fugaro
 update on a new machine) changes nothing in the cloud in the same run (the
-local config and, in a checkout, the plugin wiring in .claude/settings.json
-are the only files it writes).
+local config and, in a checkout, the plugin installed in your own Claude Code
+at user scope are all it writes).
 
 In a checkout of a repository of this project, the converge's secrets stage
 asks, at hidden prompts, for the secrets its jobs mount (the git credential,
@@ -277,11 +277,12 @@ flag). Marking any other project the owner runs an installation in is fugaro
 managed flag's. An ID that already exists and was not created by fugaro
 setup, or that is pending deletion, is refused.
 
-The plugin-wiring stage merges the Fugaro marketplace and plugin into the
-checkout's .claude/settings.json, pinned to this release's tag, after showing
-the diff and asking (--yes confirms it); see update-skills. The repository
-stage runs setup --repo for the checkout, after the secrets, when its
-origin's default branch (origin/HEAD, main or master, as last fetched) has a
+The plugin stage installs or updates the Fugaro plugin in your own Claude Code,
+at user scope, through the claude CLI, and writes nothing in the checkout: the
+merge of the marketplace and the plugin into .claude/settings.json is deleted
+(D949); see update-skills. The repository stage runs setup --repo for the
+checkout, after the secrets, when its origin's default branch (origin/HEAD,
+main or master, as last fetched) has a
 fugaro.yaml naming this project (else it is skipped and says why); it asks
 once for the GitHub App's ID of a GitHub repository (or take --github-app-id)
 and keeps its own confirmations, the first image build's included.

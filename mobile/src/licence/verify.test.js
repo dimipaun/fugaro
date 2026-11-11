@@ -728,6 +728,28 @@ function importSpecifiers(text) {
 /** The modules a verifier could phone home through. */
 const NETWORK_MODULES = ['node:http', 'node:http2', 'node:https', 'node:net', 'node:tls', 'node:dns', 'node:dgram'];
 
+/** exportedNames lists the names a module's EXPORT STATEMENTS hand out: the
+ * name a re-export list gives a caller (`export { a as b }` hands out `b`) and
+ * a declaration's own (`export function f`). It reads statements and not words,
+ * like the class scan at the end of this section and for its reason: this
+ * module's prose names the very exports it is about. */
+function exportedNames(text) {
+  const names = new Set();
+  for (const match of text.matchAll(
+    /^\s*export\s+(?:\{([^}]*)\}|(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*))/gm,
+  )) {
+    if (match[2] !== undefined) {
+      names.add(match[2]);
+      continue;
+    }
+    for (const one of match[1].split(',')) {
+      const name = one.trim().split(/\s+as\s+/).pop();
+      if (name !== '') names.add(name);
+    }
+  }
+  return names;
+}
+
 test('the primitive imports nothing at all, so it reaches no network, no clock and no environment', () => {
   // The property the app's suite rests on (`mobile/README.md`, "Running the
   // tests"): no test imports a package, so a single import here would need an
@@ -761,13 +783,18 @@ test('the door names one package and its own two files, and the package is the E
   // The suite never loads this file, so nothing here is a claim a test can make
   // by running it -- the scan is the claim.
   assert.deepEqual(specifiers.filter((specifier) => !specifier.startsWith('.')), ['@noble/curves/ed25519.js']);
-  // The two files the door is the door TO: the verifier (S2.5) and the store
-  // (S2.8), and each is named where it belongs -- the store once for the factory
-  // and once for the names it re-exports. The set is exact on purpose -- a third
-  // module reached through the door is a decision, and this is where it is made.
+  // The three files the door is the door TO: the verifier (S2.5), the store
+  // (S2.8) and the lapse state (S6.3). The set is exact on purpose -- a module
+  // reached through the door is a decision, and this is where it is made -- and
+  // the third was taken deliberately, not slipped in: S6.3's screens need the
+  // five states' names, the refusal code and its sentence (the banners of §5.3
+  // to §5.5 and the copy of §5.7), while the write path's rules -- the classes,
+  // the kept set, the refusal functions -- stay OUT of the door, so that nothing
+  // a screen can reach could enforce a lapse of its own (`index.js` states that
+  // rule and why; this line is what holds the file to it).
   assert.deepEqual(
     [...new Set(specifiers.filter((specifier) => specifier.startsWith('.')))].sort(),
-    ['./store.js', './verify.js'],
+    ['./state.js', './store.js', './verify.js'],
   );
   assert.deepEqual(specifiers.filter((specifier) => NETWORK_MODULES.includes(specifier)), []);
   assert.equal(/\bprocess\.env\b/.test(INDEX_SOURCE), false, 'the door reads no environment either');
@@ -819,4 +846,48 @@ test('the door hands out a store bound to this build’s verifier, and not the c
   assert.equal(exportsTheClass("export { LICENCE_KEYS_MAX, LicenceStore } from './store.js';"), true, 'the scan must catch a re-export');
   assert.equal(exportsTheClass('export class LicenceStore {}'), true, 'and a class declared here');
   assert.equal(exportsTheClass(INDEX_SOURCE), false, 'the door exports no class that takes a verifier');
+});
+
+/** The write path's own vocabulary in `state.js` (S6.3; D436, T12): the write
+ * classes, the kept set, the two refusal functions and the classification. The
+ * door hands out none of them, and the test below is where that is held. */
+const RULE_EXPORTS = ['WRITES', 'LAPSE_KEPT_WRITES', 'lapseRefusal', 'lapseRefusalAt', 'writeOf'];
+
+test('the door hands out the state’s names and none of the write path’s rules', () => {
+  // The other withheld set, held the way the store's class above is. The
+  // paragraph in `index.js` names these five and says why they stay out -- a
+  // screen that could call `lapseRefusal` could enforce a lapse of its own,
+  // beside the one write path D113 says every utterance leaves through, which
+  // is the thing an enforcement outside it stops being -- and this is the half
+  // of that paragraph the specifier scan above cannot hold: a re-export of a
+  // rule changes no specifier, and the door's own `./state.js` is not the
+  // `licence/state.js` specifier the mailbox scan forbids. A name nothing
+  // checks is a name a later change hands out.
+  const exported = exportedNames(INDEX_SOURCE);
+  // The reader is proved before it is trusted: on a plant, and on the two
+  // shapes a rule would arrive in (a re-export list, and a declaration or a
+  // rename). An empty set must not be able to answer for a closed door.
+  assert.deepEqual(
+    [...exportedNames("export { lapseRefusal } from './state.js';\n")],
+    ['lapseRefusal'],
+    'the scan must catch a re-exported rule',
+  );
+  assert.deepEqual(
+    [...exportedNames('export const writeOf = 1;\nexport { WRITES as writes };\n')],
+    ['writeOf', 'writes'],
+    'the scan must read a declaration, and the name a rename hands out',
+  );
+  // And the same reader finds the four names the screens DO get, so the
+  // absences below are the file's answer and not the reader's silence.
+  for (const name of ['LICENCE_STATES', 'LICENCE_STATE_CODES', 'createLicenceState', 'licenceSpeech']) {
+    assert.equal(exported.has(name), true, `the door hands out ${name}: the screens need it`);
+  }
+  for (const name of RULE_EXPORTS) {
+    assert.equal(exported.has(name), false, `the door hands out ${name}: a screen could decide a lapse of its own`);
+  }
+  // `export * from './state.js'` hands out all five without naming one, and
+  // leaves the specifier set exactly what it was. So the wholesale form is
+  // refused by name too.
+  assert.equal(/^\s*export\s*\*/m.test("export * from './state.js';"), true, 'the scan must catch a wholesale re-export');
+  assert.equal(/^\s*export\s*\*/m.test(INDEX_SOURCE), false, 'the door re-exports no module wholesale');
 });

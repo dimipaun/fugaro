@@ -632,6 +632,88 @@ func TestRetentionKeepsStateUnderTheCap(t *testing.T) {
 	}
 }
 
+// TestRetentionKeepsTheDecisionsTheCountReads pins the window retention
+// protects to the window the call count reads, at the boundary where the two
+// can part. A resolved decision is un-evictable because the count is derived
+// from the decisions the document carries (countedDecision), so what retention
+// may drop is exactly what DecisionCalls already ignores — the day now falls
+// in, whose first instant belongs to it. A window that started later, or a
+// rolling one of a different length, would let retention drop a decision the
+// daily cap still counts: the count falls with it, and the loop is handed
+// calls the cap has already spent.
+//
+// Mutation: read RetentionWindow again instead of the day and the decision
+// from just before midnight is protected, so it is still there when the drop
+// assertion runs; move the boundary to dayStart(now)+1h and the decision at
+// midnight goes with the earlier one, which the survival assertion catches
+// before the count equality below can.
+func TestRetentionKeepsTheDecisionsTheCountReads(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	midnight, hour := now.Truncate(24*time.Hour), now.Truncate(time.Hour)
+	answered := func(id string, at time.Time) orchestrator.Decision {
+		return orchestrator.Decision{
+			ID:         id,
+			Question:   strings.Repeat("q", orchestrator.MaxQuestionRunes),
+			WaitingOn:  orchestrator.OnPerson,
+			At:         at,
+			Answer:     strings.Repeat("a", orchestrator.MaxAnswerRunes),
+			By:         orchestrator.Person,
+			ResolvedAt: ptr(at.Add(time.Second)),
+		}
+	}
+
+	s := stateWithAQueuedItem(t, now)
+	s.Decisions = []orchestrator.Decision{
+		// The newest decision the day's count leaves out, and the oldest one it
+		// reads: midnight itself is inside the day, a second earlier is not. The
+		// first is the room retention may spend, the second is off limits.
+		answered("ask-just-before", midnight.Add(-time.Second)),
+		answered("ask-midnight", midnight),
+		answered("ask-this-hour", hour),
+		{
+			ID: "ask-open", Question: "does the sweep keep its own script?",
+			WaitingOn: orchestrator.OnPerson, At: now.Add(-time.Minute),
+		},
+	}
+	long := strings.Repeat("filler ", 250)
+	for i := range 12 {
+		w := workItemOf(intentItemID(i))
+		w.Phase = orchestrator.PhaseDone
+		w.Brief = long
+		s.WorkItems = append(s.WorkItems, w)
+	}
+	s.Facts = map[string]orchestrator.Fact{}
+	for i := range orchestrator.MaxFacts {
+		s.Facts[factKey(i)] = orchestrator.Fact{Value: strings.Repeat("v", orchestrator.MaxFactValueRunes), By: orchestrator.Daemon}
+	}
+	if !orchestrator.OverCap(s) {
+		t.Fatalf("the state this test built is %d bytes and inside the target, so retention has nothing to do", stateBytes(t, s))
+	}
+
+	// The count first, on its own side of the boundary: midnight is read, a
+	// second before it is not, and the open question is counted like any other
+	// decision — the count bounds the money rather than the answers.
+	if got := orchestrator.DecisionCalls(s, now); got.DecisionsDay != 3 || got.DecisionsHour != 1 {
+		t.Fatalf("the call counts are %+v, want 3 today (midnight, this hour, the open question) and 1 in the hour", got)
+	}
+
+	kept := orchestrator.Retain(s, now)
+	if _, ok := kept.Decision("ask-just-before"); ok {
+		t.Error("retention kept a decision from before the day the count reads, which is the room the node needed")
+	}
+	for _, id := range []string{"ask-midnight", "ask-this-hour", "ask-open"} {
+		if _, ok := kept.Decision(id); !ok {
+			t.Fatalf("retention dropped %s, and making room must never take a decision the count reads", id)
+		}
+	}
+	if want, got := orchestrator.DecisionCalls(s, now), orchestrator.DecisionCalls(kept, now); want != got {
+		t.Fatalf("retention moved the call counts from %+v to %+v, and making room must never raise what a cycle has left", want, got)
+	}
+	if _, err := orchestrator.EncodeState(kept); err != nil {
+		t.Fatalf("the state retention produced is not one this release reads back: %v", err)
+	}
+}
+
 // TestRetentionNeverStrandsADependency is what keeps the state retention
 // produces one this release reads back. A work item names its dependencies by
 // id, and the validator refuses a document whose item names an item that is

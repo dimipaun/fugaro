@@ -419,6 +419,48 @@ type AuthConfig struct {
 	// refused (the owner's answer of 2026-11-09 to D1938, on F31's fail-closed
 	// reading).
 	LauncherAccounts []string
+	// OrchestratorAccounts are the identities admitted as the orchestrator
+	// daemon class (E16, D2049): the accounts that may ask this service for a
+	// gated merge token, and nothing else. They are service accounts — the
+	// daemon's own identity and never a person's — and the class exists because
+	// the merge credential had no route at all: a run holds no App key (C2.2),
+	// and the one credential a local daemon could otherwise reach is the
+	// operator's own, which is exactly the credential a coding-agent session on
+	// the same machine holds (F28).
+	//
+	// What the class is, precisely, is one list read by one entry point
+	// (VerifyOrchestrator) against a token minted for THIS SERVICE'S OWN URL
+	// alone. The audience is half the rule and not a detail: a plain `gcloud
+	// auth print-identity-token` cannot mint for a custom audience, so the token
+	// a person's ambient credentials produce is refused here whatever list it
+	// would have been matched against, and the daemon's token is one the
+	// operator has to obtain on purpose, by impersonating the account this list
+	// names.
+	//
+	// What the class is NOT is a barrier against a coding-agent session on the
+	// daemon's own machine. The daemon runs as the operator (D1241), so an
+	// operator who may impersonate the daemon's account may do so from any
+	// process of theirs, a coding-agent session included, exactly as the
+	// verifier class's account may be impersonated. What bounds that session is
+	// the mint itself: one pull request's head, a base whose rules must bind the
+	// App, a per-repository rate and a line per act (mergemint.go). A credential
+	// the machine cannot reach at all is the owner's ruling to make (D2049's
+	// alternatives) and not this class's to claim.
+	//
+	// An entry is the same shape every other list's is — one bare `email` claim
+	// as a Google ID token spells it, matched by the same ASCII fold — and it is
+	// held to the one rule that keeps the classes apart: it may not be a person,
+	// a launcher, a job, a shared job or a review job, because the daemon is an
+	// automation of its own and an address that is already a run's would admit
+	// that run's own ID token to the merge mint, which is the credential C2.2
+	// and F28 exist to keep out of it.
+	//
+	// It is empty by default, and an empty list is a statement rather than a
+	// missing gate: an installation that runs no orchestrator daemon admits
+	// nobody, and the merge mint answers every call with the class's own
+	// refusal — which is what an installation configured by the release before
+	// this one has, and the state the route starts in.
+	OrchestratorAccounts []string
 	// CoordinatorAccount is the installation's coordinator service account: the
 	// SECOND class the Bitbucket read mint admits (BB5, B5), because the sweep
 	// is not a run of this installation and holds no run identity either.
@@ -477,6 +519,12 @@ type Authenticator struct {
 	// entry point, so no branch of Verify and no read mint consults it, which
 	// is what keeps a launcher off the run routes and off the read mints.
 	launcherAccounts map[string]string
+	// orchestratorAccounts maps a presented email, folded the same way, to the
+	// configured spelling of that account: the merge mint's one caller class
+	// (E16, D2049). Like verifierAccounts and personAccounts it is read by one
+	// entry point and by nothing else — the merge route is answered ahead of the
+	// shared parse, so no branch of Verify consults it.
+	orchestratorAccounts map[string]string
 	// coordinatorAccount is the read mint's OTHER class, folded (BB5): the
 	// installation's coordinator service account, or "" when it has none. It is
 	// the folded key alone because the spelling the identity carries is
@@ -660,31 +708,71 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 	// hold the same addresses on the ordinary installation, and the two are
 	// classes of different routes (the read mints and the grant route), which is
 	// not the overlap G4 refuses.
-	launchers := make(map[string]string, len(cfg.LauncherAccounts))
-	for _, email := range cfg.LauncherAccounts {
+	launchers, err := foldLauncherAccounts(cfg.LauncherAccounts)
+	if err != nil {
+		return nil, err
+	}
+	// The orchestrator list is read last and by the verifier list's rules: its
+	// entries are bare addresses, matched by the same fold, and a duplicate
+	// admits the same caller either way. It is deliberately NOT held to the
+	// person list's service-account rule — the daemon IS a service account,
+	// which is the whole point of the class, and the verifier list's own
+	// account has the same shape.
+	//
+	// The one rule it carries that the verifier list does not is the overlap
+	// rule, and it is one-directional on purpose: an account named here may not
+	// be one of the installation's people, its launchers, or any of the accounts
+	// that carry a run's identity — a job's, a shared job's or a review job's —
+	// because the merge mint's caller is an automation of its own and an address
+	// that is already a run's would admit that run's own ID token to a route
+	// whose whole point is that no run holds it (C2.2, F28). It may be a
+	// verifier or the coordinator: those are classes of OTHER routes, and one
+	// address admitted by two routes is not the overlap the class rule is about
+	// (G4).
+	//
+	// The person list makes the same three refusals a few lines above, for the
+	// same reason and with the same consequence: an overlap written into a
+	// deployment is read here, where the operator can see the refusal, rather
+	// than at the route, where the run's token would simply be admitted by a
+	// class it should never have been in.
+	orchestrators := make(map[string]string, len(cfg.OrchestratorAccounts))
+	for _, email := range cfg.OrchestratorAccounts {
 		folded, ok := foldEmail(email)
 		if !ok {
-			return nil, errors.New("credsvc: a launcher account is not a printable ASCII email address")
+			return nil, errors.New("credsvc: an orchestrator account is not a printable ASCII email address")
 		}
-		if strings.HasSuffix(folded, ".gserviceaccount.com") {
-			return nil, errors.New("credsvc: a launcher account is a service account address, and the launcher class is the people who launch runs")
+		if _, isPerson := people[folded]; isPerson {
+			return nil, errors.New("credsvc: an orchestrator account is also one of the installation's people, and the daemon class is an automation")
 		}
-		launchers[folded] = email
+		if _, isLauncher := launchers[folded]; isLauncher {
+			return nil, errors.New("credsvc: an orchestrator account is also one of the launchers, and the daemon class is an automation")
+		}
+		if _, isJob := accounts[folded]; isJob {
+			return nil, errors.New("credsvc: an orchestrator account is also one of the installation's job service accounts, and the daemon class is not a run")
+		}
+		if shared[folded] {
+			return nil, errors.New("credsvc: an orchestrator account is also a shared project job's service account, which Global Constraint 6 refuses whole")
+		}
+		if _, isReview := review[folded]; isReview {
+			return nil, errors.New("credsvc: an orchestrator account is also one of the review job accounts, and the daemon class is not a review")
+		}
+		orchestrators[folded] = email
 	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
 	}
 	return &Authenticator{
-		cfg:                cfg,
-		jobAccounts:        accounts,
-		sharedAccounts:     shared,
-		reviewAccounts:     review,
-		verifierAccounts:   verifiers,
-		personAccounts:     people,
-		launcherAccounts:   launchers,
-		coordinatorAccount: coordinator,
-		now:                now,
+		cfg:                  cfg,
+		jobAccounts:          accounts,
+		sharedAccounts:       shared,
+		reviewAccounts:       review,
+		verifierAccounts:     verifiers,
+		personAccounts:       people,
+		launcherAccounts:     launchers,
+		orchestratorAccounts: orchestrators,
+		coordinatorAccount:   coordinator,
+		now:                  now,
 	}, nil
 }
 
@@ -853,31 +941,10 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 // not. Every Google service account address is ASCII, so nothing a real caller
 // presents is lost by the rule.
 func (a *Authenticator) callerClaims(ctx context.Context, tok string) (map[string]any, string, error) {
-	head, claims, err := decodeJWT(tok)
-	if err != nil {
-		return nil, "", fmt.Errorf("%w: the caller's ID token is not a JWT", ErrUnverifiedJob)
-	}
-	if alg := claimString(head, "alg"); alg != "RS256" {
-		return nil, "", fmt.Errorf("%w: the caller's ID token is not signed with RS256", ErrUnverifiedJob)
-	}
-	key, err := a.cfg.JobKeys.Key(ctx, claimString(head, "kid"))
-	if err != nil {
-		if errors.Is(err, ErrUnknownKeyID) {
-			return nil, "", fmt.Errorf("%w: %w", ErrUnverifiedJob, err)
-		}
-		return nil, "", err
-	}
-	if err := verifySignature(tok, key); err != nil {
-		return nil, "", fmt.Errorf("%w: the caller's ID token's signature does not verify", ErrUnverifiedJob)
-	}
-	if iss := claimString(claims, "iss"); iss != "https://accounts.google.com" && iss != "accounts.google.com" {
-		return nil, "", fmt.Errorf("%w: the caller's ID token was not issued by Google", ErrUnverifiedJob)
-	}
-	folded, ok := foldEmail(claimString(claims, "email"))
-	if !ok {
-		return nil, "", fmt.Errorf("%w: the caller's email claim is not a service account address", ErrUnverifiedJob)
-	}
-	return claims, folded, nil
+	// The body is callerClaimsFrom's, because the intake verifies the launcher
+	// class over Google's ID-token keys alone and must run this check rather
+	// than a second spelling of it (launchers.go).
+	return callerClaimsFrom(ctx, a.cfg.JobKeys, tok)
 }
 
 // VerifyVerifier admits the caller of the verify route, or refuses it with
@@ -1072,6 +1139,52 @@ func (a *Authenticator) VerifyPersonCaller(ctx context.Context, tok string) (str
 	return account, nil
 }
 
+// VerifyOrchestrator admits the caller of the merge mint (mergemint.go, E16,
+// D2049), or refuses it with ErrUnverifiedJob (the caller is not one of the
+// installation's orchestrator accounts) or ErrUnavailable (the key set could
+// not be read). It answers the configured spelling of the address that matched,
+// which is what the audit line carries, or the empty string with an error —
+// never a partially verified caller.
+//
+// It is VerifyVerifier's mechanism against one more list and not a fourth
+// spelling of the token check: the signature, the issuer, the email fold and
+// the token's own window are the same shared code (callerClaims,
+// checkCallerToken).
+//
+// The audience is the whole of the class restriction and it is the reason this
+// entry point exists rather than a widening of the person class: this route's
+// caller mints for this service's own URL and may carry NOTHING else. A plain
+// `gcloud auth print-identity-token` mints for gcloud's own client id
+// (GcloudAudience) and cannot mint for a custom audience at all, so the token
+// an operator's ambient credentials produce — and therefore the token a
+// coding-agent session on the daemon's own machine produces — is refused here
+// before any list is consulted. What that session CAN do is impersonate the
+// account this list names, which is the residual OrchestratorAccounts states.
+//
+// It takes the caller's token directly for VerifyVerifier's reason: the merge
+// route is answered ahead of RequestFromHTTP (server.go), because the daemon
+// holds no run identity and the shared parse refuses a call that has none.
+func (a *Authenticator) VerifyOrchestrator(ctx context.Context, tok string) (string, error) {
+	now := a.now()
+	claims, folded, err := a.callerClaims(ctx, tok)
+	if err != nil {
+		return "", err
+	}
+	if err := checkCallerAudience(claims, a.cfg.Audience); err != nil {
+		return "", err
+	}
+	account, ok := a.orchestratorAccounts[folded]
+	if !ok {
+		// The reason names the class and never the address, for the reason
+		// VerifyVerifier's does.
+		return "", fmt.Errorf("%w: the caller is not this installation's orchestrator daemon, so it may not mint a merge token", ErrUnverifiedJob)
+	}
+	if err := checkCallerToken(claims, now); err != nil {
+		return "", err
+	}
+	return account, nil
+}
+
 // LauncherCaller is a verified launcher (D1938): a member of the installation
 // who may ask this service for a slip and reach the intake, answered as the
 // two facts about them the two routes key on.
@@ -1165,37 +1278,10 @@ const maxLauncherSubDigits = 21
 // another process's route entirely), so a Request is the one thing its caller
 // cannot build.
 func (a *Authenticator) VerifyLauncher(ctx context.Context, tok string) (LauncherCaller, error) {
-	now := a.now()
-	claims, folded, err := a.callerClaims(ctx, tok)
-	if err != nil {
-		return LauncherCaller{}, err
-	}
-	account, ok := a.launcherAccounts[folded]
-	if !ok {
-		// The reason names the class and never the address: it is the caller's
-		// own claim set, and the package doc's no-echo rule is that no refusal
-		// repeats what a caller presented.
-		return LauncherCaller{}, fmt.Errorf("%w: the caller is not one of this installation's launchers, so it may not be granted a slip", ErrUnverifiedJob)
-	}
-	// The audience is this class's own line, and it admits the two the person
-	// class admits (checkCallerAudience is per class for exactly this reason).
-	if err := checkCallerAudience(claims, a.cfg.Audience, GcloudAudience); err != nil {
-		return LauncherCaller{}, err
-	}
-	if err := checkCallerToken(claims, now); err != nil {
-		return LauncherCaller{}, err
-	}
-	sub, ok := launcherSub(claims)
-	if !ok {
-		// The refusal names the claim and never its content: a `sub` this class
-		// will not carry is caller text, and the package's no-echo rule holds
-		// for it as it does for the key id. It is not ErrUnverified: the
-		// identity is not in doubt — what is missing is the one fact the routes
-		// below need, and there is nothing a caller could fix by presenting
-		// another token of the same account.
-		return LauncherCaller{}, fmt.Errorf("%w: the caller's ID token carries no Google account id (a numeric sub), so no secret could be written under its prefix", ErrUnverifiedJob)
-	}
-	return LauncherCaller{Account: account, Sub: sub}, nil
+	// The body is verifyLauncherCaller's, because the intake verifies this
+	// class too and over a construction that holds only what the class reads
+	// (launchers.go): one body, so a rule added to it reaches both.
+	return verifyLauncherCaller(ctx, a.cfg.JobKeys, a.launcherAccounts, a.cfg.Audience, a.now(), tok)
 }
 
 // launcherSub reads the token's `sub` claim and holds it to the shape the

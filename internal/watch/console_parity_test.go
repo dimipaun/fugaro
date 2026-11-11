@@ -145,29 +145,30 @@ func consoleParityView() View {
 	runs := []RunRow{
 		{
 			Run: "20261108-113000-9c3d", Slug: "acme-app", Title: "an artifact run", Stage: "-",
-			Round: "-", Auth: "oauth", Notional: true, Queued: true, HasAge: true, Age: 90 * time.Second,
+			Round: "-", Mode: "-", From: "-", Auth: "oauth", Notional: true, Queued: true, HasAge: true, Age: 90 * time.Second,
 			StartedAt: at(0),
 		},
 		{
 			Run: "20261108-114500-aa02", Slug: "acme-app", Title: "the run that stopped reporting",
-			Stage: "implement", Round: "1", Verify: "-", Models: "sonnet", Auth: "api", Spent: budget.Micros(1_500_000),
+			Stage: "implement", Round: "1", Verify: "-", Models: "sonnet", Mode: "-", From: "-", Auth: "api", Spent: budget.Micros(1_500_000),
 			HasSpent: true, HasAge: true, Age: 14 * time.Minute, Health: HealthLost, StartedAt: at(15),
 			LaunchedBy: "someone@example.invalid",
 		},
 		{
 			Run: "20261107-010101-3bb2", Slug: "acme-app", Title: "a run from yesterday", Stage: "verify",
-			Round: "2", Verify: "-", Models: "opus", Auth: "api", Spent: budget.Micros(4_250_000),
+			Round: "2", Verify: "-", Models: "opus", Mode: "-", From: "-", Auth: "api", Spent: budget.Micros(4_250_000),
 			HasSpent: true, HasAge: true, Age: 71 * time.Minute, StartedAt: at(20),
 		},
 		{
 			Run: "20261108-115248-3bb2", Slug: "acme-app", Title: "the run beside it", Stage: "implement",
-			Round: "1", Verify: "-", Models: "opus", Auth: "api", Spent: budget.Micros(900_000),
+			Round: "1", Verify: "-", Models: "opus", Mode: "-", From: "-", Auth: "api", Spent: budget.Micros(900_000),
 			HasSpent: true, HasAge: true, Age: 12 * time.Minute, StartedAt: at(25),
 		},
 		{
 			Run: "20261108-121500-aa01", Slug: "acme-app", Title: "the run in review", Stage: "review",
 			Round: "2", Verify: "-", Models: "sonnet", Auth: "api", Spent: budget.Micros(2_000_000),
 			HasSpent: true, HasAge: true, Age: 6 * time.Minute, StartedAt: at(30),
+			Mode: "critical", From: "area",
 			LaunchedBy: "someone@example.invalid",
 		},
 	}

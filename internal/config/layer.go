@@ -122,6 +122,24 @@ type ProjectLayer struct {
 	tree map[string]any
 }
 
+// Applies reports whether l is the layer in force for a fugaro.yaml that
+// names project as its project: and gcpProject as its gcp_project: — the
+// two keys read leniently out of the file (ProjectOf, GCPProjectOf), which
+// are the same two a LayerAnchor is built from. Nothing but a file that
+// names both of the layer's own applies: a file that writes neither, or
+// one of them, keeps the layer's rows out of what a run resolves
+// (docs/design/layered-config.md §8).
+//
+// It is the one spelling of the rule, so that no reader can report a
+// layer's rows in force on a file a run would resolve without them: the
+// runner's ResolveConfig decides its Applied with it, and the two CLI
+// readers that hold a repository's bytes and a cached layer read by
+// project name (internal/cli's security paths and its security check)
+// ask it before they resolve the file over that layer.
+func (l *ProjectLayer) Applies(project, gcpProject string) bool {
+	return l != nil && project == l.Project && gcpProject == l.GCPProject
+}
+
 // Jobs is the project layer's jobs: block (R13): the installation's two
 // scheduled jobs, and whether each is stopped. Every field is a pointer
 // because the default is paused: a layer that writes no jobs: block, no block

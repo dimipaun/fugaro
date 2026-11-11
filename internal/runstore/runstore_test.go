@@ -1281,6 +1281,46 @@ func TestRecordABRoundTrip(t *testing.T) {
 	}
 }
 
+// TestRecordABSlotRoundTrip: the slot and the champion's run survive the
+// record's round trip (D728, B1.1), and a record whose block carries neither —
+// every record A1.1's release wrote — still reads as the coder pair it was:
+// the field is additive, so the format's version stays 1 and an old reader
+// sees the block it always saw.
+func TestRecordABSlotRoundTrip(t *testing.T) {
+	s := newStore(t)
+	championRun := "20261028-090000-1a2b"
+	ab := &task.AB{PairID: runID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+		Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner,
+		Slot: task.ABSlotL2, ChampionRun: championRun}
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeNone,
+		StartedAt: time.Now().UTC(), AB: ab}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AB == nil || got.AB.Slot != task.ABSlotL2 || got.AB.ChampionRun != championRun {
+		t.Fatalf("ReadRecord ab = %+v, want slot %q and champion run %q", got.AB, task.ABSlotL2, championRun)
+	}
+	// The record A1.1 wrote, with a block that names no slot.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback",` +
+		`"outcome":"none","cost_usd":1,"started_at":"2026-09-26T22:15:30Z",` +
+		`"ab":{"pair_id":"` + runID + `","arm":"challenger","publish":"none",` +
+		`"challenger":"invented-challenger-1","challenger_source":"owner"}}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatalf("an A1.1 record: %v", err)
+	}
+	if before.AB == nil || before.AB.EffectiveSlot() != task.ABSlotCoder {
+		t.Fatalf("an A1.1 record = %+v, want a coder pair", before.AB)
+	}
+}
+
 // TestRecordABOmittedWhenEmpty: a run that was not sampled carries no pair
 // block and no patch object, so its result.json is byte-for-byte what the
 // release before these fields wrote — and a record written before them still

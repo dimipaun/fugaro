@@ -80,8 +80,11 @@ credentials service and the coordinator were both "part of the Core today, not o
 the coordinator is out of that parenthetical and the credentials service keeps it. That is the
 only sentence changed, and the website page was regenerated from the document
 ([reconciliation.md](reconciliation.md#amendment-2026-10-29-the-coordinator-leaves-the-terms-core)).
-**The move is planned, not landed** (`ee/` holds only its licence and README), so the coordinator
-is still part of the Core by section 2's path definition and the released MIT versions stay MIT.
+**The move the ruling asked for was planned, not landed, when this was written** (`ee/` held only
+its licence and README then); it has landed since, the coordinator now being the
+[`ee/coordinator/`](../../ee/coordinator) package — the amendment of 2026-11-11 below records what
+moved and what did not — so the coordinator is out of the Core by section 2's path definition,
+while the released MIT versions stay MIT (amended 2026-11-11).
 Counsel has not been consulted on the edit; the owner tells counsel in the next revision round.
 The licence files are untouched, the draft is still **not in force**, and the broader question of
 where the coordinator's released MIT versions leave the licence's coverage sentence is still
@@ -114,6 +117,34 @@ subscriptions plan's S2.1 is the task that writes it, and L3.1 of this plan's
 [implementation-plan.md](implementation-plan.md) — the earlier text of the same note — is marked
 superseded there. **Nothing is built:** `ee/licence/` does not exist, no release reads or mounts a
 key, and minting stays the owner's, by hand, until the entity and the owner-operated service exist.
+
+**Amended 2026-11-11: the "move later" note (D400, D407).** **D400**, of the go-to-market work
+(D400, D407, T1 and F19 in
+[go-to-market/reconciliation.md](../go-to-market/reconciliation.md)), kept the console, the mobile
+app, the coordinator and the orchestrators where they were when the owner ruled — the code was
+under open pull requests, and moving it under them is what the ruling avoided — and asked for each
+area to be marked as covered by the `ee/` licence and moved into `ee/` later. The marking's timing
+is **D407**'s: the per-file notice goes in with the licence text it names. Both have landed, the
+notice following the text rather than arriving with it — the text is
+[`ee/LICENSE`](../../ee/LICENSE), counsel's of 2026-10-27, and the notice was the follow-up run the
+amendment of 2026-10-27 above records — so the files under `ee/`, `console/` and `mobile/` carry
+the two-line `LicenseRef-Fugaro-Subscription` notice, each directory's own licence file and its
+`README` excepted, as [LICENSING.md](../../LICENSING.md) states. The two font directories vendored under
+`console/` are the exception LICENSING.md does not name: they carry `OFL-1.1` notices in its place,
+being third-party files that are not Fugaro's to license (§7.1 of
+[`console/LICENSE.md`](../../console/LICENSE.md)). What D400 called "later" has happened for one of
+the four areas it named: the coordinator is under `ee/coordinator/`, its library as well as its
+command (D434 and T10 in
+[subscriptions/reconciliation.md](../subscriptions/reconciliation.md)), and governance, the report
+command, the graph and the key service sit there beside it, none of them among D400's four. The
+orchestrators D400 named were never in the core, so nothing of theirs moved: they are
+business-licensed from their first file (D435 and T20 in
+[subscriptions/reconciliation.md](../subscriptions/reconciliation.md)). The console and the mobile
+app have **not** moved: both are in the public tree still, in `console/` and `mobile/`, each under
+its own licence file of the same wording ([`console/LICENSE.md`](../../console/LICENSE.md),
+`mobile/LICENSE.md`) rather than under `ee/LICENSE` (D311, 2026-10-26,
+[reconciliation.md](reconciliation.md#amendment-2026-10-26-d311)), and each marked per file as D407
+timed.
 
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
