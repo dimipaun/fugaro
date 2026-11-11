@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
 const minimalYAML = `
@@ -634,6 +637,66 @@ func TestAgentModelsValidation(t *testing.T) {
 	_, ps := Parse([]byte(strings.Replace(minimalYAML, "workflows:", "agent:\n  max_output_tokens: { coder: 128000, reviewer: 0 }\n  max_run_tokens: 0\nworkflows:", 1)))
 	if len(ps) != 0 {
 		t.Fatalf("limits at the bounds: %v", ps)
+	}
+}
+
+// visionRoleIDs are the three role models minimalYAML's agent block leaves
+// unset, written out so a vision-slot fixture is a pinnable run: every row is
+// in the embedded table, so the only pin a test about the fourth slot can be
+// red about is the fourth slot's own.
+const visionRoleIDs = "coder: claude-opus-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5"
+
+// visionAgent parses minimalYAML with the four model slots written.
+func visionAgent(t *testing.T, models string) (*Config, []Problem) {
+	t.Helper()
+	return Parse([]byte(strings.Replace(minimalYAML, "workflows:", "agent:\n  models: {"+models+"}\nworkflows:", 1)))
+}
+
+// TestVisionSlotIsCheckedLikeTheOthers (V1, D2003, D2007): agent.models.vision
+// is the fourth model slot, and every rule the other three are held to reaches
+// it — the loader resolves the key, CheckPins prices it, CheckAllowed judges it
+// against the allow-list, and a value that is not a model ID is refused at the
+// key the owner wrote. It is what a run whose coder cannot read an image points
+// at, so a run that never writes it is the run it was.
+func TestVisionSlotIsCheckedLikeTheOthers(t *testing.T) {
+	const vision = "deepseek/deepseek-v4.1-flash"
+	cfg, ps := visionAgent(t, visionRoleIDs+", vision: "+vision)
+	if len(ps) != 0 {
+		t.Fatalf("a repository that writes agent.models.vision is refused: %v", ps)
+	}
+	pins := cfg.Agent.PinnedModels()
+	if len(pins) != 4 || pins[3] != vision {
+		t.Fatalf("PinnedModels() = %q, want the vision model as the fourth pin", pins)
+	}
+
+	// Priced: the slot is a pin like the other three, so a model no price row
+	// covers is refused at the key the owner edits.
+	if got := paths(CheckPins(cfg.Agent, pricing.Embedded())); got != "agent.models.vision" {
+		t.Errorf("an unpriced vision model: problems at %q, want agent.models.vision", got)
+	}
+	one := 1.0
+	priced, err := pricing.Embedded().With(pricing.Overrides{vision: {InputPerM: one, OutputPerM: one}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ps := CheckPins(cfg.Agent, priced); len(ps) != 0 {
+		t.Errorf("a priced vision model is refused: %v", ps)
+	}
+
+	// Allowed: a run with an allow-list has to name its vision model on it.
+	list := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	if got := paths(CheckAllowed(cfg.Agent, policy.Merge(policy.Layer{AllowedModels: list}), list, nil, nil)); got != "agent.models.vision" {
+		t.Errorf("a vision model outside the allow-list: problems at %q, want agent.models.vision", got)
+	}
+	all := append(slices.Clone(list), vision)
+	if ps := CheckAllowed(cfg.Agent, policy.Merge(policy.Layer{AllowedModels: all}), all, nil, nil); len(ps) != 0 {
+		t.Errorf("a vision model on the allow-list is refused: %v", ps)
+	}
+
+	// An ID: the slot is held to the model-ID shape wherever it is written.
+	_, ps = visionAgent(t, visionRoleIDs+`, vision: "has space"`)
+	if got := paths(ps); got != "agent.models.vision" {
+		t.Errorf("a vision value that is not a model ID: problems at %q, want agent.models.vision", got)
 	}
 }
 

@@ -21,15 +21,15 @@ func paths(ps []Problem) string {
 	return strings.Join(s, ",")
 }
 
-// TestPinnedModelsAreTheThreePins pins the one list of a run's pins: the
-// models PinnedModels returns are the three the paths above name, in the same
+// TestPinnedModelsAreTheFourPins pins the one list of a run's pins: the
+// models PinnedModels returns are the four the paths above name, in the same
 // order, with an empty name where the config pins nothing rather than the
-// entry dropped. The runner asks for those three to decide what a stale
+// entry dropped. The runner asks for those four to decide what a stale
 // catalog means for a run (internal/runner/gateway.go), so a set that drifted
 // from the one CheckPins and PinWarnings judge would judge some other run.
-func TestPinnedModelsAreTheThreePins(t *testing.T) {
+func TestPinnedModelsAreTheFourPins(t *testing.T) {
 	a := pinnedAgent()
-	want := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	want := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5", ""}
 	if got := a.PinnedModels(); !slices.Equal(got, want) {
 		t.Errorf("PinnedModels() = %q, want %q", got, want)
 	}
@@ -42,9 +42,10 @@ func TestPinnedModelsAreTheThreePins(t *testing.T) {
 		t.Fatalf("the fixture is not pinnable (%s): %q", got, ps)
 	}
 	// An agent.model with no role overrides pins the coder and the reviewer
-	// to it, and the background model to nothing: the empty entry stays.
+	// to it, and the background model and the vision slot to nothing: the
+	// empty entries stay.
 	b := Agent{Model: "claude-sonnet-5-5"}
-	want = []string{"claude-sonnet-5-5", "claude-sonnet-5-5", ""}
+	want = []string{"claude-sonnet-5-5", "claude-sonnet-5-5", "", ""}
 	if got := b.PinnedModels(); !slices.Equal(got, want) {
 		t.Errorf("an agent.model-only config pinned %q, want %q", got, want)
 	}

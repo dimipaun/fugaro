@@ -117,6 +117,10 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"agent.models.coder":      InProject | InRepo,
 		"agent.models.reviewer":   InProject | InRepo,
 		"agent.models.background": InProject | InRepo,
+		// The vision slot (V1, D2003): a model a stage runs when its own
+		// cannot read an image, set by a repository as its own or by the
+		// project for every repository of it.
+		"agent.models.vision": InProject | InRepo,
 		// The four crafts (docs/model-crafts/spec.md §3). A craft's model is a
 		// project default, as agent.models.* is; its access is not, and is a
 		// repository's own choice among the credentials the owner allow-lists.
