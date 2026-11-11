@@ -71,7 +71,6 @@ var forgeKindGoSites = map[string]string{
 	"internal/infra/spec.go":                   "GitSecret, the git user and the credential the spec mounts",
 	"internal/localcfg/select.go":              "ProviderHosts, the host each kind is reached at",
 	"internal/pluginwire/status.go":            "the plugin wire's GitHub-only status form",
-	"internal/pluginwire/wire.go":              "the plugin wire's GitHub form, and the marketplace source beside it",
 	"internal/projectpolicy/bitbucket.go":      "the published policy's Bitbucket block and its canonical slug",
 	"internal/projectpolicy/profiles.go":       "the profiles' Bitbucket-only validation",
 	"internal/repourl/cloneurl.go":             "the host a clone URL is built on per kind",
