@@ -204,47 +204,77 @@ func binomCoefficient(n, k int) int {
 
 // TestHolmOrdering pins Holm's step-down correction by its ordering: the
 // smallest p is read against Alpha/m, the next against Alpha/(m-1) and so on,
-// and the first failure stops the walk. The p-values are the sign test's own
-// (TestSignTestKnownValues), so what is pinned is a report's real input.
+// and the first failure stops the walk. The first fixture's p-values are the
+// sign test's own (TestSignTestKnownValues), so what is pinned there is a
+// report's real input; the second is built to tell the walk's stop apart from a
+// walk that keeps reading, which no fixture of real p-values need do.
 func TestHolmOrdering(t *testing.T) {
+	// Two fixtures, and the second is the one the first cannot stand in for.
+	//
 	// Sixteen of twenty pairs is 0.0118 and eighteen of twenty is 0.0004; the
 	// group at 0.0414 would clear Alpha on its own (0.0414 < 0.05) and is still
 	// not called a result, because the walk stopped at it. The group at 0.0118
 	// is called one although a flat Bonferroni (Alpha/5 = 0.01) would not:
-	// that difference is the whole reason the correction is Holm's.
-	ps := []float64{0.5034446716308594, 0.01181793212890625, 1, 0.0004024505615234375, 0.04138946533203125}
-	want := []bool{false, true, false, true, false}
-	got := Holm(ps)
-	if !slices.Equal(got, want) {
-		t.Errorf("Holm(%v) = %v, want %v", ps, got, want)
-	}
-	// The step-down property itself, on the same input: every hypothesis under
-	// its own threshold is rejected, and nothing after the first failure is. A
-	// test that only compared against a table could be passed by an
-	// implementation reading every p against Alpha/m.
-	order := make([]int, len(ps))
-	for i := range order {
-		order[i] = i
-	}
-	slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(ps[a], ps[b]) })
-	for i, idx := range order {
-		threshold := Alpha / float64(len(ps)-i)
-		if ps[idx] <= threshold && !got[idx] {
-			t.Errorf("Holm(%v) keeps p = %v, under its threshold %v", ps, ps[idx], threshold)
+	// that difference is the whole reason the correction is Holm's. But every
+	// p after the first failure in it fails its own threshold too, so a walk
+	// that kept going instead of stopping would reach the same answer.
+	//
+	// The second fixture is that walk's counterexample: 0.02 fails Alpha/4 =
+	// 0.0125, and 0.045 -- the largest of the five, and a group no arm's pairs
+	// argue for -- clears the loosest threshold of all, Alpha/1 = 0.05. A
+	// `continue` where Holm's `break` is rejects it and puts a group the report
+	// must keep into the list of results it calls real.
+	for _, tc := range []struct {
+		ps   []float64
+		want []bool
+	}{
+		{
+			ps:   []float64{0.5034446716308594, 0.01181793212890625, 1, 0.0004024505615234375, 0.04138946533203125},
+			want: []bool{false, true, false, true, false},
+		},
+		{
+			ps:   []float64{0.005, 0.02, 0.03, 0.04, 0.045},
+			want: []bool{true, false, false, false, false},
+		},
+	} {
+		ps, want := tc.ps, tc.want
+		got := Holm(ps)
+		if !slices.Equal(got, want) {
+			t.Errorf("Holm(%v) = %v, want %v", ps, got, want)
 		}
-		if ps[idx] > threshold {
-			for _, later := range order[i:] {
-				if got[later] {
-					t.Errorf("Holm(%v) rejects p = %v after p = %v failed its threshold %v", ps, ps[later], ps[idx], threshold)
-				}
+		// The step-down property itself, walked independently of the
+		// implementation: the hypotheses up to the first p above its own
+		// threshold are the ones called results, and none after it is --
+		// however far under its own threshold a later p may sit. That last
+		// clause is exactly what a walk that kept reading after a failure
+		// breaks, which is why the property is re-derived here and not only
+		// compared against a table.
+		order := make([]int, len(ps))
+		for i := range order {
+			order[i] = i
+		}
+		slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(ps[a], ps[b]) })
+		stop := len(order)
+		for i, idx := range order {
+			if ps[idx] > Alpha/float64(len(ps)-i) {
+				stop = i
+				break
 			}
 		}
-	}
-	// Holm never rejects less than a flat Bonferroni at the same level, which
-	// is what makes the correction usable: it is that bound, not a weaker one.
-	for i, p := range ps {
-		if p <= Alpha/float64(len(ps)) && !got[i] {
-			t.Errorf("Holm(%v) keeps p = %v at index %d, which even a flat Bonferroni rejects", ps, p, i)
+		for i, idx := range order {
+			rejected := i < stop
+			if got[idx] != rejected {
+				t.Errorf("Holm(%v) calls p = %v at index %d %t, want %t: the walk stops at the first p above its own threshold and rejects nothing from there on",
+					ps, ps[idx], idx, got[idx], rejected)
+			}
+		}
+		// Holm never rejects less than a flat Bonferroni at the same level,
+		// which is what makes the correction usable: it is that bound, not a
+		// weaker one.
+		for i, p := range ps {
+			if p <= Alpha/float64(len(ps)) && !got[i] {
+				t.Errorf("Holm(%v) keeps p = %v at index %d, which even a flat Bonferroni rejects", ps, p, i)
+			}
 		}
 	}
 	// One group, one threshold: Alpha itself, not Alpha/1 of something else. An
