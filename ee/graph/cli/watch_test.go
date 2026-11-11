@@ -383,6 +383,83 @@ func TestWatchFirstSnapshotIsBoundedWhenTheListenIsSilent(t *testing.T) {
 	}
 }
 
+// TestWatchFirstWaitsForEverySubtree: `all` covers two scope subtrees, so the
+// child holds two subscriptions and waits for one opening put from each before
+// it prints anything. Printing on the first of them would make the second a
+// change like any other, and a reader would be handed two documents for one
+// snapshot — one of them a duplicate of the other — which is the opposite of
+// what the whole-document-per-change rule is for (H5, H6).
+//
+// The child is driven by hand rather than through the fake, because the fake
+// writes every subscription's opening put in the same breath it registers it:
+// the two instants a reader has to tell apart are only reachable one at a time.
+func TestWatchFirstWaitsForEverySubtree(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	env, err := fcli.OpenCloud(context.Background(), &fcli.CloudFlags{})
+	if err != nil {
+		t.Fatalf("opening the fixture's project: %v", err)
+	}
+	t.Cleanup(env.Close)
+	db, err := rtdb.New(f.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := graph.NewStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	subs, err := graph.ScopeSubtrees(graph.Scope{Kind: graph.ScopeAll})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subs) < 2 {
+		t.Fatalf("`all` covers %v, want at least two subtrees: this test is about waiting for each of them", subs)
+	}
+
+	sink := newWatchSink()
+	all := graph.Scope{Kind: graph.ScopeAll}
+	w := &watcher{env: env, out: sink, st: st, store: coordinator.NewStore(db), db: db, scope: all, subs: subs}
+	events := make(chan streamEvent, len(subs))
+	done := make(chan error, 1)
+	go func() { done <- w.first(context.Background(), events) }()
+
+	events <- streamEvent{subtree: subs[0], ev: rtdb.Event{Type: "put", Path: "/"}}
+	sink.quiet(t, 20*testFloor, "one of the subtrees has not proved it is listening yet")
+
+	events <- streamEvent{subtree: subs[1], ev: rtdb.Event{Type: "put", Path: "/"}}
+	if err := <-done; err != nil {
+		t.Fatalf("the first snapshot ended the child with %v", err)
+	}
+	first := sink.next(t, testPatience)
+	if first.Seq != 1 || len(first.Nodes) != 1 {
+		t.Fatalf("the first document is seq %d with %d nodes, want the whole graph, once", first.Seq, len(first.Nodes))
+	}
+	sink.quiet(t, 20*testFloor, "one snapshot for two opening puts")
+
+	// A subtree whose listen is over before its opening put ever comes is not
+	// one the wait can complete on: the scope goes down and the document waits
+	// for the subtrees that are still listening, rather than for a bound that
+	// nothing can beat.
+	events2 := make(chan streamEvent, len(subs))
+	done2 := make(chan error, 1)
+	withdrawing := &watcher{out: sink, st: st, scope: all, subs: subs}
+	go func() { done2 <- withdrawing.first(context.Background(), events2) }()
+	events2 <- streamEvent{subtree: subs[0], ev: rtdb.Event{Type: "cancel"}}
+	events2 <- streamEvent{subtree: subs[1], ev: rtdb.Event{Type: "put", Path: "/"}}
+	if err := <-done2; err != nil {
+		t.Fatalf("a withdrawn listen ended the child with %v, want the first document, its scope down", err)
+	}
+	down := sink.next(t, testPatience)
+	if len(down.Sources) != 1 || down.Sources[0].State != graph.SourceDown {
+		t.Errorf("the document after the withdrawal is %+v, want the scope down", down.Sources)
+	}
+	if got := down.Sources[0].Reason; got != withdrawnListen {
+		t.Errorf("the reason is %q, want %q", got, withdrawnListen)
+	}
+	sink.quiet(t, 20*testFloor, "one document for one opening put, however many subtrees withdrew")
+}
+
 // TestWatchSeqRisesAndStreamIDIsStable: three changes are three documents whose
 // sequences are 1, 2 and 3 under one stream_id, which is what a reader compares
 // a sequence inside (H4).
@@ -951,11 +1028,13 @@ func TestWatchSlowReaderBlocksAndNeverDrops(t *testing.T) {
 	}
 }
 
-// TestWatchOneSubscriptionPerScope: the child holds one connection per scope,
-// shared by every repository and node that scope produces (H6, F12). The read
-// behind each document is not a connection — it is a request the database
-// answers and closes — so the count stays at one while the documents keep
-// coming.
+// TestWatchOneSubscriptionPerScope: the child holds one connection per scope
+// subtree, shared by every node that subtree produces (H6, F12). `all` covers
+// two — the coordinator's and the orchestrator's — and `coordinator` covers one,
+// which is the count graph.ScopeSubtrees decides and not a number this child
+// keeps. The read behind each document is not a connection — it is a request
+// the database answers and closes — so the count stays where it is while the
+// documents keep coming.
 func TestWatchOneSubscriptionPerScope(t *testing.T) {
 	f := newGraphFixture(t)
 	f.writeStoredView(t, storedView())
@@ -963,24 +1042,54 @@ func TestWatchOneSubscriptionPerScope(t *testing.T) {
 		"  acme/lib: { provider: github, base_branch: main, workflows: [web] }\n")
 	fast(t, testFloor, testKeep)
 
+	want, err := graph.ScopeSubtrees(graph.Scope{Kind: graph.ScopeAll})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	sink := newWatchSink()
 	startWatch(t, sink, "graph", "--watch", "--json")
 	sink.next(t, testPatience)
 
-	if got := f.db.Streams(); got != 1 {
-		t.Fatalf("the child holds %d subscription(s), want exactly one for its one scope", got)
+	if got := f.db.Streams(); got != len(want) {
+		t.Fatalf("the child holds %d subscription(s), want %d: one per scope subtree (%v)", got, len(want), want)
 	}
 	before := len(f.db.Requests())
 
+	// A second repository is another node inside the same subtree and never
+	// another connection, which is the whole of the rule.
 	f.writeStoredView(t, changedView())
 	sink.next(t, testPatience)
 
-	if got := f.db.Streams(); got != 1 {
-		t.Errorf("the child holds %d subscription(s) after a change, want exactly one: a connection is opened per scope, never per node or per repository", got)
+	if got := f.db.Streams(); got != len(want) {
+		t.Errorf("the child holds %d subscription(s) after a change, want %d: a connection is opened per scope subtree, never per node or per repository", got, len(want))
 	}
 	if len(f.db.Requests()) == before {
 		t.Errorf("the change made no request at all: the document does not come from a read")
 	}
+
+	// A scope of one subtree holds one connection, and one for a named
+	// orchestrator is its own node and nothing else.
+	for _, one := range []string{"coordinator", "orchestrator:o1"} {
+		subs, err := graph.ScopeSubtrees(mustScope(t, one))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(subs) != 1 {
+			t.Errorf("source %s covers %d subtrees (%v), want the one it names", one, len(subs), subs)
+		}
+	}
+}
+
+// mustScope parses a source value a test names, failing if the closed pattern
+// does not hold it.
+func mustScope(t *testing.T, s string) graph.Scope {
+	t.Helper()
+	scope, err := graph.ParseScope(s)
+	if err != nil {
+		t.Fatalf("graph.ParseScope(%q): %v", s, err)
+	}
+	return scope
 }
 
 // TestWatchAWithdrawnListenIsADownScopeAndNotAnExit: the server can take the
@@ -1059,7 +1168,7 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 	})
 
 	t.Run("before the opening put", func(t *testing.T) {
-		closed := make(chan rtdb.Event)
+		closed := make(chan streamEvent)
 		close(closed)
 
 		st, err := graph.NewStream()
@@ -1067,7 +1176,9 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 			t.Fatal(err)
 		}
 		var out bytes.Buffer
-		w := &watcher{out: &out, st: st}
+		// One subtree, because the wait is one opening put per subtree: the
+		// closed channel is every subscription this child holds.
+		w := &watcher{out: &out, st: st, subs: []string{coordpath.PathRoot}}
 		if err := w.first(context.Background(), closed); err != nil {
 			t.Fatalf("a withdrawn listen ended the child with %v, want the first document, its scope down", err)
 		}

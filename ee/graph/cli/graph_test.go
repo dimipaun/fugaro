@@ -9,10 +9,14 @@ package cli
 //   - TestGraphRefusesAnInvalidScopeBeforeAnyRead is H1. --source reaches argv
 //     from the console's renderer, so every value outside graph.ParseScope's
 //     closed set is refused before the project is even selected — no header on
-//     stderr, no call to the database, nothing on stdout — and a scope this
-//     build has no reader for is refused with the honest sentence rather than
-//     answered with an empty graph. The control at the end keeps the "no read"
-//     half from passing vacuously.
+//     stderr, no call to the database, nothing on stdout — and an id nothing
+//     here knows is refused, as a fact about the id rather than about a missing
+//     reader (CG5), rather than answered with an empty graph. The control at the
+//     end keeps the "no read" half from passing vacuously.
+//   - TestGraphReadsTheOrchestratorAndLocalScopes: CG5's scopes through the
+//     command — one orchestrator's work items and their `depends_on`, a local
+//     scope falling back to this machine's cached brief, and `all` as the union
+//     keyed by source (D1356, D1358, §6.22).
 //   - TestGraphAllIsTheCoordinatorToday: `all` is the union of the scopes that
 //     exist, which today is the coordinator alone, and the document names it as
 //     itself — `coordinator` is the source half of every key it produced and the
@@ -45,6 +49,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +63,7 @@ import (
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -250,6 +256,56 @@ func (f *graphFixture) writeStoredView(t *testing.T, v coordinator.View) {
 	}
 }
 
+// writeOrchestratorState leaves one orchestrator's state node in the fixture's
+// database: two work items, the second waiting on the first, written through
+// the daemon's own encoder so the reader decodes what a daemon writes.
+func (f *graphFixture) writeOrchestratorState(t *testing.T, id, first, second string) {
+	t.Helper()
+	item := func(itemID, title string, deps ...string) orchestrator.WorkItem {
+		return orchestrator.WorkItem{
+			ID: itemID, Title: title, Repo: "acme/app",
+			Recipe: "standard", RigorTier: "medium",
+			Brief: "The brief of " + itemID + ".", DependsOn: deps, Phase: orchestrator.PhaseQueued,
+		}
+	}
+	raw, err := orchestrator.EncodeState(orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion,
+		AgentID:       id, Role: orchestrator.RoleOrchestrator,
+		WorkItems: []orchestrator.WorkItem{item("wi-1", first), item("wi-2", second, "wi-1")},
+	})
+	if err != nil {
+		t.Fatalf("the fixture state is not one this release writes: %v", err)
+	}
+	path, err := orchestrator.PathState(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(path, json.RawMessage(raw))
+}
+
+// writeCachedBrief leaves one cached brief where the daemon writes it, placed
+// through the writer's own path builder so the test cannot disagree with the
+// reader about the file's name or its directory (D1243).
+func (f *graphFixture) writeCachedBrief(t *testing.T, id string, at time.Time) {
+	t.Helper()
+	path, err := orchestrator.BriefCachePath(os.Getenv, runtime.GOOS, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(orchestrator.BriefCache{
+		Version: orchestrator.BriefCacheVersion, Brief: "the cached brief of " + id + ".", WrittenAt: at.UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // seedRun leaves one run of the fixture's repository in the fixture's bucket: a
 // run still in flight that has opened no pull request, which is what the runs
 // half of the view holds, and which is dated against the listing's own clock so
@@ -354,8 +410,11 @@ func TestGraphRefusesAnInvalidScopeBeforeAnyRead(t *testing.T) {
 		})
 	}
 
-	// The scopes this build has no reader for are the other refusal: an honest
-	// sentence naming the scope, and still nothing read (contract §6.22).
+	// The other refusal is an id nothing here knows: the closed set holds the
+	// value — CG5 registers both readers — and the scope is refused because it
+	// does not exist, naming itself and where the ids that do are listed, rather
+	// than answered with an empty document a screen could not tell from a scope
+	// with no work in it (§6.22).
 	for _, absent := range []string{"orchestrator:o1", "local:o1"} {
 		t.Run(absent, func(t *testing.T) {
 			if _, err := graph.ParseScope(absent); err != nil {
@@ -364,19 +423,24 @@ func TestGraphRefusesAnInvalidScopeBeforeAnyRead(t *testing.T) {
 			before := len(f.db.Requests())
 			out, errOut, err := execute(t, "graph", "--source", absent, "--json")
 			if err == nil {
-				t.Fatalf("graph --source %q was answered rather than refused", absent)
+				t.Fatalf("graph --source %q was answered rather than refused: nothing here holds an orchestrator o1", absent)
 			}
-			if !strings.Contains(err.Error(), "no orchestrator is installed in this build") {
-				t.Errorf("the refusal is %q, want it to say no orchestrator is installed in this build", err)
+			for _, want := range []string{absent, "fugaro orchestrator ls"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %q does not name %s: an id that is not there is told from one that is", err, want)
+				}
 			}
 			if out != "" {
 				t.Errorf("the refused scope wrote %q to stdout, want no document at all", out)
 			}
-			if errOut != "" {
-				t.Errorf("the refused scope wrote %q to stderr: the project was selected before the scope was refused", errOut)
+			// The project is selected before the scope is read — the refusal is
+			// about the id that is not there, not about a reader this build lacks
+			// — so the header is on stderr and the database was asked.
+			if errOut == "" {
+				t.Error("the refused scope wrote nothing to stderr: the scope was refused before the project was selected")
 			}
-			if got := len(f.db.Requests()); got != before {
-				t.Errorf("the refused scope made %d database calls, want none", got-before)
+			if got := len(f.db.Requests()); got == before {
+				t.Errorf("graph --source %q read nothing, so the refusal is not about the id: this build has no reader for it", absent)
 			}
 		})
 	}
@@ -452,6 +516,105 @@ func TestGraphAllIsTheCoordinatorToday(t *testing.T) {
 			t.Errorf("the runs half's node is %+v, want the in-flight run %s", n, id)
 		}
 	})
+}
+
+// TestGraphReadsTheOrchestratorAndLocalScopes: CG5's scopes, through the
+// command. The red step this test replaces is the refusal every build before it
+// gave — "no orchestrator is installed in this build" — and what is held here
+// is the three things that refusal was standing in for: `orchestrator:<id>`
+// reads that id's state node and draws its work items and their `depends_on`,
+// `local:<id>` reads the same node and falls back to this machine's cached brief
+// when there is none, and `all` is the union of the scopes that exist, keyed by
+// source so two orchestrators can each carry a `wi-1` (D1356, §6.22).
+func TestGraphReadsTheOrchestratorAndLocalScopes(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	f.writeOrchestratorState(t, "o1", "land the state migration", "move the sweep onto the daemon")
+	written := time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC)
+	f.writeCachedBrief(t, "o2", written)
+
+	// One orchestrator: its scope, its work items, and the one edge the
+	// coordinator's view has none of (F17, F18).
+	one := graphDocument(t, "graph", "--source", "orchestrator:o1", "--json")
+	if len(one.Sources) != 1 || one.Sources[0].Source != "orchestrator:o1" || one.Sources[0].State != graph.SourceUp {
+		t.Fatalf("the orchestrator scope is %+v, want orchestrator:o1 up", one.Sources)
+	}
+	if one.Sources[0].AsOf != nil {
+		t.Errorf("the scope carries as_of %v, want null: the state node has no time of its own", one.Sources[0].AsOf)
+	}
+	if len(one.Nodes) != 2 {
+		t.Fatalf("the scope drew %d nodes, want the node's two work items: %+v", len(one.Nodes), one.Nodes)
+	}
+	if got := one.Nodes[0]; got.Kind != graph.NodeTask || got.Key != graph.NodeKey("orchestrator:o1", "wi-1") || got.State != "queued" {
+		t.Errorf("the first work item is %+v, want a queued task keyed by its source", got)
+	}
+	want := graph.Edge{From: graph.NodeKey("orchestrator:o1", "wi-2"), To: graph.NodeKey("orchestrator:o1", "wi-1"), Kind: graph.DependsOnEdge}
+	if len(one.Edges) != 1 || one.Edges[0] != want {
+		t.Errorf("the scope's edges are %+v, want the one dependency %+v", one.Edges, want)
+	}
+
+	// `all`: every scope that exists — the stored view, the orchestrator the
+	// database holds, and the local one this machine holds a cached brief for
+	// (CG4's union, D1358) — each node keyed by the source it came from.
+	all := graphDocument(t, "graph", "--json")
+	if len(all.Sources) != 3 || all.Sources[0].Source != "coordinator" ||
+		all.Sources[1].Source != "orchestrator:o1" || all.Sources[2].Source != "local:o2" {
+		t.Fatalf("`all` covers %+v, want the coordinator, orchestrator:o1 and local:o2", all.Sources)
+	}
+	// Under `all` a local id with no node is a scope that is down, not a
+	// refusal: the id is one this installation has, and only a scope named on
+	// the command line is refused for not existing (H3).
+	if all.Sources[2].State != graph.SourceDown {
+		t.Errorf("`all` lists local:o2 as %+v, want it down with the cached brief's stamp", all.Sources[2])
+	}
+	if len(all.Nodes) != 3 {
+		t.Fatalf("`all` drew %d nodes, want the stored record's one and the two work items: %+v", len(all.Nodes), all.Nodes)
+	}
+	seen := map[string]bool{}
+	for _, n := range all.Nodes {
+		if seen[n.Key] {
+			t.Errorf("`all` carries the key %q twice", n.Key)
+		}
+		seen[n.Key] = true
+		if n.Key != graph.NodeKey(n.Source, n.ID) {
+			t.Errorf("the node %+v is not keyed by the source it came from", n)
+		}
+	}
+	if len(all.Edges) != 1 {
+		t.Errorf("`all`'s edges are %+v, want the orchestrator's one dependency", all.Edges)
+	}
+
+	// A local scope with a live node reads the node: the cache is only what it
+	// has when the node is not there (D1358).
+	local := graphDocument(t, "graph", "--source", "local:o1", "--json")
+	if local.Sources[0].State != graph.SourceUp || len(local.Nodes) != 2 {
+		t.Errorf("a local scope whose node is there is %+v with %d nodes, want it up with the node's items", local.Sources[0], len(local.Nodes))
+	}
+
+	// A local scope with no node falls back to the cached brief: down, with the
+	// cache's own stamp as the age and no nodes, because a brief is not a graph
+	// (T5(a), D1243).
+	fallback := graphDocument(t, "graph", "--source", "local:o2", "--json")
+	if len(fallback.Sources) != 1 || fallback.Sources[0].State != graph.SourceDown {
+		t.Fatalf("the local scope is %+v, want it down", fallback.Sources)
+	}
+	if got := fallback.Sources[0].AsOf; got == nil || !got.Equal(written) {
+		t.Errorf("the fallback's as_of is %v, want the cached brief's own stamp %s", got, written)
+	}
+	if !strings.Contains(fallback.Sources[0].Reason, written.Format(time.RFC3339)) {
+		t.Errorf("the reason is %q, want it to name when the cached brief was written", fallback.Sources[0].Reason)
+	}
+	if len(fallback.Nodes) != 0 || len(fallback.Edges) != 0 {
+		t.Errorf("the fallback drew %d nodes and %d edges, want none", len(fallback.Nodes), len(fallback.Edges))
+	}
+
+	// A local scope with neither is the refusal, not a fourth kind of state: a
+	// cached brief for another id is not this id's.
+	if _, _, err := execute(t, "graph", "--source", "local:o3", "--json"); err == nil {
+		t.Error("a local scope with no node and no cached brief was answered rather than refused")
+	} else if !strings.Contains(err.Error(), "fugaro orchestrator ls") {
+		t.Errorf("the refusal is %q, want it to say where the ids this installation has are listed", err)
+	}
 }
 
 // TestGraphJSONIsOneVersionedDocument: the document is a wire format a reader
