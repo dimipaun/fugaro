@@ -168,11 +168,9 @@ var runCommandRE = regexp.MustCompile("`(?:fugaro )?(?:cancel|run --retry|--revi
 // send an image is told so and told what to do instead (D2014). The brief
 // names every kind the gateway refuses an image for (agent.ImageBlockExtensions),
 // so what the agent is told and the refusal it would meet are one list, and it
-// names the fix rather than leaving the coder to guess: the owner sets
-// `agent.models.vision` and prices that model's images with `model_prices`'
-// `image_tokens`. The rule is one line, and it is written once: a brief is a
-// prompt, and a coder that stopped to weigh a paragraph about images would
-// spend the stage's context on it.
+// names the fix rather than leaving the coder to guess. The rule is one line,
+// and it is written once: a brief is a prompt, and a coder that stopped to
+// weigh a paragraph about images would spend the stage's context on it.
 //
 // The kinds the deny list covers and the brief must not name are held here
 // too: the deny carries a document kind (agent.documentReadExtensions), which
@@ -180,9 +178,17 @@ var runCommandRE = regexp.MustCompile("`(?:fugaro )?(?:cancel|run --retry|--revi
 // than refusing, so a brief that listed it under "the gateway refuses a
 // request that carries an image" would state a reason that is false for it.
 //
+// And the fix it names must be one this release can carry: `agent.models.coder`
+// pinned to a model with an image rate. The vision slot and the price member
+// that will be the better answer are not keys this release's config has, and
+// the decoder is strict — an owner who wrote one from the brief would have
+// every later run refused, which is worse than being told nothing.
+//
 // Mutation (build the kinds from agent.ImageReadExtensions instead of
 // agent.ImageBlockExtensions): the document-kind assertion fails, the brief
-// naming a kind the gateway would have served.
+// naming a kind the gateway would have served. Mutation (name
+// `agent.models.vision` and `model_prices`' `image_tokens` in the remedy
+// again): the remedy assertion fails, as the config would refuse that file.
 func TestTextOnlyCoderBriefNamesImageFilesAndTheFix(t *testing.T) {
 	got := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true}, "")
 	for _, ext := range agent.ImageBlockExtensions() {
@@ -198,9 +204,18 @@ func TestTextOnlyCoderBriefNamesImageFilesAndTheFix(t *testing.T) {
 			t.Errorf("the brief names %s, a kind the gateway does not refuse an image for, under the refusal as its reason:\n%s", kind, got)
 		}
 	}
-	for _, want := range []string{"Never read an image", "priced without an image rate", "say so in the pull request description", "agent.models.vision", "`model_prices`' `image_tokens`"} {
+	for _, want := range []string{"Never read an image", "priced without an image rate", "say so in the pull request description", "agent.models.coder", "has an image rate"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the brief lacks %q:\n%s", want, got)
+		}
+	}
+	// The remedy must be one this release's config takes. These two are the
+	// vision slot and the price member a later release adds; a brief naming
+	// them today sends an owner to a fugaro.yaml the strict decoder refuses,
+	// and every run after it fails to load.
+	for _, absent := range []string{"agent.models.vision", "image_tokens"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("the brief names %s, which this release's config does not have:\n%s", absent, got)
 		}
 	}
 	if n := strings.Count(got, "Never read an image"); n != 1 {

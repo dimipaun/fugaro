@@ -41,9 +41,13 @@ type PromptData struct {
 	// settings deny the read as well (agent.imageReadExtensions, D2014). The
 	// rule names the image kinds — the ones that refusal is about — and not
 	// the document kind the deny list also covers, which the gateway prices
-	// and serves (agent.documentReadExtensions). A coder whose model has an
-	// image rate sends the image itself and gets the brief every run had
-	// before this rule existed.
+	// and serves (agent.documentReadExtensions). The remedy it names is the
+	// one an installation has today, the coder slot pinned to a model with an
+	// image rate: a key this release's config does not have is a key its owner
+	// cannot write, and the decoder is strict, so a brief naming one would
+	// send them to a fugaro.yaml every later run is refused for. A coder whose
+	// model has an image rate sends the image itself and gets the brief every
+	// run had before this rule existed.
 	NoImageReads bool
 }
 
@@ -85,7 +89,7 @@ func SystemPrompt(d PromptData, instructions string) string {
 		"- Never launch, cancel or retry a run from inside this job: you are the run it would act on, and nobody here can give the go-ahead such an action needs.",
 	}
 	if d.NoImageReads {
-		lines = append(lines, "- Never read an image ("+imageReadKinds()+"): the model serving this stage is priced without an image rate, so the gateway refuses a request that carries an image, and these reads are denied. If the work needs an image read, say so in "+explain+" instead: the owner can set `agent.models.vision`, and price that model's images with `model_prices`' `image_tokens`.")
+		lines = append(lines, "- Never read an image ("+imageReadKinds()+"): the model serving this stage is priced without an image rate, so the gateway refuses a request that carries an image, and these reads are denied. If the work needs an image read, say so in "+explain+" instead: the owner can pin `agent.models.coder` to a Claude model Fugaro ships a price for, which has an image rate.")
 	}
 	if d.NoWorkflows {
 		lines = append(lines, "- Never create, edit or delete files under .github/workflows/: GitHub refuses Fugaro's push of workflow changes, so the whole run could not be delivered. If the task needs one, describe the change in "+explain+" instead.")
