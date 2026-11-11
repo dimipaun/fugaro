@@ -2298,7 +2298,7 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds one pending workflow,
+change `.github/workflows/`. `docs/pending-workflows/` now holds two pending workflows,
 `docs/pending-workflows/images.yml` — the images workflow's nightly republish of the
 base image skipped when the published tags already name the build (issue #1745), which is the
 running `.github/workflows/images.yml` plus one step and is copied in on its own — and

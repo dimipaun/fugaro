@@ -2324,8 +2324,10 @@ func TestNoCheckoutBitbucketKeepsItsPerRepositoryJob(t *testing.T) {
 	// The build record the fixture's own repository has: a launch on a
 	// per-repository job mints the sealed budget token, which the job's image
 	// has to know how to read (launch_seal_test.go's fixture writes the same
-	// record for acme/app's web workflow).
-	writeBuildRecord(t, f.cloudFixture, bbSlug, "web", releaseSeal)
+	// record for acme/app's web workflow) — and the launch reads the policy the
+	// fixture publishes, so the record's base is the release that introduced
+	// the node's version (releasePolicy, not releaseSeal).
+	writeBuildRecord(t, f.cloudFixture, bbSlug, "web", releasePolicy)
 	// The project publishes a profile (the fixture's own github one, which is
 	// what makes the refusal fire) and admits the Bitbucket repository, so
 	// nothing below is about an admission.
@@ -2385,7 +2387,7 @@ func TestCheckoutWithoutTheFileReadsTheRefsObjects(t *testing.T) {
 // jobs.run call where the third assertion wants none.
 func TestCheckoutWithoutTheFileStillJudgesTheCloneGate(t *testing.T) {
 	f := newProjectJobFixture(t)
-	rewriteConfig(t, "fugaro-base:"+sealSince, "fugaro-base:0.7.0")
+	rewriteConfig(t, "fugaro-base:"+nodeRelease, "fugaro-base:0.7.0")
 	dir := projectJobCheckout(t)
 	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
 		t.Fatal(err)
