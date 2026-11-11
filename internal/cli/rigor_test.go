@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -207,8 +208,10 @@ func TestRigorSetRefusesARaisingWriteInAnAgentSession(t *testing.T) {
 // comments — is left exactly as it was, which is what yamledit is for. The
 // command ends with `next: fugaro update`, the stage that publishes it (D831),
 // and it prints the review floor beside the write: the floor is outside every
-// layer, this command cannot lower it, and `fugaro rigor floor` is where one is
-// changed (SD10).
+// layer and this command cannot lower it. SD10 names `fugaro rigor floor` as the
+// command that changes one, and that command is G7's and not in this tree yet,
+// so the line names no command rather than sending a person to one that prints
+// this group's help.
 //
 // The plan's name for this test says "the local project config": the document is
 // this machine's own layer file, and the name is the plan's shorthand for it.
@@ -224,11 +227,14 @@ func TestRigorSetWritesTheLocalProjectConfig(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	assertNoPrompt(t, out)
-	if !strings.Contains(out, "fugaro rigor floor") {
-		t.Errorf("the write does not name the command that changes a floor:\n%s", out)
-	}
 	if !strings.Contains(out, "critical: l2, l3") {
 		t.Errorf("the write does not print the floor this project holds:\n%s", out)
+	}
+	if !strings.Contains(out, "cannot lower it") {
+		t.Errorf("the write does not say the floor is outside this command's reach:\n%s", out)
+	}
+	if strings.Contains(out, "fugaro rigor floor") {
+		t.Errorf("the write points at a command this tree does not have:\n%s", out)
 	}
 	if lines := strings.Split(strings.TrimRight(out, "\n"), "\n"); lines[len(lines)-1] != "next: fugaro update" {
 		t.Errorf("the last line is %q, want the one hand-off line", lines[len(lines)-1])
@@ -276,18 +282,21 @@ func TestRigorSetRefusesAVocabularyNearMiss(t *testing.T) {
 }
 
 // rigorPublishedLayer is the published-layer read, answered by the test: exists
-// says whether this project has published a layer, which is the one fact §3
-// step 4's two absences are told apart by. The returned flag reports whether the
-// command made the read at all, so a test can say the creation was decided on
-// that answer rather than on the file's absence alone.
-func rigorPublishedLayer(t *testing.T, exists bool) *bool {
+// says whether this project has published a layer, and readErr a bucket that
+// cannot be read at all — the three answers §3 step 4's decision is made on. The
+// returned flag reports whether the command made the read, so a test can say the
+// decision was taken on that answer rather than on the file's absence alone.
+func rigorPublishedLayer(t *testing.T, exists bool, readErr error) *bool {
 	t.Helper()
 	var read bool
 	old := layerPublishedRead
 	t.Cleanup(func() { layerPublishedRead = old })
 	layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
 		read = true
-		if !exists {
+		switch {
+		case readErr != nil:
+			return nil, 0, false, readErr
+		case !exists:
 			return nil, 0, false, nil
 		}
 		return []byte(rigorAnchors + "defaults:\n  rigor:\n    default: pro\n"), 7, true, nil
@@ -303,7 +312,7 @@ func rigorPublishedLayer(t *testing.T, exists bool) *bool {
 // whose Layer stage seeds the file from that layer (D831, merged).
 func TestRigorSetRefusesWithNoLocalFileWhileALayerIsPublished(t *testing.T) {
 	settingsWriteHome(t)
-	read := rigorPublishedLayer(t, true)
+	read := rigorPublishedLayer(t, true, nil)
 	path := localLayerPath(t)
 	noAgentSession(t)
 	noTerminal(t)
@@ -323,6 +332,33 @@ func TestRigorSetRefusesWithNoLocalFileWhileALayerIsPublished(t *testing.T) {
 	}
 }
 
+// A bucket that cannot be read is not the answer "this project has published no
+// layer": the file is created on that answer alone, because the layer a failed
+// read could not see is exactly the one a fresh, nearly empty file would be
+// published over by the next `fugaro update`. The refusal is the shared one, the
+// same sentence the published-layer case gets, and it creates nothing.
+func TestRigorSetRefusesWhenThePublishedLayerCannotBeRead(t *testing.T) {
+	settingsWriteHome(t)
+	read := rigorPublishedLayer(t, false, errors.New("the bucket answered with a refusal"))
+	path := localLayerPath(t)
+	noAgentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "rigor", "set", "critical")
+	if err == nil {
+		t.Fatalf("a write whose published-layer read failed created the file:\n%s", out)
+	}
+	if !*read {
+		t.Error("the refusal was made without asking whether the project has published a layer")
+	}
+	if !strings.Contains(err.Error(), "fugaro update") || !strings.Contains(err.Error(), path) {
+		t.Errorf("the refusal does not name the file and the remedy: %v", err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Error("the failed read created the file it could not decide about")
+	}
+}
+
 // §3 step 4's first absence, and the state a fresh `fugaro setup` leaves: no
 // local layer file and no published layer. The file is created as a project
 // layer document — the local config's three anchor values and nothing else of
@@ -332,7 +368,7 @@ func TestRigorSetRefusesWithNoLocalFileWhileALayerIsPublished(t *testing.T) {
 // default here, and a rule below.
 func TestRigorSetCreatesTheFileWhenNoLayerIsPublished(t *testing.T) {
 	settingsWriteHome(t)
-	read := rigorPublishedLayer(t, false)
+	read := rigorPublishedLayer(t, false, nil)
 	path := localLayerPath(t)
 	noAgentSession(t)
 	noTerminal(t)
@@ -362,7 +398,7 @@ func TestRigorSetCreatesTheFileWhenNoLayerIsPublished(t *testing.T) {
 	// The area form, on its own fresh installation: what the created document
 	// carries is the rule, and the anchors are still the local config's.
 	settingsWriteHome(t)
-	rigorPublishedLayer(t, false)
+	rigorPublishedLayer(t, false, nil)
 	path = localLayerPath(t)
 	out, _, err = execute(t, "rigor", "set", "critical", "--area", "docs/**", "--name", "docs")
 	if err != nil {
@@ -387,7 +423,7 @@ func TestRigorSetCreatesTheFileWhenNoLayerIsPublished(t *testing.T) {
 // not only of its bytes.
 func TestRigorSetCreatesNothingWhenItRefuses(t *testing.T) {
 	settingsWriteHome(t)
-	rigorPublishedLayer(t, false)
+	rigorPublishedLayer(t, false, nil)
 	path := localLayerPath(t)
 	agentSession(t)
 	noTerminal(t)
@@ -536,6 +572,54 @@ func TestRigorSetAreaLowersABraceGlobRuleTheResolutionCannotSee(t *testing.T) {
 	_, _, err = execute(t, "rigor", "set", "startup", "--area", brace)
 	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
 		t.Fatalf("a coding agent's session lowered a brace-glob rule's mode: %v", err)
+	}
+	if readFileString(t, path) != seeded {
+		t.Error("the refused write changed the layer file")
+	}
+}
+
+// The rank rule's third baseline (rigorAreaIsNew): a rule the layer does not
+// carry yet. Adding a rule never lowers a resolution — it can only raise or keep
+// it — so the resolution over the glob reads the same before and after, and the
+// rule's own mode is not there to compare against either: with the default at
+// `critical`, adding a rule at `poc` lowers every path the glob covers and
+// neither baseline above reports it. An area rule replaces the default for the
+// paths it matches, so the mode a new rule is compared against is the layer's
+// default, the floor every path falls back to. Both halves of the sensitive
+// direction are pinned here, for the glob that matches its own literal text and
+// for the brace pattern that does not.
+func TestRigorSetAreaRefusesANewRuleBelowTheDefault(t *testing.T) {
+	const seeded = rigorAnchors + "defaults:\n  rigor:\n    default: critical\n"
+
+	for _, glob := range []string{"docs/**", "docs/{a,b}/**"} {
+		settingsWriteHome(t)
+		path := settingsManagedLayerFile(t, seeded)
+		noAgentSession(t)
+		noTerminal(t)
+
+		out, _, err := execute(t, "rigor", "set", "poc", "--area", glob, "--name", "docs")
+		if err != nil {
+			t.Fatalf("--area %s: %v\n%s", glob, err, out)
+		}
+		if !strings.Contains(out, "lowers") {
+			t.Errorf("--area %s: the owner's terminal did not print the lowering sentence:\n%s", glob, out)
+		}
+		got := readFileString(t, path)
+		if !strings.Contains(got, "mode: poc") || !strings.Contains(got, "match: "+glob) {
+			t.Errorf("--area %s: the write did not add the rule:\n%s", glob, got)
+		}
+	}
+
+	// The same edit in a coding agent's session is refused, because the class is
+	// Typed: a session may not add a rule that lowers what the project resolves
+	// to for the paths the rule covers.
+	settingsWriteHome(t)
+	path := settingsManagedLayerFile(t, seeded)
+	agentSession(t)
+	noTerminal(t)
+	_, _, err := execute(t, "rigor", "set", "poc", "--area", "docs/{a,b}/**", "--name", "docs")
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a coding agent's session added a rule below the default: %v", err)
 	}
 	if readFileString(t, path) != seeded {
 		t.Error("the refused write changed the layer file")

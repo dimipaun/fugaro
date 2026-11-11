@@ -144,7 +144,8 @@ your own terminal, ` + "`--yes`" + ` included, and your own terminal writes it a
 nothing. ` + "`hotfix`" + ` is refused in either form, naming ` + "`fugaro run --mode hotfix`" + `.
 
 The command prints the review floor beside the write, and it cannot lower it:
-` + "`fugaro rigor floor`" + ` is where a floor is changed.
+the floor is outside every layer, and the command that changes one is not built
+yet.
 
 It writes one file: this machine's own project layer file, whose path is
 derived from the selected project's name. A project that has published no layer
@@ -282,16 +283,35 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	// today, over the same inputs the edit is about — the rule's own glob for
 	// the area form, nothing for the layer's default — and the mode after the
 	// edit is the same resolution over the edited document. Both are read
-	// before anything is written. The area form carries the second baseline the
-	// resolution cannot see (rigorAreaLowered), for the globs that do not match
-	// their own literal text.
+	// before anything is written. The area form carries the two baselines that
+	// resolution cannot see: the mode of the rule the edit replaces, for a glob
+	// that does not match its own literal text (rigorAreaLowered), and the
+	// layer's default, for a rule the layer does not carry yet (rigorAreaIsNew).
 	baseline := rigorResolved(prev, o.area)
 	after := rigorResolved(edited, o.area)
+	// The layer's own default: the same resolution as baseline for the default
+	// form, and the mode every path falls back to for the area one — which is
+	// the baseline a rule the layer does not carry yet is compared against.
+	projectDefault := rigorResolved(prev, "")
 	typed, lowered, why := false, "", ""
 	switch {
 	case after.Rank() < baseline.Rank():
 		typed = true
 		lowered = fmt.Sprintf("the project's rigor mode from %s to %s", baseline, after)
+	case o.area != "" && rigorAreaIsNew(prev, o.area) && mode.Rank() < projectDefault.Rank():
+		// A rule the layer does not carry yet is the one lowering the two cases
+		// around this one cannot see. Adding a rule never lowers a resolution —
+		// it can only raise or keep it — so the resolution over the glob reads
+		// the same before and after, and an area rule REPLACES the default for
+		// the paths it matches (rigor.Resolve's own precedence): with the layer's
+		// default at `critical`, `--area docs/** poc` is a real lowering that
+		// neither the resolution above nor the rule's own mode (there is no rule
+		// yet) reports. The default is the floor every resolution falls back to,
+		// so a new rule below it is the safe direction: a new rule whose paths a
+		// stricter existing rule already covers is flagged too, and no real
+		// lowering is missed.
+		typed = true
+		lowered = fmt.Sprintf("the new rule %s, which sets %s where this project resolves to %s today", safetext.Field(o.area), mode, projectDefault)
 	case o.area != "" && rigorAreaLowered(prev, o.area, mode):
 		// The resolution above reads the glob as a PATH, so a glob that does not
 		// match its own text — `docs/{a,b}/**`, `docs/[ab]*` — resolves to the
@@ -312,9 +332,13 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 		}
 	}
 	// The review floor is outside every layer, so this command cannot lower it
-	// and does not try: what it does is say where the floor stands and which
-	// command changes one (SD10, D1170's own separation of the two nouns).
-	fmt.Fprintf(cmd.OutOrStdout(), "review floor: %s; this command cannot lower it: fugaro rigor floor is where a floor is changed\n", rigorFloorLine(lc))
+	// and does not try: what it does is say where the floor stands (SD10, D1170's
+	// own separation of the two nouns). SD10 names the command that changes one,
+	// `fugaro rigor floor`, and that command is G7's and is not in this tree:
+	// naming it here would send a person to a command that prints this group's
+	// own help, so the line says the floor is where it is and that no command
+	// changes one yet. The name goes back when G7 lands, in its own words.
+	fmt.Fprintf(cmd.OutOrStdout(), "review floor: %s; this command cannot lower it: the floor is outside every layer, and the command that changes one is not built yet\n", rigorFloorLine(lc))
 	edit := settingsEdit{
 		Path:     target.path,
 		Old:      old,
@@ -490,6 +514,14 @@ func rigorAreaIn(prev *config.ProjectLayer, glob string) (*rigor.Area, int) {
 func rigorAreaLowered(prev *config.ProjectLayer, glob string, mode rigor.Mode) bool {
 	rule, _ := rigorAreaIn(prev, glob)
 	return rule != nil && mode.Rank() < rule.Mode.Rank()
+}
+
+// rigorAreaIsNew says whether the area form adds a rule the layer does not carry
+// yet: the edit whose mode no resolution over the glob can see before it is
+// written, because the rule that would match the glob is the one being added.
+func rigorAreaIsNew(prev *config.ProjectLayer, glob string) bool {
+	rule, _ := rigorAreaIn(prev, glob)
+	return rule == nil
 }
 
 // rigorResolved is what these inputs resolve to: the layer's own rigor block,
