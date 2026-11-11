@@ -3178,7 +3178,11 @@ func (r *run) readRepoFile(rel string) (string, error) {
 func (r *run) systemPromptData() PromptData {
 	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
 		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
-		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != ""}
+		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != "",
+		// The brief is the coder's, and "implement" is one of its stages: the
+		// answer is the coder's own model, never a review stage's, which is
+		// why denyBinaryReads' review half cannot reach it (D2014).
+		NoImageReads: r.denyBinaryReads("implement")}
 	if r.follow != nil {
 		pd.FollowUp = followup.SystemPromptLines(r.promptData())
 	}

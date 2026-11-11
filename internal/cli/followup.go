@@ -120,7 +120,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		return r.RunID == exclude || (r.TaskPR != pr && !task.BranchRE.MatchString(r.Branch))
 	})
 	if len(rows) == 0 {
-		return nil, userErr("PR #%d is not a Fugaro PR in this repository, or its runs are older than %d days; start a new run instead",
+		return nil, userErr("PR #%d is not a Fugaro PR in this repository, or its runs are older than %d days; start a new run instead, or — for a run that opened nothing, so this PR is not its link — continue it with fugaro run --continues RUN-ID",
 			pr, int(followUpLookback/(24*time.Hour)))
 	}
 	slices.SortStableFunc(rows, func(a, b runview.Row) int {
@@ -533,8 +533,17 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 // chain's figure written alone, the composition left to the runner (L5) — is
 // repeated as it stands rather than gaining a clock from wherever the repeat
 // is run.
+//
+// A dimension this call names no flag for is taken from the stored task, which
+// is the rule the title, the plan task and the mode already follow: a flag that
+// is given must be the stored one, and a launch that gives none makes no claim.
+// The chain half of a launch (docs/run-limit-carry-over L4) is what makes it
+// necessary rather than merely tidy: a `--pr` follow-up writes the chain's
+// remaining into each dimension its chain limits, whatever this call typed, so
+// a repeat that echoed the flags alone would be refused as a different task
+// against the very task its own launch wrote.
 func repeatOverrides(have *task.Spec, o *runOptions, total time.Duration) task.Overrides {
-	var want task.Overrides
+	want := have.Overrides
 	if o.limits.usd != nil {
 		want.MaxUSD = o.limits.usd
 	}
@@ -565,12 +574,37 @@ func repeatOverrides(have *task.Spec, o *runOptions, total time.Duration) task.O
 // reused as it is, its previous_run and requested_by included. Any other
 // stored task is refused; nil means there is none.
 func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptions, text string, total time.Duration) (*task.Spec, error) {
+	return storedRepeat(ctx, env, slug, o, o.pr[0], text, total)
+}
+
+// storedRepeat is the same rule for every launch shape that repeats against a
+// stored task, with the pull request passed rather than read off this call: a
+// --continues launch names no --pr and the task it repeats carries none either
+// (pr 0). The figures such a task holds include what the chain resolved when
+// it was written (chainInherit), so a repeat that re-read the chain instead of
+// the stored task would derive another remaining every time a run behind it
+// spends or a run in flight ages, and refuse the repeated command as a
+// different task. The task is what the run reads; a repeat answers with it.
+func storedRepeat(ctx context.Context, env *cloudEnv, slug string, o *runOptions, pr int, text string, total time.Duration) (*task.Spec, error) {
 	have, err := readTask(ctx, env, slug, o.runID)
 	if errors.Is(err, runstore.ErrNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	// A --used-* figure is the one flag a repeat cannot be held to the stored
+	// task by (D1048): the stored task holds the chain's remaining as the launch
+	// that wrote it resolved it, and the charge that launch was given is inside
+	// that figure rather than beside it (chainRemaining), so the same figure and
+	// a different one are the same task here. Left there it would be dropped in
+	// silence — the failure a fresh launch refuses for a dimension the chain does
+	// not limit, where the figure is "refused rather than accepted and forgotten"
+	// — and it is the worse half: the caller is told the run is already launched
+	// while the figure they stated was never applied. Refused, and the message
+	// names the two ways to state it: without the flags, or on a new run ID.
+	if o.used.set() {
+		return nil, userErr("run ID %s already holds a task, and a repeat cannot state what the chain has used: the figures it holds are the chain's remaining as its own launch resolved them, which a --used-* figure cannot be checked against. Repeat without --used-*, or state it on a run ID that has not launched", o.runID)
 	}
 	want := repeatOverrides(have, o, total)
 	a, err1 := json.Marshal(have.Overrides)
@@ -604,7 +638,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	// pending decisions again must carry the same ruling, and one that gives
 	// none repeats the stored task — the ruling it holds stands — rather than
 	// being refused as a different one.
-	if have.PR != o.pr[0] || have.Task != text || have.Batch != o.batch || (o.title != "" && have.Title != o.title) || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
+	if have.PR != pr || have.Task != text || have.Batch != o.batch || (o.title != "" && have.Title != o.title) || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
 		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) ||
 		(o.planTask != "" && have.PlanTask != o.planTask) ||
 		(o.rigor != "" && string(have.Rigor) != o.rigor) ||
@@ -627,6 +661,39 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 		return nil, err
 	}
 	return have, nil
+}
+
+// reuseStored answers a launch that names an --run-id with the task that ID
+// already holds, when that task is this call's own launch (storedRepeat):
+// reused true with the stored task, and the chain is not read again, because
+// what the stored task holds is what the chain left the run when it was written
+// (chainInherit) and a chain read now answers another figure as soon as a run
+// behind it spends or a run in flight ages. A run ID that holds nothing is a
+// launch, and pr is the pull request the stored task must carry — 0 for the
+// launch shapes that name none (a review job, --continues).
+func reuseStored(ctx context.Context, env *cloudEnv, slug string, o *runOptions, pr int, text string, total time.Duration, spec *task.Spec) (*task.Spec, bool, error) {
+	if o.runID == "" {
+		return spec, false, nil
+	}
+	have, err := storedRepeat(ctx, env, slug, o, pr, text, total)
+	if err != nil {
+		return nil, false, err
+	}
+	if have == nil {
+		return spec, false, nil
+	}
+	// The pull requests a review job reviews are the one identity storedRepeat
+	// cannot compare: a review task keeps them in review_prs and carries no pr
+	// of its own, so the figure the pr argument is held to is 0 for every one of
+	// them, and a repeat of `--pr 8 --recipe review-only` over a run ID holding
+	// PR 7's review would be answered with that stored task — the review of a
+	// pull request this call never named, reported as the launch it asked for.
+	// The task that was written is the task a repeat answers with, so the list
+	// has to be this call's own.
+	if !slices.Equal(have.ReviewPRs, spec.ReviewPRs) {
+		return nil, false, userErr("run ID %s already holds a different task", o.runID)
+	}
+	return have, true, nil
 }
 
 // newFollowUpSpec is the task of a new follow-up of chain c: its branch and

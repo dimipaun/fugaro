@@ -4210,3 +4210,117 @@ func TestPlanWorkflowJobMovesACatalogJobsImage(t *testing.T) {
 		t.Fatalf("base image: %v %+v, want a shape refusal", err, u)
 	}
 }
+
+// TestProjectSecretCandidateFromNode is SD17's read at the layer both of its
+// readers share. The owner publishes the allow-list once
+// (project_secrets.bitbucket-token.allow_data_to, derived into the node's
+// bitbucket_token block), and a machine whose local config holds no such entry
+// reads it there: the plan mounts the project's copy of the token
+// (ProjectSecretCandidates, which Readiness resolves the mount from) and update
+// --repo's secrets stage stores it there, instead of the operator copying the
+// entry to every machine and every machine being handed a per-repository token.
+//
+// Each condition of the read has its own case below, because each one is the
+// difference between a working repository and a credential used where it must
+// not be.
+func TestProjectSecretCandidateFromNode(t *testing.T) {
+	bitbucketNode := &projectpolicy.Policy{
+		Version:        projectpolicy.Version,
+		AllowRepos:     []string{"bitbucket/acme/sandbox"},
+		BitbucketToken: &projectpolicy.BitbucketToken{AllowRepos: []string{"bitbucket/acme/sandbox"}},
+	}
+	t.Run("the node admits the repository this machine holds no entry for", func(t *testing.T) {
+		in := sandboxInputs(t, m5Additions)
+		if in.LC.ProjectSecrets != nil {
+			t.Fatalf("the fixture carries project_secrets, so it cannot show the node being read: %v", in.LC.ProjectSecrets)
+		}
+		if _, ok := ProjectSecretCandidate(in.LC, "bitbucket-token", "acme/sandbox"); ok {
+			t.Fatal("the local answer admits the repository, so the node half would prove nothing")
+		}
+		id, ok := ProjectSecretCandidateFromNode(in.LC, "bitbucket-token", "acme/sandbox", "bitbucket", bitbucketNode)
+		if !ok || id != gcp.ProjectSecretID(in.LC.Name, "bitbucket-token") {
+			t.Fatalf("ProjectSecretCandidateFromNode = %q, %v; want the project's copy of the token", id, ok)
+		}
+		// The half that makes the store safe: the plan mounts what the stage
+		// stores. Readiness resolves the mount from this map, and the map is
+		// built from the same predicate with the same two facts.
+		in.Policy = bitbucketNode
+		rs, err := Repo(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rs.ProjectSecretCandidates["bitbucket-token"]; got != id {
+			t.Errorf("the spec's candidate = %q, want %q: the job would mount a container the stage does not store into", got, id)
+		}
+		// And with no node read the map is what it always was: a machine that
+		// read no policy admits nobody through this source.
+		in.Policy = nil
+		rs, err = Repo(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := rs.ProjectSecretCandidates["bitbucket-token"]; ok {
+			t.Error("a caller that read no node got a candidate entry: nil is not an empty policy")
+		}
+	})
+	t.Run("the provider must be bitbucket", func(t *testing.T) {
+		// The node's allow_repos is bitbucket-qualified by construction, and a
+		// GitHub repository whose owner/name it happens to spell out uses the
+		// App key instead: admitting it here would hand it a credential it does
+		// not use (resolveBitbucketProxied's own rule).
+		in := webappInputs(t)
+		node := &projectpolicy.Policy{
+			Version:        projectpolicy.Version,
+			AllowRepos:     []string{"bitbucket/acme/webapp"},
+			BitbucketToken: &projectpolicy.BitbucketToken{AllowRepos: []string{"bitbucket/acme/webapp"}},
+		}
+		if _, ok := ProjectSecretCandidateFromNode(in.LC, "bitbucket-token", "acme/webapp", "github", node); ok {
+			t.Error("a GitHub repository was admitted by the Bitbucket token's allow-list")
+		}
+		// The allow_repos above is bitbucket-qualified, so that case is refused
+		// by the stamp and not by the provider guard: the guard is what answers
+		// for a node whose block spells the repository out under the very
+		// provider the caller asked about, which is the node a hand that writes
+		// the database can leave behind. Without the guard the admission below
+		// succeeds and a GitHub repository is handed the project's Bitbucket
+		// token.
+		byHand := &projectpolicy.Policy{
+			Version:        projectpolicy.Version,
+			BitbucketToken: &projectpolicy.BitbucketToken{AllowRepos: []string{"github/acme/webapp"}},
+		}
+		if _, ok := ProjectSecretCandidateFromNode(in.LC, "bitbucket-token", "acme/webapp", "github", byHand); ok {
+			t.Error("a GitHub repository was admitted by the Bitbucket token's block, on a node whose allow_repos spells it out under the GitHub stamp")
+		}
+	})
+	t.Run("a local entry decides", func(t *testing.T) {
+		// An entry is the owner's own decision and the local file is its source
+		// of truth (D854): a machine that carries one keeps the answer it
+		// carries, including the entry that names another repository.
+		in := sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token: { allow_data_to: [acme/other] }\n")
+		if _, ok := ProjectSecretCandidateFromNode(in.LC, "bitbucket-token", "acme/sandbox", "bitbucket", bitbucketNode); ok {
+			t.Error("the node widened an entry the local config wrote")
+		}
+	})
+	t.Run("a block that admits nobody admits nobody", func(t *testing.T) {
+		in := sandboxInputs(t, m5Additions)
+		for name, node := range map[string]*projectpolicy.Policy{
+			"no bitbucket_token block": {Version: projectpolicy.Version, AllowRepos: []string{"bitbucket/acme/sandbox"}},
+			"an empty allow_repos":     {Version: projectpolicy.Version, BitbucketToken: &projectpolicy.BitbucketToken{}},
+			"a block for another workspace": {Version: projectpolicy.Version, BitbucketToken: &projectpolicy.BitbucketToken{
+				AllowRepos: []string{"bitbucket/other/*"}}},
+			"no node read at all": nil,
+		} {
+			if _, ok := ProjectSecretCandidateFromNode(in.LC, "bitbucket-token", "acme/sandbox", "bitbucket", node); ok {
+				t.Errorf("%s admitted the repository", name)
+			}
+		}
+	})
+	t.Run("a wildcard admits the repositories it matches", func(t *testing.T) {
+		in := sandboxInputs(t, m5Additions)
+		node := &projectpolicy.Policy{Version: projectpolicy.Version, BitbucketToken: &projectpolicy.BitbucketToken{
+			AllowRepos: []string{"bitbucket/acme/*"}}}
+		if _, ok := ProjectSecretCandidateFromNode(in.LC, "bitbucket-token", "acme/sandbox", "bitbucket", node); !ok {
+			t.Error("a workspace pattern the owner published did not admit a repository of it")
+		}
+	})
+}

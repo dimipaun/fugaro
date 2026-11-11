@@ -1,6 +1,6 @@
 # `fugaro settings`: implementation plan
 
-**Status as of 2026-11-10: in progress, about 6/12 merged, and S7 closed as a duplicate of config-management's G7; see [docs/status.md](../status.md) for the current table.** SD1–SD18 were
+**Status as of 2026-11-10: in progress — S0, S1, S3 and S5 merged, S2 and S4 not on `main`, and S7 closed as a duplicate of config-management's G7; see [docs/status.md](../status.md) for the current table.** SD1–SD18 were
 answered by the owner on 2026-10-31 ([reconciliation.md](reconciliation.md) §3), and so were this
 plan's own decisions (§4): **all of D840–D854 were answered that day, every one as recommended,
 D854 — the stale local copy — included, its answer being the generation recorded**, which is what S3
@@ -13,9 +13,10 @@ builds the same command as a task of [docs/config-management](../config-manageme
 and the owner ruled on 2026-11-10 that **config-management wins**: **G7** builds `fugaro rigor floor`,
 and S7 is closed as its duplicate. S7 carries the marker, keeps its section as the record of what was
 designed — G7's own interface re-reads that record against the tree, as G6 re-reads the `rigor`
-design's — and keeps its number, which is never reused. **S0–S5 are merged and stay exactly as they
-are, and S6 and S8–S11 stay open**; the behaviour G7 does not carry is listed under *behaviour not
-covered by the winners* in the pull request that carries this ruling rather than dropped here.
+design's — and keeps its number, which is never reused. **S0, S1, S3 and S5 are merged and stay
+exactly as they are, S2 and S4 are not on `main`, and S6 and S8–S11 stay open**; the behaviour G7
+does not carry is listed under *behaviour not covered by the winners* in the pull request that
+carries this ruling rather than dropped here.
 
 ## Order, and what this plan does not own
 
@@ -57,14 +58,14 @@ covered by the winners* in the pull request that carries this ruling rather than
 | 1 | S1, S3 | S0 (S1) |
 | 2 | S2, S4, S5 | S1 (S2, S5); S3 (S4, S5); E3 (S5); R1 (S5) |
 | 3 | S6, S8, S9 | S5, and S3 for S6, S8 and S9 |
-| 4 | S10, S11 | S1–S6, S8 and S9, and config-management's G7 (S10); S1–S3 and S5 (S11, plus R0 and R1 for the layer half of the loop) |
+| 4 | S10, S11 | S1–S6, S8 and S9, and config-management's G7 (S10); S1–S5 (S11, plus R0 and R1 for the layer half of the loop) |
 
 **S7 is off the table, and its number stays spent.** S7 has left the levels and the order above: the
 command it designed is config-management's G7, and its number is never reused — a later task here
 takes **S12** and re-reads this plan's `Needs` column rather than this sentence. Nothing else about
 the order moves. **S10 is the one row the closing touches**: it needed S7 among the commands its
 documentation and skill describe, and it now needs G7 there instead. S11 never needed S7 — its loop
-writes a ceiling key, which is S5's — and keeps the row it had.
+writes a ceiling key, which is S5's — and keeps its place in the order.
 
 **The joint order**, agreed with the `models` and `rigor` designs and the same list in all three:
 **editor → policy stage (S3) → settings read (S0–S2, S4) → layer stage (R0, R1) → set (S5) → rigor
@@ -461,6 +462,20 @@ publisher refuses silence for the same reason.
   `website/`.
 
 ## S11. The end-to-end converge test (SD3, SD4, D849)
+
+**NOT BUILT 2026-11-10: S2 and S4 are not on `main`, so the loop this task is about cannot be
+written yet.** The loop is the read's as much as the stage's — `unpublished` before the update and
+`WINS policy` after it are S2's (`internal/cli/settings_cloud.go`, which does not exist) and the
+project-layer half is S4's (`internal/cli/settings_layer.go`, which does not exist either) — and
+neither read exists: `settingsCloudLayers` (`internal/cli/settings_read.go`) is still the no-op stub
+its own comment calls "empty until S2 fills it", and nothing in the read touches the published node
+or a Realtime Database key. On an installation whose local config writes `budget.per_run_usd`,
+`fugaro settings budget.per_run_usd` prints `WINS local` and `STATE ok` before **and** after
+`fugaro update` publishes the node, and never `unpublished` — the state spec §2.5 makes this
+command's reason to exist. The stage's half does converge (the write above reaches the published
+node), so the test below, written today, would pin `local`/`ok` for a state that is `unpublished`
+by the spec: a test whose own name says the opposite of what it asserts. **S11 is written when S2
+and S4 land**; nothing here changes its Files line, its tests, its level or the order above.
 
 The whole design is one loop: set a value, see it `unpublished`, run `fugaro update`, see it `ok`.
 Every task above tests one half of it, and the halves are exactly what can drift apart, so the loop

@@ -515,8 +515,11 @@ func TestCommandIsRegisteredOnce(t *testing.T) {
 		names = append(names, sub.Name())
 	}
 	slices.Sort(names)
-	if want := []string{"events", "ls", "patch", "run", "state"}; !slices.Equal(names, want) {
-		t.Errorf("orchestrator's subcommands are %v, and O5's three readers, O8's daemon and CG4's listing are %v", names, want)
+	// O5's three readers, O8's daemon, CG4's listing and O9's unit: install,
+	// uninstall and status are that command family's own three, and nothing
+	// else joins it.
+	if want := []string{"events", "install", "ls", "patch", "run", "state", "status", "uninstall"}; !slices.Equal(names, want) {
+		t.Errorf("orchestrator's subcommands are %v, and O5's three readers, O8's daemon, CG4's listing and O9's unit are %v", names, want)
 	}
 	for _, sub := range found[0].Commands() {
 		for _, banned := range []string{"spawn", "retry"} {
