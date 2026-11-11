@@ -156,22 +156,29 @@ func Allowed(in Input, caller string, action Action, repo string) bool {
 		return false
 	}
 	if rule.project {
-		return effectiveAtProject(in, caller).AtLeast(rule.min)
+		return EffectiveAtProject(in, caller).AtLeast(rule.min)
 	}
 	return Effective(in, caller, repo).AtLeast(rule.min)
 }
 
-// effectiveAtProject is caller's role at project scope: admin for an implicit
-// admin, and otherwise the highest role of the grants that name them with the
-// project scope (an all-repos or repository grant holds no project-level
-// thing, F19).
+// EffectiveAtProject returns caller's role at project scope: admin for an
+// implicit admin, and otherwise the highest role of the grants that name them
+// with the project scope (an all-repos or repository grant holds no
+// project-level thing, F19). Anything else — an empty caller, a grant whose
+// role or scope this package did not parse — resolves to RoleNone, and the
+// highest role wins by Rank.
+//
+// A project-level action asks it (Allowed), and so does a paired device's own
+// role: a device node records a role and no scope (D1588), so what a device may
+// hold is exactly what its pairing user holds here, and a caller whose grants
+// are all repository-scoped holds nothing a device could carry.
 //
 // It gates on Scope.Valid for the same reason Effective does, and it is the
 // half where skipping it would matter most: a grant whose kind is ScopeProject
 // but whose value this package did not parse (a project scope carrying
 // repositories) would otherwise read as project admin, which is the role that
 // hands out every other. The kind alone is not the scope.
-func effectiveAtProject(in Input, caller string) Role {
+func EffectiveAtProject(in Input, caller string) Role {
 	if caller == "" {
 		return RoleNone
 	}

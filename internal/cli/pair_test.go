@@ -31,6 +31,7 @@ import (
 	"github.com/spf13/cobra"
 	"rsc.io/qr"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
@@ -90,6 +91,13 @@ func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
+	// The installation has converged: `fugaro update` migrates the two lists
+	// above into the grants node (RS3), and the node — not the file's lists —
+	// is what places a pairing caller (RS8, D1588): person-1 an admin at
+	// project scope, person-2 an operator.
+	f.pairSeedGrants(t,
+		pairGrant(t, pairMe, accesslib.RoleAdmin, "project"),
+		pairGrant(t, pairLauncher, accesslib.RoleOperator, "project"))
 	f.db.Set("fugaro/project", "aurora")
 	f.db.Set(budget.PathMark, auroraMark())
 	marker, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"})
@@ -104,12 +112,46 @@ func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)
 		t.Fatal(err)
 	}
 
-	prevNow, prevUser, prevKeys := pairNow, authenticatedUser, pairKeychain
+	prevNow, prevUser, prevKeys, prevMe := pairNow, authenticatedUser, pairKeychain, pairMeLookup
 	pairNow = func() time.Time { return pairT0 }
 	authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return me, nil }
+	// The credential the command would read is this fixture's caller, so no
+	// test reaches Google's userinfo endpoint.
+	pairMeLookup = func(context.Context) (string, error) { return accesslib.Member(me) }
 	pairKeychain = func() keychain.Store { return f.keys }
-	t.Cleanup(func() { pairNow, authenticatedUser, pairKeychain = prevNow, prevUser, prevKeys })
+	t.Cleanup(func() { pairNow, authenticatedUser, pairKeychain, pairMeLookup = prevNow, prevUser, prevKeys, prevMe })
 	return f
+}
+
+// pairGrant is one stored grant, written as the node holds it: the member the
+// address makes and the scope in its canonical spelling.
+func pairGrant(t *testing.T, address string, role accesslib.Role, scope string) accesslib.Grant {
+	t.Helper()
+	member, err := accesslib.Member(address)
+	if err != nil {
+		t.Fatalf("the fixture's grant member: %v", err)
+	}
+	parsed, err := accesslib.ParseScope(scope)
+	if err != nil {
+		t.Fatalf("the fixture's grant scope %q: %v", scope, err)
+	}
+	return accesslib.Grant{User: member, Role: role, Scope: parsed}
+}
+
+// pairSeedGrants replaces the installation's grants node with grants, through
+// the document the node is written with, so what the fixture holds is what a
+// migration would have written.
+func (f *pairFixture) pairSeedGrants(t *testing.T, grants ...accesslib.Grant) {
+	t.Helper()
+	raw, err := accesslib.Encode(grants)
+	if err != nil {
+		t.Fatalf("the fixture's grants do not encode: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("the fixture's grants document does not decode: %v", err)
+	}
+	f.db.Set(accesslib.PathNode, doc)
 }
 
 // pairRun runs the command under a bare root, because the real tree has no
@@ -411,13 +453,92 @@ func TestPairRoleDefaultsToPairingUsersRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "role operator") {
+	if !strings.Contains(out, "role admin") {
 		t.Fatalf("output does not inherit the pairing user's role:\n%s", out)
 	}
 }
 
+// TestPairInheritsHighestProjectRole: the device inherits the pairing user's
+// highest PROJECT-scope role and nothing else. A device node records a role and
+// no scope, so a repository-scoped role — however high — is not one it can
+// carry (RS8, D1588), and the caller's own role is read from the grants node
+// rather than from the installation's IAM lists: this one is on neither list
+// and holds an admin at github/acme/* beside an operator at project scope, and
+// the device is the operator.
+func TestPairInheritsHighestProjectRole(t *testing.T) {
+	f := newPairFixture(t, "person-3@example.com")
+	f.pairSeedGrants(t,
+		pairGrant(t, "person-3@example.com", accesslib.RoleAdmin, "github/acme/*"),
+		pairGrant(t, "person-3@example.com", accesslib.RoleOperator, "project"))
+	out, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "role operator") {
+		t.Fatalf("a device did not inherit the highest project-scope role:\n%s", out)
+	}
+	allowlist, _ := f.db.Value("config/admin/devices").(map[string]any)
+	if len(allowlist) != 1 {
+		t.Fatalf("the allowlist is %v, want exactly the one device the pairing wrote", f.db.Value("config/admin/devices"))
+	}
+	for _, child := range allowlist {
+		if node, _ := child.(map[string]any); node["role"] != "operator" {
+			t.Fatalf("the device node's role is %v, want operator: a repository-scoped admin is not a role a device can carry", node["role"])
+		}
+	}
+}
+
+// TestPairRefusesRepoScopedOnlyUser: a caller the grants place only outside the
+// project — in repositories, or everywhere — cannot pair. No repository-scoped
+// role is one a device could carry (RS8, D1588), and the refusal names the
+// member and the scope that would place them, before anything is minted or
+// written.
+func TestPairRefusesRepoScopedOnlyUser(t *testing.T) {
+	f := newPairFixture(t, "person-4@example.com")
+	f.pairSeedGrants(t,
+		pairGrant(t, "person-4@example.com", accesslib.RoleAdmin, "github/acme/*"),
+		pairGrant(t, "person-4@example.com", accesslib.RoleViewer, "all-repos"))
+	out, _, err := pairRun(t, "--json")
+	pairAssertUnplaced(t, f, out, err, "user:person-4@example.com")
+
+	// The same answer for a caller the installation's IAM lists still name: the
+	// node places a caller now, and the lists are only the migration's source.
+	f = newPairFixture(t, pairMe)
+	f.pairSeedGrants(t, pairGrant(t, pairMe, accesslib.RoleAdmin, "github/acme/*"))
+	out, _, err = pairRun(t, "--json")
+	pairAssertUnplaced(t, f, out, err, "user:"+pairMe)
+}
+
+// pairAssertUnplaced holds a caller the grants place outside the project to
+// RS8's rule: the wire code a console switches on, the member and the scope the
+// sentence names, and no pairing token, device node or pairing subtree behind
+// the refusal.
+func pairAssertUnplaced(t *testing.T, f *pairFixture, out string, err error, member string) {
+	t.Helper()
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Code != pairRefusedUnplaced {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedUnplaced)
+	}
+	for _, want := range []string{member, "project scope"} {
+		if !strings.Contains(events[0].Reason, want) {
+			t.Fatalf("refusal %q does not name %q", events[0].Reason, want)
+		}
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("a refused caller still minted a pairing token (%d signJwt calls)", n)
+	}
+	for _, w := range f.pairWriteState() {
+		if w != nil {
+			t.Fatalf("a refused caller wrote %v", w)
+		}
+	}
+}
+
 func TestPairRoleAboveCallerRefused(t *testing.T) {
-	f := newPairFixture(t, pairMe)
+	f := newPairFixture(t, pairLauncher)
 	_, _, err := pairRun(t, "--role", "admin")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want exit 1", err)
@@ -452,7 +573,7 @@ func TestPairUnplacedCallerRefused(t *testing.T) {
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want exit 1", err)
 	}
-	for _, want := range []string{"user:person-3@example.com", "terraform.operators", "terraform.admins"} {
+	for _, want := range []string{"user:person-3@example.com", "project scope"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("refusal %q does not name %q", err, want)
 		}
@@ -644,7 +765,7 @@ func TestPairInteractiveWithoutATerminalRefusesAndReadsNothing(t *testing.T) {
 }
 
 func TestPairJSONRefusalExitCodes(t *testing.T) {
-	newPairFixture(t, pairMe)
+	newPairFixture(t, pairLauncher)
 	out, _, err := pairRun(t, "--json", "--role", "admin")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("operator-fixable refusal: err = %v, want exit 1", err)
@@ -1174,7 +1295,7 @@ func TestPairDeviceNodeHoldsNoSecret(t *testing.T) {
 	if want := []string{"at", "email", "name", "role"}; !slices.Equal(keys, want) {
 		t.Fatalf("the device node holds %v, want %v and nothing else", keys, want)
 	}
-	if node["name"] != "phone-a" || node["email"] != pairMe || node["role"] != "operator" || node["at"] == "" {
+	if node["name"] != "phone-a" || node["email"] != pairMe || node["role"] != "admin" || node["at"] == "" {
 		t.Fatalf("the device node is %v", node)
 	}
 	raw, err := json.Marshal(node)
@@ -1368,17 +1489,17 @@ func TestPairEmailNotOperatorsRefused(t *testing.T) {
 }
 
 // TestPairMeFailureIsNotUnplaced: the identity the command reads has a refusal
-// of its own. Dropping lc.Me's error told an operator whose identity could not
-// be read that they were on neither of the installation's lists — a fixable
-// credential problem reported as a list problem, and the wrong wire code for a
-// console to act on.
+// of its own. Dropping its error told an operator whose identity could not be
+// read that they held no role to inherit — a fixable credential problem
+// reported as a placing problem, and the wrong wire code for a console to act
+// on.
 func TestPairMeFailureIsNotUnplaced(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	prev := pairMeLookup
 	t.Cleanup(func() { pairMeLookup = prev })
 
-	pairMeLookup = func(context.Context, *localcfg.Config) (string, error) {
-		return "", errors.New("cannot tell who you are: set user in the local config or git config user.email")
+	pairMeLookup = func(context.Context) (string, error) {
+		return "", errors.New("cannot read the credential you are using: no Google credentials")
 	}
 	out, _, err := pairRun(t, "--json")
 	if err == nil || ExitCode(err) != ExitUserError {
@@ -1388,9 +1509,9 @@ func TestPairMeFailureIsNotUnplaced(t *testing.T) {
 	if len(events) != 1 || events[0].Code != pairRefusedIdentity {
 		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedIdentity)
 	}
-	for _, absent := range []string{"terraform.operators", "terraform.admins", "neither of this installation's lists"} {
+	for _, absent := range []string{"project scope", "holds no role"} {
 		if strings.Contains(events[0].Reason, absent) {
-			t.Fatalf("an identity failure reads as a list failure: %q", events[0].Reason)
+			t.Fatalf("an identity failure reads as a placing failure: %q", events[0].Reason)
 		}
 	}
 	if n := len(f.iam.SignCalls()); n != 0 {
@@ -1398,8 +1519,8 @@ func TestPairMeFailureIsNotUnplaced(t *testing.T) {
 	}
 
 	// A failure the error itself classes as remote keeps exit 2.
-	pairMeLookup = func(context.Context, *localcfg.Config) (string, error) {
-		return "", remote(errors.New("asking who you are: the identity endpoint is unreachable"))
+	pairMeLookup = func(context.Context) (string, error) {
+		return "", remote(errors.New("reading the credential: the userinfo endpoint is unreachable"))
 	}
 	out, _, err = pairRun(t, "--json")
 	if err == nil || ExitCode(err) != ExitRemoteError {

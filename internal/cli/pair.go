@@ -19,6 +19,7 @@ import (
 	// approved it by name with T4's brief. renderPairQR's comment records it.
 	"rsc.io/qr"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -38,11 +39,19 @@ import (
 // budgetNow is: a test pins the stream's timestamps and the token's exp.
 var pairNow = time.Now
 
-// pairMeLookup is who the command thinks it is: localcfg's own reader, and a
-// variable because an identity that cannot be read has a refusal of its own
-// (and a class of its own, exit 2 when the failure is remote) rather than the
-// "you are on neither list" one a dropped error would produce.
-var pairMeLookup = func(ctx context.Context, lc *localcfg.Config) (string, error) { return lc.Me(ctx) }
+// pairMeLookup is who the command thinks it is, in the "user:<address>" form the
+// grants are written in: access.Caller, which reads the credential the pairing
+// will be made with. It is the credential, and never the local config's `user:`
+// key nor git config user.email — text a person or a coding agent can set (F21)
+// — and the role a device inherits is read from the grants beside it, so both
+// halves of "who is this and what do they hold" are the cloud's answer.
+//
+// It is a variable because a test's own function stands here, so no test reaches
+// Google's userinfo endpoint, and because an identity that cannot be read has a
+// refusal of its own — and a class of its own, exit 2 when the failure is remote
+// — rather than the "you hold no role to inherit" one a dropped error would
+// produce.
+var pairMeLookup = func(ctx context.Context) (string, error) { return accesslib.Caller(ctx) }
 
 // pairKeychain is the OS keychain this pairing's MAC key is stored in (M5,
 // D113b, D171): the key never reaches a file, and the local config holds the
@@ -181,15 +190,33 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedMismatch), err)
 	}
 
-	me, err := pairMeLookup(ctx, lc)
+	me, err := pairMeLookup(ctx)
 	if err != nil {
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedIdentity), err)
 	}
-	role, ok := pairInheritedRole(lc, me)
-	if !ok {
+	// The grants are what place the caller: the node is the installation's
+	// roles, and the two IAM lists are only what `fugaro update` migrated into
+	// it (RS3). The read is the same database admin the probe above proved, and
+	// it is a read, so a refusal here is still before any side effect.
+	grantsNode, err := accesslib.Read(ctx, db)
+	switch {
+	case errors.Is(err, rtdb.ErrPermission):
+		return pairRefuse(ev, o, pairRefusedDatabaseAdmin,
+			fmt.Errorf("%s refused the read: a pairing inherits the pairing user's role at project scope from the grants there, and writes the device node with roles/firebasedatabase.admin on project %s's Firebase project: %w", accesslib.PathNode, lc.Name, err))
+	case err != nil:
+		failed := dbErr(lc, err, false)
+		return pairRefuse(ev, o, pairRefusalCode(failed, pairRefusedUnplaced), failed)
+	}
+	role := pairInheritedRole(grantsNode.Grants, me)
+	if role == mobileauth.RoleNone {
+		if !grantsNode.Found {
+			return pairRefuse(ev, o, pairRefusedUnplaced,
+				fmt.Errorf("%s has no grants node yet (%s is absent), so a device paired here would have no role to inherit: run '%s update', which migrates this installation's terraform.operators and terraform.admins into project-scope grants there",
+					lc.Name, accesslib.PathNode, selfCommand()))
+		}
 		return pairRefuse(ev, o, pairRefusedUnplaced,
-			fmt.Errorf("%s is on neither of this installation's lists (terraform.operators, terraform.admins), so a device it paired would have no role to inherit; ask an admin of %s to add you",
-				meMember(me), lc.Name))
+			fmt.Errorf("%s holds no role at project scope in %s, so a device it paired would have no role to inherit: a device node records a role and no scope (D1588), so the role it inherits is the pairing user's highest project-scope one, and a repository- or all-repos-scoped grant is not one a device can carry; ask an admin of %s to place you at project scope with '%s update --operator %s', which writes that grant",
+				me, lc.Name, lc.Name, selfCommand(), me))
 	}
 	if o.role != "" {
 		switch want, known := mobileauth.ParseRole(o.role); {
@@ -809,17 +836,28 @@ func pairTimeoutRefusal(timeout time.Duration) string {
 	return ""
 }
 
-// pairInheritedRole is the role a paired device inherits (plan §4.1, decision
-// 13): the pairing user's own, read from the installation's two member lists.
-// Membership of either list maps to the device word operator -- neither list
-// holds a viewer, so a viewer device is reached only by lowering with --role,
-// and no device is paired as an admin.
-func pairInheritedRole(lc *localcfg.Config, me string) (mobileauth.Role, bool) {
-	member := meMember(me)
-	if adminMember(member, lc.Terraform.Admins) || operatorMember(member, lc.Terraform.Operators) {
-		return mobileauth.RoleOperator, true
-	}
-	return mobileauth.RoleNone, false
+// pairInheritedRole is the role a paired device inherits (RS8, D1588): the
+// pairing user's own role AT PROJECT SCOPE, read from the grants node.
+//
+// The scope is the whole of it. A device node records a role and no scope, so
+// the role it carries has to be one that means the same thing in every
+// repository of the project; a caller whose grants all carry a repository (or
+// all-repos) scope holds nothing a device could hold, and is refused by the
+// caller rather than paired with a role nobody bounded. The device word is the
+// same word the grants use, and a project-scope admin's device is an admin:
+// --role may only lower it.
+//
+// The implicit project admins (the GCP project's owners and editors, and the
+// budget admins, F17.3/F22) are not read here, and the pairing path passes
+// none: pairing holds no CRM client — it reaches the database and the signer
+// and nothing else — so an owner who holds no stored grant is refused rather
+// than admitted. That is the direction this command fails in either way (a
+// caller on neither IAM list cannot pair today), and it is the safe one: a
+// device node has no scope, so admitting a caller the grants do not place would
+// put authority on a phone that no grant record bounds. An owner who wants a
+// device is one `fugaro update --operator` away from holding the grant.
+func pairInheritedRole(grants []accesslib.Grant, me string) mobileauth.Role {
+	return accesslib.EffectiveAtProject(accesslib.Input{Grants: grants}, me)
 }
 
 // pairDatabaseAdminProbe refuses a credential the database will not let at the
