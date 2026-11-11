@@ -479,6 +479,56 @@ export interface ConsoleOperation {
    * because the bound every other read is held to is a fact about those reads.
    */
   readonly payloadWidth?: number
+  /**
+   * `refusedAfterLapse` is the field that makes an operation part of the
+   * **refused class** of the design's lapse state (subscriptions plan S6.2;
+   * `docs/design/lapse-read-only.md` §3.2, D436, T12): after the key's grace
+   * period this console does not launch a run and does not change a setting, and
+   * `lapseHandlers` (`src/main/licence-state.ts`) refuses exactly the rows that
+   * carry this field, before the handler -- and so before any child -- is
+   * reached.
+   *
+   * **It is a field of the row and never a list of names beside the table.** The
+   * design states the rule and its reason: a later cancel is admitted to the kept
+   * set by its own row differing from the launch's in this one field, so a gate
+   * that classified by name would refuse a cancel the day it was added. Two rows
+   * carry it today -- `run.launch` and `settings.edit`, the whole of what T12
+   * takes away -- and `assertReachableSurface` refuses the column on a row that
+   * spawns no command, because the rows that spawn nothing are the console's own
+   * answers (the design's kept set, and the key screen §5.6 keeps ungated as the
+   * way out).
+   *
+   * Every other operation is the design's kept set: every read, including the
+   * paid views, and the kill switch's state.
+   */
+  readonly refusedAfterLapse?: true
+  /**
+   * `installationArgument` names the payload argument that carries the
+   * installation this row acts on, for a row whose target is not the console's
+   * own active binding. `run.launch` is the one row with it today: its payload
+   * names the installation to launch, and `src/main/launch.ts` resolves that name
+   * against this console's records and spawns **that** installation -- handing its
+   * child that installation's key, not the binding's.
+   *
+   * **It is a column for `refusedAfterLapse`'s reason, and it is what keeps the
+   * lapse gate honest about which installation it is asking about.** The gate
+   * (`src/main/licence-state.ts`) reads the licence state of the installation an
+   * operation acts on, and the row -- not the entry point -- says where that
+   * installation is spelled: a gate that read the active binding for every row
+   * would admit a launch of a lapsed installation while the console was driving a
+   * valid one, spawn it, and hand it the lapsed installation's key. A row that
+   * acts on the active installation carries no such column, because its payload
+   * names no installation at all (`settings.edit` writes the settings document of
+   * the installation the console is driving), and `undefined` is then the honest
+   * answer to "which installation is this for".
+   *
+   * `assertReachableSurface` holds the column to a **required `installationName`
+   * argument of the row itself**, so the one failure that would be silent --
+   * pointing it at a free-text field, whose value no installation answers for,
+   * which would read as the no-key state and admit the operation -- fails closed
+   * at registration instead.
+   */
+  readonly installationArgument?: string
 }
 
 /**
@@ -1011,6 +1061,18 @@ export const CONSOLE_OPERATIONS = [
     command: 'run --task-file -',
     flags: ['--json'],
     summary: 'the console’s one write: one launch of `fugaro run` for a named installation',
+    // The lapse takes this row away and keeps every read (design §3.2 rule 1,
+    // T12): a lapsed installation is read-only, and the launch is half of what
+    // read-only means.
+    refusedAfterLapse: true,
+    // **And the installation the lapse is about is this payload's own.** The
+    // launcher resolves the name below against this console's records and spawns
+    // *that* installation (`launch.ts`), handing its child that installation's
+    // key -- so the gate has to ask about the name the renderer sent, not about
+    // the binding the console happens to be driving. `settings.edit`, the lapse's
+    // other row, carries no such column: its flow reads and writes the active
+    // installation's own settings document.
+    installationArgument: 'installation',
     // The five fields, and nothing else: no `--pr`, no `--retry`, no `--recipe`,
     // no mode, no path, no ref, no workflow, no budget escape. Every one of them
     // is on `NEVER_REACHABLE`'s argv rows below, because a closed schema is not
@@ -1205,6 +1267,11 @@ export const CONSOLE_OPERATIONS = [
     command: 'settings',
     flags: [],
     summary: 'the second write: one setting set or unset, at the layer the read named, after the operator confirms it',
+    // The lapse's other row: T12 takes the launch and the configuration change
+    // away (design §3.2 rule 1). `settings.read` -- the same command, as a read
+    // -- is not this row and keeps answering, which is the design's line between
+    // reading a setting and writing one.
+    refusedAfterLapse: true,
     args: [
       {
         key: 'op',
@@ -3567,7 +3634,9 @@ function boundReason(message: string): string {
 /**
  * assertReachableSurface throws unless every entry of a table is one the console
  * may drive: its command and its flags are clear of `NEVER_REACHABLE`, the flags
- * it fixes are the surface's own two, and no two entries share a name.
+ * it fixes are the surface's own two, the lapse's refused class holds only rows
+ * that spawn a command and names its target installation only in a required
+ * `installationName` argument of its own, and no two entries share a name.
  *
  * It takes the table as an argument so that the guard is a pure function of one
  * and the test can hand it the mutation directly -- a table with `budget kill`
@@ -3587,6 +3656,35 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
     for (const flag of operation.flags) {
       if (!ALLOWED_OPERATION_FLAGS.includes(flag)) {
         throw new Error(`${operation.name} fixes ${flag}, which is not a flag the surface may fix`)
+      }
+    }
+    // The lapse's refused class is the two writes, and the design's kept set
+    // includes every answer the console gives out of its own process: a row with
+    // no command spawns nothing, so refusing it would take away a read, the key
+    // screen (the way out, §5.6), or the console's own surface -- and never a
+    // capability the licence granted. A later task that wants to refuse one of
+    // these has to come back here and say why, which is the point.
+    if (operation.refusedAfterLapse === true && operation.command === null) {
+      throw new Error(
+        `${operation.name} is refused after a lapse and spawns no command: the operations the lapse takes away are the ones that spawn a command, and the console's own answers stay`,
+      )
+    }
+    // The lapse gate asks about the installation a row's own payload names
+    // (`installationArgument`), so the column has to name an argument of this
+    // same row that really is one. Anything else fails here rather than at the
+    // gate: a column pointing at a free-text field would ask the licence store
+    // about a string no installation answers for -- the no-key state, which
+    // refuses nothing, so the operation would be admitted while the installation
+    // it acts on had lapsed -- and a column naming no argument of the row at all
+    // would hand the gate `undefined` and silently ask about the active binding
+    // instead. A later row that wants to point this at something else has to
+    // come back here and say why, which is the point.
+    if (operation.installationArgument !== undefined) {
+      const named = operation.args.find((argument) => argument.key === operation.installationArgument)
+      if (named === undefined || named.required !== true || named.kind !== 'installationName') {
+        throw new Error(
+          `${operation.name} names the installation it acts on in ${JSON.stringify(operation.installationArgument)}, which is not a required \`installationName\` argument of this row: the lapse gate reads the target installation out of the row's own payload, and an argument that is not one would have it ask about the wrong installation`,
+        )
       }
     }
     if (names.has(operation.name)) {

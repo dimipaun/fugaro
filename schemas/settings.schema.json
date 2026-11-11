@@ -332,6 +332,9 @@
         "agent.models.reviewer": {
           "default": "unset = agent.model"
         },
+        "agent.models.vision": {
+          "default": "unset = none: a stage whose own model cannot read an image keeps it"
+        },
         "agent.oauth_token": {
           "default": "unset = the job's own credential"
         },
@@ -785,6 +788,9 @@
         },
         "layer.defaults.agent.models.reviewer": {
           "default": "unset = defaults.agent.model"
+        },
+        "layer.defaults.agent.models.vision": {
+          "default": "unset = none: a stage whose own model cannot read an image keeps it"
         },
         "layer.defaults.agent.recipe": {
           "default": "unset = the built-in recipe"

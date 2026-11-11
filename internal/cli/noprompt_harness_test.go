@@ -361,6 +361,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro image status":      "prints the no-project-config refusal",
 	"fugaro image survey":      "prints the no-project-config refusal",
 	"fugaro issue list":        "reads this machine's issue folder, which holds nothing in this world, and prints no row",
+	"fugaro issue submit":      "sweeps the issues that are waiting, and this world's issue folder holds none: it prints that nothing is pending",
 	"fugaro issue mine":        "reads no store here: this world's credential lookup is refused before the bucket is opened, so it prints the notes of a machine whose shared state could not be read and no row",
 	"fugaro managed status":    "prints the no-project-config refusal",
 	"fugaro models ls":         "prints the built-in list with no project selected",

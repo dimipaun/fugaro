@@ -43,7 +43,7 @@ Subcommands:
 - `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
-- `fugaro issue` -- Read the issues saved on this machine, and the ones you reported
+- `fugaro issue` -- Read the issues saved on this machine, the ones you reported, and file one on GitHub
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
@@ -2755,7 +2755,7 @@ This command has no subcommands.
 
 ## `fugaro issue`
 
-Read the issues saved on this machine, and the ones you reported
+Read the issues saved on this machine, the ones you reported, and file one on GitHub
 
 Read the issues saved on this machine.
 
@@ -2765,7 +2765,12 @@ shows what is saved, `show` prints one, `dismiss` sets one aside so
 nothing is filed for it, and `mine` reads the project's own store for
 the issues this user reported. An issue is named by its local ID
 (`local-<run stem>`) until it has been uploaded, and by its number
-(`#0007`) from then on; `show` and `dismiss` take either.
+(`#0007`) from then on; `show`, `dismiss` and `submit` take either.
+
+`submit` shows exactly what would be filed on GitHub — the post and the
+sha256 of its bytes — and files nothing until `--ask` is answered with a
+yes at your own terminal; without `gh`, it prints how to install it and
+a new-issue link holding the same post instead.
 
 Nothing `list`, `show` or `dismiss` does leaves this machine. `mine` —
 and `list --mine`, which is the same read — is the one that does: it
@@ -2787,6 +2792,7 @@ Subcommands:
 - `fugaro issue list` -- List the issues saved on this machine
 - `fugaro issue mine` -- List the issues this user reported, from the project's store
 - `fugaro issue show` -- Print one issue: its number (#0007) or its local ID
+- `fugaro issue submit` -- Show what would be filed on GitHub, and file it with --ask
 
 ## `fugaro issue dismiss`
 
@@ -2922,6 +2928,43 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for show |
 | `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue submit`
+
+Show what would be filed on GitHub, and file it with --ask
+
+Show exactly what would be filed on GitHub for one issue, or for every
+issue that is still waiting.
+
+REF is the issue's number — `7`, or the `#0007` a listing prints — or
+its local ID `local-<run stem>`, the same argument `show` takes. With
+no reference every `pending` issue is visited, and the ones already
+filed or set aside are skipped.
+
+The post is built once and printed as it is: the title, the body, and
+the sha256 of the exact bytes. A run without --ask files nothing. --ask
+asks at your own terminal after showing the preview and files exactly
+those bytes; a coding agent's session and a pipe never file, because
+a confirmation nobody can answer is a refusal and never a silent
+proceed.
+
+Filing needs GitHub's own `gh` with an account on github.com. Where it
+is missing, or has no account there, the install command or `gh auth
+login` is printed with the new-issue link holding the same title and
+body; nothing is filed and the command exits non-zero.
+
+Usage: `fugaro issue submit [REF]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--ask` | bool | `false` | no | show the preview and file it after a yes at your own terminal |
+| `-h`, `--help` | bool | `false` | no | help for submit |
 
 Subcommands:
 

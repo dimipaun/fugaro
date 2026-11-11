@@ -128,8 +128,14 @@ const (
 // (D1854), whose owner is the `project` family because `fugaro project policy
 // publish` is what carries it. That last row is the one this paragraph adds:
 // the registry has one row more and the allowlist has not.
+//
+// The vision slot (docs/vision-model, V1) moved the registry's figure by two
+// and not the allowlist's: `agent.models.vision` in `fugaro.yaml` and its
+// project-layer key `defaults.agent.models.vision` are both the `models`
+// family's, and a row claiming a family is refused before the allowlist is
+// asked — the same shape as the two rows above it.
 const (
-	cfmRegistryRows   = 398
+	cfmRegistryRows   = 400
 	cfmAllowlistNamed = 96
 )
 
