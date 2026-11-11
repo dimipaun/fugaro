@@ -3,9 +3,8 @@ package cli
 // report_failure_line_test.go is T-DG9: a command that failed under a log
 // prints the one line naming the command that explains it. The run ID is the
 // stem of that log, so what the failure prints is what `fugaro troubleshoot`
-// takes with nobody spelling it (D1609) — and the line goes to stderr and the
-// terminal, not to a --json document. A command that kept no log prints none,
-// which is a failed read command too (T6, G7).
+// takes with nobody spelling it (D1609). A command that kept no log prints
+// none, which is a failed read command too (T6, G7).
 
 import (
 	"path/filepath"
