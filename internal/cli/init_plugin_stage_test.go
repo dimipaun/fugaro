@@ -496,13 +496,18 @@ func TestInitPluginStageRemovalLeavesTheProjectScopeInstallAlone(t *testing.T) {
 }
 
 // A fugaro.yaml that cannot be read (a symlink, a FIFO, an oversize file) is
-// unknown, not a pass: the stage cannot tell the checkout is this project's, so
-// the pin an older fugaro left here is not taken out and the reader is told
-// why. A missing one is the first-run flow, and the gates pass. Under D955 (U8)
-// the machine's own install goes on either way — what the file gates is the
+// unknown, not a pass: where the checkout carries a pin, the stage cannot tell
+// the checkout is this project's, so the pin is not taken out and the reader is
+// told why. A missing one is the first-run flow, and the gates pass. Under D955
+// (U8) the machine's own install goes on either way — what the file gates is the
 // checkout write, and a checkout whose config cannot be read is not a machine
-// with nothing to install (U1, F13) — and nothing about it is left for the
-// user: the install is this run's own write.
+// with nothing to install (U1, F13) — and nothing about it is left for the user:
+// the install is this run's own write.
+//
+// The second half of the same rule, and the reason the file is read at all: a
+// checkout with no pin has no checkout write for the config to gate, so the
+// unreadable file is not read and not reported (s.pin), and the stage's whole
+// answer is the machine's install.
 func TestInitPluginStageUnreadableConfigStillInstallsTheMachine(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	for name, make := range map[string]func(t *testing.T, p string){
@@ -521,29 +526,38 @@ func TestInitPluginStageUnreadableConfigStillInstallsTheMachine(t *testing.T) {
 			}
 		},
 	} {
-		t.Run(name, func(t *testing.T) {
-			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-			f := testutil.NewClaudePluginFake(t, "[]", "[]")
-			f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
-			settings := wiringCheckout(t, settingsWithOthers)
-			make(t, filepath.Join(filepath.Dir(filepath.Dir(settings)), "fugaro.yaml"))
-			e, out := stageEngine(t, "", &initOptions{yes: true})
-			useFakeClaude(t, f)
-			res := runPlugin(t, e)
-			if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
-				t.Errorf("the file changed in a checkout whose fugaro.yaml could not be read:\n%s", got)
-			}
-			if seen := out.String(); !strings.Contains(seen, "fugaro.yaml cannot be read") {
-				t.Errorf("the run does not say the config could not be read, so a pin left in it is unknown work:\n%s", seen)
-			}
-			if stateOf(res, "plugin") != initflow.Changed ||
-				!slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
-				t.Errorf("the machine's own install did not happen: %+v\n%s", res.Stages, out)
-			}
-			if len(res.Left) != 0 || res.Failed != nil {
-				t.Errorf("left %+v failed %+v: the checkout's config gates the pin, not the machine's install", res.Left, res.Failed)
-			}
-		})
+		for _, tc := range []struct {
+			name     string
+			settings string
+			reported bool
+		}{
+			{"a pin in the checkout", pinnedAmongOthers, true},
+			{"no pin", settingsWithOthers, false},
+		} {
+			t.Run(name+", "+tc.name, func(t *testing.T) {
+				t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+				f := testutil.NewClaudePluginFake(t, "[]", "[]")
+				f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+				settings := wiringCheckout(t, tc.settings)
+				make(t, filepath.Join(filepath.Dir(filepath.Dir(settings)), "fugaro.yaml"))
+				e, out := stageEngine(t, "", &initOptions{yes: true})
+				useFakeClaude(t, f)
+				res := runPlugin(t, e)
+				if got, _ := os.ReadFile(settings); string(got) != tc.settings {
+					t.Errorf("the file changed in a checkout whose fugaro.yaml could not be read:\n%s", got)
+				}
+				if seen := out.String(); strings.Contains(seen, "fugaro.yaml cannot be read") != tc.reported {
+					t.Errorf("reported the unreadable config %v, want %v: the gate is the checkout write's, and a checkout with no pin has none:\n%s", !tc.reported, tc.reported, seen)
+				}
+				if stateOf(res, "plugin") != initflow.Changed ||
+					!slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
+					t.Errorf("the machine's own install did not happen: %+v\n%s", res.Stages, out)
+				}
+				if len(res.Left) != 0 || res.Failed != nil {
+					t.Errorf("left %+v failed %+v: the checkout's config gates the pin, not the machine's install", res.Left, res.Failed)
+				}
+			})
+		}
 	}
 }
 
