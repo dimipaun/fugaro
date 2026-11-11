@@ -45,21 +45,31 @@ const catalogDockerfileType = "text/plain; charset=utf-8"
 // from the same object. A copy an installation's next build resolves
 // identically is not rewritten, so republishing an unchanged definition does
 // not churn the object either.
-func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.Opener, kind string, e config.Entry, bake imagebake.Plan) error {
+//
+// The first result is the slug of a checkout the copy this call replaced baked
+// and the definition it wrote does not, "" when the write dropped no bake. The
+// bake is the one part of a copy that is not the entry's own bytes, so a build
+// that composes none and finds one there is replacing another repository's
+// stage: every job of the entry clones at start once it is off the image, and
+// the plan the caller prints says nothing about it — the write happened at an
+// entry that plan is quiet about (imagebake.Plan.Notable). The caller says it
+// out loud (noteBakeDropped); a definition that already carries a bake does not
+// differ from what a build composes, so nothing is dropped and no line is owed.
+func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.Opener, kind string, e config.Entry, bake imagebake.Plan) (dropped string, err error) {
 	// The key first: a name that is not one is refused before any credential
 	// is used to read a definition, and the refusal is the helper's own
 	// sentence (it does not repeat the name, which is what reached it).
 	key, err := config.CatalogDockerfileKey(e.Name)
 	if err != nil {
-		return err
+		return "", err
 	}
 	data, err := catalog.Fetch(ctx, open, kind, e)
 	if err != nil {
-		return err
+		return "", err
 	}
 	fetchLen := len(data)
 	if data, err = imagebake.Append(data, bake); err != nil {
-		return err
+		return "", err
 	}
 	// The composed bytes are bounded here and not only where the entry's own
 	// were resolved: every reader of this object reads it with this same limit
@@ -68,16 +78,27 @@ func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.O
 	// copy has no generation to condition on. A definition inside the bound can
 	// leave it by the generated stage alone, which is the case this refuses.
 	if len(data) > catalog.MaxDockerfileBytes {
-		return fmt.Errorf("the catalog entry %s: its Dockerfile is %d bytes and the generated checkout stage takes it to %d, more than the %d a definition may be; shorten the definition",
+		return "", fmt.Errorf("the catalog entry %s: its Dockerfile is %d bytes and the generated checkout stage takes it to %d, more than the %d a definition may be; shorten the definition",
 			pluginwire.Printable(e.Name), fetchLen, len(data), catalog.MaxDockerfileBytes)
 	}
 	old, gen, err := b.ReadMax(ctx, key, catalog.MaxDockerfileBytes)
 	switch {
 	case err == nil && bytes.Equal(old, data):
-		return nil
+		return "", nil
 	case err == nil, errors.Is(err, blobx.ErrNotExist), errors.Is(err, blobx.ErrTooLarge):
 	default:
-		return err
+		return "", err
+	}
+	// What this write takes off the copy, read before it is written: the copy
+	// holds a stage and the composed definition does not, so the repository that
+	// composed it has a job on this image that finds no checkout from now on.
+	dropped = ""
+	if err == nil {
+		if before, baked := imagebake.BakedSlug(old); baked {
+			if _, still := imagebake.BakedSlug(data); !still {
+				dropped = before
+			}
+		}
 	}
 	url := "gs://" + b.GCSName
 	var werr error
@@ -99,10 +120,14 @@ func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.O
 		// Another publisher wrote this copy between the read and the write:
 		// it resolved the same definition this call did, so nothing here is
 		// lost (writeLayerCopy's errNewerLayerCopy, without a caller that
-		// needs to tell the two apart).
-		return nil
+		// needs to tell the two apart) — and it is its bytes that stand, so
+		// this call dropped nothing either.
+		return "", nil
 	}
-	return operatorWriteErr(url, key, werr, catalogCopyLead)
+	if err := operatorWriteErr(url, key, werr, catalogCopyLead); err != nil {
+		return "", err
+	}
+	return dropped, nil
 }
 
 // catalogCopyLead opens the refusal of a catalog copy: the entry's Dockerfile

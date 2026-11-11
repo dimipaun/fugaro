@@ -89,6 +89,13 @@ import (
 // It is a constant of the images the engine builds, not of an installation:
 // every job image built from a generated definition puts its checkout here, so
 // a reader looks in one place.
+//
+// The reader is internal/runner, and it derives the same path from the job's
+// own work directory (runner.BakedDir, whose BakedRepoRoot is the last segment
+// of this one) rather than reading this constant: the two agree only while a
+// job's work directory is the base image's WORKDIR, which no package can check
+// for another. internal/cli's TestBakedRootIsTheJobWorkDirectorysSibling holds
+// the three ends together.
 const Root = "/work/baked"
 
 // sortedClone lists the names a plan reports as the repositories that clone at

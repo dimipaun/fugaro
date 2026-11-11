@@ -31,7 +31,7 @@ func TestCatalogDockerfileIsCopiedUnderBuildsCatalog(t *testing.T) {
 		Kind: config.SourceDockerfile, Repo: "acme/app", Path: "docker/agent.Dockerfile",
 	}}
 	open := catalogOpen(&fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": def}}})
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
 		t.Fatalf("writeCatalogDockerfile: %v", err)
 	}
 	key, err := config.CatalogDockerfileKey("agent")
@@ -61,7 +61,7 @@ func TestCatalogCopySkipsAnUnchangedDockerfile(t *testing.T) {
 	}}
 	p := &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": first}}}
 	open := catalogOpen(p)
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
 		t.Fatalf("writeCatalogDockerfile: %v", err)
 	}
 	key, err := config.CatalogDockerfileKey("agent")
@@ -72,7 +72,7 @@ func TestCatalogCopySkipsAnUnchangedDockerfile(t *testing.T) {
 	if err != nil || string(data) != first {
 		t.Fatalf("the copy is %q (%v), want %q", data, err, first)
 	}
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
 		t.Fatalf("republishing wrote %v", err)
 	}
 	if _, again, err := b.Read(ctx, key); err != nil || again != gen {
@@ -80,7 +80,7 @@ func TestCatalogCopySkipsAnUnchangedDockerfile(t *testing.T) {
 	}
 	const second = first + "RUN echo changed\n"
 	p.State.Files["docker/agent.Dockerfile"] = second
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
 		t.Fatalf("republishing a changed definition: %v", err)
 	}
 	if data, _, err := b.Read(ctx, key); err != nil || string(data) != second {
@@ -100,7 +100,7 @@ func TestCatalogInlineDefinitionIsWrittenFromState(t *testing.T) {
 		t.Fatal("an inline definition opened a provider")
 		return nil, nil, nil
 	}
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
 		t.Fatalf("writeCatalogDockerfile: %v", err)
 	}
 	key, err := config.CatalogDockerfileKey("inline-agent")
@@ -113,7 +113,7 @@ func TestCatalogInlineDefinitionIsWrittenFromState(t *testing.T) {
 	}
 	// An entry with no Dockerfile to build (a prebuilt image, PIC5's kind)
 	// is refused rather than copied.
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, config.Entry{
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, config.Entry{
 		Name: "prebuilt", Source: config.Source{Kind: config.SourceImage, Image: "ghcr.io/acme/app:1.2"},
 	}, imagebake.Plan{}); err == nil || !strings.Contains(err.Error(), "image") {
 		t.Fatalf("a prebuilt image entry was copied: %v", err)
@@ -142,7 +142,7 @@ func TestCatalogCopyRefusesABakeThatLeavesTheBound(t *testing.T) {
 	e := config.Entry{Name: "agent", Source: config.Source{Kind: config.SourceInline, Inline: def}}
 	open := catalogOpen(&fake.Provider{Repo: "acme/app"})
 	bake := imagebake.Plan{Baked: &imagebake.Repo{Repo: "acme/app", Slug: "app-1234abcd", URL: "https://example.invalid/acme/app.git", Branch: "main"}}
-	err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, bake)
+	_, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, bake)
 	if err == nil || !strings.Contains(err.Error(), "more than the") {
 		t.Fatalf("a definition the bake takes over the bound was copied: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestCatalogCopyRefusesABakeThatLeavesTheBound(t *testing.T) {
 	}
 	// The same definition with no bake is inside the bound and is copied: what
 	// is refused is the composition, not the entry.
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
 		t.Fatalf("the entry's own definition was refused: %v", err)
 	}
 	if data, _, err := b.ReadMax(ctx, key, catalog.MaxDockerfileBytes); err != nil || len(data) != len(def) {

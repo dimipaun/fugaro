@@ -395,7 +395,8 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 				Map: imageMap, Bake: bakeRepos,
 			})
 			noteBakePlan(cmd, e.Name, bakePlan)
-			if err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e, bakePlan); err != nil {
+			dropped, err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e, bakePlan)
+			if err != nil {
 				// A provider opened without the credential its environment did
 				// not carry fails here with its own sentence, which is left
 				// exactly as it is; the hint says where the token actually is
@@ -406,6 +407,13 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 					return withLease(fmt.Errorf("%w%s", err, providerHint), lease.release(ctx))
 				}
 				return withLease(err, lease.release(ctx))
+			}
+			// The copy lost the checkout a previous build composed into it, if
+			// any: the plan above is this build's own bake and says nothing
+			// about a copy it composes none into, and a job of the entry finds
+			// no checkout in the image from this build on.
+			if dropped != "" {
+				noteBakeDropped(cmd.ErrOrStderr(), lc, e.Name, dropped)
 			}
 			// What the build pins and records is the copy itself: its bytes and
 			// its object generation, read back from the one object the build

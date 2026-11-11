@@ -1097,3 +1097,89 @@ func TestCatalogBuildBakesTheEntryAWorkflowsNeedsChoose(t *testing.T) {
 		}
 	})
 }
+
+// TestCatalogBuildSaysWhatItTookOffACopy: a copy can carry a bake no build of
+// this project composes again — the map moved the repository onto another
+// entry, or the switch went off — and the build that rewrites that copy
+// replaces the composed definition with the entry's own bytes. The stage is the
+// one part of a copy that is not the entry's own definition, so its loss is
+// nothing the build's own plan shows: noteBakePlan is quiet about an entry this
+// checkout does not run (Plan.Notable), and the definition the build then
+// composes carries no marker for the nightly check to refuse. The jobs of the
+// entry stop finding a checkout in their image from this build on, which is the
+// F18-safe direction and not a refusal — but it is a change in what the image
+// holds, and the one line the operator gets about it is this one.
+func TestCatalogBuildSaysWhatItTookOffACopy(t *testing.T) {
+	fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	// The map puts this checkout on base, not on the entry being built: this
+	// build composes nothing into tools.
+	f.appendConfig(t, "image_map:\n  acme/app: base\nbake_repos: true\n")
+	slug := mustSlug(gitprov.KindBitbucket, "acme/app")
+	stale, err := imagebake.Append([]byte(catalogBuildInline), imagebake.Plan{Baked: &imagebake.Repo{
+		Repo: "acme/app", Slug: slug, URL: "https://bitbucket.org/acme/app.git", Branch: "main",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := config.CatalogDockerfileKey("tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gcs.Bucket(t, catalogBuildBucket).Create(context.Background(), key, stale, "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	got, _ := catalogCopy(t, gcs, "tools")
+	if got != catalogBuildInline {
+		t.Errorf("the copy is %q, want the entry's own definition %q: this build composes no bake into this entry", got, catalogBuildInline)
+	}
+	if subs := catalogBuildSubs(t, fb); subs["_CATALOG_TAG"] != sha256Hex([]byte(catalogBuildInline)) {
+		t.Errorf("_CATALOG_TAG = %v, want the definition the build composed", subs["_CATALOG_TAG"])
+	}
+	// The line names the checkout by the repository this machine's config
+	// answers for the marker's slug, which is the only name a person can act on.
+	if want := "no longer carries the checkout of acme/app at /work/baked/" + slug; !strings.Contains(stderr, want) {
+		t.Errorf("stderr = %q, want it to say the copy %s", stderr, want)
+	}
+}
+
+// TestCatalogBuildSaysNothingAboutABakeItKeeps: the note above is owed only for
+// a bake this build takes off. A copy that bakes the same checkout this build
+// composes again — the ordinary rebuild, after a definition changed — is
+// written whole and drops nothing, and the build's own bake line is the one
+// thing it has to say.
+func TestCatalogBuildSaysNothingAboutABakeItKeeps(t *testing.T) {
+	repo := strings.Replace(bitbucketYAML, "  app: {", "  app: { image_name: tools,", 1)
+	if repo == bitbucketYAML {
+		t.Fatal("the fixture workflow has changed shape")
+	}
+	_, gcs, f := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	f.sm.AllowAccess()
+	f.appendConfig(t, "image_map:\n  acme/app: tools\nbake_repos: true\n")
+
+	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	slug := mustSlug(gitprov.KindBitbucket, "acme/app")
+	if !strings.Contains(stderr, "bakes the checkout of acme/app at /work/baked/"+slug) {
+		t.Fatalf("stderr = %q, want the build's own bake line: this fixture is the rebuild the note must not fire on", stderr)
+	}
+	// The second build reads the copy the first one wrote, bake and all, and
+	// writes the same bytes back: nothing was dropped, so nothing is said.
+	_, stderr, err = executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if strings.Contains(stderr, "no longer carries") {
+		t.Errorf("stderr = %q, want no dropped-bake line for a copy that keeps its bake", stderr)
+	}
+	if got, _ := catalogCopy(t, gcs, "tools"); func() bool { _, ok := imagebake.BakedSlug([]byte(got)); return !ok }() {
+		t.Errorf("the copy is %q, want it to keep the bake it had", got)
+	}
+}
