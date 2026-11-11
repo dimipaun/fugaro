@@ -3,6 +3,7 @@ package runner_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
@@ -155,6 +156,53 @@ func TestRunFillsModelTokensSubscription(t *testing.T) {
 	if rec.Cost.CacheReadTokens != 0 || rec.Cost.CacheWriteTokens != 0 {
 		t.Errorf("cache totals = %d/%d: a run with no gateway records none, because they are the gateway's",
 			rec.Cost.CacheReadTokens, rec.Cost.CacheWriteTokens)
+	}
+}
+
+// TestRunFillsModelTokensMixedRunIsTheGatewayOnly (G1.2, F8): a run that is
+// both kinds at once -- the gateway priced the coder's stage, the run's
+// stage-scoped account served review -- keeps the contract its record states:
+// on a run with a gateway the per-model counts are what the cache totals sum,
+// and the account stage's calls are in no such total, so its own result
+// event's tokens are in no key here either. A run that added them would put
+// tokens in the record that no cache total knows about, and a reader summing
+// the entries would count tokens the gateway never priced.
+func TestRunFillsModelTokensMixedRunIsTheGatewayOnly(t *testing.T) {
+	g := newGW(t, mixedAccountConfig(t, "3", "30s"), "enforce", "50",
+		anthropicfake.MessageOK(sonnet, coderUsage))
+	g.deps.Env = append(filterEnv(g.deps.Env, "CLAUDE_CODE_OAUTH_TOKEN"), "CLAUDE_CODE_OAUTH_TOKEN="+accountToken)
+	b := publishPolicy(t, g, accountNode("acme-overflow"))
+	var st []int
+	rec, err := b.run(t,
+		calling(&st, implement("feature"), call{sonnet, 4000}),
+		boundedStage(withUsage(accountReview("ship", 0.42), agent.Usage{},
+			map[string]agent.Usage{opus: {Input: reviewerUsage.Input, Output: reviewerUsage.Output}}), 30*time.Second, 3))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Cost == nil {
+		t.Fatal("the run recorded no cost")
+	}
+	want := runstore.ModelTokenCounts{
+		Input:        coderUsage.Input,
+		Output:       coderUsage.Output,
+		CacheRead:    coderUsage.CacheRead,
+		CacheWrite5m: coderUsage.CacheWrite5m,
+		CacheWrite1h: coderUsage.CacheWrite1h,
+	}
+	got := rec.Cost.ModelTokens
+	if len(got) != 1 || got[sonnet] != want {
+		t.Fatalf("model_tokens = %+v, want the gateway's stage alone (%q = %+v): the account stage's calls are in no gateway total, so they are in no key either",
+			got, sonnet, want)
+	}
+	var read, write int64
+	for _, c := range got {
+		read += c.CacheRead
+		write += c.CacheWrite5m + c.CacheWrite1h
+	}
+	if read != rec.Cost.CacheReadTokens || write != rec.Cost.CacheWriteTokens {
+		t.Fatalf("the per-model sums %d/%d are not the run's cache totals %d/%d",
+			read, write, rec.Cost.CacheReadTokens, rec.Cost.CacheWriteTokens)
 	}
 }
 
