@@ -77,7 +77,10 @@
 //     that ends it starts the screen again. This is what F24 and F9 rest on: a
 //     microphone left open through a phone call transcribes the call, and the
 //     screen would send it. A pause that arrives while `start()` is opening the
-//     microphone is followed there too, so no path leaves one open in a pause.
+//     microphone is followed there too -- and so is one that arrives while the
+//     session is `starting`, where the microphone an abandoned `start()` opened
+//     for it is the one being captured from -- so no path leaves one open in a
+//     pause.
 //   * **A port call is not a transition.** `native.start()`, `native.setMuted()`
 //     and the screen's own start answer when they answer, and the session can
 //     move while they do. What those windows forbid is applying something
@@ -157,7 +160,8 @@ const OVER = Object.freeze(['ending', 'ended']);
  * says otherwise. Neither is `ending` or `ended` -- those close the microphone
  * through the teardown -- and neither is `starting`, where the screen is started
  * once the port has answered: a microphone open while the session is `starting`
- * is an abandoned `start()`'s, and the teardown is what closes it.
+ * is an abandoned `start()`'s, and what closes it is the pause it is in, or the
+ * teardown of a session that ends there.
  */
 const PAUSED = Object.freeze(['paused_interruption', 'paused_route']);
 
@@ -168,7 +172,8 @@ const PAUSED = Object.freeze(['paused_interruption', 'paused_route']);
  * `start()` once the port has answered, so a pause that arrives before that has
  * no screen call of this session's to undo. It is not a claim that nothing is
  * capturing -- a `start()` the caller abandoned can open the microphone under it
- * -- and what closes that one is `microphone` and the teardown.
+ * -- and what closes that one is `microphone`, on the pause that enters and on
+ * the teardown that ends.
  */
 const LIVE = Object.freeze(['listening', 'speaking']);
 
@@ -473,6 +478,14 @@ export function createVoiceSession({
    * interruption and a `tick` inside a pause -- none of which changes the state
    * -- reach neither the screen nor the microphone.
    *
+   * The state the session is leaving does not decide the close, because the
+   * microphone a pause catches is not always the session's own: `starting` is
+   * not one of §4's live states, and a microphone an abandoned `start()` opened
+   * for a session it no longer holds is left open in exactly that state (see
+   * `microphone`). So the stop is asked on every crossing into a pause where the
+   * session was live, and on every crossing where this module may still be
+   * holding a microphone open.
+   *
    * One crossing is not acted on here: a session paused and resumed while
    * `native.start()` is still answering is not opened by the resume, because the
    * port has not answered and the session the screen would capture for is one it
@@ -481,8 +494,9 @@ export function createVoiceSession({
    * port answers (see the live-state branch there).
    */
   function followThePause(before, after) {
-    if (LIVE.includes(before) && PAUSED.includes(after)) closeTheMicrophone(SESSION_CODES.PAUSE_FAILED);
-    else if (begun && PAUSED.includes(before) && LIVE.includes(after)) openTheMicrophone();
+    if (PAUSED.includes(after) && !PAUSED.includes(before) && (LIVE.includes(before) || microphone)) {
+      closeTheMicrophone(SESSION_CODES.PAUSE_FAILED);
+    } else if (begun && PAUSED.includes(before) && LIVE.includes(after)) openTheMicrophone();
   }
 
   /** Adopt a state the machine answered with: the lease, the push, the pause,

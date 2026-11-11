@@ -922,6 +922,48 @@ test('a start abandoned while the session is starting is not left holding a micr
   // ends before its own port call does.
 });
 
+test('a pause closes the microphone an abandoned start opened for a starting session', async () => {
+  // `starting` is not one of §4's live states, so the pause's close used to be
+  // skipped there -- and a microphone is exactly what can be open in it: the one
+  // a `start()` the caller abandoned opened for the session that replaced it. A
+  // session paused inside a phone call with that microphone still capturing is
+  // the failure F24 is about, the call transcribed and sent.
+  const first = gate();
+  const second = gate();
+  const opening = gate();
+  const h = harness({ holdFirstStart: first, holdStart: second, holdScreenStart: opening });
+
+  const abandoned = h.session.start();
+  await settle();
+  first.open();
+  await settle();
+
+  await h.session.hangUp();
+  assert.equal(h.session.state().state, 'ended');
+
+  const replaced = h.session.start();
+  await settle();
+  opening.open();
+  await settle();
+  assert.equal(h.session.state().state, 'starting', 'the replacement has not reached its own screen call');
+  assert.equal(h.audioIn.running(), true, 'and the microphone the abandoned start opened is open');
+
+  await h.session.dispatch({ type: 'interruptionBegan', source: INTERRUPTION_SOURCES.CALL });
+  assert.equal(h.session.state().state, 'paused_interruption');
+  assert.equal(h.audioIn.running(), false, 'the pause closes the microphone the abandoned start opened');
+  assert.deepEqual(await abandoned, { ok: false, code: SESSION_CODES.START_FAILED, field: null });
+
+  // ...and the port answers into the pause, which opens nothing: the session
+  // stays in it with the microphone closed, and the resume that ends the pause
+  // is what opens one (the machine refuses the `started` this call would drive,
+  // the session not being `starting` any more).
+  second.open();
+  await settle();
+  assert.equal(h.session.state().state, 'paused_interruption');
+  assert.equal(h.audioIn.running(), false, 'the answer does not open one inside the call');
+  assert.equal((await replaced).ok, false);
+});
+
 test('a port that answers after the teardown has finished is ended all the same', async () => {
   // The other half of the test above, and the one it stops short of. That session
   // ended before its port answered, so the teardown had no port half to run -- and
