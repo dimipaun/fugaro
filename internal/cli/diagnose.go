@@ -284,7 +284,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 	// the run's own, the block is what tells a reader what to do about it, and
 	// the rest of the diagnosis is worth having without it.
 	if d.Halt != nil {
-		lim, cerr := chainLimitsOf(ctx, env, s.Slug(), s.RunID(), rec, warn)
+		lim, cerr := chainLimitsOf(ctx, env, s.Slug(), s.RunID(), warn)
 		if cerr != nil {
 			fmt.Fprintf(warn, "warning: %v\n", cerr)
 		} else {

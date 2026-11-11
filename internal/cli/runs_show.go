@@ -83,10 +83,18 @@ type ChainLimit struct {
 	Limit     runstore.Amount    `json:"limit"`
 	Used      *runstore.Amount   `json:"used"`
 	Remaining *runstore.Amount   `json:"remaining"`
-	// Source is the policy layer the figure came from, as the shown run's own
-	// record names it — the chain layer's name is policy.SourceChain (F4,
-	// D1055). It is the chain layer wherever the record names none: a chain's
-	// limit is the root launch's own figure, whatever wrote the record (D1041).
+	// Source is the policy layer the figure came from, and for a chain limit
+	// that layer is always the chain's own — policy.SourceChain (F4, D1055).
+	//
+	// It is deliberately not read off the shown run's record. The record's
+	// Sources name the layer that set each *merge* key, and the dollar key is
+	// also the repository's own per-run cap: a repository that sets
+	// budget.per_run_usd in its fugaro.yaml writes `branch` there, so a row
+	// read that way labels the chain's figure with a layer the figure did not
+	// come from — the failure F4 exists to prevent (spec §2). A chain's limit
+	// is the root launch's own figure (D1041) and only the launch's `--max-*`
+	// flags write it, so the layer is the chain's wherever the record was
+	// written and whatever else the record's merge named.
 	Source string `json:"source"`
 }
 
@@ -151,7 +159,7 @@ func runRunsShow(cmd *cobra.Command, o *runsShowOptions, ref string) error {
 	if err != nil {
 		return err
 	}
-	lim, err := chainLimitsOf(ctx, env, s.Slug(), s.RunID(), rec, cmd.ErrOrStderr())
+	lim, err := chainLimitsOf(ctx, env, s.Slug(), s.RunID(), cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -203,14 +211,14 @@ func showRunRepo(ctx context.Context, env *cloudEnv, s *runstore.Store, rec *run
 }
 
 // showRunRecord is the run's own record, nil when the bucket has none or the
-// record cannot be read: what the chain block reads off it — the layer each
-// limit's source names and the halt — is optional, and the chain itself is read
-// from the run's stored task and its ledgers either way.
+// record cannot be read: the one thing the answer reads off it is the halt,
+// which is optional, and the chain itself is read from the run's stored task
+// and its ledgers either way.
 func showRunRecord(ctx context.Context, s *runstore.Store, warn io.Writer) (*runstore.Record, error) {
 	rec, err := absent(s.ReadRecord(ctx))
 	switch {
 	case corruptObject(err):
-		fmt.Fprintf(warn, "warning: run %s/%s's result.json is unreadable (%v), so the halt and the layers it names are left out\n",
+		fmt.Fprintf(warn, "warning: run %s/%s's result.json is unreadable (%v), so its halt is left out\n",
 			s.Slug(), task.ShortRun(s.RunID()), err)
 		return nil, nil
 	case err != nil:
@@ -222,9 +230,9 @@ func showRunRecord(ctx context.Context, s *runstore.Store, warn io.Writer) (*run
 // chainLimitsOf reads the chain run id of slug belongs to and what is left of
 // its limits (D1046, D1047): the link followed one record at a time, the limit
 // out of the stored task of the run that began it, and what has been used out
-// of the budget database's ledgers and the records. rec is the shown run's own
-// record, nil when the bucket has none, and it is where the layer each limit's
-// source names is read from.
+// of the budget database's ledgers and the records. Every row's source is the
+// chain layer's own name, because the figure beside it is the root launch's
+// own and no run record is consulted for it (ChainLimit.Source, F4, D1055).
 //
 // A read that stopped at a gap is a warning and a block with what was read:
 // the bucket ages a run's objects out together, so a chain older than its
@@ -232,7 +240,7 @@ func showRunRecord(ctx context.Context, s *runstore.Store, warn io.Writer) (*run
 // is a fact about them whatever the hop held (ResolveChain, D1049). Every other
 // failed read is the command's own failure: a chain whose spend cannot be
 // established is a chain this answer would have to invent.
-func chainLimitsOf(ctx context.Context, env *cloudEnv, slug, id string, rec *runstore.Record, warn io.Writer) (*ChainLimits, error) {
+func chainLimitsOf(ctx context.Context, env *cloudEnv, slug, id string, warn io.Writer) (*ChainLimits, error) {
 	if warn == nil {
 		warn = io.Discard
 	}
@@ -272,7 +280,7 @@ func chainLimitsOf(ctx context.Context, env *cloudEnv, slug, id string, rec *run
 		if !limited {
 			continue
 		}
-		row := ChainLimit{Dimension: d, Limit: limit, Source: chainLimitSource(rec, d)}
+		row := ChainLimit{Dimension: d, Limit: limit, Source: policy.SourceChain}
 		if used := chain.Used(d); used.Measured {
 			amount, left := used.Amount, chain.Remaining(limit, d).Amount
 			row.Used, row.Remaining = &amount, &left
@@ -280,43 +288,6 @@ func chainLimitsOf(ctx context.Context, env *cloudEnv, slug, id string, rec *run
 		out.Limits = append(out.Limits, row)
 	}
 	return out, nil
-}
-
-// chainLimitSource is the layer one dimension's figure came from, read where
-// the run's own policy merge recorded it: Sources maps each key to the layer
-// that set it, and the chain layer's name is policy.SourceChain (F4, D1055).
-// Before the chain layer had a name of its own every layer past the first two
-// was called `branch`, and a limit printed as coming from the branch names a
-// place the number did not come from.
-//
-// A record that names none leaves the chain layer: a chain's limit is the root
-// launch's own figure — no other layer can set one (D1041) — so a record with
-// no policy block, or one written before the layer had a name, is a record
-// whose silence is the chain layer's.
-func chainLimitSource(rec *runstore.Record, d runstore.Dimension) string {
-	if rec != nil && rec.Policy != nil {
-		if src := rec.Policy.Sources[chainLimitKey(d)]; src != "" {
-			return src
-		}
-	}
-	return policy.SourceChain
-}
-
-// chainLimitKey is the policy key one dimension is merged under — the key the
-// record's sources are read by, which is not the task's own field name: the
-// task's max_time is the merge's max_run_time (policy.KeyMaxRunTime).
-func chainLimitKey(d runstore.Dimension) string {
-	switch d {
-	case runstore.USD:
-		return policy.KeyPerRunUSD
-	case runstore.Tokens:
-		return policy.KeyMaxRunTokens
-	case runstore.Time:
-		return policy.KeyMaxRunTime
-	case runstore.ReviewRounds:
-		return policy.KeyMaxReviewRounds
-	}
-	return string(d)
 }
 
 // printRunsShow prints the document for a person: the run, its chain and its
@@ -385,7 +356,12 @@ func writeChainLimits(w io.Writer, lim *ChainLimits) error {
 		if l.Remaining != nil {
 			left = chainAmountText(l.Dimension, *l.Remaining)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", l.Dimension, chainAmountText(l.Dimension, l.Limit), used, left, l.Source)
+		// Three cells are figures this file computed and one is the dimension
+		// enum; the source is a policy layer's name, the one piece of text
+		// here this view did not build, so it goes through cellOneLine the way
+		// every name in a table does (safetext.go): a tab stays inside the
+		// cell instead of opening a column of its own.
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", l.Dimension, chainAmountText(l.Dimension, l.Limit), used, left, cellOneLine(l.Source))
 		advisory = advisory || l.Dimension == runstore.Time || l.Dimension == runstore.ReviewRounds
 	}
 	if err := tw.Flush(); err != nil {

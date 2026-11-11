@@ -105,7 +105,7 @@
         "source": {
           "type": "string",
           "minLength": 1,
-          "description": "The policy layer the figure came from, as the shown run's own record names it (policy.SourceChain and the four names beside it: ceiling, policy, default-branch, branch). The chain layer's own name is `chain` (F4, D1055); before it had one, every layer past the first two was called `branch`, and a chain limit printed as coming from the branch names a place the number did not come from. Not an enum here: the record's merge may name a layer this schema has never heard of, and a consumer that refused one would refuse a newer CLI's document."
+          "description": "The policy layer the figure came from: `chain`, the chain layer's own name (policy.SourceChain, F4, D1055). A chain's limit is the root launch's own figure — the `--max-*` flags the launch that began the chain was given, merged as the chain layer (D1041, D1043) — and the limit is not read from any run record, so this member is not read from one either: a record's own sources name the layer that set each merge key, and the dollar key is also the repository's per-run cap, which the repository's own file may set (`branch`). A chain limit labelled with that layer names a place the number did not come from, which is the failure F4 exists to prevent. Before the chain layer had a name of its own, every layer past the first two was called `branch`. Not an enum here: a layer name is a string, and a consumer that refused one this schema has never heard of would refuse a newer CLI's document."
         }
       }
     },

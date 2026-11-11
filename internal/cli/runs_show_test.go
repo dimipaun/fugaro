@@ -170,24 +170,32 @@ func TestRunsShowPrintsTheChainLimits(t *testing.T) {
 	}
 }
 
-// TestRunsShowNamesTheChainLayerAsChainSource: the source of a limit is the
-// policy layer's own name, read where the merge recorded it, and the chain
-// layer's name is policy.SourceChain (F4, D1055). Before the layer had a name
-// of its own every layer past the first two was called `branch`, and a limit
-// printed as coming from the branch names a place the number did not come from.
+// TestRunsShowNamesTheChainLayerAsChainSource: a chain limit's figure is the
+// root launch's own, written by its `--max-*` flags and merged as the chain
+// layer (D1041, D1043), so its source is policy.SourceChain (F4, D1055) — and
+// it is that whatever the shown run's own record says. Before the layer had a
+// name of its own every layer past the first two was called `branch`, and a
+// limit printed as coming from the branch names a place the number did not come
+// from (spec §2).
 //
-// A record that carries no policy block is the second half: the limit is still
-// the chain launch's own figure — that is what a chain's limit is (D1041) — so
-// the layer's name stands where the record names none.
+// The record is the trap. Sources names the layer that set each *merge* key,
+// and the dollar key is also the repository's own per-run cap: a repository
+// whose fugaro.yaml sets budget.per_run_usd writes `branch` there, so a source
+// read off the shown run's record labels the chain's figure with a layer that
+// set a different number. The tip's record here names all four other layers.
+//
+// A record that carries no policy block is the other half: the silence is the
+// chain layer's too.
 func TestRunsShowNamesTheChainLayerAsChainSource(t *testing.T) {
-	t.Run("the run's own record names the layer", func(t *testing.T) {
+	t.Run("the record's merge names other layers", func(t *testing.T) {
 		f := showRig(t)
 		rec := showRecord(t, f, showTip)
-		sources := map[string]string{}
-		for _, key := range []string{policy.KeyPerRunUSD, policy.KeyMaxRunTokens, policy.KeyMaxRunTime, policy.KeyMaxReviewRounds} {
-			sources[key] = policy.SourceChain
-		}
-		rec.Policy = &runstore.PolicyRecord{Sources: sources}
+		rec.Policy = &runstore.PolicyRecord{Sources: map[string]string{
+			policy.KeyPerRunUSD:       policy.SourceBranch,
+			policy.KeyMaxRunTokens:    policy.SourceCeiling,
+			policy.KeyMaxRunTime:      policy.SourcePolicy,
+			policy.KeyMaxReviewRounds: policy.SourceDefaultBranch,
+		}}
 		writeRecord(t, f, showTip, rec)
 
 		out, errOut, err := execute(t, "runs", "show", showTip)
@@ -199,8 +207,27 @@ func TestRunsShowNamesTheChainLayerAsChainSource(t *testing.T) {
 				t.Errorf("%s row = %q, want its source to be %q\n%s", dim, got, policy.SourceChain, out)
 			}
 		}
-		if strings.Contains(out, policy.SourceBranch) {
-			t.Errorf("a chain limit is printed as coming from the branch (F4):\n%s", out)
+		if strings.Contains(out, policy.SourceBranch) || strings.Contains(out, policy.SourceCeiling) {
+			t.Errorf("a chain limit is printed as coming from the layer that set the run's own cap (F4):\n%s", out)
+		}
+		// The same column travels in the document the console, the coordinator
+		// and an orchestrator read (D1056).
+		jout, jerrOut, err := execute(t, "runs", "show", "--json", showTip)
+		if err != nil {
+			t.Fatalf("runs show --json: %v (%s)", err, jerrOut)
+		}
+		var doc struct {
+			Limits []struct {
+				Source string `json:"source"`
+			} `json:"limits"`
+		}
+		if err := json.Unmarshal([]byte(jout), &doc); err != nil {
+			t.Fatal(err)
+		}
+		for i, l := range doc.Limits {
+			if l.Source != policy.SourceChain {
+				t.Errorf("limits[%d].source = %q, want %q", i, l.Source, policy.SourceChain)
+			}
 		}
 	})
 	t.Run("a record with no policy block", func(t *testing.T) {
@@ -213,6 +240,42 @@ func TestRunsShowNamesTheChainLayerAsChainSource(t *testing.T) {
 			t.Errorf("usd row = %q, want the chain layer's own name as its source\n%s", got, out)
 		}
 	})
+}
+
+// TestRunsShowSanitizesTheRecordsText: part of what this view prints comes out
+// of result.json, an object the job's service account — and so the agent — can
+// write, and a control character in a printed string rewrites the operator's
+// screen, plants a hyperlink or sets the clipboard (safetext.go). The record's
+// text in this view is the repository's name and the halt's own sentence; what
+// a row's source cell holds is the chain layer's own name and not the record's
+// (ChainLimit.Source), so the cell is defended rather than exercised here.
+func TestRunsShowSanitizesTheRecordsText(t *testing.T) {
+	f := showRig(t)
+	rec := showRecord(t, f, showTip)
+	h := showHalt
+	h.Detail = "run spent \x1b[2J$5.00 of $5.00\nand $9.00 more\x07"
+	rec.Repo, rec.Status, rec.Halt = "acme/app\x1b]52;c;AAAA\x07", runstore.StatusHalted, &h
+	writeRecord(t, f, showTip, rec)
+
+	out, errOut, err := execute(t, "runs", "show", showTip)
+	if err != nil {
+		t.Fatalf("runs show: %v (%s)", err, errOut)
+	}
+	text := out + errOut
+	for _, bad := range []string{"\x1b", "\x07", "\r"} {
+		if strings.Contains(text, bad) {
+			t.Errorf("runs show prints %q from the record:\n%s", bad, text)
+		}
+	}
+	// A newline of the record's own would forge a line of the view: the halt
+	// stays one line, and what the record wrote after its newline is inside
+	// that line rather than at the head of one of its own.
+	if strings.Contains(text, "\nand $9.00 more") {
+		t.Errorf("a newline in the record's halt opened a line of the view:\n%s", text)
+	}
+	if !strings.Contains(text, "and $9.00 more") {
+		t.Errorf("runs show dropped the halt's own text rather than neutralizing its controls:\n%s", text)
+	}
 }
 
 // TestRunsShowMarksABudgetOffChainUnenforced: with the budget off there is no
