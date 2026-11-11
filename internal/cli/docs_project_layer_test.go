@@ -224,6 +224,7 @@ func TestDocsProjectLayerSaysTheSecurityListIsResolved(t *testing.T) {
 		"the readers resolve them",
 		"what a run matches a change against, what `fugaro security paths` prints and what `fugaro doctor` counts are that one resolution",
 		"the floor's rows and the repository's as if the project had written none",
+		"a layer applies only to a file that names its `project:` and `gcp_project:`",
 		"the one row it reports is one **this repository's own file** wrote that matches no path in the base",
 		"it is counted like the floor's rows and never measured",
 		"a row they refuse is dropped from the list rather than matched as written",

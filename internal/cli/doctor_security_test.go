@@ -302,19 +302,31 @@ const doctorSecurityProjectLayerYAML = "version: 1\nproject: aurora\ngcp_project
 	"    - { name: creds, match: \"internal/creds/**\", category: credentials }\n" +
 	"    - { name: settlements, match: \"internal/settlements/**\", category: credentials }\n"
 
-// doctorSecurityLayerChecks runs the check in a checkout whose machine holds the
-// layer above cached — the branch a project's rows only reach on a machine that
-// has read the published layer — with the repository's own block written into
-// the base's fugaro.yaml. own is that block's rows as YAML, or "" for a file
-// that writes no security: key at all.
-func doctorSecurityLayerChecks(t *testing.T, own string) []doctorCheck {
-	t.Helper()
-	isolateCache(t)
-	file := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+// doctorSecurityLayerFileWith is the base's fugaro.yaml these two tests run
+// doctor over: a repository of project aurora whose anchor line is the given
+// one — `gcp_project: proj-1234`, the line the cached layer is anchored to, or
+// one that is not the layer's — with own's rows as its security: block (YAML,
+// or "" for a file that writes no security: key at all).
+func doctorSecurityLayerFileWith(anchor, own string) string {
+	file := "version: 1\nproject: aurora\n" + anchor + "git: { provider: github }\n" +
 		"workflows: { web: { commands: { build: sh b.sh, test: sh t.sh } } }\n"
 	if own != "" {
 		file += "security: { patterns: [ " + own + " ] }\n"
 	}
+	return file
+}
+
+// doctorSecurityLayerFile is the anchored file, the one the layer is read for.
+func doctorSecurityLayerFile(own string) string {
+	return doctorSecurityLayerFileWith("gcp_project: proj-1234\n", own)
+}
+
+// doctorSecurityLayerFileChecks runs the check in a checkout whose base commits
+// file and whose machine holds the layer above cached — the branch a project's
+// rows only reach on a machine that has read the published layer.
+func doctorSecurityLayerFileChecks(t *testing.T, file string) []doctorCheck {
+	t.Helper()
+	isolateCache(t)
 	root := doctorSecurityTestBase(t, map[string]string{
 		"README.md":               "# aurora\n",
 		"internal/creds/state.go": "package creds\n",
@@ -326,6 +338,16 @@ func doctorSecurityLayerChecks(t *testing.T, own string) []doctorCheck {
 		t.Fatal(err)
 	}
 	return doctorSecurityChecks(context.Background(), root)
+}
+
+// doctorSecurityLayerChecks runs the check in a checkout whose machine holds the
+// layer above cached — the branch a project's rows only reach on a machine that
+// has read the published layer — with the repository's own block written into
+// the base's fugaro.yaml. own is that block's rows as YAML, or "" for a file
+// that writes no security: key at all.
+func doctorSecurityLayerChecks(t *testing.T, own string) []doctorCheck {
+	t.Helper()
+	return doctorSecurityLayerFileChecks(t, doctorSecurityLayerFile(own))
 }
 
 // The project layer's rows are counted and never measured. A layer row that
@@ -367,6 +389,34 @@ func TestDoctorMeasuresOnlyTheRowsThisRepositoryWrote(t *testing.T) {
 	}
 	if strings.Contains(found.Problem, "settlements") {
 		t.Errorf("problem = %q, names a row of the project layer: only the rows this repository wrote are its reader's to fix", found.Problem)
+	}
+}
+
+// TestDoctorDoesNotCountALayerTheFileIsNotAnchoredTo: this machine reads the
+// cached layer by project name, and a run applies it only to a file whose
+// project: and gcp_project: are the layer's (internal/runner/runner.go's
+// ResolveConfig, whose Applied is config.ProjectLayer.Applies — the one spelling
+// of the rule, which `fugaro security paths` asks too and holds against that
+// same resolution in its own test). A base file that names the project and no
+// GCP project, or another one, gets the floor's rows and its own counted and the
+// layer's not: counting the layer's would put rows in the list doctor reports
+// that the run this checkout launches does not escalate on.
+func TestDoctorDoesNotCountALayerTheFileIsNotAnchoredTo(t *testing.T) {
+	for _, tc := range []struct{ name, anchor string }{
+		{"no gcp project", ""},
+		{"another gcp project", "gcp_project: proj-9999\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := doctorSecurityLayerFileChecks(t, doctorSecurityLayerFileWith(tc.anchor, ""))
+
+			line, ok := doctorCheckByID(checks, doctorSecurityID)
+			if !ok {
+				t.Fatalf("no %s check: %+v", doctorSecurityID, checks)
+			}
+			if !strings.Contains(line.Problem, "no patterns written by this project's layer") {
+				t.Errorf("problem = %q, want the layer's rows not counted: the layer is not in force for this file", line.Problem)
+			}
+		})
 	}
 }
 

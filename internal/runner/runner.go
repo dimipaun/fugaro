@@ -2995,7 +2995,7 @@ func ResolveConfig(data []byte, pl *task.ProjectLayer, project, base string) Con
 		out.Layer = l
 		p, _ := config.ProjectOf(data)
 		gcp, _ := config.GCPProjectOf(data)
-		out.Applied = p == l.Project && gcp == l.GCPProject
+		out.Applied = l.Applies(p, gcp)
 		if out.Applied {
 			layer = l
 		}

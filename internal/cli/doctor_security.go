@@ -51,12 +51,17 @@ const (
 // The two written layers are read offline and at the base branch (D1518): the
 // repository's own rows out of its fugaro.yaml at the default branch's ref, and
 // the project layer's out of this machine's cached copy of the published layer
-// (modelsLayer). A machine that holds no cached layer for the project has its
-// rows missing from the count, which this check cannot tell apart from a project
-// that wrote none: the layer is not on this machine to be read, doctor is an
-// offline read (SC4), and the state of that read is the sibling `project-layer`
-// line's own subject (doctorLayerChecks), which says when a layer's state is
-// unknown rather than leaving it out.
+// (modelsLayer). A project layer's rows are missing from the count in two states,
+// which this check cannot tell apart from a project that wrote none: this machine
+// holds no cached layer for the project, or the cached one is not the base file's
+// — a layer applies only to a file that names its project and gcp_project
+// (config.ProjectLayer.Applies, the rule a run's ResolveConfig decides Applied
+// by), and counting the rows of a layer no run of this checkout applies would
+// report a list in force that is not the run's. Neither state is doctor's to
+// leave unsaid, and neither is said here: doctor is an offline read (SC4), the
+// first is the floor's own count moving, and the `project-layer` line beside this
+// one is where a layer's state is reported (doctorLayerChecks: "no project layer
+// applies to this checkout" is what an unanchored file gets).
 //
 // A row the matcher refuses is not in the count either: securityBaseFile drops
 // it before this check sees the block, so that measuring a written row against
@@ -73,7 +78,7 @@ func doctorSecurityChecks(ctx context.Context, root string) []doctorCheck {
 			if ref == "" {
 				return nil, nil
 			}
-			project, own, _, reason := securityBaseFile(ctx, root, ref)
+			project, gcpProject, own, _, reason := securityBaseFile(ctx, root, ref)
 			if reason != "" {
 				// The repository's own file is not one this reader can read, or
 				// writes a block no run holds: there are no rows of the
@@ -81,7 +86,16 @@ func doctorSecurityChecks(ctx context.Context, root string) []doctorCheck {
 				// list in force is the floor.
 				return nil, nil
 			}
-			return own, modelsLayer(project)
+			// The cached layer is read by project name, and a run applies a layer
+			// only to a file whose project: and gcp_project: are the layer's own
+			// (config.ProjectLayer.Applies, the rule ResolveConfig's Applied is):
+			// counting a layer this base file does not anchor to would report rows
+			// in the list in force that no run of this checkout escalates on.
+			layer := modelsLayer(project)
+			if !layer.Applies(project, gcpProject) {
+				return own, nil
+			}
+			return own, layer
 		},
 		func() (string, []string) {
 			ref := defaultBranchRef(ctx, root)

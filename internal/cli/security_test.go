@@ -14,6 +14,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
+	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -823,6 +825,62 @@ const securityOwnRepeatYAML = "version: 1\nproject: aurora\ngcp_project: proj-12
 // fixture above repeats.
 const securityProjectPaymentsLayerYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
 	"security:\n  patterns:\n    - { name: payments, match: \"internal/payments/**\", category: credentials }\n"
+
+// securityOtherGCPYAML is a repository of the same project on another GCP
+// project: project aurora's layer is anchored to proj-1234, so this file's runs
+// resolve without it. It is the second half of the anchor rule — a layer is not
+// a file's just because the project name is.
+var securityOtherGCPYAML = "version: 1\nproject: aurora\ngcp_project: proj-9999\ngit: { provider: github, base_branch: main }\n" +
+	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// TestSecurityPathsDoesNotApplyALayerTheFileIsNotAnchoredTo: this machine reads
+// a cached layer by project name, and a run applies it only to a file whose
+// project: and gcp_project: are the layer's (internal/runner/runner.go's
+// ResolveConfig, whose Applied is config.ProjectLayer.Applies — the one spelling
+// of the rule both reads ask). A file that names the project and no GCP project,
+// or another one, is not that file, so the cached layer is not in force here
+// either: the command prints the floor's rows and the repository's alone, says
+// on stderr why the project's are missing, and answers as the runner's own
+// resolution over the same bytes does — which is what this test holds it to.
+func TestSecurityPathsDoesNotApplyALayerTheFileIsNotAnchoredTo(t *testing.T) {
+	for _, tc := range []struct{ name, yaml string }{
+		{"no gcp project", securityNoKeyYAML},
+		{"another gcp project", securityOtherGCPYAML},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			securityCheckout(t, "acme/app", tc.yaml)
+			if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+				GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234", CheckedAt: time.Now(), YAML: securityProjectLayerYAML,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			rc := runner.ResolveConfig([]byte(tc.yaml), &task.ProjectLayer{YAML: securityProjectLayerYAML}, "aurora", "main")
+			if rc.LayerErr != nil {
+				t.Fatal(rc.LayerErr)
+			}
+			if rc.Applied {
+				t.Fatalf("a run applies the layer to this file, so the fixture is not the mismatch it means to be: %s", tc.yaml)
+			}
+
+			out, errOut, err := execute(t, "security", "paths")
+			if err != nil {
+				t.Fatalf("fugaro security paths: %v\n%s", err, out)
+			}
+			if strings.Contains(out, "settlements") {
+				t.Errorf("the table carries the cached layer's row:\n%s", out)
+			}
+			if !strings.Contains(errOut, "aurora") || !strings.Contains(errOut, "not in force") {
+				t.Errorf("stderr = %q, want the project and that its layer is not in force for this file", errOut)
+			}
+
+			doc := securityDoc(t, "security", "paths")
+			if got := securityRows(doc); !slices.Equal(got, securityFloorRows()) {
+				t.Errorf("the list in force = %+v, want the floor's %d rows: the layer a run does not apply is not in force here either", got, len(securityFloorRows()))
+			}
+		})
+	}
+}
 
 // TestSecurityPathsSaysWhenARowIsDropped: a repository's row under a name the
 // project layer already spends is not in force — the project's row is — and the
