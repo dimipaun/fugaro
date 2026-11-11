@@ -431,7 +431,12 @@ func newImageRefreshCmd() *cobra.Command {
 			"same as without it) or a custom, dev or hand-pushed base image (still\n" +
 			"refused with the one-line fix); there is still no --json or --plan-only.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runImageRefresh(cmd, o) },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if repoImagesOff {
+				return repoImagesDisabled(cmd.OutOrStdout())
+			}
+			return runImageRefresh(cmd, o)
+		},
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.repo, "repo", "", "owner/name (or a path inside its checkout) of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout)")

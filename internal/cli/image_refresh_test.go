@@ -860,10 +860,14 @@ func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 // TestRepoImageRefreshIsDisabled: D1900 (2026-11-09) disables repo-level
 // images and keeps the code, so every command that would build a
 // repository's own image answers the notice and exits 0 with nothing built.
-// The three of them are here together because they are one decision: the
-// derived build, the rebuild the repository's daily check job runs, and the
-// refresh's rebuild of a stale derived image -- which is the one that builds
-// today (the red step).
+// They are here together because they are one decision: the derived build
+// (--local, --workflow and the fallthrough a project with no catalog takes),
+// the rebuild the repository's daily check job runs, and the refresh command,
+// which is the one that builds today (the red step).
+//
+// The tests of the machinery the ruling keeps run with repoImagesOff cleared
+// (TestMain), so this is the one test that reads the ruling itself: it turns
+// the switch on, and puts it back as it found it for whatever runs next.
 //
 // What stays is named in the same breath: the refresh still pins the base
 // image and still moves a checkout: clone workflow's job, neither of which
@@ -874,8 +878,10 @@ func TestRepoImageRefreshIsDisabled(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	noProjectLayerBucket(t)
+	t.Cleanup(func() { repoImagesOff = false })
+	repoImagesOff = true
 
-	t.Run("the derived build", func(t *testing.T) {
+	t.Run("the per-workflow and local builds", func(t *testing.T) {
 		for _, args := range [][]string{
 			{"image", "build", "--workflow", "app"},
 			{"image", "build", "--local"},
@@ -890,6 +896,25 @@ func TestRepoImageRefreshIsDisabled(t *testing.T) {
 		}
 	})
 
+	// A project that publishes no image catalog is the third: fugaro image
+	// build with no name falls through to the per-workflow path there, and that
+	// fallthrough is a repository-level build like the two above. It needs a
+	// checkout because which arm it takes -- a named entry's build, or this one
+	// -- is the catalog's answer.
+	t.Run("a project with no catalog", func(t *testing.T) {
+		fb, _ := cloudBuildCheckout(t, false)
+		out, _, err := executeBuild(t, "image", "build")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if n := buildPosts(fb); n != 0 {
+			t.Fatalf("the build submitted %d Cloud Builds, want none", n)
+		}
+		if !strings.Contains(out, repoImagesDisabledNotice) {
+			t.Errorf("a bare image build answered %q, want the notice", out)
+		}
+	})
+
 	t.Run("the check job's rebuild", func(t *testing.T) {
 		out, _, err := executeStdin(t, "", "image", "check", "--job")
 		if err != nil {
@@ -900,21 +925,17 @@ func TestRepoImageRefreshIsDisabled(t *testing.T) {
 		}
 	})
 
-	t.Run("the refresh's builds step", func(t *testing.T) {
-		r := newAnchorModeRig(t, refreshYAML, true)
+	t.Run("the refresh command", func(t *testing.T) {
 		fb := useFakeBuilder(t)
-		e, tg := buildTarget(t, r)
-		putWorkflowRecordFrom("api", "0.4.0", managedRef("base", "0.4.0"))
-		p := &refreshPlan{workflows: []string{"api", "app"}}
-		out := atTerminal(t, e, "nope\n")
-		if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
-			t.Fatalf("%v\n%s", err, out.String())
+		out, _, err := executeStdin(t, "", "image", "refresh")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
 		}
 		if len(fb.specs) != 0 {
 			t.Fatalf("the refresh submitted a repository-level build: %+v", fb.specs)
 		}
-		if !strings.Contains(out.String(), repoImagesDisabledNotice) {
-			t.Errorf("the refresh's builds step answered:\n%s", out.String())
+		if !strings.Contains(out, repoImagesDisabledNotice) {
+			t.Errorf("the refresh answered %q, want the notice", out)
 		}
 	})
 }

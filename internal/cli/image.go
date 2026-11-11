@@ -86,6 +86,18 @@ func repoImagesDisabled(w io.Writer) error {
 	return nil
 }
 
+// repoImagesOff is D1900's ruling as the door this package's commands read:
+// while it is set, every command that would build a repository's own image --
+// the local and the per-workflow arms of fugaro image build, the fallthrough
+// that builds one in a project with no catalog, the repository's check job and
+// the refresh command -- answers the notice above instead. `fugaro update` is
+// not one of them: it runs the machinery below in process (the images stage,
+// refreshBuilds), because a repository whose project names no catalog image
+// still runs its own (O4 b), and the HARD RULE says one update is the whole
+// upgrade. The tests of that machinery clear this, so the code the ruling
+// keeps stays exercised rather than rotting behind a door nobody opens.
+var repoImagesOff = true
+
 func newImageBuildCmd() *cobra.Command {
 	var o imageBuildOptions
 	cmd := &cobra.Command{
@@ -155,6 +167,9 @@ func runImageBuild(cmd *cobra.Command, name string, o imageBuildOptions) error {
 		if name != "" {
 			return &ExitError{Code: ExitUserError, Err: errors.New("a catalog entry is built by Cloud Build; --local builds the derived image of the workflow you are in")}
 		}
+		if repoImagesOff {
+			return repoImagesDisabled(cmd.OutOrStdout())
+		}
 		return runImageBuildLocal(cmd, o)
 	}
 	// --json is the local build's report, which is the only build whose
@@ -170,13 +185,18 @@ func runImageBuild(cmd *cobra.Command, name string, o imageBuildOptions) error {
 		if name != "" {
 			return &ExitError{Code: ExitUserError, Err: errors.New("--workflow names a workflow's derived image and a positional name names a catalog entry: give one of them, not both")}
 		}
+		if repoImagesOff {
+			return repoImagesDisabled(cmd.OutOrStdout())
+		}
 		return runImageBuildCloud(cmd, o)
 	}
 	return runImageBuildCatalogOrDerived(cmd, name, o)
 }
 
 // runImageBuildLocal builds the derived image of the workflow the checkout
-// declares with the local Docker daemon.
+// declares with the local Docker daemon. Under D1900 it answers the notice
+// instead: the image it builds is the repository's own, which no job runs
+// while the project has one of its own for the job.
 func runImageBuildLocal(cmd *cobra.Command, o imageBuildOptions) error {
 	ctx := cmd.Context()
 	if o.repo != "" {

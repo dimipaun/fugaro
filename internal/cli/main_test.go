@@ -128,6 +128,14 @@ func TestMain(m *testing.M) {
 	// while their configs carry fake endpoints, so they turn the skip off and
 	// the tests of the skip itself turn it on.
 	skipGSOnFakeEndpoints = false
+	// D1900's door (image.go, repoImagesOff) is the other one of these: the
+	// commands that build a repository's own image answer the notice while it
+	// is set, and the tests of that machinery -- the derived build, the check
+	// job, the refresh's steps, all of them still in the tree because the
+	// ruling keeps the code -- drive it with the door open, exactly as they did
+	// before the ruling. TestRepoImageRefreshIsDisabled is the test of the
+	// ruling itself, and it turns it on again for its own run.
+	repoImagesOff = false
 	// Neither shipped gate needs a seam any more: managedDeployerShipped is
 	// true as of 0.10.0 and batchProvisionShipped as of 0.9.5, so the managed
 	// paths and the Batch provisioning run as they ship, with nothing opened
