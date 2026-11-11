@@ -194,6 +194,22 @@ func TestBundleSwapDeterministic(t *testing.T) {
 	if second.A != arm(!swap) || second.B != arm(swap) {
 		t.Fatalf("pass 2 (%+v, swap %v) is not pass 1 reversed", second, !swap)
 	}
+
+	// The seed is the pair ID and nothing else, so a pair with none would be
+	// labelled exactly as every other pair with none: the labelling would say
+	// nothing about the pair, which is the one thing it is for. The refusal is
+	// its own, not one of the pair's: a caller with no ID has a bug, and a
+	// caller reading ErrIdentified or ErrTruncated would count the pair
+	// unjudged (A5.4) instead of fixing it.
+	for _, pairID := range []string{"", " ", "\t\n"} {
+		in, sw, err := Bundle(champion, challenger, pairID)
+		if err == nil {
+			t.Fatalf("Bundle with the pair ID %q: in = %+v, swap = %v, want a refusal", pairID, in, sw)
+		}
+		if errors.Is(err, ErrIdentified) || errors.Is(err, ErrTruncated) {
+			t.Fatalf("Bundle with the pair ID %q: err = %v, want a refusal of the missing ID rather than of the pair", pairID, err)
+		}
+	}
 }
 
 // TestBundleRefusesTruncated: half a change cannot be judged against a whole
