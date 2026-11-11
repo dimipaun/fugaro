@@ -379,3 +379,31 @@ func TestRecipeHandOverSkipsFix(t *testing.T) {
 		t.Fatalf("reviews = %+v, want the one round's verdict and findings recorded", rec.Reviews)
 	}
 }
+
+// TestRecipeHandOverSkipsLevel3: the same ending on the one mode whose own row
+// runs review level 3 (rigor.Critical; agent.levels.l3, the owner's floor and
+// the security escalation turn it on at every other mode). Level 3's step is
+// the one a run inserts after the review step, and a review that hands the run
+// over ends it: a step inserted after that review would be an adversarial
+// round, and the fix it buys, dispatched after the run has already ended —
+// which is what the recipe's own grammar refuses ("hand_over ends the run at
+// the review: no adversarial step may follow it", recipe.Parse), and what the
+// insert must not undo.
+//
+// Mutation (drop the `!recipe.UsesHandOver(rcp)` guard from planRecipe's
+// level-3 insert): the run reaches the adversarial stage this test never
+// scripts.
+func TestRecipeHandOverSkipsLevel3(t *testing.T) {
+	const handOver = "version: 1\nname: hand-over\nsteps:\n  - review: { hand_over: true }\n"
+	h := newHarness(t, modeCfg(t, "critical", 3, "  first_line_review: off\n"), recipeSpec(embeddedTask("hand-over", handOver)))
+	rec, err := h.run(t, implement("feature"), review("changes", 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review") {
+		t.Fatalf("stages = %v, want the implement stage and the one review: nothing runs after a review that hands the run over", got)
+	}
+	if len(rec.Reviews) != 1 {
+		t.Fatalf("reviews = %+v, want the one round of the review that ended the run", rec.Reviews)
+	}
+}
