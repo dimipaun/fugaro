@@ -1588,6 +1588,101 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 	}
 }
 
+// The credentials-service stage is in the gate's own set, and this is the entry
+// no other test can drop silently: a coding agent's session never reaches the
+// gate here at all — the stage's own skip answers a marker first
+// (init_stages.go's newCredentialsStage returns credentialsSessionHeld, and the
+// loop checks every stage before it runs any), so the entry's whole answer is
+// the one a PERSON at the terminal on a managed project gets.
+//
+// The shape is therefore that person: the installation root planned for a
+// change §4.1 refuses to apply (a removal of a grant), and the fourth read of
+// its saved plan — the credentials stage's own — refused. The two arms are the
+// entry's own answer and its mutation: under the gate the step is left for the
+// owner and the run carries on, and with the entry dropped the same refusal
+// stops the run instead and leaves the owner nothing.
+func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		remove bool
+	}{
+		{"under the gate", false},
+		{"entry dropped", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.remove {
+				delete(gatedStages, initflow.CredentialsService)
+				t.Cleanup(func() { gatedStages[initflow.CredentialsService] = true })
+			}
+			got, applies := credentialsStageRun(t)
+			if tc.remove {
+				// The run stops where the gate used to stand: the stage refuses
+				// the plan itself either way — nothing applies a plan nothing
+				// admitted — and what the entry decides is WHO answers that
+				// refusal, the loop turning it into the owner's own step with
+				// the entry and into a run failure without it.
+				if stopped := stoppedStage(got); stopped != initflow.CredentialsService {
+					t.Fatalf("the run stopped at %s, want the credentials-service stage:\n%s", stopped, got)
+				}
+				if left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand); left != "" {
+					t.Errorf("a stage this door does not gate left the owner a command:\n%s", got)
+				}
+				return
+			}
+			if applies != 1 {
+				t.Errorf("%d applies reached the fake, want the installation stage's alone: the credentials stage's plan was refused and nothing of it may be applied:\n%s", applies, got)
+			}
+			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
+				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
+			}
+			left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand)
+			if left == "" {
+				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
+			}
+			for _, want := range []string{"managed gate refused this step", "storage_bucket_iam_member"} {
+				if !strings.Contains(left, want) {
+					t.Errorf("the step left for the owner does not name %q:\n%s", want, left)
+				}
+			}
+		})
+	}
+}
+
+// credentialsStageRun is one `fugaro update --yes` at the owner's own terminal
+// on a managed project, with the plan the gate refuses in front of the
+// credentials-service stage. The installation root's saved plan is shown more
+// than once in a run — every stage that judges that root reads it again — and
+// the credentials stage's own read is the FOURTH of them, so the refused
+// document is the last step of the ordered list (faketerraform's keyed script
+// consumes a list in order and repeats its last step). A run that reads the
+// root one more time before this stage leaves the list a step short, and the
+// test then fails on the credentials stage being applied instead of left,
+// rather than passing quietly.
+//
+// Returns the run's own output, and the applies that reached the fake.
+func credentialsStageRun(t *testing.T) (string, int) {
+	t.Helper()
+	r := newConvergeRig(t, v5Node())
+	publishCredentialsImage(t, r.imagesRig, convergeRelease)
+	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	admitted := map[string]any{"stdout": planJSON(t, change("module.installation.google_service_account.scheduler", "create"))}
+	refused := map[string]any{"stdout": planJSON(t, grantChange("state", "user:a@example.com", "roles/storage.objectAdmin", "delete"))}
+	r.script["show@installation"] = []any{admitted, admitted, admitted, refused}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
+	r.save(t)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	currentRelease(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		out += ErrorText(err)
+	}
+	return out + errOut, len(r.ran(t, "apply"))
+}
+
 // A run whose own arguments shape the installation is refused the gate, and it
 // is refused it for the reason §3.2 gives those arguments: the cover's Listed
 // members are read from THIS run's options (accessLists reads spec.Launchers,

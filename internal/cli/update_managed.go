@@ -118,6 +118,15 @@ var gatedStages = map[string]bool{
 	// root, the same kinds, and the same gate. Its own position in the run is
 	// not this map's business: the gate judges the plan in front of it, and the
 	// loop reaches this stage after the policy migration either way.
+	//
+	// This entry answers for a PERSON at a terminal and never for a coding
+	// agent's session, which is the opposite of how the entries above read: the
+	// stage's own skip returns credentialsSessionHeld for a marker before the
+	// loop asks this map at all (newCredentialsStage, and every stage is
+	// checked before it is run), so a session reads the refusal it always read
+	// and pays for no read here. What the entry decides is what becomes of the
+	// refusal the stage makes either way — the owner's own step with it, a run
+	// failure without it (TestUpdateManagedGatesTheCredentialsServiceStage).
 	initflow.CredentialsService: true,
 	initflow.Workspace:          true,
 }

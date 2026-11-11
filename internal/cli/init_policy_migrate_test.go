@@ -824,6 +824,80 @@ func TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight(t *testing.T) {
 	}
 }
 
+// TestUpgradePolicyStepHoldsTheNodeWhenItReplacesNoService: the node's version
+// and the credentials service's process move together, and this door moves no
+// service — its cloud step is fugaro image refresh, job images only, and the
+// service's image lives in the installation root's tfvars, which only `fugaro
+// update`'s stages write. A node raised here would leave the release behind's
+// service reading it and refusing every cascade and Bitbucket-proxied call of
+// the project until a later update succeeds (init_stages.go's
+// credentialsRaiseHeld; the update door's half is init_policy_migrate.go's
+// Check, pinned by TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion).
+//
+// The second case is the hold's own mutation check: the same installation whose
+// recorded image is already this binary's release is NOT held, because the
+// update before this one moved the service and there is no stale process to
+// refuse the node. A hold that fired on any block at all would stop every
+// upgrade of every installation that runs the service.
+func TestUpgradePolicyStepHoldsTheNodeWhenItReplacesNoService(t *testing.T) {
+	for _, tc := range []struct {
+		name, service string
+		held          bool
+	}{
+		{"the release behind", "0.4.0", true},
+		{"this binary's release", "0.5.1", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := upgradeRigWithGitHubAppID(t)
+			db := gcpfake.NewRTDB(t)
+			db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+			db.Set(budget.PathProject, initProjectName)
+			db.Set(budget.PathMode, budget.ModeEnforce)
+			db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
+			r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
+			db.SetRules([]byte(`{"rules":{".read":false}}`))
+			db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+			db.Set(projectpolicy.PathShared(), v3Node(nil))
+
+			// The installation's own record of the service it runs, which is
+			// what this door can read and all it can read: it runs no stage of
+			// the converge, so the workdir the last update left is the document.
+			isolateState(t)
+			writeInstallationServiceImage(t, os.Getenv("XDG_STATE_HOME"), initProject, tc.service)
+
+			fakeTerminal(t)
+			out := &syncBuf{}
+			cmd := NewRootCmd()
+			cmd.SetOut(out)
+			cmd.SetErr(&syncBuf{})
+			u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: r.root}}
+			u.o.yes = true
+
+			got := policyStep(context.Background(), u)
+			if tc.held {
+				if got.state != stepSkipped {
+					t.Fatalf("the policy step is %s, want skipped: %s\n%s", got.state, got.reason, out)
+				}
+				for _, want := range []string{"version 3", "fugaro update"} {
+					if !strings.Contains(got.reason, want) {
+						t.Errorf("the skip does not name %q: %s", want, got.reason)
+					}
+				}
+				if v := nodeVersionOn(t, db); v != 3 {
+					t.Errorf("the node moved to version %d under a step that replaces no service", v)
+				}
+				return
+			}
+			if got.state != stepDone {
+				t.Fatalf("the policy step is %s, want done: %s\n%s", got.state, got.reason, out)
+			}
+			if v := nodeVersionOn(t, db); v != projectpolicy.Version {
+				t.Errorf("the node is version %d, want %d", v, projectpolicy.Version)
+			}
+		})
+	}
+}
+
 // TestUpdatePolicyMigrationWritesUnderRunsInFlight is the owner's ruling of
 // 2026-11-09 at this stage: `fugaro update` is the whole upgrade and it is safe
 // while runs are in flight, so the door answers the same state the test above
