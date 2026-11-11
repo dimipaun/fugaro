@@ -82,7 +82,7 @@ only sentence changed, and the website page was regenerated from the document
 ([reconciliation.md](reconciliation.md#amendment-2026-10-29-the-coordinator-leaves-the-terms-core)).
 **The move the ruling asked for was planned, not landed, when this was written** (`ee/` held only
 its licence and README then); it has landed since, the coordinator now being the
-[`ee/coordinator/`](../../ee/coordinator) package — the note at the end of this page records what
+[`ee/coordinator/`](../../ee/coordinator) package — the amendment of 2026-11-11 below records what
 moved and what did not — so the coordinator is out of the Core by section 2's path definition,
 while the released MIT versions stay MIT (amended 2026-11-11).
 Counsel has not been consulted on the edit; the owner tells counsel in the next revision round.
@@ -124,16 +124,19 @@ under open pull requests, and moving it under them is what the ruling avoided �
 area to be marked as covered by the `ee/` licence and moved into `ee/` later (T1, F19). The
 marking's timing is **D407**'s: the per-file notice goes in with the licence text it names, in the
 same change that lands it. That change has landed, so the notice has too — the text is
-[`ee/LICENSE`](../../ee/LICENSE), counsel's of 2026-10-27, and every file under `ee/`, `console/`
-and `mobile/` carries the two-line `LicenseRef-Fugaro-Subscription` notice, as
-[LICENSING.md](../../LICENSING.md) states. What D400 called "later" has since happened for most of
-what it named: the coordinator is under `ee/coordinator/`, its library as well as its command
-(D434, T10), and governance, the report command, the graph and the key service sit there beside it;
-the central orchestrators are business-licensed from their first file rather than moved, never
-having been in the core (D435, T20). The console and the mobile app have **not** moved: both are in
-the public tree still, in `console/` and `mobile/`, each under its own licence file of the same
-wording ([`console/LICENSE.md`](../../console/LICENSE.md), `mobile/LICENSE.md`) rather than under
-`ee/LICENSE` (D311, 2026-10-26), and each marked per file as D407 timed.
+[`ee/LICENSE`](../../ee/LICENSE), counsel's of 2026-10-27, and the files under `ee/`, `console/`
+and `mobile/` carry the two-line `LicenseRef-Fugaro-Subscription` notice, as
+[LICENSING.md](../../LICENSING.md) states: each directory's own licence file and its `README` are
+exempt, and the two font directories vendored under `console/` carry `OFL-1.1` notices in their
+place, being third-party files that are not Fugaro's to license (§7.1 of the console's licence).
+What D400 called "later" has happened for one of the four areas it named: the coordinator is under
+`ee/coordinator/`, its library as well as its command (D434, T10), and governance, the report
+command, the graph and the key service sit there beside it, none of them among D400's four. The
+orchestrators D400 named were never in the core, so nothing of theirs moved: they are
+business-licensed from their first file (D435, T20). The console and the mobile app have **not**
+moved: both are in the public tree still, in `console/` and `mobile/`, each under its own licence
+file of the same wording ([`console/LICENSE.md`](../../console/LICENSE.md), `mobile/LICENSE.md`)
+rather than under `ee/LICENSE` (D311, 2026-10-26), and each marked per file as D407 timed.
 
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
