@@ -160,11 +160,21 @@ func TestDocsForgeChecksWritten(t *testing.T) {
 				t.Errorf("Check %s's section does not say %q: the section is the other half of the registration, and it is where the owner reads who wrote it, who runs it and what it is about", c.number, want)
 			}
 		}
-		for _, group := range [][]string{c.settles, c.prereqs, c.commands} {
+		for _, group := range [][]string{c.settles, c.prereqs} {
 			for _, want := range group {
 				if !strings.Contains(flat, want) {
-					t.Errorf("Check %s's section does not say %q: the section is where the owner reads what the check settles, what has to exist before it can run and what to type", c.number, want)
+					t.Errorf("Check %s's section does not say %q: the section is where the owner reads what the check settles and what has to exist before it can run", c.number, want)
 				}
+			}
+		}
+		// The commands are read against the section's own case, not the folded
+		// text above: `-run Checks` and `%B` are the command, and a section that
+		// spelled one `-run checks` would print a `go test` invocation that
+		// matches nothing and reads as one that ran.
+		typed := flattenDoc(section)
+		for _, want := range c.commands {
+			if !strings.Contains(typed, want) {
+				t.Errorf("Check %s's section does not say %q: the section is where the owner reads what to type, and a command the section spells differently is a command that does something else", c.number, want)
 			}
 		}
 	}
@@ -227,6 +237,17 @@ func TestDocsForgeChecksWritten(t *testing.T) {
 		if !strings.Contains(x1, want) {
 			t.Errorf("%s's X1 section does not name %q: the task's Files, Tests, Command and Commit are what a reviewer of it holds the work to", forgeAuthorshipPlan, want)
 		}
+	}
+
+	// The pin is one more `internal/cli/docs_*_test.go`, so it moved the census
+	// that counts them: docs/rigor-modes/reconciliation.md's row is a running
+	// total of other folders' guards, and its own rule (which
+	// docs_dynamic_delivery_test.go holds it to for its own pin) is that the
+	// folder which writes one moves the row in the same commit and names itself
+	// in the sentence beside it. A row that moved without a sentence is the merge
+	// that row calls the one that did not.
+	if !strings.Contains(flattenDoc(readDoc(t, rigorModesRecon)), "Amended 2026-11-11: `internal/cli/docs_forge_checks_test.go`, the forge-authorship-images plan's pin") {
+		t.Errorf("%s does not name this pin as the amendment that moved its `internal/cli/docs_*_test.go` count: the row is a total of other folders' guards, and a folder that writes one says so in its own commit", rigorModesRecon)
 	}
 }
 
