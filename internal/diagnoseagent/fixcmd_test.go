@@ -89,6 +89,46 @@ func TestFixesWithoutACheckerRefuseEverything(t *testing.T) {
 	}
 }
 
+// TestFixesFlagWhatTheCheckCannotReach (D1614): the flag exists for the
+// commands Fugaro cannot check, and the command a person is most likely to
+// paste is the one that is not Fugaro's at all. A line that runs something else
+// is a command all the same and is marked like any other refused one, and a
+// `fugaro` command whose words are separated by a tab is one command and is
+// checked, not passed over for the way it was written.
+func TestFixesFlagWhatTheCheckCannotReach(t *testing.T) {
+	const text = "gcloud auth application-default login\nfugaro\tdoctor --json\n"
+	got := Fixes(text, fakeTree)
+	if len(got) != 2 {
+		t.Fatalf("Fixes = %+v, want the two command lines", got)
+	}
+	if got[0].Checked || got[0].Reason != errNotFugaro.Error() {
+		t.Errorf("the gcloud line is %+v, want it marked as not a fugaro command", got[0])
+	}
+	if !got[1].Checked || !slices.Equal(got[1].Argv, []string{"fugaro", "doctor", "--json"}) {
+		t.Errorf("the tab-separated line is %+v, want one checked command's words", got[1])
+	}
+	want := "gcloud auth application-default login\n  (" + UncheckedFlag + " — " + errNotFugaro.Error() + ")\nfugaro\tdoctor --json\n"
+	if flagged := FixText(text, fakeTree); flagged != want {
+		t.Fatalf("FixText =\n%q\nwant\n%q", flagged, want)
+	}
+}
+
+// TestFixesLeaveProseToTheProse: a line that is not a command of its own is not
+// one the person pastes, and marking it would put the flag under sentences. The
+// reading is the shape of the line's first word plus the punctuation a sentence
+// ends a word with.
+func TestFixesLeaveProseToTheProse(t *testing.T) {
+	const text = "The account is not allowed for this repository.\n" +
+		"- run it from the checkout, then again\n" +
+		"1. Run `fugaro doctor` in the checkout\n"
+	if got := Fixes(text, fakeTree); len(got) != 0 {
+		t.Fatalf("Fixes = %+v, want no commands in three prose lines", got)
+	}
+	if flagged := FixText(text, fakeTree); flagged != text {
+		t.Fatalf("FixText rewrote prose: %q", flagged)
+	}
+}
+
 func TestFixTextFlagsOnlyTheRefused(t *testing.T) {
 	const text = "Read the check below.\n\nfugaro doctor --json\nfugaro doctor --nope\n"
 	got := FixText(text, fakeTree)

