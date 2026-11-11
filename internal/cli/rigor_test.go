@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // rigor_test.go is G6's half of the `fugaro rigor` group (D1169,
@@ -239,8 +241,11 @@ func TestRigorSetWritesTheLocalProjectConfig(t *testing.T) {
 	rigorReadsBack(t, got)
 }
 
-// The vocabulary is internal/rigor's, refused in the words `fugaro run --mode`
-// refuses it in (§3 step 1): a near miss is not a mode, and nothing is written.
+// The vocabulary is internal/rigor's, refused with the list in the message (§3
+// step 1): a near miss is not a mode, and nothing is written. The sentence is
+// this command's own — `fugaro run --mode`'s names a flag this command does not
+// have and offers to resolve a mode it cannot resolve — so the two are pinned
+// apart here.
 func TestRigorSetRefusesAVocabularyNearMiss(t *testing.T) {
 	settingsWriteHome(t)
 	path := rigorModeSet(t, rigorAnchors, "pro")
@@ -255,6 +260,9 @@ func TestRigorSetRefusesAVocabularyNearMiss(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "poc, startup, pro, critical, hotfix") {
 			t.Errorf("%q: the refusal does not print the vocabulary: %v", near, err)
+		}
+		if strings.Contains(err.Error(), "--mode") || strings.Contains(err.Error(), "leave it off") {
+			t.Errorf("%q: the refusal is `fugaro run --mode`'s sentence, naming a flag and a resolution this command has not got: %v", near, err)
 		}
 	}
 	if readFileString(t, path) != before {
@@ -471,6 +479,37 @@ func TestRigorSetAreaRefusesAGlobOutsideTheRepository(t *testing.T) {
 	}
 	if readFileString(t, path) != before {
 		t.Error("a refused rule changed the layer file")
+	}
+}
+
+// §3 step 5's shape check is read before the rule is built, and it is the
+// sentence that names the rule the way the loader names it — by its index in
+// defaults.rigor.areas — so a person is told which rule is wrong and in the
+// rule's own words. The re-read one line later refuses the same rule for the
+// same reason, which is why the guard's sentence is what this pins: a name past
+// rigor.MaxAreaName reaches it, and the refusal must be the guard's own and not
+// the loader's re-read of the bytes it would have written.
+func TestRigorSetAreaRefusesARuleItsOwnShapeCheckRejects(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsManagedLayerFile(t, rigorAnchors+
+		"defaults:\n  rigor:\n    areas:\n      - match: docs/**\n        mode: critical\n        name: docs\n")
+	before := readFileString(t, path)
+	noAgentSession(t)
+	noTerminal(t)
+
+	_, _, err := execute(t, "rigor", "set", "critical", "--area", "docs/**", "--name", strings.Repeat("n", rigor.MaxAreaName+1))
+	if err == nil {
+		t.Fatal("a rule whose name is past the limit was written")
+	}
+	want := fmt.Sprintf("defaults.rigor.areas[0]: a name must be 1 to %d characters of letters, digits, space, dash, underscore and dot, starting with a letter or a digit; nothing was written", rigor.MaxAreaName)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not the shape check's own sentence with the rule's index: %v", err)
+	}
+	if strings.Contains(err.Error(), "would not read back") {
+		t.Errorf("the loader's re-read is what refused the rule, so the shape check did not: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused rule changed the layer file")
 	}
 }
 

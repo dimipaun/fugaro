@@ -144,8 +144,10 @@ The command prints the review floor beside the write, and it cannot lower it:
 ` + "`fugaro rigor floor`" + ` is where a floor is changed.
 
 It writes one file — this machine's own project layer file, whose path is
-derived from the selected project's name — and it refuses when that file does
-not exist, naming ` + "`fugaro update`" + `, which seeds it from the published layer.`,
+derived from the selected project's name — and only a file that is already
+there: with no local layer file it refuses and names ` + "`fugaro update`" + `, whose Layer
+stage seeds the file from the published layer where the project has published
+one. This command creates no file.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRigorSet(cmd, args[0], o)
@@ -178,10 +180,13 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 		return err
 	}
 	mode := rigor.Mode(name)
-	// §3 step 1: the vocabulary, refused in `fugaro run --mode`'s own words, so
-	// a near miss is the same mistake wherever a person makes it.
+	// §3 step 1: the vocabulary. The design asks for the list in the message "as
+	// `fugaro run --mode` refuses it" — that refusal and not its words: run's
+	// sentence names a `--mode` flag and offers to leave it off, and this command
+	// has no such flag (the mode is its argument) and nothing to resolve from.
+	// The list is rigor.ModeList's one spelling either way.
 	if !rigor.Known(mode) {
-		return userErr("--mode %q: use %s, or leave it off to resolve the mode from the run's own configuration", name, rigor.ModeList())
+		return userErr("%q is not a rigor mode: use %s; nothing was written", name, rigor.ModeList())
 	}
 	// §3 step 2 (D834): hotfix is off the axis and is an operator's own run
 	// mode (D12), so no layer sets it — as a default or as a rule — and the

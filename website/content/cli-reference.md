@@ -4585,8 +4585,10 @@ The command prints the review floor beside the write, and it cannot lower it:
 `fugaro rigor floor` is where a floor is changed.
 
 It writes one file — this machine's own project layer file, whose path is
-derived from the selected project's name — and it refuses when that file does
-not exist, naming `fugaro update`, which seeds it from the published layer.
+derived from the selected project's name — and only a file that is already
+there: with no local layer file it refuses and names `fugaro update`, whose Layer
+stage seeds the file from the published layer where the project has published
+one. This command creates no file.
 
 Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]]`
 
