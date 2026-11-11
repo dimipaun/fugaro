@@ -623,7 +623,7 @@ func (s *Store) checkReleaseRoom(ctx context.Context, stream string) error {
 		streams = append(streams, stream)
 	}
 	if len(streams) > MaxStreams {
-		return fmt.Errorf("%w: the record holds %d streams; a release may not open a new one past %d", ErrRoadmapTooLarge, MaxStreams, MaxStreams)
+		return fmt.Errorf("%w: %s would be the record's %dth stream, and a record holds at most %d", ErrRoadmapTooLarge, stream, len(streams), MaxStreams)
 	}
 	return nil
 }
