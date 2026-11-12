@@ -451,6 +451,58 @@ func TestAnEventWhosePurchaseWasNotSavedIsRefused(t *testing.T) {
 	}
 }
 
+// TestAPurchaseWhoseSubscriptionWasNotSavedKeepsItsWorkspace: the repair a
+// redelivered purchase gets from `completed` writes the state the record
+// describes, and the workspace binding a v1 key carries is **not** in that
+// record — the event is the only place it arrives (TN2, D2134). A repair that
+// left it behind would strand the customer for good: Renew refuses a
+// subscription whose record names no workspace with ErrNoClaims, no later event
+// carries the binding again, and the term they paid for could never be minted
+// (§5.1, §5.3).
+func TestAPurchaseWhoseSubscriptionWasNotSavedKeepsItsWorkspace(t *testing.T) {
+	f, store := newFailingStore(t)
+	purchase := Event{
+		ID:           "evt-1",
+		Type:         EventPurchase,
+		Mode:         ModeFor(f.env),
+		OccurredAt:   f.now,
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
+		Email:        buyerAddress("acme.example"),
+		Seats:        5,
+		TermDays:     365,
+	}
+	store.refuse = 1
+	if rec := f.deliver(purchase); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a purchase whose subscription write failed was answered %d, want 500", rec.Code)
+	}
+	first := f.records()[0]
+	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
+		t.Fatal("the purchase the store refused saved a subscription, want the failure this test is about")
+	}
+
+	// The merchant's redelivery finishes the state off the record.
+	f.deliver(purchase)
+	sub, held, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil || !held {
+		t.Fatalf("the redelivered purchase left the subscription (held=%v, err=%v), want the state the record describes", held, err)
+	}
+	if sub.WorkspaceID != workspaceID {
+		t.Errorf("the repaired subscription names the workspace %q, want the %q its purchase carried (TN2)", sub.WorkspaceID, workspaceID)
+	}
+
+	f.advance(365*day - 30*day)
+	minted, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example")
+	if err != nil || !renewed {
+		t.Fatalf("the renewal of the repaired subscription answered (renewed=%v, err=%v), want the next key: the customer paid for the term", renewed, err)
+	}
+	claims := v1Verified(t, f, minted.Key)
+	if claims.WorkspaceID != workspaceID || claims.KeyID == first.KeyID {
+		t.Errorf("the renewal of the repaired subscription claims workspace %q and key id %q, want the %q its purchase bound and a key of its own", claims.WorkspaceID, claims.KeyID, workspaceID)
+	}
+}
+
 // TestRenewalKeyIssuesThirtyDaysBeforeExpiry: T26 — the next key issues 30 days
 // before the current one expires, its `issued` is the day the service runs and
 // its `expires` is the end of the term it covers, so the two keys overlap and
