@@ -1647,8 +1647,8 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 				if stopped := stoppedStage(got); stopped != initflow.CredentialsService {
 					t.Fatalf("the run stopped at %s, want the credentials-service stage:\n%s", stopped, got)
 				}
-				if left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused); left != "" {
-					t.Errorf("a stage this door does not gate left the owner the gate's own step, which is the answer the entry exists to give:\n%s", got)
+				if left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand); left != "" {
+					t.Errorf("a stage this door does not gate left the owner a command:\n%s", got)
 				}
 				return
 			}
@@ -1658,12 +1658,15 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
 				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
 			}
-			// LeftRefused and not LeftCommand: what the gate leaves the owner
-			// is D1012's refusal step (internal/initflow's stage.go answers a
-			// gate verdict with it), not a command to run — the plan this stage
-			// holds is the installation's own, and no command of the owner's
-			// rebuilds what the gate would not admit.
-			left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused)
+			// LeftCommand and not LeftRefused: the plan was refused for a
+			// removal alone, and that shape is the one §4.3 leaves the owner
+			// their own step for — `<self> update --allow-delete <address>`,
+			// the command their own flag admits the removal with
+			// (update_managed.go's gateDeleteLeft, and the address alone is
+			// what the flag reaches, so the reason the identity names is what
+			// the owner has to go on). D1012's commandless refusal is every
+			// other verdict's answer, not this one's.
+			left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand)
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
 			}
