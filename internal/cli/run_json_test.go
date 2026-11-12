@@ -6,6 +6,14 @@ package cli
 // consumer reading the document a launch answered and the document runs show
 // prints is reading one shape and not two.
 //
+// The chain here is a pull request's, which is the one shape whose runs link
+// each other through their records (D1045, §3): the launch follows the pull
+// request up, so the run it starts writes a record that names the run it
+// continues, and runs show of that run reaches the same chain the reply named —
+// with the launch itself counted among its runs. A chain continued by
+// --continues has no such record to write, and the test that pins the reply
+// there says so.
+//
 // The additions are additive, and these tests pin that from both sides: the
 // reply of a launch that joins a chain names the run that began it — never the
 // run the caller continued, which would be a chain of one — and the reply of a
@@ -28,10 +36,14 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// The chain every test here launches into: a run that began it, a follow-up of
-// that run, and the tip the launch continues. The limit lives in the stored
-// task of the root alone (D1041, D1046), and the root's id is what the reply's
-// `chain` must name — the tip's id would be the shortening D1047 forbids.
+// jsonPR is the pull request the chain every test here belongs to.
+const jsonPR = 7
+
+// The chain's three runs — the one that began it and holds its limit (D1041,
+// D1046), the follow-up of it, and the tip the launch follows up — and jsonFu,
+// the launch itself. The ids are minted from the wall clock because that is the
+// clock run --pr reads (wallRunIDAt): a follow-up's window is followUpLookback
+// back from time.Now(), which no test can move.
 var (
 	jsonRoot = wallRunIDAt(3, "090000", "11a1")
 	jsonMid  = wallRunIDAt(2, "090000", "22b2")
@@ -48,31 +60,37 @@ func jsonLimit() task.Overrides {
 	return task.Overrides{MaxUSD: &usd, MaxTokens: &tokens, MaxTime: "45m", MaxReviewRounds: &rounds}
 }
 
-// jsonRecorded is when each run of the chain here started and how long it ran:
-// the record's own elapsed time, which is the figure D1060 reads.
-var (
-	jsonStarted = time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
-	jsonElapsed = 5 * time.Minute
-)
+// jsonElapsed is the five minutes each run of the chain ran: the record's own
+// elapsed time, which is the figure D1060 reads, and three of them put 15m0s
+// against the chain's 45m0s.
+const jsonElapsed = 5 * time.Minute
 
-// jsonChainRun stores id as a run of the chain: a task carrying o (the root's
-// alone is the chain's limit) and a record linked to previous that states
-// costUSD as its model spend and holds rounds review rounds. With the budget
-// off, the record's cost is the chain's dollar figure (D1046).
-func jsonChainRun(t *testing.T, f *cloudFixture, id, previous string, o task.Overrides, costUSD float64, rounds int) {
+// jsonDaysAgo is when the chain's runs started, as days back from now: inside
+// the window resolvePR finds a follow-up's previous run through
+// (followUpLookback), and ordered by the clock a --pr launch's own id is minted
+// from.
+func jsonStarted(daysAgo int) time.Time { return time.Now().AddDate(0, 0, -daysAgo) }
+
+// jsonChainRun stores id as a run of root's chain: a task carrying o (the
+// root's alone is the chain's limit), a record that pushed to the pull request
+// — which is what resolvePR finds a follow-up's previous run through — and the
+// link back to previous, which is what makes the run a member of the chain.
+// With the budget off, the record's cost is the chain's dollar figure (D1046).
+func jsonChainRun(t *testing.T, f *cloudFixture, id, root, previous string, o task.Overrides, costUSD float64, rounds, daysAgo int) {
 	t.Helper()
 	spec := firstRunSpec(id)
+	if previous != "" {
+		spec = followUpSpec(id, root, previous, jsonPR)
+	}
 	spec.Overrides = o
 	seedSpec(t, f, spec, false)
-	rec := prRecord(id, "", 0, costUSD)
-	rec.Branch, rec.Status, rec.Stage, rec.Outcome = "fugaro/"+jsonRoot, runstore.StatusHalted, "writeback", runstore.OutcomeNone
-	rec.PR, rec.PushedHead = nil, ""
-	rec.StartedAt = jsonStarted
-	finished := jsonStarted.Add(jsonElapsed)
+	rec := prRecord(id, "", jsonPR, costUSD)
+	rec.Branch, rec.StartedAt = "fugaro/"+root, jsonStarted(daysAgo)
+	finished := rec.StartedAt.Add(jsonElapsed)
 	rec.FinishedAt = &finished
 	rec.Reviews = make([]runstore.ReviewSummary, rounds)
 	if previous != "" {
-		rec.FollowUp = &runstore.FollowUp{PreviousRun: previous}
+		rec.FollowUp = &runstore.FollowUp{PR: jsonPR, PreviousRun: previous}
 	}
 	writeRecord(t, f, id, rec)
 }
@@ -83,9 +101,36 @@ func jsonChainRun(t *testing.T, f *cloudFixture, id, previous string, o task.Ove
 // dimension unmeasured (no run record carries a token total, D1051).
 func jsonChain(t *testing.T, f *cloudFixture) {
 	t.Helper()
-	jsonChainRun(t, f, jsonRoot, "", jsonLimit(), 1.5, 1)
-	jsonChainRun(t, f, jsonMid, jsonRoot, task.Overrides{}, 0.5, 1)
-	jsonChainRun(t, f, jsonTip, jsonMid, task.Overrides{}, 0.25, 0)
+	jsonChainRun(t, f, jsonRoot, jsonRoot, "", jsonLimit(), 1.5, 1, 3)
+	jsonChainRun(t, f, jsonMid, jsonRoot, jsonRoot, task.Overrides{}, 0.5, 1, 2)
+	jsonChainRun(t, f, jsonTip, jsonRoot, jsonMid, task.Overrides{}, 0.25, 0, 1)
+}
+
+// jsonAgedChain is a chain whose first run the bucket no longer holds: the two
+// follow-ups are there and link to a run 95 days old, which is past the window
+// the bucket ages a run's objects out over, and that run has nothing stored at
+// all — the state that makes a chain read stop at a gap (TestRunPRRootExpired,
+// followup_test.go).
+func jsonAgedChain(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	gone := wallRunIDAt(95, "090000", "a0a0")
+	jsonChainRun(t, f, jsonMid, gone, gone, task.Overrides{}, 0.5, 1, 2)
+	jsonChainRun(t, f, jsonTip, gone, jsonMid, task.Overrides{}, 0.25, 0, 1)
+}
+
+// jsonStartedRun writes the record of the run this launch started, as the
+// runner writes one: the link back to the run it continues, which is what puts
+// the run in the same chain, with nothing spent and no time behind it. The
+// reply is read as the run starts, so what the chain holds for this run is
+// nothing, and the chain runs show reads from it is the chain the reply names.
+func jsonStartedRun(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	rec := prRecord(jsonFu, "", jsonPR, 0)
+	rec.Branch, rec.StartedAt = "fugaro/"+jsonRoot, jsonStarted(0)
+	finished := rec.StartedAt
+	rec.FinishedAt = &finished
+	rec.FollowUp = &runstore.FollowUp{PR: jsonPR, PreviousRun: jsonTip}
+	writeRecord(t, f, jsonFu, rec)
 }
 
 // jsonLaunchReply is the reply as its consumer reads it: the members this work
@@ -101,13 +146,13 @@ type jsonLaunchReply struct {
 	Limits     []ChainLimit `json:"limits"`
 }
 
-// jsonReply launches a run that continues the chain's tip and reads the reply
-// back, both as its members and as the raw document.
-func jsonReply(t *testing.T, f *cloudFixture) (jsonLaunchReply, map[string]any) {
+// jsonReply launches a follow-up of the chain's pull request and reads the
+// reply back, as its members and as the raw document.
+func jsonReply(t *testing.T, f *cloudFixture) (jsonLaunchReply, map[string]any, string) {
 	t.Helper()
-	out, errOut, err := execute(t, "run", "--repo", limitsRepo, "--continues", jsonTip, "--run-id", jsonFu, "--json", "A task")
+	out, errOut, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", jsonFu, "--json", "A task")
 	if err != nil {
-		t.Fatalf("run --continues: %v (%s)", err, errOut)
+		t.Fatalf("run --pr: %v (%s)", err, errOut)
 	}
 	var res jsonLaunchReply
 	var raw map[string]any
@@ -117,7 +162,21 @@ func jsonReply(t *testing.T, f *cloudFixture) (jsonLaunchReply, map[string]any) 
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("the reply does not decode: %v\n%s", err, out)
 	}
-	return res, raw
+	return res, raw, out
+}
+
+// jsonRunsShow is `fugaro runs show --json` of id, decoded the way the reply is.
+func jsonRunsShow(t *testing.T, id string) jsonLaunchReply {
+	t.Helper()
+	out, errOut, err := execute(t, "runs", "show", "--json", id)
+	if err != nil {
+		t.Fatalf("runs show --json %s: %v (%s)", id, err, errOut)
+	}
+	var show jsonLaunchReply
+	if err := json.Unmarshal([]byte(out), &show); err != nil {
+		t.Fatalf("runs show --json does not decode: %v\n%s", err, out)
+	}
+	return show
 }
 
 // jsonLimitRows is the chain's limits as both documents must print them: the
@@ -143,48 +202,75 @@ func jsonLimitRows(measuredTokens bool) []ChainLimit {
 }
 
 // TestLaunchJSONCarriesTheChain: the reply of a launch that joins a chain names
-// the run that began it, how many runs the link reached, whether the figures
-// are the budget database's (D1046), and one row per dimension the chain's own
-// limit bounds — the figures the caller needs to know what the run it just
-// started may still spend, read from the chain behind the link it named and not
-// from the run it named (D1047).
+// the run that began it, how many runs of the chain the link reached — the run
+// this launch started among them — whether the figures are the budget
+// database's (D1046), and one row per dimension the chain's own limit bounds:
+// the figures the caller needs to know what the run it just started may still
+// spend, read from the chain behind the link it named and not from the run it
+// named (D1047).
 func TestLaunchJSONCarriesTheChain(t *testing.T) {
 	f := chainRig(t)
 	jsonChain(t, f)
-	res, raw := jsonReply(t, f)
+	res, raw, out := jsonReply(t, f)
 
 	if res.Status != "launched" || res.RunID != jsonFu {
-		t.Fatalf("reply = %+v, want %s launched", res, jsonFu)
+		t.Fatalf("reply = %+v, want %s launched (%s)", res, jsonFu, out)
 	}
 	if res.Chain != jsonRoot {
-		t.Errorf("chain = %q, want the run that began it (%s), not the run the launch continued (%s)\n%s", res.Chain, jsonRoot, jsonTip, raw)
+		t.Errorf("chain = %q, want the run that began it (%s), not the run the launch followed up (%s)\n%s", res.Chain, jsonRoot, jsonTip, raw)
 	}
-	if res.RunCount != 3 || !res.LimitsRead {
-		t.Errorf("reply = %+v, want the three runs of the chain and its limit read", res)
+	if res.RunCount != 4 || !res.LimitsRead {
+		t.Errorf("reply = %+v, want the chain's three runs and the one this launch started, and its limit read", res)
 	}
 	if want := jsonLimitRows(false); !reflect.DeepEqual(res.Limits, want) {
 		t.Errorf("limits = %+v, want %+v", res.Limits, want)
 	}
 }
 
-// TestLaunchJSONLimitsMatchRunsShow: the reply and `runs show --json` are one
-// document written twice — the launch reply's members are the block the command
-// prints (D1056), so a consumer that reads one and then the other is not left
-// with two spellings of a figure or with a member one of them lacks.
+// TestLaunchJSONLimitsMatchRunsShow: the reply and `runs show --json` of the run
+// the launch started are one document written twice — the launch reply's
+// members are the block that command prints (D1056), so a consumer that reads
+// one and then the other is not left with two spellings of a figure or with a
+// member one of them lacks. The chain is the one the run itself is in: its
+// record names the run it continues, and the count is the same count on both
+// sides, this launch's run among the chain's.
 //
-// Both documents are read from the same anchor: the run the launch continued,
-// which is the chain's own read — the run that just started has no record yet,
-// and a chain read from it is a chain of one, which is the shortening D1047
-// forbids. The launch's own figures are a snapshot taken as the run started;
-// runs show of the chain is the same read at the same moment.
+// The record is the one the runner writes as the run starts, so what the chain
+// holds for it is nothing and the two reads are the same read: what the run
+// spends from here on belongs to the chain, and to runs show, and not to a reply
+// that was printed before it started spending.
 func TestLaunchJSONLimitsMatchRunsShow(t *testing.T) {
+	f := chainRig(t)
+	jsonChain(t, f)
+	res, _, _ := jsonReply(t, f)
+	jsonStartedRun(t, f)
+
+	show := jsonRunsShow(t, jsonFu)
+	if res.Chain != show.Chain || res.RunCount != show.RunCount || res.Enforced != show.Enforced || res.LimitsRead != show.LimitsRead {
+		t.Errorf("the reply says chain %q of %d runs (ENFORCED %v, read %v) where runs show of %s says chain %q of %d (ENFORCED %v, read %v)",
+			res.Chain, res.RunCount, res.Enforced, res.LimitsRead, jsonFu, show.Chain, show.RunCount, show.Enforced, show.LimitsRead)
+	}
+	if want := jsonLimitRows(false); !reflect.DeepEqual(res.Limits, want) || !reflect.DeepEqual(show.Limits, want) {
+		t.Errorf("limits = %+v and %+v, want %+v", res.Limits, show.Limits, want)
+	}
+}
+
+// TestLaunchJSONLimitsAreTheLedgers (D1046): with the budget on, what the chain
+// has spent is the budget database's, per run — reserved less released for the
+// money and the ledger's token leaf — and the token dimension is measured here
+// where a record states no token total at all.
+//
+// The rows are the chain the reply read, which is the chain behind the link it
+// named: runs show of the run the launch continued reads the same three
+// ledgers. The run the launch started is not among them — nothing writes its
+// ledger until it starts spending — so what runs show of that run shares with
+// the reply is the chain itself: the run that began it, how many runs it has,
+// and whether its figures are the database's.
+func TestLaunchJSONLimitsAreTheLedgers(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	limitsImage(t, f.cloudFixture)
 	limitsCheckout(t)
 	jsonChain(t, f.cloudFixture)
-	// The ledger is the chain's dollar and token figure while the budget is on
-	// (D1046): the three runs hold 2.25 dollars and 550000 tokens between them,
-	// whatever their records state.
 	for id, l := range map[string]budget.RunLedger{
 		jsonRoot: {Reserved: 2_000_000, Released: 500_000, Tokens: 400_000},
 		jsonMid:  {Reserved: 1_000_000, Released: 500_000, Tokens: 100_000},
@@ -192,21 +278,72 @@ func TestLaunchJSONLimitsMatchRunsShow(t *testing.T) {
 	} {
 		f.db.Set(budget.PathRun(appSlug, id), l)
 	}
-	res, _ := jsonReply(t, f.cloudFixture)
+	res, _, _ := jsonReply(t, f.cloudFixture)
+	jsonStartedRun(t, f.cloudFixture)
 
-	out, errOut, err := execute(t, "runs", "show", "--json", jsonTip)
-	if err != nil {
-		t.Fatalf("runs show --json: %v (%s)", err, errOut)
+	want := jsonLimitRows(true)
+	if !reflect.DeepEqual(res.Limits, want) {
+		t.Errorf("limits = %+v, want the ledgers' figures, %+v", res.Limits, want)
 	}
-	var show jsonLaunchReply
-	if err := json.Unmarshal([]byte(out), &show); err != nil {
-		t.Fatalf("runs show --json does not decode: %v\n%s", err, out)
+	if anchor := jsonRunsShow(t, jsonTip); !reflect.DeepEqual(anchor.Limits, want) {
+		t.Errorf("runs show of %s reads %+v, want %+v", jsonTip, anchor.Limits, want)
 	}
+	show := jsonRunsShow(t, jsonFu)
 	if res.Chain != show.Chain || res.RunCount != show.RunCount || res.Enforced != show.Enforced || res.LimitsRead != show.LimitsRead {
-		t.Errorf("the reply says %+v where runs show says %+v", res, show)
+		t.Errorf("the reply says chain %q of %d runs (ENFORCED %v, read %v) where runs show of %s says chain %q of %d (ENFORCED %v, read %v)",
+			res.Chain, res.RunCount, res.Enforced, res.LimitsRead, jsonFu, show.Chain, show.RunCount, show.Enforced, show.LimitsRead)
 	}
-	if want := jsonLimitRows(true); !reflect.DeepEqual(res.Limits, want) || !reflect.DeepEqual(show.Limits, want) {
-		t.Errorf("limits = %+v and %+v, want %+v", res.Limits, show.Limits, want)
+}
+
+// TestLaunchJSONCountsTheRunItLaunchedInAChainWithNoLink: a chain continued by
+// naming the run --continues names has no record link — a stored task carries
+// previous_run only with a branch and a pull request (task.Spec.Validate) — so
+// the reply is the only document that can say how many runs the chain has, and
+// it counts the run it just started among them. runs show of that run reads a
+// chain of one, which is what its own record holds and not what the run is
+// limited by (D1045, D1052).
+func TestLaunchJSONCountsTheRunItLaunchedInAChainWithNoLink(t *testing.T) {
+	f := chainRig(t)
+	usd := chainUSD
+	seedChainRun(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+	out, errOut, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "--json", "A task")
+	if err != nil {
+		t.Fatalf("run --continues: %v (%s)", err, errOut)
+	}
+	var res jsonLaunchReply
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("the reply does not decode: %v\n%s", err, out)
+	}
+	limit, used, left := runstore.Amount(5_000_000), runstore.Amount(2_000_000), runstore.Amount(3_000_000)
+	want := []ChainLimit{{Dimension: runstore.USD, Limit: limit, Used: &used, Remaining: &left, Source: policy.SourceChain}}
+	if res.Chain != chainRun || res.RunCount != 2 || !res.LimitsRead || !reflect.DeepEqual(res.Limits, want) {
+		t.Errorf("reply = %+v, want chain %s of 2 runs (the run it continued and the one it started) with %+v\n%s", res, chainRun, want, out)
+	}
+}
+
+// TestLaunchJSONNamesAChainItCouldNotFollow: a launch that joined a chain whose
+// first run the bucket has aged out inside its own window cannot read the chain
+// — the pull request's runs are there, the run their branch is named for is not
+// — and it still carries the block, with an empty chain and no limit read. The
+// members are what tells this reply apart from the reply of a launch that began
+// a chain, whose block is absent: a consumer that read an absence here would
+// read a run the chain bounds as one it does not (D1047).
+func TestLaunchJSONNamesAChainItCouldNotFollow(t *testing.T) {
+	f := newCloudFixture(t)
+	jsonAgedChain(t, f)
+	_, raw, out := jsonReply(t, f)
+
+	for _, key := range []string{"chain", "run_count", "enforced", "limits_read", "limits"} {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("the reply of a launch that joined a chain the bucket cannot follow carries no %s:\n%s", key, out)
+		}
+	}
+	var res jsonLaunchReply
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("the reply does not decode: %v\n%s", err, out)
+	}
+	if res.Chain != "" || res.LimitsRead {
+		t.Errorf("reply = %+v, want an empty chain and no limit read rather than a chain named out of the runs the read did reach", res)
 	}
 }
 
@@ -245,7 +382,7 @@ func TestLaunchJSONOmitsTheChainForAFirstRun(t *testing.T) {
 func TestLaunchJSONMarksAnUnenforcedChain(t *testing.T) {
 	f := chainRig(t)
 	jsonChain(t, f)
-	res, _ := jsonReply(t, f)
+	res, _, _ := jsonReply(t, f)
 
 	if res.Enforced {
 		t.Errorf("reply = %+v, want a budget-off chain marked UNENFORCED", res)
@@ -271,9 +408,9 @@ func TestLaunchJSONMarksAnUnenforcedChain(t *testing.T) {
 func TestLaunchJSONStaysReadableToAConsumerThatIgnoresTheAdditions(t *testing.T) {
 	f := chainRig(t)
 	jsonChain(t, f)
-	out, errOut, err := execute(t, "run", "--repo", limitsRepo, "--continues", jsonTip, "--run-id", jsonFu, "--json", "A task")
+	out, errOut, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", jsonFu, "--json", "A task")
 	if err != nil {
-		t.Fatalf("run --continues: %v (%s)", err, errOut)
+		t.Fatalf("run --pr: %v (%s)", err, errOut)
 	}
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {

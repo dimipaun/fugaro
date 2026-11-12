@@ -107,22 +107,37 @@ func TestRunHumanOutput(t *testing.T) {
 }
 
 // TestLaunchTextNamesTheChainOnlyWhenThereIsOne: a launch that joins a chain
-// says so (L7, D1056) — the run that began it, how many runs the link reached
-// and whether the figures are the budget database's — and a launch that begins
-// one prints exactly what it always printed. The run's own chain is the run the
-// line above already names, and printing it would be a chain of one: the
-// shortening D1047 forbids wherever an id is read back as the chain's.
+// says so (L7, D1056) — the run that began it, how many runs of it the link
+// reached, the run just launched among them, and whether the figures are the
+// budget database's — and a launch that begins one prints exactly what it
+// always printed. The run's own chain is the run the line above already names,
+// and printing it would be a chain of one: the shortening D1047 forbids
+// wherever an id is read back as the chain's. A chain the read could not follow
+// to the run that began it is named as well, with no id and no absence, because
+// an absent line here is what a launch that began a chain prints.
 func TestLaunchTextNamesTheChainOnlyWhenThereIsOne(t *testing.T) {
 	t.Run("a launch that joins a chain", func(t *testing.T) {
 		f := chainRig(t)
 		jsonChain(t, f)
-		out, errOut, err := execute(t, "run", "--repo", limitsRepo, "--continues", jsonTip, "--run-id", jsonFu, "A task")
+		out, errOut, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", jsonFu, "A task")
 		if err != nil {
-			t.Fatalf("run --continues: %v (%s)", err, errOut)
+			t.Fatalf("run --pr: %v (%s)", err, errOut)
 		}
-		want := "  chain " + jsonRoot + " (3 runs, UNENFORCED)"
+		want := "  chain " + jsonRoot + " (4 runs, UNENFORCED)"
 		if !strings.Contains(out, want) {
 			t.Errorf("output:\n%s\nwant it to name the chain:\n%s", out, want)
+		}
+	})
+	t.Run("a launch whose chain cannot be followed", func(t *testing.T) {
+		f := newCloudFixture(t)
+		jsonAgedChain(t, f)
+		out, errOut, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", jsonFu, "A task")
+		if err != nil {
+			t.Fatalf("run --pr: %v (%s)", err, errOut)
+		}
+		want := "  chain unread: a link in it stops at a run the bucket no longer holds (UNENFORCED)"
+		if !strings.Contains(out, want) {
+			t.Errorf("output:\n%s\nwant it to say the chain could not be followed:\n%s", out, want)
 		}
 	})
 	t.Run("a launch that begins a chain", func(t *testing.T) {

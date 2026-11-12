@@ -111,12 +111,16 @@ type launchResult struct {
 	// show --json` prints — chain, run_count, enforced, limits_read, limits[] —
 	// so a consumer reading the document a launch answered and the document
 	// that command prints is reading one shape and not two (ChainLimits,
-	// ChainLimit).
+	// ChainLimit). RunCount counts the run just launched among the chain's,
+	// which is the run that command is asked about when it reads the same
+	// chain.
 	//
 	// It is nil for a launch that begins a chain, and the whole block is then
 	// absent from the document: its chain is the run this reply's own run_id
 	// names, and a block naming it would say a chain of one where the launch
-	// began the chain (D1045, D1047).
+	// began the chain (D1045, D1047). A launch that joined a chain keeps the
+	// block wherever the read could answer one at all, even with nothing but an
+	// empty chain in it.
 	*ChainLimits
 	// account is the account this launch resolved and the alias it read it
 	// through, which the launch's own line prints as ALIAS -> ACCOUNT
@@ -1097,23 +1101,36 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 // resolves the same link chainInherit inherited from, and the runs it reaches
 // are the chain the run joins.
 //
-// nil is a launch that begins a chain — a first run, each attempt of a batch —
-// and every read that did not reach the run that began one: the reply's members
-// are additions, so a launch with no chain to name leaves them out rather than
-// printing an empty block, and a chain the bucket has aged past its root has no
-// id to name at all (chainLimitsOf). Nothing here can fail a launch that has
-// already started: the link was resolved, and the chain gone through its gates,
-// before the run was launched, so a read that fails now — a record deleted in
-// between, a chain that aged out — is answered as an absent block rather than
-// as a refusal of a launch that happened.
+// The run just launched is one of that chain's runs, so RunCount counts it: the
+// link reached the chain behind it, and this run is the one the chain has now.
+// That is the figure `fugaro runs show --json` prints for the run just launched
+// — its record links back to the run it continues, so the read there reaches
+// the same chain and counts the same run (L6, ChainLimits.RunCount). A read
+// that reached nothing at all adds nothing: 0 stays the unknown it is rather
+// than becoming the one run this launch is known to have started.
+//
+// nil is a launch that begins a chain — a first run, each attempt of a batch, a
+// retry of a task that is its own chain — and a read that failed outright. A
+// chain the bucket has aged past its root is neither: chainLimitsOf answers it
+// as a block whose chain is empty and whose limit was not read, and that block
+// is carried, because it is the one thing that tells a consumer this launch
+// joined a chain from the absence that says it began one — the reading D1047
+// forbids is the second. Nothing here can fail a launch that has already
+// started: the link was resolved, and the chain gone through its gates, before
+// the run was launched, so a read that fails now — a record deleted in between
+// — is answered with what the read holds rather than as a refusal of a launch
+// that happened.
 func launchChainLimits(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec) *ChainLimits {
 	from, err := chainFrom(ctx, env, slug, o, spec, io.Discard)
 	if err != nil || from == "" {
 		return nil
 	}
 	lim, err := chainLimitsOf(ctx, env, slug, from, io.Discard)
-	if err != nil || lim.Chain == "" {
+	if err != nil {
 		return nil
+	}
+	if lim.RunCount > 0 {
+		lim.RunCount++
 	}
 	return lim
 }
@@ -4645,9 +4662,15 @@ func launchDetail(w io.Writer, res launchResult) error {
 }
 
 // launchChainLine is the chain a launch joined, as the text reply names it: the
-// run that began it, how many runs the link reached and whether the figures are
-// the budget database's (D1056, D1046). It is empty for a launch that begins a
-// chain, whose chain is the run the launch's own line already names.
+// run that began it, how many runs of it the link reached — the run just
+// launched among them — and whether the figures are the budget database's
+// (D1056, D1046). It is empty for a launch that begins a chain, whose chain is
+// the run the launch's own line already names.
+//
+// A chain the read could not follow to the run that began it has no id to name:
+// the line says so, because saying nothing at all would read as a launch that
+// began a chain (D1047), which is the one thing this line is here to tell
+// apart.
 //
 // The figures are not repeated here: they are a table, and the two commands
 // that print one are `runs show` and `diagnose` (D1055). What this line adds is
@@ -4655,12 +4678,15 @@ func launchDetail(w io.Writer, res launchResult) error {
 // that the run it just started is bounded by a chain and not by itself, and by
 // how much.
 func launchChainLine(lim *ChainLimits) string {
-	if lim == nil || lim.Chain == "" {
+	if lim == nil {
 		return ""
 	}
 	word := "ENFORCED"
 	if !lim.Enforced {
 		word = "UNENFORCED"
+	}
+	if lim.Chain == "" {
+		return fmt.Sprintf("chain unread: a link in it stops at a run the bucket no longer holds (%s)", word)
 	}
 	return fmt.Sprintf("chain %s (%d %s, %s)", oneLine(lim.Chain), lim.RunCount, plural(lim.RunCount, "run", "runs"), word)
 }

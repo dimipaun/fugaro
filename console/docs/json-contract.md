@@ -2047,12 +2047,40 @@ which one layer the stored task actually carries, and never its text).
 (`internal/cli/runs_show.go`), so a member or a figure the one carries and the
 other lacks is not a state this pair can be in, and the amounts are in the
 dimension's own unit (micro-dollars for the money, whole tokens, seconds and a
-count). **All five are absent for a launch that begins a chain** — a first run,
-an attempt of a batch — because that launch joins none: its chain is the run
-the reply's own `run_id` names, and a block naming it would read as a chain of
-one. `enforced` false means the figures are the run records' rather than the
-budget database's, which is what a chain is when the installation's budget is
-off (D1046).
+count). `run_count` is the same count on both sides: **the run the launch
+started is one of the chain's runs**, and the reply counts it, which is what
+`runs show` of that `run_id` reads once the run's own record links it into the
+chain — one more than the same read of the run the launch continued.
+`enforced` false means the figures are the run records' rather than the budget
+database's, which is what a chain is when the installation's budget is off
+(D1046).
+
+**The two documents name the chain the run they are about is bounded by.**
+`runs show` reads the chain a run's **record** links it into
+(`follow_up.previous_run`, written as a follow-up's run starts), and the reply
+reads the chain the launch **joined**; for a pull request follow-up those are
+one chain and one read. A chain a caller continued by naming a run of it has no
+record link to write — a stored task carries `previous_run` only with a branch
+and a pull request (`task.Spec.Validate`) — so `runs show` of the run that
+launch started answers a chain of one, that run, while the reply names the
+chain the caller continued, which is the chain the run is limited by (D1045,
+D1052).
+
+**The block is absent for a launch that begins a chain, and for one whose chain
+read failed.** The first is a first run, an attempt of a batch, a retry of a
+task that is its own chain: that launch joins none, its chain is the run the
+reply's own `run_id` names, and a block naming it would read as a chain of one.
+The second is a read that failed outright while the launch went on — the link
+was resolved and the chain gated before the run started, and no later read
+unlaunches it, so a record deleted in between leaves the block out. **A chain
+the bucket can no longer follow is neither of those**: the run that began it
+sits behind a link the bucket holds nothing under, so the reply carries the
+block with an empty `chain` (empty and never absent, as in `runs show`),
+`limits_read` false, and `run_count` the runs the read reached, the run the
+launch started among them. A consumer
+that has to tell the two reasons for an absence apart has the launch it is
+reading the reply of — which link it named is in the text reply and in the
+arguments that produced it — and `runs show` of `run_id` afterwards.
 
 **Four of the fields are the launch's own identity, and the fifth is a version
 of it the console built.** `project` is the Fugaro project the launch was cut
