@@ -387,7 +387,7 @@ func TestReviewCallerIsOfferedNoTierBOrCAndNoOtherAccount(t *testing.T) {
 	}
 
 	id := Identity{Slug: s.slug, JobAccount: testReviewSA, JobClass: ClassReview}
-	cands, skipped, err := s.server.candidates(context.Background(), id, testRepo, s.policy.shared, b)
+	cands, _, skipped, err := s.server.candidates(context.Background(), id, testRepo, s.policy.shared, b)
 	if err != nil {
 		t.Fatalf("candidates: %v", err)
 	}
@@ -639,7 +639,7 @@ func TestProviderKeyEntryIsNotOfferedToAnyOtherCaller(t *testing.T) {
 		t.Fatalf("the fixture's bundle does not hold the provider key at tier C: %+v, %v", e, ok)
 	}
 
-	cands, skipped, err := s.server.candidates(context.Background(),
+	cands, _, skipped, err := s.server.candidates(context.Background(),
 		Identity{Slug: s.slug, JobAccount: testJobSA, JobClass: ClassRepository}, testRepo, s.policy.shared, b)
 	if err != nil {
 		t.Fatalf("candidates: %v", err)

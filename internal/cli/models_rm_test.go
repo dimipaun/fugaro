@@ -64,8 +64,8 @@ func TestModelsRmAsksNothing(t *testing.T) {
 // write still happens.
 func TestModelsRmWarnsNamingEachPinningRepository(t *testing.T) {
 	home, path := modelsWriteHome(t)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", ""))
-	modelsWriteCheckout(t, home, "owner/repo-b", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "vendor/model-x", "claude-sonnet-5-5"))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", "", ""))
+	modelsWriteCheckout(t, home, "owner/repo-b", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "vendor/model-x", "claude-sonnet-5-5", ""))
 
 	out, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
 	if err != nil {
@@ -95,13 +95,34 @@ func TestModelsRmWarnsNamingEachPinningRepository(t *testing.T) {
 	}
 }
 
+// TestModelsRmNamesTheVisionPin: the warning names the role each repository
+// pins the model in, and the vision slot is one of them (D791's list, V6). A
+// repository that runs the model only where a stage reads an image is exactly
+// the pin this removal breaks, so a warning that stopped at the three stage
+// roles would leave the owner to find the break at the next run.
+func TestModelsRmNamesTheVisionPin(t *testing.T) {
+	home, _ := modelsWriteHome(t)
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "claude-sonnet-5-5", "", "vendor/model-x"))
+
+	out, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "owner/repo-a (vision)") {
+		t.Errorf("the warning does not name the vision pin:\n%s", out)
+	}
+	if !strings.Contains(out, "coder|reviewer|background|vision") {
+		t.Errorf("the fix the warning names does not offer the vision role:\n%s", out)
+	}
+}
+
 // TestModelsRmWarnsForRepositoriesWithoutACheckout: a repository this machine
 // has no checkout for is named as one it cannot see, rather than left out. The
 // pin it may carry is exactly the one the warning exists for, and a reader who
 // is not told which repositories were not read would take silence for safety.
 func TestModelsRmWarnsForRepositoriesWithoutACheckout(t *testing.T) {
 	home, _ := modelsWriteHome(t)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", ""))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", "", ""))
 
 	out, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
 	if err != nil {
@@ -122,7 +143,7 @@ func TestModelsRmWarnsForRepositoriesWithoutACheckout(t *testing.T) {
 // break nothing caused (D783's warning is about a removal).
 func TestModelsRmWarnsNothingWhenThereIsNothingToRemove(t *testing.T) {
 	home, path := modelsWriteHome(t)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-q", "claude-sonnet-5-5", ""))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-q", "claude-sonnet-5-5", "", ""))
 	before := readFileString(t, path)
 
 	out, _, err := execute(t, "models", "rm", "vendor/model-q", "--yes")
@@ -150,7 +171,7 @@ model_prices:
 repos:
   owner/repo-a: {}
 `)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "claude-sonnet-5-5", ""))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "claude-sonnet-5-5", "", ""))
 
 	out, _, err := execute(t, "models", "rm", "vendor/model-z", "--yes")
 	if err != nil {
@@ -171,7 +192,7 @@ repos:
 // false, and the sentence that says the pattern still claims it is the true one.
 func TestModelsRmWarnsWithoutTheNoProviderLineWhileAPatternStillClaimsIt(t *testing.T) {
 	home, _ := modelsWriteHome(t)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "", ""))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "", "", ""))
 
 	out, _, err := execute(t, "models", "rm", "deepseek/deepseek-v4-flash", "--yes")
 	if err != nil {
@@ -314,7 +335,7 @@ func TestModelsRmRefusesInAnAgentSession(t *testing.T) {
 // about it would tell the owner to repair a break nothing caused.
 func TestModelsRmWarnsOnlyOfARemovalThatLanded(t *testing.T) {
 	home, path := modelsWriteHome(t)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", ""))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", "", ""))
 
 	t.Setenv("CLAUDECODE", "1")
 	refused, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")

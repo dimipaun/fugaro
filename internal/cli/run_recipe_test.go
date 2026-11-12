@@ -192,7 +192,7 @@ func TestRunRecipeImageNamesTheImplicitBaseKind(t *testing.T) {
 	t.Chdir(dir)
 	other := mustSlug("github", "acme/other")
 	writeBuildRecord(t, f, other, "svc", "ghcr.io/dimipaun/fugaro-base:0.4.0")
-	wantRefused(t, f, "it verifies this release's base base image", "run", "--run-id", "20261007-100000-abcd", "A task")
+	wantRefused(t, f, "its images stage verifies this release's base base image", "run", "--run-id", "20261007-100000-abcd", "A task")
 }
 
 // TestRunClonedWorkflowWithRecipeLaunchesWithNoBuildRecord (review finding

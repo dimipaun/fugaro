@@ -51,6 +51,33 @@ type Run struct {
 	ID   string
 }
 
+// Strategy is how a caller wants a tier's usable members shared out among the
+// runs that arrive: the cascade's own rule (StrategyFailover, and the zero
+// value), or a rotation through them (StrategyRoundRobin).
+//
+// It is the CALLER's word and not this package's policy. Which strategy a pool
+// is served under is the owner's, written in the published node and read where
+// the credentials come from (the credentials service maps it,
+// internal/credsvc's roundrobin.go); a selection is handed the answer, because
+// this package knows nothing of pools, crafts or projects.
+//
+// The two rules are the spec's, and their names are the ones the pool format
+// spells (config.PoolStrategyFailover, .PoolStrategyRoundRobin), so a strategy
+// written in a file and a strategy a selection is handed are one vocabulary.
+type Strategy string
+
+const (
+	// StrategyFailover is the cascade's own within-tier rule: the credential
+	// exhausted longest ago, with the round-robin counter breaking an exact tie
+	// (leastRecentlyExhausted). It is the zero value, so a caller built without
+	// a strategy selects exactly as it did before a strategy existed.
+	StrategyFailover Strategy = "failover"
+	// StrategyRoundRobin steps through the usable members of a tier in the
+	// order the caller offered them, one run at a time, and skips the ones a
+	// mark or the cap holds (rotate).
+	StrategyRoundRobin Strategy = "round-robin"
+)
+
 // Selector selects the credential a run's next call goes to. It holds no state
 // of its own: everything it decides is read from the Store and written back,
 // because the service is stateless and several instances select at once.
@@ -61,6 +88,10 @@ type Selector struct {
 	Settings Settings
 	// Now is the clock. nil is time.Now.
 	Now func() time.Time
+	// Strategy is how this caller's candidates are shared out within a tier
+	// (Strategy). It never outranks the tier: the strategy decides which member
+	// of a tier a run goes to and never which tier (F7).
+	Strategy Strategy
 }
 
 // Select answers the credential the run's next call goes to, or the wait until
@@ -95,7 +126,10 @@ type Selector struct {
 // and nothing here invents a credential the caller did not offer. The tier
 // decides which credential is taken and the order within a tier does not —
 // except in a tie, which the offered order breaks, so a pool is listed the way
-// its owner ordered it and the listed order never outranks the tier (F7). A
+// its owner ordered it and the listed order never outranks the tier (F7). What
+// picks among the usable members of one tier is the caller's Strategy — the
+// rule above, or a rotation through them in that same order — and the tier is
+// decided before it, so neither rule can move a call off the cheaper one. A
 // candidate whose tier is not one this release selects is refused rather than
 // skipped. A tier B
 // candidate offered under `oauth-only` is not refused — it carries no mistake —
@@ -180,7 +214,7 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 			}
 		}
 		if len(usable) > 0 {
-			c, err := s.leastRecentlyExhausted(ctx, usable, marks)
+			c, err := s.within(ctx, usable, marks)
 			if err != nil {
 				return Credential{}, 0, err
 			}
@@ -421,6 +455,61 @@ func (s *Selector) Broken(ctx context.Context, name string) (Mark, error) {
 // call is never sent on a decision the service could not record.
 func (s *Selector) take(ctx context.Context, run Run, c Credential, now time.Time, set Settings) error {
 	return s.Store.SetPlacement(ctx, run, c.Name, Lease{Credential: c.Name, Until: now.Add(set.LeaseTTL)})
+}
+
+// within picks the one credential of a tier that serves this call out of the
+// set a mark or the cap does not hold, by the rule the caller asked for. It is
+// the only place a strategy is read, and it is read once per tier — the tier
+// itself has already been decided by the loop above, which is what "a strategy
+// never outranks the tier" means in code.
+//
+// The usable set is the same one both rules are handed, and that is the point:
+// a member a mark holds is not in it, so neither rule can reach a backed-off,
+// broken or capped credential, and the "skip any that fail" the spec asks of a
+// round robin is this set and not a rule of its own.
+func (s *Selector) within(ctx context.Context, usable []Credential, marks map[string]Mark) (Credential, error) {
+	if s.Strategy == StrategyRoundRobin {
+		return s.rotate(ctx, usable)
+	}
+	return s.leastRecentlyExhausted(ctx, usable, marks)
+}
+
+// rotate takes the next usable member of a tier, in the order the caller
+// offered them, and consumes one turn of the project's counter (creds/
+// roundrobin, F6, D1625). The offered order is the caller's and, for a pool,
+// the owner's: the pool's listed order is where a rotation starts and the order
+// it turns in (F7).
+//
+// A turn is consumed by a selection that had to CHOOSE, which is why a usable
+// set of one is answered without touching the counter: a pool whose other
+// members are held is not a rotation, and spending a project-wide turn on it
+// would move every other pool's rotation along for nothing. What a turn buys is
+// what the counter is for: several service instances selecting at once each
+// take a different member rather than the same one, because the read and the
+// write of the counter are one compare-and-set (Store.RoundRobin) and a lost
+// race re-reads rather than overwrites.
+//
+// It is a rotation per selection and not per call to the upstream in the sense
+// D1625 is about, and the property comes from the caller: the credential this
+// answers is written onto the run by take, and a run that has one is answered
+// by the sticky path before any rule here is reached (D154, D874). So a run
+// takes one turn and keeps it.
+//
+// A count below zero is a node a hand-edit wrote and is read as zero rather
+// than as an index into the middle of the set, exactly as the tie-break reads
+// it (leastRecentlyExhausted).
+func (s *Selector) rotate(ctx context.Context, usable []Credential) (Credential, error) {
+	if len(usable) == 1 {
+		return usable[0], nil
+	}
+	n, err := s.Store.RoundRobin(ctx)
+	if err != nil {
+		return Credential{}, err
+	}
+	if n < 0 {
+		n = 0
+	}
+	return usable[int(n%int64(len(usable)))], nil
 }
 
 // leastRecentlyExhausted picks from a usable set: the credential exhausted

@@ -161,6 +161,18 @@ variable "operators" {
   }
 }
 
+variable "launcher_accounts" {
+  description = "The launcher class (D1938, F25): the bare email addresses a Google ID token's email claim carries, one per person who may ask the secrets intake or the credentials service for something. `fugaro update` derives it from the same roster list the invoker grants are made from (internal/infra/launchers.go), so the class and the grant name the same people (F31, F36). Empty by default, and the two services render the environment entry only when it is non-empty: an installation whose roster names no launcher starts with a class that admits nobody (fail closed) rather than refusing to bind a port. It never holds a member spelling: a group or a domain is not an address an ID token carries, and the class check refuses one."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for a in var.launcher_accounts : can(regex("^[^@: ]+@[^@ ]+$", a))])
+    error_message = "launcher_accounts is the bare email addresses an ID token's email claim carries (someone@example.com), never the member spelling the launchers variable takes (user:someone@example.com): the process compares the claim against these values, and a prefixed one matches nobody."
+  }
+}
+
 # The viewer list (RS4 of docs/roles-scopes/implementation-plan.md, roles.md
 # §4): members who read and do nothing else. The grammar is the Firebase
 # module's rather than the two lists above: the same list is handed to the
@@ -546,6 +558,30 @@ variable "credentials_service" {
       (try(var.credentials_service.url, null) == null || can(regex("^https://[a-z0-9.-]+$", var.credentials_service.url)))
     )
     error_message = "credentials_service needs the Firebase project a run's identity is verified against (the shape of a project ID), the installation's realtime database URL (https://<database>.firebasedatabase.app or .firebaseio.com, without a path — the same rule history.rtdb_url is held to), at least one job as {provider, repo, workflow} with all three set (the service binds a run to a repository through them, and an empty table refuses every caller), every review job as {profile, provider, account} with all three set (the service derives the review job's account from them and serves a review call by the account the row names), and, once it is known, its own URL in the same https://<host> form."
+  }
+}
+
+variable "intake" {
+  description = "The secrets intake (D1931, DS2.2): the installation's own Cloud Run service that alone creates, versions and deletes the dynamic per-secret containers — fugaro_u_<sub>_<name> and fugaro_p_<name>, the internal/secretname grammar — and the identity the credentials service reads them back through a prefix-conditioned accessor for. OFF by default (null): with it off this module creates no account, no role and no service, and no container of the dynamic class is ever written. It is on for an installation whose owner has the feature, and turning it off again removes a service and an account and touches no container (nothing here reads a value, so nothing here carries a prevent_destroy). account_id and service are the account's ID and the Cloud Run service's name; image is the released image, pinned BY DIGEST and never by a tag — the same rule and the same reason as credentials_service.image, because this process runs as the account that writes an installation's credentials and the repository grants roles/artifactregistry.writer to every operator (iam.tf); url is the service's OWN URL, the audience a caller's Google ID token is minted for, and it is optional because Cloud Run assigns it — no expression can read google_cloud_run_v2_service.intake[0].uri from inside that resource, so the first apply creates the revision with intake.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL this module's output publishes."
+  type = object({
+    account_id = string
+    service    = string
+    image      = string
+    url        = optional(string)
+  })
+  default = null
+
+  # The image is a DIGEST and never a tag, held to credentials.tf's own rule
+  # and for its reason: an operator can push a tag, and the code this account
+  # runs is the code that writes an installation's dynamic credentials.
+  validation {
+    condition = var.intake == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.intake.account_id)) &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.intake.service)) &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$", var.intake.image)) &&
+      (var.intake.url == null || can(regex("^https://[a-z0-9.-]+$", var.intake.url)))
+    )
+    error_message = "intake needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), and, once the URL is known, its own URL in the https://<host> form (no path)."
   }
 }
 

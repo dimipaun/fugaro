@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,6 +58,21 @@ var repoImagesOffShipped bool
 // traffic, which is all the fakes use, around any proxy). A test that
 // means to talk to GCS points its config's endpoints at a fake.
 func TestMain(m *testing.M) {
+	// The test binary's own flags are not a session's arguments. The commands
+	// that leave an audit trail take theirs from the process (managed_gate.go's
+	// Argv, os.Args[1:]), so a `-run` naming a shard's tests would put the whole
+	// name list in every record one of them writes — past the 64 KiB a reader
+	// accepts, which turns a command that ran fine in a whole-package run into
+	// a failed one in a subset. The program's own name stays: secondUpdate
+	// re-executes this binary through it (update_lock_test.go).
+	//
+	// The flags are parsed first, because the run below is what parses them
+	// (testing's M.Run parses os.Args, and skips it when TestMain got there
+	// first): trimming before that leaves this binary with no -test.run and no
+	// -test.timeout, so every subset would run the whole package with nothing
+	// bounding it.
+	flag.Parse()
+	os.Args = os.Args[:1]
 	os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/nonexistent/fugaro-tests-have-no-credentials.json")
 	os.Setenv("GCE_METADATA_HOST", "127.0.0.1:1")
 	os.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
@@ -134,6 +151,13 @@ func TestMain(m *testing.M) {
 	// while their configs carry fake endpoints, so they turn the skip off and
 	// the tests of the skip itself turn it on.
 	skipGSOnFakeEndpoints = false
+	// The two bucket openers a converge reaches on its own — the record
+	// bucket's (readPublishedLayer, updateResolvedWindow) and the update
+	// offer's (updateRetryOpen) — each get a rig's gs:// runs bucket URL, which
+	// they would otherwise open for real: the fake-endpoint skip above is off
+	// for the tests, so nothing else stops it.
+	openRecordBucket = offGoogle(openRecordBucket, "openRecordBucket")
+	updateRetryOpen = offGoogle(updateRetryOpen, "updateRetryOpen")
 	// D1900's door (image.go, repoImagesOff) is the other one of these: the
 	// commands that build a repository's own image answer the notice while it
 	// is set, and the tests of that machinery -- the derived build, the check
@@ -151,14 +175,14 @@ func TestMain(m *testing.M) {
 	// true as of 0.10.0 and batchProvisionShipped as of 0.9.5, so the managed
 	// paths and the Batch provisioning run as they ship, with nothing opened
 	// for the tests.
-	// findLayer's bucket has no seam override redirecting gs:// elsewhere
-	// the way sharedBucketOpener does above: a rig whose local config
-	// computes a gs:// runs bucket URL (most do; only bucket_url: file://
-	// fixtures don't) would otherwise have it opened for real the first
-	// time anything resolves a project layer. A test that means to
-	// exercise a layer already uses a file:// bucket_url or overrides this
-	// var itself; anything else panics loudly instead of quietly reaching
-	// storage.googleapis.com.
+	// findLayer's bucket is the one read that does not go through that var,
+	// and it has no override redirecting gs:// elsewhere the way
+	// sharedBucketOpener does above: a rig whose local config computes a
+	// gs:// runs bucket URL, which most do, would otherwise have it opened
+	// for real the first time anything resolves a project layer. A test that
+	// means to exercise a layer already uses a file:// bucket_url or
+	// overrides this var itself; anything else panics loudly instead of
+	// quietly reaching storage.googleapis.com.
 	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
 		if strings.HasPrefix(url, "gs://") {
 			panic("fugaro: test tried to open a real gs:// project layer bucket: " + url + "; use a bucket_url: file:// fixture or override layerBucketOpener")
@@ -205,6 +229,25 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	cleanupFakes()
 	os.Exit(code)
+}
+
+// offGoogle wraps one of the package's bucket openers so that no test reaches
+// the cloud: a gs:// URL — the runs bucket a rig's own config computes, which
+// no test means to touch — is answered with the error a failed open would
+// give, and anything else (a file:// or mem:// fixture, the tests' own
+// buckets) is opened as before. The open itself does no I/O, so what a test
+// would wait on is the read behind it: the storage client retries a failed one
+// with no bound a test can outwait, which is what hung a shard for its whole
+// timeout while a whole-package run got away with it only because an earlier
+// test had left a failing opener behind. name is the var to replace for a test
+// that means to read a bucket of its own.
+func offGoogle(open func(context.Context, string) (*blobx.Bucket, error), name string) func(context.Context, string) (*blobx.Bucket, error) {
+	return func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		if strings.HasPrefix(url, "gs://") {
+			return nil, errors.New("fugaro: test tried to open the real gs:// bucket " + url + "; use a bucket_url: file:// fixture or override " + name)
+		}
+		return open(ctx, url)
+	}
 }
 
 // stubBucket is the base of a test blob driver: the embedded driver.Bucket is

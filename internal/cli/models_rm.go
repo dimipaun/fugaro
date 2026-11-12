@@ -252,7 +252,7 @@ func modelsRmWarn(cmd *cobra.Command, lc *localcfg.Config, id string, served boo
 	if len(pins) > 0 {
 		fmt.Fprintf(out, "warning: %s is pinned by %s\n", oneLine(id), modelsPinsSentence(pins))
 		if !served {
-			fmt.Fprintf(out, "warning: the next run of %s fails at launch: no provider serves it once the claim is gone. Change the pin with `fugaro models use <repo> coder|reviewer|background %s`, or put the model back with `fugaro models add %s`\n", pluralRepos(pins), oneLine(id), oneLine(id))
+			fmt.Fprintf(out, "warning: the next run of %s fails at launch: no provider serves it once the claim is gone. Change the pin with `fugaro models use <repo> %s %s`, or put the model back with `fugaro models add %s`\n", pluralRepos(pins), strings.Join(modelsRoleNames, "|"), oneLine(id), oneLine(id))
 		}
 	}
 	if len(unseen) > 0 {
