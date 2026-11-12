@@ -1,8 +1,10 @@
 # Check 511 — the owner's steps (a request every N seconds keeps one instance up, U4)
 
-**Status: written by task DS0.2 of the dynamic-delivery plan; run by the owner, task DS0.3. It has not
-been run: **NOT RUN.** No agent runs any step of it**, and no agent may: what it measures is a live
-Cloud Run service's own instance behaviour, which nothing in this tree can answer.
+**Status: written by task DS0.2 of the dynamic-delivery plan; run by the owner, task DS0.3. **RUN
+2026-11-12 in fugaro-dev:** the 15 s beat held one instance up for the whole 300 s window (the result
+block is recorded in the register, "Check 511"). **No agent runs any step of it**, and no agent may:
+what it measures is a live Cloud Run service's own instance behaviour, which nothing in this tree can
+answer.
 
 The check is `scripts/live-checks/check511.sh` (its sibling test is
 `scripts/live-checks/check511_test.sh`, which drives it against fake tools only and never a real
@@ -97,3 +99,12 @@ which are not the check's to delete — the row names them so that a reader who 
 Record the block in `docs/gcp-live-checklist.md`'s "Check 511" section and change the row's
 `OWNER-RUN, NOT RUN.` to what the run found. **A failed 511 stops DS1.5 and returns to the owner as a
 decision:** the heartbeat's interval is what that task would otherwise assume.
+
+**It ran on 2026-11-12.** `scale-to-zero` PASS (`min_instance_count` 0 in `fugaro-dev`), so the warmth
+below was the requests' and not the configuration's. `container-answers` PASS. `heartbeat-answered`
+PASS and `heartbeat-warm` PASS: 20 requests, one every 15 s for the whole 300 s window, each answered
+by the container itself and **none of them paying a cold start** (min 109 ms, mean 165 ms, max 293 ms).
+`idle-cost` read 1511 ms — the opening request, the one that could pay a cold start, and did.
+`instance-ids` came back **empty**: the entries the check read carried no instance id it could use, so
+the run cannot say how many instances answered, and the owner ruled that row not part of the decision.
+So U4's timing is answered at the interval DS1.5 reuses — and its one-instance reading is not.
