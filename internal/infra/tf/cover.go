@@ -120,12 +120,14 @@ var allowedTypes = map[string]bool{
 // MCP is the front door's own account (D920, D935), its own kind for the
 // catalog check job's reason: as one of FugaroAccounts every toAccounts row
 // would have accepted it, and the account's whole point is that it reaches the
-// runs bucket's read (D932) and the store its records live in (D935) and
-// nothing else — a public endpoint whose identity could ride a job's
-// datastore.user or a launcher's role would be the "there is no credential to
-// reach" of spec.md §8 one grant away from false. Exactly one row carries the
-// bit, and it is narrowed further by the bucket it is on
-// (mcpauthStoreGrant, TestMCPAccountIsItsOwnPrincipalKind).
+// runs bucket's read (D932), the store its records live in (D935) and — since
+// O16b — the orchestrator's node, read-only (D2020 (a)), and nothing else — a
+// public endpoint whose identity could ride a job's datastore.user or a
+// launcher's role would be the "there is no credential to reach" of spec.md §8
+// one grant away from false. Exactly two rows carry the bit, and each is
+// narrowed further: the store's by the bucket it is on (mcpauthStoreGrant) and
+// the state group's by its role and the project it is in
+// (mcpauthStateReadGrant, TestMCPAccountIsItsOwnPrincipalKind).
 //
 // Intake is the secrets intake's own account (D1931, DS2.2), its own kind for
 // the catalog check job's reason: as one of FugaroAccounts every toAccounts row
@@ -212,6 +214,16 @@ var grantRules = map[string]map[string]who{
 		// takes two principals.
 		customKey + IntakeSecretsRole: toIntake,
 		customKey + SecretListerRole:  toIntake | toCredentials,
+		// The front door's read of the orchestrator's node (O16b, D2020 (a)):
+		// a PROJECT grant on the coordinator's own Firebase project, where the
+		// database lives (D6), and the account's second role. Like the store's
+		// bit, this one is not the row's to decide: mcpauthStateReadGrant
+		// accepts exactly this account, exactly this role, on exactly the
+		// project the role was declared in and under no condition, so a plan
+		// that moved the read to another project, another role to this
+		// account, or a write permission into the role (which RolePermissions
+		// pins) is refused rather than covered.
+		customKey + MCPStateReadRole: toMCP,
 		// The service's project-level accessor over the same fence: a PROJECT
 		// grant, unlike the bundle's (google_secret_manager_secret_iam_member),
 		// so the row is here rather than in that type's, and it names the
@@ -478,11 +490,36 @@ const CatalogCheckAccountID = "fugaro-catalog-check"
 // and the service runs as; internal/infra.MCPServerAccountID is the same name
 // on the writer's side, and TestCoverMCPNamesAreTheWritersNames pins the two
 // together. It is NOT among FugaroAccounts, for the catalog check job's
-// reason: its one role is the store's (D935), so it is read as a kind of its
-// own (toMCP) and every role it is given is refused unless a row carries that
-// bit — which the objectAdmin row alone does, and only through
-// mcpauthStoreGrant, the check that pins the grant to D935's store.
+// reason: its two roles are the store's (D935) and the database's read (O16b),
+// so it is read as a kind of its own (toMCP) and every role it is given is
+// refused unless a row carries that bit — which the objectAdmin row and the
+// state-read row alone do, each narrowed further by mcpauthStoreGrant and
+// mcpauthStateReadGrant, the checks that pin the two grants to D935's store and
+// to the coordinator's own project.
 const MCPServerAccountID = "fugaro-mcp"
+
+// MCPStateReadRole is the custom role modules/installation/state_read.tf
+// creates in the coordinator's Firebase project for the front door's own
+// account, holding MCPStateReadPermissions and nothing else (O16b, D2020 (a)).
+//
+// It is the front door's reach into the orchestrator's node, and it is a READ:
+// the state group's two tools answer get_state and get_events, apply_patch is
+// served by nothing (D2021), and the state group's writes stay with `fugaro
+// orchestrator patch` and the person's own credential (D1223, D1241). Realtime
+// Database IAM has no path-level scope, so the role's permission list is the
+// only place that direction can be decided: MCPStateReadPermissions is the
+// instance's read alone, and the write (instances.update, the only one — a node
+// write is an update) is not in it, so no later revision of the front door can
+// reach for it. TestCoverAdmitsTheStateReadGrantOnPurpose and
+// TestFrontDoorStateRoleHoldsNoDatabaseWrite (the module's own file) are the
+// pins, and TestRolePinsAreTheModules holds the list to the module's.
+const MCPStateReadRole = "fugaroStateRead"
+
+// MCPStateReadPermissions are that role's permissions, the instance's read and
+// no second one. A var rather than a literal inside RolePermissions so a test
+// can hold the map, the module's own source and this list to each other — the
+// shape WorkspaceReadPermissions has for the member's workspace read.
+var MCPStateReadPermissions = []string{"firebasedatabase.instances.get"}
 
 // MCPServerStorePrefix begins the name of D935's store: the installation
 // module's own local is `fugaro-mcpauth-${var.project}`
@@ -537,7 +574,7 @@ const (
 // own account (MCPServerAccountID), for the same reason (toCoordinator,
 // toCatalogCheck, toMCP).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
+	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, WorkspaceReadRole, MCPStateReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -941,6 +978,45 @@ func (c Cover) mcpauthStoreGrant(rc ResourceChange) string {
 	return ""
 }
 
+// mcpauthStateReadGrant says why a PROJECT grant to the front door's own
+// account is not O16b's read of the orchestrator's node, "" when it is: the
+// account's second role, on the project the role was declared in, under no
+// condition — the single binding modules/installation/state_read.tf makes.
+//
+// What it holds is the instance's READ and nothing else (RolePermissions pins
+// the permission; the module's own file is the other half), and Realtime
+// Database IAM has no path-level scope, so a project binding of this role is a
+// read of the WHOLE database of that project — every run's state, the policy,
+// the kill switches and the credentials' nodes included. That reach is what
+// D2020 (a) answered for, and it is why the grant is checked rather than
+// accepted by the row: a plan that moved the read to another role, put another
+// role on this account, declared the role in a project the grant is not in, or
+// carried a condition (which RTDB cannot express as a path prefix, so one would
+// look like a fence and not be one) is refused here and the update that carries
+// it asks its owner.
+//
+// The member is read before this runs: the caller checks it with isMCPMember,
+// so what is left to check is the role, the project and the condition.
+func (c Cover) mcpauthStateReadGrant(rc ResourceChange) string {
+	ch := rc.Change
+	project := str(ch.After["project"])
+	if !slices.Contains(c.Projects, project) {
+		return "grants the front door's account its database read in a project that is not this run's, where the role the module declares cannot be read"
+	}
+	want := "projects/" + project + "/roles/" + MCPStateReadRole
+	if role := str(ch.After["role"]); role != want {
+		return "grants the front door's account " + role + " on a project, and its second role is " + MCPStateReadRole + " on the project the module declares it in"
+	}
+	conds, why := grantConditions(ch, "a project grant")
+	switch {
+	case why != "":
+		return why
+	case len(conds) != 0:
+		return "grants the front door's account its database read under a condition, which the module never sets: RTDB IAM cannot express a path prefix, so a condition here would fence nothing"
+	}
+	return ""
+}
+
 // isDeployerMember is whether m is exactly this run's deployer account as an
 // IAM member: "serviceAccount:" + DeployerAccount(the installation's project).
 func (c Cover) isDeployerMember(m string) bool {
@@ -1043,6 +1119,18 @@ var RolePermissions = map[string][]string{
 	// firebasedatabase.instances.update is not bound at all, so no later
 	// revision of the service can write a member's database.
 	WorkspaceReadRole: {"firebasedatabase.instances.get"},
+	// The front door's read of the installation's database (O16b, D2020 (a),
+	// state_read.tf): the instance's read and no second permission — the write
+	// is instances.update, the only one RTDB has, and it is deliberately not
+	// here, so the state group's writes stay with `fugaro orchestrator patch`
+	// and the person's own credential (D1223, D1241) and a later revision of
+	// the front door has none to reach for. The module's own file names the
+	// same single permission and
+	// TestFrontDoorStateRoleHoldsNoDatabaseWrite refuses a second one there;
+	// TestCoverAdmitsTheStateReadGrantOnPurpose holds this pin to
+	// MCPStateReadPermissions, and TestRolePinsAreTheModules holds both to the
+	// module.
+	MCPStateReadRole: {"firebasedatabase.instances.get"},
 	// The deployer's eight roles (D75, Task 1.5, redesigned for 0.10.0). They
 	// are not installation roles: nothing a run does needs them, and their
 	// bound is the split between them — creation, reads and
@@ -1521,6 +1609,15 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	if why == "" && t == "google_storage_bucket_iam_member" && c.isMCPMember(str(rc.Change.After["member"])) {
 		why = c.mcpauthStoreGrant(rc)
 	}
+	// ... and the account's second grant is one row on the project too: the
+	// state-read bit opens the custom-role cell, and mcpauthStateReadGrant
+	// closes it again to that role, on the project it was declared in, under no
+	// condition. A plan that moved the read to another role or project, or
+	// another role to the account, is refused here even though the row would
+	// otherwise accept it.
+	if why == "" && t == "google_project_iam_member" && c.isMCPMember(str(rc.Change.After["member"])) {
+		why = c.mcpauthStateReadGrant(rc)
+	}
 	if why == "" && t == "google_project_iam_member" {
 		why = c.dynamicSecretsGrant(rc)
 	}
@@ -1751,11 +1848,13 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// role.
 			kind = toCatalogCheck
 		case c.isMCPMember(m):
-			// ... and the front door's own account (D920, D935): its own kind,
-			// which one row accepts — objectAdmin on D935's store, and only
-			// through mcpauthStoreGrant, which reads the bucket, the role and
-			// the condition as well as the member — so every other grant it is
-			// given is refused and the update that carries one asks its owner.
+			// ... and the front door's own account (D920, D935, O16b): its own
+			// kind, which two rows accept — objectAdmin on D935's store and the
+			// state group's database read on the coordinator's project, each
+			// narrowed further by mcpauthStoreGrant and mcpauthStateReadGrant,
+			// which read the role, the target and the condition as well as the
+			// member — so every other grant it is given is refused and the
+			// update that carries one asks its owner.
 			// Read here, before the review screen's list, for the deployer's
 			// reason: a plan that listed the front door's address would
 			// otherwise be able to grant it any toAccounts row's role.

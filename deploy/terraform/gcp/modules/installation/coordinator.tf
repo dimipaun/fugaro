@@ -318,24 +318,26 @@ resource "google_cloud_scheduler_job" "coordinator_sweep" {
 # private key, a Bitbucket read at the credentials service and
 # firebasedatabase.admin over the FP, and an identity holding any of those
 # behind a public endpoint would make spec.md §8's "there is no credential to
-# reach" false the day the front door is turned on. This one holds two grants —
-# the runs bucket's read, below, and the store's objects, in mcpauth_store.tf —
-# and nothing else in this tree or the Firebase root grants it anything: no
-# secret, no database, no actAs, which is the narrowest account the design names
-# for M4.
+# reach" false the day the front door is turned on. This one holds three grants
+# — the runs bucket's read, below, the store's objects, in mcpauth_store.tf, and
+# the database's read, in state_read.tf — and nothing else in this tree or the
+# Firebase root grants it anything: no secret, no database write, no actAs,
+# which is the narrowest account the design names for M4.
 #
 # It is created with the front door's own opt-in and not with the coordinator's:
 # an installation that opted into the coordinator for its read-only view
 # acquires no account at all, which is the same rule the service and the
 # binding follow.
 #
-# The database half of what a front door needs is NOT here and deliberately so:
-# the store binding is D935, whose bucket and one binding live in
-# mcpauth_store.tf — beside the bucket they bind rather than in this file,
+# The account's other two grants are NOT here and deliberately so: the store
+# binding is D935, whose bucket and one binding live in mcpauth_store.tf, and
+# the database's read is O16b, whose role and one binding live in
+# state_read.tf — each beside the resource it binds rather than in this file,
 # which names this account exactly twice (the runs bucket's read below, and the
 # service's own identity) and must keep doing so. What this account reaches is
-# therefore the runs bucket (D932) and the store's objects (D935), and nothing
-# else.
+# therefore the runs bucket (D932), the store's objects (D935) and the
+# orchestrator's own node, read-only, in the coordinator's Firebase project
+# (O16b), and nothing else.
 resource "google_service_account" "mcp_server" {
   count = local.mcp_server_on ? 1 : 0
 
@@ -346,7 +348,7 @@ resource "google_service_account" "mcp_server" {
   depends_on = [google_project_service.this]
 }
 
-# The runs bucket, read-only, and one of the account's two grants: a run's
+# The runs bucket, read-only, and one of the account's three grants: a run's
 # recorded
 # artefacts — its logs and its diff — are what the tools behind this port
 # answer with (D932), and the answer the owner did not choose (streaming Cloud
