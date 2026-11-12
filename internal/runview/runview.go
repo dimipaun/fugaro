@@ -250,13 +250,14 @@ type Row struct {
 	//
 	// It is the LISTING's computation and not Join's: whether a run is going
 	// on a pull request is a fact about every run of that pull request, and
-	// Join sees one. `fugaro runs ls` groups the rows it read by the pull
-	// request they carry, takes the newest run of each group and marks every
-	// row of it with the answer (internal/cli's markPRStates), so the field
-	// is empty on a row that carries no pull request and on every document a
-	// listing does not compute it for — `diagnose --json`'s `row` and
-	// `watch --json`'s rows among them — and `omitempty` is what keeps that
-	// absence out of their JSON, as it does for the fields beside it.
+	// Join sees one. A read that holds a window of runs groups them by the
+	// pull request they carry, takes the newest run of each group and marks
+	// every row of it with the answer (internal/cli's markPRStates), so the
+	// field is empty on a row that carries no pull request and on every
+	// document whose read is not a window — `diagnose --json`'s `row`, which
+	// holds the one run it diagnoses and drops the state rather than answer
+	// from a single run of a pull request — and `omitempty` is what keeps
+	// that absence out of their JSON, as it does for the fields beside it.
 	PRState string `json:"pr_state,omitempty"`
 	// Pushed means the run updated its branch, and PushedHead is the
 	// commit it pushed; see Pushed.

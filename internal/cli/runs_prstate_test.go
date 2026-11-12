@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
@@ -215,6 +216,33 @@ func TestRunsLsPRStateHelpNamesTheFourthWord(t *testing.T) {
 	// them: the sentence above is where a reader learns why.
 	if !strings.Contains(out, strings.Join(lsStateWords(), ", ")) {
 		t.Errorf("runs ls --help does not list the words --state takes (%s)", strings.Join(lsStateWords(), ", "))
+	}
+}
+
+// TestDiagnoseDoesNotGuessAPRState: diagnose reads one run, so it cannot answer
+// what that run's pull request is doing -- whether a run is going on a pull
+// request is a fact about the other runs of it -- and its row carries no
+// pr_state at all rather than a state read from the one run it holds. The pull
+// request the run is on is still named.
+func TestDiagnoseDoesNotGuessAPRState(t *testing.T) {
+	f := newCloudFixture(t)
+	r := seedPRStateRuns(t, f)
+
+	out, errOut, err := execute(t, "diagnose", "--json", r.ready)
+	if err != nil {
+		t.Fatalf("diagnose: %v (%s)", err, errOut)
+	}
+	var doc struct {
+		Row map[string]json.RawMessage `json:"row"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if raw, ok := doc.Row["pr_state"]; ok {
+		t.Errorf("diagnose --json carries pr_state %s on its row, want no key at all: one run cannot say what its pull request is doing", raw)
+	}
+	if _, ok := doc.Row["pr"]; !ok {
+		t.Errorf("diagnose --json's row carries no pr, want the pull request the run is on: %v", doc.Row)
 	}
 }
 
