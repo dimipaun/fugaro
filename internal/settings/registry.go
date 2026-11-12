@@ -1078,6 +1078,13 @@ var localRows = []Row{
 	// has the read print that file's sentence beside a key stated in neither.
 	// max_parallel above is the same row shape and carries the same token.
 	//
+	// The owner is the allowlist's own token, `settings set`, for the reason
+	// D1178 gives it to every key the list carries. The file-carrier tokens name
+	// files these four keys are not in — the project layer `fugaro config
+	// publish` carries, and a checkout's own `fugaro.yaml` — so a row naming one
+	// has the read print that file's sentence beside a key stated in neither.
+	// max_parallel above is the same row shape and carries the same token.
+	//
 	// vertex and credentials_service_ready below keep the `project` owner and
 	// are NOT in that allowlist: they are not a person's settings at all — a
 	// run records what it read and applied (this file's row comments) — so the

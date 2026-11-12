@@ -542,6 +542,36 @@ const reviewJobSince = "0.20.0"
 // the class.
 const reviewAdmissionSince = "0.21.0"
 
+// providerEntrySince is the first fugaro release whose credentials service
+// reads the bundle's provider entry (config.ProviderKeySecret, AK6b of
+// docs/api-key-review): the project's provider credential, whose value is the
+// mapping of the key, the provider's base URL and how the key is sent
+// (credsvc's providerValue). The loader is strict about the document's KEYS —
+// an entry it does not know refuses the WHOLE document (ErrBundleUnknownKey),
+// which the service answers as a service-wide refusal and not as a refused
+// credential — so a bundle written with this entry by a CLI newer than the
+// service that reads it halts every caller of that service, coding runs
+// included, until `fugaro update` moves the service onto the image that reads
+// it.
+//
+// `fugaro creds set` is the bundle's only writer, so the guard is at that
+// write (creds.go, AK10 of the same folder), and it judges the release that
+// SERVES the document rather than the installation's pin: a pin ahead of a
+// service whose apply was declined or failed is exactly the state the guard
+// exists for. Unlike every other gate here, a record it cannot read refuses
+// the write instead of warning about it — the alternative is a write that
+// halts every caller of the service.
+//
+// It names 0.22.0, the release AK6b's own commit (`26e72426`, #2172) went out
+// in and therefore the first release whose credentials service was built with
+// the entry's reader: the constant is the tag that shipped it and not the
+// release this guard is written in, and a release that raised it would refuse
+// the write on installations whose deployed service already reads the entry —
+// which is every installation on that release, and `fugaro update` would be no
+// remedy for them. docs/release.md's ("Before you tag") list carries that
+// reading.
+const providerEntrySince = "0.22.0"
+
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
 // check job's own rebuild names the secret ID Readiness resolved, so a
@@ -2236,20 +2266,38 @@ const installationServiceUnknown = "this installation's terraform.tfvars.json na
 // second machine, a config copied to someone else's — is a refusal on a launch
 // that works, with a remedy the reader cannot carry out.
 func installationServiceRelease(lc *localcfg.Config) (rel, image string, ok bool) {
-	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
-	if err != nil {
-		return "", "", false
-	}
-	vars, err := infra.ReadWorkdirVars(dir, "installation")
-	if err != nil {
-		return "", "", false
-	}
-	image, ok, err = infra.CredentialsServiceImageOf(vars)
-	if err != nil || !ok {
+	image, ok = installationServiceImageOf(lc)
+	if !ok {
 		return "", "", false
 	}
 	rel = infra.CredentialsServiceImageRelease(image)
 	return rel, image, rel != ""
+}
+
+// installationServiceImageOf is the record itself: the credentials service
+// image the installation's terraform.tfvars.json names, whether or not the
+// reference carries a release. It is what tells "no pin at all" — an
+// installation whose workdir this machine does not hold, or one that names no
+// service — from a pin this reader cannot read, which are two different
+// answers for a caller deciding whether anything is coming: the review gate
+// warns about both (installationServiceRelease), while the bundle write
+// refuses the second (creds.go's bundleReaderRelease), because an image whose
+// release cannot be shown is a service that may not be able to read the
+// document.
+func installationServiceImageOf(lc *localcfg.Config) (image string, ok bool) {
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return "", false
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		return "", false
+	}
+	image, ok, err = infra.CredentialsServiceImageOf(vars)
+	if err != nil {
+		return "", false
+	}
+	return image, ok
 }
 
 // refuseClonesNotShipped refuses, before any cloud effect, deploying or
