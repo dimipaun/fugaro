@@ -1975,10 +1975,54 @@ Flags:
 
 Subcommands:
 
+- `fugaro coordinator roadmap move` -- Put a task in a release, or take it out of one
 - `fugaro coordinator roadmap need` -- Record that one task needs another
 - `fugaro coordinator roadmap releases` -- Write a stream's releases
 - `fugaro coordinator roadmap request` -- Read back what happened to a roadmap request
 - `fugaro coordinator roadmap unneed` -- Remove a recorded dependency between two tasks
+
+## `fugaro coordinator roadmap move`
+
+Put a task in a release, or take it out of one
+
+Move one task between the record's releases (roadmap_move, D2113).
+
+The task is named as <plan>/<task>, and `--to` is a release key the
+record holds — not a version from a checkout's release catalogue — or the
+word none to take the task out of every release.
+
+**`--expect` is not a formality: it is the release the record held when you
+read it.** The move is a compare-and-set, so a task somebody else has moved
+since your read is refused — with the release the record holds now, which is
+what you send next — rather than written over theirs. A task the record
+holds no assignment for is expected as `none` (D2114), and a release the
+record calls finished is refused by the record's own state.
+
+It queues the move at the installation's front door, as every write here
+does, and prints the request's id and then the record's answer to it. The
+command holds no database credential and writes no node. The inverse move
+— the same task back to the release you read, expected as the one you moved
+it into — is how a mistake is undone: the record keeps the release it
+replaced for exactly that.
+
+Usage: `fugaro coordinator roadmap move <plan>/<task>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the release the record holds for this task now, or none for a task with no assignment; a move without it is refused |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for move |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--to` | string | "" | yes | the release key to put the task in, or none to take it out of one (required) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro coordinator roadmap need`
 

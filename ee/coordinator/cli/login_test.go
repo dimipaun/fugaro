@@ -105,6 +105,18 @@ type fakeFrontDoor struct {
 	// tokenRedirect, when set, is where the token endpoint redirects to
 	// instead of answering.
 	tokenRedirect string
+	// writeCheck, when set, is the door's own reading of a write before it
+	// queues it: it answers the tool's refusal sentence, or "" to queue the
+	// call. The real door reads the record here — a stale `expect` is refused
+	// before anything is queued (P9d's move) — and a test that is about that
+	// refusal needs the same check on this side rather than a canned sentence
+	// that would pass against a client sending anything at all.
+	writeCheck func(tool string, arguments map[string]any) string
+	// writeApplied, when set, is the apply job's half of a write: it is called
+	// once the door has queued a request its answer calls applied, which is
+	// where the record changes. A queued request the answer calls refused
+	// changes nothing, so it is not called for one.
+	writeApplied func(tool string, arguments map[string]any)
 }
 
 func newFakeFrontDoor(t *testing.T) *fakeFrontDoor {
@@ -194,6 +206,24 @@ func (d *fakeFrontDoor) redirectToken(to string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.tokenRedirect = to
+}
+
+// checkWrites makes the door read what a write asks for before it queues it,
+// the way the real door reads the record: fn answers the sentence the tool
+// refuses the call with, or "" to queue it.
+func (d *fakeFrontDoor) checkWrites(fn func(tool string, arguments map[string]any) string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.writeCheck = fn
+}
+
+// applyWrites makes the door hand a queued request to the apply job's half:
+// fn is called for a write whose answer is `applied`, which is where the record
+// changes.
+func (d *fakeFrontDoor) applyWrites(fn func(tool string, arguments map[string]any)) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.writeApplied = fn
 }
 
 // answerInVersion moves the number the door answers its documents in, so that
@@ -384,13 +414,30 @@ func (d *fakeFrontDoor) mcp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.mu.Lock()
-	refusal, version := d.writeRefusal, d.version
+	refusal, version, check, applied := d.writeRefusal, d.version, d.writeCheck, d.writeApplied
 	d.mu.Unlock()
 	if refusal != "" {
 		d.answerError(w, req.ID, refusal)
 		return
 	}
+	if check != nil {
+		// The door's own reading of the call, where the real one reads the
+		// record: a refusal here is a sentence and not a request, so nothing is
+		// queued and the answer carries no id.
+		if sentence := check(req.Params.Name, req.Params.Arguments); sentence != "" {
+			d.answerError(w, req.ID, sentence)
+			return
+		}
+	}
 	id := d.queue(kind)
+	if applied != nil {
+		d.mu.Lock()
+		status := d.status
+		d.mu.Unlock()
+		if status == "" || status == mcpauth.RoadmapApplied {
+			applied(req.Params.Name, req.Params.Arguments)
+		}
+	}
 	d.answer(w, req.ID, map[string]any{
 		"version": version, "request": id, "kind": kind, "asked": req.Params.Arguments,
 	})
@@ -421,6 +468,8 @@ func fakeRequestKind(tool string) (string, bool) {
 		return string(mcpauth.RequestNeed), true
 	case "roadmap_unneed":
 		return string(mcpauth.RequestUnneed), true
+	case "roadmap_move":
+		return string(mcpauth.RequestMove), true
 	case "roadmap_release_set":
 		return string(mcpauth.RequestReleaseSet), true
 	default:

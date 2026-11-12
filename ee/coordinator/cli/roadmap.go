@@ -105,9 +105,9 @@ type coordinatorDoor struct {
 	access string
 }
 
-// newCoordinatorRoadmapCmd is the roadmap group. `publish` (P9c) and GV3.1's
-// `move` join it later, which is why it is a group of its own rather than
-// three commands on `coordinator`.
+// newCoordinatorRoadmapCmd is the roadmap group. `publish` (P9c) joins it
+// later, which is why it is a group of its own rather than a command per
+// operation on `coordinator`.
 func newCoordinatorRoadmapCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "roadmap",
@@ -131,6 +131,7 @@ func newCoordinatorRoadmapCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newCoordinatorRoadmapNeedCmd())
 	cmd.AddCommand(newCoordinatorRoadmapUnneedCmd())
+	cmd.AddCommand(newCoordinatorRoadmapMoveCmd())
 	cmd.AddCommand(newCoordinatorRoadmapReleasesCmd())
 	cmd.AddCommand(newCoordinatorRoadmapRequestCmd())
 	return cmd

@@ -3381,9 +3381,9 @@ author believes and the list in force is not.
 **Command:** `ee/coordinator/cli/roadmap.go` `newCoordinatorRoadmapCmd`, with
 the document built as `coordinatorOutcomeDoc`. Cited by symbol, not by line, for
 §6.11's reason. It documents the coordinator's roadmap group (D2110, D2122):
-`need`, `unneed` and `releases set` queue one change to the project's roadmap
-record, and `roadmap request <id>` reads one back. The three writes are the six
-tools of the coordinator's front door over `roadmap:write`, and the front door
+`need`, `unneed`, `releases set` and §6.25's `move` queue one change to the
+project's roadmap record, and `roadmap request <id>` reads one back. The four
+writes are the six tools of the coordinator's front door over `roadmap:write`, and the front door
 holds **no database write**: it queues, and an apply job that this command never
 reaches changes the record as the coordinator's own account (D2118, D922/H3).
 
@@ -3392,7 +3392,8 @@ reaches changes the record as the coordinator's own account (D2118, D922/H3).
 waiting up to 60 seconds for the record to answer — and `roadmap request <id>`
 prints it without waiting. There is no second shape for the later read, so a
 console that stored one of these documents can compare it with the one it reads
-next.
+next. The group's fourth write, `roadmap move`, prints this same document with
+`kind` `move`, and §6.25 is where its argv and its refusals are written down.
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
@@ -3451,6 +3452,70 @@ refresh token, the access token or the client's registration: a document a
 console reads is a document a console logs, and the one credential of this flow
 that lives longer than a command is in the operating system's keychain and
 nowhere else (D2122).
+
+### 6.25 `fugaro coordinator roadmap move <plan>/<task> --to <release-id> --json`
+
+**Command:** `ee/coordinator/cli/roadmap_move.go` `newCoordinatorRoadmapMoveCmd`,
+over the same queue-and-wait path as the group's other writes
+(`runCoordinatorRoadmapWrite`, `ee/coordinator/cli/roadmap.go`). Cited by
+symbol, not by line, for §6.11's reason. **Document:** `coordinatorOutcomeDoc` —
+**§6.24's document, unchanged**, with `kind` `move`, so a console that decodes
+one of the group's writes decodes this one. The section is a section of its own
+because the argv is the console's — GV3.2's drag spawns exactly this command —
+and not because the answer has a shape of its own.
+
+**The task is the command's one positional argument**, `<plan>/<task>`, and the
+release is a flag:
+
+- `--to` (**required**) is where the task goes: a release key the record holds —
+  not a `<stream>/<version>` read from a checkout's release catalogue (D2113) —
+  or the word `none`, which is the unassign. It is a value the caller read out
+  of the record, so a key no release of the record carries is refused by the
+  door rather than resolved here.
+- `--expect` (**required**) is the release the record held for this task when
+  the caller read it, or `none` for a task the record holds no assignment for
+  (D2114). **Nothing defaults it**, and an omitted or empty one is refused by
+  the command itself with a sentence naming `none`: `none` is a reading a caller
+  states after reading the record, and a default would be this client claiming a
+  reading nobody made — the blind write the flag exists to stop. The command
+  exits **1** and reaches neither the front door nor the record.
+- `--json` is §6.24's document, and the two cloud flags `--project` and
+  `--config` (with `--gcp-project` and `--region`) are the installation pair
+  every command that resolves one carries.
+
+**The compare-and-set is checked twice, and the two refusals arrive
+differently.** The door reads the record before it queues anything
+(`roadmap_move`, P9d): a request whose `expect` is not what the assignment holds
+is refused there, and — §6.24's rule — **a call refused before it queues has no
+document at all**: nothing reaches standard output with or without `--json`, the
+door's sentence (with the release the record holds now) is the error, and the
+exit code is **1**. The writer checks `expect` again when the apply job runs
+(P9b), because a move can lose the race between the two reads: that refusal
+arrives as a **`refused` outcome**, with the reason and the release the record
+holds now in `current`, and it is the caller's (exit **1**) — the move that won
+is not written over, and the caller re-reads and asks again. A release the
+record's own state calls `finished` is refused the same way and at the same
+place (D2113): the record knows its releases' states, and no version of a
+catalogue decides it here.
+
+**What the command does not decide.** A move that makes an edge point backwards
+— a task put in an earlier release than something it needs — is **applied and
+reported like any other move**: the order of the edges is the graph's to flag
+(design §5.1's dependency-aware warning, V2.6.2), the record refuses it no more
+than it refuses any other assignment, and this command reads no edge at all. A
+refusal invented here would be a rule the record does not have and a state the
+console could never explain.
+
+**The inverse move is the same argv back**, and it is how a mistake is undone
+(GV3.2's undo issues it): the same task `--to` the release the caller read, with
+`--expect` the release it was moved into. What the record writes for it — the
+`prev` a second move inverts, and the `by` and `at` that say who moved it and
+when — is the writer's and is in no field here: the command sends the tool's
+three arguments and nothing that stands in for them.
+
+**What is not in the document.** As §6.24: no database path, no node, no
+subtree, no token and no code. The move adds nothing to that list and nothing to
+the document — the request's `kind` is the only trace of which write it was.
 
 ## 7. The CLI gaps, settled against the code
 
