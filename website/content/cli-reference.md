@@ -2030,13 +2030,13 @@ Write one release of a stream
 Write one release document: its name, its state, its position and the
 version you last read (roadmap_release_set).
 
-**`--expect` is not optional and is not a formality.** It is the version of
-the release document you read before you decided what to write, and the
-record compares it with the version it holds now: a release somebody else
-has changed since is refused, with the version it holds, rather than
-written over. For a release the record does not hold yet, pass the empty
-string (`--expect ''`) — that says "I read nothing, and I expect nothing",
-which is the one claim that cannot be stale.
+**`--expect` is not a formality.** It is the version of the release
+document you read before you decided what to write, and the record compares
+it with the version it holds now: a release somebody else has changed since
+is refused, with the version it holds, rather than written over. For a
+release the record does not hold yet, leave it out — the empty string says
+"I read nothing, and I expect nothing", which is the one claim that cannot
+be stale.
 
 Usage: `fugaro coordinator roadmap releases set`
 
@@ -2045,13 +2045,13 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--expect` | string | "" | no | the version of the release document you last read, empty for one the record does not hold (required) |
+| `--expect` | string | "" | no | the version of the release document you last read; empty for one the record does not hold |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--id` | string | "" | yes | the release id within its stream (required) |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--name` | string | "" | yes | the release's name, which is the label its box is drawn with (required) |
-| `--order` | int | `0` | yes | the release's position in its stream (required) |
+| `--order` | int | `0` | yes | the release's position in its stream, from 0 (required) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--state` | string | "" | yes | the release's state: open or finished (required) |

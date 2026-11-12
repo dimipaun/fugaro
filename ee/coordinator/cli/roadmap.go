@@ -244,13 +244,13 @@ func newCoordinatorRoadmapReleaseSetCmd() *cobra.Command {
 		Short: "Write one release of a stream",
 		Long: "Write one release document: its name, its state, its position and the\n" +
 			"version you last read (roadmap_release_set).\n\n" +
-			"**`--expect` is not optional and is not a formality.** It is the version of\n" +
-			"the release document you read before you decided what to write, and the\n" +
-			"record compares it with the version it holds now: a release somebody else\n" +
-			"has changed since is refused, with the version it holds, rather than\n" +
-			"written over. For a release the record does not hold yet, pass the empty\n" +
-			"string (`--expect ''`) — that says \"I read nothing, and I expect nothing\",\n" +
-			"which is the one claim that cannot be stale.",
+			"**`--expect` is not a formality.** It is the version of the release\n" +
+			"document you read before you decided what to write, and the record compares\n" +
+			"it with the version it holds now: a release somebody else has changed since\n" +
+			"is refused, with the version it holds, rather than written over. For a\n" +
+			"release the record does not hold yet, leave it out — the empty string says\n" +
+			"\"I read nothing, and I expect nothing\", which is the one claim that cannot\n" +
+			"be stale.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !slicesContains(coordinatorReleaseStateVocabulary, o.state) {
@@ -270,14 +270,18 @@ func newCoordinatorRoadmapReleaseSetCmd() *cobra.Command {
 	f.StringVar(&o.stream, "stream", "", "the stream the release belongs to (required)")
 	f.StringVar(&o.name, "name", "", "the release's name, which is the label its box is drawn with (required)")
 	f.StringVar(&o.state, "state", "", "the release's state: "+strings.Join(coordinatorReleaseStateVocabulary, " or ")+" (required)")
-	f.IntVar(&o.order, "order", 0, "the release's position in its stream (required)")
-	f.StringVar(&o.expect, "expect", "", "the version of the release document you last read, empty for one the record does not hold (required)")
+	f.IntVar(&o.order, "order", 0, "the release's position in its stream, from 0 (required)")
+	f.StringVar(&o.expect, "expect", "", "the version of the release document you last read; empty for one the record does not hold")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	fcli.AddCloudFlags(cmd, &o.cloud)
 	_ = cmd.MarkFlagRequired("id")
 	_ = cmd.MarkFlagRequired("stream")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("state")
+	// The order is required although a flag with a default cannot say so in its
+	// value: cobra reads "required" as "the flag was set", so `--order 0` — a
+	// release that really is first — passes and a forgotten one is refused,
+	// which is what a silently-0 order would not be.
 	_ = cmd.MarkFlagRequired("order")
 	return cmd
 }

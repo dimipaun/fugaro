@@ -139,6 +139,37 @@ func TestRoadmapUnneedAndReleaseSetAreCataloguedTools(t *testing.T) {
 	}
 }
 
+// TestReleaseSetChecksWhatItCanBeforeItCalls keeps two mistakes from costing a
+// request the record then refuses a minute later: a state outside the two a
+// release is written in, and a release written with no position — the one flag
+// whose default is a real value, so "forgotten" and "first" would otherwise
+// read the same.
+func TestReleaseSetChecksWhatItCanBeforeItCalls(t *testing.T) {
+	newCloudFixture(t)
+	door := newFakeFrontDoor(t)
+	store := &keychain.Fake{}
+	withFrontDoor(t, door, store)
+	seedCredential(t, store, door, "aurora")
+
+	base := []string{"coordinator", "roadmap", "releases", "set",
+		"--id", "2026.1", "--stream", "ga", "--name", "Winter", "--order", "0", "--expect", ""}
+	_, _, err := execute(t, append(append([]string{}, base...), "--state", "done")...)
+	if err == nil {
+		t.Fatal("a release state outside the two was accepted")
+	}
+	if !strings.Contains(err.Error(), "open") || !strings.Contains(err.Error(), "finished") {
+		t.Errorf("the refusal is %q; want it to name the two states", err)
+	}
+	forgotten := []string{"coordinator", "roadmap", "releases", "set",
+		"--id", "2026.1", "--stream", "ga", "--name", "Winter", "--state", "open", "--expect", ""}
+	if _, _, err := execute(t, forgotten...); err == nil {
+		t.Error("a release was written with no position")
+	}
+	if calls := door.toolCalls(); len(calls) != 0 {
+		t.Errorf("the door was reached %v for two requests it could have refused locally", calls)
+	}
+}
+
 // TestRoadmapRefusesWithoutATokenAndNamesLogin is the first refusal, and it is
 // checked before anything else happens: a person who has not signed in is told
 // that and the one command that fixes it, and no Terraform run and no call to
