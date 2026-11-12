@@ -515,6 +515,27 @@ func TestGraphRefusesAnInvalidScopeBeforeAnyRead(t *testing.T) {
 	}
 }
 
+// writeRoadmap leaves the project's roadmap record in the fixture's database,
+// written the way the record's own writer leaves it: one node per document under
+// the four collections, keyed by the record's own document ids.
+func (f *graphFixture) writeRoadmap(t *testing.T, plans []coordinator.Plan, releases []coordinator.Release, assigns []coordinator.Assignment, edges []coordinator.Edge) {
+	t.Helper()
+	node := map[string]any{"plans": map[string]any{}, "releases": map[string]any{}, "assign": map[string]any{}, "edges": map[string]any{}}
+	for _, p := range plans {
+		node["plans"].(map[string]any)[coordinator.PlanID(p.Plan)] = p
+	}
+	for _, r := range releases {
+		node["releases"].(map[string]any)[coordinator.ReleaseID(r.Stream, r.ID)] = r
+	}
+	for _, a := range assigns {
+		node["assign"].(map[string]any)[coordinator.AssignID(a.Task)] = a
+	}
+	for _, e := range edges {
+		node["edges"].(map[string]any)[coordinator.EdgeID(e.Task, e.Needs)] = e
+	}
+	f.db.Set(coordinator.PathRoadmap(), node)
+}
+
 // TestGraphAllIsTheCoordinatorToday: `all` is the union of the scopes that
 // exist, and today exactly one does. The document says so in the only way a
 // reader can act on — it lists the coordinator under its own name, which is the
@@ -1122,4 +1143,175 @@ func TestGraphTextTableNamesTheScopeAndGroupsByRelease(t *testing.T) {
 			t.Errorf("the runs half's table does not hold %q:\n%s", want, out)
 		}
 	}
+}
+
+// TestGraphDrawsTheRoadmapRecord is GV4.1 through the command: the project's
+// roadmap record reaches the document the console draws — its release boxes, its
+// tasks with their qualified ids and their plan's own version, and its
+// cross-plan edges, which a document drawn from the stored view alone has none of
+// (D2112, F17).
+//
+// The record's own read is the scope's own: no flag asks for it (the record is
+// project-level, D2111), and a scope named on the command line is the same
+// document, because the record is drawn wherever the coordinator's scope is.
+func TestGraphDrawsTheRoadmapRecord(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	target := "1.6.0"
+	cli := coordinator.Release{Schema: coordinator.RoadmapSchema, ID: "v1.5.0", Stream: "cli",
+		Name: "CLI 1.5", State: coordinator.ReleaseOpen, Order: 2}
+	f.writeRoadmap(t,
+		[]coordinator.Plan{
+			{Schema: coordinator.RoadmapSchema, Plan: "plans/cli", Stream: "cli", Tasks: []coordinator.Task{
+				{ID: "place", Title: "the box a task is placed in", Version: &target},
+				{ID: "free", Title: "a task nobody has placed", Version: &target},
+			}},
+			{Schema: coordinator.RoadmapSchema, Plan: "plans/style", Stream: "style", Tasks: []coordinator.Task{
+				{ID: "paint", Title: "a task in the other stream"},
+			}},
+		},
+		[]coordinator.Release{cli},
+		[]coordinator.Assignment{{Schema: coordinator.RoadmapSchema, Task: "plans/cli/place",
+			Release: coordinator.ReleaseID(cli.Stream, cli.ID)}},
+		[]coordinator.Edge{{Schema: coordinator.RoadmapSchema, Task: "plans/style/paint",
+			Needs: "plans/cli/place", Reason: "the palette"}},
+	)
+
+	doc := graphDocument(t, "graph", "--json")
+	if len(doc.Releases) != 1 {
+		t.Fatalf("the document carries %d release boxes, want the record's one: %+v", len(doc.Releases), doc.Releases)
+	}
+	box := doc.Releases[0]
+	if box.Key != coordinator.ReleaseID("cli", "v1.5.0") || box.Stream != "cli" || box.Name != "CLI 1.5" ||
+		box.State != coordinator.ReleaseOpen || box.Order != 2 {
+		t.Fatalf("the box is %+v, want the record's own release", box)
+	}
+
+	byID := map[string]graph.Node{}
+	for _, n := range doc.Nodes {
+		byID[n.ID] = n
+	}
+	placed, ok := byID["plans/cli/place"]
+	if !ok {
+		t.Fatalf("the record's tasks are not in the document: %+v", doc.Nodes)
+	}
+	if placed.Kind != graph.NodeTask || placed.Plan != "plans/cli" || placed.Stream != "cli" || placed.Release != box.Key {
+		t.Errorf("the placed task is %+v, want a task node in its box", placed)
+	}
+	if placed.Key != graph.NodeKey("coordinator", "plans/cli/place") {
+		t.Errorf("the task's key is %q, want the qualified id under the coordinator's source", placed.Key)
+	}
+	free := byID["plans/cli/free"]
+	if free.Release != "" || free.Stream != "cli" || free.Version != "1.6.0" {
+		t.Errorf("an unplaced task is %+v, want its plan's lane and its plan's version (D2114)", free)
+	}
+
+	if len(doc.Edges) != 1 {
+		t.Fatalf("the document carries %d edges, want the record's cross-plan one: %+v", len(doc.Edges), doc.Edges)
+	}
+	want := graph.Edge{
+		From: graph.NodeKey("coordinator", "plans/style/paint"),
+		To:   graph.NodeKey("coordinator", "plans/cli/place"),
+		Kind: graph.DependsOnEdge,
+	}
+	if doc.Edges[0] != want {
+		t.Errorf("the edge is %+v, want %+v", doc.Edges[0], want)
+	}
+
+	// The stored view is still drawn beside the record: the record is the
+	// coordinator's own half and not a replacement for the sweep's.
+	if _, ok := byID["acme/app#12"]; !ok {
+		t.Errorf("the stored view's record is gone from the document: %+v", doc.Nodes)
+	}
+	if len(doc.Warnings) != 0 {
+		t.Errorf("a record this build reads whole warns: %v", doc.Warnings)
+	}
+}
+
+// TestGraphTextNamesTheRecordsBoxes: the table's group headings are the
+// release's own words. A task of the roadmap record names its release by a
+// **key**, and `coordinator.ReleaseID` folds two strings into a hash, so a
+// heading read off the node alone is 64 hex characters where the release's name
+// belongs — and the box's state, which is the only state a record task has
+// (GV4.1, §6.22), would not be printed at all.
+//
+// Hand mutation this fails on: heading a group with n.Release, which puts the
+// hash in the table and drops `CLI 1.5 (open)` from it.
+func TestGraphTextNamesTheRecordsBoxes(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	target := "1.6.0"
+	cli := coordinator.Release{Schema: coordinator.RoadmapSchema, ID: "v1.5.0", Stream: "cli",
+		Name: "CLI 1.5", State: coordinator.ReleaseOpen, Order: 2}
+	key := coordinator.ReleaseID(cli.Stream, cli.ID)
+	f.writeRoadmap(t,
+		[]coordinator.Plan{{Schema: coordinator.RoadmapSchema, Plan: "plans/cli", Stream: "cli",
+			Tasks: []coordinator.Task{{ID: "place", Title: "a task of the record", Version: &target}}}},
+		[]coordinator.Release{cli},
+		[]coordinator.Assignment{{Schema: coordinator.RoadmapSchema, Task: "plans/cli/place", Release: key}},
+		nil,
+	)
+
+	out, errOut, err := execute(t, "graph")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	if !strings.Contains(out, "CLI 1.5 (open)") {
+		t.Errorf("the table does not head the record's group with the box's name and state:\n%s", out)
+	}
+	if strings.Contains(out, key) {
+		t.Errorf("the table printed the box's key, which is a hash and not a name:\n%s", out)
+	}
+	if !strings.Contains(out, "plans/cli/place") {
+		t.Errorf("the record's task is not in the table:\n%s", out)
+	}
+	// The stored view's own groups keep the release string its repository wrote:
+	// only a task of the record names a key.
+	if !strings.Contains(out, "0.11.0") {
+		t.Errorf("the stored view's own group is gone from the table:\n%s", out)
+	}
+}
+
+// TestGraphSaysWhatItCannotReadOfTheRecord: a document of another schema is
+// skipped and counted rather than read as empty — "the record holds nothing" and
+// "the record holds something this build cannot read" must not look alike
+// (§6.22) — and the read is not refused: the rest of the record, and the stored
+// view beside it, are still drawn.
+func TestGraphSaysWhatItCannotReadOfTheRecord(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	f.writeRoadmap(t,
+		[]coordinator.Plan{
+			{Schema: coordinator.RoadmapSchema, Plan: "plans/cli", Stream: "cli",
+				Tasks: []coordinator.Task{{ID: "place", Title: "a task this build reads"}}},
+		},
+		[]coordinator.Release{{Schema: coordinator.RoadmapSchema + 1, ID: "v9.0.0", Stream: "cli",
+			Name: "a release of a later shape", State: coordinator.ReleaseOpen, Order: 1}},
+		nil, nil,
+	)
+
+	doc := graphDocument(t, "graph", "--json")
+	if len(doc.Releases) != 0 {
+		t.Errorf("a document of a later schema was drawn: %+v", doc.Releases)
+	}
+	if _, ok := nodeByID(doc, "plans/cli/place"); !ok {
+		t.Errorf("the record's readable half is not drawn: %+v", doc.Nodes)
+	}
+	if len(doc.Warnings) != 1 || !strings.Contains(doc.Warnings[0], "cannot read 1 of the roadmap record's documents") {
+		t.Errorf("warnings = %v, want the one sentence about the record", doc.Warnings)
+	}
+	if len(doc.Sources) != 1 || doc.Sources[0].State != graph.SourceUp {
+		t.Errorf("sources = %+v, want the scope up: a record this build partly cannot read is not a scope that is down", doc.Sources)
+	}
+}
+
+// nodeByID is one node of a document by its id, for the tests that read a
+// document's nodes by the thing they are.
+func nodeByID(doc graph.Document, id string) (graph.Node, bool) {
+	for _, n := range doc.Nodes {
+		if n.ID == id {
+			return n, true
+		}
+	}
+	return graph.Node{}, false
 }
