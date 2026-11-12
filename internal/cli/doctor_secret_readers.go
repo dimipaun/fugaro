@@ -86,7 +86,12 @@ func doctorSecretManagerChecks(ctx context.Context, lc *localcfg.Config, sm *gcp
 	if sm != nil {
 		checks = append(checks, doctorSecretReaderChecks(ctx, lc, sm, pol, polErr, roles)...)
 	}
-	return append(checks, doctorCredentialsServiceDeployers(ctx, lc, pol, polErr, roles)...)
+	checks = append(checks, doctorCredentialsServiceDeployers(ctx, lc, pol, polErr, roles)...)
+	// The dynamic class's own account and the names only its fence admits
+	// (DS4.2) are read here for the same reason the deployer read is: they are
+	// questions about the project's IAM policy, and this is the one pass that
+	// reads it and the one cache of what a custom role carries.
+	return append(checks, doctorIntakeChecks(ctx, lc, sm, pol, polErr, roles)...)
 }
 
 // doctorSecretReaderChecks is doctor's "secret-readers-unexpected" sweep (plan
