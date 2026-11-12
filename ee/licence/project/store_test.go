@@ -242,6 +242,26 @@ func TestProjectStoreKeepsTwoKeys(t *testing.T) {
 	if piece, found := carries(err.Error(), stray...); found {
 		t.Errorf("the refusal for a three-key object carries %q: a refusal is a sentence a user pastes into a ticket, and it names the object and the count and no key", piece)
 	}
+
+	// The decode runs to the end of the object (decodeClaimsV1's rule): a stray
+	// brace a hand edit left behind is a second value, not the object before it.
+	if err := r.bucket.Put(ctx, Object, []byte(`{"v":1,"keys":["fgk_alpha"]}}`), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.store.Keys(ctx); !errors.Is(err, ErrObject) {
+		t.Errorf("an object with a trailing brace answers %v, want ErrObject: an object this store cannot read is refused whole", err)
+	}
+
+	// A key too large to read back is never written: the object would be past
+	// the limit every read applies, and the project's licence would be lost to a
+	// key no verifier accepts in the first place.
+	huge := newRig(t)
+	if err := huge.store.Install(ctx, []byte(strings.Repeat("f", maxObjectBytes+1))); !errors.Is(err, ErrObject) {
+		t.Errorf("installing a key larger than an object is read = %v, want ErrObject", err)
+	}
+	if _, _, err := huge.bucket.Read(ctx, Object); !errors.Is(err, blobx.ErrNotExist) {
+		t.Errorf("the refused oversized install left %v on the bucket, want the bucket untouched", err)
+	}
 }
 
 // TestTheStoreNeverLogsAKey holds the store to the rule the key's own package

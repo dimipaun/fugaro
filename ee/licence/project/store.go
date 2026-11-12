@@ -39,6 +39,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -158,7 +159,7 @@ func New(b *blobx.Bucket) *Store { return &Store{bucket: b} }
 // all where no key is installed: the no-key state is the store being empty
 // rather than an error (D2143).
 func (s *Store) Keys(ctx context.Context) ([][]byte, error) {
-	rec, _, err := s.read(ctx)
+	rec, err := s.read(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +183,7 @@ func (s *Store) Install(ctx context.Context, raw []byte) error {
 	if key == "" {
 		return fmt.Errorf("%w: the key to install is empty", ErrObject)
 	}
-	rec, _, err := s.read(ctx)
+	rec, err := s.read(ctx)
 	if err != nil {
 		return err
 	}
@@ -208,7 +209,7 @@ func (s *Store) RecordCheck(ctx context.Context, at time.Time, status string) er
 	default:
 		return fmt.Errorf("%w: %q is not a revocation check's answer", ErrObject, status)
 	}
-	rec, _, err := s.read(ctx)
+	rec, err := s.read(ctx)
 	if err != nil {
 		return err
 	}
@@ -226,6 +227,12 @@ func (s *Store) RecordCheck(ctx context.Context, at time.Time, status string) er
 
 // Applied is the key that applies, the state the clock puts it in, and the
 // store it came from.
+//
+// Claims is the whole claim set, the note the key carries for admins and the
+// renewal secret's hash included: it is the installation's own key, read by
+// `ee/` code that acts on it, and a viewer's shape is View. So a caller that
+// prints an Applied prints a key's admin fields, and a caller that shows a
+// person a licence asks View.
 type Applied struct {
 	Claims licence.ClaimsV1
 	State  licence.State
@@ -249,7 +256,7 @@ type Applied struct {
 // what the key's required `workspace_id` is checked against, and a store that
 // took it from the key would be comparing the key with itself.
 func (s *Store) Active(ctx context.Context, now time.Time, ring licence.Keyring, firebaseProjectID string, machine [][]byte) (Applied, error) {
-	rec, _, err := s.read(ctx)
+	rec, err := s.read(ctx)
 	if err != nil {
 		return Applied{}, err
 	}
@@ -291,7 +298,7 @@ type View struct {
 // carries for admins and the renewal secret's hash are all absent by
 // construction rather than by a caller's care.
 func (s *Store) View(ctx context.Context, now time.Time, ring licence.Keyring, firebaseProjectID string, machine [][]byte) (View, error) {
-	rec, _, err := s.read(ctx)
+	rec, err := s.read(ctx)
 	if err != nil {
 		return View{}, err
 	}
@@ -314,34 +321,37 @@ func (s *Store) View(ctx context.Context, now time.Time, ring licence.Keyring, f
 	return view, nil
 }
 
-// read answers the object and whether the bucket held one. A missing object is
-// the no-key state and not an error: an installation whose owner never
-// installed a key has no object at all (the licence package's rule for its own
-// file, one store over).
-func (s *Store) read(ctx context.Context) (record, bool, error) {
+// read answers the object. A missing object is the no-key state and not an
+// error: an installation whose owner never installed a key has no object at all
+// (the licence package's rule for its own file, one store over).
+func (s *Store) read(ctx context.Context) (record, error) {
 	data, _, err := s.bucket.ReadMaxStrict(ctx, Object, maxObjectBytes)
 	if errors.Is(err, blobx.ErrNotExist) {
-		return record{}, false, nil
+		return record{}, nil
 	}
 	if err != nil {
-		return record{}, false, fmt.Errorf("%w: reading %s: %w", ErrObject, Object, err)
+		return record{}, fmt.Errorf("%w: reading %s: %w", ErrObject, Object, err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var rec record
 	if err := dec.Decode(&rec); err != nil {
-		return record{}, false, fmt.Errorf("%w: %s does not decode as this store's object (%v)", ErrObject, Object, err)
+		return record{}, fmt.Errorf("%w: %s does not decode as this store's object (%v)", ErrObject, Object, err)
 	}
-	if dec.More() {
-		return record{}, false, fmt.Errorf("%w: %s carries more than one JSON value", ErrObject, Object)
+	// The decode runs to the end of the object, as the key's own does
+	// (decodeClaimsV1): a second value, or the stray brace a hand-edited object
+	// leaves, is an object this store cannot place rather than one it reads and
+	// ignores the rest of.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return record{}, fmt.Errorf("%w: %s carries more than one JSON value", ErrObject, Object)
 	}
 	if rec.V != recordVersion {
-		return record{}, false, fmt.Errorf("%w: %s is a version %d object, and this Fugaro writes and reads version %d", ErrObject, Object, rec.V, recordVersion)
+		return record{}, fmt.Errorf("%w: %s is a version %d object, and this Fugaro writes and reads version %d", ErrObject, Object, rec.V, recordVersion)
 	}
 	if len(rec.Keys) > maxKeys {
-		return record{}, false, fmt.Errorf("%w: %s holds %d keys, and the renewal's overlap installs two at the most (T26)", ErrObject, Object, len(rec.Keys))
+		return record{}, fmt.Errorf("%w: %s holds %d keys, and the renewal's overlap installs two at the most (T26)", ErrObject, Object, len(rec.Keys))
 	}
-	return rec, true, nil
+	return rec, nil
 }
 
 // write puts the object back. The write is unconditional, as the shared
@@ -349,11 +359,19 @@ func (s *Store) read(ctx context.Context) (record, bool, error) {
 // launcher, so two writers racing lose one write rather than corrupt the
 // object, and the rules that matter -- one shape, at most two keys -- are held
 // on the read.
+//
+// An object larger than the read accepts is refused here, so a store never
+// writes one it could not read back: the object is the project's only copy of
+// its licence, and a write that poisoned every later read would be the licence
+// lost to a key nothing verifies anyway.
 func (s *Store) write(ctx context.Context, rec record) error {
 	rec.V = recordVersion
 	data, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("%w: the object could not be written: %v", ErrObject, err)
+	}
+	if len(data) > maxObjectBytes {
+		return fmt.Errorf("%w: the object to write is %d bytes, and %s is read with a limit of %d", ErrObject, len(data), Object, maxObjectBytes)
 	}
 	if err := s.bucket.Put(ctx, Object, data, "application/json"); err != nil {
 		return fmt.Errorf("%w: writing %s: %w", ErrObject, Object, err)
