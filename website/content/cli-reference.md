@@ -2029,12 +2029,17 @@ that is not a regular file, and a graph this build refuses all end the run
 before anything is sent; an artifact with uncommitted changes is refused
 too, because what is published is what is committed.
 
-Publishing the same artifact again writes nothing: the record compares the
-document it holds with the one it is sent. `--expect` is the version of the
-plan document you last read, and it is what keeps two people publishing one
-plan from two checkouts from overwriting each other — the second is refused
-and told the version the record holds. Leave it out while the record does
-not hold the plan.
+`--expect` is the version of the plan document you last read, and the
+record compares it with the version it holds: an empty `--expect` is the
+claim that the record holds no such plan, so leave it out for a plan the
+record does not hold and send what the record holds for one it does. A
+publish that carries the version it read and sends the same artifact
+writes nothing the second time — the record compares the document it holds
+with the one it is sent — and one that carries a version the record has
+moved past is refused, which is what keeps two people publishing one plan
+from two checkouts from overwriting each other. This command holds no read
+that would fetch the version for you: the refusal names it, and sending it
+back is the next run.
 
 `--all` publishes every graph artifact under the checkout's docs/, each its
 own request. `--releases <file>` imports a release catalogue — this

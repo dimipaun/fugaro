@@ -209,12 +209,17 @@ func newCoordinatorRoadmapPublishCmd() *cobra.Command {
 			"that is not a regular file, and a graph this build refuses all end the run\n" +
 			"before anything is sent; an artifact with uncommitted changes is refused\n" +
 			"too, because what is published is what is committed.\n\n" +
-			"Publishing the same artifact again writes nothing: the record compares the\n" +
-			"document it holds with the one it is sent. `--expect` is the version of the\n" +
-			"plan document you last read, and it is what keeps two people publishing one\n" +
-			"plan from two checkouts from overwriting each other — the second is refused\n" +
-			"and told the version the record holds. Leave it out while the record does\n" +
-			"not hold the plan.\n\n" +
+			"`--expect` is the version of the plan document you last read, and the\n" +
+			"record compares it with the version it holds: an empty `--expect` is the\n" +
+			"claim that the record holds no such plan, so leave it out for a plan the\n" +
+			"record does not hold and send what the record holds for one it does. A\n" +
+			"publish that carries the version it read and sends the same artifact\n" +
+			"writes nothing the second time — the record compares the document it holds\n" +
+			"with the one it is sent — and one that carries a version the record has\n" +
+			"moved past is refused, which is what keeps two people publishing one plan\n" +
+			"from two checkouts from overwriting each other. This command holds no read\n" +
+			"that would fetch the version for you: the refusal names it, and sending it\n" +
+			"back is the next run.\n\n" +
 			"`--all` publishes every graph artifact under the checkout's docs/, each its\n" +
 			"own request. `--releases <file>` imports a release catalogue — this\n" +
 			"repository's `docs/release-streams.yaml` is the one that exists — one\n" +
@@ -377,7 +382,7 @@ func runCoordinatorPublish(cmd *cobra.Command, o *coordinatorPublishOptions, arg
 		if !ready[i] {
 			continue
 		}
-		plans[i] = coordinatorSendWrite(ctx, client, door, "roadmap_publish_plan", map[string]any{
+		plans[i], _ = coordinatorSendWrite(ctx, client, door, "roadmap_publish_plan", map[string]any{
 			"plan": documents[i], "expect": o.expect,
 		}, plans[i])
 	}
@@ -404,7 +409,7 @@ func runCoordinatorUnpublish(cmd *cobra.Command, o *coordinatorUnpublishOptions,
 	if err != nil {
 		return err
 	}
-	r := coordinatorSendWrite(ctx, client, door, "roadmap_unpublish_plan", map[string]any{
+	r, _ := coordinatorSendWrite(ctx, client, door, "roadmap_unpublish_plan", map[string]any{
 		"plan": id, "expect": o.expect,
 	}, coordinatorPublishResult{Plan: id, Status: mcpauth.RoadmapRefused})
 	doc := coordinatorPublishDoc{Version: coordinatorPublishDocVersion, Plans: []coordinatorPublishResult{r}}
@@ -418,31 +423,36 @@ func runCoordinatorUnpublish(cmd *cobra.Command, o *coordinatorUnpublishOptions,
 // failure is preserved rather than flattened: a refusal is the person's (exit
 // 1, the record's sentence and the version it holds are beside it) and a fault
 // of the installation is not (exit 2, nobody can act on it).
-func coordinatorSendWrite(ctx context.Context, client *http.Client, door *coordinatorDoor, tool string, args map[string]any, r coordinatorPublishResult) coordinatorPublishResult {
+//
+// The failure comes back beside the result because one caller reads a class of
+// it: an import of a catalogue tells a refusal the tool answered — the record's
+// own sentence about that release — from the door refusing the call, which is
+// not about the release at all (coordinatorDoorRefusal).
+func coordinatorSendWrite(ctx context.Context, client *http.Client, door *coordinatorDoor, tool string, args map[string]any, r coordinatorPublishResult) (coordinatorPublishResult, error) {
 	answer, err := coordinatorCallTool(ctx, client, door, tool, args)
 	if err != nil {
-		return coordinatorResultOf(r, err)
+		return coordinatorResultOf(r, err), err
 	}
 	var queued struct {
 		Version int    `json:"version"`
 		Request string `json:"request"`
 	}
 	if err := json.Unmarshal(answer, &queued); err != nil {
-		return coordinatorResultOf(r, fcli.RemoteErr(fmt.Errorf("the front door's answer to %s was not a queued request", tool)))
+		return coordinatorResultOf(r, fcli.RemoteErr(fmt.Errorf("the front door's answer to %s was not a queued request", tool))), nil
 	}
 	if err := coordinatorAnswerVersion("the answer to "+tool, queued.Version); err != nil {
-		return coordinatorResultOf(r, err)
+		return coordinatorResultOf(r, err), nil
 	}
 	if queued.Request == "" {
-		return coordinatorResultOf(r, fcli.RemoteErr(fmt.Errorf("the front door's answer to %s named no request id", tool)))
+		return coordinatorResultOf(r, fcli.RemoteErr(fmt.Errorf("the front door's answer to %s named no request id", tool))), nil
 	}
 	r.Request = queued.Request
 	outcome, err := coordinatorAwaitOutcome(ctx, client, door, queued.Request)
 	if err != nil {
-		return coordinatorResultOf(r, err)
+		return coordinatorResultOf(r, err), nil
 	}
 	r.Status, r.Reason, r.Current = outcome.Status, outcome.Reason, outcome.Current
-	return r
+	return r, nil
 }
 
 // coordinatorResultOf is a failure as a result line, keeping whose it is: a
@@ -746,8 +756,15 @@ func coordinatorRepoFromOrigin(origin string) (string, bool) {
 // coordinatorCheckCommitted refuses an artifact with changes that are not
 // committed. What is published is what is committed, so the commit the document
 // names is one that really holds the graph the document carries.
+//
+// `--ignored` is not decoration: a path a `.gitignore` matches is reported by
+// nothing but that flag, and an ignored artifact is exactly the case this check
+// exists for — it is in the tree, it is in no commit, and a publish that took
+// the read as "committed" would send a document under a commit that does not
+// hold it. A tracked artifact is reported the same way with the flag as
+// without it, so nothing else changes.
 func coordinatorCheckCommitted(ctx context.Context, rel string) error {
-	out, err := coordinatorGit(ctx, "status", "--porcelain", "--", rel)
+	out, err := coordinatorGit(ctx, "status", "--porcelain", "--ignored", "--", rel)
 	if err != nil {
 		return err
 	}
@@ -806,11 +823,18 @@ func coordinatorGit(ctx context.Context, args ...string) (string, error) {
 //
 // Each stream is sent with the empty `expect`, which is the claim that the
 // record holds nothing — and that is what makes the import idempotent: the
-// front door refuses a release the record already holds, and a refusal here is
-// a skip rather than a failure, because "this release is already in the record"
-// is what a second import of the same catalogue means. The refusal's own
-// sentence is printed beside it, so a catalogue the record refuses for some
-// other reason is still visible.
+// front door refuses a release the record already holds, and a refusal of a
+// write that queued is a skip rather than a failure, because "this release is
+// already in the record" is what a second import of the same catalogue means.
+// The refusal's own sentence is printed beside it, so a catalogue the record
+// refuses for some other reason is still visible.
+//
+// Only a refusal the tool answered is a skip. A refusal the door answered
+// instead — a credential it will not take (401, 403) or a call it will not read
+// — says nothing about the release: no tool ran, and reading it as "already
+// there" would print a whole catalogue as skipped and exit 0 under a token that
+// published nothing at all. The group's exit codes are the same for a catalogue
+// as for a plan, and a plan refused that way is exit 1.
 func coordinatorPublishCatalogue(ctx context.Context, client *http.Client, door *coordinatorDoor, path string) ([]coordinatorPublishResult, error) {
 	cat, err := streams.Read(path)
 	if err != nil {
@@ -832,11 +856,16 @@ func coordinatorPublishCatalogue(ctx context.Context, client *http.Client, door 
 			// does not reach would be a panic rather than a refusal.
 			continue
 		}
-		r := coordinatorSendWrite(ctx, client, door, "roadmap_release_set", map[string]any{
+		r, err := coordinatorSendWrite(ctx, client, door, "roadmap_release_set", map[string]any{
 			"id": s.Current.String(), "stream": s.Name, "name": s.Names[order],
 			"state": coordinatorPublishReleaseState, "order": order, "expect": "",
 		}, coordinatorPublishResult{Release: s.Name + " " + s.Current.String(), Status: mcpauth.RoadmapRefused})
-		if r.Status == mcpauth.RoadmapRefused {
+		// A refusal the door answered is not a refusal of this release: no tool
+		// ran, and a token it will not take or a call it will not read would
+		// otherwise print a whole catalogue as skipped and exit 0 under a
+		// credential that published nothing.
+		var byTheDoor coordinatorDoorRefusal
+		if r.Status == mcpauth.RoadmapRefused && !errors.As(err, &byTheDoor) {
 			r.Status = coordinatorPublishSkipped
 		}
 		out = append(out, r)

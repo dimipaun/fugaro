@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"go/parser"
 	"go/token"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -424,21 +425,39 @@ func mustJSON(t *testing.T, v any) []byte {
 }
 
 // TestPublishTwiceWritesOnce is the red step, and it is the property the whole
-// idempotence rests on: the two runs send the same bytes.
+// idempotence rests on: the two runs send the same bytes, so P9b's
+// compare-before-put has nothing to write the second time.
 //
-// P9b's writer compares before it puts, so the second publish of one artifact
-// writes nothing — but only if the second document is the first one. A publish
-// that stamped anything of its own into the document (a time, a counter, the
-// person's name) would send a different document every run, the record would
-// see a change every time, and every publish would be a write. There is nothing
-// in this command that could answer "when was this published" without that, and
-// nothing asks it to: the record's own `at` is the apply job's.
+// The second run carries the version the record holds, because an empty
+// `--expect` is the claim that the record holds no such plan and the front door
+// refuses that claim against a record that holds one (mcpauth's
+// TestRoadmapToolsRefuseAStaleExpectBeforeQueueing). This command holds no read
+// that would learn the version — the roadmap tools are the writes, and
+// roadmap_request reads one queued request's outcome — so a person re-publishing
+// sends back the version the refusal named, and what this test holds the command
+// to is the half the command owns: the document it sends is the artifact's own,
+// byte for byte, with nothing of the run stamped into it. A publish that stamped
+// anything of its own into the document (a time, a counter, the person's name)
+// would send a different document every run, the record would see a change every
+// time, and every publish would be a write. There is nothing in this command that
+// could answer "when was this published" without that, and nothing asks it to:
+// the record's own `at` is the apply job's.
 func TestPublishTwiceWritesOnce(t *testing.T) {
 	door := publishDoor(t)
 	publishCheckout(t, map[string]string{planDoc: "# the plan\n", planArtifact: publishGraph})
 
+	// held is the version the record answered with, which the second run sends
+	// back. The fake door compares no expect, so what it is here is what the
+	// sentence of a refusal would name; what the assertions below read is the
+	// document.
+	const held = "the-version-the-record-holds"
+
 	for i := range 2 {
-		if _, _, err := execute(t, "coordinator", "roadmap", "publish", planDoc); err != nil {
+		args := []string{"coordinator", "roadmap", "publish", planDoc}
+		if i == 1 {
+			args = append(args, "--expect", held)
+		}
+		if _, _, err := execute(t, args...); err != nil {
 			t.Fatalf("publish %d: %v", i+1, err)
 		}
 	}
@@ -446,11 +465,14 @@ func TestPublishTwiceWritesOnce(t *testing.T) {
 	if len(calls) != 4 {
 		t.Fatalf("the door served %v; want two publishes and their two outcome reads", publishTools(calls))
 	}
-	first, err := json.Marshal(calls[0].Arguments)
+	if got, _ := calls[2].Arguments["expect"].(string); got != held {
+		t.Errorf("the second publish sent expect=%q; want %q, the version the record holds", got, held)
+	}
+	first, err := json.Marshal(calls[0].Arguments["plan"])
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := json.Marshal(calls[2].Arguments)
+	second, err := json.Marshal(calls[2].Arguments["plan"])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,6 +539,52 @@ func TestPublishRefusesAnUncommittedArtifact(t *testing.T) {
 	// nothing.
 	if calls := door.toolCalls(); len(calls) != 0 {
 		t.Errorf("the door was called with %v; an uncommitted artifact is refused before anything is sent", publishTools(calls))
+	}
+}
+
+// TestPublishRefusesAnIgnoredArtifact is the same rule at the one path a
+// plain `git status --porcelain` reports as nothing at all: an artifact a
+// `.gitignore` matches is in the tree, in no commit, and neither untracked nor
+// modified as far as that read is concerned — only `--ignored` prints it. A
+// publish that took the empty answer as "committed" would send the graph under
+// a commit that does not hold it, which is what the provenance is for.
+//
+// Both the named publish and the sweep are held to it: the sweep is where an
+// artifact nobody named is found, and the walk that finds it reads the
+// filesystem rather than the index, so it sees an ignored file too.
+func TestPublishRefusesAnIgnoredArtifact(t *testing.T) {
+	door := publishDoor(t)
+	publishCheckout(t, map[string]string{
+		".gitignore": "docs/plans/*.graph.json\n",
+		planDoc:      "# the plan\n",
+		planArtifact: publishGraph,
+	})
+
+	out, _, err := execute(t, "coordinator", "roadmap", "publish", planDoc)
+	if err == nil {
+		t.Fatalf("an ignored artifact was published:\n%s", out)
+	}
+	if fcli.ExitCode(err) != fcli.ExitUserError {
+		t.Errorf("exit %d, want a user error: committing the artifact is the person's to do", fcli.ExitCode(err))
+	}
+	if !strings.Contains(err.Error(), planArtifact) || !strings.Contains(err.Error(), "committed") {
+		t.Errorf("the command said %q; want the artifact named and its changes reported as not committed", err)
+	}
+	if calls := door.toolCalls(); len(calls) != 0 {
+		t.Errorf("the door was called with %v; an ignored artifact is refused before anything is sent", publishTools(calls))
+	}
+
+	// The sweep reports it and exits non-zero rather than publishing it, and it
+	// still opens no door: the one artifact under docs/ was refused.
+	out, _, err = execute(t, "coordinator", "roadmap", "publish", "--all")
+	if err == nil {
+		t.Fatalf("--all published an ignored artifact:\n%s", out)
+	}
+	if !strings.Contains(out, planArtifact) {
+		t.Errorf("the sweep printed %q; want the refused artifact named", out)
+	}
+	if calls := door.toolCalls(); len(calls) != 0 {
+		t.Errorf("the sweep called the door with %v; want nothing sent", publishTools(calls))
 	}
 }
 
@@ -820,6 +888,54 @@ func TestPublishReleasesFlagSkipsWhatExists(t *testing.T) {
 		if r.Reason == "" {
 			t.Errorf("the skip of %s carries no reason; the record's own sentence is what says why", r.Release)
 		}
+	}
+}
+
+// TestPublishCatalogueRefusalOfTheCredentialIsNotASkip: the two refusals an
+// import meets are not one answer. A release the record already holds is
+// refused by the tool — the record's own sentence about that release — and a
+// skip is what an import does with it; a token the door will not take (401,
+// 403) is refused before any tool runs, so the sentence is about the credential
+// and nothing about the release.
+//
+// Reading the second as the first is the shape this holds against: a whole
+// catalogue printed as "skipped" and exit 0 over a run that published nothing
+// at all, where a plan refused the same way is exit 1.
+func TestPublishCatalogueRefusalOfTheCredentialIsNotASkip(t *testing.T) {
+	for _, tc := range []struct {
+		what   string
+		status int
+	}{
+		{"a token the door no longer accepts", http.StatusUnauthorized},
+		{"a token that may not call the tool", http.StatusForbidden},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			door := publishDoor(t)
+			publishCheckout(t, map[string]string{"docs/release-streams.yaml": publishCatalogue})
+			door.mu.Lock()
+			door.refuseStatus = tc.status
+			door.mu.Unlock()
+
+			out, _, err := execute(t, "coordinator", "roadmap", "publish", "--releases", "docs/release-streams.yaml", "--json")
+			if err == nil {
+				t.Fatalf("an import under a token the door refused exited 0:\n%s", out)
+			}
+			if fcli.ExitCode(err) != fcli.ExitUserError {
+				t.Errorf("exit %d, want a user error: the credential is the person's to fix", fcli.ExitCode(err))
+			}
+			var doc coordinatorPublishDoc
+			if err := json.Unmarshal([]byte(out), &doc); err != nil {
+				t.Fatalf("the --json document: %v\n%s", err, out)
+			}
+			if len(doc.Releases) != 3 {
+				t.Fatalf("the import reported %d releases; want the three of the catalogue", len(doc.Releases))
+			}
+			for _, r := range doc.Releases {
+				if r.Status != mcpauth.RoadmapRefused {
+					t.Errorf("%s was reported %q; want refused, because the door refused the call and no tool ran", r.Release, r.Status)
+				}
+			}
+		})
 	}
 }
 
