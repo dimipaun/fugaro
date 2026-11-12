@@ -550,8 +550,22 @@ func TestAccessRunProjectScopeRefusalNamesAUsableCommand(t *testing.T) {
 	if strings.Contains(err.Error(), "--repo project") {
 		t.Errorf("the refusal names a --repo value this build refuses: %v", err)
 	}
-	if _, _, lsErr := execute(t, "user", "ls"); lsErr != nil {
-		t.Errorf("the command the refusal names does not run: %v", lsErr)
+	// The sentence's own command, run for real: whatever it names has to be a
+	// command this build has.
+	_, after, ok := strings.Cut(err.Error(), "holds is what '")
+	if !ok {
+		t.Fatalf("the refusal names no command for what the credential holds: %v", err)
+	}
+	held, _, ok := strings.Cut(after, "' prints")
+	if !ok || held == "" {
+		t.Fatalf("the refusal names no command for what the credential holds: %v", err)
+	}
+	args := strings.Fields(held)
+	if len(args) > 0 && args[0] == selfCommand() {
+		args = args[1:]
+	}
+	if _, _, lsErr := execute(t, args...); lsErr != nil {
+		t.Errorf("the command the refusal names (%q) does not run: %v", held, lsErr)
 	}
 }
 
