@@ -166,6 +166,14 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 		"allow_repos": []string{"*"},
 		"routing":     map[string]any{"claude": map[string]any{"via": projectpolicy.RouteCascade}},
 	}
+	// The same node as the release before this one wrote it: the shape every
+	// installation holds while the update that bumps Version converges, and the
+	// one the door meets before its policy stage has run.
+	behindCascade := map[string]any{
+		"version":     projectpolicy.Version - 1,
+		"allow_repos": []string{"*"},
+		"routing":     map[string]any{"claude": map[string]any{"via": projectpolicy.RouteCascade}},
+	}
 	for _, tc := range []struct {
 		name    string
 		node    map[string]any
@@ -194,6 +202,17 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			name: "the policy a cascade project re-reads", node: cascade, mode: budget.ModeEnforce,
 			want:    []string{"1 run(s) are in flight", "the policy this update publishes", "routing.claude.via", projectpolicy.RouteCascade},
 			notWant: []string{"budget mode", "retirement"},
+		},
+		{
+			// The same project on the node this upgrade actually reads: the one
+			// the release before this wrote, which the policy stage has not
+			// migrated yet. The clause has to be there — the service re-reads
+			// the node per call, and the stage is about to rewrite it — and a
+			// reader that decoded the node with the refusing Read would answer
+			// "no cascade" and print "no step of it can reach them" over it.
+			name: "the policy a cascade project re-reads, one version behind", node: behindCascade, mode: budget.ModeEnforce,
+			want:    []string{"1 run(s) are in flight", "the policy this update publishes", "routing.claude.via", projectpolicy.RouteCascade},
+			notWant: []string{"budget mode", "retirement", "no step of it can reach them"},
 		},
 		{
 			name: "the retirement a managed project runs", mode: budget.ModeEnforce, managed: true,
@@ -286,7 +305,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
 	}
 	t.Run("the node's version rises and the service moves", func(t *testing.T) {
-		got := line(t, v4Node())
+		got := line(t, v5Node())
 		for _, want := range []string{"the credentials service this update replaces", "does not understand"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("the line does not say %q over a run whose node is raised before the service that reads it is replaced:\n%s", want, got)
@@ -297,7 +316,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		}
 	})
 	t.Run("the service moves over a node that does not", func(t *testing.T) {
-		got := line(t, v5Node())
+		got := line(t, v6Node())
 		if strings.Contains(got, "credentials service") {
 			t.Errorf("the line names the credentials service over a run that raises no node, so no call can meet a service that cannot read it:\n%s", got)
 		}

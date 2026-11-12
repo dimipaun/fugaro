@@ -239,11 +239,13 @@ func launchCanonical(provider, repo string) (string, error) {
 
 // policySkewRefusal is the policySince gate's message (plan task 1.5 step 4):
 // the sentence the CLI prints for a policy written in a version this Fugaro
-// does not read, the release the skew is about, and the remedy for *this
-// direction* of the skew, which the gate takes from projectpolicy.SkewRemedy —
-// the one place both this package's readers and the runner's word a version
-// skew from, so neither side can tell an operator to upgrade a binary that is
-// already ahead of the node (the review finding on this change).
+// does not read, the release the skew is about, and the remedy for *this state*
+// of the skew — the direction, and for a node behind this binary whichever move
+// its version allows — which the gate takes from projectpolicy.SkewRemedy, the
+// one place both this package's readers and the runner's word a version skew
+// from, so neither side can tell an operator to upgrade a binary that is
+// already ahead of the node (the review finding on this change) or to delete a
+// node the migration chain would have carried forward.
 // launchPolicyGates refuses a launch with it before the execution is created.
 //
 // The release it names is the one that introduced the version on the node when

@@ -1685,7 +1685,7 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 // Returns the run's own output, and the applies that reached the fake.
 func credentialsStageRun(t *testing.T) (string, int) {
 	t.Helper()
-	r := newConvergeRig(t, v5Node())
+	r := newConvergeRig(t, v6Node())
 	publishCredentialsImage(t, r.imagesRig, convergeRelease)
 	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
 	r.script["show -json"] = r.script["show"]

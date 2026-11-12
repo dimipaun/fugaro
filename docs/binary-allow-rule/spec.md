@@ -313,14 +313,14 @@ block is a member `buildProjectPolicy` fills like `review_floor`, so:
   refreshes the job images of the checkout it runs in (behind its own confirmations, one per build),
   so that checkout's runs and the node arrive in one command. A repository of the project whose job
   image is a derived image of *another* checkout keeps the image it had, and the launcher refuses a
-  launch onto an image older than the release that introduced the node's version (0.23.0 for version
+  launch onto an image older than the release that introduced the node's version (0.24.0 for version
   5), naming `fugaro image refresh --repo … --workflow …` (`internal/cli`'s `policyImageGate`),
   rather than starting a run that halts at bootstrap on a node it cannot read.
 - **The window between the two is not a refusal.** The update migrates the node in its policy stage
   and moves the credentials service onto this release's image in the stage immediately after it, with
   nothing between the two, so the service it installs is never handed a node it has not migrated —
   and the reader accepts a node one shape-free step behind anyway (`projectpolicy`'s `ReadsVersion`:
-  the 4 → 5 step moves the version member and nothing else). What an old *job image* meets is the
+  the 5 → 6 step moves the version member and nothing else). What an old *job image* meets is the
   launcher's gate above rather than a halt. What no order can close is the release behind's own
   service, which refuses a version-5 node until that stage applies: the window is one apply, that
   binary was released, and the update's own line about the runs in flight names it when this run both
@@ -329,21 +329,21 @@ block is a member `buildProjectPolicy` fills like `review_floor`, so:
   node is raised (`credentialsResolveBeforeRaise`), so a resolve this run cannot make fails with the
   node exactly where it was, and a run that will replace no service — a coding agent's session, a
   development build — does not raise the node at all (`credentialsMoveHeld`).
-- **The policy version moves 4 → 5** (§D990 — the recommendation; the owner did not rule on it),
-  `VersionSince` gains its row (`5: "0.23.0"`, the release that ships it — §4's slot read 0.20.0
-  when the plan was written, and a row naming a release that already carries a version-4 node is
+- **The policy version moves 5 → 6** (§D990 — the recommendation; the owner did not rule on it),
+  `VersionSince` gains its row (`6: "0.24.0"`, the release that ships it — §4's slot read 0.20.0
+  when the plan was written, and a row naming a release that already carries a version-5 node is
   the floor the launch gate holds a job image to), and
   `TestVersionSinceCoversEveryVersion` fails until it does. The convergence test the HARD RULE asks
-  for — an installation at the previous version ends `fugaro update` with a version-5 node published
+  for — an installation at the previous version ends `fugaro update` with a version-6 node published
   — is `TestInstallationAtThePreviousVersionConvergesBinaries`, written with the `…Binaries` suffix
   so it cannot collide with the sibling designs' convergence tests in package `cli`.
-- **The migration is the node's own.** An installation whose published node is version 4 and carries
-  no `binaries` member is not broken by the bump in either direction: a version-5 reader tolerates a
-  node with no `binaries` (the block is optional, absent meaning "admits nothing"), and the version-4
+- **The migration is the node's own.** An installation whose published node is version 5 and carries
+  no `binaries` member is not broken by the bump in either direction: a version-6 reader tolerates a
+  node with no `binaries` (the block is optional, absent meaning "admits nothing"), and the version-5
   node is republished by the same update that refreshes the image. The only operator step is
   `fugaro update`.
 
-**What a version-4 reader makes of a version-5 node, stated plainly.** It refuses the node
+**What a version-5 reader makes of a version-6 node, stated plainly.** It refuses the node
 (`RunnerSkew`) — which is the fail-closed direction and the reason the bump is taken rather than
 tolerated. See §D990 for why, and for the cost of the alternative.
 

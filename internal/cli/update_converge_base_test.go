@@ -30,7 +30,7 @@ func TestUpdateConvergesSlimBase(t *testing.T) {
 	// alone), so policy-vs-jobs — the check this fixture exists to fire — would
 	// never be appended and the guard below would fail for a reason that has
 	// nothing to do with the base.
-	r := newConvergeRig(t, v5Node())
+	r := newConvergeRig(t, v6Node())
 	// The fixture is the previous release's base, or the assertions after the
 	// run prove nothing: an installation already on this release's pin would
 	// converge without the images stage touching it.

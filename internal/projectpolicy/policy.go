@@ -1375,7 +1375,13 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		if err := dec.Decode(&p.CraftPools); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: craft_pools: %w", err)
 		}
-		for _, prob := range config.ValidatePools(p.CraftPools, p.CraftCredentials) {
+		// The PUBLISHED node is where a pool must name its owner
+		// (ValidatePublishedPools, D1936): an installation's own config keeps
+		// loading without one, so a pool written before owners existed still
+		// starts a run on the release that bumped the version, and the
+		// migration's legacy-open marker is what such a pool carries here
+		// (D1942).
+		for _, prob := range config.ValidatePublishedPools(p.CraftPools, p.CraftCredentials) {
 			return nil, true, fmt.Errorf("projectpolicy: %s: %s", prob.Path, prob.Message)
 		}
 	}

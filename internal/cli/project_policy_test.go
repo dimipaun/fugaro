@@ -2953,19 +2953,19 @@ func TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers(t *testing.T) {
 
 // TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy: a node this
 // binary cannot read as its own shape — hand-written with no version, or with
-// one the chain cannot carry the reader across — is refused rather than
-// replaced, but the refusal must name a remedy that works. "Publish again" is
-// the one it cannot: the publish is what is being refused. Removing the node is
-// the path that does.
+// one below the migration chain's first step — is refused rather than replaced,
+// but the refusal must name a remedy that works. "Publish again" is the one it
+// cannot: the publish is what is being refused. Removing the node is the path
+// that does, for a version no step carries.
 //
-// The version below is two steps back and not the step immediately below this
-// one: that step's node is shape-free, so this reader reads it and a publish
-// replaces it in place — the case the test below pins.
+// A version the chain *does* carry takes the other remedy, and the test below
+// this one is that state: there the delete would work but costs what only the
+// node holds, so the publish names the update instead.
 func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) {
 	for name, node := range map[string]map[string]any{
-		"no version":     {"budget": map[string]any{"mode": "enforce"}},
-		"version zero":   {"version": 0, "budget": map[string]any{"mode": "enforce"}},
-		"an older shape": {"version": projectpolicy.Version - 2, "budget": map[string]any{"mode": "enforce"}},
+		"no version":                {"budget": map[string]any{"mode": "enforce"}},
+		"version zero":              {"version": 0, "budget": map[string]any{"mode": "enforce"}},
+		"a version no step reaches": {"version": 1, "budget": map[string]any{"mode": "enforce"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newProjectFixture(t, "")
@@ -3022,6 +3022,34 @@ func TestProjectPolicyPublishReplacesAShapeFreePredecessor(t *testing.T) {
 	}
 	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
 		t.Errorf("BinariesAllow() = %v, want %v: the block the older node carried did not survive the publish", p.BinariesAllow(), want)
+	}
+}
+
+// TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate: the other older
+// state, and the one an operator meets most — a node one step older than the shape-free
+// predecessor is what an installation holds between the binary upgrade and `fugaro update`. The
+// migration chain carries it, so the publish names the update's in-place
+// rewrite rather than the delete: the delete works here, but a publish that
+// follows rebuilds the node from this machine's config and drops the members
+// only the node holds. Doctor's policy-older-than-binary asks the same question
+// of the same node and names the same move.
+func TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version - 2, "budget": map[string]any{"mode": "enforce"}})
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatal("publishing over an older node was allowed")
+	}
+	for _, want := range []string{"fugaro update", "rewrites the node in place", "keeping the members it carries"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--delete") {
+		t.Errorf("the refusal names the delete for a node the migration chain carries: %v", err)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v == nil {
+		t.Fatal("the node was removed by a refused publish")
 	}
 }
 
@@ -3344,7 +3372,7 @@ func TestProjectPolicyPublishKeepsTheCraftMembers(t *testing.T) {
 	// leaves on the node.
 	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
 	node["craft_credentials"] = []any{map[string]any{"name": "acme-main", "type": "openrouter"}}
-	node["craft_pools"] = []any{map[string]any{"name": "acme-pool", "strategy": "failover", "members": []any{"acme-main", "vertex"}}}
+	node["craft_pools"] = []any{map[string]any{"name": "acme-pool", "strategy": "failover", "members": []any{"acme-main", "vertex"}, "owner": "owner@example.com"}}
 	node["crafts"] = map[string]any{
 		"coder":           map[string]any{"model": "claude-opus-5-5", "access": "acme-main"},
 		"security-review": map[string]any{"model": "claude-opus-5-5", "access": "acme-pool"},

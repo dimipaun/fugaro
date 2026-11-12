@@ -508,10 +508,10 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 
 // TestDocsProjectLayerStatesThePolicyVersionItShips: docs/project-layer.md's
 // reference paragraph said, in the present tense, that "the policy is version 2
-// from fugaro 0.8.5" — and the bump to version 5 raises `projectpolicy.Version`
-// (VersionSince[5] = "0.23.0", the release that states the binaries block in
+// from fugaro 0.8.5" — and the bump to version 6 raises `projectpolicy.Version`
+// (VersionSince[6] = "0.24.0", the release that states the binaries block in
 // the node), so the sentence must name the version and release this tree
-// writes. The paragraph now leads with version 5 and keeps version 4 as the
+// writes. The paragraph now leads with version 6 and keeps version 4 as the
 // node that came before it, which is what the table says.
 //
 // The version the page names is read from the constants rather than typed
@@ -699,11 +699,11 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	for _, want := range []string{
 		"| `binaries` | decoded, validated and accepted, **not applied**",
 		"the block is the owner's grant of the paths a run may add a binary at",
-		"no run reads it yet",
+		"no run does that yet",
 		"the one key of this table whose *written block* is a statement at publish time and not at admission time",
 		"the database keeps no member for an empty list, so the node never *holds* that spelling",
 		"an empty block and a write of nothing leave the same node, and both admit nothing",
-		"A version-4 reader lists the key as unknown and enforces no rule at all, which is why the node is version 5",
+		"A version-5 reader lists the key as unknown and enforces no rule at all, which is why the node is version 6",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/project-layer.md's `binaries` row lacks %q: the row is where an operator reads what the member does today and what writing an empty one means", want)

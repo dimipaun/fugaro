@@ -782,6 +782,34 @@ func TestPolicyOlderVersionHaltsTheRunWithThePublishRemedy(t *testing.T) {
 	}
 }
 
+// The same older direction, one version up: a node the migration chain carries
+// forward is one `fugaro update` rewrites in place, so the delete advice would
+// cost the node the members a publish rebuilds from the operator's own config
+// rather than from the node. Version 4 is the node every installation holds
+// between the binary upgrade and `fugaro update`, which is what makes it the
+// older state an operator meets most — and doctor names the same move for it
+// (policy-older-than-binary), from the same question (projectpolicy.Migratable).
+func TestPolicyCarriedVersionHaltsTheRunWithTheUpdateRemedy(t *testing.T) {
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":4,"budget":{"mode":"enforce"}}`, capScript(3)...)
+	rec, err := b.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a policy of an older version must stop the run: rec = %+v", rec)
+	}
+	for _, want := range []string{"version 4", fmt.Sprintf("understands version %d", projectpolicy.Version), "fugaro update", "rewrites the node in place", "keeping the members it carries", projectpolicy.PathShared()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	for _, bad := range []string{"refresh the runner image", "upgrade Fugaro", "publish --delete"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("the refusal tells the operator to %q, and a node the chain carries is migrated in place: %v", bad, err)
+		}
+	}
+	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("%d stages ran", len(b.agent.calls))
+	}
+}
+
 // Carried review item (d): a marker that is not an integer generation is a
 // user's node, named as itself — never read as "no marker", which would make a
 // project-centric installation a legacy one.
