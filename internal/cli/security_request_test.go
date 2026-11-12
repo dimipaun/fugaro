@@ -251,19 +251,24 @@ func TestRunRefusesTheLayersSecurityRequestOnACloneWorkflowsOlderBaseImage(t *te
 	}
 }
 
-// TestRunRefusesAReviewRecipeUnderTheSecurityRequest: the launcher resolves the
-// levels the run will resolve (L3.2), and the run's own request is part of that
-// resolution (launchReviewLevelsAsk) — so a launch whose request the run cannot
-// honour is refused here, with the task unwritten and no job paid for. A
-// mode: review recipe allows exactly one review step and nothing else
-// (recipe.Parse), and config's resolver refuses level 3 for it: a launcher that
-// resolved the levels without the request accepted this launch, and the runner
-// then met the refusal at bootstrap, after the job was running. The message
-// names the request, so a reader is not left looking for a floor nobody set.
+// TestRunToleratesAReviewRecipeUnderTheSecurityRequest: a mode: review recipe
+// is the one run the request cannot be honoured by — it allows exactly one
+// review step and nothing else (recipe.Parse), so level 3 has no step to run in
+// — and both the launcher and the run drop the force for it rather than refuse
+// the launch (launchReviewLevelsAsk, the runner's securityForcedLevels).
+//
+// The tolerance is the point and not a courtesy: `fugaro review` resolves
+// review-only (reviewOnlyRecipe), so a project whose layer sets
+// always_level_3 would otherwise refuse every review of every repository of it
+// — the project owner's own included, with no flag that lifts it — and a
+// launcher that refused while the run dropped the same force would make the
+// runner's warning dead code for the only case it names. The launch goes
+// through, the warning names the request and the reason, and the levels resolve
+// as they would have without it.
 //
 // Both homes of the request are here: the task's field, which this launch
 // carries because it passed --security, and the project layer's switch.
-func TestRunRefusesAReviewRecipeUnderTheSecurityRequest(t *testing.T) {
+func TestRunToleratesAReviewRecipeUnderTheSecurityRequest(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		layer   bool
@@ -275,28 +280,34 @@ func TestRunRefusesAReviewRecipeUnderTheSecurityRequest(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCloudFixture(t)
+			workflow := "svc"
 			if tc.layer {
 				isolateCache(t)
 				publishedLayer(t, f, layerWithSecurity("security: { always_level_3: true }\n"))
 				dir := layerCheckout(t, f, minimalAnchored)
 				registerOtherLocally(t, f)
 				commitRef(t, dir, "main")
+				workflow = config.ImplicitWorkflow
 			} else {
 				configSkewCheckout(t, f, configSkewHead+configSkewWorkflow)
 			}
+			// The recipe's own gate (recipeSince) and the layer's (layerSince)
+			// are older than the constant, so an image on it passes both and
+			// leaves the request's tolerance as the only thing under test.
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), workflow, "ghcr.io/dimipaun/fugaro-base:"+securityRequestSince)
 			args := append([]string{"run", "--pr", "7", "--recipe", "review-only"}, tc.extra...)
 			args = append(args, "Review the pull request")
-			_, _, err := execute(t, args...)
-			if ExitCode(err) != ExitUserError {
-				t.Fatalf("err = %v, want the launch refused", err)
+			_, errOut, err := execute(t, args...)
+			if err != nil {
+				t.Fatalf("the launch must tolerate a request its recipe cannot hold: %v", err)
 			}
-			for _, want := range []string{tc.subject, "mode: review", "review level 3"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("%v lacks %q", err, want)
+			for _, want := range []string{"warning:", tc.subject, "mode: review", "review level 3"} {
+				if !strings.Contains(errOut, want) {
+					t.Errorf("the warning lacks %q: %s", want, errOut)
 				}
 			}
-			if n := len(f.run.Executions()); n != 0 {
-				t.Errorf("%d executions, want none", n)
+			if n := len(f.run.Executions()); n != 1 {
+				t.Errorf("%d executions, want the one this launch started", n)
 			}
 		})
 	}

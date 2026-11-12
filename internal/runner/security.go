@@ -87,9 +87,11 @@ import (
 // review run of a project whose layer sets always_level_3, and `fugaro review`
 // goes through the same launch — so the run keeps the levels it resolved and
 // the warning names the request and the reason, which is F9's rule for the
-// escalation's own row. The launcher refuses the launch first where it can
-// (internal/cli's launchReviewLevelsAsk resolves the same force), so what
-// reaches this warning is a task written by hand or launched before it existed.
+// escalation's own row. The launcher drops it the same way and says so before
+// the job starts (internal/cli's launchReviewLevelsAsk), so a launch made by
+// this release resolves the levels without the request and never reaches this
+// warning: what does is a task written by hand, or one carrying the field from
+// a release whose launcher had no such read.
 func (r *run) securityForcedLevels() []policy.Level {
 	if !r.securityRequested() {
 		return nil

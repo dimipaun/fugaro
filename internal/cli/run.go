@@ -1521,7 +1521,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// the two writes with its model named none (checkNoneModelImage,
 	// launchLevelsConfig).
 	fileCfg := launchLevelsConfig(ctx, env, spec)
-	levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, fileCfg, levelsRecipe, levelsRecipeUnknown)
+	levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, fileCfg, levelsRecipe, levelsRecipeUnknown, warn)
 	if err != nil {
 		return config.Inputs{}, err
 	}

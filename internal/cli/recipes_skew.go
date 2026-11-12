@@ -1619,16 +1619,31 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // securityForcedLevels, SC10/D1517): it forces review level 3, and the levels'
 // own off-switch for that level is cleared rather than allowed to defeat it
 // (securityRequestRaiseOnly). Mirroring it is what keeps this gate the run's
-// own answer — a launch whose request the run would refuse (a mode: review
-// recipe has no step for the level) is refused here, before the task is
-// written, instead of by the job it was launched into (G2).
-func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool) (string, error) {
+// own answer.
+//
+// A mode: review recipe is the one run the force cannot hold — the level has
+// no step to run in — and the launch tolerates it exactly as the run does
+// (the runner's securityForcedLevels): the force is dropped, the levels
+// resolve as they would without the request, and a warning names the request
+// and the reason. Refusing here instead would be the tolerance's opposite:
+// `fugaro review` resolves review-only (reviewOnlyRecipe) and every launch of
+// it comes through this gate, so a project whose layer sets always_level_3
+// would refuse every review of every repository of it — including the project
+// owner's own, with no flag that lifts it — and the same would go for
+// `run --pr --recipe review-only` and for a recipe picked by --recipe pick.
+// A request that costs a launch is worse than one a launch cannot honour.
+func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool, warn io.Writer) (string, error) {
 	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
 	var floor []policy.Level
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
 		floor = p.ReviewFloor[mode]
 	}
 	fromTask, fromSwitch := securityRequestSources(spec, cfg)
+	if (fromTask || fromSwitch) && rcp != nil && rcp.Mode == recipe.ModeReview {
+		subject, _ := securityRequestNames(fromTask, fromSwitch)
+		fmt.Fprintf(warn, "warning: the run asks for the strongest review (%s) and its recipe %s is mode: review, which allows exactly one review step and nothing else: review level 3 has no step to run in, so the launch resolves the levels the run would have resolved without it\n", subject, rcp.Name)
+		fromTask, fromSwitch = false, false
+	}
 	in := config.LevelInputs{
 		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: env.lc.Providers,
 	}
