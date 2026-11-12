@@ -2499,6 +2499,7 @@ provenance reads both:
 | `reviewer` | string | **yes** | never | the senior review's model, resolved |
 | `background` | string | **yes** | never | the file's own `agent.models.background` |
 | `background_effective` | string | **yes** | never | the model Claude Code's background requests actually reach (`config.EffectiveBackground`). **Present only when it differs from `background`**, so a consumer draws `background_effective` when it has one and `background` otherwise |
+| `vision` | string | **yes** | never | the file's own `agent.models.vision`: the model a stage runs instead when its own model cannot read an image. **It is the one pin with no fallback**, so an absent key is the slot unset and never an inherited model — a consumer draws an empty cell rather than the coder's model |
 | `problems` | array of string | **yes** | never | what a launch would refuse this repository on, one line each (`config.CheckProviderPolicy`, the same check a run makes): a pin no route serves, a model the project's `allowed_models` leaves out. `omitempty`, so a repository with nothing wrong carries no key at all |
 
 **Version skew.** Every field is additive within `version: 1` (D784), and the
