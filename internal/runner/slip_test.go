@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
@@ -602,6 +603,25 @@ func TestHeartbeatStopsWithRun(t *testing.T) {
 	time.Sleep(20 * beatEvery)
 	if got := len(svc.beats()); got != settled {
 		t.Errorf("the run sent %d beats after it stopped (had %d): the beat outlives the run", got, settled)
+	}
+}
+
+// TestKeepWarmBeatEveryIsTheIntervalCheck511Measured: the beat's cadence is
+// the interval Check 511 measured rather than a number respelled here — one
+// request per 15 s held one instance up across its 300 s window (D1934, and the
+// plan's DS1.5 reuses that interval for exactly that reason) — and a beat
+// slower than the service's own idle reap holds nothing warm. Every other test
+// here shortens the cadence through the session, so none of them would fail if
+// the beat were given another interval; this one reads the interval itself.
+//
+// Its second half is the arm those fixtures cannot reach: a run with no session
+// to read a cadence off beats at the default rather than not at all.
+func TestKeepWarmBeatEveryIsTheIntervalCheck511Measured(t *testing.T) {
+	if budget.DefaultHeartbeatEvery != 15*time.Second {
+		t.Fatalf("the beat's interval is %v, want 15s: one request per 15 s is what Check 511 measured as holding an instance up across its 300 s window (D1934)", budget.DefaultHeartbeatEvery)
+	}
+	if got := (&run{}).slipBeatEvery(); got != budget.DefaultHeartbeatEvery {
+		t.Errorf("a run with no session beats every %v, want the default %v", got, budget.DefaultHeartbeatEvery)
 	}
 }
 
