@@ -27,8 +27,9 @@ import (
 // These are DS1.5's runner half: the run takes the slip its launcher was
 // granted at its own start, keeps the claim's secret in memory and nowhere
 // else, presents it on every call the gateway makes to the credentials service
-// (internal/gateway's service upstream), and keeps one instance of that service
-// warm for as long as it lives (D1933, D1934; Check 511 measured the beat).
+// (internal/gateway's service upstream), and keeps that service warm for as
+// long as it lives by asking it to read the slip back every interval (D1933,
+// D1934; Check 511 measured the beat's cadence).
 //
 // The fixtures are the ones internal/runner's cascade tests already build (the
 // run's own budget session is its Firebase identity, so no test can make it
@@ -50,6 +51,11 @@ const (
 type slipReply struct {
 	status int
 	body   string
+	// location is the answer's Location header, for the answers that are a
+	// redirect: the run's client must not follow one
+	// (TestTheRunDoesNotFollowARedirect), and a redirect without one is a
+	// redirect no client follows, which would test nothing.
+	location string
 }
 
 // slipCall is one call the run made, as the stand-in read it.
@@ -97,6 +103,9 @@ func newSlipService(t *testing.T, answer func(n int, r *http.Request, body []byt
 			rep.status = http.StatusOK
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if rep.location != "" {
+			w.Header().Set("Location", rep.location)
+		}
 		w.WriteHeader(rep.status)
 		_, _ = io.WriteString(w, rep.body)
 	}))
@@ -664,17 +673,23 @@ func TestHeartbeatStopsWithRun(t *testing.T) {
 
 // TestKeepWarmBeatEveryIsTheIntervalCheck511Measured: the beat's cadence is
 // the interval Check 511 measured rather than a number respelled here — one
-// request per 15 s held one instance up across its 300 s window (D1934, and the
-// plan's DS1.5 reuses that interval for exactly that reason) — and a beat
-// slower than the service's own idle reap holds nothing warm. Every other test
-// here shortens the cadence through the session, so none of them would fail if
-// the beat were given another interval; this one reads the interval itself.
+// request every 15 s is the cadence the credentials service answered at across
+// its whole 300 s window, with no cold start (D1934, and the plan's DS1.5
+// reuses that interval for exactly that reason) — and a beat slower than the
+// service's own idle reap holds nothing warm. Every other test here shortens
+// the cadence through the session, so none of them would fail if the beat were
+// given another interval; this one reads the interval itself.
+//
+// What the check settled is the timing: it exited 2, its instance-ids row
+// having come back empty, so it cannot say how many instances answered. The
+// interval is pinned here because it is what DS1.5 was written against, not
+// because the check counted anything.
 //
 // Its second half is the arm those fixtures cannot reach: a run with no session
 // to read a cadence off beats at the default rather than not at all.
 func TestKeepWarmBeatEveryIsTheIntervalCheck511Measured(t *testing.T) {
 	if budget.DefaultHeartbeatEvery != 15*time.Second {
-		t.Fatalf("the beat's interval is %v, want 15s: one request per 15 s is what Check 511 measured as holding an instance up across its 300 s window (D1934)", budget.DefaultHeartbeatEvery)
+		t.Fatalf("the beat's interval is %v, want 15s: one request every 15 s is the cadence Check 511 measured the credentials service answering at, with no cold start, across its 300 s window (D1934)", budget.DefaultHeartbeatEvery)
 	}
 	if got := (&run{}).slipBeatEvery(); got != budget.DefaultHeartbeatEvery {
 		t.Errorf("a run with no session beats every %v, want the default %v", got, budget.DefaultHeartbeatEvery)
@@ -726,6 +741,107 @@ func TestBeatGoesToTheServiceTheSlipWasClaimedAt(t *testing.T) {
 	}
 	if calls := elsewhere.seen(""); len(calls) != 0 {
 		t.Errorf("the beat reached %s, the host the environment names now: the run's calls go to the service its claim was answered from", elsewhere.URL)
+	}
+}
+
+// TestTheRunDoesNotFollowARedirect: a 3xx is not an answer, and the run's own
+// calls to the credentials service carry the job's Google ID token and the
+// run's Firebase identity, with the claim secret beside them on every beat. A
+// client that followed one would carry all of that to whatever host the
+// Location named, so the second server here is exactly that host and must
+// never be reached.
+//
+// Every 3xx is asked, because they differ in what a client that followed one
+// would do with this request: 301, 302 and 303 turn the POST into a GET at the
+// new host, which is the identity carried there in a header and the body
+// dropped, and 307 and 308 send the POST there whole, claim secret and all.
+//
+// The claim and a beat are both asked: the claim is the run's first call and
+// the one that decides whether it holds a slip at all, and the beat is the one
+// it makes every interval afterwards, so a guard that held for one and not the
+// other would be the claim secret leaving on a timer.
+//
+// Mutation (verified, run and restored): drop the CheckRedirect from
+// slipClient and this fails on the requests that reached the host the Location
+// named -- the claim half on the run holding the slip that host answered, and
+// both halves on the request count.
+func TestTheRunDoesNotFollowARedirect(t *testing.T) {
+	const beatEvery = 2 * time.Millisecond
+
+	for _, code := range []int{
+		http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect,
+	} {
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			var mu sync.Mutex
+			var carried []http.Header
+			elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				carried = append(carried, r.Header.Clone())
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(claimAnswer().body))
+			}))
+			t.Cleanup(elsewhere.Close)
+
+			// nowhere is the whole of what this test says about that host: it
+			// saw no request, and so none of the run's credentials.
+			nowhere := func(call string) {
+				t.Helper()
+				mu.Lock()
+				defer mu.Unlock()
+				if len(carried) == 0 {
+					return
+				}
+				t.Errorf("the %s call followed a %d to the host the Location named (%d requests): a 3xx names where this run's identity would go next", call, code, len(carried))
+				for _, h := range carried {
+					for _, name := range []string{"Authorization", credsvc.HeaderSlip, credsvc.HeaderSlipClaim, gateway.HeaderRunIdentity} {
+						if h.Get(name) != "" {
+							t.Errorf("the %s call carried %s to the host the Location named", call, name)
+						}
+					}
+				}
+			}
+
+			// The claim: the run's first call, and the one that decides
+			// whether it holds a slip at all. A 3xx is not an answer, so the
+			// run proceeds without a slip, the way it does for a service it
+			// cannot reach.
+			svc := newSlipService(t, func(int, *http.Request, []byte) slipReply {
+				return slipReply{status: code, location: elsewhere.URL + credsvc.SlipClaimPath}
+			})
+			r := slipRun(t, svc, nil, nil, beatEvery)
+			r.claimSlip(context.Background())
+			if r.slipHold() != nil {
+				t.Error("the run holds a slip a redirected claim answered: the answer came from the host the Location named, not from the service")
+			}
+			nowhere("claim")
+
+			// The beat: the claim is answered and every beat after it is
+			// redirected. The run keeps the slip it took, and the secret it
+			// presents on each beat goes to the service it claimed at and to
+			// no host that service names.
+			svc = newSlipService(t, func(n int, _ *http.Request, _ []byte) slipReply {
+				if n == 1 {
+					return claimAnswer()
+				}
+				return slipReply{status: code, location: elsewhere.URL + credsvc.SlipClaimPath}
+			})
+			r = slipRun(t, svc, nil, nil, beatEvery)
+			r.claimSlip(context.Background())
+			if r.slipHold() == nil {
+				t.Fatal("the run holds no slip: the beat this test reads was never started")
+			}
+			deadline := time.Now().Add(10 * time.Second)
+			for len(svc.beats()) == 0 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if len(svc.beats()) == 0 {
+				t.Fatalf("the service saw no beat over 10s, want one every %s", beatEvery)
+			}
+			r.stopSlipBeat()
+			nowhere("beat")
+		})
 	}
 }
 

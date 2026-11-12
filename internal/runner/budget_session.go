@@ -182,10 +182,11 @@ const (
 
 // slipBeatEvery is how often the beat asks the service to read the slip back
 // (D1934): the budget session's own cadence, read off the session rather than
-// respelled beside it, because one request per interval is what kept an
-// instance up in Check 511 and the registry's beat is that same interval. A
-// hold exists only under a session -- the claim is bound to the identity the
-// session is -- so the default is the answer for a run that somehow has none.
+// respelled beside it, because one request per interval is the cadence Check
+// 511 measured the service answering at, with no cold start, and the registry's
+// beat is that same interval. A hold exists only under a session -- the claim
+// is bound to the identity the session is -- so the default is the answer for
+// a run that somehow has none.
 func (r *run) slipBeatEvery() time.Duration {
 	r.mu.Lock()
 	sess := r.sess
@@ -835,7 +836,7 @@ func (r *run) claimSlip(ctx context.Context) {
 	// after it are redacted of it from here on.
 	r.addSecret(claim.ClaimSecret)
 	r.startSlipBeat(ctx)
-	r.d.Log.Info("this run claimed its slip: the credentials service serves it the credentials the slip names, and this run keeps one instance of it warm for as long as it lives (D1933, D1934)")
+	r.d.Log.Info("this run claimed its slip: the credentials service serves it the credentials the slip names, and this run keeps the service warm for as long as it lives by asking it to read the slip back every interval (D1933, D1934)")
 }
 
 // checkSlipServiceURL refuses a URL this run will not send its own identity
@@ -1003,9 +1004,10 @@ func slipRouteAbsent(status int) bool {
 // startSlipBeat sends the keep-warm request while the run lives: the same call
 // that claimed the slip, presenting the claim secret instead of nothing, which
 // the service answers from the slip it holds without a credential behind it
-// (D1934). One request per interval is what kept an instance up when Check 511
-// measured it, so a run holds its own instance of the service warm rather than
-// paying a cold start on the call that needs a credential.
+// (D1934). One request per interval is the cadence Check 511 measured the
+// service answering at, with no cold start, so a run holds its own instance of
+// the service warm rather than paying a cold start on the call that needs a
+// credential.
 //
 // It is a no-op for a run that holds no slip, which is every run of an
 // installation without the slip routes and every run whose claim did not land:

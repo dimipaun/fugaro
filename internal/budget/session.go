@@ -118,9 +118,11 @@ const maxStale = 8
 // DefaultHeartbeatEvery is the cadence of the registry's beat and every
 // interval derived from it (Config.HeartbeatEvery when it is zero). It is
 // exported because the runner's keep-warm beat against the credentials
-// service keeps the same interval — one request per 15 s is what Check 511
-// measured as enough to hold an instance up (D1934) — and the two beats are
-// one cadence by intent rather than two numbers that happen to agree.
+// service keeps the same interval — one request per 15 s is the cadence Check
+// 511 measured the service answering at across its whole 300 s window, with no
+// cold start (D1934; that check exited 2 on its instance-ids row, so what it
+// settled is the timing and not how many instances answered) — and the two
+// beats are one cadence by intent rather than two numbers that happen to agree.
 const DefaultHeartbeatEvery = 15 * time.Second
 
 // Session is a run's connection to the budget backend: its Firebase
