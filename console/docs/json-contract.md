@@ -3383,7 +3383,7 @@ next.
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
 | `version` | integer | never | never | the document's own version, `1`. It is the front door's `mcpauth.RoadmapAnswerVersion`, the one constant both ends read, so a shape change moves both together, and a document this build does not know is refused by its number rather than read field by field: the command exits **1** and names `fugaro update`, which is the one command that brings the CLI and the installation to the same release |
-| `request` | string | never | never | the request's id, minted by the front door when it queued the write. It is the only handle on the request, the value `roadmap request` takes, and the value the command prints **before** it waits — so a person who stops the command still holds it |
+| `request` | string | never | never | the request's id, minted by the front door when it queued the write. It is the only handle on the request and the value `roadmap request` takes. Without `--json` the command prints it as soon as the door has queued the write and **before** it waits, so a person who stops the command still holds it; with `--json` nothing reaches standard output until the outcome is in, because the document is what was asked for, and the id is a field of it |
 | `kind` | string | never | never | what the request asked for: `publish_plan`, `unpublish_plan`, `move`, `need`, `unneed` or `release_set`. It is the request's own discriminator and not the tool's name, because two tools are the same act with opposite arguments |
 | `status` | string | never | never | one of `applied`, `refused`, `failed`, `pending` |
 | `reason` | string | **yes** | never | why a `refused` or a `failed` request did not happen, in the record's own words. Absent rather than empty for the two statuses that carry none |
@@ -3413,8 +3413,9 @@ inside that sentence rather than in a `current` field, because no request was
 queued to carry one: a console that showed a `current` beside such a refusal
 would be showing the answer to a different call. (A refusal from the protocol
 layer rather than from the tool — a name the catalogue does not hold, a store
-the door could not read — is a JSON-RPC error, and it is not this document
-either.)
+the door could not read or write, a method it does not serve — is a JSON-RPC
+error instead: it is the installation's and not the call's, the command exits
+**2**, and it is not this document either.)
 
 **The wait.** A write asks for its outcome immediately after queueing, and asks
 again every two seconds until the status is not `pending` or 60 seconds have

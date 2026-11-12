@@ -307,6 +307,34 @@ func TestAWriteRefusedBeforeItIsQueuedIsTheDoorsOwnSentence(t *testing.T) {
 	}
 }
 
+// TestAFaultOfTheFrontDoorIsTheInstallations is the other half of the exit
+// code the group's own sentence pins: a JSON-RPC error is the front door
+// failing to answer a call this build made — -32603 a store it could not read
+// or write, -32602 a call it would not read, -32601 a method it does not serve
+// — and it is the installation's, exit 2. Only a tool's own refusal (`isError`)
+// and a credential the door will not take (401, 403) are the caller's, and
+// mapping this one to exit 1 told a person to look again at a call the record
+// never saw.
+func TestAFaultOfTheFrontDoorIsTheInstallations(t *testing.T) {
+	newCloudFixture(t)
+	door := newFakeFrontDoor(t)
+	store := &keychain.Fake{}
+	withFrontDoor(t, door, store)
+	seedCredential(t, store, door, "aurora")
+	door.failMCP(-32603, "the tool could not be answered: this installation's store could not be read or written, which is a fault of the installation and not of this call")
+
+	_, _, err := execute(t, "coordinator", "roadmap", "request", "req-1")
+	if err == nil {
+		t.Fatal("a fault of the installation exited 0")
+	}
+	if fcli.ExitCode(err) != fcli.ExitRemoteError {
+		t.Errorf("the fault exited %d; want %d — the record never saw the call", fcli.ExitCode(err), fcli.ExitRemoteError)
+	}
+	if !strings.Contains(err.Error(), "-32603") || !strings.Contains(err.Error(), "fault of the installation") {
+		t.Errorf("the refusal is %q; want the code and the door's own sentence", err)
+	}
+}
+
 // TestADocumentInAVersionThisBuildDoesNotReadIsRefused is the gate the version
 // is for, at both ends of a write: the number is the front door's own
 // (mcpauth.RoadmapAnswerVersion — one constant, so there is no second number

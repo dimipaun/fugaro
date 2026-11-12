@@ -605,7 +605,20 @@ func coordinatorCallTool(ctx context.Context, client *http.Client, door *coordin
 		return nil, fcli.RemoteErr(errors.New("the front door's answer was not a JSON-RPC document"))
 	}
 	if rpc.Error != nil {
-		return nil, fcli.UserErr("the front door refused %s: %s", name, safetext.OneLine(rpc.Error.Message))
+		// A JSON-RPC error is the front door failing to answer a call this
+		// build made, and it is the installation's (exit 2) — which is what
+		// the group's own exit-code sentence says a failure of the front door
+		// is. The code says what failed: -32603 a store it could not read or
+		// write (and the audit sink it could not record into), -32602 a call
+		// it would not read, -32601 a method it does not serve, -32700 and
+		// -32600 a body it could not read at all. Nothing a person can fix
+		// arrives this way: a tool's refusal is `isError` below, and a token
+		// the door will not take is a 401 or a 403 above.
+		said := safetext.OneLine(rpc.Error.Message)
+		if said == "" {
+			said = "the door sent no message"
+		}
+		return nil, fcli.RemoteErr(fmt.Errorf("the front door answered %s with the JSON-RPC error %d: %s", name, rpc.Error.Code, said))
 	}
 	if rpc.Result == nil {
 		return nil, fcli.RemoteErr(fmt.Errorf("the front door's answer to %s carried neither a result nor an error", name))
@@ -632,11 +645,13 @@ func coordinatorCallTool(ctx context.Context, client *http.Client, door *coordin
 		// was not an outcome document".
 		//
 		// A refusal is the caller's (exit 1). What the door cannot answer for
-		// at all is not this shape: a store it could not read or write is
-		// answered as -32603, a name the catalogue does not hold as -32602,
-		// and a tool the token may not call as a 403 — all handled above. So
-		// the text here is the tool reading the call, which is why §6.24 says
-		// a call refused before it queues anything has no document at all.
+		// at all is not this shape and is handled above as what it is: a
+		// store it could not read or write is answered as -32603, a name the
+		// catalogue does not hold as -32602, and a tool the token may not
+		// call as a 403 — the installation's and the credential's, not the
+		// call's. So the text here is the tool reading the call, which is why
+		// §6.24 says a call refused before it queues anything has no document
+		// at all.
 		return nil, fcli.UserErr("the front door refused %s: %s", name, safetext.OneLine(text))
 	}
 	return json.RawMessage(text), nil

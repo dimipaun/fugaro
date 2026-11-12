@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -530,12 +531,15 @@ const coordinatorCallbackPath = "/callback"
 // code the door sent, or the refusal it sent instead.
 type coordinatorCallback struct {
 	done chan struct{}
+	// once is what makes the first answer the only one. The listener serves
+	// each request on its own goroutine and the context watcher answers too,
+	// so two of them reach finish at the same instant routinely — a browser
+	// that follows the redirect twice, a context cancelled while the handler
+	// runs — and a check followed by a close would close the signal twice and
+	// take the process down with it.
+	once sync.Once
 	code string
 	err  error
-	// wrote is whether the browser's request has been answered yet, so that
-	// wait can tell "no answer within the bound" from "answered, and this
-	// process has not looked yet".
-	wrote chan struct{}
 }
 
 // coordinatorAwaitCallback serves the listener until the door's answer arrives
@@ -547,7 +551,7 @@ type coordinatorCallback struct {
 // ignored, because a state this process did not mint is not the flow's answer
 // and refusing it loudly would be a refusal a stranger could read.
 func coordinatorAwaitCallback(ctx context.Context, ln net.Listener, state string) (*coordinatorCallback, error) {
-	cb := &coordinatorCallback{done: make(chan struct{}), wrote: make(chan struct{})}
+	cb := &coordinatorCallback{done: make(chan struct{})}
 	mux := http.NewServeMux()
 	mux.HandleFunc(coordinatorCallbackPath, func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -591,15 +595,15 @@ func coordinatorAwaitCallback(ctx context.Context, ln net.Listener, state string
 	return cb, nil
 }
 
-// finish records the answer once and wakes whoever is waiting on it.
+// finish records the answer once and wakes whoever is waiting on it. The
+// first caller wins and the others wait for it and return: an answer that
+// arrived second is not a second answer, and the recording and the wake are
+// one step rather than a check and a close two goroutines can both pass.
 func (cb *coordinatorCallback) finish(code string, err error) {
-	select {
-	case <-cb.done:
-		return
-	default:
-	}
-	cb.code, cb.err = code, err
-	close(cb.done)
+	cb.once.Do(func() {
+		cb.code, cb.err = code, err
+		close(cb.done)
+	})
 }
 
 // wait blocks until the answer arrives or the bound passes. The bound is

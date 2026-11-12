@@ -81,6 +81,12 @@ type fakeFrontDoor struct {
 	// refuseStatus, when set, is the status every MCP call is answered with
 	// instead of being served.
 	refuseStatus int
+	// faultCode and faultMessage, when set, are the JSON-RPC error every MCP
+	// call is answered with: a fault of the installation rather than a
+	// refusal of the call, which the resource server sends as -32603 when it
+	// cannot read or write its store.
+	faultCode    int
+	faultMessage string
 }
 
 func newFakeFrontDoor(t *testing.T) *fakeFrontDoor {
@@ -133,6 +139,15 @@ func (d *fakeFrontDoor) refuseWrite(sentence string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.writeRefusal = sentence
+}
+
+// failMCP makes every call answer the way the resource server answers a fault
+// of the installation: a JSON-RPC error, which is not a refusal of the call
+// and not this build's to fix.
+func (d *fakeFrontDoor) failMCP(code int, message string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.faultCode, d.faultMessage = code, message
 }
 
 // answerInVersion moves the number the door answers its documents in, so that
@@ -264,7 +279,15 @@ func (d *fakeFrontDoor) mcp(w http.ResponseWriter, r *http.Request) {
 	}
 	d.mu.Lock()
 	d.calls = append(d.calls, fakeToolCall{Name: req.Params.Name, Arguments: req.Params.Arguments})
+	faultCode, faultMessage := d.faultCode, d.faultMessage
 	d.mu.Unlock()
+	if faultCode != 0 {
+		// After the catalogue lookup, where the real door's own faults are:
+		// the call is one this endpoint served, and the answer is that the
+		// installation could not.
+		d.rpcError(w, faultCode, faultMessage)
+		return
+	}
 	if req.Params.Name == "roadmap_request" {
 		id, _ := req.Params.Arguments["id"].(string)
 		outcome, ok := d.outcome(id)
@@ -578,6 +601,94 @@ func TestALoginIgnoresARequestItDidNotSend(t *testing.T) {
 	}
 	if cred.RefreshToken != door.refreshToken() {
 		t.Error("the credential does not hold the refresh token the door minted")
+	}
+}
+
+// TestTheCallbackRecordsOneAnswerOfMany is the callback's own half of the
+// listener's rule, and it is a test of the seam rather than of HTTP because
+// the window it is about is a few instructions wide: two answers released
+// together, thousands of times. A check followed by a close is a close two
+// goroutines both reach, which panics the process in the middle of a sign-in —
+// and the handler and the context watcher are two goroutines that reach it.
+func TestTheCallbackRecordsOneAnswerOfMany(t *testing.T) {
+	for round := 0; round < 2000; round++ {
+		cb := &coordinatorCallback{done: make(chan struct{})}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				cb.finish(fmt.Sprintf("code-%d", i), nil)
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		if err := cb.wait(); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		if cb.code == "" {
+			t.Fatalf("round %d: the callback recorded no answer", round)
+		}
+	}
+}
+
+// TestSeveralAnswersToOneLoginDoNotRace drives the listener the way a browser
+// does when it follows the redirect more than once: several answers carrying
+// the state this login minted, at once. One of them is the answer, the rest
+// change nothing, and the sign-in completes — which is what the callback's own
+// test above cannot show, because it never runs the handler.
+func TestSeveralAnswersToOneLoginDoNotRace(t *testing.T) {
+	newCloudFixture(t)
+	for round := 0; round < 4; round++ {
+		door := newFakeFrontDoor(t)
+		store := &keychain.Fake{}
+		withFrontDoor(t, door, store)
+		coordinatorOpenBrowser = func(raw string) error {
+			u, err := url.Parse(raw)
+			if err != nil {
+				return err
+			}
+			resp, err := http.Get(raw)
+			if err != nil {
+				return err
+			}
+			var page struct {
+				Code string `json:"code"`
+			}
+			err = json.NewDecoder(resp.Body).Decode(&page)
+			_ = resp.Body.Close()
+			if err != nil {
+				return err
+			}
+			target := u.Query().Get("redirect_uri") + "?code=" + url.QueryEscape(page.Code) + "&state=" + url.QueryEscape(u.Query().Get("state"))
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			for i := 0; i < 8; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					answer, err := http.Get(target)
+					if err != nil {
+						return
+					}
+					_, _ = io.Copy(io.Discard, answer.Body)
+					_ = answer.Body.Close()
+				}()
+			}
+			close(start)
+			wg.Wait()
+			return nil
+		}
+
+		if _, _, err := execute(t, "coordinator", "login", "--scope", "roadmap:write"); err != nil {
+			t.Fatalf("round %d: eight answers at once ended the sign-in: %v", round, err)
+		}
+		if len(store.Keys) != 1 {
+			t.Fatalf("round %d: the keychain holds %v; want the one credential the answer stored", round, store.Keys)
+		}
 	}
 }
 
