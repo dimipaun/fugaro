@@ -139,6 +139,14 @@ func (c *Config) Shared() *Config {
 	// ParseShared from refusing a shared file whole over keys it does not
 	// know.
 	s.Issues = nil
+	// Escalation is local-only and sharpest of all: the ladder's thresholds
+	// decide when a stalled item is taken off its recipe, what it runs on then
+	// and at what cost it is merged under the gate, so a launcher who could
+	// write the block into the runs bucket's shared file would be choosing how
+	// every teammate's runs merge (D2032, G3). ParseShared refuses the key
+	// besides, because a shared config carrying it was not written by the
+	// converge.
+	s.Escalation = nil
 	// The operator's rotation record is local-only for update_check's reason,
 	// one credential at a time: secret_rotation_days is how often the person
 	// who holds the provider accounts means to rotate them, and secret_expires

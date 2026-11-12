@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -146,6 +147,14 @@ var settingsGenericKeys = map[string]bool{
 	"stages.review.claude_account":       true,
 	"stages.review_first.claude_account": true,
 	"stages.triage.claude_account":       true,
+	// The ladder's per-mode override table (E3). A mode's own member is the one
+	// spelling of the block that carries a varying segment, so it is named here
+	// the way the stage account's pattern is: the registry carries the row and
+	// settingsWriteLookup reaches a wildcard row only through this list.
+	"escalation.modes.*.r2_after_hours":    true,
+	"escalation.modes.*.r2_after_attempts": true,
+	"escalation.modes.*.r3_after_hours":    true,
+	"escalation.modes.*.r2_coder":          true,
 	// A repository's workflows.* (37 rows) and the project layer's profiles.*
 	// (36), in the registry's own order.
 	"workflows.*.profile":                            true,
@@ -267,6 +276,11 @@ var settingsGenericPrefixes = []string{
 	"agent.", "git.", "followup.", "governance.", "watch.",
 	"layer.defaults.", "layer.governance.",
 	"credentials.", "clone_urls.",
+	// The ladder's own block (E3). It is §4.4's list's successor in shape and
+	// not in origin: the keys are T-E3's, and the generic path is their one
+	// door — which is what puts the owner's own hand (the typed form below) and
+	// the coding agent's session in front of them at all.
+	"escalation.",
 }
 
 // settingsGenericKey reports whether spec §4.4 gives the generic path the key.
@@ -1626,6 +1640,167 @@ func settingsLoosens(key, oldValue, newValue string) bool {
 	return true
 }
 
+// settingsEscalationLoosens is the outer loop's ladder read as a direction
+// (E3, D846): the three threshold keys and the critical-path factor, whose
+// *smaller* figure is the wider one, and the cost ceiling beside them, whose
+// larger figure is. It is not settingsCeilingKey's list, and that is the whole
+// reason it exists: on the ladder a lower figure takes an item off its normal
+// recipe sooner, merges it under the gate on a shorter clock, or scales the
+// clock of an item that blocks other work down — which is more of the owner's
+// authority handed to the daemon and not less.
+//
+// `unset` is deliberately not the typed form here, though it is on a ceiling: a
+// ceiling removed hands the decision to a looser layer, where a threshold
+// removed hands it back to the shipped table — a figure the owner did not
+// choose, and one neither looser nor tighter than the figure it replaces. The
+// directions that are provably a loosening are the ones worth the owner's own
+// hand; the rest are an ordinary edit to a local file.
+//
+// A grade is not here either: naming a stronger grade is the tightening
+// direction, and naming a weaker one is a model choice the project layer owns
+// rather than a ladder threshold (G11, D2039).
+func settingsEscalationLoosens(key, oldValue, newValue, mode string) (string, bool) {
+	if mode != "set" && mode != "add-entry" {
+		return "", false
+	}
+	_, leaf := settingsEscalationName(key)
+	switch "escalation." + leaf {
+	case "escalation.r2_after_hours", "escalation.r2_after_attempts":
+		if settingsLowersFigure(oldValue, newValue) {
+			return "this escalates sooner: rung 2 then runs on a lower figure than the one a run gets today", true
+		}
+	case "escalation.r3_after_hours":
+		if settingsLowersFigure(oldValue, newValue) {
+			return "this lowers the ladder's ceiling: an item is then merged under the gate on a shorter clock than the one a run gets today", true
+		}
+	case "escalation.critical_path_factor":
+		if settingsLowersFigure(oldValue, newValue) {
+			return "this shortens the ladder's critical path: every time threshold of an item that blocks other work is then scaled by a smaller figure, so it escalates sooner than it does today", true
+		}
+	case "escalation.cost_ceiling":
+		if settingsLoosens(key, oldValue, newValue) {
+			return "this raises the ladder's cost ceiling: an item may then spend more before the ceiling stops it", true
+		}
+	}
+	return "", false
+}
+
+// settingsEscalationName splits a ladder key into the mode it is about and the
+// leaf it names: a mode's own member is the same key one segment deeper, so the
+// two spellings are one rule rather than two, and the mode comes back empty for
+// every key the block states once.
+func settingsEscalationName(key string) (mode, leaf string) {
+	rest, ok := strings.CutPrefix(key, "escalation.modes.")
+	if !ok {
+		return "", strings.TrimPrefix(key, "escalation.")
+	}
+	m, l, _ := strings.Cut(rest, ".")
+	return m, l
+}
+
+// settingsEscalationFigureKey is the ladder's own figures: the keys a write is
+// measured against what a run gets today, which settingsEscalationBase answers.
+// The grades and the readiness switch beside them are not figures — a grade is
+// a model choice the project layer owns (G11, D2039) and turning ready_drafts
+// on is the row's own direction — so the fence for those reads the values and
+// not a scale.
+func settingsEscalationFigureKey(key string) bool {
+	_, leaf := settingsEscalationName(key)
+	switch leaf {
+	case "r2_after_hours", "r2_after_attempts", "r3_after_hours", "critical_path_factor", "cost_ceiling":
+		return true
+	}
+	return false
+}
+
+// settingsEscalationBase is the figure a run gets today for one of the ladder's
+// keys: the file's own figure where it states one, and the shipped table
+// (escalation.DefaultThresholds) behind it where it does not. It is
+// settingsCeilingBase's rule read against the one layer a ladder key has, and
+// it exists for the same hole: a first write over a default the file never
+// states is a loosening like any other, and an empty base reads it as an
+// ordinary write — so an agent session could lower the ladder every mode runs
+// under with an edit that meets no fence.
+//
+// A scalar key reaches every mode, so it is measured against the *largest*
+// figure it would lower: the fence is over any mode being widened, not over all
+// of them, and one mode's clock shortening is the authority this guards. A
+// mode's own member is measured against that mode's figure alone — its member
+// where the file states one, else the block's scalar, else the shipped row.
+// The cost ceiling answers "" where no file states one, and that is not the
+// same blind spot: a ceiling nobody wrote is no ceiling, which is the loosest
+// direction, so a write that adds one tightens.
+func settingsEscalationBase(doc []byte, key, raw string) string {
+	shipped := escalation.DefaultThresholds()
+	mode, leaf := settingsEscalationName(key)
+	if mode != "" {
+		return settingsEscalationFigure(doc, shipped, mode, leaf, raw)
+	}
+	best, bestN := "", 0.0
+	for _, m := range rigor.Modes {
+		figure := settingsEscalationFigure(doc, shipped, string(m), leaf, raw)
+		n, err := strconv.ParseFloat(figure, 64)
+		if err != nil {
+			continue
+		}
+		if best == "" || n > bestN {
+			best, bestN = figure, n
+		}
+	}
+	return best
+}
+
+// settingsEscalationFigure is what a run gets for one mode and one leaf today:
+// the mode's own member where the file states one, else the file's scalar,
+// else the shipped row's own figure.
+func settingsEscalationFigure(doc []byte, shipped escalation.Thresholds, mode, leaf, scalar string) string {
+	if v := settingsValueIn(doc, []string{"escalation", "modes", mode, leaf}); v != "" {
+		return v
+	}
+	if scalar != "" {
+		return scalar
+	}
+	return settingsEscalationShipped(shipped, mode, leaf)
+}
+
+// settingsEscalationShipped is the shipped table's own figure for one mode and
+// leaf — the figure a run gets for a mode this file does not override. A key
+// the table has no column for (the cost ceiling, a mode's member of a key the
+// block states once) answers "", which the callers read as no figure to
+// compare against.
+func settingsEscalationShipped(t escalation.Thresholds, mode, leaf string) string {
+	row, ok := t.Rows[rigor.Mode(mode)]
+	if !ok {
+		return ""
+	}
+	switch leaf {
+	case "r2_after_hours":
+		return strconv.FormatFloat(row.R2Hours, 'f', -1, 64)
+	case "r2_after_attempts":
+		return strconv.Itoa(row.RunsBeforeR2)
+	case "r3_after_hours":
+		return strconv.FormatFloat(row.CeilingHours, 'f', -1, 64)
+	case "critical_path_factor":
+		return strconv.FormatFloat(t.CriticalPathFactor, 'f', -1, 64)
+	}
+	return ""
+}
+
+// settingsLowersFigure reports whether newValue is a smaller number than
+// oldValue. A key no file sets has nothing to lower, so a first write is never
+// the typed form — settingsLoosens' rule over one figure rather than a cap.
+func settingsLowersFigure(oldValue, newValue string) bool {
+	if oldValue == "" {
+		return false
+	}
+	oldN, oldErr := strconv.ParseFloat(oldValue, 64)
+	newN, newErr := strconv.ParseFloat(newValue, 64)
+	if oldErr != nil || newErr != nil {
+		return false
+	}
+	return newN < oldN
+}
+
 // settingsListSubset reports whether every member of a appears in b.
 func settingsListSubset(a, b string) bool {
 	in := map[string]bool{}
@@ -1763,6 +1938,11 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 			// turned on names neither the list nor the account.
 			return true, followupAddWhy
 		}
+	}
+	// The ladder's own block (E3), whose directions are its own for the reason
+	// settingsEscalationLoosens states.
+	if why, typed := settingsEscalationLoosens(key, oldValue, newValue, mode); typed {
+		return true, why
 	}
 	// A row's own sensitive direction: turning the key on is the act D846
 	// reserves, and the row carries the sentence saying why.
@@ -2012,6 +2192,13 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	base := checkedOld
 	if settingsCeilingKey(checked.Key) {
 		base = settingsCeilingBase(cmd.Context(), checked, checkedOld)
+	}
+	// The ladder's figures are the same "what a run gets today" question read
+	// against the shipped table rather than the layers above the file
+	// (settingsEscalationBase), so a first write into a file that states no
+	// escalation block is a loosening like any other.
+	if settingsEscalationFigureKey(checked.Key) {
+		base = settingsEscalationBase(old, checked.Key, checkedOld)
 	}
 	typed, why := settingsTypedWrite(checked, base, checkedNew, mode)
 	if !changed {
