@@ -10,9 +10,17 @@ and how much of the per-run cap it may spend getting there. Five modes, one word
 each: `poc`, `startup`, `pro`, `critical` and `hotfix`.
 
 The default is `pro`, for every repository that configures nothing. It is a
-default and not a floor: the narrowest layer that sets a mode wins, and a
-repository that wants the behavior of the releases before the modes existed pins
-itself back with one line — `rigor: { default: critical }` in its `fugaro.yaml`.
+default and not a floor: the narrowest layer that sets a mode wins, and one line
+in a `fugaro.yaml` asks for another — `rigor: { default: critical }` carries the
+whole per-run cap and blocks on every finding.
+
+One bound is worth meeting before the table, because it is the difference between
+a mode being resolved and a mode being applied: the mode's blocking rule runs for
+a run whose repository **opted in** — a `rigor:` block in its `fugaro.yaml`, or a
+`defaults.rigor` the project layer sets for it. A repository that configures
+nothing still resolves `pro`, and `pro` supplies its rounds and its share of the
+cap, but it blocks on every finding it did not fix, exactly as every run did
+before the modes existed (§[What blocks](#what-blocks)).
 
 This page is the promise; [rigor-modes/](rigor-modes/README.md) is the design
 record, and the two are separate on purpose. The ladder a mode sits on is the one
@@ -31,7 +39,7 @@ because the run it names is the one with the least room to spend.
 | `startup` | "Good foundation. Happy path plus common error paths. Rare, expensive corner cases go to the backlog." | 2 / 2 | A finding whose likelihood × impact reaches 8, plus the catastrophic override above. | 0.70 |
 | `pro` | "Established-company quality. Aim for bug-free patches, but balance cost against likelihood; extremely rare, high-effort issues may stay unfixed." | 3 / 3 | A finding whose likelihood × impact reaches 4, plus the override — except the case the sentence names: a likelihood of 1 with a fix cost of 4 or more is tolerated. | 0.85 |
 | `critical` | "Maximum care about everything." | 3 / 5 | Every finding. It is the strictest mode and the one no repository may fall below for security-sensitive code. | 1.00 |
-| `hotfix` | "Production is on fire. Time is the dominant constraint." It is reached per run and by no layer. | 1 / 1 | A finding of class `security` alone, plus an unscored one. A `data_loss` finding and an impact of 5 are tolerated. | 0.40 |
+| `hotfix` | "Production is on fire. Time is the dominant constraint." Reached only by a layer written by hand, never by a flag (§[What is not settled](#what-is-not-settled-the-hotfix-gate)). | 1 / 1 | A finding of class `security` alone, plus an unscored one. A `data_loss` finding and an impact of 5 are tolerated. | 0.40 |
 
 The rounds column is the mode's **default**, not a cap (§[Review
 rounds](#review-rounds)), and the last column is the mode's share of the
@@ -66,6 +74,15 @@ set. In every mode but `poc` the first-line level is the repository's own switch
 a level the configuration turned off (§[The floor](#the-floor)).
 
 ### What blocks
+
+**The table applies to a run that opted in.** A mode may not let a finding
+through where the repository has not asked for the mode, so the row is read only
+for a run whose repository carries a `rigor:` block, or whose project layer sets
+`defaults.rigor` for it (`rigor.Config.Configured`). A repository that configures
+nothing resolves `pro` — its rounds and its share of the cap are `pro`'s — but no
+row is applied to it: every finding it did not fix blocks it, which is what every
+run did before the modes existed. Opting in is therefore the step that turns the
+modes from a setting of cost and rounds into a review policy.
 
 Findings are the reviewer's own output: every finding carries three axes of 1–5 —
 likelihood, impact and fix cost — and a class, and the mode's table reads the
@@ -168,10 +185,11 @@ still decides the run's readiness.
 repository in the project. `fugaro rigor set MODE` writes the project layer's
 default, and `fugaro rigor set MODE --area GLOB --name NAME` writes one rule;
 both write this machine's own project layer file, end with `next: fugaro update`,
-and refuse `hotfix` in either form — no layer sets it, and
-`fugaro run --mode hotfix` is the one door that reaches it. A mode below what the
-project resolves to today is refused in a coding agent's session, with the command
-to run at the owner's own terminal.
+and refuse `hotfix` in either form — a mode a command writes is a mode every run
+of the project takes, and `hotfix` is meant to be an operator's own run
+(§[What is not settled](#what-is-not-settled-the-hotfix-gate)). A mode below what
+the project resolves to today is refused in a coding agent's session, with the
+command to run at the owner's own terminal.
 
 **The order** is the one rule `docs/project-layer.md` §2 states: an area rule the
 run's paths match, then the repository's `rigor.default`, then the project layer's
@@ -190,6 +208,8 @@ default and not a floor. Two differences worth knowing:
 **A follow-up** (`fugaro run --pr N`) keeps the mode the pull request's runs
 recorded, and may only raise it — with `--mode` or without. A follow-up is a
 continuation of the same work, so it may not review less than the run it follows.
+A recorded `hotfix` is the one mode it does not keep: the follow-up re-resolves
+from its layers, and `--mode hotfix` on a follow-up is refused outright.
 
 ## The floor
 
@@ -236,10 +256,14 @@ review in a mode whose own level set is the first-line review alone.
 ## What is not settled: the hotfix gate
 
 `hotfix` is a mode value today, and that is all it is. It resolves like the
-others, its levels are `pro`'s set, and it is the one mode no layer may set — so
-`fugaro run --mode hotfix` reaches it, and a hand-written `rigor.default: hotfix`
-does too. What does **not** exist is the gate the spec names: an authorization
-read from the base branch before a run may be a hotfix at all.
+others and its levels are `pro`'s set. What reaches it is a layer written by hand
+— `rigor: { default: hotfix }` in a `fugaro.yaml`, or an `areas` rule whose
+`mode` is `hotfix`, in either layer; the configuration accepts both and the
+resolver honours them. `fugaro rigor set` refuses it in either form, and
+`fugaro run --mode hotfix` does **not** reach it: a request may only raise a run's
+mode, and `hotfix` ranks below every on-axis mode, so the launcher says the flag
+has no effect. What does **not** exist is the gate the spec names: an
+authorization read from the base branch before a run may be a hotfix at all.
 
 That gate is an open question for the owner and is designed and reviewed on its
 own, as task R7 of `docs/rigor-command/implementation-plan.md` — whose first step

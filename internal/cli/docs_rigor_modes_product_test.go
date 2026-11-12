@@ -203,63 +203,41 @@ func TestDocsRigorModesProductTableMatchesTheCode(t *testing.T) {
 // and a page is edited by hand, which is exactly where a renamed flag survives.
 //
 // The commands are read out of the real command tree (`NewRootCmd`), the flags
-// out of every command's own flag set, and the keys out of
+// out of the flag set of the command the span names them on, and the keys out of
 // `internal/config`'s scope table — the table every layer is validated against,
 // so a key it does not hold is a key no `fugaro.yaml` may write.
 func TestDocsRigorModesProductNamesWhatExists(t *testing.T) {
 	doc := readDoc(t, rigorModesProductDoc)
 	root := NewRootCmd()
 
-	// Every command the document names, as an inline code span that starts with
-	// the command and goes on until its first flag or its first argument
-	// placeholder — `fugaro run --mode critical` is a command and its flag, and
-	// `fugaro rigor floor set MODE LEVELS` is a command and its two arguments —
-	// plus every line of a code block that opens with one, which is where a
-	// page puts the commands a reader copies.
-	spans := regexp.MustCompile("`fugaro [^`]*`").FindAllString(doc, -1)
-	for _, line := range strings.Split(doc, "\n") {
-		if line = strings.TrimSpace(line); strings.HasPrefix(line, "fugaro ") {
-			spans = append(spans, "`"+line+"`")
-		}
-	}
+	spans := rigorModesProductSpans(doc)
 	if len(spans) == 0 {
 		t.Fatalf("%s names no fugaro command: a product document that shows none is a page a reader cannot act on", rigorModesProductDoc)
 	}
-	named := map[string]bool{}
 	for _, span := range spans {
-		// The command is the longest run of leading words that resolves in the
-		// tree, so a span that goes on to name a flag, an argument placeholder
-		// (`MODE`, `GLOB`) or a value reads as its command and no further: a
-		// document writes `fugaro rigor floor set MODE LEVELS`, and the
-		// placeholder is not a subcommand. A span whose first word already
-		// resolves to nothing is the failure this test is for — the command was
-		// renamed or removed, and the page still promises it.
-		fields := strings.Fields(strings.Trim(span, "`"))
-		var path []string
-		for _, w := range fields[1:] {
-			if strings.HasPrefix(w, "-") {
-				break
-			}
-			c, _, err := root.Find(append(append([]string{}, path...), w))
-			if err != nil || c == nil || c.Name() != w {
-				break
-			}
-			path = append(path, w)
-		}
-		if len(path) == 0 {
-			t.Errorf("%s names %s, and no command starts with that", rigorModesProductDoc, span)
+		path, ok := rigorModesProductCommand(t, root, span)
+		if !ok {
 			continue
 		}
-		key := strings.Join(path, " ")
-		if named[key] {
-			continue
+
+		// Every flag a span names is looked up on the command that span names it
+		// on, not on the tree as a whole: a flag that moved to another command
+		// still exists somewhere, so the tree-wide set would pass a reader a
+		// span that no longer runs.
+		c, _, err := root.Find(path)
+		if err != nil || c == nil {
+			continue // reported by rigorModesProductCommand
 		}
-		named[key] = true
+		for _, f := range rigorModesProductFlags(span) {
+			if c.Flags().Lookup(f) == nil {
+				t.Errorf("%s names --%s on `fugaro %s`, which has no such flag", rigorModesProductDoc, f, strings.Join(path, " "))
+			}
+		}
 	}
 
-	// Every flag, against every command's own flags: a flag the document names
-	// is one a reader will type, and a renamed one is a run the launcher refuses
-	// before it starts.
+	// Every flag named outside a command span — a page explains `--mode` in
+	// prose as often as it shows it in a command — against the whole tree, which
+	// is the most a span-less mention can be held to.
 	flags := map[string]bool{}
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
@@ -293,4 +271,139 @@ func TestDocsRigorModesProductNamesWhatExists(t *testing.T) {
 			t.Errorf("%s no longer names the key %s: a mode's knobs are what the page is about, and a key the scope table holds is one a reader may write", rigorModesProductDoc, key)
 		}
 	}
+}
+
+// TestDocsRigorModesProductStatesTheOptInBound: the document says that a mode's
+// blocking row is applied only to a run whose repository opted in, and that a
+// repository that configures nothing blocks on every finding it did not fix.
+//
+// It is pinned because every other claim on the page is false without it: the
+// runner reads the table only where rigor.Config.Configured, so a page that
+// promises `pro`'s table to a repository that configures nothing promises
+// something no run does. The sentence and the code are asked in the same breath,
+// since either one moving alone is the mistake.
+func TestDocsRigorModesProductStatesTheOptInBound(t *testing.T) {
+	doc := readDoc(t, rigorModesProductDoc)
+	for _, want := range []string{
+		"**The table applies to a run that opted in.**",
+		"blocks on every finding it did not fix",
+		"`rigor.Config.Configured`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s lacks %q: the mode's table is read only for a repository that opted in, and a page that promises it to one that configured nothing promises what no run does", rigorModesProductDoc, want)
+		}
+	}
+	if (rigor.Config{}).Configured() {
+		t.Errorf("rigor.Config{}.Configured() is true, and %s reads a repository that configures nothing as getting no row: the sentence and the gate have to move together", rigorModesProductDoc)
+	}
+	if !(rigor.Config{Repo: rigor.Pro}).Configured() {
+		t.Errorf("a repository whose own rigor block names pro is not Configured, and %s reads a rigor: block as the opt-in", rigorModesProductDoc)
+	}
+}
+
+// TestDocsRigorModesProductStatesTheHotfixDoor: the document says that a
+// hand-written layer is what reaches `hotfix` and that `fugaro run --mode hotfix`
+// does not, since a request may only raise a run's mode and `hotfix` ranks below
+// every on-axis mode.
+//
+// The two halves are the resolver's own behaviour, so they are asked of it here:
+// a page that named the flag as the door would send an operator to a launch that
+// does nothing, which is what this guard exists to catch.
+func TestDocsRigorModesProductStatesTheHotfixDoor(t *testing.T) {
+	doc := readDoc(t, rigorModesProductDoc)
+	for _, want := range []string{
+		"What reaches it is a layer written by hand",
+		"`fugaro run --mode hotfix` does **not** reach it",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s lacks %q: the flag cannot raise a run to hotfix, and the page has to say which door does reach it", rigorModesProductDoc, want)
+		}
+	}
+	if got := rigor.Resolve(rigor.Config{Repo: rigor.Pro}, rigor.Request{Mode: rigor.Hotfix}); got.Mode != rigor.Pro {
+		t.Errorf("a request for hotfix resolved %s, and %s reads the flag as reaching nothing: the request and the mode's rank have to move together", got.Mode, rigorModesProductDoc)
+	}
+	if got := rigor.Resolve(rigor.Config{Repo: rigor.Hotfix}, rigor.Request{}); got.Mode != rigor.Hotfix {
+		t.Errorf("a rigor block naming hotfix resolved %s, and %s reads a hand-written layer as the way in", got.Mode, rigorModesProductDoc)
+	}
+}
+
+// rigorModesProductSpans is every command the document shows: an inline code
+// span that opens with `fugaro `, and every line of a fenced block that opens
+// with one, which is where a page puts the commands a reader copies. A fenced
+// line's trailing `#` comment is dropped first, since the fences are shell.
+func rigorModesProductSpans(doc string) []string {
+	spans := regexp.MustCompile("`fugaro [^`]*`").FindAllString(doc, -1)
+	for _, line := range strings.Split(doc, "\n") {
+		line = strings.TrimSpace(line)
+		if i := strings.Index(line, " #"); i >= 0 {
+			line = strings.TrimSpace(line[:i])
+		}
+		if strings.HasPrefix(line, "fugaro ") {
+			spans = append(spans, "`"+line+"`")
+		}
+	}
+	return spans
+}
+
+// rigorModesProductArgument reports whether w is a word a command's own name does
+// not hold: an uppercase placeholder the document writes for a value (`MODE`,
+// `GLOB`, `RUN`, `N`), a mode from the vocabulary (`critical`), or a
+// comma-separated list of review levels (`l1,l2,l3`). Every other word after a
+// command path has to resolve as the next subcommand of it, which is what catches
+// a rename anywhere in the path: read as "the longest prefix that resolves", a
+// `fugaro rigor floors show` is `fugaro rigor` plus two words of arguments, and
+// that is the rename this guard exists to catch.
+func rigorModesProductArgument(w string) bool {
+	if w != strings.ToLower(w) && w == strings.ToUpper(w) {
+		return true
+	}
+	return rigor.Known(rigor.Mode(w)) || rigorModesProductLevelsRE.MatchString(w)
+}
+
+// rigorModesProductLevelsRE is the shape `fugaro rigor floor set` takes its
+// levels in: `l1`, `l2`, `l3`, comma-separated (internal/cli/rigor_floor.go).
+var rigorModesProductLevelsRE = regexp.MustCompile(`^l[123](,l[123])*$`)
+
+// rigorModesProductCommand resolves the command a span names, reporting it as a
+// failure when it is not one. The command is the span's leading words up to its
+// first flag or its first argument word (rigorModesProductArgument), and every
+// one of those words has to be a command: a span that stops resolving early is
+// the renamed or removed command the document still promises.
+func rigorModesProductCommand(t *testing.T, root *cobra.Command, span string) ([]string, bool) {
+	t.Helper()
+	words := strings.Fields(strings.Trim(span, "`"))
+	var path []string
+	for _, w := range words[1:] {
+		if strings.HasPrefix(w, "-") || rigorModesProductArgument(w) {
+			break
+		}
+		c, _, err := root.Find(append(append([]string{}, path...), w))
+		if err != nil || c == nil || c.Name() != w {
+			t.Errorf("%s names `fugaro %s`, which is not a command: the words up to the first flag or argument are a command's own path", rigorModesProductDoc, strings.Join(append(path, w), " "))
+			return nil, false
+		}
+		path = append(path, w)
+	}
+	if len(path) == 0 {
+		t.Errorf("%s names %s, and no command starts with that", rigorModesProductDoc, span)
+		return nil, false
+	}
+	return path, true
+}
+
+// rigorModesProductFlags is every flag a span names, in the order it names them:
+// the words that open with `--` once a bracketed optional one (`[--repo R]`) has
+// had its brackets taken off, and `--name=value` has had its value.
+func rigorModesProductFlags(span string) []string {
+	var out []string
+	for _, w := range strings.Fields(strings.Trim(span, "`")) {
+		w = strings.Trim(w, "[]")
+		if !strings.HasPrefix(w, "--") {
+			continue
+		}
+		if name := strings.TrimPrefix(w, "--"); name != "" {
+			out = append(out, strings.SplitN(name, "=", 2)[0])
+		}
+	}
+	return out
 }
