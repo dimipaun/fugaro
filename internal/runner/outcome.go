@@ -960,10 +960,9 @@ func (r *run) capDeferrals() []runstore.DeferredFinding {
 //
 // An entry an earlier rule already filed stands: a judge's deferral carries the
 // judge's own word for the finding and the table's carries the table's
-// (T-TR7b), and a cap that rewrote either would report who deferred the finding
-// first as the moment the rounds ran out. The key is what says it is the same
-// finding (D1850), so a round a cap ends on files nothing for a finding an
-// earlier round already filed, and the record keeps the count it had.
+// (T-TR7b), and a cap that rewrote either would lose that account of who
+// deferred the finding. The key is what says it is the same finding (D1850), so
+// a cap files nothing for a finding an earlier round already filed.
 func (r *run) recordCapDeferrals() {
 	filed := false
 	for _, e := range r.capDeferrals() {
