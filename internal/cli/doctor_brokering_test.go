@@ -22,8 +22,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -2455,5 +2457,235 @@ func TestDoctorCheckBitbucketTokenRefusedInAgentSession(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// intakeMember is the secrets intake's own account as a project IAM policy
+// spells it, in the installation project every rig uses: the account
+// modules/installation/intake.tf creates and every DS2.2 grant names.
+func intakeMember() string {
+	return "serviceAccount:" + tf.IntakeAccountID + "@" + initProject + ".iam.gserviceaccount.com"
+}
+
+// intakeWriteRole is the dynamic class's write role as a policy names it: a
+// project-level custom role's name is the role's id under the project's.
+func intakeWriteRole() string {
+	return "projects/" + initProject + "/roles/" + tf.IntakeSecretsRole
+}
+
+// intakeFence is the condition every write grant of the intake is bound under
+// (DS2.2): the one condition the class's writes and the service's prefix
+// accessor share.
+func intakeFence() *gcpfake.IAMCondition {
+	return &gcpfake.IAMCondition{
+		Title:      gcp.DynamicSecretNamesConditionTitle,
+		Expression: gcp.DynamicSecretNamesCondition(),
+	}
+}
+
+// useIntakeIAM points the rig's config at an IAM fake holding the dynamic
+// class's write role as modules/installation/intake.tf defines it. The check
+// asks the IAM API what a custom role carries, so a rig without one would
+// report the intake's own role as one nobody read rather than answer the
+// question the test is about.
+func useIntakeIAM(t *testing.T, r *brokeringRig) {
+	t.Helper()
+	iam := gcpfake.NewIAM(t)
+	cfg := strings.Replace(r.cfg, "endpoints: { ", "endpoints: { iam: "+iam.URL+"/, ", 1)
+	if cfg == r.cfg {
+		t.Fatal("the rig's config carries no endpoints block to point at the IAM fake")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.cfg = cfg
+	role := "projects/" + initProject + "/roles/" + tf.IntakeSecretsRole
+	iam.AddRole(initProject, tf.IntakeSecretsRole, "Fugaro secrets intake (the conditioned writes)", false)
+	iam.SetRolePermissions(role, "secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add")
+	// Both roles the class defines, as modules/installation/intake.tf does: a
+	// role the fake does not know is one the check reports as unread, and a
+	// lister that cannot be read is a second line about a state the case is not
+	// about.
+	lister := "projects/" + initProject + "/roles/" + tf.SecretListerRole
+	iam.AddRole(initProject, tf.SecretListerRole, "Fugaro secret lister (the names, never a value)", false)
+	iam.SetRolePermissions(lister, "secretmanager.secrets.list")
+}
+
+// setIntakePolicy writes the rig's project policy with bindings beside the
+// operator's own roles/owner, which every other check of the rig reads.
+func setIntakePolicy(t *testing.T, r *brokeringRig, bindings ...gcpfake.Binding) {
+	t.Helper()
+	all := append([]gcpfake.Binding{
+		{Role: "roles/owner", Members: []string{"user:owner@example.com"}},
+	}, bindings...)
+	r.crm.SetPolicy(initProject, all...)
+}
+
+// TestDoctorIntakeHasNoAccessor is DS4.2's red step and its subject. The
+// intake is the one account that creates, adds a version to and deletes the
+// dynamic containers, and DS2.2 gives it no way to read one: its grants are the
+// two roles of the class, under the name fence. A project policy that gives the
+// account a role carrying secretmanager.versions.access — a Secret Manager
+// role, or a basic one, which reads through the project's own grant — or binds
+// its write role without the fence, or names the account without ever giving it
+// the write role, is a finding an operator has to act on; an installation where
+// the account is deployed and fenced, and one where no grant names it at all,
+// are measurements.
+func TestDoctorIntakeHasNoAccessor(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		bindings []gcpfake.Binding
+		finding  string
+		absent   string
+	}{
+		{
+			name: "the account holds an accessor",
+			bindings: []gcpfake.Binding{
+				{Role: intakeWriteRole(), Members: []string{intakeMember()}, Condition: intakeFence()},
+				{Role: "roles/secretmanager.secretAccessor", Members: []string{intakeMember()}},
+			},
+			finding: "secretmanager.secretAccessor",
+		},
+		{
+			name: "the write grant is bound without the fence",
+			bindings: []gcpfake.Binding{
+				{Role: intakeWriteRole(), Members: []string{intakeMember()}},
+			},
+			finding: "name-prefix condition",
+		},
+		{
+			// A basic role reads values through the project's own grant, and
+			// the same run's reader sweep names its holders: a measurement that
+			// called this account reader-free would contradict it.
+			name: "the account holds a basic role",
+			bindings: []gcpfake.Binding{
+				{Role: intakeWriteRole(), Members: []string{intakeMember()}, Condition: intakeFence()},
+				{Role: "roles/owner", Members: []string{intakeMember()}},
+			},
+			finding: "roles/owner",
+		},
+		{
+			// Half an installation: the account is there, the grant that makes
+			// it the class's writer is not. Nothing of the class works, and the
+			// fence the measurement would otherwise report is not bound at all.
+			name: "no binding gives it the write role",
+			bindings: []gcpfake.Binding{
+				{Role: "projects/" + initProject + "/roles/" + tf.SecretListerRole, Members: []string{intakeMember()}},
+			},
+			finding: intakeWriteRole(),
+		},
+		{
+			name: "deployed under the fence",
+			bindings: []gcpfake.Binding{
+				{Role: intakeWriteRole(), Members: []string{intakeMember()}, Condition: intakeFence()},
+			},
+			absent: "holds no role that reads a secret's value",
+		},
+		{name: "no grant names the account", absent: "no secrets intake is deployed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newBrokeringRig(t)
+			useIntakeIAM(t, r)
+			setIntakePolicy(t, r, tc.bindings...)
+			o, _ := r.doctor(t)
+			found := checksByID(o, "secrets-intake")
+			if len(found) != 1 {
+				t.Fatalf("doctor emitted %d secrets-intake checks, want exactly one:\n%+v", len(found), found)
+			}
+			c := found[0]
+			if tc.finding != "" {
+				if c.OK || c.Severity != "warning" {
+					t.Fatalf("secrets-intake = ok=%v severity=%q, want a warning: %+v", c.OK, c.Severity, c)
+				}
+				if !strings.Contains(c.Problem, tc.finding) {
+					t.Errorf("the warning does not name %q: %s", tc.finding, c.Problem)
+				}
+				if !strings.Contains(c.Fix, "remove-iam-policy-binding") && !strings.Contains(c.Fix, selfCommand()+" update") {
+					t.Errorf("the warning's fix names no action: %s", c.Fix)
+				}
+				return
+			}
+			if !c.OK || c.Severity != "info" {
+				t.Fatalf("secrets-intake = ok=%v severity=%q, want a measurement: %+v", c.OK, c.Severity, c)
+			}
+			if !strings.Contains(c.Problem, tc.absent) {
+				t.Errorf("the measurement does not say %q: %s", tc.absent, c.Problem)
+			}
+		})
+	}
+}
+
+// TestDoctorFlagsUnparseableSecretName: a container of the installation's
+// project whose name carries the fugaro_u_/fugaro_p_ prefix the intake's write
+// fence admits and no grammar admits is one the intake may version and delete
+// and no reader can ever resolve (R1, R12). Doctor names it, and leaves a
+// container whose name the grammar admits alone.
+func TestDoctorFlagsUnparseableSecretName(t *testing.T) {
+	r := newBrokeringRig(t)
+	good := secretname.UserPrefix + "123_account-token"
+	digitless := secretname.UserPrefix + "abc_account-token"
+	uppercase := secretname.ProjectPrefix + "Account_Token"
+	for _, id := range []string{good, digitless, uppercase} {
+		r.sm.Seed(id, map[string]string{gcp.LabelManaged: gcp.ManagedValue}, nil)
+	}
+	o, _ := r.doctor(t)
+	found := checksByID(o, "dynamic-secret-name")
+	if len(found) != 2 {
+		t.Fatalf("doctor emitted %d dynamic-secret-name checks, want one per unreadable name:\n%+v", len(found), found)
+	}
+	var problems string
+	for _, c := range found {
+		if c.OK || c.Severity != "warning" {
+			t.Errorf("dynamic-secret-name = ok=%v severity=%q, want a warning: %+v", c.OK, c.Severity, c)
+		}
+		if !strings.Contains(c.Fix, "grammar") {
+			t.Errorf("the warning's fix does not say what a name has to be: %s", c.Fix)
+		}
+		problems += c.Problem + "\n"
+	}
+	for _, want := range []string{digitless, uppercase} {
+		if !strings.Contains(problems, want) {
+			t.Errorf("no line names the unreadable name %s:\n%s", want, problems)
+		}
+	}
+	if strings.Contains(problems, good) {
+		t.Errorf("a name the grammar admits was flagged:\n%s", problems)
+	}
+}
+
+// TestDoctorNamesLegacyOpenPools: the migration that gave pools an owner left
+// every pool that predated owners marked legacy_open, which is a pool served to
+// whoever asks (D1942). Doctor names those pools and asks an admin to give each
+// an owner, and says nothing about a pool that has one.
+func TestDoctorNamesLegacyOpenPools(t *testing.T) {
+	r := newBrokeringRig(t)
+	node, err := json.Marshal(doctorPolicy(func(p *projectpolicy.Policy) {
+		p.CraftPools = []config.Pool{
+			{Name: "reviewers", Members: []string{config.CredentialVertex}, LegacyOpen: true},
+			{Name: "auditors", Members: []string{config.CredentialVertex}, Owner: "owner@example.com"},
+		}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.publishPolicyNode(t, string(node))
+
+	o, _ := r.doctor(t)
+	found := checksByID(o, "pools-legacy-open")
+	if len(found) != 1 {
+		t.Fatalf("doctor emitted %d pools-legacy-open checks, want exactly one:\n%+v", len(found), found)
+	}
+	c := found[0]
+	if c.OK || c.Severity != "warning" {
+		t.Fatalf("pools-legacy-open = ok=%v severity=%q, want a warning: %+v", c.OK, c.Severity, c)
+	}
+	if !strings.Contains(c.Problem, "reviewers") {
+		t.Errorf("the warning does not name the legacy-open pool: %s", c.Problem)
+	}
+	if strings.Contains(c.Problem, "auditors") {
+		t.Errorf("the warning names a pool that has an owner: %s", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "owner") {
+		t.Errorf("the fix does not ask for an owner: %s", c.Fix)
 	}
 }

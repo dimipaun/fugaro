@@ -133,10 +133,13 @@ test('the module is exactly these files, at every depth', () => {
   assert.deepEqual(FILES, [
     'events.js',
     'events.test.js',
+    'fake.js',
     'index.js',
     'index.test.js',
     'machine.js',
     'machine.test.js',
+    'port.js',
+    'port.test.js',
     'session.js',
     'session.test.js',
   ]);
@@ -310,7 +313,14 @@ function scanned(dir = DIR) {
 
 test('the scan reads the module, and not an empty list', () => {
   const files = production();
-  assert.deepEqual(files.map(([file]) => file), ['events.js', 'index.js', 'machine.js', 'session.js']);
+  assert.deepEqual(files.map(([file]) => file), [
+    'events.js',
+    'fake.js',
+    'index.js',
+    'machine.js',
+    'port.js',
+    'session.js',
+  ]);
   for (const [file, text] of files) {
     assert.ok(text.includes('export'), `${file} is real code, not a comment`);
   }
@@ -319,9 +329,12 @@ test('the scan reads the module, and not an empty list', () => {
   assert.deepEqual(scanned().map(([file]) => file), [
     'events.js',
     'events.test.js',
+    'fake.js',
     'index.js',
     'machine.js',
     'machine.test.js',
+    'port.js',
+    'port.test.js',
     'session.js',
     'session.test.js',
   ]);
