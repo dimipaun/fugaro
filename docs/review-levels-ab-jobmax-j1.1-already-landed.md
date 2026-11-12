@@ -14,9 +14,10 @@ task: the three files the block's **Files** line names, and no others —
 `plugin/parallelism_skill_test.go`. The pull request's second commit is its review's fixes: the
 `/jobmax` exception names both of its conditions, and the `working` pointer is pinned.
 
-Two later commits rewrote other parts of the same skill and left the job max text as #1413 wrote
-it: `3cfff357` (CD1, the contract-first section and `reference/decoupling.md`) and `c96b339f`
-(schema 3 graphs and `planning.decoupling`).
+Two later commits rewrote other parts of the same file — `3cfff357` (CD1, the contract-first
+section and `reference/decoupling.md`) and `c96b339f` (schema 3 graphs and
+`planning.decoupling`) — and the `## Job max` section and the one-yes-per-batch bullet are still
+the text #1413 wrote: `git log -L` over both traces them to it and to nothing after.
 
 ## The task, point by point
 
@@ -28,7 +29,7 @@ it: `3cfff357` (CD1, the contract-first section and `reference/decoupling.md`) a
 | the graph kept wide and shallow | `plugin/skills/parallelism/SKILL.md:35` |
 | the skill's "one yes per batch" rule stays the default | `plugin/skills/parallelism/SKILL.md:122`: the yes for the whole batch, with `/jobmax` the only exception and only where the owner has turned on the project's opt-in, and the rule standing where it is off. J1.2 owns the next edit to this line; this task does not touch it |
 | the one-line pointer in `working` | `plugin/skills/working/SKILL.md:16`, in the decide-first list |
-| `TestParallelismSkillDefinesJobMax` | `plugin/parallelism_skill_test.go:252` (the definition and the techniques); `TestWorkingSkillPointsAtJobMax` (line 41) holds the pointer and `TestParallelismSkillJobMaxExceptionNeedsTheOptIn` (line 57) the exception's two conditions |
+| `TestParallelismSkillDefinesJobMax` | `plugin/parallelism_skill_test.go:259` (the definition and the techniques); `TestWorkingSkillPointsAtJobMax` (line 41) holds the pointer and `TestParallelismSkillJobMaxExceptionNeedsTheOptIn` (line 57) the exception's two conditions |
 | the lint, "which checks every command and flag a skill names against the live cobra tree" | `plugin/skills_lint_test.go`, run by the same command |
 
 No command or flag the skill's job max text names is missing from the CLI: the lint's own walk
@@ -57,7 +58,7 @@ first was matched.
 Proved against its mutation, on this branch's base: with ` so neither side waits` deleted from
 `plugin/skills/parallelism/SKILL.md:35`, the test as it stood was **green**
 (`ok github.com/dimipaun/fugaro/plugin 0.033s`), and the same mutation against the pin this
-commit adds fails with
+pull request adds fails with
 `skills/parallelism/SKILL.md does not name the planning technique "so neither side waits"`. With
 the clause back, both are green.
 
@@ -79,6 +80,6 @@ in it; the skill's text is untouched.
   owner's call, so this note records it and does not rewrite it. The folder's README status line
   and `docs/status.md`'s row are the same kind of dated snapshot, and a task's own pull request
   does not move the row.
-- **The plan's own block**, beyond the `Done` line this landing never got: the **Content**,
-  **Tests**, **Command** and **Red step** lines read as they were written, because that is what
-  the task asked for and #1413 did it.
+- **The plan's own block**, beyond the `Done` line this landing never got: the **Files**,
+  **Content**, **Tests**, **Command**, **Depends on**, **Red step** and **Commit** lines read as
+  they were written, and each is a statement #1413's diff bears out.
