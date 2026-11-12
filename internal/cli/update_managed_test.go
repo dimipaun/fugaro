@@ -1619,7 +1619,8 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // the one a PERSON at the terminal on a managed project gets.
 //
 // The shape is therefore that person: the installation root planned for a
-// change §4.1 refuses to apply (the removal of a data-bearing bucket), and the fourth read of
+// change §4.1 refuses to apply (an authoritative IAM resource, D1549's kind:
+// a bucket removal now leaves the owner a command, T9), and the fourth read of
 // its saved plan — the credentials stage's own — refused. The two arms are the
 // entry's own answer and its mutation: under the gate the step is left for the
 // owner and the run carries on, and with the entry dropped the same refusal
@@ -1647,8 +1648,8 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 				if stopped := stoppedStage(got); stopped != initflow.CredentialsService {
 					t.Fatalf("the run stopped at %s, want the credentials-service stage:\n%s", stopped, got)
 				}
-				if left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand); left != "" {
-					t.Errorf("a stage this door does not gate left the owner the gate's own step, which is the answer the entry exists to give:\n%s", got)
+				if strings.Contains(got, "left for you ("+initflow.CredentialsService+", ") {
+					t.Errorf("a stage this door does not gate left the owner a step, which is the answer the entry exists to give:\n%s", got)
 				}
 				return
 			}
@@ -1658,18 +1659,15 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
 				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
 			}
-			// LeftCommand and not LeftRefused: the plan this fixture holds
-			// removes an address, and a removal the owner's own --allow-delete
-			// clears is their decision rather than a session's, so what the gate
-			// leaves is the producer's command line — the one the person runs at
-			// their own terminal (initflow's GatedError.Left, GateRefusedDelete,
-			// D1012 and spec §4.3). The refusal that has no command is the one no
-			// flag reaches, and this fixture's is not that one.
-			left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand)
+			// LeftRefused and not LeftCommand: the plan carries no removal, so
+			// the owner's --allow-delete admits nothing of it (gateDeleteLeft
+			// finds no listable address) and what the gate leaves is D1012's
+			// refusal step, a verdict with no command to run.
+			left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused)
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
 			}
-			for _, want := range []string{"managed gate refused this step", "google_storage_bucket.runs"} {
+			for _, want := range []string{"managed gate refused this step", "an authoritative IAM resource"} {
 				if !strings.Contains(left, want) {
 					t.Errorf("the step left for the owner does not name %q:\n%s", want, left)
 				}
@@ -1698,9 +1696,14 @@ func credentialsStageRun(t *testing.T) (string, int) {
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	admitted := map[string]any{"stdout": planJSON(t, change("module.installation.google_service_account.scheduler", "create"))}
-	refused := map[string]any{"stdout": planJSON(t, change("module.installation.google_storage_bucket.runs", "delete"))}
+	refused := map[string]any{"stdout": planJSON(t, iamBindingCreate())}
 	r.script["show@installation"] = []any{admitted, admitted, admitted, refused}
-	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		// The intake this run deploys: its block is written by the same stage,
+		// and its audience comes back from the same outputs.
+		"intake": intakeServiceOutput(),
+	})}
 	r.save(t)
 	r.managedRuns(t, initProjectName, initProject)
 	isolateGateCredentials(t)
