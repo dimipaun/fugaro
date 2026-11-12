@@ -728,7 +728,7 @@ steps:
           tok="$$(curl -sS -H 'Metadata-Flavor: Google' "$${meta}/__ACCOUNT__/identity?audience=__AUDIENCE__&format=full")"
         fi
         code="$$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $${tok}" "$${url}")"
-        email="$$(printf '%s' "$${tok}" | python3 -c 'import base64,json,sys; p=sys.argv[1].split(".")[1]; p+="="*(-len(p)%4); print(json.loads(base64.urlsafe_b64decode(p)).get("email",""))' 2>/dev/null || true)"
+        email="$$(printf '%s' "$${tok}" | python3 -c 'import base64,json,sys; p=sys.stdin.read().strip().split(".")[1]; p+="="*(-len(p)%4); print(json.loads(base64.urlsafe_b64decode(p)).get("email",""))' 2>/dev/null || true)"
         echo "CHK195 status=$${code} email=$${email:-unread}"
         [ "$${code}" = 200 ]
 options:

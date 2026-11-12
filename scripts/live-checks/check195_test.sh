@@ -393,6 +393,101 @@ CURL_EOF
   chmod +x "$1/bin/curl"
 }
 
+# The step the check writes into its build config is a shell script that a real
+# run hands to Cloud Build, and nothing else in this suite ever runs it — which
+# is how two bugs lived in it unseen. So this fake is the OTHER end of that step:
+# a metadata server that mints an ID token, and a Cloud Run front end that admits
+# the call only when the token it is given is one for the check's own account and
+# this service's own URL.
+write_fake_curl_for_the_step() { # dir
+  mkdir -p "$1"
+  cat >"$1/curl" <<'STEP_CURL_EOF'
+#!/usr/bin/env python3
+"""A stand-in for `curl` INSIDE the check's own build step, for
+scripts/live-checks/check195.sh's test only: no socket is opened.
+
+The step is the point of the check -- it mints an ID token out of the metadata
+server and calls the service with it -- and this fake answers both halves the way
+the real ones do: a JWT-shaped token whose `email` claim is the account the build
+runs as, and a 200 only for a token minted for that account and this URL.
+"""
+import base64, json, os, sys
+
+CALLER = "fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com"
+LOG = os.environ.get("FAKE_LOG_DIR", "")
+args = sys.argv[1:]
+url = ""
+for a in args:
+    if a.startswith("http"):
+        url = a
+if LOG:
+    with open(os.path.join(LOG, "step-curl.calls"), "a") as fh:
+        fh.write("curl " + " ".join(args) + "\n")
+
+
+def b64(obj):
+    return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
+
+
+def minted_token(audience):
+    # Header, payload and signature, the shape the check's step decodes: the
+    # signature is a word, not a credential, and no real token is ever here.
+    return "%s.%s.%s" % (b64({"alg": "RS256", "typ": "JWT"}),
+                         b64({"email": CALLER, "aud": audience, "iss": "https://accounts.google.com"}),
+                         "fake-signature")
+
+
+def write_out():
+    fmt = ""
+    for i, a in enumerate(args):
+        if a.startswith("-w=") or a.startswith("--write-out="):
+            fmt = a.split("=", 1)[1]
+        elif a in ("-w", "--write-out"):
+            fmt = args[i + 1]
+    return fmt
+
+
+def headers():
+    out = []
+    for i, a in enumerate(args):
+        if a == "-H":
+            out.append(args[i + 1])
+        elif a.startswith("-H"):
+            out.append(a[2:].lstrip("="))
+    return out
+
+
+if "metadata.google.internal" in url:
+    audience = ""
+    for part in url.split("?", 1)[-1].split("&"):
+        if part.startswith("audience="):
+            audience = part[len("audience="):]
+    sys.stdout.write(minted_token(audience))
+    sys.exit(0)
+
+# The service's own front end: it admits a token that names the account that ran
+# the build, for this service's URL, and refuses anything else.
+code = "401"
+for h in headers():
+    if not h.startswith("Authorization:"):
+        continue
+    token = h.split("Bearer", 1)[-1].strip()
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        continue
+    if claims.get("email") == CALLER and claims.get("aud") == url:
+        code = "200"
+fmt = write_out()
+sys.stdout.write(fmt.replace("%{http_code}", code) if fmt else "")
+sys.stdout.write("\n")
+sys.exit(0)
+STEP_CURL_EOF
+  chmod +x "$1/curl"
+}
+
 # ------------------------------------------------------------------- harness
 status=0
 out=""
@@ -568,6 +663,49 @@ test_a_service_that_answers_unauthenticated_calls_stops_the_run() {
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "service-accounts create" "public service: no account was created"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "builds submit" "public service: no build was submitted"
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services delete" "public service: the service is still deleted"
+}
+
+# The step the check writes into its build config is the point of the whole
+# thing, and it is the one piece of this check that no other case runs: a real
+# run hands it to Cloud Build, and the fakes answer the check's own calls, not
+# the step's. So this case lifts the step's text out of the generated config and
+# runs it here, against a fake curl that mints a JWT-shaped ID token for the
+# metadata server and admits the call only when the token it is given names the
+# check's own account for this service's own URL. The line the step prints is the
+# line the check reads the email claim out of, so `email=unread` here is the
+# false FAIL that would land on the gate S4 stops on.
+#
+# Cloud Build reduces every `$$` in a step's script to `$` before the container
+# runs it -- which is why the config carries `$${tok}` and not `${tok}` -- and the
+# same reduction happens here (images/cloudbuild_test.go runs the image steps the
+# same way).
+test_the_generated_step_mints_a_token_and_reads_its_own_email_claim() {
+  local dir=$work/step
+  prepare "$dir"
+  run195 "$dir"
+  expect_status "$status" 0 "the step: the run that generates it"
+
+  local step=$dir/step.sh
+  awk '/^      - \|$/ { f = 1; next } f && /^        / { sub(/^        /, ""); print; next } f { exit }' \
+    "$dir/logs/cloudbuild.yaml" | sed -e 's/\$\$/$/g' >"$step"
+  [ -s "$step" ] || {
+    fail "the step: no script could be lifted out of the generated build config"
+    return 0
+  }
+  expect_contains "$(cat "$step")" 'tok="$(curl -sS' "the step: after Cloud Build's own reduction the token is minted with a command substitution"
+  expect_absent "$(cat "$step")" "sys.argv" "the step: nothing reads an argument the step never passed"
+
+  write_fake_curl_for_the_step "$dir/stepbin"
+  status=0
+  env PATH="$dir/stepbin:$PATH" FAKE_LOG_DIR="$dir/logs" bash "$step" >"$dir/step.out" 2>"$dir/step.err" || status=$?
+  local step_out
+  step_out=$(cat "$dir/step.out")
+  expect_status "$status" 0 "the step: its own exit status (a step that exits non-zero fails the build)"
+  expect_contains "$step_out" "CHK195 status=200 email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "the step: the one line it prints"
+  expect_absent "$step_out" "email=unread" "the step: the email claim is read out of the token it minted"
+  expect_contains "$(cat "$dir/logs/step-curl.calls")" "metadata.google.internal" "the step: it mints its token from the metadata server"
+  expect_contains "$(cat "$dir/logs/step-curl.calls")" "-H Metadata-Flavor: Google" "the step: the metadata call carries the header the metadata server requires"
+  expect_contains "$(cat "$dir/logs/step-curl.calls")" "Authorization: Bearer " "the step: the call to the service carries the token as a bearer header"
 }
 
 # A knob the header advertises and nothing reads is worse than no knob at all: a
@@ -952,6 +1090,7 @@ t test_a_deploy_line_without_no_allow_unauthenticated_is_refused
 t test_a_public_iam_policy_stops_before_any_request
 t test_a_service_that_answers_unauthenticated_calls_stops_the_run
 t test_every_advertised_knob_is_read
+t test_the_generated_step_mints_a_token_and_reads_its_own_email_claim
 t test_happy_path
 t test_a_service_already_there_is_a_hard_stop
 t test_an_account_already_there_is_a_hard_stop
