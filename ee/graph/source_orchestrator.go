@@ -4,12 +4,15 @@
 package graph
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/orchestrator/endpoint"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The orchestrator scopes: `orchestrator:<id>`, one orchestrator's state node
@@ -28,11 +31,15 @@ import (
 //     the same node does not carry draws nothing (contract §6.22): the ids are
 //     the node's own namespace, and an edge to a node this document does not
 //     hold is not one a screen can draw.
-//   - **It reads nothing.** The caller has already read `orchestrator/<id>`
-//     through the person's own credential (D1357, T2) and, for a local scope,
-//     listed the cached briefs this machine holds (`orchestrator.CachedBriefs`,
-//     D1358). This package stays what its doc says it is: data, with no
-//     connection and no clock of its own.
+//   - **It reads almost nothing.** The caller has already read
+//     `orchestrator/<id>` through the person's own credential (D1357, T2) and,
+//     for a local scope, listed the cached briefs this machine holds
+//     (`orchestrator.CachedBriefs`, D1358). The one read this file makes is a
+//     local scope's endpoint (CG13c): one lookup of a registry file beside a
+//     handshake, and then one document from a live endpoint on loopback, all of
+//     it bounded by `endpointTimeout`. A machine whose daemon is not running, or
+//     whose daemon predates the endpoint, has none of it and reads exactly what
+//     CG5 built: the node and then the cache (T5(a), amended 2026-11-11).
 
 // ErrNoOrchestrator is a scope that does not exist: an id the project's
 // database does not hold at all and this machine holds no cached brief for. The
@@ -59,9 +66,11 @@ var ErrNoOrchestrator = errors.New("graph: no such orchestrator")
 const DependsOnEdge = "depends_on"
 
 // OrchestratorSource is one orchestrator scope: the state node the caller read,
-// the failure of that read when there was one, and the brief this machine's
-// daemon cached for the id. It holds no connection, no path and no credential,
-// so building one is not a read and testing it needs no fake.
+// the failure of that read when there was one, the brief this machine's daemon
+// cached for the id, and the endpoint it may be serving (CG13c). It holds no
+// path and no credential of its own — the endpoint's token lives in the Client
+// and reaches nothing but a request header — so building one is not a read and
+// the zero value of the two fields it added reads this machine.
 type OrchestratorSource struct {
 	// ID is the orchestrator id: the `<id>` of `orchestrator/<id>`, and the id
 	// half of the scope's own name.
@@ -100,6 +109,12 @@ type OrchestratorSource struct {
 	// the brief a session-start print reads, never a graph, so what this scope
 	// draws with it is one state and an age and no nodes.
 	CachedAt time.Time
+	// Endpoint is the reader of the local endpoint this machine's daemon may be
+	// serving for the id (CG13c). It is read for a `local:` scope and for no
+	// other kind, and its zero value — the fields a caller leaves alone — is
+	// this process's own environment and platform, which is what a scope built
+	// from the command line has (graphSources).
+	Endpoint endpoint.Client
 }
 
 // Scope is the scope this source is, as the command line spells it: the source
@@ -123,14 +138,27 @@ func (s OrchestratorSource) Scope() Scope {
 // edges to the items this same node holds, and a dependency it does not hold
 // draws nothing.
 //
+// A `local:` scope tries the endpoint this machine's daemon serves before it
+// answers from the node: a live endpoint is the daemon's own document, fresher
+// than the node a person's credential reads out of the database, and where
+// there is none the node and then the cache are read exactly as CG5 built them
+// (T5(a), amended 2026-11-11). "Live" is the endpoint's own handshake and never
+// a file on disk: a registry file left behind by a daemon that is gone is no
+// live endpoint, and a process that has taken its port answers for neither.
+//
 // The scope's state is what the read could say:
 //
-//   - `up` — the node was read and decoded. An orchestrator scope never claims
-//     an age: the node carries no time of its own, exactly as the coordinator's
-//     stored view does not (CG2), so `as_of` is null. The one freshness fact an
-//     orchestrator has — its lease's last beat — is what `fugaro orchestrator
-//     ls` reads (CG4), and it is one request per id this read does not make, for
-//     an age no screen draws.
+//   - `up` — the node was read and decoded, or a live endpoint served the
+//     daemon's own document. A node claims no age, and neither does this scope
+//     when it answers from one: the node carries no time of its own, exactly as
+//     the coordinator's stored view does not (CG2), so `as_of` is null. A live
+//     endpoint is the one answer that carries a time — the server time of the
+//     tick the document came from, which is the same stamp the cached brief
+//     carries and never this machine's clock (D1230) — and that is the scope's
+//     `as_of`: it says the document is the daemon's own and how old it is. The
+//     other freshness fact an orchestrator has — its lease's last beat — is what
+//     `fugaro orchestrator ls` reads (CG4), and it is one request per id this
+//     read does not make, for an age no screen draws.
 //   - `unreadable` — the node answered with a document this build cannot read:
 //     a schema version from a later release, a field this release does not model
 //     (DecodeState), or an item id sanitising would rewrite, which would let two
@@ -156,12 +184,32 @@ func (s OrchestratorSource) Scope() Scope {
 // and one it lost between the enumeration and the read is left out with the
 // sentence saying so rather than taking the document with it (readGraph).
 //
+// A local scope's id is judged before anything is read: a name H1's pattern
+// cannot carry is refused rather than read, because the id of a registry file is
+// a path component and the scope's id is an argument. That is the one place the
+// scope's rule is narrower than the daemon's own (agentRE admits `_` and 64
+// characters), and the limit is named here rather than widened: a project whose
+// name carries `_`, or is longer than 40 characters, has no local scope (H1,
+// CG13c).
+//
 // It never returns a read's own failure: the caller classifies that before it
 // gets here (a refusal is terminal and is returned by the caller without asking
 // this source at all), and everything else reaches it as ReadErr, which is a
 // state.
 func (s OrchestratorSource) Nodes() ([]Node, []Edge, SourceState, error) {
 	source := s.Scope().String()
+	if s.Local {
+		if err := s.localID(source); err != nil {
+			return nil, nil, SourceState{}, err
+		}
+		if state, at, ok := s.live(); ok {
+			nodes, edges, err := orchestratorNodes(source, state)
+			if err != nil {
+				return nil, nil, unreadableState(source, err), nil
+			}
+			return nodes, edges, SourceState{Source: source, State: SourceUp, AsOf: &at}, nil
+		}
+	}
 	switch {
 	case len(s.Node) > 0:
 		state, err := orchestrator.DecodeState(s.Node)
@@ -178,6 +226,41 @@ func (s OrchestratorSource) Nodes() ([]Node, []Edge, SourceState, error) {
 	default:
 		return s.absent(source)
 	}
+}
+
+// localID judges the scope's id by the two rules that govern it, before
+// anything is read: H1's pattern, which is what a value that reaches argv from
+// a renderer may look like (ParseScope), and the daemon's own rule for the id
+// of `orchestrator/<id>` (agentRE). H1's is the narrower of the two — it admits
+// no `_` and stops at 40 characters where the daemon's carries 64 — so a scope
+// whose own name parses is one both rules accept, and a name that does not is
+// refused here rather than read: the id of a registry file is a path component
+// and the scope's id is an argument, and neither may carry what the other's
+// rule refused.
+//
+// The refusal is ErrNoOrchestrator's, because that is what it is: an id this
+// read cannot have a local scope for. `all` therefore leaves such an id out of
+// the document with the warning saying so, instead of taking a console's whole
+// graph down over a project named `my_project` (readGraph), and a scope named
+// on the command line is refused with the pattern's own sentence.
+func (s OrchestratorSource) localID(source string) error {
+	if _, err := ParseScope(source); err != nil {
+		return fmt.Errorf("%w: source %s names no id a local scope can carry: an id is 1 to 40 characters of a-z, 0-9 and -, starting with a letter or a digit, and a project whose name is not one has no local scope (H1)", ErrNoOrchestrator, safetext.Field(source))
+	}
+	return nil
+}
+
+// live is the endpoint this machine's daemon serves for the scope's id, and
+// whether one answered. Nothing here has a context of its own — Nodes is a
+// method on a value a caller built — so the read is bounded here, by
+// endpointTimeout: an endpoint on loopback answers at once or not at all, and a
+// graph is never worth a hung read. A machine with no endpoint is a false in the
+// time a refused connection takes, which is what makes this cheap enough to try
+// first (T5(a)).
+func (s OrchestratorSource) live() (orchestrator.State, time.Time, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), endpointTimeout)
+	defer cancel()
+	return LocalLive{Client: s.Endpoint, ID: s.ID}.Read(ctx)
 }
 
 // Absent is a source with nothing to answer for itself: the database holds no

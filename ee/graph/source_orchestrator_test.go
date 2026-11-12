@@ -26,18 +26,41 @@ package graph
 //     state node is not written yet is a scope that is down — the shape a daemon
 //     that has beaten its lease and saved no state leaves behind, which `ls`
 //     lists and a screen sends back.
+//   - TestLocalScopeUsesTheLiveEndpoint: a local scope draws the endpoint this
+//     machine's daemon serves when one is live — stamped with the tick it came
+//     from — and the node when the file's port belongs to something that is not
+//     that daemon (CG13c).
+//   - TestLocalScopeFallsBackToTheNodeAndThenTheCache: the order T5(a) was
+//     amended to, as a machine with no endpoint sees it.
+//   - TestLocalScopeRefusesAnIdOutsideThePatternBeforeAnyRead: H1's pattern is
+//     checked before the registry file or the node is looked at, and only for a
+//     local scope (CG13c).
+//   - TestTheEndpointStreamFeedsTheWatch: the endpoint's stream feeds the
+//     document stream — one whole document per tick, rising seq, one stream_id.
 //
-// The source is pure, so every one of these is a struct literal and a returned
-// value: no fake, no clock and no I/O.
+// The source is pure but for the endpoint it reaches, so every one of the first
+// five is a struct literal and a returned value: no fake, no clock and no I/O.
+// The endpoint cases start a real one on loopback, with its registry file in a
+// temp directory, and no case reads a developer's own state directory.
 
 import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/orchestrator/endpoint"
 )
 
 // stateOf encodes the fixture state the way the daemon writes it, which is the
@@ -248,7 +271,7 @@ func TestLocalScopeFallsBackToTheCache(t *testing.T) {
 	written := time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC)
 
 	t.Run("the node cannot be read", func(t *testing.T) {
-		src := OrchestratorSource{ID: "o1", Local: true, CachedAt: written,
+		src := OrchestratorSource{ID: "o1", Local: true, CachedAt: written, Endpoint: noEndpoint(t),
 			ReadErr: errors.New("the database is down")}
 		nodes, edges, st, err := src.Nodes()
 		if err != nil {
@@ -269,7 +292,7 @@ func TestLocalScopeFallsBackToTheCache(t *testing.T) {
 	})
 
 	t.Run("the node is gone", func(t *testing.T) {
-		src := OrchestratorSource{ID: "o1", Local: true, CachedAt: written}
+		src := OrchestratorSource{ID: "o1", Local: true, CachedAt: written, Endpoint: noEndpoint(t)}
 		_, _, st, err := src.Nodes()
 		if err != nil {
 			t.Fatalf("a local scope with a cache answered with a failure: %v", err)
@@ -301,7 +324,7 @@ func TestLocalScopeFallsBackToTheCache(t *testing.T) {
 		// A stale cache beside a live node is not staleness: what the scope
 		// draws is the node, and the cache is only what it has when the node is
 		// not there (D1358).
-		src := OrchestratorSource{ID: "o1", Local: true, CachedAt: written,
+		src := OrchestratorSource{ID: "o1", Local: true, CachedAt: written, Endpoint: noEndpoint(t),
 			Node: stateOf(t, "o1", item("wi-1", "a live item", "acme/app"))}
 		nodes, _, st, err := src.Nodes()
 		if err != nil {
@@ -331,7 +354,7 @@ func TestUnknownOrchestratorIsRefused(t *testing.T) {
 	// not hold, and one this machine has no cached brief for either.
 	for _, src := range []OrchestratorSource{
 		{ID: "o1"},
-		{ID: "o1", Local: true},
+		{ID: "o1", Local: true, Endpoint: noEndpoint(t)},
 	} {
 		nodes, edges, st, err := src.Nodes()
 		if !errors.Is(err, ErrNoOrchestrator) {
@@ -374,7 +397,7 @@ func TestListedOrchestratorWithoutAStateIsDown(t *testing.T) {
 	written := time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC)
 	for _, src := range []OrchestratorSource{
 		{ID: "o1", Listed: true},
-		{ID: "o1", Local: true, Listed: true},
+		{ID: "o1", Local: true, Listed: true, Endpoint: noEndpoint(t)},
 	} {
 		nodes, edges, st, err := src.Nodes()
 		if err != nil {
@@ -394,7 +417,7 @@ func TestListedOrchestratorWithoutAStateIsDown(t *testing.T) {
 	// A local scope with a cached brief keeps the brief's own stamp: the cache is
 	// the last thing written about the id, and a database that lists it does not
 	// change what the brief says (D1358, D1243).
-	src := OrchestratorSource{ID: "o1", Local: true, Listed: true, CachedAt: written}
+	src := OrchestratorSource{ID: "o1", Local: true, Listed: true, CachedAt: written, Endpoint: noEndpoint(t)}
 	_, _, st, err := src.Nodes()
 	if err != nil {
 		t.Fatalf("reading a listed local scope with a cached brief: %v", err)
@@ -420,5 +443,412 @@ func sameNode(a, b Node) bool {
 		return false
 	default:
 		return a.Updated.Equal(*b.Updated)
+	}
+}
+
+// The local scope against the endpoint a daemon serves (CG13c of
+// docs/cli-output-console-graph/implementation-plan-graph.md): a live endpoint
+// first, then the node, then the cache — and never a read the scope's own id
+// rule refused.
+
+// endpointEnv is one machine's state directory and the two readers placed in
+// it: the getenv the registry file is written and looked up through, and the
+// Client a local scope reads with. The directory is a temp one, so no case here
+// touches the state directory of the developer running it (the plan's
+// hermeticity rule, and the reason Client's placement is two fields).
+func endpointEnv(t *testing.T) (func(string) string, endpoint.Client) {
+	t.Helper()
+	dir := t.TempDir()
+	getenv := func(name string) string {
+		if name == "XDG_STATE_HOME" {
+			return dir
+		}
+		return ""
+	}
+	return getenv, endpoint.Client{Getenv: getenv, GOOS: "linux"}
+}
+
+// noEndpoint is the reader of a machine that runs no daemon: a temp state
+// directory with nothing written in it. Every local fixture carries one, because
+// the zero value of the field is this process's own environment and platform.
+func noEndpoint(t *testing.T) endpoint.Client {
+	t.Helper()
+	_, client := endpointEnv(t)
+	return client
+}
+
+// fileToken is a value of the shape the endpoint mints, drawn here and never
+// written down: a fixture carries no literal credential, and nothing in a test
+// is a secret of anybody's.
+func fileToken(t *testing.T) string {
+	t.Helper()
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("drawing a token: %v", err)
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// closeEndpoint closes what a case started, at the end of the case.
+func closeEndpoint(t *testing.T, srv *endpoint.Server) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Close(ctx); err != nil {
+			t.Errorf("closing the endpoint: %v", err)
+		}
+	})
+}
+
+// servedDaemon is the daemon half of a local scope: a real endpoint on loopback,
+// started with the state a case wants it to answer with, and the registry file
+// that daemon would have written for its own id.
+func servedDaemon(t *testing.T, getenv func(string) string, id string, s orchestrator.State, at time.Time) {
+	t.Helper()
+	srv, err := endpoint.Start(t.Context(), endpoint.Options{ID: id, Snapshot: func() (orchestrator.State, time.Time, bool) {
+		return s, at, true
+	}})
+	if err != nil {
+		t.Fatalf("starting the endpoint: %v", err)
+	}
+	closeEndpoint(t, srv)
+	holdRegistry(t, getenv, endpoint.Registry{ID: id, PID: os.Getpid(), Addr: srv.Addr(),
+		Token: srv.Token(), Nonce: srv.Nonce(), Started: time.Now().UTC()})
+}
+
+// anotherDaemon is the case D1359's nonce exists for: a live endpoint that is
+// not this scope's daemon, and a registry file that names its port for this
+// scope's id with the token it answers to and a nonce it was not started with.
+// Everything about the file looks like a daemon's — it is a daemon's, of another
+// orchestrator — and what refuses it is the handshake, so a reader that trusted
+// the file would draw another orchestrator's work under this scope's name.
+func anotherDaemon(t *testing.T, getenv func(string) string, id string, s orchestrator.State, at time.Time) {
+	t.Helper()
+	srv, err := endpoint.Start(t.Context(), endpoint.Options{ID: "o2", Snapshot: func() (orchestrator.State, time.Time, bool) {
+		return s, at, true
+	}})
+	if err != nil {
+		t.Fatalf("starting the second endpoint: %v", err)
+	}
+	closeEndpoint(t, srv)
+	holdRegistry(t, getenv, endpoint.Registry{ID: id, PID: os.Getpid(), Addr: srv.Addr(),
+		Token: srv.Token(), Nonce: fileToken(t), Started: time.Now().UTC()})
+}
+
+// holdRegistry writes one daemon's registry file for the life of the case.
+func holdRegistry(t *testing.T, getenv func(string) string, reg endpoint.Registry) {
+	t.Helper()
+	holder, err := endpoint.Hold(getenv, "linux", reg)
+	if err != nil {
+		t.Fatalf("writing the registry file: %v", err)
+	}
+	t.Cleanup(func() { _ = holder.Remove() })
+}
+
+// stateWith is one work item as the daemon's own state — what an endpoint serves
+// and what a local scope reads back — with the item's id the case's own, so a
+// document drawn from the endpoint and one drawn from a node cannot be confused.
+func stateWith(id string) orchestrator.State {
+	return orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion,
+		Rev:           1,
+		AgentID:       "o1",
+		Role:          orchestrator.RoleOrchestrator,
+		WorkItems:     []orchestrator.WorkItem{item(id, "the endpoint's item", "acme/app")},
+	}
+}
+
+// countingTransport counts the requests that left the process. A scope that
+// refuses an argument before it reads anything is a claim about a read that did
+// not happen, and this is what makes it a fact.
+type countingTransport struct {
+	base  http.RoundTripper
+	count atomic.Int64
+}
+
+func (c *countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.count.Add(1)
+	return c.base.RoundTrip(req)
+}
+
+// TestLocalScopeUsesTheLiveEndpoint: a `local:` scope draws the document the
+// daemon on this machine serves when there is one, and the node when there is
+// not. The two answers are distinguishable in the document without knowing
+// which process wrote it: the endpoint's is stamped with the server time of the
+// tick it came from, which is the one freshness fact a local read has, and the
+// node's claims no age at all.
+//
+// The second sub-case is the one CG13b's handshake exists for, and it is the
+// reason "live" is a proven process rather than a file: a registry file naming a
+// port that is not this scope's daemon is refused, and the scope draws the node
+// instead of another orchestrator's work under this scope's name.
+func TestLocalScopeUsesTheLiveEndpoint(t *testing.T) {
+	tickedAt := time.Date(2026, 11, 11, 17, 0, 0, 0, time.UTC)
+	written := time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC)
+	node := func(t *testing.T) json.RawMessage {
+		t.Helper()
+		return stateOf(t, "o1", item("wi-node", "the node's item", "acme/app"))
+	}
+
+	t.Run("the daemon's own document, stamped with its tick", func(t *testing.T) {
+		getenv, client := endpointEnv(t)
+		servedDaemon(t, getenv, "o1", stateWith("wi-endpoint"), tickedAt)
+
+		src := OrchestratorSource{ID: "o1", Local: true, Endpoint: client, Node: node(t), CachedAt: written}
+		nodes, _, st, err := src.Nodes()
+		if err != nil {
+			t.Fatalf("reading a local scope beside a live endpoint: %v", err)
+		}
+		if st.Source != "local:o1" || st.State != SourceUp {
+			t.Fatalf("the scope is %+v, want local:o1 up", st)
+		}
+		if st.AsOf == nil || !st.AsOf.Equal(tickedAt) {
+			t.Errorf("the scope's as_of is %v, want the endpoint's own tick %s: it is what a document drawn from an endpoint carries and a document drawn from a node does not", st.AsOf, tickedAt)
+		}
+		if len(nodes) != 1 || nodes[0].ID != "wi-endpoint" {
+			t.Fatalf("the scope drew %+v, want the live endpoint's own item", nodes)
+		}
+		if nodes[0].Key != "local:o1:wi-endpoint" {
+			t.Errorf("the node is keyed %q, want the scope's own key", nodes[0].Key)
+		}
+	})
+
+	t.Run("a port that is not this scope's daemon is not an endpoint", func(t *testing.T) {
+		getenv, client := endpointEnv(t)
+		anotherDaemon(t, getenv, "o1", stateWith("wi-another-orchestrator"), tickedAt)
+
+		src := OrchestratorSource{ID: "o1", Local: true, Endpoint: client, Node: node(t)}
+		nodes, _, st, err := src.Nodes()
+		if err != nil {
+			t.Fatalf("reading a local scope beside a file that is not this daemon's: %v", err)
+		}
+		if st.State != SourceUp || st.AsOf != nil {
+			t.Errorf("the scope is %+v, want it up from the node and claiming no age", st)
+		}
+		if len(nodes) != 1 || nodes[0].ID != "wi-node" {
+			t.Fatalf("the scope drew %+v, want the node: the endpoint at the file's address is not the daemon that wrote it (D1359)", nodes)
+		}
+	})
+}
+
+// TestLocalScopeFallsBackToTheNodeAndThenTheCache: `local:<id>` prefers a live
+// endpoint, then the node, then the cache (T5(a), amended 2026-11-11). This is
+// the order as a machine without a daemon sees it — the endpoint tries first and
+// answers nothing — so what a machine whose daemon predates the endpoint, or is
+// not running, reads is exactly what CG5 built.
+func TestLocalScopeFallsBackToTheNodeAndThenTheCache(t *testing.T) {
+	written := time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC)
+
+	t.Run("the node", func(t *testing.T) {
+		src := OrchestratorSource{ID: "o1", Local: true, Endpoint: noEndpoint(t),
+			Node: stateOf(t, "o1", item("wi-node", "the node's item", "acme/app")), CachedAt: written}
+		nodes, _, st, err := src.Nodes()
+		if err != nil {
+			t.Fatalf("reading a local scope with no endpoint: %v", err)
+		}
+		if st.State != SourceUp || st.AsOf != nil || len(nodes) != 1 || nodes[0].ID != "wi-node" {
+			t.Errorf("the scope is %+v with nodes %+v, want it up from the node and claiming no age", st, nodes)
+		}
+	})
+
+	t.Run("the cache", func(t *testing.T) {
+		src := OrchestratorSource{ID: "o1", Local: true, Endpoint: noEndpoint(t), CachedAt: written,
+			ReadErr: errors.New("the database is down")}
+		nodes, edges, st, err := src.Nodes()
+		if err != nil {
+			t.Fatalf("reading a local scope with a cache: %v", err)
+		}
+		if st.State != SourceDown || st.AsOf == nil || !st.AsOf.Equal(written) {
+			t.Errorf("the scope is %+v, want it down with the cached brief's own stamp %s", st, written)
+		}
+		if len(nodes) != 0 || len(edges) != 0 {
+			t.Errorf("the fallback drew %d nodes and %d edges, want none: a brief is not a graph", len(nodes), len(edges))
+		}
+	})
+
+	t.Run("a scope with neither is refused", func(t *testing.T) {
+		src := OrchestratorSource{ID: "o1", Local: true, Endpoint: noEndpoint(t)}
+		if _, _, _, err := src.Nodes(); !errors.Is(err, ErrNoOrchestrator) {
+			t.Errorf("a local scope with no endpoint, no node and no cache answered %v, want ErrNoOrchestrator", err)
+		}
+	})
+
+	t.Run("a watch with no endpoint says so", func(t *testing.T) {
+		// The watch's half of the same order: a caller that is watching holds the
+		// node subscription already, so what it is told is that there is nothing
+		// live here to follow rather than a scope that is empty.
+		err := LocalLive{Client: noEndpoint(t), ID: "o1"}.Watch(t.Context(), func(orchestrator.State, time.Time) error {
+			t.Error("a watch with no endpoint drew a document")
+			return nil
+		})
+		if err == nil {
+			t.Fatal("a watch with no endpoint answered with no error")
+		}
+		if !strings.Contains(err.Error(), "no live endpoint") {
+			t.Errorf("the watch failed with %q, want it to say there is no live endpoint", err)
+		}
+	})
+}
+
+// TestLocalScopeRefusesAnIdOutsideThePatternBeforeAnyRead: H1's pattern governs
+// the scope argument while the daemon's own rule governs the id of
+// `orchestrator/<id>`, and where the two differ the narrower one decides — a
+// project whose name carries `_`, or is longer than 40 characters, has no local
+// scope (CG13c). The refusal happens before the registry file is looked at and
+// before the node is decoded, which is what the counting transport and the
+// undecodable node hold.
+//
+// It is ErrNoOrchestrator's refusal and not a state, so `all` leaves such an id
+// out with the warning saying so rather than taking the document down with it
+// (readGraph). The control at the end is the other half: an id of the same shape
+// under `orchestrator:` is read as before, because only a local scope's id has
+// to be a value the command line could have carried.
+func TestLocalScopeRefusesAnIdOutsideThePatternBeforeAnyRead(t *testing.T) {
+	tickedAt := time.Date(2026, 11, 11, 17, 0, 0, 0, time.UTC)
+	const project = "my_project"
+	long := strings.Repeat("o", 41)
+
+	// The id is one the daemon's own rule admits: `agentRE` takes `_` and 64
+	// characters, so a daemon for this project really does serve an endpoint.
+	if _, err := orchestrator.PathNode(project); err != nil {
+		t.Fatalf("the fixture id is not one the daemon's own rule admits: %v", err)
+	}
+
+	getenv, client := endpointEnv(t)
+	servedDaemon(t, getenv, project, stateWith("wi-endpoint"), tickedAt)
+	counted := &countingTransport{base: http.DefaultTransport}
+	client.HTTP = &http.Client{Transport: counted}
+
+	for _, id := range []string{project, long} {
+		// The node is not a document this build reads: a scope that decoded it
+		// before judging the id would answer `unreadable` rather than refuse.
+		src := OrchestratorSource{ID: id, Local: true, Endpoint: client, Node: json.RawMessage("{")}
+		nodes, edges, st, err := src.Nodes()
+		if !errors.Is(err, ErrNoOrchestrator) {
+			t.Errorf("a local scope whose id is %q answered %v, want ErrNoOrchestrator", id, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "local:"+id) {
+			t.Errorf("the refusal %q does not name the scope it refused", err)
+		}
+		if len(nodes) != 0 || len(edges) != 0 || st.State != "" {
+			t.Errorf("the refused scope answered with nodes %+v, edges %+v and state %+v", nodes, edges, st)
+		}
+	}
+	if n := counted.count.Load(); n != 0 {
+		t.Errorf("the scope made %d requests before refusing the id, want none: the pattern is checked before any read (H1)", n)
+	}
+
+	// The control: the same id under the kind the database holds is read, so the
+	// refusal above is the local scope's own rule and not a source that refuses
+	// everything.
+	control := OrchestratorSource{ID: project, Node: stateOf(t, project, item("wi-1", "an item", "acme/app"))}
+	if _, _, st, err := control.Nodes(); err != nil || st.State != SourceUp {
+		t.Errorf("an orchestrator scope for %q is %+v, %v, want it up", project, st, err)
+	}
+}
+
+// TestTheEndpointStreamFeedsTheWatch: the endpoint's stream is what a local
+// scope's watch follows, and what it feeds is the same document the one-shot
+// read builds — one whole document per tick, carrying the stream's identity and
+// a sequence that rises within it (D1360, H4). The state at connect time comes
+// first, so a watch opened on a quiet orchestrator draws something at once.
+func TestTheEndpointStreamFeedsTheWatch(t *testing.T) {
+	first := time.Date(2026, 11, 11, 17, 0, 0, 0, time.UTC)
+	later := first.Add(5 * time.Minute)
+
+	var mu sync.Mutex
+	state, at := stateWith("wi-first"), first
+	getenv, client := endpointEnv(t)
+	srv, err := endpoint.Start(t.Context(), endpoint.Options{ID: "o1", Snapshot: func() (orchestrator.State, time.Time, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		return state, at, true
+	}})
+	if err != nil {
+		t.Fatalf("starting the endpoint: %v", err)
+	}
+	closeEndpoint(t, srv)
+	holdRegistry(t, getenv, endpoint.Registry{ID: "o1", PID: os.Getpid(), Addr: srv.Addr(),
+		Token: srv.Token(), Nonce: srv.Nonce(), Started: time.Now().UTC()})
+
+	stream, err := NewStream()
+	if err != nil {
+		t.Fatalf("drawing a stream: %v", err)
+	}
+	var printed bytes.Buffer
+	frames := make(chan struct{}, 8)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- LocalLive{Client: client, ID: "o1"}.Watch(ctx, func(s orchestrator.State, tick time.Time) error {
+			nodes, edges, err := orchestratorNodes("local:o1", s)
+			if err != nil {
+				return err
+			}
+			doc := stream.Next(Document{Version: DocumentVersion,
+				Sources: []SourceState{{Source: "local:o1", State: SourceUp, AsOf: &tick}},
+				Nodes:   nodes, Edges: edges}, tick)
+			if err := WriteDoc(&printed, doc); err != nil {
+				return err
+			}
+			frames <- struct{}{}
+			return nil
+		})
+	}()
+
+	waitForFrame(t, frames, "the state at connect time")
+	mu.Lock()
+	state, at = stateWith("wi-moved"), later
+	mu.Unlock()
+	waitForFrame(t, frames, "the tick that moved")
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("the watch ended with %v, want the caller's own cancellation", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(printed.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("the watch printed %d documents, want one per tick: %q", len(lines), printed.String())
+	}
+	var docs []Document
+	for i, line := range lines {
+		var doc Document
+		if err := json.Unmarshal([]byte(line), &doc); err != nil {
+			t.Fatalf("document %d is not one this release reads: %v", i, err)
+		}
+		docs = append(docs, doc)
+	}
+	if docs[0].Version != DocumentVersion || docs[0].StreamID == "" || docs[0].StreamID != docs[1].StreamID {
+		t.Errorf("the two documents are %+v and %+v, want one version and one stream_id", docs[0], docs[1])
+	}
+	if docs[0].Seq != 1 || docs[1].Seq != 2 {
+		t.Errorf("the sequences are %d and %d, want them rising within one stream (H4)", docs[0].Seq, docs[1].Seq)
+	}
+	if docs[0].GeneratedAt != first.UTC() {
+		t.Errorf("the first document is stamped %s, want the endpoint's own tick %s", docs[0].GeneratedAt, first)
+	}
+	if len(docs[0].Nodes) != 1 || docs[0].Nodes[0].ID != "wi-first" {
+		t.Errorf("the first document holds %+v, want the state at connect time", docs[0].Nodes)
+	}
+	if len(docs[1].Nodes) != 1 || docs[1].Nodes[0].ID != "wi-moved" {
+		t.Errorf("the second document holds %+v, want the tick that moved", docs[1].Nodes)
+	}
+	if docs[0].Sources[0].AsOf == nil || !docs[0].Sources[0].AsOf.Equal(first) {
+		t.Errorf("the first document's source is %+v, want it stamped with the tick it came from", docs[0].Sources[0])
+	}
+}
+
+// waitForFrame waits for one document the watch printed, and fails the case at
+// the deadline: the watch runs in its own goroutine, so a case waits for what
+// arrived rather than sleeping for a guess.
+func waitForFrame(t *testing.T, frames <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-frames:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("the watch printed no document for %s", what)
 	}
 }
