@@ -23,6 +23,7 @@ import (
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -61,15 +62,22 @@ func newABCmd(d Deps) *cobra.Command {
 			"A sampled task launches a champion (the run the developer sees) and a\n" +
 			"challenger (the same task, at the same commit, on another coder model, run as a\n" +
 			"shadow that pushes nothing and opens nothing). Both records carry the pair, and\n" +
-			"this command scores the pairs from those records alone: no model call, no\n" +
-			"judgement, and the same records always give the same table.\n\n" +
+			"this command scores the pairs from those records and from what the repository's\n" +
+			"judge runs wrote under their own prefixes: no model call is made here, and the\n" +
+			"same records and verdicts always give the same table. A pair at Critical counts\n" +
+			"only once a judge has decided it (D561), and every other mode shows the judge's\n" +
+			"verdict beside the hard signals it is ranked on.\n\n" +
 			"Rows are one per rigor mode x tier x model pair. A pair the arms do not make --\n" +
 			"a different start commit, mode, tier or recipe, or an arm that never started --\n" +
 			"is in no figure at all. WINS and LOSSES are the challenger's; a TIE decided\n" +
 			"nothing and no figure is drawn from one. HALTS is each arm's halt count: a halt\n" +
 			"is already a loss, and the count says how often a limit rather than the work\n" +
 			"decided a pair. COST is the median pair cost ratio, the challenger's model\n" +
-			"dollars over the champion's.\n\n" +
+			"dollars over the champion's. JUDGE FAMILY is the family of the model that judged\n" +
+			"the group's pairs -- a Claude ID is anthropic, a provider model's family is its\n" +
+			"ID's vendor prefix -- and SAME FAMILY says one of them is an arm's own, which\n" +
+			"blindness does not remove (D553). UNJUDGED counts the pairs no judge has decided\n" +
+			"and TRUNCATED those whose patch was cut short and can never be judged.\n\n" +
 			"ADVICE is D565's rule at the mode's exchange rate: the challenger is recommended\n" +
 			"when it is clearly better (the lower bound of its win share above a half) and its\n" +
 			"median cost ratio is within the mode's rate, or when it is not worse (the upper\n" +
@@ -78,13 +86,15 @@ func newABCmd(d Deps) *cobra.Command {
 			"approximating one. Nothing here changes a default: this is a report, not a\n" +
 			"switch.\n\n" +
 			"No person, repository or task text reaches the output: a row is a mode, a tier and\n" +
-			"two coder models.\n\n" +
+			"two coder models, with the family of the model that judged them.\n\n" +
 			"--since is how far back the read goes (default 30d: a day count, a Go duration,\n" +
 			"or 0 for no bound). --json prints {project, source, since, until, rows[{mode,\n" +
 			"tier, champion, challenger, pairs, wins, losses, ties, champion_halts,\n" +
-			"challenger_halts, champion_follow_ups, recommendation{decision, rule, decisive,\n" +
-			"p, win_share_lo, win_share_hi, median_cost_ratio, exchange_rate}}], warnings};\n" +
-			"median_cost_ratio is null when no pair of the group carried both arms' costs.",
+			"challenger_halts, champion_follow_ups, judge_families, judge_same_family,\n" +
+			"unjudged, truncated, recommendation{decision, rule, decisive, p, win_share_lo,\n" +
+			"win_share_hi, median_cost_ratio, exchange_rate}}], warnings};\n" +
+			"median_cost_ratio is null when no pair of the group carried both arms' costs,\n" +
+			"and judge_families is empty when no judge has decided a pair of the group.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runAB(cmd, &o, d) },
 	}
@@ -153,7 +163,11 @@ func runAB(cmd *cobra.Command, o *abOptions, d Deps) error {
 	if corrupt > 0 {
 		m.Warnings = append(m.Warnings, fmt.Sprintf("%d of the window's runs have a result.json this build cannot read: an arm without a record is in no pair, so the pair it belongs to is in no figure", corrupt))
 	}
-	rep := report.BuildAB(recs, rates)
+	verdicts, unread := readVerdicts(ctx, env, slugs, objs)
+	if unread > 0 {
+		m.Warnings = append(m.Warnings, fmt.Sprintf("%d of the window's judge runs have a verdicts object this read could not open: the pairs they decided count as unjudged here, so a Critical pair among them is in no figure", unread))
+	}
+	rep := report.BuildAB(recs, verdicts, rates)
 	if o.json {
 		return report.ABJSON(cmd.OutOrStdout(), rep, m)
 	}
@@ -179,6 +193,76 @@ func abRecords(objs []fcli.RunRecord) ([]runstore.Record, int) {
 		recs = append(recs, *rec)
 	}
 	return recs, corrupt
+}
+
+// readVerdicts is what the window's judge runs have decided, keyed by pair ID
+// (ab.JudgeVerdicts), and how many of their objects this read could not open.
+//
+// The verdicts are read from where the judge runs wrote them and nowhere else
+// (D559): a judge run is one of the records this read already holds, so finding
+// one costs no listing, and its own prefix is the only place its object lives.
+// The record does not say which repository prefix that is — a read across
+// repositories holds records and their slugs apart — so the slug is derived
+// from the record's repository and the slugs the read covered, the way the run
+// itself derives it (runner.ProviderForSlug). Its run ID is the listing's own
+// and never the record's: the record's is text out of result.json, and it
+// becomes part of an object name (runstore.Open), so a record declaring another
+// run's ID would open another prefix's object — where the listing's ID is the
+// directory the bucket actually holds the run under.
+//
+// A judge run whose object is there and cannot be opened or believed is counted
+// rather than fatal: the figures it would have decided are read as unjudged,
+// which the report says out loud, and one bad object never costs a reader the
+// whole table — the reading ab's own launcher makes is the opposite one, since
+// judging the same pairs again would write a second verdict for each. An object
+// that is simply absent is not counted: a judge run that wrote none decided
+// nothing (JudgeVerdicts).
+func readVerdicts(ctx context.Context, cloud *fcli.Cloud, slugs []string, objs []fcli.RunRecord) (map[string]ab.Verdict, int) {
+	verdicts := map[string]ab.Verdict{}
+	unread := 0
+	for _, o := range objs {
+		rec := o.Record()
+		if rec == nil || !ab.IsJudgeRun(rec) {
+			continue
+		}
+		slug := slugOfRecord(*rec, slugs)
+		if slug == "" {
+			unread++
+			continue
+		}
+		got, err := ab.JudgeVerdicts(ctx, cloud.RunsBucket(), slug, o.ID())
+		if err != nil {
+			unread++
+			continue
+		}
+		// Two objects can name one pair: A5.2 hands a pair whose judge call
+		// failed to the next run (skipCallFailed), so a later run's answer
+		// stands beside an earlier run's skip. A judgement therefore wins over a
+		// skip whatever order the records were read in, and a second judgement —
+		// which no launcher here makes (D569) — leaves the first standing
+		// rather than making a figure depend on the listing's order.
+		for pairID, v := range got {
+			seen, ok := verdicts[pairID]
+			if !ok || (!seen.Judged() && v.Judged()) {
+				verdicts[pairID] = v
+			}
+		}
+	}
+	return verdicts, unread
+}
+
+// slugOfRecord is the storage slug of the repository a record ran in: the one
+// slug of the read that names that repository, "" for a repository none of them
+// does. A slug is a hash of the provider kind and the repository, so exactly
+// one of a read's slugs can match a given record, and a record whose repository
+// no slug names is one whose judge runs this read cannot find.
+func slugOfRecord(rec runstore.Record, slugs []string) string {
+	for _, slug := range slugs {
+		if _, ok := runner.ProviderForSlug(slug, rec.Repo); ok {
+			return slug
+		}
+	}
+	return ""
 }
 
 // abRateSource is the exchange rate table the recommendation is read at (D565)
