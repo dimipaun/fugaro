@@ -20,14 +20,15 @@ var prVocabularyWords = []string{"live", "ready", "stalled", "orphan"}
 // "stalled", and nothing else in the tree fails if one copy drifts -- the
 // skills' own lint checks bytes, commands and flags, never a meaning.
 //
-// The meanings pinned here are the ones the product can produce. A run records
-// the outcome `ready` only for a pull request it really left ready: finalize
-// refuses that outcome when the provider left the pull request looking like a
-// draft (internal/runner/runner.go, the PartialError case that flips ready to
-// false), and plugin/skills/working/reference/status.md states the same fact
-// for a reader. So no copy may call a draft ready; a draft with a run behind
-// it is stalled, whatever that run ended as, and the four words stay a
-// partition of every open pull request.
+// Ready and stalled are decided by the run record's outcome, never by whether
+// the host calls the pull request a draft. A host that refuses draft pull
+// requests leaves an ordinary one with `[DRAFT]` in its title instead
+// (gitprov.PR.DraftFallback, what reference/diagnose.md tells a reader to say),
+// so a run halted there leaves a pull request no host draft flag marks and
+// whose outcome is still `draft`: read off the host's flag it looks ready, and
+// it is not. Only a run that opened or last followed the pull request writes
+// that outcome, so a review run's own `reviewed` outcome neither makes a pull
+// request ready nor takes it away.
 var prVocabularyCopies = []struct {
 	path string
 	// wants are the phrases a copy must carry. The four bold words are checked
@@ -38,39 +39,63 @@ var prVocabularyCopies = []struct {
 	{"CLAUDE.md", []string{
 		"**Pull-request words.**",
 		"**live** (a run is going on it)",
-		"**ready** (no run is going and only a merge is left: a non-draft whose checks the owner accepts, which is the only shape a run records the outcome `ready` for)",
-		"**stalled** (it had a run, no run is going and it is not ready: a draft with a run behind it, whatever that run ended as",
+		"**ready** (no run is going, the pull request is not a draft, and the run that opened or last followed it ended with the outcome `ready`",
+		"**stalled** (it had a run, no run is going and it is not ready: the outcome `draft`",
+		"a pull request on a host with no drafts, an ordinary one it marks `[DRAFT]` in its title that can look ready",
+		"or a ready one a person turned back into a draft",
 		"**orphan** (no run ever produced or follows it: a person's pull request, or one whose run records are gone)",
 	}},
 	{"plugin/skills/working/SKILL.md", []string{
 		"**The state of a pull request.**",
 		"when you report on a pull request",
 		"**live** when a run is going on it",
-		"**ready** when no run is going and it waits only on a merge — a non-draft whose checks the owner accepts, which is the only shape a run records the outcome `ready` for",
-		"**stalled** when it had a run, no run is going and it is not ready — a draft with a run behind it, whatever that run ended as",
+		"**ready** when no run is going, it is not a draft, and the run that opened or last followed it ended with the outcome `ready`",
+		"**stalled** when it had a run, no run is going and it is not ready — the outcome `draft`",
+		"an ordinary pull request on a host with no drafts that marks it `[DRAFT]` in its title and can look ready",
+		"or a ready one a person turned back into a draft",
 		"**orphan** when no run ever produced or follows it",
 	}},
 	{"plugin/skills/parallelism/SKILL.md", []string{
 		"the four words that skill's own paragraph defines",
 		"**live** while a run is going on one",
-		"**ready** when only its merge is left",
-		"**stalled** when a run has been on it and it is not ready",
+		"**ready** when the run that opened or last followed it ended with the outcome `ready`",
+		"**stalled** when a run has been on it and it is not ready (`[DRAFT]`-titled ordinary pull requests on a host with no drafts included)",
 		"**orphan** when no run produced or follows it",
 	}},
 	{"docs/status.md", []string{
 		"A pull request is in one of four states, and the four words are the same ones everyone uses",
 		`**live** (a run is going on it, which is what rule 3's "in a run" means)`,
-		"**ready** (no run is going and only a merge is left, so it is never a draft)",
-		"**stalled** (it had a run, no run is going and it is not ready — a draft with a run behind it, whatever that run ended as)",
+		"**ready** (no run is going, it is not a draft, and the run that opened or last followed it ended with the outcome `ready`)",
+		"**stalled** (it had a run, no run is going and it is not ready — the outcome `draft`, a `[DRAFT]`-titled ordinary pull request on a host with no drafts included, or a ready one a person turned back into a draft)",
 		"**orphan** (no run ever produced or follows it)",
 	}},
 }
 
+// prVocabularyRetired are wordings a copy of the vocabulary may not go back to,
+// with the fact that rules each one out. Both were written, both were found
+// wrong by the runner's own behaviour, and either one coming back means the
+// four words classify a pull request differently from the record they are read
+// from.
+var prVocabularyRetired = []struct {
+	phrase string
+	why    string
+}{
+	{
+		"a draft whose last run succeeded with outcome",
+		"it calls a draft ready: the runner writes the outcome `ready` only for a pull request it really left ready (finalize flips it back when the provider left the pull request looking like a draft), so a draft with that outcome behind it is a pull request a person turned back into a draft, and every copy files it under stalled",
+	},
+	{
+		"non-draft whose checks the owner accepts",
+		"it reads readiness off the host's draft flag: a host that refuses draft pull requests leaves an ordinary one marked `[DRAFT]` in its title, which no draft flag marks and whose run's outcome is `draft`, so the pull request looks ready and is not (reference/diagnose.md tells a reader to say so)",
+	},
+}
+
 // TestDocsPullRequestVocabularyIsOneVocabulary: every copy names the four
-// words and means the same state by them, the state the product cannot produce
-// is in none of them, and the paragraph the parallelism skill points at
-// exists. A copy that drops a word, rewords one into something the runner does
-// not produce, or points at a paragraph nobody wrote fails here.
+// words and means the same state by them, each copy files the `[DRAFT]`-titled
+// fallback under stalled, none has gone back to a wording the product rules
+// out, and the paragraph the parallelism skill points at exists. A copy that
+// drops a word, decides readiness by the host's draft flag instead of the run's
+// own outcome, or points at a paragraph nobody wrote fails here.
 func TestDocsPullRequestVocabularyIsOneVocabulary(t *testing.T) {
 	for _, c := range prVocabularyCopies {
 		text := flattenDoc(readDoc(t, c.path))
@@ -84,13 +109,10 @@ func TestDocsPullRequestVocabularyIsOneVocabulary(t *testing.T) {
 				t.Errorf("%s does not carry %q: the wording of a meaning may change, but the meaning has to be in the copy that states it, and these four are the same everywhere (the owner's list of 2026-11-12)", c.path, want)
 			}
 		}
-		// A draft whose last run ended `ready` is a pull request someone turned
-		// back into a draft, never one a run left that way: finalize refuses the
-		// outcome for a pull request its provider left looking like a draft. A
-		// copy that calls it ready classifies a state nothing produces and
-		// contradicts the sentence every other copy carries.
-		if strings.Contains(text, "a draft whose last run succeeded with outcome") {
-			t.Errorf("%s calls a draft ready: the runner records the outcome `ready` only for a pull request it really left ready, so a draft with the outcome `ready` behind it is a pull request a person turned back into a draft, and the other copies file it under stalled", c.path)
+		for _, r := range prVocabularyRetired {
+			if strings.Contains(text, r.phrase) {
+				t.Errorf("%s says %q again: %s", c.path, r.phrase, r.why)
+			}
 		}
 	}
 	// The parallelism skill repeats the vocabulary in one sentence and points
