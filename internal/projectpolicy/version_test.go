@@ -59,7 +59,7 @@ func TestTheProfileGateIsVersioned(t *testing.T) {
 
 // TestTheCLISkewRemediesStayApart: the two CLI directions carry different
 // advice because they have different fixes, and each one is wrong for the other
-// direction — `fugaro upgrade` when this binary is already the newer side does
+// direction — an upgrade named when this binary is already the newer side does
 // nothing, and `fugaro update --firebase-project` at an older binary redeploys this
 // release's rules template over rules a newer Fugaro wrote. internal/cli picks
 // between them by Found > Understood (cliSkewSentence), which is why the pair
@@ -68,14 +68,14 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 	if !strings.Contains(CLISkew, "upgrade Fugaro") {
 		t.Errorf("CLISkew = %q, want the upgrade remedy for the older binary", CLISkew)
 	}
-	// The reader here is on the older side, and `fugaro upgrade` never
+	// The reader here is on the older side, and `fugaro update` never
 	// replaces the binary it runs: the remedy names the package manager's
 	// command, and the update that follows it.
 	if !strings.Contains(CLISkew, "brew upgrade dimipaun/tap/fugaro") || !strings.Contains(CLISkew, "fugaro update") {
 		t.Errorf("CLISkew = %q, want the binary upgrade and the update behind it", CLISkew)
 	}
 	if strings.Contains(CLISkew, "(fugaro upgrade)") {
-		t.Errorf("CLISkew = %q: fugaro upgrade never upgrades fugaro itself", CLISkew)
+		t.Errorf("CLISkew = %q: fugaro update never upgrades fugaro itself, and the retired spelling names nothing", CLISkew)
 	}
 	if !strings.Contains(CLISkewNewer, "fugaro project policy publish --delete") || !strings.Contains(CLISkewNewer, "publish it again") {
 		t.Errorf("CLISkewNewer = %q, want the delete-then-publish remedy for the older node no step reaches", CLISkewNewer)
@@ -192,7 +192,7 @@ func TestSkewSentencePicksByDirectionAndReader(t *testing.T) {
 		},
 		{
 			name: "a newer node, the runner", ve: newerNode, reader: ReaderRunner,
-			want:    []string{ahead, understood, "refresh the runner image", "fugaro upgrade"},
+			want:    []string{ahead, understood, "refresh the runner image", "fugaro update"},
 			notWant: []string{"publish --delete", "fugaro update --firebase-project", "upgrade Fugaro ("},
 		},
 	} {
