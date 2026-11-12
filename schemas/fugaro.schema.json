@@ -66,7 +66,7 @@
             "coder": { "$ref": "#/$defs/modelName", "description": "implement and fix" },
             "reviewer": { "$ref": "#/$defs/modelName", "description": "review" },
             "background": { "$ref": "#/$defs/modelName", "description": "Claude Code's small background requests" },
-            "vision": { "$ref": "#/$defs/modelName", "description": "the model a stage runs when its own model cannot read an image" },
+            "vision": { "$ref": "#/$defs/modelName", "description": "the model a stage runs when its own model cannot read an image (D2003). It never falls back to agent.model: the slot is read exactly when a stage's own model cannot read an image, and the model that cannot is the one the fallback would answer with. Fugaro before 0.25.0 refuses the key. The file is decoded strictly, so a job image older than the release that reads it fails at bootstrap on a key its runner does not know: `fugaro run` refuses the launch, naming the key and the image to move (internal/cli's visionSince)." },
             "diagnose": { "$ref": "#/$defs/modelName", "description": "the model fugaro troubleshoot runs on" }
           }
         },
