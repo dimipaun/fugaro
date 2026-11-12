@@ -626,6 +626,60 @@ func TestTriageAuditIDIsRunColonTriage(t *testing.T) {
 	}
 }
 
+// TestTriageMergeGateHoldsOnItsOwn: the merge gate is asked directly, because
+// the rule tries the fail-closed outcome before it and a gate that leaned on
+// that order would merge on an input nobody read the moment the order changed
+// (D1245, G12).
+func TestTriageMergeGateHoldsOnItsOwn(t *testing.T) {
+	if _, ok := orchestrator.MergeAsIsGate(mergeable()); !ok {
+		t.Fatal("the gate refused the whole of D1245's evidence")
+	}
+
+	cases := []struct {
+		name   string
+		break_ func(*orchestrator.TriageInput)
+	}{
+		{name: "an unread CI answer", break_: func(in *orchestrator.TriageInput) { in.CI = gitprov.CIUnknown }},
+		{name: "a red CI", break_: func(in *orchestrator.TriageInput) { in.CI = gitprov.CIRed }},
+		{name: "no pull request", break_: func(in *orchestrator.TriageInput) { in.PR = nil }},
+		{name: "a draft pull request", break_: func(in *orchestrator.TriageInput) { in.PR.Draft = true }},
+		{name: "a run still in flight", break_: func(in *orchestrator.TriageInput) { in.Record.Status = runstore.StatusRunning }},
+		{name: "a record nobody read", break_: func(in *orchestrator.TriageInput) { in.Record = nil }},
+		{name: "a status this release does not know", break_: func(in *orchestrator.TriageInput) { in.Record.Status = "halfway" }},
+		{name: "no pushed head", break_: func(in *orchestrator.TriageInput) { in.Record.PushedHead = "" }},
+		{name: "no changed path at all", break_: func(in *orchestrator.TriageInput) { in.Record.ChangedFiles = &runstore.ChangedFiles{} }},
+		{name: "no changed-path set", break_: func(in *orchestrator.TriageInput) { in.Record.ChangedFiles = nil }},
+		{name: "a truncated changed-path set", break_: func(in *orchestrator.TriageInput) { in.Record.ChangedFiles.Truncated = true }},
+		{name: "a path outside the routine allowlist", break_: func(in *orchestrator.TriageInput) {
+			in.Record.ChangedFiles = &runstore.ChangedFiles{Paths: []string{".github/workflows/ci.yml"}, Total: 1}
+		}},
+		{name: "a findings file nobody could read", break_: func(in *orchestrator.TriageInput) {
+			in.Findings = orchestrator.Findings{Read: orchestrator.FindingsAbsent}
+		}},
+		{name: "an unattributable findings file", break_: func(in *orchestrator.TriageInput) {
+			in.Findings = orchestrator.Findings{Read: orchestrator.FindingsUnattributable}
+		}},
+		{name: "a severity nobody knows", break_: func(in *orchestrator.TriageInput) {
+			in.Findings = findingsOf(orchestrator.Finding{Severity: "urgent", Path: triageRoutine, Key: "k1"})
+		}},
+		{name: "a critical finding", break_: func(in *orchestrator.TriageInput) {
+			in.Findings = findingsOf(orchestrator.Finding{Severity: orchestrator.SeverityCritical, Path: triageRoutine, Key: "k1"})
+		}},
+		{name: "a high finding in a security path", break_: func(in *orchestrator.TriageInput) {
+			in.Findings = findingsOf(orchestrator.Finding{Severity: orchestrator.SeverityHigh, Path: "internal/creds/store.go", Key: "k1"})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := mergeable()
+			tc.break_(&in)
+			if out, ok := orchestrator.MergeAsIsGate(in); ok {
+				t.Fatalf("the gate merged on %s: %+v", tc.name, out)
+			}
+		})
+	}
+}
+
 // TestTriageTriesTheOutcomesInTheFixedOrder: D1244's order is the rule, and it
 // is what decides a run two of the readings cover. Each case names the
 // outcomes whose own reading the input satisfies; the rule must answer the

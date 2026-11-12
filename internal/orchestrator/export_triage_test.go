@@ -11,3 +11,9 @@ func TriageOrder() []TriageKind { return append([]TriageKind(nil), triageOutcome
 // TriageTransition is the audit transition one run's triage is appended under
 // (D1247).
 const TriageTransition = triageTransition
+
+// MergeAsIsGate is the merge's own decider, on its own. The rule tries it
+// after the fail-closed outcome, so the checks it makes for itself are a
+// defence in depth, and a test that drove only Triage could not tell whether
+// the gate holds without the order.
+func MergeAsIsGate(in TriageInput) (TriageOutcome, bool) { return triageMergeAsIs(in) }
