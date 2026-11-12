@@ -5500,6 +5500,101 @@ func TestSchemasDecodeTheVisionKey(t *testing.T) {
 	}
 }
 
+// TestSchemasDecodeTheModelGradesKey (E2, D2039): the escalation ladder's two
+// grades are one block in three schemas — a repository's model_grades:, the
+// project layer's defaults.model_grades, and the DEFAULT column
+// $defs.keyDefaults is. A repository's CI and a consumer of the settings read
+// check against the documents, so a key the Go types carry and a document does
+// not is a configuration the CLI accepts and a checker refuses.
+//
+// The layer's block is the one place the pair's second half is admitted: a
+// grade named in a project layer may carry an access, which is why
+// project-layer.schema.json carries its own $defs/grade rather than reusing the
+// model-only $defs/craft beside it. Both files refuse a grade the ladder does
+// not have, a key the block does not have and an access that is not a
+// credential name.
+func TestSchemasDecodeTheModelGradesKey(t *testing.T) {
+	const head = "version: 1\nproject: acme\ngit: { provider: github }\nworkflows:\n  default:\n    commands: { build: make, test: make test }\n"
+	const layerHead = "version: 1\nproject: acme\ngcp_project: acme-1a2b3c\n"
+	const grade = "anthropic/claude-sonnet-5.5"
+	for _, tc := range []struct {
+		file string
+		sch  *jsonschema.Schema
+		head string
+		ok   []string
+		bad  []string
+	}{
+		{
+			file: "fugaro.schema.json", sch: compile(t, "fugaro.schema.json"), head: head,
+			ok: []string{
+				"model_grades:\n  strong: { model: " + grade + ", access: ai-gateway-main }\n",
+				"model_grades:\n  strongest: { model: " + grade + " }\n",
+				"model_grades: {}\n",
+			},
+			bad: []string{
+				"model_grades:\n  strng: { model: " + grade + " }\n",
+				"model_grades:\n  strong: { model: \"two words\" }\n",
+				"model_grades:\n  strong: { model: " + grade + ", access: \"two words\" }\n",
+				"model_grades:\n  strong: { model: " + grade + ", creds: x }\n",
+			},
+		},
+		{
+			file: "project-layer.schema.json", sch: compile(t, "project-layer.schema.json"), head: layerHead,
+			ok: []string{
+				"defaults:\n  model_grades:\n    strong: { model: " + grade + ", access: ai-gateway-main }\n",
+				"defaults:\n  model_grades:\n    strongest: { model: " + grade + " }\n",
+			},
+			bad: []string{
+				"defaults:\n  model_grades:\n    stronger: { model: " + grade + " }\n",
+				"defaults:\n  model_grades:\n    strong: { model: " + grade + ", creds: x }\n",
+			},
+		},
+	} {
+		for _, ok := range tc.ok {
+			if err := tc.sch.Validate(yamlInstance(t, []byte(tc.head+ok))); err != nil {
+				t.Errorf("%s refuses %q: %v", tc.file, ok, err)
+			}
+		}
+		for _, bad := range tc.bad {
+			if err := tc.sch.Validate(yamlInstance(t, []byte(tc.head+bad))); err == nil {
+				t.Errorf("%s accepts %q", tc.file, bad)
+			}
+		}
+	}
+
+	data, err := os.ReadFile("settings.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	// All four rows the registry carries, twice: the repository's key and the
+	// layer's, each with the default the registry gives it, and the two halves
+	// answering differently — a grade nobody set is no grade, and the rung that
+	// needs one refuses and asks, while a grade naming no access takes the
+	// project's default credential, as a craft's access does.
+	for _, key := range []string{
+		"model_grades.strong.model", "model_grades.strongest.model",
+		"layer.defaults.model_grades.strong.model", "layer.defaults.model_grades.strongest.model",
+	} {
+		got, _ := nodeOf(t, doc, "$defs", "keyDefaults", "properties", key)["default"].(string)
+		if !strings.HasPrefix(got, "unset = ") || !strings.Contains(got, "refuses and asks") {
+			t.Errorf("settings.schema.json %s: the default is %q, want the registry's unset sentence", key, got)
+		}
+	}
+	for _, key := range []string{
+		"model_grades.strong.access", "model_grades.strongest.access",
+		"layer.defaults.model_grades.strong.access", "layer.defaults.model_grades.strongest.access",
+	} {
+		got, _ := nodeOf(t, doc, "$defs", "keyDefaults", "properties", key)["default"].(string)
+		if !strings.HasPrefix(got, "unset = ") || !strings.Contains(got, "default credential") {
+			t.Errorf("settings.schema.json %s: the default is %q, want the registry's unset sentence", key, got)
+		}
+	}
+}
+
 // TestSettingsConsoleFixture: console/test/fixtures/settings.json is the answer
 // the console's hermetic CLI stub gives `fugaro settings --json`, and the e2e
 // spec that drives a setting's edit draws it as the CLI's own read (the

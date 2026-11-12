@@ -1654,6 +1654,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkClonePlanningImage(ctx, env, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The model_grades: block, the same shape and the same reason
+		// again: see checkModelGradesImage. The repository's half is
+		// judged even though the merge drops and records what it writes.
+		if err := checkCloneModelGradesImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The follow-up fields a filed task carries, gated on the fields
 		// themselves: see followUpSince. It comes before the request
 		// below because a task this command files also carries the
@@ -1817,6 +1823,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The planning: block, the same shape and the same reason again:
 		// see checkPlanningImage.
 		if err := checkPlanningImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkModelGradesImage.
+		if err := checkModelGradesImage(ctx, env, slug, spec, kind, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The same gate as the clone branch's above, and for the same

@@ -2001,9 +2001,9 @@ func accountsRmPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
 // unresolved rather than the default, which is the value a verdict about a file
 // may not resolve (basebranch.go's projectBaseBranchErr).
 //
-// The version is the one that is refused (two steps back: the step immediately
-// below this binary's is shape-free and this reader reads it, so a node there
-// would answer the read) and no stage of the same run repairs in the other
+// The version is the one that is refused (refusedOlderVersion: every version
+// between it and this binary's is shape-free and this reader reads those, so a
+// node there would answer the read) and no stage of the same run repairs in the other
 // direction: a node of an OLDER version is the state the update's own
 // instrumentation stage tolerates (init.go's effectiveVerifiers answers a node
 // older than this binary with the config's own list, and the policy stage
@@ -2014,7 +2014,7 @@ func accountsRmPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
 func accountsRmBreakPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
 	t.Helper()
 	node := addPolicyNode()
-	node["version"] = projectpolicy.Version - 2
+	node["version"] = refusedOlderVersion(t)
 	node["base_branch"] = branch
 	accountsRmPublishPolicyNode(t, r, node)
 }
