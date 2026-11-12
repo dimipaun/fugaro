@@ -271,7 +271,9 @@ func newLsCmd() *cobra.Command {
 			"run is going and it waits only on a merge) or stalled (it had a run, no run\n" +
 			"is going, and it is not ready). That state is the pull request's and not a\n" +
 			"row's: the listing groups the runs it read by the pull request they carry,\n" +
-			"takes the newest run of each, and keeps the rows of the pull requests in\n" +
+			"takes the newest one of each that says what the pull request is -- the run\n" +
+			"whose outcome is ready or draft, so a rebase or a review that left it as\n" +
+			"it found it does not decide -- and keeps the rows of the pull requests in\n" +
 			"the state asked for; --json carries it as `pr_state` on every row that has\n" +
 			"a pull request, and leaves it out of the rows that have none. A run's own\n" +
 			"state is in its result.json, so this filter reads every run it filters --\n" +

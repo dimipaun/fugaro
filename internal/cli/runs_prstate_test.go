@@ -35,6 +35,8 @@ type prStateRuns struct {
 	stalled    string // PR 13: the newest run ended a draft
 	unlaunched string // PR 14: a run that never launched on the pull request
 	broken     string // PR 15: a run whose result.json cannot be read
+	rebased    string // PR 16: the run that left the pull request ready
+	rebase     string // PR 16: the newer run, a rebase that said nothing about it
 	noPR       string // a run that opened no pull request
 }
 
@@ -50,6 +52,8 @@ func seedPRStateRuns(t *testing.T, f *cloudFixture) prStateRuns {
 		stalled:    runIDAt(0, "000300", "c001"),
 		unlaunched: runIDAt(0, "000400", "d001"),
 		broken:     runIDAt(0, "000500", "e001"),
+		rebased:    runIDAt(0, "000700", "1a01"),
+		rebase:     runIDAt(0, "000800", "1b01"),
 		noPR:       runIDAt(0, "000600", "f001"),
 	}
 	// PR 11: the newest run of the pull request is still going, so the pull
@@ -83,6 +87,21 @@ func seedPRStateRuns(t *testing.T, f *cloudFixture) prStateRuns {
 	// error row is not going: the pull request is stalled.
 	seedSpec(t, f, prStateTaskFor(r.broken, 15), false)
 	putBuildObject(t, f, "runs/"+appSlug+"/"+r.broken+"/result.json", []byte("{not json"))
+
+	// PR 16: the newest run is a follow-up that only put the branch back on
+	// its base (internal/runner's rebase, which ends succeeded with outcome
+	// none and pushes for nobody's review), so the pull request is still the
+	// ready one the run before it left behind: a run that says nothing about
+	// the pull request does not take it off ready.
+	seedSpec(t, f, prStateTaskFor(r.rebased, 16), false)
+	writeRecord(t, f, r.rebased, &runstore.Record{Version: 1, RunID: r.rebased, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady, Stage: "finalize",
+		PR: &runstore.PRRef{Number: 16, URL: "https://github.com/acme/app/pull/16"}})
+	seedSpec(t, f, prStateTaskFor(r.rebase, 16), false)
+	writeRecord(t, f, r.rebase, &runstore.Record{Version: 1, RunID: r.rebase, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeNone, Stage: "rebase",
+		Branch: "fugaro/" + r.rebased, FollowUp: &runstore.FollowUp{PR: 16, PreviousRun: r.rebased},
+		PR: &runstore.PRRef{Number: 16, URL: "https://github.com/acme/app/pull/16"}})
 
 	// A run that opened no pull request carries no state at all.
 	seedSpec(t, f, firstRunSpec(r.noPR), false)
@@ -119,6 +138,8 @@ func TestRunsLsPRStateVocabulary(t *testing.T) {
 		r.stalled:    prStateStalled,
 		r.unlaunched: prStateStalled,
 		r.broken:     prStateStalled,
+		r.rebased:    prStateReady, // the rebase below that run said nothing about the pull request
+		r.rebase:     prStateReady,
 		r.noPR:       "", // no pull request, no state
 	}
 	if len(got.Runs) != len(want) {
@@ -142,7 +163,7 @@ func TestRunsLsPRStateFilter(t *testing.T) {
 
 	for state, want := range map[string][]string{
 		prStateLive:    {r.live},
-		prStateReady:   {r.ready, r.readyOld},
+		prStateReady:   {r.rebase, r.rebased, r.ready, r.readyOld},
 		prStateStalled: {r.broken, r.unlaunched, r.stalled}, // newest first, the listing's own order
 	} {
 		got, _ := lsJSON(t, "--since", "0", "--state", state)
@@ -276,11 +297,24 @@ func TestPRStateFromTheListingsOwnRows(t *testing.T) {
 		prStateRow(slug, "20261112-090000-dddd", at(0), runstore.StatusFailed, runstore.OutcomeDraft, 2),
 		// PR 3: a follow-up that never launched is not going.
 		prStateRow(slug, "20261112-090000-eeee", at(0), runview.StatusUnlaunched, runstore.OutcomeNone, 3),
+		// PR 4: the run that left it ready is older than a rebase that only
+		// put the branch back on its base and a review run that pushed
+		// nothing -- neither says what the pull request is, so neither takes
+		// the pull request off ready.
+		prStateRow(slug, "20261110-090000-aa11", at(2), runstore.StatusSucceeded, runstore.OutcomeReady, 4),
+		prStateRow(slug, "20261112-090000-bb11", at(0), runstore.StatusSucceeded, runstore.OutcomeNone, 4),
+		prStateRow(slug, "20261112-090000-cc11", at(0), runstore.StatusSucceeded, runstore.OutcomeReviewed, 4),
+		// PR 5: the same rebase after a run that left a draft leaves it a
+		// draft: looking past the runs that said nothing is not looking past
+		// the newest one that did.
+		prStateRow(slug, "20261111-090000-dd11", at(1), runstore.StatusFailed, runstore.OutcomeDraft, 5),
+		prStateRow(slug, "20261112-090000-ee11", at(0), runstore.StatusSucceeded, runstore.OutcomeNone, 5),
 		// A run that opened no pull request.
 		prStateRow(slug, "20261112-090000-ffff", at(0), runstore.StatusFailed, runstore.OutcomeNone, 0),
 	}
 	markPRStates(rows)
-	want := []string{prStateLive, prStateLive, prStateStalled, prStateStalled, prStateStalled, ""}
+	want := []string{prStateLive, prStateLive, prStateStalled, prStateStalled, prStateStalled,
+		prStateReady, prStateReady, prStateReady, prStateStalled, prStateStalled, ""}
 	for i, row := range rows {
 		if row.PRState != want[i] {
 			t.Errorf("row %s carries pr_state %q, want %q", row.RunID, row.PRState, want[i])

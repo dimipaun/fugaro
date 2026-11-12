@@ -6376,7 +6376,9 @@ the pull request the run went to: live (a run is going on it), ready (no
 run is going and it waits only on a merge) or stalled (it had a run, no run
 is going, and it is not ready). That state is the pull request's and not a
 row's: the listing groups the runs it read by the pull request they carry,
-takes the newest run of each, and keeps the rows of the pull requests in
+takes the newest one of each that says what the pull request is -- the run
+whose outcome is ready or draft, so a rebase or a review that left it as
+it found it does not decide -- and keeps the rows of the pull requests in
 the state asked for; --json carries it as `pr_state` on every row that has
 a pull request, and leaves it out of the rows that have none. A run's own
 state is in its result.json, so this filter reads every run it filters --

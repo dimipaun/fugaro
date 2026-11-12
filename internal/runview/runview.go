@@ -251,7 +251,9 @@ type Row struct {
 	// It is the LISTING's computation and not Join's: whether a run is going
 	// on a pull request is a fact about every run of that pull request, and
 	// Join sees one. A read that holds a window of runs groups them by the
-	// pull request they carry, takes the newest run of each group and marks
+	// pull request they carry, takes the newest run of each group that says
+	// what the pull request is (an outcome of `ready` or `draft`, so a rebase
+	// or a review that changed nothing about it does not decide) and marks
 	// every row of it with the answer (internal/cli's markPRStates), so the
 	// field is empty on a row that carries no pull request and on every
 	// document whose read is not a window — `diagnose --json`'s `row`, which

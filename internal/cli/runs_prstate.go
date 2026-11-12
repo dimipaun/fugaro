@@ -65,46 +65,74 @@ func rowInState(r runview.Row, state string) bool {
 }
 
 // prGroup is the runs of one pull request a listing read, as markPRStates
-// folds them: whether a run of it is going, and the newest run's row.
+// folds them: whether a run of it is going, and the newest run whose record
+// says what the pull request is — prVerdict's rows.
 type prGroup struct {
-	newest runview.Row // the newest run of the pull request, in the listing's own order
-	set    bool        // a row is in newest
-	live   bool        // a run of it is going
+	verdict runview.Row // the newest run of the pull request whose outcome is the record's word for it
+	said    bool        // a row is in verdict
+	live    bool        // a run of it is going
 }
 
 // state is the group's pull request in the vocabulary above, decided in that
-// order: a run going means live whatever the newest run ended as — a run that
-// finished and a run still going are both on a live pull request — and
-// otherwise the newest run decides.
+// order: a run going means live whatever the runs that ended left behind — a
+// run that finished and a run still going are both on a live pull request —
+// and otherwise the newest run that said what the pull request is decides.
 //
-// It is ready when that run succeeded with outcome `ready`, which is the
-// record's own word for a pull request left ready for review rather than a
-// draft: the owner's definition names both halves of "waits only on a merge"
-// ("a non-draft, or a draft whose last run succeeded with outcome ready"), and
+// It is ready when that run's outcome is `ready`, which is the record's own
+// word for a pull request left ready for review rather than a draft: the
+// owner's definition names both halves of "waits only on a merge" ("a
+// non-draft, or a draft whose last run succeeded with outcome ready"), and
 // they are one test, because the outcome is the only word a run record has for
 // either — a run that ends ready leaves the pull request a non-draft, and the
 // draft marker a host may still show is the one a mark-ready call left behind,
-// which the record cannot see.
+// which the record cannot see. An outcome of `draft` is the other word, and it
+// stalls the pull request.
 //
-// Everything else is stalled: the pull request had a run (it has this row),
-// no run is going, and it is not ready — a failed or halted run, a run whose
-// outcome left a draft, an error row whose objects could not be read, and a
-// run that never launched among them.
+// Everything else is stalled: the pull request had a run (it has this row), no
+// run is going, and it is not ready — a run whose outcome left a draft, a run
+// that failed or halted, an error row whose objects could not be read, a run
+// that never launched, and a pull request whose runs here all ended without
+// saying what they left behind (prVerdict) among them.
 func (g prGroup) state() string {
 	switch {
 	case g.live:
 		return prStateLive
-	case g.newest.Status == string(runstore.StatusSucceeded) && g.newest.Outcome == string(runstore.OutcomeReady):
+	case g.said && g.verdict.Outcome == string(runstore.OutcomeReady):
 		return prStateReady
 	default:
 		return prStateStalled
 	}
 }
 
+// prVerdict reports whether a run's record says what its pull request is: its
+// outcome, `ready` or `draft`, which is the only word a record has for the
+// pull request's own state — the runner writes `ready` for a run that left the
+// pull request ready for review and `draft` for one that left it, or could
+// have left it, a draft.
+//
+// Everything else says nothing about the pull request and is not a verdict: a
+// `none` outcome is a run that never had one to leave behind — a follow-up
+// that only put the branch back on its base (internal/runner's rebase, which
+// pushes for nobody's review), an artifact run, a run that failed before it
+// reached any pull request — and `reviewed` is a review run, which never
+// pushes and never edits a pull request of its own. None of them may decide
+// how the pull request they were launched on reads: a rebase that succeeded on
+// a pull request waiting only on a merge leaves it exactly that, and a review
+// run leaves it as it found it, so the fold looks past both for the newest run
+// that did say (prGroup.verdict).
+func prVerdict(r runview.Row) bool {
+	switch r.Outcome {
+	case string(runstore.OutcomeReady), string(runstore.OutcomeDraft):
+		return true
+	}
+	return false
+}
+
 // markPRStates sets PRState on every row that carries a pull request, from the
 // runs of that pull request the listing read: the rows are grouped by the pull
-// request they carry, the newest run of each group is taken, and the
-// vocabulary above is applied to the group.
+// request they carry, the newest run of each group that said what the pull
+// request is is taken (prVerdict), and the vocabulary above is applied to the
+// group.
 //
 // It is the listing's read and not the row's, which is why it is done here and
 // not in runview.Join: whether a run is going on a pull request is a fact about
@@ -130,8 +158,8 @@ func markPRStates(rows []runview.Row) {
 		if prGoing(r.Status) {
 			g.live = true
 		}
-		if !g.set || newerRow(r, g.newest) {
-			g.newest, g.set = r, true
+		if prVerdict(r) && (!g.said || newerRow(r, g.verdict)) {
+			g.verdict, g.said = r, true
 		}
 	}
 	for i, key := range keys {
