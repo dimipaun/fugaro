@@ -211,15 +211,31 @@ func TestAccessRunListsAreNotTheRoles(t *testing.T) {
 // refused. An outage is not an answer about the caller, and a courtesy check
 // that turned one into a lockout would stop an installation's own people from
 // reading their runs for as long as the endpoint is having a bad day.
+//
+// The config names an implicit admin (F22), which is the half of this
+// installation's roster that is not the node: judged on the half that did not
+// go missing, the credential here — which the node places as a viewer — would
+// be refused, and that is the lockout this case is about. The observation is
+// the check itself and then a read that goes through it, because a launch meets
+// the same outage at its own policy read one step later and fails there for its
+// own reasons.
 func TestAccessRunRolesDatabaseOutageIsNotRefused(t *testing.T) {
 	noAgentSession(t)
 	f := newLaunchBudget(t, "off")
+	f.appendConfig(t, "terraform:\n  budget_admins: ['user:boss@example.com']\n")
 	accessRunUnreachableDB(t, f)
+	env := fileEnv(t, f.cloudFixture)
 	accessRunAs(t, accessViewer)
 
-	_, _, err := runBudget(t)
-	if err != nil && strings.Contains(err.Error(), "roles") {
+	if err := requireAccess(context.Background(), env, accesslib.ActionLaunch, accessRepoA, "nothing was launched"); err != nil {
 		t.Fatalf("the outage of the roles database was read as a refusal: %v", err)
+	}
+	const id = "20261112-120006-abd4"
+	exec := seedRun(t, f.cloudFixture, id, "", "someone@example.com", true)
+	f.logging.AddJSONLines(exec, []byte(`{"time":"`+logTime(time.Second)+`","severity":"INFO","message":"stage started","stage":"implement"}
+`))
+	if out, _, err := execute(t, "logs", id); err != nil || !strings.Contains(out, "stage started") {
+		t.Fatalf("a read under an unreachable roles database = %q, %v", out, err)
 	}
 }
 
@@ -459,6 +475,84 @@ func TestAccessRunsLsListsInScope(t *testing.T) {
 			t.Errorf("the listing dropped the run in silence: stderr %q", errOut)
 		}
 	})
+}
+
+// TestAccessRunDiagnoseIsReadInScope: a diagnosis prints the run's logs and the
+// chain it belongs to, so it is the same read `fugaro logs` and
+// `fugaro runs show` make — D1586's read half, which a command cannot step
+// around by being named differently — and a credential scoped to another
+// repository reads none of it.
+func TestAccessRunDiagnoseIsReadInScope(t *testing.T) {
+	noAgentSession(t)
+	const id = "20261112-120005-abd3"
+	logs := []byte(`{"time":"` + logTime(time.Second) + `","severity":"INFO","message":"stage started","stage":"implement"}
+`)
+
+	t.Run("in scope", func(t *testing.T) {
+		f := newLaunchBudget(t, "off")
+		accessRunNode(t, f, userStored(t, accessViewer, accesslib.RoleViewer, accessRepoA))
+		accessRunAs(t, accessViewer)
+		exec := seedRun(t, f.cloudFixture, id, "", "someone@example.com", true)
+		f.logging.AddJSONLines(exec, logs)
+		out, _, err := execute(t, "diagnose", id)
+		if err != nil || !strings.Contains(out, "stage started") {
+			t.Fatalf("diagnose in scope = %q, %v", out, err)
+		}
+	})
+
+	t.Run("another repository only", func(t *testing.T) {
+		f := newLaunchBudget(t, "off")
+		accessRunNode(t, f, userStored(t, accessViewer, accesslib.RoleViewer, accessRepoB))
+		accessRunAs(t, accessViewer)
+		exec := seedRun(t, f.cloudFixture, id, "", "someone@example.com", true)
+		f.logging.AddJSONLines(exec, logs)
+		out, _, err := execute(t, "diagnose", id)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("diagnose out of scope: err = %v (exit %d), out = %q", err, ExitCode(err), out)
+		}
+		if strings.Contains(out, "stage started") {
+			t.Errorf("the refused diagnosis printed the run's logs anyway: %q", out)
+		}
+		for _, want := range []string{"nothing was read", accessRepoA, "needs the role viewer"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say %q: %v", want, err)
+			}
+		}
+	})
+}
+
+// TestAccessRunProjectScopeRefusalNamesAUsableCommand: a run under a slug this
+// machine's config cannot name is judged at project scope, and the remedy the
+// refusal names has to be a command that runs. `user ls --repo` takes a
+// repository (userLsRepo refuses anything that is not provider/owner/name), so
+// a project-scope refusal pointing at `--repo project` would answer one error
+// with another.
+func TestAccessRunProjectScopeRefusalNamesAUsableCommand(t *testing.T) {
+	noAgentSession(t)
+	f := newLaunchBudget(t, "off")
+	accessRunNode(t, f, userStored(t, accessViewer, accesslib.RoleViewer, accessRepoA))
+	accessRunAs(t, accessViewer)
+	env := fileEnv(t, f.cloudFixture)
+
+	err := requireProjectAccess(context.Background(), env, accesslib.ActionViewRepo, "github/acme/unlisted", "nothing was read")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("the project-scope read: err = %v (exit %d), want a refusal", err, ExitCode(err))
+	}
+	for _, want := range []string{
+		"nothing was read",
+		"judged at project scope",
+		"user grant " + accessViewer + " --role viewer --scope project",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--repo project") {
+		t.Errorf("the refusal names a --repo value this build refuses: %v", err)
+	}
+	if _, _, lsErr := execute(t, "user", "ls"); lsErr != nil {
+		t.Errorf("the command the refusal names does not run: %v", lsErr)
+	}
 }
 
 // TestAccessRunActionRolesAgreeWithTheResolver is what keeps the refusal

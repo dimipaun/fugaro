@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -212,6 +213,13 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 	// (D1705).
 	slug, id, err := resolveRun(ctx, env, ref, resolveRunOpts(cmd, o.asJSON))
 	if err != nil {
+		return err
+	}
+	// A diagnosis prints the run's logs and the chain it belongs to, which is
+	// the read D1586 scopes to the run's own repository, so the same check
+	// `fugaro logs` and `fugaro runs show` make stands here — before the row,
+	// the logs or the chain are read at all (plan task RS6a).
+	if err := requireRunAccess(ctx, env, accesslib.ActionViewRepo, slug, "nothing was read"); err != nil {
 		return err
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, id)

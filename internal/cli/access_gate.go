@@ -48,7 +48,11 @@ import (
 // A roles database that cannot be REACHED is not a refusal either: an outage
 // is not a statement about who the caller is (rtdb's own contract separates it
 // from a refusal: ErrUnavailable against ErrPermission), and the check is a
-// courtesy that must not turn a bad minute into a lockout. A node that answers
+// courtesy that must not turn a bad minute into a lockout. The check does not
+// run at all then — not even against the implicit admins the config names,
+// which are half of a roster whose other half went unread: judging a caller on
+// the half that did not go missing would refuse every credential the node
+// places, which is the lockout an outage must not cause. A node that answers
 // and cannot be read is a refusal, because then the installation *has* roles
 // this build cannot hold whole (F27's fail-closed half).
 
@@ -149,18 +153,29 @@ func accessJudge(ctx context.Context, env *cloudEnv, what string) (in accesslib.
 // implicit admins this machine can name, and the published allow_repos. placed
 // is whether anything in it places anybody.
 func accessInput(ctx context.Context, env *cloudEnv) (in accesslib.Input, placed bool, err error) {
+	grants, answered, err := accessStoredGrants(ctx, env)
+	if err != nil {
+		return accesslib.Input{}, false, err
+	}
+	if !answered {
+		// The node could not be reached, so the roster is unknown rather than
+		// empty: the config's implicit admins are not what is left of it, and
+		// judging with them alone would refuse every credential the node places.
+		// This is where an outage stops being a refusal.
+		return accesslib.Input{}, false, nil
+	}
 	in = accesslib.Input{
+		Grants:     grants,
 		Implicit:   userImplicitAdmins(env.lc),
 		AllowRepos: accessAllowRepos(ctx, env),
 	}
-	if in.Grants, err = accessStoredGrants(ctx, env); err != nil {
-		return accesslib.Input{}, false, err
-	}
-	return in, len(in.Grants)+len(in.Implicit) > 0, nil
+	return in, len(grants)+len(in.Implicit) > 0, nil
 }
 
 // accessStoredGrants is the grants node's pairs, and nothing when the
-// installation has no node to read.
+// installation has no node to read. answered is whether the node was read
+// rather than merely empty: an installation with no node has no roles yet,
+// while one whose read failed has roles this command did not see.
 //
 // The node is the installation's whole roster (RS3 migrates the two terraform
 // lists into it), so this is the only place roles come from: an absent node is
@@ -172,20 +187,21 @@ func accessInput(ctx context.Context, env *cloudEnv) (in accesslib.Input, placed
 // launcher and operator, so a credential it refuses holds no IAM on this
 // project at all — F29(b), and judging that caller by anything else would
 // place them with something they do not hold); an outage is nobody's, and
-// places nobody; anything else is a node this build cannot hold whole, which
-// is a refusal rather than a half-read roster (F27).
-func accessStoredGrants(ctx context.Context, env *cloudEnv) ([]accesslib.Grant, error) {
+// answers nothing — answered false, which is not the same as an empty roster
+// and must not be judged as one; anything else is a node this build cannot
+// hold whole, which is a refusal rather than a half-read roster (F27).
+func accessStoredGrants(ctx context.Context, env *cloudEnv) (grants []accesslib.Grant, answered bool, err error) {
 	if env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" {
-		return nil, nil
+		return nil, true, nil
 	}
 	_, db, err := budgetDBFor(ctx, env.lc)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	node, err := accesslib.Read(ctx, db)
 	switch {
 	case errors.Is(err, rtdb.ErrPermission):
-		return nil, userErr("the roles could not be read: %s refused this credential's read (%v), and the installation's roles are that node. Every launcher and operator of %s holds it (roles/firebasedatabase.viewer); a repository-scoped pair alone does not, and before RS12 it grants nothing in the cloud either (finding F29b)", accesslib.PathNode, err, safetext.Field(env.lc.Name))
+		return nil, true, userErr("the roles could not be read: %s refused this credential's read (%v), and the installation's roles are that node. Every launcher and operator of %s holds it (roles/firebasedatabase.viewer); a repository-scoped pair alone does not, and before RS12 it grants nothing in the cloud either (finding F29b)", accesslib.PathNode, err, safetext.Field(env.lc.Name))
 	case errors.Is(err, rtdb.ErrUnavailable):
 		// The database is unreachable: a 5xx, a 429 or a network failure is not
 		// an answer about the caller, and refusing over one would stop the
@@ -193,14 +209,14 @@ func accessStoredGrants(ctx context.Context, env *cloudEnv) ([]accesslib.Grant, 
 		// endpoint is having a bad day. The launch path meets the same outage
 		// one step later, at its own budget read, where a run really cannot
 		// start without an answer.
-		return nil, nil
+		return nil, false, nil
 	case err != nil:
-		return nil, dbErr(env.lc, err, false)
+		return nil, true, dbErr(env.lc, err, false)
 	}
 	if !node.Found {
-		return nil, nil
+		return nil, true, nil
 	}
-	return node.Grants, nil
+	return node.Grants, true, nil
 }
 
 // accessAllowRepos is the published policy's allow_repos, or an allow-list that
@@ -348,7 +364,8 @@ func accessRefusal(env *cloudEnv, in accesslib.Input, caller string, action acce
 		held = "the role " + string(r)
 	}
 	return userErr("%s: %s %s needs the role %s in it, and the credential this command is using (%s) holds %s there.%s",
-		what, a.word, repo, a.role, caller, held, accessFix(env, caller, a.role, repo))
+		what, a.word, repo, a.role, caller, held,
+		accessFix(env, caller, a.role, fmt.Sprintf("%s user ls --repo %s", selfCommand(), repo), repo))
 }
 
 // accessProjectRefusal is accessRefusal for a run whose repository this
@@ -365,16 +382,21 @@ func accessProjectRefusal(env *cloudEnv, in accesslib.Input, caller string, acti
 		held = "the role " + string(r) + " at project scope"
 	}
 	return userErr("%s: the run is stored under %s, a repository this machine's config cannot name (provider/owner/name), so %s it is judged at project scope and the credential this command is using (%s) holds %s there.%s",
-		what, safetext.Field(slug), a.word, caller, held, accessFix(env, caller, a.role, "project"))
+		what, safetext.Field(slug), a.word, caller, held,
+		accessFix(env, caller, a.role, selfCommand()+" user ls", "project"))
 }
 
 // accessFix is the half of both refusals above that is about the credential
 // rather than about the role: where the roles come from, what this credential
 // holds, and the command that grants one. scope is what the grant's own flag
-// takes — a canonical repository, or "project".
-func accessFix(env *cloudEnv, caller string, role accesslib.Role, scope string) string {
-	return fmt.Sprintf(" The roles are read from the credential the command is using, never from the local config's user: key or git config (finding F21), so a grant written for another address does not place this one. What this credential holds is what '%s user ls --repo %s' prints, and an admin of %s changes it with '%s user grant %s --role %s --scope %s'",
-		selfCommand(), scope, safetext.Field(env.lc.Name), selfCommand(), caller, role, scope)
+// takes — a canonical repository, or "project". held is the command that prints
+// what this credential holds there, which is not always `user ls --repo`: that
+// flag takes a repository (userLsRepo refuses anything that is not
+// provider/owner/name), so the project-scope refusal points at the whole
+// listing instead of at a command that would only error.
+func accessFix(env *cloudEnv, caller string, role accesslib.Role, held, scope string) string {
+	return fmt.Sprintf(" The roles are read from the credential the command is using, never from the local config's user: key or git config (finding F21), so a grant written for another address does not place this one. What this credential holds is what '%s' prints, and an admin of %s changes it with '%s user grant %s --role %s --scope %s'",
+		held, safetext.Field(env.lc.Name), selfCommand(), caller, role, scope)
 }
 
 // accessUnworded is the refusal of an action this build has no role sentence
