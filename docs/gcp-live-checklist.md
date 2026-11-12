@@ -828,6 +828,9 @@ probe account carries predefined grants only).
 | 146 | The coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 146, task T2.10 and the script T2.9 writes; D361 and D362): on a sandbox installation with the credentials service on, the sweep's stored view for a Bitbucket repository is **read** rather than `StaleUnsupported`, and the installation's GitHub views — the ones the sweep already writes — are unchanged | See "Check 146" below; **you** run it on a sandbox installation, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check146.sh --installation <sandbox>`. The script lands with task **T2.9**; this section is task **T0.2**'s and carries no steps of its own until then | One sandbox installation with the service on and one sweep; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 148 | The Bitbucket read consumer's stop, rotation and ownership transfer ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 148, task T3.8 and the script this task writes; U13, and D1961): on a sandbox installation with the read mint deployed, the consumer is taken **out** of the bundle and a read mint is then **refused**; its secret is regenerated and the mint serves the **new** one while the **old** secret's own `client_credentials` grant is **refused**; and ownership moves to a successor consumer under a second sandbox account, against which a read mint **succeeds** — with **U13** recording whether a token minted **before** the rotation still reads | See "Check 148" below; **you** run it at your own terminal, on `https` or a loopback `http` endpoint, on sandbox workspaces only, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check148.sh --installation <sandbox> --repo <owner/name> --consumer-file <path> --rotated-consumer-file <path> --successor-consumer-file <path>`. The row and the section are **T0.2**'s | Three sandbox consumer files **you** name and the script never prints (the bundle's own consumer, a successor created under a second sandbox account, and the same consumer after Bitbucket regenerated its secret — the last written **by you during the run**, at the rotation step that asks for it and then holds it to the consumer file's own key and workspace), one sandbox installation with the credentials service on and its coordinator job deployed, and `gcloud`, `fugaro`, `python3` and `curl` on PATH; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 149 | The console shows the stored view on the owner's own machine ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 149 and task T1.3; D364, and U9 end to end): `fugaro coordinator status --from-store --all --json --project <name>` reads the stored view as the signed-in person with **no key**, and the console's project view renders it — the read the console could not make while it had to run `coordinator status` itself | See "Check 149" below; **you** run it at your own terminal, on your own machine, read-only, and **no agent runs any step of it** | Nothing: two reads and one window. No project is written, no run is launched and no credential is minted. **USER-RUN, NOT RUN.** |
+| 160 | The campaign pages' three key events, and the consent gate in front of them ([`docs/go-to-market/`](go-to-market/implementation-plan.md), its Check 160, under task **G2.5**, whose events and pass-through are task **G2.4**'s; **D401** and the reconciliation's **F17** and **F22**; spec §6's "Done when"): on a deployed campaign page — `/save`, `/control`, `/scale` and `/crew` are the four `website/data/landing.yaml` writes — with **both** consents granted (the site's analytics question, and the campaign's own **Marketing** one under its separate key, `website/src/lib/consent-key.mjs`), GA4's DebugView shows `install_click`, `whatsapp_click` and `demo_booked`, each once on its own action, and **none** of the three reaches it before a consent is given (`keyEvent()` in `website/public/scripts/site.js` sends nothing while `measuring` is false, and GA4's own tag is not fetched either); with **analytics only**, the booking is `CampaignCalls.astro`'s plain `Book a demo` link and Calendly's frame is never drawn | See "Check 160" below; **you** run it, in a browser on the four deployed campaign pages (a preview channel from `scripts/deploy-website.sh --channel <name>`, or the live site once it is promoted) with GA4's DebugView open — read-only, on the site's own Firebase project, never an installation's and never `belong` — and **no agent runs any step of it** | Nothing billable and no model call: one preview deploy of the site and one browser session. It leaves one booking in your own Calendly account, which you cancel again, and two consent decisions in the browser profile you used. No project, no installation, no run and no credential is touched. **OWNER-RUN, NOT RUN.** |
+| 161 | A test booking's campaign attribution ([`docs/go-to-market/`](go-to-market/implementation-plan.md), its Check 161, under task **G2.5**, whose pass-through is task **G2.4**'s; the reconciliation's **F22**; spec §6's "Done when" — *"a test booking carries its UTM source"*): a visitor who arrives at a campaign page carrying a `utm_source` and books through the embedded widget has that source on the booking **Calendly records**, because `bookingURL()` in `website/public/scripts/site.js` copies the five allow-listed `utm_*` values — and only those, each re-encoded and length-capped — onto the embed's own address; the plain link a visitor who declined the marketing consent gets carries none of them, and neither does GA4 | See "Check 161" below; **you** run it, in the same browser session and on the same deployed campaign page as Check 160 (`scripts/deploy-website.sh --channel <name>`, or the live site once it is promoted) — read-only, on the site's own Firebase project, never an installation's and never `belong` — and **no agent runs any step of it** | Nothing billable and no model call: one page load with a campaign parameter on its URL, one test booking through the embed, and the reading of it in Calendly, which you cancel again. Nothing else is written. **OWNER-RUN, NOT RUN.** |
+| 162 | `fugaro estimate`'s figure, against the one the run itself recorded ([`docs/go-to-market/`](go-to-market/implementation-plan.md), its Check 162, registered by task **G6.1** and run by you once **G1.2** and **G1.3** are released; the reconciliation's **F7**, **F8** and **F9**): one finished **sandbox** run whose record carries the per-model token counts G1.2 writes and whose every call stayed under its model's long-context threshold, repriced at its own model by `fugaro estimate --run <ID> --model <model>` from a fresh catalog — the figure it prints sits beside the run's recorded `model_usd`, and a pass is the two agreeing within a few percent, judged by you with **F9**'s list in front of you: a long-context tier is dropped because it applies per call, web searches are priced apart from the tokens, and `model_usd` carries the unattributed residual and the calls settled from a reservation. The demo line F7 corrects (`--pr N --repo owner/name --model claude-opus-5-5`) is this same command | See "Check 162" below; **you** run it, on a sandbox installation and one finished run of a sandbox repository only, **never `belong`**, with one `fugaro estimate`, one `fugaro logs` and one `fugaro budget prices` — read-only, and **no agent runs any step of it** | Nothing billable and no model call: one read of a finished run's record, one price-table lookup and the catalog's own date. No job, no container, no build; nothing is written and nothing is deleted. **OWNER-RUN, NOT RUN.** |
 | 170 | A key verifies offline in the CLI, the console and the app ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 170, written by task **S3.6** and run by you in task **S3.7**; **R2**, and [design/key-signing-service.md](design/key-signing-service.md) §1–§2): one key the service issued — or the owner minted by hand with S2.10's tool — is installed where each product keeps it (the CLI's `licence.key` at mode 0600, the console's key screen, the app's settings screen), the network is off on the machine and on the phone, and all three read the same tier, seats and expiry with no call made to answer. It is the reading no hermetic test can produce: each verifier's own tests hold a signature vector, and this holds a key the owner's key ring signed | See "Check 170" below; **you** run it, at your own terminal and on a sandbox installation, read-only, with the network off, and **no agent runs any step of it** | Nothing: one key installed in three places, no mint and no deploy. **USER-RUN, NOT RUN.** |
 | 171 | The free seat's three outcomes ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 171, written by task **S3.6** and run by you in task **S3.7**; the design's §4.1–§4.3 and UNVERIFIED **U11**): against the intake that mints with the staging key id, an address at a free email provider and a second application for a domain that already holds a free key are each **queued**, with the same uniform answer and nothing said about an existing key, and a domain the service's event store knows holds a paid subscription is **refused**. Whether an email domain, a free-mail list and the code host's API are enough to enforce "one per organisation" has never been measured | See "Check 171" below; **you** run it, against the intake that mints with the staging key id (D459 is where that intake lives), and **no agent runs any step of it** | Two applications, each declined in the admin page, so no key is minted for either; the third is refused at submission and never queued. **USER-RUN, NOT RUN.** |
 | 172 | The open-source check and proof of control ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 172, written by task **S3.6** and run by you in task **S3.7**; the design's §4.4, **D452**, **F47** and **U11**): a private repository, one carrying no licence and one under a non-OSI licence are each refused; an all-public repository under an OSI licence is refused **without** D452's proof of control and minted with it, valid for one year. It is the other half of U11, and the check's own limit is stated with it: a private repository beside the ones named cannot be seen | See "Check 172" below; **you** run it, against the intake that mints with the staging key id and with repositories you control — never a third party's — and **no agent runs any step of it** | One staging key that expires with its term; the four refusals are recorded in the section below. **USER-RUN, NOT RUN.** |
@@ -11096,6 +11099,182 @@ machine.
 **Restore.** Nothing is created, so there is nothing to undo: two reads and one window. No project
 is written, no run is launched, no credential is minted, and the check holds no secret to paste
 back. **No agent runs any step of it.**
+
+## Check 160: the campaign pages' three key events fire in GA4 DebugView after both consents, and none before (the four deployed campaign pages, read-only, on the site's own Firebase project — never an installation's and never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** The go-to-market plan ([go-to-market/implementation-plan.md](go-to-market/implementation-plan.md))
+writes it under task **G2.5**, its owner-run half, and the events and the gate it reads are task
+**G2.4**'s, in `website/public/scripts/site.js`. **You** run it, as G2.5. There is no script: the check
+is one browser session on the four deployed campaign pages with GA4's DebugView open, and **no agent
+runs any step of it**.
+
+**What it settles, and what it gates.** Spec §6's "Done when", the sentence at the end of the
+landing pages section (*"all key events fire in GA4 DebugView"*), and **F17**: that the funnel's
+three events — `install_click`, `whatsapp_click` and
+`demo_booked` — reach GA4, one each, and that none of them reaches it before the visitor has
+answered. The gate is the site's **analytics** consent, a separate question from the campaign's
+**marketing** one (**D401**, `website/src/lib/consent-key.mjs`): `keyEvent()` in
+`website/public/scripts/site.js` sends nothing while `measuring` is false — the state a visitor who
+has not answered is in, and the state a withdrawal puts them back in — and GA4's own script is not
+fetched before that answer either. The second half of the check is the other question's reading:
+Calendly's embed is drawn only behind the marketing grant (**D401**), and what a visitor who
+declined keeps is the plain link underneath.
+
+**What you do.** The four paths are the `path` entries of `website/data/landing.yaml`: `/save`,
+`/control`, `/scale` and `/crew`. The check reads them on a **preview channel**, so that what is
+read is not the live site. Each of steps 3 to 5 needs a browser that holds no decision yet, so start
+each one in a fresh profile. And **open the two text actions in a new tab** — ⌘-click, Ctrl-click or
+a middle press — because `Install free` and `Chat with the founder` are plain same-tab links to the
+repository and to WhatsApp (`CampaignCalls.astro` sets no `target`, and the click handler `site.js`
+binds sends its event without holding the press back), so a plain press takes the campaign page away
+from under the reading, and the events are read off the campaign page's own session:
+
+1. Deploy a preview channel and keep the URL it prints:
+
+   ```sh
+   scripts/deploy-website.sh --channel <name> --dry-run
+   scripts/deploy-website.sh --channel <name>
+   ```
+
+2. Open one of the four pages on it with **GA4's DebugView** in front of you (Admin → DebugView for
+   the property the site's measurement id names). The page sets no debug flag of its own, so the
+   browser needs GA's debug signal: turn the debug extension on before the page is opened.
+3. **Before answering anything**: press `Install free`, press `Chat with the founder` — each in the
+   new tab just described, so the campaign page stays open in front of DebugView — and leave the
+   banner standing. DebugView shows nothing at all.
+4. Press **Accept All Cookies** — on a campaign page a press answers the campaign's question, and the
+   site's too when the visitor has not answered it yet, which a fresh profile has not — then press
+   `Install free` (`install_click`), press
+   `Chat with the founder` (`whatsapp_click`), again each in its new tab, and book through the embed
+   the grant has now drawn into `#calendly-embed` (`demo_booked`). Each fires **once**.
+5. Then read the analytics-only case, in another **fresh browser profile** — a question this browser
+   has answered is not asked again, so a step done in a used profile reads the previous step, not
+   this one. Open **Cookie Settings**, and note that the panel is drawn with **nothing ticked**, as
+   a browser holding no decision has both questions open: turn **Analytics** **on**, leave
+   **Marketing** **off** and press **Save my choices**, which writes exactly those two answers.
+   Then press `Install free` and `Chat with the founder` again, each in its new tab, and read the
+   closing band. The band carries `website/src/components/CampaignCalls.astro`'s plain `Book a demo`
+   link with no frame under it — Calendly's script is fetched after the marketing grant and never
+   before — so the third event has no booking to come from.
+
+**What a pass looks like.** Step 3's DebugView shows no event at all, GA4's script not being fetched
+before the analytics grant. Step 4's shows `install_click`, `whatsapp_click` and `demo_booked`, one
+of each. Step 5's shows `install_click` and `whatsapp_click` for its two presses — analytics alone
+measures them — and **no** `demo_booked`, the band holding the link and no `iframe`; the `page_view`
+that same grant sends for the page itself is not one of the three. The reading is the one the save
+wrote: a save that left **Analytics** off answers both questions **no**, and while its DebugView is
+just as empty as step 3's, it is not this reading and does not stand for it. `demo_booked` is read
+off a real booking, which is Check 161's test booking when the page was arrived at with a campaign
+source on its URL. A press that fires no event after its grant, an event before any grant, a second
+event for one press, or a frame in step 5 is the failure.
+
+**Restore.** Delete the preview channel (`firebase hosting:channel:delete <name> --project
+fugaro-prod`), cancel the test booking in your own Calendly account, and clear the consent decisions
+from the browser profile you used if you want the questions asked again. Nothing in the repository, in
+an installation, in the runs bucket or in the site's built artifact is written. **No agent runs any
+step of it**, and **never `belong`**.
+
+## Check 161: a test booking carries its UTM source into Calendly (a deployed campaign page, read-only, on the site's own Firebase project — never an installation's and never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** The go-to-market plan's task **G2.5** carries it (its "Checks 160–161"), on the
+pass-through task **G2.4** wrote in `website/public/scripts/site.js`, and **you** run it in the same
+browser session as Check 160. There is no script, and **no agent runs any step of it**.
+
+**What it settles, and what it gates.** Spec §6's "Done when", its landing pages sentence —
+*"a test booking carries its UTM source"* — and **F22**: that the campaign's attribution travels on
+the booking's own address and
+nowhere else. `bookingURL()` in `website/public/scripts/site.js` copies the campaign parameters the
+visitor arrived through onto the address it writes into the embed: the five allow-listed `utm_*` keys,
+each value decoded and encoded again, with a key outside the five, an empty value and one over 100
+characters dropped. They go there **only** — not into the chat message, not to GA4, and not onto the
+plain link a visitor who declined the marketing consent gets, which is the second reading this check
+can take. What Calendly does with the address it is handed is Calendly's, so the check reads its
+record of the booking and not a field name this repository would be pinning for it.
+
+**What you do.**
+
+1. On the deployed campaign page (Check 160's preview channel, or the live site once it is promoted),
+   arrive **with a campaign source on the URL** — for example
+   `/save?utm_source=newsletter&utm_medium=email`. `utm_source` is the one this check reads; the five
+   names are the ones `bookingURL()` lists.
+2. Grant the marketing consent, so the widget is embedded, and book a test slot through it.
+3. Read that booking in your own Calendly account: its record carries the source the visitor arrived
+   through.
+
+**What a pass looks like.** The booked event's own record names `newsletter` — the value the URL
+carried, and no other. A booking whose source is empty, or names a value the URL did not carry, is the
+failure. The second reading is the refusing case: a booking made from the plain `Book a demo` link on
+a page where the marketing consent was declined, whose address is the one `website/data/landing.yaml`
+writes with nothing appended.
+
+**Restore.** Cancel the test booking in your own Calendly account; that is the whole of it. The page
+load, the consent decision and the booking are the only things the check made. **No agent runs any
+step of it**, and **never `belong`**.
+
+## Check 162: `fugaro estimate`'s figure against the one the run itself recorded (a sandbox installation and one finished run of a sandbox repository, read-only; never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Registered by task **G6.1** of the go-to-market plan
+([go-to-market/implementation-plan.md](go-to-market/implementation-plan.md), its "Check 162") and
+**run by you** once tasks **G1.2** and **G1.3** are released — G1.2 is what puts the per-model token
+counts on the run record (**F8**) and G1.3 is the command — and **no agent runs any step of it**: the
+reading is a comparison you judge.
+
+**What it settles, and what it gates.** Spec §10's demo feature on a real run: that `fugaro estimate`
+reprices what a finished run recorded and lands near what that run cost. **F8** is why the run has to
+be a recent one (the record's `cost.model_tokens` is what G1.2 added, and there is no backfill), and
+**F9** is what the figure means: the command labels it an estimate, assumes the run's own cache ratio,
+and cannot reproduce four things about the recorded figure. Check 162 is named in **D404**'s
+launch-ready list, and it is the last reading of it.
+
+**What you do.**
+
+1. Pick **one finished sandbox run**: one that a released build carrying G1.2 finalized, so its record
+   carries `cost.model_tokens`, and one whose calls all stayed under their model's long-context
+   threshold. The run's `model call` lines, from `fugaro logs <run>`, carry the input counts that say
+   so; a small task is the easy one to read.
+2. Read the catalog the figure will be priced from. `fugaro budget prices` prints the same
+   `checked_at` and stale flag the estimate prints beside its figure, and the window is the row's: 30
+   days for a provider catalog row (`catalog.StaleAfter`), 90 for the embedded Claude price table
+   (`priceStaleAfter`). **A stale catalog is not this check's reading** — a stale provider row is
+   priced at the dearest end of its tier until it is regenerated, so the figure would be wrong on
+   purpose; regenerate it first (`scripts/gen-price-catalog.sh`, which the release checklist runs).
+   "A fresh catalog" in the plan means a date inside that window.
+3. Reprice the run at the model it ran on:
+
+   ```sh
+   fugaro estimate --run <ID> --model <model>
+   ```
+
+   `--run` takes the run's ID, its `slug/id`, or an ending of one, and `--model` is the model that run
+   itself ran on, spelled the way the price table spells it: an ID `fugaro budget prices` lists, or
+   that row's route ID. The command writes nothing and runs nothing — it reprices the stored counts.
+4. Read the two figures it prints: the estimate on the first line, and `the run recorded <figure>
+   (<basis>)` under it — the basis is `api-list` (a bill) or `subscription` (a plan's figure). The
+   `prices:` line under the model table carries the catalog's source and date, and a stale catalog is
+   warned about on stderr.
+
+**What a pass looks like.** The two figures agree within a few percent, from a catalog inside its own
+window. They are not the same number and are not expected to be: **F9** names the four things this
+command cannot reproduce — a long-context tier, which applies per call and is dropped rather than
+charged on the run's summed input; web searches, priced apart from the tokens; the `unattributed`
+residual `model_usd` carries; and the calls settled from a reservation (`Unreconciled`,
+`UsageUnparsed`). The difference is yours to judge with that list in front of you; the run that is the
+clean reading is the one none of the four applies to, and a gap wider than a few percent there is the
+finding, and it belongs in this row's result rather than being explained away.
+
+Two refusals are not failures of the check and are not readings either: a run the command refuses **by
+name** for carrying no per-model tokens — one that never finalized, or one finalized before this
+binary recorded them — is F8's "no backfill", and a `--model` the price table has no row for is
+answered with the IDs it has. Both name what to do next.
+
+**What waits on it.** **D404**'s launch-ready list names Check 162, and it is the last reading of it: a
+figure that lands wide of the record on a clean run is the finding that list waits on, not a detail to
+explain away. The demo line **F7** corrects (`fugaro estimate --pr N --repo owner/name --model
+claude-opus-5-5`) is this same command aimed at a pull request's run instead of a named one.
+
+**Restore.** Nothing was created, so there is nothing to undo: one bucket read, one price-table lookup
+and the catalog's date. No job, no container, no build, no object and no credential. **No agent runs
+any step of it**, and **never `belong`**.
 
 ## Check 170: a key verifies offline in the CLI, the console and the app (your own machine and a sandbox installation, read-only, with the network off; run by you; NOT RUN)
 
