@@ -1734,7 +1734,10 @@ Flags:
 Subcommands:
 
 - `fugaro coordinator intents` -- Show what the fleet has declared
+- `fugaro coordinator login` -- Sign in to the installation's front door and keep the token in your keychain
+- `fugaro coordinator logout` -- Delete the front door credential this project's keychain holds
 - `fugaro coordinator report` -- Declare the work you are about to start
+- `fugaro coordinator roadmap` -- Change the project's roadmap record, through the installation's front door
 - `fugaro coordinator show` -- Show one pull request as the host has it
 - `fugaro coordinator status` -- Show the work in flight, and where it collides
 
@@ -1803,6 +1806,82 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro coordinator login`
+
+Sign in to the installation's front door and keep the token in your keychain
+
+Run the authorization-code flow this installation's front door serves
+(docs/coordinator/implementation-plan.md, P9f; the flow is the MCP server
+plan's M5): a loopback redirect with PKCE, so nothing the browser carries
+back can be replayed from a history, a log or a shoulder.
+
+The front door's URL is read from the installation's own outputs, which is
+the only place it is published: Cloud Run's URL carries the project number
+and nothing derives it. An installation whose front door is off publishes
+none, and that is this command's refusal.
+
+The refresh token it receives is stored in the operating system's keychain,
+under an item named after the project, and never in a file. `fugaro
+coordinator logout` deletes it. What the command prints is the issuer and
+the scopes: never the token, the code or the verifier.
+
+The scope defaults to roadmap:write, which is what the roadmap group's
+commands hold. It is an operator's scope on this installation's own list:
+a person who is not an operator is refused by the door, at the approval
+step, where the list is read.
+Exit codes: 1 for a refusal (no front door, no scope this build mints,
+the person's own refusal, or an installation that would not store the
+token), 2 for a failure of the front door or of the keychain.
+
+Usage: `fugaro coordinator login`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for login |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--scope` | stringArray | `[roadmap:write]` | no | the scope to ask for (repeatable; the front door mints tasks:read, tasks:write, state:read, state:write, roadmap:write) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator logout`
+
+Delete the front door credential this project's keychain holds
+
+Remove the keychain item `fugaro coordinator login` wrote, which is the
+whole of what this machine holds for the front door: no file, no cache and
+nothing else is written, so deleting the item is the end of it.
+
+An item that is not there is not an error: the state a person asks for is
+the state they get. The token family itself is not revoked by this command
+— the door revokes a family where it is revoked, and a device that lost
+its credential is not a theft signal (M5b).
+Exit codes: 1 for a refusal, 2 for a keychain that could not be reached.
+
+Usage: `fugaro coordinator logout`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for logout |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro coordinator report`
 
 Declare the work you are about to start
@@ -1850,6 +1929,191 @@ Flags:
 | `--release` | string | "" | no | the target release (default: the one the branch names, e.g. release/v0.11.0) |
 | `--repo` | string | "" | no | the repository this report is about (owner/name; default: the local config's, when it lists one) |
 | `--service` | stringArray | `[]` | no | a service you are about to touch (repeatable) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap`
+
+Change the project's roadmap record, through the installation's front door
+
+The commands that change the project's roadmap record
+(docs/coordinator/implementation-plan.md, P9f).
+
+Every one of them is one call to a tool the installation's front door
+serves, over the credential `fugaro coordinator login` left in your
+keychain. The front door queues the change and a job applies it as the
+coordinator's own account: these commands hold no database credential and
+write no node, so nothing here can reach the record directly.
+
+Each write prints the request's id and then waits up to a minute for the
+record's answer. A change that has not been applied by then is still
+queued: read it later with `fugaro coordinator roadmap request <id>`.
+
+The scope the tools need (roadmap:write) is an operator's on this
+installation's own list, so a person who is not an operator is refused by
+the door.
+Exit codes: 1 for a refusal (no credential, no front door, a write the
+record refused, a tool the token may not call), 2 for a failure of the
+front door or of the record.
+
+Usage: `fugaro coordinator roadmap`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for roadmap |
+
+Subcommands:
+
+- `fugaro coordinator roadmap need` -- Record that one task needs another
+- `fugaro coordinator roadmap releases` -- Write a stream's releases
+- `fugaro coordinator roadmap request` -- Read back what happened to a roadmap request
+- `fugaro coordinator roadmap unneed` -- Remove a recorded dependency between two tasks
+
+## `fugaro coordinator roadmap need`
+
+Record that one task needs another
+
+Record a dependency between two tasks, across plans or streams
+(roadmap_need, D2112).
+
+A reason is required and not decoration: an edge nobody can check is not
+one, and the reason is what a reviewer reads when the record is read.
+The dependency is one the coordinator reports and never one it enforces:
+nothing here blocks a merge, a run or a release (spec §3).
+
+Usage: `fugaro coordinator roadmap need`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for need |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--needs` | string | "" | yes | the qualified task id: <plan>/<task> it needs (required) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--reason` | string | "" | yes | why the dependency exists, which a reviewer reads (required) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--task` | string | "" | yes | the qualified task id: <plan>/<task> that needs another (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap releases`
+
+Write a stream's releases
+
+The release half of the roadmap record. `set` is the only subcommand today.
+
+Usage: `fugaro coordinator roadmap releases`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for releases |
+
+Subcommands:
+
+- `fugaro coordinator roadmap releases set` -- Write one release of a stream
+
+## `fugaro coordinator roadmap releases set`
+
+Write one release of a stream
+
+Write one release document: its name, its state, its position and the
+version you last read (roadmap_release_set).
+
+**`--expect` is not optional and is not a formality.** It is the version of
+the release document you read before you decided what to write, and the
+record compares it with the version it holds now: a release somebody else
+has changed since is refused, with the version it holds, rather than
+written over. For a release the record does not hold yet, pass the empty
+string (`--expect ''`) — that says "I read nothing, and I expect nothing",
+which is the one claim that cannot be stale.
+
+Usage: `fugaro coordinator roadmap releases set`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the version of the release document you last read, empty for one the record does not hold (required) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--id` | string | "" | yes | the release id within its stream (required) |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | yes | the release's name, which is the label its box is drawn with (required) |
+| `--order` | int | `0` | yes | the release's position in its stream (required) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--state` | string | "" | yes | the release's state: open or finished (required) |
+| `--stream` | string | "" | yes | the stream the release belongs to (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap request`
+
+Read back what happened to a roadmap request
+
+Read one roadmap request's outcome: applied, refused with the reason and the
+value the record holds now, failed, or still pending (roadmap_request).
+
+The id is the one a write printed. A request belongs to the person who
+queued it, and an id that is not yours is answered exactly as one that does
+not exist, so this cannot be used to ask what other people have asked for.
+This reads once and does not wait: a pending request is a state, not a
+failure, and running the command again is how you look later.
+
+Usage: `fugaro coordinator roadmap request <id>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for request |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap unneed`
+
+Remove a recorded dependency between two tasks
+
+Remove the dependency `roadmap need` recorded (roadmap_unneed).
+
+A dependency the record does not hold is not a refusal: the state asked
+for is the state the record is in.
+
+Usage: `fugaro coordinator roadmap unneed`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for unneed |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--needs` | string | "" | yes | the qualified task id: <plan>/<task> it pointed at (required) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--task` | string | "" | yes | the qualified task id: <plan>/<task> the dependency starts at (required) |
 
 Subcommands:
 

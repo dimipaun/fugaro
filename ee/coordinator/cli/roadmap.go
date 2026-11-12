@@ -72,7 +72,7 @@ const coordinatorRoadmapToolTimeout = 30 * time.Second
 // commands print. It is the front door's own roadmapAnswerVersion, spelled
 // here because the console reads this document off the CLI and the two have to
 // be the same number: a shape change is a version and not a field that means
-// something new (console/docs/json-contract.md §6.24).
+// something new (the console contract's §6.24).
 const coordinatorOutcomeVersion = 1
 
 // coordinatorOutcomeDoc is one roadmap request's outcome, as the front door
