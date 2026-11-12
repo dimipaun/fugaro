@@ -279,9 +279,13 @@ type View struct {
 	State licence.State
 	// Kind is paid, trial or comped.
 	Kind string
-	// RenewalMode is auto, manual or none: whether the installation has a job
-	// that renews by itself, and an installation without that job renews by
-	// hand (TN5).
+	// RenewalMode is the key's own claim (auto, manual or none; spec.md section
+	// 3.2's renewal_mode) and not whether this installation has a job that
+	// renews: a key claiming auto on an installation with no Scheduler job --
+	// K4.2's condition, which an installation without a coordinator does not
+	// meet -- still reads auto here, while what that installation does is renew
+	// by hand (TN5). The job's existence is a fact about the installation and is
+	// asked of the installation, not of the key.
 	RenewalMode string
 	// Source says which store answered.
 	Source Source
@@ -356,10 +360,14 @@ func (s *Store) read(ctx context.Context) (record, error) {
 }
 
 // write puts the object back. The write is unconditional, as the shared
-// config's is (internal/cli/sharedcfg.go): the runs bucket is writable by every
-// launcher, so two writers racing lose one write rather than corrupt the
-// object, and the rules that matter -- one shape, at most two keys -- are held
-// on the read.
+// config's is (internal/cli/sharedcfg.go), because the writers that can meet
+// here are a person running `fugaro licence set`, who holds objectAdmin over
+// fugaro/, and -- from K4.2 -- the renewal job's own service account, whose
+// grant is this one object. A launcher is not among them: it holds objectUser
+// on runs/, tokens/ and issues/ and reads the rest of the bucket, so this
+// object is not its to write (docs/design/bucket-iam.md section 3). Two such
+// writers racing lose one write rather than corrupt the object, and the rules
+// that matter -- one shape, at most two keys -- are held on the read.
 //
 // An object larger than the read accepts is refused here, so a store never
 // writes one it could not read back: the object is the project's only copy of

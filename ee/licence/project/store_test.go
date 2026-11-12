@@ -300,6 +300,42 @@ func TestTheStoreRefusesWhatItCannotRead(t *testing.T) {
 	}
 }
 
+// TestTheStoreRefusesAnEmptyKeyAndAnUnknownAnswer pins the two refusals the
+// store makes on what it is handed rather than on what it reads: an install
+// with no text, and a check whose answer is not one of the three. Neither
+// writes the object, so a caller that got one wrong leaves the project's
+// licence as it was.
+func TestTheStoreRefusesAnEmptyKeyAndAnUnknownAnswer(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	m := newMinted(t)
+	held := m.key(t, nil)
+	if err := r.store.Install(ctx, []byte(held)); err != nil {
+		t.Fatalf("installing a key: %v", err)
+	}
+
+	for _, empty := range []string{"", "   ", "\n\t"} {
+		if err := r.store.Install(ctx, []byte(empty)); !errors.Is(err, ErrObject) {
+			t.Errorf("installing %q = %v, want ErrObject: an install with no key is nothing to write", empty, err)
+		}
+	}
+	if err := r.store.RecordCheck(ctx, at(1), "maybe"); !errors.Is(err, ErrObject) {
+		t.Errorf("recording a check that answered %q = %v, want ErrObject: the three answers are the store's, and a fourth is not a check", "maybe", err)
+	}
+
+	keys, err := r.store.Keys(ctx)
+	if err != nil || !sameKeys(keys, []string{held}) {
+		t.Errorf("after the refusals the store holds %v (%v), want the one key it was given", text(keys), err)
+	}
+	view, err := r.store.View(ctx, at(1), m.ring, testFirebaseProject, nil)
+	if err != nil {
+		t.Fatalf("View: %v", err)
+	}
+	if view.HasCheck {
+		t.Errorf("a refused check left the record %+v, want none recorded", view.Check)
+	}
+}
+
 // TestTheStoreNeverLogsAKey holds the store to the rule the key's own package
 // keeps for argv: a key text reaches the bucket's object and nothing else. No
 // error the store returns and no value it hands out carries one, in whole or in
