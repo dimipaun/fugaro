@@ -730,6 +730,27 @@ describe('the v1 key', () => {
     return named as LicenceV1Refusal
   }
 
+  /** mintV1 signs one v1 payload as the format spells it: the prefix, the
+   * payload's bytes, a dot, and the signature over exactly those bytes. */
+  function mintV1(one: Signer, claims: Record<string, unknown>): string {
+    const payload = Buffer.from(JSON.stringify(claims), 'utf8')
+    return `${V1_PREFIX}${payload.toString('base64url')}.${edSign(
+      null,
+      payload,
+      one.privateKey,
+    ).toString('base64url')}`
+  }
+
+  /** teamClaimsV1 is the team vector's own claim set, decoded back out of its
+   * payload: every negative case below is this claim set with one field changed,
+   * so the signature verifies and the claim set is the only thing that can
+   * refuse the key. */
+  function teamClaimsV1(): Record<string, unknown> {
+    const key = vectorNamed('a team key inside its paid term').key
+    const payload = key.slice(V1_PREFIX.length).split('.')[0] ?? ''
+    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>
+  }
+
   it('VectorsV1RoundTrip: every vector answers the state, the claims or the refusal the file names', () => {
     expect(Object.keys(file.keyring), 'the vectors’ keyring is not the fixture’s one key').toHaveLength(1)
     expect(file.vectors.length, 'the vectors carry too few cases to cover both halves').toBeGreaterThanOrEqual(15)
@@ -792,6 +813,44 @@ describe('the v1 key', () => {
   it('TestKeyIDIsNotInTheProductionKeyring: the ring this build ships holds no key minted for the vectors', () => {
     for (const id of [...Object.keys(file.keyring), file.staging.id]) {
       expect(PRODUCTION_KEYRING[id], `${id} is a key minted for the vectors`).toBeUndefined()
+    }
+  })
+
+  it('a known field of the wrong type is refused: the claim set the format declares is the one that reads', () => {
+    // The vectors carry no key with an unknown `renewal_mode`, `kind` or warning
+    // whose signature verifies, and none with a known field of the wrong type
+    // that gets that far either: the vector that spells a second `seats` as text
+    // is the one refused for its signature, so its claims are never decoded.
+    // Those are the cases where the console would otherwise
+    // accept a key the CLI refuses, so the claim set is re-signed here with one
+    // field changed at a time: the signature verifies, and the claim set is the
+    // only thing that can refuse the key. Both verifiers refuse all six
+    // (`ee/licence/keyv1_test.go` mints the same wrong-type payloads).
+    const one = signer('a key this test minted')
+    const sound = teamClaimsV1()
+    sound['kid'] = one.id
+    expect(
+      verifyLicenceKeyV1(mintV1(one, sound), now, file.firebase_project_id, one.keyring).ok,
+      'the claim set this test re-signs is not one the verifier reads at all',
+    ).toBe(true)
+
+    for (const [what, change] of [
+      ['a renewal mode this build does not read', { renewal_mode: 'sometimes' }],
+      ['a kind this build does not read', { kind: 'gift' }],
+      ['a seat count spelled as text', { seats: 'five' }],
+      ['warnings that are not a list', { warnings: {} }],
+      ['a warning whose roles are not roles', { warnings: [{ roles: [7], from: 'P7D' }] }],
+      ['a check interval that is not a duration', { check_interval: 5 }],
+    ] as const) {
+      expect(
+        verifyLicenceKeyV1(
+          mintV1(one, { ...sound, ...change }),
+          now,
+          file.firebase_project_id,
+          one.keyring,
+        ),
+        what,
+      ).toEqual({ ok: false, refusal: 'claims', reason: expect.any(String) })
     }
   })
 
