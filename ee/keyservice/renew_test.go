@@ -1054,6 +1054,60 @@ func TestChainedRenewalsStopAtOneTerm(t *testing.T) {
 	}
 }
 
+// TestARenewalOffTheDayGridCoversTheWholeTerm: the fixture's clock is whole
+// days, which is what hides this from the chain test above. The term the
+// endpoint names is whole days (`RequestV1.TermDays`) and the minter dates the
+// successor from its own clock and never from a date this side sends (§2), so a
+// renewal asked at an hour the key was not issued at ends a whole number of days
+// from the asking and can land past the end of the term it covers — by the
+// asker's own lateness inside the window, and never short of that end, which is
+// the half Check 175 measures: a successor short of it has taken days from a
+// customer who cancels at the end of the term, and the renewal after it measures
+// from the end the key in hand carries. What this pins is where the successor
+// ends to the minute, and that the day the round costs is not handed out again:
+// the successor's own end is on the minute the renewal was asked at, so a job
+// running at that minute asks from it and the term after is exact.
+func TestARenewalOffTheDayGridCoversTheWholeTerm(t *testing.T) {
+	f, _ := renewing(t)
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	policy, known := DefaultPolicy(PolicyTeamMonthly)
+	if !known {
+		t.Fatal("the monthly row is not in the table")
+	}
+	f.inTheRenewalWindow(t, keyID)
+	// Seven hours and thirteen minutes later than the minute the window opened
+	// on, which is where a daily job's run lands for a key issued at noon.
+	f.advance(7*time.Hour + 13*time.Minute)
+	asked := f.now
+	covered := f.issuance(t, keyID).Expires.Add(policy.Term)
+
+	answer := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}))
+	if answer.Key == "" {
+		t.Fatalf("the renewal inside the window answered no key: %+v", answer)
+	}
+	claims := v1Verified(t, f, answer.Key)
+	if claims.PaidThrough.Before(covered) {
+		t.Errorf("the successor is paid through %s, before the end of the term it covers (%s): the renewal covers the term that begins where its predecessor ends, and days short of it are days taken from a customer who cancels at the end of the term (§5.3, Check 175)", claims.PaidThrough, covered)
+	}
+	if gap := claims.PaidThrough.Sub(covered); gap > 24*time.Hour {
+		t.Errorf("the successor is paid through %s, %s past the end of the term it covers (%s): the round costs the asker's own lateness inside the window and not more", claims.PaidThrough, gap, covered)
+	}
+	if rest := claims.PaidThrough.Sub(asked) % (24 * time.Hour); rest != 0 {
+		t.Errorf("the successor is paid through %s, which is %s from the asking and not a whole number of days: the minter dates a key in whole days from its own clock, which is why an off-grid renewal cannot end on the term's end", claims.PaidThrough, rest)
+	}
+
+	// The renewal after it, asked from the minute the successor's end is on,
+	// lands on the term's end itself.
+	f.inTheRenewalWindow(t, claims.KeyID)
+	next := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: claims.KeyID, WorkspaceID: workspaceID, RenewalSecret: answer.RenewalSecret}))
+	if next.Key == "" {
+		t.Fatalf("the successor did not renew: %+v", next)
+	}
+	if got, want := v1Verified(t, f, next.Key).PaidThrough, claims.PaidThrough.Add(policy.Term); !got.Equal(want) {
+		t.Errorf("the renewal after an off-grid one is paid through %s, want %s: the day the round costs is paid once and not a day a period (T26)", got, want)
+	}
+}
+
 // losingHandovers is the store of an instance whose handover write fails while
 // the two writes before it land: the rotation's state and its record are in the
 // store and the answer kept beside them is not.

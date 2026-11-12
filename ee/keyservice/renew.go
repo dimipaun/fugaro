@@ -550,12 +550,20 @@ func renewable(record Record, policy Policy, now time.Time) bool {
 // covers a whole period from now (T26; the meaning `RequestV1.TermDays` states).
 //
 // It is measured from this key's own `paid_through` and never accumulated here:
-// the successor ends one period past this key's end, whatever the holder asked
-// for before, and a term longer than the tier allows is the minter's refusal
-// rather than a clamp in this file.
+// the successor covers the term that begins where this key ends, whatever the
+// holder asked for before, and a term longer than the tier allows is the
+// minter's refusal rather than a clamp in this file (Check 175).
 //
-// The days are rounded up, so a renewal taken at an hour the key was not issued
-// at does not cost the customer the day it lands in.
+// The term is in whole days, because that is the unit `RequestV1.TermDays`
+// states and the minter dates the successor from its own clock and never from a
+// date this side sends (§2), which is the rule the tier's ceiling rests on. So a
+// renewal asked at an hour the key was not issued at ends a whole number of days
+// from the asking: up to the asker's lateness inside the window past the end of
+// the term it covers, and past it rather than short of it, because a successor
+// short of that end is days taken from the customer and the renewal after it
+// measures from the end the key in hand carries. The round is what that costs,
+// and a job running at a fixed minute pays it once: the successor's end is on
+// that minute, so its window opens on it too and the term after is exact.
 func renewalDays(record Record, policy Policy, now time.Time) int {
 	end := record.Expires
 	if end.Before(now) {
