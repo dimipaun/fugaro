@@ -85,7 +85,8 @@ func TestDocsRolesDesign(t *testing.T) {
 }
 
 // TestDocsRolesDesignCitations: the role-model section's four line citations
-// into internal/access/access.go are resolved, not pinned to a literal.
+// into internal/access/access.go and the two into internal/cli/pair.go are
+// resolved, not pinned to a literal.
 //
 // It is the drift a literal cannot see that this guard is for: RS2 grew that
 // file's package doc by six lines, all four citations named a line that then
@@ -93,6 +94,13 @@ func TestDocsRolesDesign(t *testing.T) {
 // are the closed set's `const (` block and the three declarations the sentence
 // names beside it, so each one is read out of the source and the document has to
 // name it. mobileauth.go:80 is that file's own and is not this section's.
+//
+// The pair.go citations were the same drift the other way round: RS8 moved
+// pairInheritedRole off the two IAM lists and onto the grants node, the line the
+// two sentences named became pairQR.Project, and the sentences went on
+// describing the rule RS8 had replaced. Both are read out of pair.go and both
+// are COUNTED, because one re-pointed citation and one stale one would satisfy a
+// check that only asks whether the document contains the resolved line.
 func TestDocsRolesDesignCitations(t *testing.T) {
 	doc := readDoc(t, rolesDesignPath)
 	src := strings.Split(readDoc(t, "internal/access/access.go"), "\n")
@@ -130,6 +138,22 @@ func TestDocsRolesDesignCitations(t *testing.T) {
 		if !strings.Contains(doc, c.cite) {
 			t.Errorf("%s does not cite %s at %s, where internal/access/access.go declares it: the sentence points at whatever now sits on the lines it names, which is how these four drifted from 60/82/99/112 when that file grew", rolesDesignPath, c.what, c.cite)
 		}
+	}
+
+	pairSrc := strings.Split(readDoc(t, "internal/cli/pair.go"), "\n")
+	pairLine := 0
+	for i, l := range pairSrc {
+		if strings.Contains(l, "func pairInheritedRole(") {
+			pairLine = i + 1
+			break
+		}
+	}
+	if pairLine == 0 {
+		t.Fatalf("internal/cli/pair.go no longer declares pairInheritedRole, so %s's two citations of it have nothing to resolve against: the role a device inherits is the sentence they are there for", rolesDesignPath)
+	}
+	pairCite := "`internal/cli/pair.go:" + strconv.Itoa(pairLine) + "`"
+	if n := strings.Count(doc, pairCite); n != 2 {
+		t.Errorf("%s cites %s %d times, want 2 (the session's role and the vocabulary paragraph): a citation left at the old line names whatever pairInheritedRole left behind", rolesDesignPath, pairCite, n)
 	}
 }
 

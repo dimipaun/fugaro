@@ -38,6 +38,7 @@ module "installation" {
   manage_apis               = var.manage_apis
   launchers                 = var.launchers
   operators                 = var.operators
+  viewers                   = var.viewers
   launcher_bucket_condition = var.launcher_bucket_condition
   budget                    = var.budget
   alert_email               = var.alert_email

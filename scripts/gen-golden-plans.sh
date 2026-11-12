@@ -75,7 +75,7 @@ golden=$repo/internal/infra/tf/testdata/golden
 # schedule, and the Firebase root's database grant to it. The opt-in is off by
 # default, so they are goldens of their own and every other golden here plans
 # no coordinator at all.
-for pair in installation:installation installation-accounts:installation installation-managed:installation installation-credentials:installation installation-coordinator:installation repo:repo firebase:firebase firebase-same-project:firebase firebase-coordinator:firebase; do
+for pair in installation:installation installation-accounts:installation installation-managed:installation installation-credentials:installation installation-coordinator:installation installation-viewers:installation repo:repo firebase:firebase firebase-same-project:firebase firebase-coordinator:firebase firebase-viewers:firebase; do
   r=${pair%%:*}
   root=${pair##*:}
   (
@@ -87,7 +87,9 @@ for pair in installation:installation installation-accounts:installation install
       installation-managed) jq '. + {managed_deployer_scoped: true}' "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" > terraform.tfvars.json ;;
       installation-credentials) cp "$repo/internal/infra/testdata/installation-credentials.tfvars.json" terraform.tfvars.json ;;
       installation-coordinator) cp "$repo/internal/infra/testdata/installation-coordinator.tfvars.json" terraform.tfvars.json ;;
+      installation-viewers) cp "$repo/internal/infra/testdata/installation-viewers.tfvars.json" terraform.tfvars.json ;;
       firebase-coordinator) cp "$repo/internal/infra/testdata/firebase-coordinator.tfvars.json" terraform.tfvars.json ;;
+      firebase-viewers) cp "$repo/internal/infra/testdata/firebase-viewers.tfvars.json" terraform.tfvars.json ;;
     esac
     sed -i.bak '/backend "gcs" {}/d' main.tf
     "${tfenv[@]}" terraform init -backend=false >/dev/null

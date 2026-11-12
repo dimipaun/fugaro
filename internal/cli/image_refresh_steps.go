@@ -27,11 +27,6 @@ type refreshTarget struct {
 	cfg   *config.Config
 	spec  infra.RepoSpec
 	kinds []string // the selected kinds (the plan's), for telling the others apart in the check job's diff
-
-	// checkJobMissing is set when step 3 finds no daily image check job for
-	// a repository whose spec has one (a 404 that should not be one): the
-	// final summary repeats it, so it is not just a line that scrolled past.
-	checkJobMissing bool
 }
 
 // refreshBase is step 2: the images stage alone, for kinds (D5, D6), with
@@ -125,8 +120,13 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 	case err != nil:
 		return remote(err)
 	case u == nil && t.spec.Check != nil:
-		t.checkJobMissing = true
-		fmt.Fprintf(w, "  the daily image check job %s was not found, though this repository's spec has one: run fugaro update --repo in the checkout to deploy it (nothing was updated)\n", pluginwire.Printable(gcp.CheckJobName(t.spec.Slug)))
+		// The spec still carries a daily check (a workflow the catalog does
+		// not speak for) and the cloud holds none, which after D1900 is the
+		// state every such repository is left in: Readiness deploys a check
+		// job only where the cloud already holds one (IS2), so no command
+		// fixes this and none is named — the remedy the line printed before,
+		// `fugaro update --repo`, deploys no check job either.
+		fmt.Fprintf(w, "  the daily image check job %s is not deployed, though this repository's spec has one: repo-level images are disabled, so a repository whose cloud holds no check job is given none (nothing was updated)\n", pluginwire.Printable(gcp.CheckJobName(t.spec.Slug)))
 		return nil
 	case u == nil:
 		fmt.Fprintln(w, "  no daily image check job (every workflow has rebuild.check: off): nothing to update")

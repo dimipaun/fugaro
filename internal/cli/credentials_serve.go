@@ -528,8 +528,8 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// is the state an installation that runs no coordinator starts in.
 		CoordinatorAccount: coordinator,
 		// The review-only class (C3.9a): the jobs `fugaro review` runs on, by
-		// the service account each one was deployed as, with the Claude account
-		// its calls are served by. Empty is the state an installation whose
+		// the service account each one was deployed as, with the value of the
+		// account axis its calls are served by. Empty is the state an installation whose
 		// module renders no review-job document starts in, and a caller of the
 		// class is then no class at all rather than a class with no route.
 		ReviewJobAccounts: reviewAccounts,
@@ -810,7 +810,7 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 // credentialsServiceReviewJobAccounts turns FUGARO_REVIEW_JOB_ACCOUNTS into the
 // review-only class's table (C3.9a): one row per review job this installation
 // deployed, keyed by the service account the caller is verified as and carrying
-// the Claude account that call is served by.
+// the value of the account axis that call is served by.
 //
 // The document is a JSON array of {"profile": ..., "provider": ...,
 // "account": ...} objects — the variant's own axis, which is the axis
@@ -869,8 +869,8 @@ func credentialsServiceReviewJobAccounts(raw, gcpProject string) ([]credsvc.Revi
 	}
 	// The same order and the same de-duplication the policy read makes
 	// (credsvc.ReviewJobAccountsFor): two rows that name one account are one
-	// row, and rows that name one account under two Claude accounts are left
-	// for credsvc.NewAuthenticator to refuse, which is the deployment that
+	// row, and rows that name one account under two values of the account axis
+	// are left for credsvc.NewAuthenticator to refuse, which is the deployment that
 	// disagrees with itself rather than a document this function can repair.
 	slices.SortFunc(out, func(a, b credsvc.ReviewJobAccount) int { return cmp.Compare(a.Email, b.Email) })
 	return slices.Compact(out), nil

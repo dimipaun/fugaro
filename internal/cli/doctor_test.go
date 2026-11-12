@@ -61,6 +61,13 @@ func newDoctorRig(t *testing.T) *doctorRig {
 	// Hermetic: a stand-in terraform (CI has none), no real Claude Code
 	// config, and a fixed binary version.
 	withVersion(t, "0.2.0")
+	// The rig models an operator's own machine, and such a machine has the
+	// plugin installed in Claude Code (fugaro update put it there): since D942
+	// plugin-install asks about that install wherever the checkout carries no
+	// release-tag pin, which is every rig, so without this the rig's clean
+	// installations would each carry one warning that has nothing to do with
+	// what they test.
+	installUserPlugin(t, "0.2.0")
 	doctorFakeTerraform(t, dir)
 	path := isolateProjects(t, dir)
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\n" +
@@ -191,7 +198,7 @@ func TestDoctorSaysWhenTheBaseIsMissing(t *testing.T) {
 	}
 	for _, c := range o.Checks {
 		if c.ID == "base-image" {
-			if c.OK || c.Severity != "warning" || !strings.Contains(c.Fix, "fugaro image refresh") {
+			if c.OK || c.Severity != "warning" || !strings.Contains(c.Fix, "fugaro update") {
 				t.Errorf("base-image = %+v", c)
 			}
 			return
@@ -306,17 +313,19 @@ func TestDoctorStrictPlugin(t *testing.T) {
 	}
 }
 
-// TestDoctorStrictFailsForeignAndUnpinned: foreign, unpinned and unwired
-// plugin states are reported either way, but only fail doctor with
-// --strict: the repository's CI is where this is meant to be enforced, a
-// developer's machine is not.
+// TestDoctorStrictFailsForeignAndUnpinned: foreign and unpinned plugin states
+// are reported either way, but only fail doctor with --strict: the
+// repository's CI is where this is meant to be enforced, a developer's machine
+// is not. "not wired" is no longer one of them (D942, U3 of
+// docs/plugin-user-scope/implementation-plan.md): nothing in the tree writes a
+// pin any more (D949), so a repository that never opted in is the normal one,
+// and TestDoctorUnwiredCheckoutPassesStrict holds that end.
 func TestDoctorStrictFailsForeignAndUnpinned(t *testing.T) {
 	withVersion(t, "0.2.0")
 	foreign := `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"someone/fork","ref":"v0.2.0"}}},"enabledPlugins":{"fugaro@fugaro":true}}`
 	for _, tc := range []struct{ name, content string }{
 		{"foreign", foreign},
 		{"unpinned", wiredAt("")},
-		{"not-wired", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, _ := skillCheckout(t, tc.content)
@@ -327,6 +336,44 @@ func TestDoctorStrictFailsForeignAndUnpinned(t *testing.T) {
 				t.Fatal("--strict: want a failure")
 			}
 		})
+	}
+}
+
+// TestDoctorUnwiredCheckoutPassesStrict: a repository that never opted in to
+// the plugin pin is not a CI failure (D942, reconciliation F21). Its
+// plugin-pin check is informational — the state every checkout fugaro leaves
+// behind is in now that the merge that wrote the pin is deleted (D949) — and
+// the check that does fail a machine, plugin-install, is not evaluated in this
+// mode at all, because the runner that runs it has no Claude Code install.
+// This is the red test of U3: before it, the un-wired checkout failed --strict
+// on plugin-pin, for the wrong reason.
+func TestDoctorUnwiredCheckoutPassesStrict(t *testing.T) {
+	withVersion(t, "0.2.0")
+	root, _ := skillCheckout(t, "")
+	out, _, err := execute(t, "doctor", "--plugin", "--strict", "--json", "--dir", root)
+	if err != nil {
+		t.Fatalf("an un-wired checkout failed --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	pin, ok := doctorCheckByID(o.Checks, "plugin-pin")
+	if !ok || pin.OK || pin.Severity != "info" {
+		t.Fatalf("plugin-pin on an un-wired checkout = %+v, want ok false and info", pin)
+	}
+	// The wiring it could not find is still said, in the check's own words:
+	// informational is not silence.
+	if !strings.Contains(pin.Problem, "settings.json") {
+		t.Errorf("plugin-pin's problem does not say what is missing: %q", pin.Problem)
+	}
+	if !o.OK {
+		t.Fatalf("the verdict is false on an un-wired checkout: %+v", o)
+	}
+	// And a repository that never opted in is not one with something to do:
+	// the default view ends on its ok line.
+	if view, _, err := execute(t, "doctor", "--plugin", "--strict", "--dir", root); err != nil || strings.Contains(view, "things to do") {
+		t.Fatalf("the default view of an un-wired checkout: err %v\n%s", err, view)
 	}
 }
 
@@ -463,10 +510,14 @@ func TestDoctorProviderSecretNameIsInformational(t *testing.T) {
 	}
 }
 
-// TestDoctorNotInstalledIsInformational: a correctly pinned plugin nobody
-// has installed yet is informational, under --strict or not: a teammate who
-// hasn't opened the folder in Claude Code is not a CI failure.
-func TestDoctorNotInstalledIsInformational(t *testing.T) {
+// TestDoctorNotInstalledIsAWarning: the install plugin-install reads is the
+// user-scope one now, so "no plugin on this machine" is a state `fugaro update`
+// repairs and a warning rather than the measurement it was (D942, U3 of
+// docs/plugin-user-scope/implementation-plan.md) — an installation with none of
+// the Fugaro skills is what the reader acts on. Under `--plugin --strict` it is
+// not evaluated at all: that mode is the one a repository's CI runs, and a
+// runner has no Claude Code install to report.
+func TestDoctorNotInstalledIsAWarning(t *testing.T) {
 	withVersion(t, "0.2.0")
 	root, _ := skillCheckout(t, wiredAt("v0.2.0"))
 	out, _, err := execute(t, "doctor", "--plugin", "--json", "--dir", root)
@@ -478,17 +529,47 @@ func TestDoctorNotInstalledIsInformational(t *testing.T) {
 		t.Fatalf("json: %v\n%s", jerr, out)
 	}
 	c, ok := doctorCheckByID(o.Checks, "plugin-install")
-	if !ok || c.OK || c.Severity != "info" {
-		t.Fatalf("plugin-install = %+v", c)
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("plugin-install = %+v, want a warning", c)
+	}
+	// The checkout carries a release-tag pin, so the install this reports is
+	// the one that applies there, and the problem is the state's own words.
+	if c.Problem != "not installed" {
+		t.Fatalf("plugin-install problem = %q, want the pin's own state", c.Problem)
 	}
 	if !strings.Contains(c.Fix, "/plugin install fugaro@fugaro") || strings.Contains(c.Fix, "by itself") {
 		t.Fatalf("plugin-install fix = %q", c.Fix)
 	}
+	// A checkout nothing pins asks the machine's question instead, and the
+	// problem says which install answered (D942).
+	unwired, _ := skillCheckout(t, `{}`)
+	uout, _, _ := execute(t, "doctor", "--plugin", "--json", "--dir", unwired)
+	var uo doctorOutput
+	if jerr := json.Unmarshal([]byte(uout), &uo); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, uout)
+	}
+	uc, ok := doctorCheckByID(uo.Checks, "plugin-install")
+	if !ok || uc.OK || uc.Severity != "warning" || !strings.Contains(uc.Problem, "no Fugaro plugin is installed in Claude Code at user scope") {
+		t.Fatalf("an un-wired checkout's plugin-install = %+v, want the user-scope warning", uc)
+	}
+	// A warning is wrong and Fugaro still runs: it fails --strict, not an
+	// ordinary run, which is the change that makes it an update item.
 	if !o.OK {
-		t.Fatalf("an informational state failed doctor: %+v", o)
+		t.Fatalf("a warning must not fail an ordinary run: %+v", o)
 	}
 	if _, _, err := execute(t, "doctor", "--plugin", "--strict", "--dir", root); err != nil {
-		t.Fatalf("--strict: %v", err)
+		t.Fatalf("--plugin --strict evaluated the machine's install: %v", err)
+	}
+	sout, _, err := execute(t, "doctor", "--plugin", "--strict", "--json", "--dir", root)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, sout)
+	}
+	var so doctorOutput
+	if jerr := json.Unmarshal([]byte(sout), &so); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, sout)
+	}
+	if c, ok := doctorCheckByID(so.Checks, "plugin-install"); ok {
+		t.Errorf("--plugin --strict reported %+v: a runner has no Claude Code, so there is no install to compare", c)
 	}
 }
 
@@ -581,6 +662,238 @@ func TestDoctorNeverPrintsSecretValues(t *testing.T) {
 	}
 	if len(o.Secrets) != 1 || o.Secrets[0].Name != "claude-oauth-token" {
 		t.Fatalf("secrets = %+v", o.Secrets)
+	}
+}
+
+// doctorOfflineCheck is one check of `doctor --offline --json`, read the way a
+// reader outside this binary reads it (the console's §6.4, and the skills):
+// the document's own members, not this package's struct, so the test pins the
+// wire shape and not the field one refactor away from it.
+type doctorOfflineCheck struct {
+	ID       string `json:"id"`
+	OK       bool   `json:"ok"`
+	Severity string `json:"severity"`
+	Problem  string `json:"problem"`
+	Class    string `json:"class"`
+	Skipped  bool   `json:"skipped"`
+}
+
+// TestDoctorOffline: the session-start check (D945 to D952, U3 of
+// docs/plugin-user-scope/implementation-plan.md). It is the update class, run
+// with no cloud call of any kind, and every check it cannot answer comes back
+// with skipped true and ok false rather than guessed. This is the red test of
+// the flag: before U3, doctor had no --offline at all.
+func TestDoctorOffline(t *testing.T) {
+	r, dir := doctorCleanRig(t, nil)
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/nonexistent")
+
+	out, _, err := execute(t, "doctor", "--offline", "--json", "--dir", dir)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o struct {
+		OK     bool                 `json:"ok"`
+		Checks []doctorOfflineCheck `json:"checks"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	byID := map[string]doctorOfflineCheck{}
+	for _, c := range o.Checks {
+		byID[c.ID] = c
+		if c.Skipped && c.OK {
+			t.Errorf("%s is skipped and ok: a check that was not run may never report ok (D946)", c.ID)
+		}
+		if c.Skipped && c.Problem == "" {
+			t.Errorf("%s is skipped with no problem: a skip has to say what it could not read", c.ID)
+		}
+		if c.Skipped && c.Severity != "info" {
+			t.Errorf("%s is skipped at severity %q: a skip fails nothing, with or without --strict", c.ID, c.Severity)
+		}
+	}
+	// The one that needs the network, named by the plan's red step.
+	cli, ok := byID["cli-version"]
+	if !ok {
+		t.Fatalf("--offline does not report cli-version at all, so a reader cannot tell the lookup did not happen:\n%s", out)
+	}
+	if !cli.Skipped || cli.OK {
+		t.Fatalf("cli-version = %+v, want skipped and not ok: whether a newer release is available is a network call", cli)
+	}
+	if !strings.Contains(cli.Problem, "network") {
+		t.Errorf("cli-version's problem does not say why it was not run: %q", cli.Problem)
+	}
+	// The three the database holds: skipped too, each in its own words.
+	for _, id := range []string{"policy-rules-skew", "policy-vs-jobs", "policy-older-than-binary"} {
+		c, ok := byID[id]
+		if !ok || !c.Skipped || c.OK {
+			t.Errorf("%s = %+v (present %v), want skipped and not ok", id, c, ok)
+		}
+	}
+	// And the checks a file here answers: the plugin pair (the rig's machine
+	// has the plugin at this binary's release), the login unit and the base
+	// image. Not one of them is skipped, and none is a failure.
+	for _, id := range []string{"plugin-pin", "plugin-install", "orchestrator-unit", "base-image"} {
+		c, ok := byID[id]
+		if !ok {
+			t.Errorf("--offline did not answer %s: it is one of the class's local checks:\n%s", id, out)
+			continue
+		}
+		if c.Skipped {
+			t.Errorf("%s was skipped and it answers from this machine: %s", id, c.Problem)
+		}
+	}
+	if !o.OK {
+		t.Fatalf("--offline failed doctor on a machine with nothing wrong:\n%s", out)
+	}
+	// Not one request reached the installation's own fakes: the flag's whole
+	// promise (spec §7). The rig's config points at them, so a run that read
+	// anything at all would show up here.
+	if n := len(r.crm.Requests()) + len(r.billing.Requests()) + len(r.sm.Requests()); n != 0 {
+		t.Fatalf("--offline made %d cloud calls", n)
+	}
+	if _, _, err := execute(t, "doctor", "--offline", "--strict", "--json", "--dir", dir); err != nil {
+		t.Fatalf("--strict failed on skipped checks: %v", err)
+	}
+	// The class the skips are filed in, pinned directly: a skipped check is a
+	// measurement (D946's "counted in no view's total"), never an item and
+	// never a finding. policy-rules-skew stands in for all of them — they are
+	// the update class's IDs, whose own arm sits above the measure ones — and
+	// without this arm the four skips above would be counted in the default
+	// view's pointer line, which is a count of checks that never ran.
+	if got := doctorClassOf(doctorCheck{ID: "policy-rules-skew", Skipped: true, Severity: "info"}); got != doctorClassMeasure {
+		t.Errorf("a skipped policy-rules-skew is %q, want %q: a skip is not a finding", got, doctorClassMeasure)
+	}
+	// The default view never prints a skipped check's own line, and never
+	// claims a check it did not run was checked: the pointer says how many
+	// were left out, and --all is where their own words are.
+	view, _, err := execute(t, "doctor", "--offline", "--dir", dir)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, view)
+	}
+	if strings.Contains(view, "policy-rules-skew") || strings.Contains(view, "cli-version") {
+		t.Errorf("the default view prints a skipped check:\n%s", view)
+	}
+	if !strings.Contains(view, "not run by `--offline`") {
+		t.Errorf("the default view does not say that checks were not run:\n%s", view)
+	}
+	if strings.Contains(view, "more finding") {
+		t.Errorf("the default view counts a skipped check as a finding:\n%s", view)
+	}
+	all, _, err := execute(t, "doctor", "--offline", "--all", "--dir", dir)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, all)
+	}
+	for _, want := range []string{"skipped cli-version: ", "skipped policy-rules-skew: "} {
+		if !strings.Contains(all, want) {
+			t.Errorf("--all does not print %q:\n%s", want, all)
+		}
+	}
+}
+
+// doctorOfflineAnchoredYAML is skillCheckoutYAML with the anchor every other
+// checkout in this file's tests goes without: project aurora in gcp_project
+// proj-1234, which is the rig's own local installation, so findLayer has a
+// project layer to look for and reaches the bucket it lives in.
+const doctorOfflineAnchoredYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+	"git: { provider: github }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+// TestDoctorOfflineReadsNoBucket: --offline resolves the checkout's own
+// fugaro.yaml over the cache alone, and never opens the project layer's
+// bucket to do it. The guard is the layerOptions.Offline
+// doctorOfflineWorkflows resolves with, and it is the flag's whole promise
+// (D952, doctor.go's own help: no cloud call, no secret read) -- but no
+// fixture the flag's own test uses can pin it. skillCheckoutYAML names no
+// gcp_project:, so findLayer returns before any bucket is named, and a
+// checkout with no local installation selected is forced offline by findLayer
+// itself (layer_resolve.go). This one is anchored and the rig's installation
+// is selected: the only thing left between the run and a bucket read is the
+// option itself, and noLayerBucketReads fails the test the instant anything
+// opens it.
+//
+// Mutation (run, restore): drop Offline from doctorOfflineWorkflows'
+// layerOptions and this test fails -- with an installation whose endpoints are
+// real it would be a bucket read with this machine's own credentials, which is
+// the reproduction the review recorded (a logging proxy saw the OAuth calls the
+// unmutated build never makes).
+func TestDoctorOfflineReadsNoBucket(t *testing.T) {
+	r := newDoctorRig(t)
+	isolateCache(t)
+	dir := gitCheckout(t, t.TempDir(), doctorOfflineAnchoredYAML)
+	t.Chdir(dir)
+	doctorCleanState(t, r, dir)
+	noLayerBucketReads(t)
+	out, _, err := execute(t, "doctor", "--offline", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// And the resolution really happened: the workflow names come from this
+	// checkout's own file, one skipped check each, without the bucket. Without
+	// this the test would pass over a run that gave up before the layer.
+	if !strings.Contains(out, `"id": "image-config-app"`) {
+		t.Fatalf("--offline did not name the anchored checkout's workflow:\n%s", out)
+	}
+}
+
+// TestDoctorOfflineImageConfigNamesOnlyComparedWorkflows: the skips name the
+// checks that exist. An image-config-<workflow> check is emitted for a
+// workflow whose per-workflow build record the ordinary run compares, and that
+// is not every workflow in the file: one that builds from a dockerfile: is
+// never compared (the hash covers a tree's blob), and one the project's image
+// catalog gives an image to is judged by its entry's record instead
+// (imageConfigWorkflows). Naming them here listed checks that no run has, and
+// the default view's "N checks not run by `--offline`" counted them.
+//
+// The catalog is the one this machine's own config states — the half of the
+// image selection --offline can read — so the pinned workflow is one this test
+// can expect to be left out; the node's half of that selection is the residual
+// the flag reports rather than guesses at.
+//
+// Mutation (run, restore): return every workflow name from
+// doctorOfflineWorkflows (drop imageConfigWorkflows), and this test fails on
+// both the check list and the count.
+func TestDoctorOfflineImageConfigNamesOnlyComparedWorkflows(t *testing.T) {
+	r := newDoctorRig(t)
+	isolateCache(t)
+	addLocalLines(t, r, doctorCatalogFixture)
+	const yaml = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+		"git: { provider: github }\nworkflows:\n" +
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n" +
+		"  baked: { dockerfile: .fugaro/baked.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n" +
+		"  pinned: { image_name: go, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	dir := gitCheckout(t, t.TempDir(), yaml)
+	t.Chdir(dir)
+	doctorCleanState(t, r, dir)
+	out, _, err := execute(t, "doctor", "--offline", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o struct {
+		Checks []doctorOfflineCheck `json:"checks"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	named := map[string]bool{}
+	for _, c := range o.Checks {
+		named[c.ID] = true
+	}
+	if !named["image-config-app"] {
+		t.Errorf("--offline does not name image-config-app, the workflow the ordinary run compares:\n%s", out)
+	}
+	for _, id := range []string{"image-config-baked", "image-config-pinned"} {
+		if named[id] {
+			t.Errorf("--offline names %s: no run emits that check for that workflow, so --all would list a check that does not exist", id)
+		}
+	}
+	// The count on the screen is the checks that exist: cli-version and the
+	// three policy checks are the only other skips this rig has (base-image
+	// answers from the local config).
+	view, _, err := execute(t, "doctor", "--offline")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, view)
+	}
+	if !strings.Contains(view, "5 checks not run by `--offline`") {
+		t.Errorf("the default view does not count exactly the five skipped checks:\n%s", view)
 	}
 }
 
@@ -1732,9 +2045,24 @@ func TestDoctorProjectSecretStoredPassesWithEitherCopy(t *testing.T) {
 // splice in) and whose local config offers one provider serving deepseek/*.
 func apiKeyRig(t *testing.T, lines string) *doctorRig {
 	t.Helper()
+	return apiKeyRigFiles(t, lines, nil)
+}
+
+// apiKeyRigFiles is apiKeyRig with files of the caller's own committed on the
+// checkout's base branch: the checks that read a repository's tree rather than
+// its working copy (D1518) need them there before the clone is made. The clone
+// is left as the working directory, so a test that needs a different origin
+// remote can re-point it (a repository the local config would refuse to record
+// is still one a checkout can be cloned from).
+func apiKeyRigFiles(t *testing.T, lines string, extra map[string]string) *doctorRig {
+	t.Helper()
 	r := newDoctorRig(t)
 	yaml := strings.Replace(cliMinimalYAML, "workflows:", lines+"workflows:", 1)
-	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+	files := map[string]string{"fugaro.yaml": yaml}
+	for name, body := range extra {
+		files[name] = body
+	}
+	dir := checkoutWith(t, files)
 	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
 	addLocalLines(t, r, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n"+
 		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n"+
@@ -1813,6 +2141,200 @@ func doctorWarnsForTheOptionalAnthropicKey(t *testing.T, lines string) {
 	}
 	if stored, ok := doctorCheckByID(o.Checks, "project-secret-stored"); ok && !stored.OK {
 		t.Fatalf("project-secret-stored = %+v: the optional key is not the red gate", stored)
+	}
+}
+
+// TestDoctorWarnsWhenTheCoderCannotSeeAndTheRepoHasImages is D2011's warning: a
+// coder priced without an image rate, no vision slot, and a base branch that
+// tracks a picture. The stage that reads one pays for its work and is refused
+// by the gateway mid-run (V5's checkImages is the run's half of the same rule),
+// so this is a warning — the default view prints it, and --strict fails on it —
+// and it names the coder, the slot, the file and the repository in the command
+// that fixes it.
+func TestDoctorWarnsWhenTheCoderCannotSeeAndTheRepoHasImages(t *testing.T) {
+	apiKeyRigFiles(t,
+		"agent: { auth: api-key, models: { coder: deepseek/deepseek-v4-flash } }\nbudget: { mode: enforce, per_run_usd: 20 }\n",
+		map[string]string{"assets/logo.png": "a picture, as far as the check reads one"})
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "vision-coder")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("vision-coder = %+v", c)
+	}
+	for _, want := range []string{"deepseek/deepseek-v4-flash", "agent.models.vision is unset", "origin/main", "assets/logo.png"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("the warning does not say %q: %s", want, c.Problem)
+		}
+	}
+	if !strings.Contains(c.Fix, "models use acme/app vision") {
+		t.Errorf("the fix does not name the command that sets the slot: %s", c.Fix)
+	}
+	if !strings.Contains(c.Fix, "image_tokens") {
+		t.Errorf("the fix does not name the price half of it: %s", c.Fix)
+	}
+	// A warning is an item of the default view whatever its ID: one a reader
+	// only met under --all would be the silent pass this check exists to
+	// prevent.
+	human, _, _ := execute(t, "doctor")
+	if !strings.Contains(human, "warning vision-coder:") {
+		t.Errorf("the default view does not print the warning:\n%s", human)
+	}
+}
+
+// TestDoctorSaysNothingWhenTheCoderSees: a coder whose price row carries an
+// image rate reads a picture itself (D2016), so the slot is beside the point
+// and the check is a measurement — never a finding, and not one line of the
+// default view, images at the base branch or not. --all and --json carry it,
+// so a reader who asks does learn the state.
+func TestDoctorSaysNothingWhenTheCoderSees(t *testing.T) {
+	apiKeyRigFiles(t,
+		"agent: { auth: api-key, models: { coder: claude-sonnet-5-5 } }\nbudget: { mode: enforce, per_run_usd: 20 }\n",
+		map[string]string{"assets/logo.png": "a picture, as far as the check reads one"})
+
+	human, _, err := execute(t, "doctor")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, human)
+	}
+	if strings.Contains(human, "vision-coder") {
+		t.Errorf("the default view printed a measurement:\n%s", human)
+	}
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "vision-coder")
+	if !ok || !c.OK || c.Severity != "info" {
+		t.Fatalf("vision-coder = %+v, want an ok measurement: this coder reads an image itself", c)
+	}
+	if !strings.Contains(c.Problem, "image rate") {
+		t.Errorf("the measurement does not say what lets the coder read one: %s", c.Problem)
+	}
+	all, _, err := execute(t, "doctor", "--all")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, all)
+	}
+	if !strings.Contains(all, "vision-coder") {
+		t.Errorf("--all does not print the measurement:\n%s", all)
+	}
+}
+
+// TestDoctorSaysNothingWhenTheVisionSlotIsSet: a coder that cannot read an
+// image with a vision model named for the stages that do is the covered state
+// (V7's rewrite is what runs that model), so what the base branch tracks
+// decides nothing and the check stays a measurement. It is the false-positive
+// direction of the warning above: a repository full of pictures is not warned
+// about when something already answers for them.
+func TestDoctorSaysNothingWhenTheVisionSlotIsSet(t *testing.T) {
+	apiKeyRigFiles(t,
+		"agent: { auth: api-key, models: { coder: deepseek/deepseek-v4-flash, vision: deepseek/deepseek-v4-pro } }\nbudget: { mode: enforce, per_run_usd: 20 }\n",
+		map[string]string{"assets/logo.png": "a picture, as far as the check reads one"})
+
+	human, _, err := execute(t, "doctor")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, human)
+	}
+	if strings.Contains(human, "vision-coder") {
+		t.Errorf("the default view printed a measurement:\n%s", human)
+	}
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "vision-coder")
+	if !ok || !c.OK || c.Severity != "info" {
+		t.Fatalf("vision-coder = %+v, want an ok measurement: the slot is set", c)
+	}
+	if !strings.Contains(c.Problem, "deepseek/deepseek-v4-pro") {
+		t.Errorf("the measurement does not name the model the slot holds: %s", c.Problem)
+	}
+}
+
+// TestDoctorQuotesTheRepositoryInTheVisionWarningsFix: the warning's fix is a
+// command the reader pastes, and the repository in it is the origin remote's
+// answer through gitprov.SplitRepo — one slash, and no character set beyond
+// that. A name that reached the line unquoted is a live shell substitution
+// printed by the very check that exists to keep a run from dying mid-flight,
+// so the line is held to the same rule every other doctor fix embedding this
+// repository already follows (quoteWord).
+func TestDoctorQuotesTheRepositoryInTheVisionWarningsFix(t *testing.T) {
+	// The fix is printed to be pasted, so it names the binary as the user ran
+	// it: the literal text below is what a person sees.
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+
+	apiKeyRigFiles(t,
+		"agent: { auth: api-key, models: { coder: deepseek/deepseek-v4-flash } }\nbudget: { mode: enforce, per_run_usd: 20 }\n",
+		map[string]string{"assets/logo.png": "a picture, as far as the check reads one"})
+	// The name a checkout can be cloned from and the local config would refuse
+	// to record: nothing validates an origin remote against it, which is the
+	// whole reason the line has to quote what doctor read there.
+	testutil.Git(t, ".", "remote", "set-url", "origin", "https://github.com/acme/app$(id).git")
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "vision-coder")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("vision-coder = %+v", c)
+	}
+	if want := "models use 'acme/app$(id)' vision <id>"; !strings.Contains(c.Fix, want) {
+		t.Errorf("the fix does not quote the repository, so pasting it runs the name: want %q in\n%s", want, c.Fix)
+	}
+}
+
+// TestDoctorSaysNothingWhenTheCoderIsUnpriced: a coder pin no price row knows
+// is refused at launch (config.CheckPins), before any stage runs, so the
+// mid-run refusal this check warns about cannot happen — and a row that does
+// not exist has not answered what the model reads (D2000), which is the only
+// question the check asks. It says nothing rather than warning with a
+// consequence that cannot come true and a remedy that does not end the fault:
+// fugaro validate is where that pin's own refusal is printed.
+func TestDoctorSaysNothingWhenTheCoderIsUnpriced(t *testing.T) {
+	apiKeyRigFiles(t,
+		"agent: { auth: api-key, models: { coder: deepseek/deepseek-not-priced } }\nbudget: { mode: enforce, per_run_usd: 20 }\n",
+		map[string]string{"assets/logo.png": "a picture, as far as the check reads one"})
+
+	human, _, err := execute(t, "doctor")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, human)
+	}
+	if strings.Contains(human, "vision-coder") {
+		t.Errorf("doctor warned about a pin that never reaches a stage:\n%s", human)
+	}
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "vision-coder"); ok {
+		t.Fatalf("vision-coder = %+v, want no check at all: the price row that would answer it does not exist", c)
 	}
 }
 

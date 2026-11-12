@@ -146,6 +146,14 @@ type CatalogBuildSpec struct {
 	// has to be able to tell which is which (D1400).
 	ContextCommit string
 	ContextSHA256 string
+	// TemplateSalt is TemplateSalt of the binary submitting the build: the
+	// digest of the embedded cloudbuild.yaml and the fugaro version, which is
+	// how this build builds rather than what the entry holds. The record
+	// carries it, so the nightly check sees an engine-side change to the
+	// build and rebuilds the entry, the way a workflow check does (F33,
+	// D1402). "" is a submitter that states none, and the record writes it as
+	// it was given it.
+	TemplateSalt string
 	// ServiceAccount is the email of the repository's build account
 	// (BuildServiceAccountID), which the build runs as.
 	ServiceAccount string
@@ -751,6 +759,7 @@ func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 		"GENERATION=" + strconv.FormatInt(s.Definition.Generation, 10),
 		"SHA256=" + s.Definition.SHA256, "COMMIT=" + s.Definition.SourceCommit,
 		"CONTEXT_COMMIT=" + s.ContextCommit, "CONTEXT_SHA256=" + s.ContextSHA256,
+		"TEMPLATE_SALT=" + s.TemplateSalt,
 		"BASE=" + s.Base, "TAG=${_CATALOG_TAG}",
 	}
 	// A build's own record step has exactly the variables it had before a
@@ -768,7 +777,7 @@ func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 image_digest=$$(cat /workspace/out/image-digest)
 case "$$image_digest" in sha256:*) ;; *) echo "no pushed digest" >&2; exit 1 ;; esac
 built_at=$$(cat /workspace/out/built-at)
-# A smoke-only run has no base to read: its record carries the same thirteen
+# A smoke-only run has no base to read: its record carries the same fourteen
 # keys, and the fields only a build has are the empty ones its own env states.
 base_digest=
 if [ -z "$${PREBUILT:-}" ]; then
@@ -777,8 +786,8 @@ if [ -z "$${PREBUILT:-}" ]; then
   case "$$base_digest" in sha256:*) ;; *) echo "no base digest" >&2; exit 1 ;; esac
 fi
 record=$$(mktemp)
-printf '{"version":1,"entry":"%s","source_commit":"%s","context_commit":"%s","context_sha256":"%s","definition_generation":%s,"definition_sha256":"%s","base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
-  "$$ENTRY" "$$COMMIT" "$$CONTEXT_COMMIT" "$$CONTEXT_SHA256" "$$GENERATION" "$$SHA256" "$$BASE" "$$base_digest" "$$IMAGE" "$$TAG" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
+printf '{"version":1,"entry":"%s","source_commit":"%s","context_commit":"%s","context_sha256":"%s","definition_generation":%s,"definition_sha256":"%s","template_salt":"%s","base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
+  "$$ENTRY" "$$COMMIT" "$$CONTEXT_COMMIT" "$$CONTEXT_SHA256" "$$GENERATION" "$$SHA256" "$$TEMPLATE_SALT" "$$BASE" "$$base_digest" "$$IMAGE" "$$TAG" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
 case "$$BUCKET" in gs://*) ;; *) echo "the runs bucket must be a gs:// URL" >&2; exit 1 ;; esac
 export LC_ALL=C
 name=
@@ -876,6 +885,13 @@ func (s CatalogBuildSpec) check(project string, reserved map[string]bool) error 
 	}
 	if s.Context != "" && !sha256HexRE.MatchString(s.ContextSHA256) {
 		return fmt.Errorf("the context's sum %q is not 64 hex digits", s.ContextSHA256)
+	}
+	// The template salt is the one other value the record carries, and it is
+	// written into that same unescaped printf: a submitter states a salt this
+	// package computed or states none, and anything else is refused rather
+	// than written.
+	if s.TemplateSalt != "" && !sha256HexRE.MatchString(s.TemplateSalt) {
+		return fmt.Errorf("the template salt %q is not 64 hex digits", s.TemplateSalt)
 	}
 	if err := s.checkSmokeSpec(); err != nil {
 		return err
@@ -977,6 +993,11 @@ func (s CatalogBuildSpec) checkPrebuilt(project string) error {
 	// or any other control character in it never reaches that record.
 	if !imageRefRE.MatchString(s.Prebuilt) {
 		return fmt.Errorf("the prebuilt image %q is not a container image reference such as ghcr.io/owner/image:1.2", s.Prebuilt)
+	}
+	// The smoke-only run writes the same record through the same unescaped
+	// printf, so its salt is constrained here as a build's is.
+	if s.TemplateSalt != "" && !sha256HexRE.MatchString(s.TemplateSalt) {
+		return fmt.Errorf("the template salt %q is not 64 hex digits", s.TemplateSalt)
 	}
 	if s.Base != "" || s.Image != "" || s.Context != "" || s.Definition != (CatalogDefinition{}) || len(s.WorkflowSecrets) > 0 {
 		return fmt.Errorf("the entry's run smokes the prebuilt image %s and builds nothing, yet the request names a build's inputs: base %q, image %q, context %q, definition %+v, %d workflow secrets", s.Prebuilt, s.Base, s.Image, s.Context, s.Definition, len(s.WorkflowSecrets))

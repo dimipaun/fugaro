@@ -407,6 +407,34 @@ const adversarialSince = "0.16.0"
 // digestSince's and adversarialSince's bullets record.
 const escalationSince = "0.23.0"
 
+// evaluateSince is the first fugaro release whose runner reads a task's mode:
+// evaluate: its task validation accepts the value, its recipe parser knows the
+// mode and the registered step kind the recipe holds, and the run is that one
+// step and nothing else (A5.2, U6). It is judged from the task's own field and
+// not from a recipe's constructs, exactly as artifactsSince is: mode: evaluate
+// is carried by the launcher (chooseRecipe writes the spec's mode for an
+// artifact and an evaluate recipe alike), so every launch that could start a
+// judge run is judged, whatever its recipe's source — an evaluate recipe's text
+// trips none of the parse-time gates (the mode is a 0.7.0 key and the registered
+// step kind reads as any other registered kind), so without this arm the launch
+// would be admitted at recipesSince.
+//
+// A runner before it refuses the task outright: mode is in the spec's own
+// vocabulary (task.Spec.Validate), and "evaluate" is a value it does not know,
+// so the run dies at bootstrap with the launch already paid for and nothing in
+// the bucket judged. Like artifactsSince it carries no shipped flag: refusing
+// every image that predates the mode is exactly the direction this gate wants,
+// and an image with no release tag (a dev build, a hand-pushed one) only warns,
+// the same as for every other *Since constant here.
+//
+// It names 0.24.0, the CLI minor after 0.23.0 ("Tapir"), which main already
+// carries the release notes of and which is not tagged yet: docs/release.md's
+// ("Before you tag") checklist verifies the constant against the tag actually
+// cut, the way digestSince's, adversarialSince's and slotSince's bullets
+// record. A wrong value refuses too late (a launch reaches a runner that
+// refuses its task) or too early (an image that can judge stays blocked).
+const evaluateSince = "0.24.0"
+
 // escalationRecipes are the catalog recipe names whose runner half ships in
 // escalationSince's release: `escalate` (one coder pass, one review, the
 // verdict recorded) and `rebase`, which that release adds, and `merge-judge`,
@@ -541,6 +569,36 @@ const reviewJobSince = "0.20.0"
 // you tag") list verifies the number against the release whose service admits
 // the class.
 const reviewAdmissionSince = "0.21.0"
+
+// providerEntrySince is the first fugaro release whose credentials service
+// reads the bundle's provider entry (config.ProviderKeySecret, AK6b of
+// docs/api-key-review): the project's provider credential, whose value is the
+// mapping of the key, the provider's base URL and how the key is sent
+// (credsvc's providerValue). The loader is strict about the document's KEYS —
+// an entry it does not know refuses the WHOLE document (ErrBundleUnknownKey),
+// which the service answers as a service-wide refusal and not as a refused
+// credential — so a bundle written with this entry by a CLI newer than the
+// service that reads it halts every caller of that service, coding runs
+// included, until `fugaro update` moves the service onto the image that reads
+// it.
+//
+// `fugaro creds set` is the bundle's only writer, so the guard is at that
+// write (creds.go, AK10 of the same folder), and it judges the release that
+// SERVES the document rather than the installation's pin: a pin ahead of a
+// service whose apply was declined or failed is exactly the state the guard
+// exists for. Unlike every other gate here, a record it cannot read refuses
+// the write instead of warning about it — the alternative is a write that
+// halts every caller of the service.
+//
+// It names 0.22.0, the release AK6b's own commit (`26e72426`, #2172) went out
+// in and therefore the first release whose credentials service was built with
+// the entry's reader: the constant is the tag that shipped it and not the
+// release this guard is written in, and a release that raised it would refuse
+// the write on installations whose deployed service already reads the entry —
+// which is every installation on that release, and `fugaro update` would be no
+// remedy for them. docs/release.md's ("Before you tag") list carries that
+// reading.
+const providerEntrySince = "0.22.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
@@ -1099,8 +1157,8 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 	}
 	refuse := func(why string) error {
 		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the job image of %s workflow %s %s. "+
-			"Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies %s and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image)%s",
-			subject, knows, since, spec.Repo, spec.Workflow, why, spec.Repo, spec.Workflow, base, alt)
+			"Run fugaro update in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; its images stage verifies %s, pins it by digest through the installation's remote repository and rebuilds the workflow's image)%s",
+			subject, knows, since, spec.Repo, spec.Workflow, why, base, alt)
 	}
 	b, err := env.recordBucket(ctx)
 	if err != nil {
@@ -1197,7 +1255,7 @@ func baseBranchSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.
 	}
 	drop := func() {
 		spec.BaseBranch = ""
-		fmt.Fprintf(warn, "the job image predates %s and ignores the project's base branch %s; refresh it with fugaro image refresh\n", baseBranchSince, b)
+		fmt.Fprintf(warn, "the job image predates %s and ignores the project's base branch %s; fugaro update in the checkout moves it onto this release's base image\n", baseBranchSince, b)
 	}
 	predates := func(rel string, known bool) bool { return known && imagePredates(rel, baseBranchSince) }
 	if clone == nil {
@@ -2287,20 +2345,38 @@ const installationServiceUnknown = "this installation's terraform.tfvars.json na
 // second machine, a config copied to someone else's — is a refusal on a launch
 // that works, with a remedy the reader cannot carry out.
 func installationServiceRelease(lc *localcfg.Config) (rel, image string, ok bool) {
-	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
-	if err != nil {
-		return "", "", false
-	}
-	vars, err := infra.ReadWorkdirVars(dir, "installation")
-	if err != nil {
-		return "", "", false
-	}
-	image, ok, err = infra.CredentialsServiceImageOf(vars)
-	if err != nil || !ok {
+	image, ok = installationServiceImageOf(lc)
+	if !ok {
 		return "", "", false
 	}
 	rel = infra.CredentialsServiceImageRelease(image)
 	return rel, image, rel != ""
+}
+
+// installationServiceImageOf is the record itself: the credentials service
+// image the installation's terraform.tfvars.json names, whether or not the
+// reference carries a release. It is what tells "no pin at all" — an
+// installation whose workdir this machine does not hold, or one that names no
+// service — from a pin this reader cannot read, which are two different
+// answers for a caller deciding whether anything is coming: the review gate
+// warns about both (installationServiceRelease), while the bundle write
+// refuses the second (creds.go's bundleReaderRelease), because an image whose
+// release cannot be shown is a service that may not be able to read the
+// document.
+func installationServiceImageOf(lc *localcfg.Config) (image string, ok bool) {
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return "", false
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		return "", false
+	}
+	image, ok, err = infra.CredentialsServiceImageOf(vars)
+	if err != nil {
+		return "", false
+	}
+	return image, ok
 }
 
 // refuseClonesNotShipped refuses, before any cloud effect, deploying or

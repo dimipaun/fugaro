@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagebake"
@@ -178,7 +179,11 @@ func (f *catalogCheckFixture) putRecord(t *testing.T, entry, repo string, gen in
 	rec, err := json.Marshal(imagecheck.CatalogRecordState{
 		Version: imagecheck.CatalogRecordVersion, Entry: entry, SourceCommit: catalogCheckCommit,
 		DefinitionGeneration: gen, DefinitionSHA256: sum,
-		BaseRef: checkBase, BaseDigest: baseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
+		// The template the job's own binary would run: a record that names it
+		// is a build of this same release, so the tests below are about the
+		// triggers they name and not about the template one.
+		TemplateSalt: gcp.TemplateSalt(Version),
+		BaseRef:      checkBase, BaseDigest: baseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -322,6 +327,7 @@ func TestCatalogCheckJobRebuildsTheChangedEntryAsItsOwnRepositorysAccount(t *tes
 		ServiceAccount: gcp.BuildServiceAccountID(otherSlug) + "@proj-1234.iam.gserviceaccount.com",
 		MachineType:    "E2_HIGHCPU_8",
 		Bucket:         "gs://" + catalogBuildBucket,
+		TemplateSalt:   gcp.TemplateSalt(Version),
 		Selftest:       catalogCheckSelftest(t, "acme/other", catalogCheckCommit),
 	})
 	if err != nil {
@@ -449,6 +455,61 @@ func TestCatalogCheckJobBuildsNothingWithoutACopiedDefinition(t *testing.T) {
 	}
 	if st := f.state(t, "runtime", "acme/other"); st == nil || st.Decision != imagecheck.CheckFailed {
 		t.Fatalf("runtime check.json = %+v", st)
+	}
+}
+
+// TestCatalogCheckJobBuildsNothingWithoutAStagedContext: an entry that names a
+// build context is pinned to the digest and the commit the copy staged with it,
+// so a copy that staged neither — or the digest but not the commit — is an
+// error for that entry, not a rebuild, and the message names the command that
+// stages them. A copy that never staged the context is not "nothing changed".
+func TestCatalogCheckJobBuildsNothingWithoutAStagedContext(t *testing.T) {
+	cat := &config.Catalog{Entries: []config.Entry{
+		{Name: "tools", Tags: []string{"node"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: ".fugaro/tools.Dockerfile", Context: "ci"}},
+	}}
+	for _, tc := range []struct {
+		name         string
+		hash, commit bool
+		want         string
+	}{
+		{"no digest", false, false, "has no staged context digest"},
+		{"no commit", true, false, "has no staged context commit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, cat, 5))
+			gen, sum := f.seed(t, "tools", "acme/app", catalogCheckAppDef, checkBaseDigest)
+			f.putRecord(t, "tools", "acme/app", gen, sum, checkBaseDigest)
+			for _, obj := range []struct {
+				put  bool
+				key  func(string) (string, error)
+				data string
+			}{
+				{tc.hash, config.CatalogContextHashKey, strings.Repeat("7", 64)},
+				{tc.commit, config.CatalogContextCommitKey, catalogCheckCommit},
+			} {
+				if !obj.put {
+					continue
+				}
+				key, err := obj.key("tools")
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.put(t, key, []byte(obj.data))
+			}
+
+			lines, err := runCatalogCheck(t)
+			if err == nil {
+				t.Fatal("the catalog check reported no failure for a context entry with no staged context")
+			}
+			if got := buildPosts(f.fb); got != 0 {
+				t.Fatalf("builds submitted = %d, want 0", got)
+			}
+			l := lineFor(t, lines, "tools")
+			if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" ||
+				!strings.Contains(l.Error, tc.want) || !strings.Contains(l.Error, "fugaro image build tools") {
+				t.Fatalf("tools line = %+v", l)
+			}
+		})
 	}
 }
 
@@ -730,6 +791,177 @@ func TestCatalogCheckJobRefusesAnEntryAssignedTwice(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "more than once") {
 		t.Fatalf("err = %v, want the duplicate assignment named", err)
+	}
+}
+
+// TestCatalogCheckReadsTheStagedContextHash: the context trigger's input is the
+// digest the copy staged beside the Dockerfile, read from the runs bucket and
+// never from the repository. An entry whose staged digest is not the one its
+// record names is a rebuild with the catalog-context reason, one whose staged
+// digest is the record's is a skip, and the fingerprint the entry's check.json
+// keeps carries the staged value, and the rebuild it submits is the entry's own
+// build, pinned to the staged commit and digest — all four of which the bucket
+// read is the only source of. Nothing on this path opens a git provider, and
+// the opener below fails the test if one is ever reached: the digest is read
+// from the bucket precisely so this job keeps the credential-less shape the
+// comment on its Lockfiles: false states (D1401, reconciliation §4.6).
+func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
+	was := openCatalogProvider
+	openCatalogProvider = func([]string, func(string)) (string, gitprov.Opener, error) {
+		t.Error("the catalog check opened a git provider: the context trigger reads the digest the copy staged in the runs bucket (D1401)")
+		return "", nil, errors.New("no provider")
+	}
+	t.Cleanup(func() { openCatalogProvider = was })
+
+	cat := &config.Catalog{Entries: []config.Entry{
+		{Name: "tools", Tags: []string{"node"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: ".fugaro/tools.Dockerfile", Context: "."}},
+		{Name: "extra", Tags: []string{"node"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: ".fugaro/extra.Dockerfile", Context: "ci"}},
+	}}
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, cat, 5))
+	staged, same := strings.Repeat("7", 64), strings.Repeat("8", 64)
+	stagedCommit := strings.Repeat("c1", 20)
+	gens, sums := map[string]int64{}, map[string]string{}
+	for _, tc := range []struct{ entry, recorded, staged string }{
+		{"tools", strings.Repeat("9", 64), staged},
+		{"extra", same, same},
+	} {
+		gen, sum := f.seed(t, tc.entry, "acme/app", catalogCheckAppDef, checkBaseDigest)
+		gens[tc.entry], sums[tc.entry] = gen, sum
+		recKey, err := gcp.CatalogRecordKey(f.slugs["acme/app"], tc.entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(imagecheck.CatalogRecordState{
+			Version: imagecheck.CatalogRecordVersion, Entry: tc.entry, SourceCommit: catalogCheckCommit,
+			ContextCommit: catalogCheckCommit, ContextSHA256: tc.recorded,
+			DefinitionGeneration: gen, DefinitionSHA256: sum,
+			TemplateSalt: gcp.TemplateSalt(Version),
+			BaseRef:      checkBase, BaseDigest: checkBaseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.put(t, recKey, data)
+		hashKey, err := config.CatalogContextHashKey(tc.entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.put(t, hashKey, []byte(tc.staged))
+		commitKey, err := config.CatalogContextCommitKey(tc.entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.put(t, commitKey, []byte(stagedCommit))
+	}
+
+	lines, err := runCatalogCheck(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := lineFor(t, lines, "tools"); l.Decision != imagecheck.Rebuild || !slices.Equal(l.Reasons, []string{imagecheck.ReasonCatalogContext}) {
+		t.Fatalf("tools line = %+v, want a rebuild on the moved context", l)
+	}
+	if l := lineFor(t, lines, "extra"); l.Decision != imagecheck.Skip || len(l.Reasons) != 0 {
+		t.Fatalf("extra line = %+v, want a skip (its staged digest is its record's)", l)
+	}
+	st := f.state(t, "tools", "acme/app")
+	if st == nil || st.BuildInputs == nil || st.BuildInputs.ContextSHA256 != staged {
+		t.Fatalf("tools check.json = %+v, want the staged context digest %s on its inputs", st, staged)
+	}
+
+	// The rebuild the trigger fires is the entry's own build: the staged commit
+	// and digest go with it, so the build runs the entry's context rather than
+	// the template's one-file directory and records the digest it built — a
+	// rebuild that states no context would record context_sha256: "" and fire
+	// again the next night.
+	if got := buildPosts(f.fb); got != 1 {
+		t.Fatalf("builds submitted = %d, want 1", got)
+	}
+	slug := f.slugs["acme/app"]
+	want, err := gcp.CatalogBuildRequest("proj-1234", gcp.CatalogBuildSpec{
+		Entry: "tools", Slug: slug,
+		GitProvider: "bitbucket", RepoURL: "https://bitbucket.org/acme/app.git", BaseBranch: "main",
+		GitSecretID: gcp.SecretID(slug, "bitbucket-token"), GitUser: bitbucket.GitUsername,
+		Base: checkBase, Image: catalogBuildImage(t, "tools"),
+		Definition:     gcp.CatalogDefinition{SourceCommit: stagedCommit, Generation: gens["tools"], SHA256: sums["tools"]},
+		Context:        ".",
+		ContextCommit:  stagedCommit,
+		ContextSHA256:  staged,
+		ServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		MachineType:    "E2_HIGHCPU_8",
+		Bucket:         "gs://" + catalogBuildBucket,
+		TemplateSalt:   gcp.TemplateSalt(Version),
+		Selftest:       catalogCheckSelftest(t, "acme/app", stagedCommit),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wantMap map[string]any
+	if err := json.Unmarshal(data, &wantMap); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.fb.Last(); !reflect.DeepEqual(got, wantMap) {
+		t.Fatalf("request =\n%v\nwant\n%v", got, wantMap)
+	}
+}
+
+// TestCatalogCheckRebuildsOnAChangedTemplate: an entry whose last build ran a
+// template this job does not know — the release behind — is rebuilt, and the
+// record the rebuild writes carries this job's own template, so the trigger
+// fires once and not every night. The copied definition, the context and the
+// base are the same bytes either way, so without the salt a release that
+// changes how catalog images are built rebuilds every workflow image and no
+// catalog entry at all (F33, D1402's second half).
+func TestCatalogCheckRebuildsOnAChangedTemplate(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	gen, sum := f.seed(t, "runtime", "acme/other", catalogCheckOtherDef, checkBaseDigest)
+	recKey, err := gcp.CatalogRecordKey(f.slugs["acme/other"], "runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(imagecheck.CatalogRecordState{
+		Version: imagecheck.CatalogRecordVersion, Entry: "runtime", SourceCommit: catalogCheckCommit,
+		DefinitionGeneration: gen, DefinitionSHA256: sum,
+		// A build of the release behind: the same definition and base, a
+		// template this job has never run.
+		TemplateSalt: strings.Repeat("9", 64),
+		BaseRef:      checkBase, BaseDigest: checkBaseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.put(t, recKey, data)
+
+	lines, err := runCatalogCheck(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := lineFor(t, lines, "runtime"); l.Decision != imagecheck.Rebuild || !slices.Equal(l.Reasons, []string{imagecheck.ReasonCatalogTemplate}) {
+		t.Fatalf("runtime line = %+v, want a rebuild on the changed template", l)
+	}
+	if got := buildPosts(f.fb); got != 1 {
+		t.Fatalf("builds submitted = %d, want 1", got)
+	}
+	// The rebuild states the template this job would run, which is what the
+	// record it writes carries: the same salt twice would fire again tomorrow.
+	st := catalogBuildStep(t, f.fb, "catalog-record")
+	if st == nil {
+		t.Fatal("the request has no catalog-record step")
+	}
+	var salt string
+	env, _ := st["env"].([]any)
+	for _, raw := range env {
+		kv, _ := raw.(string)
+		if v, ok := strings.CutPrefix(kv, "TEMPLATE_SALT="); ok {
+			salt = v
+		}
+	}
+	if want := gcp.TemplateSalt(Version); salt != want {
+		t.Fatalf("the rebuild states the template salt %q, want this job's own %q", salt, want)
 	}
 }
 

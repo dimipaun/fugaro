@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -1424,6 +1425,116 @@ func TestVerifyBoundsTheLaunchDayScan(t *testing.T) {
 }
 
 // The construction refuses a service that cannot check what it must check.
+// TestReviewAccountRefusalsNameTheAxisAndNotAnAccount is AK9's (SEC): four
+// sentences refuse a review job account this service cannot serve a call by,
+// and each of them says ACCOUNT AXIS and never "a Claude account". The
+// distinction is not a preference: since AK4 the axis's values include
+// config.AnthropicKeyAccount — the project's own Anthropic API key, which is
+// not an account — so a refusal telling an operator that what serves a review
+// call is a Claude account sends them to the accounts list for a fault that is
+// in the axis, and the refusal is what they have to act on.
+//
+// The four are the two AuthConfig refusals and the two the service makes with
+// the same table (NewServer): the same rows are configured twice in a deployment
+// — the verifier's own set and the service's — so the two files must refuse in
+// the same words and cannot be fixed one at a time.
+func TestReviewAccountRefusalsNameTheAxisAndNotAnAccount(t *testing.T) {
+	base := AuthConfig{
+		Project:         testProject,
+		FirebaseProject: testFirebase,
+		Audience:        testAudience,
+		JobAccounts:     []string{testJobSA},
+		Keys:            staticKeys{testKid: &testKey().PublicKey},
+		JobKeys:         staticKeys{testJobKid: &testKey().PublicKey},
+		Outcomes:        RTDBOutcomes{DB: &fakeDB{}},
+	}
+	for _, tc := range []struct {
+		name  string
+		rows  []ReviewJobAccount
+		wants string
+	}{
+		{
+			name:  "a review job account that names nothing",
+			rows:  []ReviewJobAccount{{Email: testReviewSA, Account: ""}},
+			wants: "no value on the account axis",
+		},
+		{
+			name: "one review job account bound to two values",
+			rows: []ReviewJobAccount{
+				{Email: testReviewSA, Account: testReviewAccount},
+				{Email: testReviewSA, Account: config.AnthropicKeyAccount},
+			},
+			wants: "bound to two values of the account axis",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			auth := base
+			auth.ReviewJobAccounts = tc.rows
+			_, err := NewAuthenticator(auth)
+			if err == nil {
+				t.Fatal("NewAuthenticator accepted a review job account it cannot serve a call by")
+			}
+			assertAxisSentence(t, "internal/credsvc/auth.go", err.Error(), tc.wants)
+		})
+	}
+
+	// The service's own table is configured beside the verifier's, and the
+	// repository table is what NewServer requires before it reads the review
+	// rows at all: a service that admits a review caller without it could pair
+	// no call with a run.
+	var captured *Config
+	newSvcWith(t, func(s *svc, cfg *Config) {
+		captured = cfg
+		cfg.Repos = map[string]string{s.slug: testRepo}
+	})
+	if captured == nil {
+		t.Fatal("the fixture handed the test no configuration")
+	}
+	for _, tc := range []struct {
+		name  string
+		rows  []ReviewJobAccount
+		wants string
+	}{
+		{
+			name:  "a review job account that names nothing",
+			rows:  []ReviewJobAccount{{Email: testReviewSA, Account: ""}},
+			wants: "no value on the account axis",
+		},
+		{
+			name: "one review job account bound to two values",
+			rows: []ReviewJobAccount{
+				{Email: testReviewSA, Account: testReviewAccount},
+				{Email: testReviewSA, Account: config.AnthropicKeyAccount},
+			},
+			wants: "bound to two values of the account axis",
+		},
+	} {
+		t.Run("NewServer: "+tc.name, func(t *testing.T) {
+			c := *captured
+			c.ReviewAccounts = tc.rows
+			_, err := NewServer(c)
+			if err == nil {
+				t.Fatal("NewServer accepted a review job account it cannot serve a call by")
+			}
+			assertAxisSentence(t, "internal/credsvc/server.go", err.Error(), tc.wants)
+		})
+	}
+}
+
+// assertAxisSentence holds one refusal sentence to AK9's rule: it names the
+// axis, and it does not say that what serves a review call is a Claude account.
+// The second half is the one that catches a copy left behind, which is the
+// mutation this task's own plan names.
+func assertAxisSentence(t *testing.T, file, sentence, wants string) {
+	t.Helper()
+	if !strings.Contains(sentence, wants) {
+		t.Errorf("%s's refusal does not name the axis: %q", file, sentence)
+	}
+	if strings.Contains(sentence, "Claude account") {
+		t.Errorf("%s's refusal says a review call is served by a Claude account: %q", file, sentence)
+	}
+}
+
 func TestNewAuthenticatorRefusesAnIncompleteConfig(t *testing.T) {
 	base := AuthConfig{
 		Project:           testProject,
@@ -1462,6 +1573,20 @@ func TestNewAuthenticatorRefusesAnIncompleteConfig(t *testing.T) {
 		},
 		"a job account with a space in it": func(c *AuthConfig) {
 			c.JobAccounts = []string{"fugaro job@aurora-dev.iam.gserviceaccount.com"}
+		},
+		// A review job account names a value on the account axis, and the
+		// branch that refuses an empty one had no case until the axis grew its
+		// second value (AK4's config.AnthropicKeyAccount, which is not an
+		// account): the empty string is a credential no bundle holds, so a
+		// pairing that carried it could only refuse.
+		"a review job account that names nothing on the axis": func(c *AuthConfig) {
+			c.ReviewJobAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: ""}}
+		},
+		"one review job account bound to two values of the axis": func(c *AuthConfig) {
+			c.ReviewJobAccounts = []ReviewJobAccount{
+				{Email: testReviewSA, Account: testReviewAccount},
+				{Email: testReviewSA, Account: config.AnthropicKeyAccount},
+			}
 		},
 	}
 	for name, mutate := range cases {

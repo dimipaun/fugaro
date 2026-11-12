@@ -154,6 +154,7 @@ const customKey = "custom:"
 var grantRules = map[string]map[string]who{
 	"google_project_iam_member": {
 		customKey + "fugaroLauncher":       toPeople,
+		customKey + ViewerRole:             toPeople,
 		customKey + "fugaroBuildSubmitter": toPeople | toAccounts,
 		customKey + "fugaroHistory":        toAccounts,
 		customKey + "fugaroReaper":         toAccounts,
@@ -373,6 +374,23 @@ type Cover struct {
 // and this one differ.
 const CloudAssetRole = "fugaroCloudAssetReader"
 
+// ViewerRole is the installation's read-only job role (RS4 of
+// docs/roles-scopes/implementation-plan.md, roles.md §4): the fugaroLauncher
+// role minus run.executions.cancel, so its holder reads a run, its execution
+// and its operations — and the project's secret list's metadata, which is the
+// launcher's too — and cannot cancel one. Its list is the one grant of the
+// viewer's that is a role of its own: everything else a viewer holds is a
+// predefined role on a resource the modules already grant to someone.
+//
+// The ID is a literal in the module and here, like the Cloud Asset reader's
+// and the history role's, and not a names.role_ids entry: nothing outside
+// installation/iam.tf names it, the pin in this package is by the same literal
+// (TestViewerRoleHasNoCancelPermission), and an installation with an empty
+// viewer list must plan exactly what it planned before this role existed —
+// which the tfvars plumbing of the four older roles would break, since role_ids
+// is a required key of the root's tfvars (TestInstallationVarsMatchModule).
+const ViewerRole = "fugaroViewer"
+
 // CredentialsAccountID is the credentials service's fixed service account ID
 // (internal/infra/tfvars.go's CredentialsAccountID, which
 // var.credentials_service.account_id carries) and CredentialsDatabaseRole the
@@ -453,7 +471,7 @@ const MCPServerStorePrefix = "fugaro-mcpauth-"
 // own account (MCPServerAccountID), for the same reason (toCoordinator,
 // toCatalogCheck, toMCP).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, WorkspaceReadRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
+	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, WorkspaceReadRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -883,6 +901,14 @@ var (
 // TestRolePinsAreTheModules fails when a module's list and this one differ.
 var RolePermissions = map[string][]string{
 	"fugaroLauncher": {"run.jobs.get", "run.jobs.list", "run.executions.get", "run.executions.list", "run.executions.cancel", "run.operations.get",
+		"secretmanager.secrets.list", "secretmanager.versions.list"},
+	// The viewer's read-only job role (RS4, roles.md §4): the launcher's list
+	// minus run.executions.cancel and nothing else, so every read a launcher
+	// makes a viewer makes — the run's own state and operations, and the
+	// project's secret list's metadata, which is what `fugaro secrets ls`
+	// needs — and the one thing the list withholds is the cancel.
+	// TestViewerRoleHasNoCancelPermission reads this against the launcher's.
+	ViewerRole: {"run.jobs.get", "run.jobs.list", "run.executions.get", "run.executions.list", "run.operations.get",
 		"secretmanager.secrets.list", "secretmanager.versions.list"},
 	"fugaroJobRunner":      {"run.jobs.run", "run.jobs.runWithOverrides"},
 	"fugaroBuildSubmitter": {"cloudbuild.builds.create", "cloudbuild.builds.get"},

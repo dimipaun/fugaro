@@ -27,16 +27,25 @@ type Severity int
 
 const (
 	SeverityNone    Severity = iota // ok, or not evaluated
-	SeverityInfo                    // not installed, cannot compare: never a failure
+	SeverityInfo                    // not wired, not installed, cannot compare: never a failure
 	SeverityWarning                 // everything else
 )
 
 // Severity of the state.
+//
+// NotWired is informational, and it is the design's answer rather than a
+// leftover (D942, U3 of docs/plugin-user-scope/implementation-plan.md): nothing
+// in the tree writes a pin any more (D949), so a repository without one is the
+// normal repository rather than a repository with something to fix, and the
+// mode a repository's CI runs (`doctor --plugin --strict`) may not fail it
+// (reconciliation F21). The state keeps every meaning it had: doctor still
+// reports the wiring it could not find, and `update-skills --check` still names
+// it in its own line.
 func (s State) Severity() Severity {
 	switch s {
 	case "", OK:
 		return SeverityNone
-	case NotInstalled, CannotCompare:
+	case NotWired, NotInstalled, CannotCompare:
 		return SeverityInfo
 	}
 	return SeverityWarning

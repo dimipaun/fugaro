@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,6 +84,43 @@ func execute(t *testing.T, args ...string) (string, string, error) {
 	cmd.SetArgs(fcli.NormalizeArgs(args))
 	err := cmd.Execute()
 	return out.String(), errOut.String(), err
+}
+
+// executeConcurrently runs n copies of the same command at once and answers
+// what each printed and what each returned, in order.
+//
+// The trees are built first and run afterwards, never built at once:
+// internal/cli's NewRootCmd fills a surface it builds once per process
+// (extend.go's coreSurface) and seals the registration table as it does, so two
+// trees built in two goroutines race in the core rather than in the command
+// under test. What is concurrent here is the command's own run, which is the
+// part a test of two commands at once is about.
+func executeConcurrently(t *testing.T, n int, args ...string) ([]string, []error) {
+	t.Helper()
+	cmds := make([]*cobra.Command, n)
+	outs := make([]*bytes.Buffer, n)
+	for i := range cmds {
+		cmds[i] = coordinatorTestRoot()
+		outs[i] = &bytes.Buffer{}
+		cmds[i].SetOut(outs[i])
+		cmds[i].SetErr(outs[i])
+		cmds[i].SetArgs(fcli.NormalizeArgs(args))
+	}
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range cmds {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = cmds[i].Execute()
+		}()
+	}
+	wg.Wait()
+	out := make([]string, n)
+	for i := range outs {
+		out[i] = outs[i].String()
+	}
+	return out, errs
 }
 
 // recentRunID mints a run ID offset back from the clock the listing's --since

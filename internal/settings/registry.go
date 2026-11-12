@@ -188,10 +188,10 @@ var yamlMeta = map[string]Row{
 	// one. The models family owns it as it owns the three rows above — the
 	// slot's checks are that command's (D2013: priced, a route opens it to this
 	// repository, no whitespace), which a generic scalar write does not make —
-	// and the fourth role name reaches `models use` in V6 of docs/vision-model.
-	// Until it does, this row's refusal names the family that will write the
-	// key, and the key is written by hand — in fugaro.yaml, or in the project
-	// layer's own file for every repository of it.
+	// and V6 of docs/vision-model gave the family the fourth role name, so this
+	// row's refusal names the command that writes the key. A hand edit is the
+	// other way in — in fugaro.yaml, or in the project layer's own file for
+	// every repository of it.
 	"agent.models.vision": {
 		Owner:   "models",
 		Default: unset("none: a stage whose own model cannot read an image keeps it"),
@@ -856,6 +856,25 @@ var localRows = []Row{
 		Doc:      docModels,
 		TypedWhy: "this lets Fugaro choose an account for the owner: a run then spreads one project across several accounts, which is the owner's own decision about the terms the subscriptions are held under",
 	},
+	// The choice keys' own vocabulary (docs/account-aliases, D2090–D2093): one
+	// name the owner points at one account, so moving every stage that names it
+	// is one edit. Local-only for `claude_account_auto`'s reason and one of its
+	// own — a launcher who could write an alias into the shared file could name
+	// an account the file never admitted, one indirection in.
+	//
+	// The owner is `config local` and not a family, because no command writes
+	// the block yet: D2096 gives the write to `fugaro accounts alias set/rm`,
+	// whose whole point is converging the node and the job set on the repoint,
+	// and that command is a later task than the block and its rules. A row
+	// naming the `accounts` family before the command exists would print an
+	// owner for a key no subcommand of that family takes and refuse the write
+	// in its name, which is the pair the owner column exists not to print
+	// (D1178) — so the row says
+	// what is true of it here: the key is stated in the machine's own config,
+	// and `fugaro update` is what writes that file. The row moves to the
+	// `accounts` family the day the command lands, and D2096 is the entry that
+	// remembers it.
+	locLocal("claude_account_aliases", "none: no alias is defined, and every choice key names an account of claude_accounts directly", "config local", docModels),
 	// The installation's credentials, pools and crafts (docs/model-crafts/
 	// spec.md §1–3). They are local-only for claude_accounts' reason, and the
 	// one key here that names a credential rather than holding one is why: a
@@ -1063,6 +1082,13 @@ var localRows = []Row{
 	// a key the generic path writes is `settings set`'s, and these four are
 	// stated in the machine's own config rather than in the layer file, so the
 	// file-carriers' sentences are files they are not in (D1515).
+	//
+	// The owner is the allowlist's own token, `settings set`, for the reason
+	// D1178 gives it to every key the list carries. The file-carrier tokens name
+	// files these four keys are not in — the project layer `fugaro config
+	// publish` carries, and a checkout's own `fugaro.yaml` — so a row naming one
+	// has the read print that file's sentence beside a key stated in neither.
+	// max_parallel above is the same row shape and carries the same token.
 	//
 	// The owner is the allowlist's own token, `settings set`, for the reason
 	// D1178 gives it to every key the list carries. The file-carrier tokens name

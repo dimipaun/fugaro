@@ -40,11 +40,6 @@ import (
 // they are grouped as untiered rather than left out.
 const ABTierNone = "untiered"
 
-// implementStage is the stage the coder runs, as the runner dispatches it: the
-// stage whose pinned model is that arm's coder model (D555 moves the coder
-// alone, so this one stage is where the two arms differ).
-const implementStage = "implement"
-
 // ABRow is one line of `fugaro ab`: a group and what its pairs did.
 type ABRow struct {
 	// Mode is the rigor mode the group's pairs resolved, ModeNone for a pair
@@ -141,8 +136,8 @@ func groupOf(p ab.Pair) abGroup {
 		mode:       scoredMode(p.Champion),
 		modeKey:    modeKey(string(recordedMode(p.Champion))),
 		tier:       tierKey(p.Champion),
-		champion:   armModel(p.Champion),
-		challenger: armModel(p.Challenger),
+		champion:   ab.ArmModel(p.Champion),
+		challenger: ab.ArmModel(p.Challenger),
 	}
 }
 
@@ -178,24 +173,6 @@ func tierKey(rec runstore.Record) string {
 		return ABTierNone
 	}
 	return string(rec.Tier.Tier)
-}
-
-// armModel is the coder model one arm ran: the model its implement stage was
-// pinned to. An arm that reached no implement stage — its job died before the
-// first one — falls back to the model its own task named, which only a
-// challenger's task carries (AB.Challenger); a champion's task names none, so a
-// champion that never implemented groups under the empty model rather than
-// under a guess.
-func armModel(rec runstore.Record) string {
-	for _, s := range rec.Stages {
-		if s.Name == implementStage && s.Model != "" {
-			return s.Model
-		}
-	}
-	if rec.AB != nil {
-		return rec.AB.Challenger
-	}
-	return ""
 }
 
 // compare orders two groups: by mode, tier, champion model and challenger
