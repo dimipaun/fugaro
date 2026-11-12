@@ -474,6 +474,12 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 	if lc == nil {
 		return userErr("no project config could be selected, so there is no database to clear %q in (%s)", name, note)
 	}
+	// The marks this clears are the project's record of which account a run
+	// used, and the account is the project's (F19): the admin of a repository
+	// clears its own repository's nothing here.
+	if err := accessGateProject(ctx, lc, nil, "nothing was cleared", "clearing an account's marks"); err != nil {
+		return err
+	}
 	// The name must be one this installation has, and the two ways it can be
 	// are answered in different places. "default" and a claude_accounts entry
 	// of the selected config are local, so they are decided here, before the

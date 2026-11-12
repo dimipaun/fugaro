@@ -578,6 +578,16 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 			return err
 		}
 	}
+	// D1586: the document is the project's — the global block, the project's
+	// own figures and every repository's row in it — so it is read by a
+	// project-scope role, and the repositories a repository-scoped role covers
+	// are read one at a time (`runs ls --repo`, `logs`). The document's
+	// figures are always present and never nulled (the console's JSON
+	// contract), so a filtered document is not the answer here: it is not
+	// shown at all.
+	if err := accessGateProjectRead(ctx, lc, db, "the project's spend is a project-level read, so it is not shown", "reading it"); err != nil {
+		return err
+	}
 
 	var cfg dbConfig
 	if _, err := db.Get(ctx, "config", &cfg); err != nil {
@@ -1484,6 +1494,14 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 		if slug, err = repoSlugOf(ctx, lc, p.repo); err != nil {
 			return err
 		}
+		// A repository's caps are that repository's, so they are set by its
+		// admin and by nobody else — the project's own caps are the
+		// project-level pair below (F19).
+		if err := accessGateRepo(ctx, lc, db, p.repo, "nothing was set", "setting this repository's caps"); err != nil {
+			return err
+		}
+	} else if err := accessGateProject(ctx, lc, db, "nothing was set", "setting the project's own caps"); err != nil {
+		return err
 	}
 	out := cmd.OutOrStdout()
 	for attempt := 1; attempt <= setAttempts; attempt++ {
