@@ -50,7 +50,7 @@ func stubCurrentRefresh(t *testing.T, r *anchorModeRig) {
 func upgradeRigWithGitHubAppID(t *testing.T) *anchorModeRig {
 	t.Helper()
 	fakeTerraform(t)
-	upgradeEnv(t, "0.5.1")
+	convergeEnv(t, "0.5.1")
 	r := newAnchorModeRig(t, refreshYAML, false)
 	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
 	runs := t.TempDir()
@@ -775,8 +775,8 @@ func TestUpgradeCloudSecretValueSourceEntriesAreNeverConfigCopy(t *testing.T) {
 // as fugaro upgrade sees it.
 func upgradeRig(t *testing.T) (*anchorModeRig, string) {
 	t.Helper()
-	fakeTerraform(t) // builds with go, which upgradeEnv takes off PATH
-	upgradeEnv(t, "0.5.1")
+	fakeTerraform(t) // builds with go, which convergeEnv takes off PATH
+	convergeEnv(t, "0.5.1")
 	r := newAnchorModeRig(t, refreshYAML, true)
 	loc, ok := pluginwire.Locate(".")
 	if !ok {
@@ -901,7 +901,7 @@ func TestUpgradeOneCheckoutsCloudFailureDoesNotHideAnother(t *testing.T) {
 	// Nothing in the tree writes a pin any more (U2, D949): the other
 	// checkout's own settings come out of the run byte for byte as they went
 	// in, and its steps are named all the same.
-	if got := upgradeRead(t, otherSettings); got != wiredAt("v0.5.0") {
+	if got := convergeRead(t, otherSettings); got != wiredAt("v0.5.0") {
 		t.Errorf("the other checkout's settings changed:\n%s", got)
 	}
 	if !strings.Contains(out, "  "+other+": plugin skipped, cloud skipped, rules skipped, policy skipped") {
@@ -940,7 +940,7 @@ func TestUpgradeRerunWhenCurrentIsNothingToDo(t *testing.T) {
 	}
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
-	if err != nil || upgradeRead(t, settings) != wiredAt("v0.5.1") ||
+	if err != nil || convergeRead(t, settings) != wiredAt("v0.5.1") ||
 		!strings.Contains(out, "plugin: skipped: claude is not on PATH") ||
 		!strings.Contains(out, "cloud: current: no base image to pin and no image to rebuild") ||
 		!strings.Contains(out, "nothing to do: "+root) {

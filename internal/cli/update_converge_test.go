@@ -131,8 +131,8 @@ func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 // where the file the repository stage reads is the thing that is wrong.
 func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *convergeRig {
 	t.Helper()
-	fakeTerraform(t) // built with go, which upgradeEnv takes off PATH
-	upgradeEnv(t, convergeRelease)
+	fakeTerraform(t) // built with go, which convergeEnv takes off PATH
+	convergeEnv(t, convergeRelease)
 	// The checkout stage's cloud step builds the stale workflows, and a build
 	// leases its estimated cost before it is submitted (T4): its lease needs
 	// the caps below and the price of a build, which a hermetic test reads
@@ -522,7 +522,7 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	// (U5's migration, inside this same `fugaro update`): the fixture carries
 	// nothing but the pin, so both entries go and both parent keys with them,
 	// and an empty settings object is left — never a deleted file.
-	if got := upgradeRead(t, r.settings); got != "{}\n" {
+	if got := convergeRead(t, r.settings); got != "{}\n" {
 		t.Errorf("the checkout's settings after the run:\n%s\nwant the pin taken out and nothing else moved:\n%s", got, "{}\n")
 	}
 	// And with the pin gone there is nothing stale left for the line every

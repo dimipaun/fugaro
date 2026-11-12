@@ -94,10 +94,19 @@ type initOptions struct {
 	noLogIsolation                  bool
 	registryCleanup                 string
 	planOnly, printVars, configOnly bool
-	publishConfig                   bool // --publish-config: publish the shared config to the runs bucket and stop
-	anchor                          bool // --anchor: write the checkout's gcp_project line, after its checks, and stop
-	forget, yes, asJSON             bool
-	nonInteractive                  bool
+	// checkOnly is --check, the update door's read-only mode (D948, U4 of
+	// docs/plugin-user-scope/implementation-plan.md): it prints what each
+	// step of the converge would do from the checkout's own files, writes
+	// nothing, and exits 1 when anything is stale (runUpdateCheck,
+	// update_check.go). It is the update door's alone — setup refuses it by
+	// name (setupDoor.foreign) — and it was the half of the retired
+	// `fugaro upgrade` that was not a converge at all.
+	checkOnly bool
+
+	publishConfig       bool // --publish-config: publish the shared config to the runs bucket and stop
+	anchor              bool // --anchor: write the checkout's gcp_project line, after its checks, and stop
+	forget, yes, asJSON bool
+	nonInteractive      bool
 	// ask is --ask (the owner's rule of 2026-11-04): the symmetric half of
 	// --yes, and fugaro update's flag alone (setup refuses it by name). In a
 	// managed project it puts back the confirmations the gate would have
@@ -404,6 +413,15 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			switch {
 			case foreign:
 				err = userErr("fugaro %s does not take --%s: that is %s's (%s)", d.name, ff.name, ff.owner, ff.hint)
+			case o.checkOnly:
+				// --check is the one mode of this door that is not a
+				// converge: it reads the checkout's own files, writes
+				// nothing and prints each step's verdict (update_check.go).
+				// It is decided here, before --repo, because the checkout is
+				// this mode's argument rather than the run's: `fugaro update
+				// --check PATH`, and a converge flag passed beside it is
+				// refused by name (refuseConvergeFlags) rather than ignored.
+				err = runUpdateCheck(cmd, o, args)
 			case o.ask && o.yes:
 				// The two flags say opposite things about the same
 				// confirmations (managed_ask.go): refused here, beside the
@@ -429,7 +447,12 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			// is itself the remedy never sends the reader to itself over work
 			// it is about to do. Every other door prints it before it runs,
 			// which this call leaves alone.
-			warnStaleSkillsAfter(cmd)
+			// A --check run reports the plugin's own state as its first
+			// step, so the closing staleness line would say the same thing a
+			// second time: it is the converge's last line and stays there.
+			if !o.checkOnly {
+				warnStaleSkillsAfter(cmd)
+			}
 			return err
 		},
 	}
@@ -491,6 +514,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.parent, "parent", "", "on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed)")
 	f.BoolVar(&o.managed, "managed", false, "on a first run, which creates the project: record its monthly budget in the creation fact. Every project "+d.name+" creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: creating the project still takes a person at a real terminal, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, "+managedFlaggingSentence)
 	f.StringVar(&o.linkBilling, "link-billing", "", "on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, at your own real terminal, where being at it is what confirms the step. This may incur charges on that account; never with --yes. It never changes a project's existing billing link")
+	// --check is the update door's alone (D948): the read-only half of the
+	// retired `fugaro upgrade`, and the mode the skills ask for, because it
+	// promises no cloud call where a stage's own plan may make one. Its help
+	// is worded for the door that reads it — setup declares it, hides it and
+	// refuses it by name (setupDoor.foreign), the shape --forget has on that
+	// door.
+	f.BoolVar(&o.checkOnly, "check", false, "read-only: write nothing, run no claude command and make no cloud call, print what each step of "+d.name+" would do from this checkout's own files, and exit 1 when anything is stale. The checkout is PATH ("+d.name+" --check [PATH]); the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag promises not to make")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (never takes --yes: it creates nothing on a flag's word)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")

@@ -793,53 +793,6 @@ func (e *initEngine) credentialsMoveHeld() string {
 	return why
 }
 
-// credentialsBehindHeld is why a door that replaces no credentials service may
-// not raise the node either, when the service this installation runs is one
-// another release pinned.
-const credentialsBehindHeld = "this door replaces no credentials service, and the image the installation records for it is the release behind this binary's"
-
-// credentialsRaiseHeld is why `fugaro upgrade`'s policy step may not write a
-// node whose version rises: the installation's tfvars carry a credentials
-// service, and this door replaces none — its cloud step is fugaro image
-// refresh, job images only, and the service's image lives in the installation
-// root's tfvars, which only `fugaro update`'s stages write
-// (newCredentialsStage). It is the same pair of facts the update door's own
-// hold is read from — credentialsMoveHeld for the block,
-// credentialsResolveBeforeRaise for the staleness — asked by the door that
-// cannot answer either by moving the service, and the state it may not leave is
-// the one the update door's hold exists for: the service reads the published
-// node on every cascade and Bitbucket-proxied call and refuses a node its own
-// binary does not understand, so a node raised here refuses every such call of
-// the project until a later `fugaro update` succeeds (the owner's ruling of
-// 2026-11-10; the migration and the replacement are that one command's).
-//
-// A development build holds it whatever the reference says, which is the update
-// door's own answer to that run (credentialsDevBuildHeld): it resolves no
-// released image, so there is none to compare the record against and none for
-// it to move to. An installation whose tfvars carry no block runs no service to
-// refuse the node at all, and one whose recorded image is already this binary's
-// release is the state the last update left — no stale process — and neither is
-// held. A tfvars this binary cannot read is silence, the answer
-// credentialsMoveHeld gives it: the failure of that read belongs to the run
-// that applies the file.
-func credentialsRaiseHeld(lc *localcfg.Config) string {
-	if lc == nil {
-		return ""
-	}
-	doc, image, err := installationCredentialsImage(lc)
-	if err != nil || doc == nil {
-		return ""
-	}
-	ver := releaseVersion()
-	switch {
-	case ver == "":
-		return credentialsDevBuildHeld
-	case credentialsImageStale(ver, image):
-		return credentialsBehindHeld
-	}
-	return ""
-}
-
 // credentialsResolveBeforeRaise resolves the image this run's own move of the
 // credentials service will pin, and it is the policy stage's precondition for a
 // write whose version rises. It is where the resolve's failure has to land: an
@@ -1051,9 +1004,8 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 // carry no block at all.
 //
 // It is recordedCredentialsImage's read for a caller that holds no workdir —
-// the checks' own case, and the read `fugaro upgrade` makes
-// (credentialsRaiseHeld): that door runs no stage of the converge at all, so
-// the file the last update left is the only document it has.
+// the checks' own case: a check runs before the stage that prepares the
+// workdir, so the file the last update left is the only document it has.
 func installationCredentialsImage(lc *localcfg.Config) ([]byte, string, error) {
 	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
 	if err != nil {

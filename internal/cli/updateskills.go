@@ -156,7 +156,7 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, asJSON bool) error {
 	// The machine-side half: fugaro upgrade's own plugin step, the same
 	// function the plugin stage runs, which installs or updates the plugin in
 	// the user's own Claude Code at user scope.
-	u := &upgradeCtx{cmd: cmd, w: w, loc: loc}
+	u := &stepCtx{cmd: cmd, w: w, loc: loc}
 	step := pluginStep(cmd.Context(), u)
 	if step.state == stepFailed {
 		return fail(updateSkillsOutput{Checkout: true, Settings: loc.Settings}, errors.New(step.reason))

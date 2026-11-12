@@ -97,13 +97,13 @@ func resolveCloudRepo(ctx context.Context, root string, co cloudOptions) (rf res
 
 // cloudCheck is the cloud step's state from fugaro.yaml and the local
 // project config alone: never a bucket, the registry or a job, and no
-// credentials (fugaro upgrade --check, and the skips of the cloud step). It
+// credentials (fugaro update --check, and the skips of the cloud step). It
 // cannot see a build that failed after the base moved: build records live in
 // the bucket. It prints nothing; rerun is the command line a blocked reason
-// tells the user to run again ("" is the bare fugaro upgrade).
+// tells the user to run again ("" is the bare fugaro update).
 func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string) cloudVerdict {
 	if rerun == "" {
-		rerun = selfCommand() + " upgrade"
+		rerun = selfCommand() + " update"
 	}
 	rf, lc, lcPath, repo, host, v := resolveCloudRepo(ctx, root, co)
 	if v != nil {
@@ -143,7 +143,7 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 	case len(stale) > 0:
 		return cloudVerdict{state: cloudStale, repo: repo, reason: "base images to move: " + strings.Join(stale, "; ")}
 	}
-	return cloudVerdict{state: cloudCurrent, repo: repo, reason: "the local config records this release's base image for every workflow's kind (--check reads no build record: a build that failed after the base moved shows only when fugaro upgrade runs the cloud step)"}
+	return cloudVerdict{state: cloudCurrent, repo: repo, reason: "the local config records this release's base image for every workflow's kind (--check reads no build record: a build that failed after the base moved shows only when fugaro update runs the cloud step)"}
 }
 
 // checkJobCopyCaveat is --check's note on the job's config copy
@@ -154,7 +154,7 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 // (cloudStep), whatever the local config currently holds: an owner who just
 // removed every provider locally still needs to know the job might still
 // carry the old ones, which --check cannot see either.
-const checkJobCopyCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell whether the deployed job's copy of this local project config (providers, model_prices, budget settings, the region's compute price override and the GitHub App ID) still matches, or is stale, in either direction; run fugaro upgrade without --check to find out, or just run fugaro update --repo . in your own terminal to refresh it (never run automatically)"
+const checkJobCopyCaveat = "fugaro update --check makes no cloud call, so it cannot tell whether the deployed job's copy of this local project config (providers, model_prices, budget settings, the region's compute price override and the GitHub App ID) still matches, or is stale, in either direction; run fugaro update --repo . in your own terminal to find out, and to refresh it (never run automatically)"
 
 // jobConfigCopyTimeout bounds the cloud work jobConfigCopyNote does (opening
 // the runs bucket to check the project's name, then reading each existing
@@ -167,7 +167,7 @@ var jobConfigCopyTimeout = 30 * time.Second
 // whether any of the repository's deployed workflow jobs carries a copy of
 // the local project config that no longer matches what this local config
 // would write now. A version upgrade never refreshes that copy; only
-// fugaro update --repo does, and fugaro upgrade never runs it itself (its
+// fugaro update --repo does, and the cloud step never runs it itself (its
 // Terraform confirmations stay the operator's). It compares every env var
 // infra.Workflow sets from the local config (spec.Env, minus
 // infra.PlatformEnv's installation-identity keys, which legitimately vary by
@@ -236,7 +236,7 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 		return couldNotCheckJobConfigCopy("cannot read the checkout's origin")
 	}
 	// jobConfigCopyNote is an advisory extra on an otherwise-successful
-	// fugaro upgrade, not the thing the operator ran for (the same risk
+	// cloud step, not the thing the operator ran for (the same risk
 	// layerBucketTimeout guards against for the project layer's own bucket
 	// read): a flaky or offline network must not hang the whole command in
 	// a client retry loop just to report on something optional.
@@ -372,7 +372,7 @@ func jobConfigCopyMountNote(names []string) string {
 }
 
 // jobConfigCopyCredentialsNote is the drift note's credentials clause (plan
-// task C1.20): the one thing `fugaro upgrade` has to say about the
+// task C1.20): the one thing the cloud step has to say about the
 // credentials service, and the reason it has to say it here.
 //
 // `agent.auth: cascade` is a value the setup skill offers and the config
@@ -386,8 +386,8 @@ func jobConfigCopyMountNote(names []string) string {
 // invoker on the service, and every other repository of the project needs its
 // own `fugaro update --repo .`. Until that has run for a repository, its file
 // says `cascade` while its jobs are unchanged, exactly the half-state the
-// skill's offer is pinned against (C1.19). An upgrade is where the operator
-// learns it: the step names both, in the order they have to run.
+// skill's offer is pinned against (C1.19). A `fugaro update` is where the
+// operator learns it: the step names both, in the order they have to run.
 //
 // "" for every other auth: nothing of this is about a workflow that mounts
 // its own credential, which is every repository until its file says
@@ -584,13 +584,13 @@ func checkoutNamesProject(ctx context.Context, root string) bool {
 }
 
 // cloudStep is fugaro image refresh for the checkout's repository, in this
-// process (runImageRefresh, decision U16). --check reports cloudCheck's state
-// without running the refresh. Under --local and in a coding agent's session
-// (U7) the step is skipped before anything is read, so nothing there can
-// fail it. Otherwise (a real run, or --check) a real local-file error
-// (cloudFailed) stops the checkout: a failure, not a skip; where there is
-// nothing to refresh from here (cloudNotHere, U9) the step is skipped.
-func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
+// process (runImageRefresh, decision U16). `--check` reports cloudCheck's
+// state without running the refresh. In a coding agent's session (U7) the step
+// is skipped before anything is read, so nothing there can fail it. Otherwise
+// (a real run, or --check) a real local-file error (cloudFailed) stops the
+// checkout: a failure, not a skip; where there is nothing to refresh from here
+// (cloudNotHere, U9) the step is skipped.
+func cloudStep(ctx context.Context, u *stepCtx) stepResult {
 	verdict := func() (cloudVerdict, *stepResult) {
 		v := cloudCheck(ctx, u.loc.Root, u.o.refresh.cloud, u.o.again(u.loc.Root))
 		if v.state == cloudFailed {
@@ -613,9 +613,6 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 			return stepResult{state: stepStale, reason: v.reason}
 		}
 		return stepResult{state: stepSkipped, reason: v.reason}
-	}
-	if u.o.local {
-		return stepResult{state: stepSkipped, reason: "--local; for the cloud step, run in your own terminal window: " + u.o.cloudLine(u.loc.Root, false)}
 	}
 	if u.agent != "" {
 		return stepResult{state: stepSkipped, reason: cloudAgentRefusal(u)}
@@ -653,9 +650,9 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 // session (U7), in one place: cloudStep returns it as its own skip, and the
 // checkout stage of the converge refuses the step with it before the step is
 // reached, its plan being local-only under a marker
-// (init_checkout_upgrade.go). One refusal, one wording, so the two doors say
-// the same thing about the same session.
-func cloudAgentRefusal(u *upgradeCtx) string {
+// (init_checkout_upgrade.go). One refusal, one wording, so the step and the
+// stage that plans it say the same thing about the same session.
+func cloudAgentRefusal(u *stepCtx) string {
 	reason := fmt.Sprintf("a coding agent's session (%s is set) never applies cloud changes, by design; in your own terminal window, not through the agent, run %s (it confirms every step itself, each billable build included), or %s to be asked at each step",
 		u.agent, u.o.cloudLine(u.loc.Root, true), u.o.cloudLine(u.loc.Root, false))
 	if h := initflow.IDEHint(u.agent); h != "" {
@@ -665,10 +662,9 @@ func cloudAgentRefusal(u *upgradeCtx) string {
 }
 
 // cloudLine is the command that runs the cloud step for root in the user's
-// own terminal: this run's flags without --check and --local, with or
-// without --yes.
-func (o upgradeOptions) cloudLine(root string, yes bool) string {
+// own terminal: this run's flags without --check, with or without --yes.
+func (o stepOptions) cloudLine(root string, yes bool) string {
 	c := o
-	c.check, c.local, c.yes = false, false, yes
+	c.check, c.yes = false, yes
 	return c.again(root)
 }

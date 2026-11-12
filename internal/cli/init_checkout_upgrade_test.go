@@ -152,7 +152,7 @@ func TestUpdateRunsThePluginAndImages(t *testing.T) {
 	// The checkout the run writes into comes out of it unpinned: the two
 	// entries an older fugaro left are the whole of what the run takes out of
 	// the file, and nothing puts a pin back (U2, U5).
-	if got := upgradeRead(t, settings); got != "{}\n" {
+	if got := convergeRead(t, settings); got != "{}\n" {
 		t.Errorf("the checkout's settings after the run:\n%s\nwant the pin an older fugaro left taken out, and nothing else in the file:\n%s", got, "{}\n")
 	}
 	for _, want := range []string{"removed the fugaro@fugaro pin from", removalLoss()} {
@@ -240,7 +240,7 @@ func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
 		if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
 			t.Errorf("the plugin stage is %q on a checkout still carrying the pin an older fugaro left, want %q\n%s", got, initflow.Changed, out)
 		}
-		if got := upgradeRead(t, settings); got != "{}\n" {
+		if got := convergeRead(t, settings); got != "{}\n" {
 			t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin taken out:\n%s", got, "{}\n")
 		}
 		if len(f.Changes(t)) != 0 {
@@ -285,13 +285,13 @@ func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
 		if len(*ran) != 0 {
 			t.Errorf("a checkout already at this release refreshed its job images: %q\n%s", *ran, out)
 		}
-		if got := upgradeRead(t, settings); got != "{}\n" {
+		if got := convergeRead(t, settings); got != "{}\n" {
 			t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin taken out:\n%s", got, "{}\n")
 		}
 		// The record is Claude Code's own, and the project-scope entry in it is
 		// the trusted folder's install, not this run's to move: taking the pin
 		// out of the checkout leaves it exactly as it was (D949, U2).
-		if got := upgradeRead(t, record); !strings.Contains(got, `{"scope":"project","version":"0.5.0","projectPath":"`+root+`"}`) {
+		if got := convergeRead(t, record); !strings.Contains(got, `{"scope":"project","version":"0.5.0","projectPath":"`+root+`"}`) {
 			t.Errorf("the run rewrote Claude Code's record of the project-scope install:\n%s", got)
 		}
 		if len(f.Changes(t)) != 0 {
@@ -329,7 +329,7 @@ func TestUpdateImageBuildNeedsItsOwnConfirmation(t *testing.T) {
 	if len(res.Left) != 1 || res.ExitCode() != 1 {
 		t.Fatalf("a run with no terminal and without --yes did not leave the checkout's steps for the user: %+v\n%s", res, out)
 	}
-	if len(*ran) != 0 || string(upgradeRead(t, settings)) != wiredAt("v0.5.0") {
+	if len(*ran) != 0 || string(convergeRead(t, settings)) != wiredAt("v0.5.0") {
 		t.Errorf("something ran without a confirmation: steps %q\n%s", *ran, out)
 	}
 	if l := res.Left[0]; l.Stage != checkoutStageName || !strings.Contains(l.Text, "upgrade") {
@@ -428,8 +428,8 @@ func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 	if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
 		t.Fatalf("the plugin stage is %q in an agent's session, want %q\n%s", got, initflow.Changed, out)
 	}
-	if upgradeRead(t, settings) != wiredAt("v0.5.0") {
-		t.Errorf("an agent's session rewrote the checkout's settings (U2):\n%s", upgradeRead(t, settings))
+	if convergeRead(t, settings) != wiredAt("v0.5.0") {
+		t.Errorf("an agent's session rewrote the checkout's settings (U2):\n%s", convergeRead(t, settings))
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in an agent's session\n%s", out)
@@ -472,7 +472,7 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 	// and looked right by saying nothing: the plugin stage is the one that
 	// writes on this machine, and the checkout stage's cloud step is parked.
 	if stateOf(res, string(initflow.Plugin)) != initflow.Changed ||
-		upgradeRead(t, settings) != wiredAt("v0.5.0") || len(f.Changes(t)) == 0 {
+		convergeRead(t, settings) != wiredAt("v0.5.0") || len(f.Changes(t)) == 0 {
 		t.Errorf("the local steps did not run in an agent's session:\n%s", out)
 	}
 }
@@ -540,8 +540,8 @@ func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 	if got, want := res.state(initflow.Plugin), "changed"; got != want {
 		t.Errorf("the plugin stage is %q under the marker, want %q: its writes are on this machine, which is what LocalUnderAgent is for\n%s", got, want, out)
 	}
-	if upgradeRead(t, settings) != wiredAt("v0.1.0") {
-		t.Errorf("a coding agent's session rewrote the checkout's settings (U2):\n%s", upgradeRead(t, settings))
+	if convergeRead(t, settings) != wiredAt("v0.1.0") {
+		t.Errorf("a coding agent's session rewrote the checkout's settings (U2):\n%s", convergeRead(t, settings))
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in Claude Code in a coding agent's session:\n%s", out)
@@ -696,8 +696,8 @@ func TestUpdateLocalStepsRunInAgentSessionWithoutAYes(t *testing.T) {
 	if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
 		t.Fatalf("the plugin stage is %q in an agent's session with no terminal and no --yes, want %q\n%s", got, initflow.Changed, out)
 	}
-	if upgradeRead(t, settings) != wiredAt("v0.5.0") {
-		t.Errorf("an agent's session rewrote the checkout's settings (U2):\n%s", upgradeRead(t, settings))
+	if convergeRead(t, settings) != wiredAt("v0.5.0") {
+		t.Errorf("an agent's session rewrote the checkout's settings (U2):\n%s", convergeRead(t, settings))
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in an agent's session\n%s", out)
@@ -745,7 +745,7 @@ func TestUpdateSecondRunWritesNothing(t *testing.T) {
 	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
 		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
 	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
-	settled, plugins := upgradeRead(t, settings), len(f.Changes(t))
+	settled, plugins := convergeRead(t, settings), len(f.Changes(t))
 	*ran = nil
 
 	for _, tc := range []struct {
@@ -771,7 +771,7 @@ func TestUpdateSecondRunWritesNothing(t *testing.T) {
 			if len(*ran) != 0 {
 				t.Errorf("the second run ran the refresh's steps: %q\n%s", *ran, out)
 			}
-			if got := string(upgradeRead(t, settings)); got != settled {
+			if got := string(convergeRead(t, settings)); got != settled {
 				t.Errorf("the second run rewrote the checkout's settings:\n%s\nwant:\n%s", got, settled)
 			}
 			if got := len(f.Changes(t)); got != plugins {
@@ -806,7 +806,7 @@ func TestUpdateFailsOnAnOriginItCannotRead(t *testing.T) {
 		if len(*ran) != 0 {
 			t.Errorf("the refresh ran over an origin it cannot read: %q\n%s", *ran, out)
 		}
-		if got := string(upgradeRead(t, settings)); got != wiredAt("v0.5.0") {
+		if got := string(convergeRead(t, settings)); got != wiredAt("v0.5.0") {
 			t.Errorf("the pin moved before the run failed on the origin:\n%s\nwant it untouched:\n%s", got, wiredAt("v0.5.0"))
 		}
 	})
@@ -814,7 +814,7 @@ func TestUpdateFailsOnAnOriginItCannotRead(t *testing.T) {
 	// A checkout git itself cannot read is the other half: the stage never
 	// concluded "no origin", so it did not skip the step over it.
 	t.Run("a checkout git cannot read", func(t *testing.T) {
-		upgradeEnv(t, "0.5.1")
+		convergeEnv(t, "0.5.1")
 		dir := t.TempDir()
 		checkoutFile(t, filepath.Join(dir, ".git"), "gitdir: "+filepath.Join(dir, "gone")+"\n")
 		checkoutFile(t, filepath.Join(dir, "fugaro.yaml"), "version: 1\nproject: aurora\ngit: { provider: github }\n")
@@ -861,7 +861,7 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 	if res.Failed != nil || len(res.Left) != 0 {
 		t.Fatalf("the run did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
 	}
-	if got := string(upgradeRead(t, settings)); got != wiredAt("v0.5.0") {
+	if got := string(convergeRead(t, settings)); got != wiredAt("v0.5.0") {
 		t.Errorf("the pin moved in another project's checkout:\n%s", got)
 	}
 	if len(*ran) != 0 {
@@ -912,8 +912,8 @@ func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
 	if len(*ran) != 0 {
 		t.Errorf("the refresh ran in a checkout with no repository to refresh: %q\n%s", *ran, out)
 	}
-	if upgradeRead(t, settings) != wiredAt("v0.5.0") {
-		t.Errorf("the checkout's settings moved in a checkout with no origin:\n%s", upgradeRead(t, settings))
+	if convergeRead(t, settings) != wiredAt("v0.5.0") {
+		t.Errorf("the checkout's settings moved in a checkout with no origin:\n%s", convergeRead(t, settings))
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in a checkout with no origin\n%s", out)
@@ -949,13 +949,13 @@ func TestUpdateSkipsWithoutAReleaseOrAFugaroCheckout(t *testing.T) {
 		if _, err := st.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
-		if len(*ran) != 0 || string(upgradeRead(t, settings)) != wiredAt("v0.5.0") {
+		if len(*ran) != 0 || string(convergeRead(t, settings)) != wiredAt("v0.5.0") {
 			t.Errorf("a development build ran something: steps %q\n%s", *ran, out)
 		}
 	})
 
 	t.Run("a checkout Fugaro is not set up in", func(t *testing.T) {
-		upgradeEnv(t, "0.5.1")
+		convergeEnv(t, "0.5.1")
 		t.Chdir(t.TempDir())
 		testutil.Git(t, ".", "init", "--quiet")
 		ran := fakeSteps(t, "", nil)
@@ -1034,14 +1034,14 @@ func TestUpdateRecognisesACheckoutByItsFugaroYAML(t *testing.T) {
 // claude on PATH is skipped with the slash commands to type — and its settings
 // file is left exactly as it was.
 func TestUpgradeStillWorks(t *testing.T) {
-	upgradeEnv(t, "0.5.2")
+	convergeEnv(t, "0.5.2")
 	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if upgradeRead(t, settings) != wiredAt("v0.5.1") {
-		t.Errorf("fugaro upgrade --local rewrote the checkout's settings:\n%s", upgradeRead(t, settings))
+	if convergeRead(t, settings) != wiredAt("v0.5.1") {
+		t.Errorf("fugaro upgrade --local rewrote the checkout's settings:\n%s", convergeRead(t, settings))
 	}
 	for _, want := range []string{"plugin: skipped: claude is not on PATH", "  " + root + ": plugin skipped, cloud skipped, rules skipped, policy skipped"} {
 		if !strings.Contains(out, want) {

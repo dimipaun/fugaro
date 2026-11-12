@@ -42,7 +42,7 @@ import (
 // order, minus the policy step the converge already runs as its own stage and
 // minus the pin and the plugin, which are the plugin stage's (init_plugin_
 // stage.go).
-var checkoutSteps = []upgradeStep{{"cloud", cloudStep}}
+var checkoutSteps = []checkStep{{"cloud", cloudStep}}
 
 type checkoutStage struct {
 	e *initEngine
@@ -110,7 +110,7 @@ func (s *checkoutStage) checkout() (pluginwire.Location, string) {
 // session's own doing — a step the user still owes, rather than one that is
 // not this checkout's to run at all.
 type plannedStep struct {
-	step upgradeStep
+	step checkStep
 	skip string
 	// parked: this run does not run the step and never will (the cloud half
 	// in a coding agent's session, planFor), so the stage is done with what
@@ -143,7 +143,7 @@ type plannedStep struct {
 // reason it fails — an origin that is not owner/name, a checkout git cannot
 // read — is a failure here too, not a skip.
 func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc pluginwire.Location) ([]plannedStep, error) {
-	u := s.e.upgradeCtx(env, loc)
+	u := s.e.stepCtx(env, loc)
 	cloudSkip, cloudParked := "", false
 	switch other, err := s.namesAnotherProject(loc); {
 	case err != nil:
@@ -340,8 +340,8 @@ func parked(steps []plannedStep) bool {
 // prompt, and quiet. The notes and warnings a check prints — the fork warning,
 // the caveat on the deployed job's config copy — belong to the apply that
 // really runs the step, not to a look at whether there is anything to do.
-func (s *checkoutStage) checkStep(ctx context.Context, step upgradeStep, loc pluginwire.Location) stepResult {
-	u := s.e.upgradeCtx(initflow.Env{}, loc)
+func (s *checkoutStage) checkStep(ctx context.Context, step checkStep, loc pluginwire.Location) stepResult {
+	u := s.e.stepCtx(initflow.Env{}, loc)
 	u.o.check = true
 	u.w = io.Discard
 	c := *s.e.r.cmd // the run's command, its output silenced: the steps' side notes go there
@@ -376,7 +376,7 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
-	u := s.e.upgradeCtx(env, loc)
+	u := s.e.stepCtx(env, loc)
 	if !env.Yes && !env.Interactive && u.agent == "" {
 		// The cloud step asks before every change, each billable build
 		// included, and there is no terminal here to ask at; the stage
@@ -440,7 +440,7 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 // the one whose cloud step really runs the refresh, which is the run the
 // step's own stop line already names: upgrade's own line for this checkout,
 // with this run's flags (u.o.again), said here so the two do not drift.
-func (s *checkoutStage) stepFailure(r stepResult, u *upgradeCtx, step upgradeStep) error {
+func (s *checkoutStage) stepFailure(r stepResult, u *stepCtx, step checkStep) error {
 	err := errors.New(r.reason)
 	if step.name != "cloud" {
 		return err
@@ -457,7 +457,7 @@ func (s *checkoutStage) stepFailure(r stepResult, u *upgradeCtx, step upgradeSte
 // sent to a second command for the same step would have to know which half of
 // which door runs it. The why is the plan's line, in the step's own words
 // (cloudAgentRefusal).
-func (s *checkoutStage) leftBehind(u *upgradeCtx, steps []plannedStep) *initflow.Left {
+func (s *checkoutStage) leftBehind(u *stepCtx, steps []plannedStep) *initflow.Left {
 	for _, p := range steps {
 		if !p.parked {
 			continue
@@ -471,7 +471,7 @@ func (s *checkoutStage) leftBehind(u *upgradeCtx, steps []plannedStep) *initflow
 
 func (*checkoutStage) Verify(context.Context) error { return nil }
 
-// upgradeCtx is what upgrade's steps see for this checkout: the converge's own
+// stepCtx is what upgrade's steps see for this checkout: the converge's own
 // command and output, the flags the converge carries that upgrade has too, and
 // the marker of the coding agent's session this run is in — the run's own
 // options().Agent, and not a second read of the environment, so that the
@@ -483,12 +483,12 @@ func (*checkoutStage) Verify(context.Context) error { return nil }
 // It is the engine's and not one stage's, because more than one stage of the
 // converge runs a step of fugaro upgrade: the plugin stage the pin's and the
 // plugin's (`plugin:`, U1), the checkout stage the cloud half.
-func (e *initEngine) upgradeCtx(env initflow.Env, loc pluginwire.Location) *upgradeCtx {
+func (e *initEngine) stepCtx(env initflow.Env, loc pluginwire.Location) *stepCtx {
 	o := e.r.o
-	return &upgradeCtx{
+	return &stepCtx{
 		cmd: e.r.cmd,
 		w:   e.r.w,
-		o: upgradeOptions{yes: env.Yes, refresh: refreshOptions{
+		o: stepOptions{yes: env.Yes, refresh: refreshOptions{
 			imageSource: o.imageSource, expectDigests: o.expectDigests, cloud: o.cloud,
 			// The refresh's own run prints and asks where its command says
 			// (newInitRun), and this stage runs inside the converge's step:
