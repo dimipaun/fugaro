@@ -217,7 +217,7 @@ func TestDecodeRefusesBadVersion(t *testing.T) {
 	for name, raw := range map[string]string{
 		"no version":     `{"budget": {"mode": "observe"}}`,
 		"version 0":      `{"version": 0}`,
-		"version 7":      `{"version": 7}`,
+		"version 8":      `{"version": 8}`,
 		"a string":       `{"version": "1"}`,
 		"a float":        `{"version": 1.5}`,
 		"a bool":         `{"version": true}`,
@@ -235,8 +235,8 @@ func TestDecodeRefusesBadVersion(t *testing.T) {
 	}
 	// The version message is the shared constant, so the runner and the CLI
 	// print the same sentence.
-	_, _, err := Decode([]byte(`{"version": 7}`))
-	if err == nil || !strings.Contains(err.Error(), "policy is version 7") {
+	_, _, err := Decode([]byte(`{"version": 8}`))
+	if err == nil || !strings.Contains(err.Error(), "policy is version 8") {
 		t.Errorf("the version refusal must use Skew, got %v", err)
 	}
 }
@@ -245,7 +245,7 @@ func TestDecodeRefusesBadVersion(t *testing.T) {
 // a missing json tag: every documented key, field by field.
 func TestDecodeReadsTheDocumentedSnakeCaseKeys(t *testing.T) {
 	p, found, err := Decode([]byte(`{
-		"version": 6,
+		"version": 7,
 		"budget": {"mode": "enforce", "per_run_usd": 12.5, "allowed_models": ["claude-sonnet-5"], "max_run_tokens": 250000},
 		"allow_repos": ["github/acme/*", "bitbucket/acme/app"]
 	}`))
@@ -779,7 +779,7 @@ func TestDecodeRefusesABadPrice(t *testing.T) {
 // rendered message, so the runner (task 1.3) prints RunnerSkew and the CLI
 // (task 1.6) CLISkew from the same error without matching on the text.
 func TestVersionErrorCarriesBothVersions(t *testing.T) {
-	_, found, err := Decode([]byte(`{"version": 7}`))
+	_, found, err := Decode([]byte(`{"version": 8}`))
 	if !found {
 		t.Error("the node exists and cannot be used, so found must be true")
 	}
@@ -787,10 +787,10 @@ func TestVersionErrorCarriesBothVersions(t *testing.T) {
 	if !errors.As(err, &ve) {
 		t.Fatalf("err = %v, want a *VersionError", err)
 	}
-	if ve.Found != 7 || ve.Understood != Version {
-		t.Errorf("VersionError = %+v, want found 7 and understood %d", ve, Version)
+	if ve.Found != 8 || ve.Understood != Version {
+		t.Errorf("VersionError = %+v, want found 8 and understood %d", ve, Version)
 	}
-	if got, want := err.Error(), fmt.Sprintf(Skew, 7, Version); got != want {
+	if got, want := err.Error(), fmt.Sprintf(Skew, 8, Version); got != want {
 		t.Errorf("Error() = %q, want the shared sentence %q", got, want)
 	}
 	if got := fmt.Sprintf(RunnerSkew, ve.Found, ve.Understood); !strings.Contains(got, "runner image") {

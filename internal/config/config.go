@@ -85,6 +85,18 @@ type Config struct {
 	// the json tag keeps an absent block out of the resolved config's hash the
 	// way Rigor's does, and names the block on the wire when one is written.
 	Planning *Planning `yaml:"planning,omitempty" json:"planning,omitempty"`
+	// ModelGrades is the escalation ladder's two model grades (docs/outer-
+	// loop-escalation E2, D2039): the model each grade runs and the credential
+	// or pool its calls go out on. The project layer's defaults.model_grades
+	// is what a repository that writes none takes, and a repository's own
+	// block may name a grade, which the merge drops and records — a grade is
+	// a model choice the project owns (G3).
+	//
+	// Like Rigor the pointer is what keeps an absent block out of the resolved
+	// config's hash: SHA256 marshals this struct (resolve.go), and a pointer
+	// with no json name would write a null key into every file that writes
+	// none, moving the hash of a file that did not change.
+	ModelGrades *ModelGrades `yaml:"model_grades,omitempty" json:"model_grades,omitempty"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
@@ -165,6 +177,14 @@ type Config struct {
 	// (internal/cli). Like the fields above it is never part of the file or of
 	// SHA256.
 	RepoTriageSet bool `yaml:"-" json:"-"`
+	// RepoModelGradesSet is whether the repository's own file wrote the
+	// model_grades key at all, at any value: the question RepoRigorSet answers
+	// for rigor:, and ModelGrades cannot answer it — the block written empty
+	// (`model_grades: {}`) decodes to the same nil pointer as the key being
+	// absent, and a runner older than modelGradesSince refuses the key itself,
+	// whatever it says (internal/cli). Like the fields above it is never part
+	// of the file or of SHA256.
+	RepoModelGradesSet bool `yaml:"-" json:"-"`
 }
 
 // Planning is fugaro.yaml's planning: block and the project layer's

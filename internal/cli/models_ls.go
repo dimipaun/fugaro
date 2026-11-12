@@ -140,9 +140,14 @@ type modelsRepo struct {
 	// Background is the file's own agent.models.background, and
 	// BackgroundEffective the model Claude Code's background requests
 	// actually reach (config.EffectiveBackground) when the two differ.
-	Background          string   `json:"background,omitempty"`
-	BackgroundEffective string   `json:"background_effective,omitempty"`
-	Problems            []string `json:"problems,omitempty"`
+	Background          string `json:"background,omitempty"`
+	BackgroundEffective string `json:"background_effective,omitempty"`
+	// Vision is the file's own agent.models.vision: the model a stage runs
+	// instead when its own model cannot read an image (D2000). It is the one
+	// pin with no fallback, so an empty member means the slot is unset rather
+	// than inherited.
+	Vision   string   `json:"vision,omitempty"`
+	Problems []string `json:"problems,omitempty"`
 }
 
 func runModelsLs(cmd *cobra.Command, o *modelsLsOptions) error {
@@ -279,7 +284,7 @@ func modelsModelRows(lc *localcfg.Config, table *pricing.Table, rows []priceRow,
 		}
 	}
 	for _, r := range repos {
-		for _, m := range []string{r.Coder, r.Reviewer, r.Background, r.BackgroundEffective} {
+		for _, m := range []string{r.Coder, r.Reviewer, r.Background, r.BackgroundEffective, r.Vision} {
 			if m != "" {
 				ids[m] = true
 			}
@@ -399,6 +404,7 @@ func modelsUsage(ctx context.Context, lc *localcfg.Config, table *pricing.Table)
 		row.Coder = cfg.Agent.ModelFor(config.RoleCoder)
 		row.Reviewer = cfg.Agent.ModelFor(config.RoleReviewer)
 		row.Background = cfg.Agent.Models.Background
+		row.Vision = cfg.Agent.VisionModel()
 		if bg := config.EffectiveBackground(cfg.Agent, lc.Providers); bg != row.Background {
 			row.BackgroundEffective = bg
 		}
@@ -526,14 +532,14 @@ func writeModelsLs(cmd *cobra.Command, lc *localcfg.Config, doc modelsLsDoc) err
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "USAGE")
 	tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "REPOSITORY\tCODER\tREVIEWER\tBACKGROUND\tSTATE\tNOTES")
+	fmt.Fprintln(tw, "REPOSITORY\tCODER\tREVIEWER\tBACKGROUND\tVISION\tSTATE\tNOTES")
 	for _, r := range doc.Repos {
 		background := r.Background
 		if r.BackgroundEffective != "" {
 			background = r.BackgroundEffective
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", cellOneLine(r.Name), cell(r.Coder), cell(r.Reviewer),
-			cell(background), cellOneLine(r.State), cellOneLine(strings.Join(r.Problems, "; ")))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", cellOneLine(r.Name), cell(r.Coder), cell(r.Reviewer),
+			cell(background), cell(r.Vision), cellOneLine(r.State), cellOneLine(strings.Join(r.Problems, "; ")))
 	}
 	return tw.Flush()
 }

@@ -650,7 +650,7 @@ func convergeLocalConfig(t *testing.T) *localcfg.Config {
 //     means yes, so only a value can say no.
 func TestSetupUpdateConvergesBake(t *testing.T) {
 	t.Run("an installation that never answered the question", func(t *testing.T) {
-		r := newConvergeRig(t, v5Node())
+		r := newConvergeRig(t, v6Node())
 		// The fixture is an installation of the release before this one: neither
 		// the file nor the node names the key, or none of this is about a switch
 		// that did not exist.
@@ -677,7 +677,7 @@ func TestSetupUpdateConvergesBake(t *testing.T) {
 	})
 
 	t.Run("the answer a run gives the question", func(t *testing.T) {
-		r := newConvergeRig(t, v5Node())
+		r := newConvergeRig(t, v6Node())
 		out, errOut, err := executeStdin(t, "", "setup", "--yes", "--bake-repos=false")
 		if err != nil {
 			t.Fatalf("fugaro setup --bake-repos=false stopped at %s (exit %d): %v\n%s\n%s", stoppedStage(out), ExitCode(err), err, out, errOut)

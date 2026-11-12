@@ -181,7 +181,16 @@ const (
 // `project clone-url` family -- `settings set` can make no cross-key check
 // between an entry's canonical name and its URL, which is the node's own rule
 // (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
-// list does not. The account aliases moved it once more, by one row and not the
+// list does not.
+//
+// Outer-loop escalation's E2 moved it by eight the same way and in the same
+// direction: the escalation ladder's two model grades are four rows for a
+// repository's own `model_grades.*` key and four for the project layer's
+// `defaults.model_grades.*`, and not one of them is in the allowlist -- the
+// block is the project's own model choice (G3), and a repository's entry is
+// dropped and recorded by the merge rather than written by it.
+//
+// The account aliases moved it once more, by one row and not the
 // allowlist's, for the clone URLs' reason: the block is local-only (D2090). Its
 // row is owned by `config local` and not by the `accounts` family the write
 // belongs to (D2096), because `fugaro accounts alias set/rm` -- the write that
@@ -189,7 +198,7 @@ const (
 // block, and a row may not name a family command that does not take it (D1178);
 // the row and the reconcile paragraph move together when that command lands.
 const (
-	cfmRegistryRows   = 416
+	cfmRegistryRows   = 424
 	cfmAllowlistNamed = 101
 )
 

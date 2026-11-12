@@ -212,6 +212,14 @@ type InstallationOutputs struct {
 	// stage. The repository roots read the same object from the tfvars'
 	// installation.credentials_service (RepoInstallation).
 	CredentialsService *CredentialsService `json:"credentials_service"`
+	// Intake is the installation's secrets intake (DS2.2, D1931): the Cloud Run
+	// service the dynamic-delivery class writes its per-user and project
+	// containers through, or null while the installation has not opted in.
+	// Nothing reads it yet — the stage that deploys the intake is DS4.1's — and
+	// it is here because DecodeOutputs reads the root's outputs by name (the
+	// field is the contract that test pins), so an output with no field is an
+	// output this binary cannot report.
+	Intake *IntakeService `json:"intake"`
 	// CatalogCheckServiceAccount is the project's catalog check job's account
 	// (D1148), its email, or "" on an installation whose project publishes no
 	// catalog: the value every repository root reads from its own tfvars
@@ -243,6 +251,19 @@ type CredentialsService struct {
 	// first two fields and nothing else, so the object it writes into its own
 	// tfvars is built without it (repoCredentialsService).
 	URL string `json:"url,omitempty"`
+}
+
+// IntakeService is the installation root's `intake` output (DS2.2, D1931): the
+// service's name, its region and its own URL, in the same shape
+// CredentialsService carries. Null means the installation has not opted in, and
+// the URL is what the update stage writes back into var.intake on the apply
+// after the one that created the service — Cloud Run assigns the URL, and
+// nothing inside the resource can read its own uri. A caller cannot mint an ID
+// token for the intake without it.
+type IntakeService struct {
+	Name   string `json:"name"`
+	Region string `json:"region"`
+	URL    string `json:"url,omitempty"`
 }
 
 // CredentialsServiceServes is the switch: whether a repository's runs may go
