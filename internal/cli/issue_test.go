@@ -457,6 +457,47 @@ func TestIssueListShowsResolved(t *testing.T) {
 	})
 }
 
+// TestIssueListShowsClosedAs: the listing's detail column says why an issue
+// that closed without a fix did (D1752) — the reason GitHub gave, recorded when
+// the pass set it aside — beside the `resolved` row's release. It is the third
+// thing issueDetail has to say, and the one a `dismiss` this machine made
+// itself has nothing for: that record carries the status and no reason, so its
+// row leaves the column empty.
+func TestIssueListShowsClosedAs(t *testing.T) {
+	rig := newMineRig(t)
+	closed := rigFiledThenClosed(t, rig, "48241", "sig-list-closed", issues.ClosedNotPlanned)
+
+	out, _ := rig.listing()
+	if !strings.Contains(out, mineRefOf(closed.Number)) {
+		t.Fatalf("the list has no row for the closed issue:\n%s", out)
+	}
+	if !strings.Contains(out, string(issues.StatusDismissed)) || !strings.Contains(out, "closed as "+string(issues.ClosedNotPlanned)) {
+		t.Errorf("the list does not show why the issue closed:\n%s", out)
+	}
+
+	plain := savedIssue("48234", issues.StatusDismissed, false)
+	rig.save(plain)
+	out, _ = rig.listing()
+	row, ok := issueRowOf(out, plain.LocalID)
+	if !ok {
+		t.Fatalf("the list drops a dismissal this machine made:\n%s", out)
+	}
+	if strings.Contains(row, "closed as") {
+		t.Errorf("the list prints a reason for an issue that closed for none:\n%s", row)
+	}
+}
+
+// issueRowOf is the listing's row for one issue, the line its reference starts,
+// so a test asserts about that issue rather than about every row at once.
+func issueRowOf(listing, ref string) (string, bool) {
+	for _, line := range strings.Split(listing, "\n") {
+		if strings.HasPrefix(line, ref) {
+			return line, true
+		}
+	}
+	return "", false
+}
+
 // TestIssueListPrintsOnlyAnUploadedURL: the listing's link column is the same
 // one shape `show` prints (F28) and the same one `mine` checks (F11) — a record
 // is a file on this machine, so a URL of any other shape is a line that reads
