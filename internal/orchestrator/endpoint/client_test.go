@@ -476,10 +476,17 @@ func stallingPort(t *testing.T) string {
 // directory's lock across the handshake -- so an unbounded lookup would hold
 // that lock for as long as the watch ran, and the next daemon's Hold would
 // refuse over a file nobody is serving.
+//
+// The client carries an HTTP client of its own and one with no timeout, which is
+// what makes this the *wrap's* test and not handshake's: a nil HTTP is handed to
+// Probe as nil, and handshake's default client carries handshakeTimeout itself,
+// so a lookup that added no bound of its own would still be answered in time and
+// the case would pass over the defect.
 func TestClientLookupIsBoundedByTheHandshakeTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	c, getenv, dir := clientFor(t)
+	c.HTTP = &http.Client{}
 	writeRegistryFile(t, dir, registryFor(t, endpointID, stallingPort(t)), 0o600)
 
 	start := time.Now()
