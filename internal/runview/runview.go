@@ -241,6 +241,23 @@ type Row struct {
 	TaskPR   int `json:"task_pr,omitempty"`
 	RecordPR int `json:"record_pr,omitempty"`
 	PR       int `json:"pr,omitempty"`
+	// PRState is the state of the pull request this row carries, in the
+	// vocabulary of the owner's 2026-11-12 ruling: `live` (a run is going on
+	// it), `ready` (no run is going and it waits only on a merge), `stalled`
+	// (it had a run, no run is going, and it is not ready). The fourth word,
+	// `orphan` — a pull request no run ever produced or follows — is one no
+	// listing of runs can answer, because such a pull request has no row.
+	//
+	// It is the LISTING's computation and not Join's: whether a run is going
+	// on a pull request is a fact about every run of that pull request, and
+	// Join sees one. `fugaro runs ls` groups the rows it read by the pull
+	// request they carry, takes the newest run of each group and marks every
+	// row of it with the answer (internal/cli's markPRStates), so the field
+	// is empty on a row that carries no pull request and on every document a
+	// listing does not compute it for — `diagnose --json`'s `row` and
+	// `watch --json`'s rows among them — and `omitempty` is what keeps that
+	// absence out of their JSON, as it does for the fields beside it.
+	PRState string `json:"pr_state,omitempty"`
 	// Pushed means the run updated its branch, and PushedHead is the
 	// commit it pushed; see Pushed.
 	Pushed     bool       `json:"pushed"`

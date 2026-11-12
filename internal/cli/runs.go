@@ -264,10 +264,23 @@ func newLsCmd() *cobra.Command {
 			"next page. The id is the run_id --json carries; one the listing does not\n" +
 			"hold is refused rather than answered with an empty page, which reads as no\n" +
 			"more runs. Neither flag goes with --watch, which redraws the whole listing.\n\n" +
-			"--state STATE lists only runs in that state, matched against the status --json\n" +
-			"carries: the `halted (run_cap)` cell is --state halted, and --help lists the\n" +
-			"states the flag takes. A run's state is in its result.json, so this filter\n" +
-			"reads every run it filters -- it narrows the listing, never the reads.\n\n" +
+			"--state STATE lists only the runs in that state, one of two vocabularies.\n" +
+			"The first is the run's own state, matched against the status --json carries:\n" +
+			"the `halted (run_cap)` cell is --state halted. The second is the state of\n" +
+			"the pull request the run went to: live (a run is going on it), ready (no\n" +
+			"run is going and it waits only on a merge) or stalled (it had a run, no run\n" +
+			"is going, and it is not ready). That state is the pull request's and not a\n" +
+			"row's: the listing groups the runs it read by the pull request they carry,\n" +
+			"takes the newest run of each, and keeps the rows of the pull requests in\n" +
+			"the state asked for; --json carries it as `pr_state` on every row that has\n" +
+			"a pull request, and leaves it out of the rows that have none. A run's own\n" +
+			"state is in its result.json, so this filter reads every run it filters --\n" +
+			"it narrows the listing, never the reads.\n\n" +
+			"The fourth state of a pull request, orphan (no run ever produced or follows\n" +
+			"it), is one no listing of runs can name: such a pull request has no run and\n" +
+			"so no row here, and telling one from every other would take a call to the\n" +
+			"forge, which a listing of runs does not make -- --state orphan is refused\n" +
+			"for that reason rather than answered with an empty listing.\n\n" +
 			"--debt lists only the runs filed from a triage deferral: a task whose own spec\n" +
 			"is marked debt, which is work a run's review left behind rather than work\n" +
 			"somebody asked for. Like --state it reads the runs it filters, since the\n" +
@@ -292,7 +305,7 @@ func newLsCmd() *cobra.Command {
 	f.BoolVar(&o.mine, "mine", false, "only runs you requested")
 	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
-	f.StringVar(&o.state, "state", "", "only runs in this state ("+strings.Join(lsStates, ", ")+")")
+	f.StringVar(&o.state, "state", "", "only runs in this state, a run's or its pull request's ("+strings.Join(lsStateWords(), ", ")+")")
 	f.StringVar(&o.groupBy, "group-by", "", "group the listing by one field ("+strings.Join(lsGroupings, ", ")+")")
 	f.BoolVar(&o.debt, "debt", false, "only runs filed from a triage deferral (a task marked debt)")
 	f.IntVar(&o.limit, "limit", 0, "print only the newest N rows (0, the default, is every row of the window; the totals stay the window's)")
@@ -343,8 +356,11 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	if o.watch && (cmd.Flags().Changed("limit") || cmd.Flags().Changed("after")) {
 		return userErr("--watch redraws the whole listing until every run has settled: --limit and --after don't go with it")
 	}
-	if o.state != "" && !slices.Contains(lsStates, o.state) {
-		return userErr("--state %q: use one of %s", o.state, strings.Join(lsStates, ", "))
+	if o.state == prStateOrphan {
+		return userErr("--state orphan: no run produced or follows such a pull request, so no listing of runs holds a row of it -- only a forge can name one")
+	}
+	if o.state != "" && !slices.Contains(lsStateWords(), o.state) {
+		return userErr("--state %q: use one of %s", o.state, strings.Join(lsStateWords(), ", "))
 	}
 	if o.groupBy != "" && !slices.Contains(lsGroupings, o.groupBy) {
 		return userErr("--group-by %q: use one of %s", o.groupBy, strings.Join(lsGroupings, ", "))
@@ -568,9 +584,14 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 		return nil, remote(err)
 	}
 
+	// The state of each pull request the window holds, set before the filters
+	// below pick the page: a state is the pull request's, read from every run
+	// of it the listing read, so it is the same on every row of a page as on
+	// the rows --mine, --batch and --state dropped.
+	markPRStates(rows)
 	rows = slices.DeleteFunc(rows, func(r runview.Row) bool {
 		return (f.mine != "" && r.RequestedBy != f.mine) || (f.batch != "" && r.Batch != f.batch) ||
-			(f.state != "" && string(r.Status) != f.state)
+			(f.state != "" && !rowInState(r, f.state))
 	})
 	// The listing's order, which --after's cursor is defined by: created
 	// descending, then the run reference descending. Two runs minted in the
