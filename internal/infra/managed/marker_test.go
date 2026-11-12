@@ -3982,3 +3982,242 @@ func TestWriteFlagNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 		t.Error("the flag was written with no project named")
 	}
 }
+
+// --- ConvergeMarker: D1543's migration half (T10) ---
+//
+// The step `fugaro update` runs over an installation's creation fact
+// (internal/cli/update_marker_version.go): a fact of the version that carried
+// the image build count is rewritten as the version this build writes, in
+// place, with the amount carried over — and the HARD RULE is that the upgrade
+// is that one command, so this rewrite belongs to the update rather than to a
+// second command the owner is asked to run. The tests below pin both halves of
+// it: the object the step is for, and every state it must NOT touch. The two
+// failures a migration may never make are among the latter — rewriting an
+// object the caller did not understand, and rewriting an object this build's
+// own managed read refuses whole, which would turn a refused marker into an
+// accepted one and open the gate that read keeps closed.
+
+// convergeWorld is the world these tests read and write the fact in: the
+// project's own runs bucket, and the object at the fact's key where seed is not
+// empty.
+func convergeWorld(t *testing.T, seed string) (*storage.Service, *gcpfake.GCS) {
+	t.Helper()
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	if seed != "" {
+		f.Put(testBucket, MarkerObject, []byte(seed))
+	}
+	return s, f
+}
+
+// TestConvergeMarkerRewritesTheBuildsVersionInPlace: the object the step is
+// for — a version-3 fact — becomes the version this build writes, reported as
+// written, and the amount the project chose is carried over rather than
+// re-decided, defaulted or dropped here (the count is the one field that does
+// not survive, which is the whole of D1543). A second call meets the version
+// the first one wrote and is a no-op, which is what makes the step safe to
+// reach on every update an installation ever runs.
+func TestConvergeMarkerRewritesTheBuildsVersionInPlace(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct{ seed, want string }{
+		"the amount and count the flag wrote": {markerBuildsJSON, markerNoBuildsJSON},
+		"another amount, another count": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":1000,"currency":"JPY"},"max_image_builds":250}`,
+			want: `{"version":4,"gcp_project":"proj-1234","budget":{"amount":1000,"currency":"JPY"}}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := convergeWorld(t, tc.seed)
+			wrote, err := ConvergeMarker(ctx, s, testBucket, testProject, testProjectNumber)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !wrote {
+				t.Error("the step reported that it wrote nothing, and this is the object it is for")
+			}
+			if b, ok := readMarker(t, s, testBucket); !ok || string(b) != tc.want {
+				t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, tc.want)
+			}
+			wrote, err = ConvergeMarker(ctx, s, testBucket, testProject, testProjectNumber)
+			if err != nil || wrote {
+				t.Errorf("the call over the converged fact = (%v, %v), want (false, nil)", wrote, err)
+			}
+			if b, _ := readMarker(t, s, testBucket); string(b) != tc.want {
+				t.Errorf("the second call changed the object to %q", b)
+			}
+		})
+	}
+}
+
+// TestConvergeMarkerLeavesTheStatesItHasNothingToDoAbout: the states that are
+// answered wrote == false with nothing written and nothing refused. A rewrite
+// of any of them would be a write with no content — and for the version-1 fact,
+// which records no amount, there is nothing a version-4 write could carry, so
+// `fugaro managed flag` is what replaces that one, when its owner runs it.
+func TestConvergeMarkerLeavesTheStatesItHasNothingToDoAbout(t *testing.T) {
+	ctx := context.Background()
+	for name, seed := range map[string]string{
+		"nothing there": "",
+		"the creation fact that records no amount":         markerJSON,
+		"the version that records the amount and no count": markerBudgetJSON,
+		"the version this build writes":                    markerNoBuildsJSON,
+		// A version this build does not know is left where it is, and that is
+		// the safe end of "a fact of any version but 3": the managed read
+		// refuses such an object whole (readFactObject), so its installation
+		// is not managed and keeps every confirmation it ever gave, and a
+		// rewrite conditioned on an object the caller did not fully
+		// understand is exactly the write this package must not make.
+		"a version this build does not know": `{"version":5,"gcp_project":"proj-1234"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := convergeWorld(t, seed)
+			wrote, err := ConvergeMarker(ctx, s, testBucket, testProject, testProjectNumber)
+			if err != nil {
+				t.Fatalf("a state this step has no content for was refused: %v", err)
+			}
+			if wrote {
+				t.Error("the step wrote over an object it had nothing to write about")
+			}
+			b, ok := readMarker(t, s, testBucket)
+			switch {
+			case seed == "" && ok:
+				t.Errorf("the step wrote an object where there was none: %q", b)
+			case seed != "" && (!ok || string(b) != seed):
+				t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, seed)
+			}
+		})
+	}
+}
+
+// TestConvergeMarkerRefusesWhatItMayNotRewrite: every state the step refuses
+// rather than rewrite, each leaving the object byte for byte where it was. The
+// three version-3 rows are the ones that matter most — an object whose own
+// figures this build refuses is one the managed read refuses whole, so
+// converging it as a valid version-4 fact would open a gate the read keeps
+// closed on that installation — and the amount and the count are two separate
+// refusals, so a rule dropped for one of them leaves the other's row red.
+//
+// The refusal is asserted to be ErrRefused and not merely an error: a row whose
+// refusal were deleted would reach the write, and the write's own error (or a
+// converged object) is not this package's refusal.
+func TestConvergeMarkerRefusesWhatItMayNotRewrite(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		seed       string
+		unreadable bool
+		want       string
+	}{
+		"an object the caller may not read": {
+			seed:       markerBuildsJSON,
+			unreadable: true,
+			want:       "cannot be read",
+		},
+		"an object that is not a marker": {
+			seed: "this is not the marker",
+			want: "not a marker for",
+		},
+		"an object carrying a key this build does not write": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":1,"image_builds":2}`,
+			want: "not a marker for",
+		},
+		"a fact about another project": {
+			seed: `{"version":3,"gcp_project":"proj-9999","budget":{"amount":7,"currency":"USD"},"max_image_builds":1}`,
+			want: "names project proj-9999, not proj-1234",
+		},
+		"a version-3 fact that records no amount": {
+			seed: `{"version":3,"gcp_project":"proj-1234","max_image_builds":1}`,
+			want: "records no budget amount",
+		},
+		"a version-3 fact whose amount this build refuses": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":0,"currency":"USD"},"max_image_builds":1}`,
+			want: "records no budget amount a managed creation could have chosen",
+		},
+		// The absent key decodes to the same zero a written one would, and both
+		// are refused: a version-3 fact records a count, and one that records
+		// none is not the object this build wrote.
+		"a version-3 fact that records no count": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"}}`,
+			want: "records no image build bound this build accepts",
+		},
+		"a version-3 fact whose count this build refuses": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":1001}`,
+			want: "records no image build bound this build accepts",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := convergeWorld(t, tc.seed)
+			if tc.unreadable {
+				f.FailObjectGetsAfter(testBucket, MarkerObject, 0)
+			}
+			wrote, err := ConvergeMarker(ctx, s, testBucket, testProject, testProjectNumber)
+			if err == nil {
+				t.Fatal("the step rewrote an object it may not rewrite")
+			}
+			if !errors.Is(err, ErrRefused) {
+				t.Errorf("the refusal is not this package's own (ErrRefused): %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not say %q: %v", tc.want, err)
+			}
+			if wrote {
+				t.Error("a refused call reported a write")
+			}
+			// The knob above refuses every later read of that object as well,
+			// so it is turned off before what is there is read back.
+			f.FailObjectGetsAfter(testBucket, MarkerObject, -1)
+			if b, ok := readMarker(t, s, testBucket); !ok || string(b) != tc.seed {
+				t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, tc.seed)
+			}
+		})
+	}
+}
+
+// convergeRacer is a storage transport that writes another fact to the same key
+// just before the caller's own write of it goes out: the writer that got there
+// first — the owner's own flag, or another update — made deterministic instead
+// of raced. Every other call is delegated to the real transport, so the read
+// the caller conditions on is the fake's own answer.
+type convergeRacer struct {
+	rt    http.RoundTripper
+	f     *gcpfake.GCS
+	other []byte
+	done  bool
+}
+
+func (r *convergeRacer) RoundTrip(req *http.Request) (*http.Response, error) {
+	if !r.done && req.Method == http.MethodPost && strings.HasPrefix(req.URL.Path, "/upload/") {
+		r.done = true
+		r.f.Put(testBucket, MarkerObject, r.other)
+	}
+	return r.rt.RoundTrip(req)
+}
+
+// TestConvergeMarkerIsConditionedOnTheGenerationItRead: the write is
+// conditioned on the generation the step read (insertMarker), so a writer that
+// got there first is never clobbered. What that writer left is what is there
+// afterwards — the step does not converge on top of it — and the call answers
+// ErrAlreadyMarked rather than a success over an object it never read.
+func TestConvergeMarkerIsConditionedOnTheGenerationItRead(t *testing.T) {
+	ctx := context.Background()
+	_, f := convergeWorld(t, markerBuildsJSON)
+	other := []byte(`{"version":4,"gcp_project":"proj-1234","budget":{"amount":9,"currency":"EUR"}}`)
+	racer := &convergeRacer{rt: http.DefaultTransport, f: f, other: other}
+	s, err := storage.NewService(ctx, option.WithoutAuthentication(),
+		option.WithEndpoint(f.URL+"/storage/v1/"), option.WithHTTPClient(&http.Client{Transport: racer}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrote, err := ConvergeMarker(ctx, s, testBucket, testProject, testProjectNumber)
+	if !racer.done {
+		t.Fatal("the race never happened: no write of the fact went out")
+	}
+	if err == nil || !errors.Is(err, ErrAlreadyMarked) {
+		t.Fatalf("the step over a fact another writer replaced = %v, want ErrAlreadyMarked", err)
+	}
+	if wrote {
+		t.Error("the call reported a write the precondition refused")
+	}
+	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != string(other) {
+		t.Errorf("gs://%s/%s = %q (present %v), want the other writer's fact %q", testBucket, MarkerObject, b, ok, other)
+	}
+}
