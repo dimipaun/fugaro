@@ -468,9 +468,10 @@ func (c *cycle) triaged(ctx context.Context, target TriageTarget, in TriageInput
 	)
 	switch out.Kind {
 	case MergeAsIs:
-		// The one outcome that lands work without a person, and the only
-		// merge this package ever asks for: the head is the one the rule
-		// judged, and the provider's own call refuses a head that moved.
+		// The one outcome that asks for a merge without a person, and the
+		// only merge this package ever asks for: the head is the one the
+		// rule judged, and the actor's own implementation is what refuses a
+		// head that moved or a diff nothing corroborates.
 		err := c.tick.Triage.Act.Merge(ctx, target, *in.PR)
 		code := mergeRefusalCode(err)
 		switch {
@@ -533,18 +534,35 @@ func (c *cycle) triaged(ctx context.Context, target TriageTarget, in TriageInput
 	return nil
 }
 
-// mergeRefusalCode is the closed code of a merge the provider refused, or ""
+// ErrTriageUncorroborated is how a triage actor refuses a merge the rule
+// judged: the paths the merge gate classified are the run's own account of its
+// diff, and nothing the actor can read corroborates them at the judged head.
+//
+// The job writes that record from inside the container it shares with the
+// agent (design §6.1), so a run can describe its diff as one of audit-safe
+// paths while carrying a sensitive one, and a merge taken on it would land
+// work nobody was asked about. The read that lifts this refusal is the host's
+// changed files at the head under judgement; until a provider answers one, no
+// merge lands unattended, and the outcome becomes a person's question.
+var ErrTriageUncorroborated = errors.New("the changed paths are not corroborated at the judged head")
+
+// codeUncorroborated is that refusal's closed code in the log and the question.
+const codeUncorroborated = "uncorroborated"
+
+// mergeRefusalCode is the closed code of a merge the actor refused, or ""
 // when the error is not a refusal at all. A refusal is a person's: the head
 // moved under the call, the provider's merge cannot be bound to an expected
-// head at all, it holds no merge credential, or the pull request is no longer
-// open. Everything else is an outage — a host that did not answer — which the
-// next cycle retries.
+// head at all, it holds no merge credential, the pull request is no longer
+// open, or the diff under judgement is nobody's but the run's own word.
+// Everything else is an outage — a host that did not answer — which the next
+// cycle retries.
 //
 // The codes are this file's own vocabulary and never the provider's message:
 // O3's line carries closed codes and no untrusted text, and two providers
 // spell one refusal two ways.
 func mergeRefusalCode(err error) string {
 	for code, sentinel := range map[string]error{
+		codeUncorroborated:      ErrTriageUncorroborated,
 		"head_moved":            gitprov.ErrHeadMoved,
 		"no_head_precondition":  gitprov.ErrMergeNoHeadPrecondition,
 		"no_merge_mint":         gitprov.ErrNoMergeMint,
@@ -646,10 +664,14 @@ func escalateQuestion(target TriageTarget, out TriageOutcome) string {
 	return "The triage escalated run " + target.RunID + " (" + triageCodes(out) + "). The run was stopped; read the finding and decide what happens to it."
 }
 
-// mergeRefusedQuestion is what a person is asked about a merge the host
+// mergeRefusedQuestion is what a person is asked about a merge that was
 // refused: the refusal is theirs to act on — a moved head is a review, an
-// unbound merge and a missing credential are configuration — and the run keeps
-// its own record either way.
+// unbound merge and a missing credential are configuration, an uncorroborated
+// diff is the one the daemon will not land by itself — and the run keeps its
+// own record either way.
 func mergeRefusedQuestion(target TriageTarget, code string) string {
+	if code == codeUncorroborated {
+		return "The triage will not land the pull request of run " + target.RunID + " by itself: the changed paths it judged are the run's own account of its diff, and no host read of the judged head corroborates them (" + code + "). Read the diff and land it yourself, or close it."
+	}
 	return "The triage could not land the pull request of run " + target.RunID + " (" + code + "). Decide what happens to it."
 }

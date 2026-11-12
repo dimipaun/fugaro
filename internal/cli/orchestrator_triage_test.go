@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -27,7 +28,6 @@ import (
 const (
 	triageRunID    = "20261108-090000-abcd"
 	triageHeadSHA  = "0b0c1d2e3f405162738495a6b7c8d9e0f1234567"
-	triageMovedSHA = "1a2b3c4d5e6f708192a3b4c5d6e7f80912345678"
 	triagePRNumber = 7
 	// triageAge is how long the attempt has been going: past the ladder's
 	// ceiling for every mode (12h for pro, the default), which is what makes
@@ -148,10 +148,15 @@ func triageRecord() *runstore.Record {
 // run no seam here can reach at all.
 func (f *triageFixture) writeTask(t *testing.T) {
 	t.Helper()
-	doc := `{"version":1,"run_id":"` + triageRunID + `","repo":"acme/app"}`
-	if err := f.store(t).PutFile(context.Background(), "task.json", []byte(doc), "application/json"); err != nil {
-		t.Fatalf("writing the run's task: %v", err)
-	}
+	f.writeTaskRepo(t, "acme/app")
+}
+
+// writeTaskRepo is that task for a repository a test names: the launcher writes
+// this file, so a test about which repository a run is asked about writes it.
+func (f *triageFixture) writeTaskRepo(t *testing.T, repo string) {
+	t.Helper()
+	doc := `{"version":1,"run_id":"` + triageRunID + `","repo":"` + repo + `"}`
+	f.putFile(t, "task.json", doc)
 }
 
 // writeRecord puts one record in the run's own store.
@@ -178,9 +183,15 @@ func (f *triageFixture) store(t *testing.T) *runstore.Store {
 // findings writes the runner's findings artifact into the run's own prefix.
 func (f *triageFixture) findings(t *testing.T, findings ...string) {
 	t.Helper()
-	doc := `{"version":1,"run":"` + triageRunID + `","findings":[` + strings.Join(findings, ",") + `]}`
-	if err := f.store(t).PutFile(context.Background(), triageFindingsObject, []byte(doc), "application/json"); err != nil {
-		t.Fatalf("writing the run's findings artifact: %v", err)
+	f.putFile(t, triageFindingsObject, `{"version":1,"run":"`+triageRunID+`","findings":[`+strings.Join(findings, ",")+`]}`)
+}
+
+// putFile writes one object into the run's own prefix, verbatim: the body a
+// test hands over is the body a reader gets.
+func (f *triageFixture) putFile(t *testing.T, name, body string) {
+	t.Helper()
+	if err := f.store(t).PutFile(context.Background(), name, []byte(body), "application/json"); err != nil {
+		t.Fatalf("writing %s into the run's storage: %v", name, err)
 	}
 }
 
@@ -222,9 +233,15 @@ func (f *triageFixture) line(t *testing.T) orchestrator.Entry {
 // merges is every merge the host was asked for.
 func (f *triageFixture) merges(t *testing.T) []fake.Call {
 	t.Helper()
+	return f.calls(t, "Merge")
+}
+
+// calls is every call the host was asked for under one operation.
+func (f *triageFixture) calls(t *testing.T, op string) []fake.Call {
+	t.Helper()
 	var out []fake.Call
 	for _, c := range f.prov.Snapshot().Calls {
-		if c.Op == "Merge" {
+		if c.Op == op {
 			out = append(out, c)
 		}
 	}
@@ -265,26 +282,30 @@ func (f *triageFixture) filed(t *testing.T) []orchestrator.WorkItem {
 	return out
 }
 
-// input is the triage read for the fixture's run, the way the daemon makes it
-// and the way `fugaro runs watch` will (O14c).
+// input is the triage read for the fixture's run, made by the reader seam the
+// tick carries — the daemon's own reading, and the one `fugaro runs watch` will
+// make (O14c).
 func (f *triageFixture) input(t *testing.T) orchestrator.TriageInput {
 	t.Helper()
-	ctx := context.Background()
-	rec, err := f.store(t).ReadRecord(ctx)
+	in, err := f.triage.TriageInput(context.Background(), f.target(t))
 	if err != nil {
-		t.Fatal(err)
-	}
-	// The host is the one this daemon would open for the repository, which is
-	// what makes the reading below the daemon's own and not a second one.
-	prov, err := f.triage.provider(ctx, "acme/app")
-	if err != nil {
-		prov = nil
-	}
-	in, err := GatherTriageInput(ctx, f.store(t), prov, rec)
-	if err != nil {
-		t.Fatalf("gathering the triage input: %v", err)
+		t.Fatalf("the reader seam failed: %v", err)
 	}
 	return in
+}
+
+// target is the run's item as the tick hands it to the seams: the one item of
+// the seeded node, under the run the node records it for.
+func (f *triageFixture) target(t *testing.T) orchestrator.TriageTarget {
+	t.Helper()
+	w, ok := f.items(t)["wi-1"]
+	if !ok {
+		t.Fatalf("the node carries no item for the run: %+v", f.state(t).WorkItems)
+	}
+	return orchestrator.TriageTarget{
+		Item: w, RunID: triageRunID, Age: triageAge,
+		Threshold: orchestrator.TriageAfter(rigor.Default),
+	}
 }
 
 // TestTriageReadsCIThroughTheProvider: the CI the rule judges is the host's
@@ -308,19 +329,19 @@ func TestTriageReadsCIThroughTheProvider(t *testing.T) {
 		t.Fatalf("the read reports the findings as %q, want readable", in.Findings.Read)
 	}
 
+	// The green answer is the rule's merge gate, and the daemon still lands
+	// nothing itself: what a green green run gets is a person's question (see
+	// TestTriageRefusesToMergeUncorroborated), not a merge.
 	f.step(t)
-	if got := f.merges(t); len(got) != 1 {
-		t.Fatalf("a green commit the host reported was merged %d time(s), want once: %+v", len(got), got)
+	if got := f.merges(t); len(got) != 0 {
+		t.Fatalf("the daemon merged a green commit: %+v", got)
 	}
-	if got := f.merges(t)[0]; got.PR != triagePRNumber || got.Detail != "sha="+triageHeadSHA {
-		t.Errorf("the merge is %+v, want pull request %d at the head the rule read", got, triagePRNumber)
-	}
-	if got := f.prov.Snapshot().PRs[0].State; got != gitprov.PRMerged {
-		t.Errorf("the host carries the pull request as %q after a green merge, want merged", got)
+	if got := f.line(t).Text; !strings.Contains(got, string(orchestrator.MergeAsIs)) {
+		t.Errorf("the line is %q, want the outcome a green routine run reaches", got)
 	}
 
 	// The same run, judged where the host reports a check that failed and where
-	// it reports none at all: neither is green, so neither merges.
+	// it reports none at all: neither is green, so neither reaches the gate.
 	for _, tc := range []struct {
 		name   string
 		checks []gitprov.CheckRun
@@ -342,8 +363,15 @@ func TestTriageReadsCIThroughTheProvider(t *testing.T) {
 			if g.cancelRequested(t) {
 				t.Errorf("%s stopped the run, and a CI read is not a reason to stop one", tc.name)
 			}
-			if e := g.line(t); e.ID != orchestrator.TriageAuditID(triageRunID) {
+			if got := g.state(t).Decisions; len(got) != 0 {
+				t.Errorf("%s raised a question, and it never reached the merge gate: %+v", tc.name, got)
+			}
+			e := g.line(t)
+			if e.ID != orchestrator.TriageAuditID(triageRunID) {
 				t.Errorf("%s left the line %+v", tc.name, e)
+			}
+			if !strings.Contains(e.Text, string(orchestrator.RecommendOnly)) {
+				t.Errorf("the line for %s is %q, want the outcome a CI read that is not green reaches", tc.name, e.Text)
 			}
 		})
 	}
@@ -421,59 +449,126 @@ func TestTriageCancelsThroughTheCancelPath(t *testing.T) {
 	}
 }
 
-// TestTriageMergesThroughTheProvider: a merge is the host's own call, made
-// once, at the head the rule judged — and a head that moved under it is a
-// refusal a person answers, with nothing recorded as landed.
-func TestTriageMergesThroughTheProvider(t *testing.T) {
-	t.Run("the head the rule judged lands", func(t *testing.T) {
-		f := newTriageFixture(t, green())
-		f.findings(t)
-		f.step(t)
-		if got := f.merges(t); len(got) != 1 || got[0].Detail != "sha="+triageHeadSHA {
-			t.Fatalf("the host was asked to merge %+v, want one merge at %s", got, triageHeadSHA)
-		}
-		if got := f.prov.Snapshot().PRs[0].State; got != gitprov.PRMerged {
-			t.Errorf("the pull request is %q, want merged", got)
-		}
-		if f.prov.Snapshot().PRs[0].Draft {
-			t.Error("the pull request was marked ready, and the rule only ever merges a ready one")
-		}
-	})
+// TestTriageRefusesToMergeUncorroborated: the merge gate's evidence is the
+// run's own account of its diff, written by the job from inside the container
+// it shares with the agent, and nothing this daemon can read corroborates it at
+// the judged head — so the merge stays a person's: no host call at all, nothing
+// marked ready, nothing recorded as landed, and the run's own question raised.
+func TestTriageRefusesToMergeUncorroborated(t *testing.T) {
+	f := newTriageFixture(t, green())
+	f.findings(t)
 
-	t.Run("a head that moved is refused", func(t *testing.T) {
-		f := newTriageFixture(t, green())
-		f.findings(t)
-		f.triage.open = gitprov.Static(headMoves{Provider: f.prov, prov: f.prov, to: triageMovedSHA})
-
-		f.step(t)
-		if got := f.prov.Snapshot().PRs[0].State; got != gitprov.PROpen {
-			t.Errorf("a moved head left the pull request %q, want it still open", got)
+	f.step(t)
+	if got := f.merges(t); len(got) != 0 {
+		t.Fatalf("the daemon asked the host to merge %+v, and the paths the rule judged are the run's own account of its diff", got)
+	}
+	if got := f.prov.Snapshot().PRs[0]; got.State != gitprov.PROpen || got.Draft {
+		t.Errorf("the pull request is %q (draft %v), want it left exactly as the run opened it", got.State, got.Draft)
+	}
+	if got := f.calls(t, "MarkReady"); len(got) != 0 {
+		t.Errorf("the daemon marked a pull request ready: %+v", got)
+	}
+	if len(f.filed(t)) != 0 {
+		t.Errorf("a merge that did not land filed work: %+v", f.filed(t))
+	}
+	text := f.line(t).Text
+	for _, want := range []string{string(orchestrator.MergeAsIs), string(orchestrator.ReasonMergeRefused), "uncorroborated"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the line %q does not carry %s", text, want)
 		}
-		if len(f.filed(t)) != 0 {
-			t.Errorf("a refused merge filed work: %+v", f.filed(t))
-		}
-		if got := f.line(t).Text; !strings.Contains(got, string(orchestrator.ReasonMergeRefused)) {
-			t.Errorf("the audit line is %q, and a refused merge is a person's to read", got)
-		}
-		d, ok := f.state(t).Decision(triageRunID + "-" + "triage")
-		if !ok || d.WaitingOn != orchestrator.OnPerson || d.Resolved() {
-			t.Fatalf("a refused merge raised %+v, want an open question waiting on a person", d)
-		}
-	})
+	}
+	if strings.Contains(text, "(merged)") {
+		t.Errorf("the line records a merge that never happened: %q", text)
+	}
+	d, ok := f.state(t).Decision(triageRunID + "-" + "triage")
+	if !ok || d.WaitingOn != orchestrator.OnPerson || d.Resolved() {
+		t.Fatalf("the refused merge raised %+v, want an open question waiting on a person", d)
+	}
+	if !strings.Contains(d.Question, "corroborat") {
+		t.Errorf("the question does not say why the daemon will not land it: %q", d.Question)
+	}
 }
 
-// headMoves is the host as a test moves it: the pull request is read at the
-// head the run pushed, and the branch moves before the merge lands — the race
-// the provider's own second read is there for.
-type headMoves struct {
-	gitprov.Provider
-	prov *fake.Provider
-	to   string
+// TestTriageFailsClosedOnAnUnattributableFindingsFile: a findings file that is
+// not this run's — another run's id on it, a version this release was not
+// taught, or a body that is not the artifact at all — is nobody's evidence
+// about this run, so the triage reads its own unreadable input: the run is
+// recommended on, and nothing is merged, stopped or filed.
+func TestTriageFailsClosedOnAnUnattributableFindingsFile(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{name: "another run's findings", body: `{"version":1,"run":"20261101-090000-ffff","findings":[{"severity":"low","path":"docs/design/x.md","key":"k1"}]}`},
+		{name: "a version this release was not taught", body: `{"version":2,"run":"` + triageRunID + `","findings":[]}`},
+		{name: "a body that is not the artifact", body: `{"findings": `},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTriageFixture(t, green())
+			f.putFile(t, triageFindingsObject, tc.body)
+			// A run the rule would restart if it could read this file: it
+			// pushed nothing, so the only thing between it and a cancel is the
+			// finding nobody can attribute.
+			rec := triageRecord()
+			rec.Status = runstore.StatusFailed
+			rec.Stage = "code"
+			rec.PushedHead = ""
+			rec.ChangedFiles = &runstore.ChangedFiles{Paths: []string{}, Total: 0}
+			f.putRecord(t, rec)
+
+			if in := f.input(t); in.Findings.Read != orchestrator.FindingsUnattributable {
+				t.Fatalf("the read reports the findings as %q, want unattributable", in.Findings.Read)
+			}
+			f.step(t)
+			if f.cancelRequested(t) {
+				t.Error("a run whose findings nobody could attribute was stopped")
+			}
+			if len(f.filed(t)) != 0 {
+				t.Errorf("%s filed work: %+v", tc.name, f.filed(t))
+			}
+			if got := f.merges(t); len(got) != 0 {
+				t.Errorf("%s was merged: %+v", tc.name, got)
+			}
+			if got := f.state(t).Decisions; len(got) != 0 {
+				t.Errorf("%s raised a question: %+v", tc.name, got)
+			}
+			if got := f.line(t).Text; !strings.Contains(got, string(orchestrator.ReasonFindingsUnattributable)) {
+				t.Errorf("the line is %q, and the reason it was recommended on is %s", got, orchestrator.ReasonFindingsUnattributable)
+			}
+		})
+	}
 }
 
-func (h headMoves) Merge(ctx context.Context, number int, expectedHeadSHA string) error {
-	h.prov.State.PRs[0].Head = h.to
-	return h.Provider.Merge(ctx, number, expectedHeadSHA)
+// TestTriageAsksTheHostAboutTheRunsOwnRepository: the repository the forge is
+// asked about comes from the slug the run was found under and this machine's
+// own resolution of it — the launcher's task and the daemon's config — and
+// never from the record the job wrote, so a job cannot point the read at a
+// repository the run never touched (F24, F30).
+func TestTriageAsksTheHostAboutTheRunsOwnRepository(t *testing.T) {
+	for _, tc := range []struct{ name, taskRepo, recordRepo string }{
+		{name: "the task its launcher wrote", taskRepo: "acme/app", recordRepo: "acme/app"},
+		{name: "a record naming another repository", taskRepo: "acme/app", recordRepo: "attacker/other"},
+		{name: "a task naming another repository", taskRepo: "attacker/other", recordRepo: "attacker/other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTriageFixture(t, green())
+			f.writeTaskRepo(t, tc.taskRepo)
+			rec := triageRecord()
+			rec.Repo = tc.recordRepo
+			f.putRecord(t, rec)
+			f.findings(t)
+
+			var asked []string
+			f.triage.open = func(_ context.Context, _, repo string) (gitprov.Provider, []string, error) {
+				asked = append(asked, repo)
+				return f.prov, nil, nil
+			}
+			in := f.input(t)
+			if len(asked) != 1 || asked[0] != "acme/app" {
+				t.Fatalf("the seam asked a host about %v, want the run's own repository", asked)
+			}
+			if in.PR == nil || in.PR.Number != triagePRNumber || in.CI != gitprov.CIGreen {
+				t.Errorf("the read is %+v with CI %s, want the pull request the run's own host answers about", in.PR, in.CI)
+			}
+		})
+	}
 }
 
 // TestTriageRestartFilesSmallerItemsWaitingForApproval: a restarted run stops,

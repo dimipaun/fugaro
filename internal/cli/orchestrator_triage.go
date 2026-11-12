@@ -2,19 +2,19 @@
 // audit log (O14b).
 //
 // The rule (O14a) is pure code that decides and does nothing. This file is the
-// other half: it gathers the rule's three readings from where they live, and
-// carries out the two things an outcome can ask for that are not a state write
-// — landing the pull request it judged, and stopping the run it judged — plus
-// the one line of audit every outcome leaves.
+// other half: it gathers the rule's three readings from where they live, it
+// stops the run an outcome judged, and it leaves the one line of audit every
+// outcome carries. It does not land a merge: that read is not in reach here,
+// and Merge says why at length.
 //
 // Two properties matter more than the plumbing. The findings are read from the
 // run's own storage, the runner's finalize artifact under the run's prefix, and
 // never from a path in the daemon's working directory: the run writes its own
 // checkout, so a findings file found there would be the run's account of itself
 // rather than evidence about it. And every reading that cannot be made is left
-// as the rule's own unreadable input rather than turned into a reason to act:
-// the merge is the one outcome that lands work without a person, and a triage
-// that cannot see does not merge, and does not cancel the run it cannot judge.
+// as the rule's own unreadable input rather than turned into a reason to act: a
+// triage that cannot see does not merge, and does not cancel the run it cannot
+// judge.
 package cli
 
 import (
@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // triageFindingsObject is the runner's finalize artifact the rule's third
@@ -143,7 +144,7 @@ func (t *orchestratorTriage) seams() orchestrator.TriageSeams {
 // record nobody can read, which the rule turns into recommend-only rather than
 // an error that ends the cycle.
 func (t *orchestratorTriage) TriageInput(ctx context.Context, target orchestrator.TriageTarget) (orchestrator.TriageInput, error) {
-	store, err := t.storeOf(ctx, target.RunID)
+	store, slug, err := t.storeOf(ctx, target.RunID)
 	switch {
 	case errors.Is(err, runstore.ErrNotFound):
 		return orchestrator.TriageInput{}, nil
@@ -157,31 +158,66 @@ func (t *orchestratorTriage) TriageInput(ctx context.Context, target orchestrato
 	case err != nil:
 		return orchestrator.TriageInput{}, err
 	}
-	prov, err := t.provider(ctx, repoOf(rec, target))
+	repo, err := t.repoFor(ctx, store, slug, target)
 	if err != nil {
-		// No provider is a host this cycle did not reach, and the rule reads
-		// that as the merge gate's refusal rather than as evidence about the
-		// run: nothing is merged, and nothing is cancelled on it either.
+		// A run nobody can tie to a repository is one this cycle has no host
+		// for, and the rule reads that as the merge gate's refusal rather
+		// than as evidence about the run: nothing is merged, and nothing is
+		// cancelled on it either.
+		t.warnOnce(slug, err)
+		return GatherTriageInput(ctx, store, nil, rec)
+	}
+	prov, err := t.provider(ctx, repo)
+	if err != nil {
 		return GatherTriageInput(ctx, store, nil, rec)
 	}
 	return GatherTriageInput(ctx, store, prov, rec)
 }
 
-// Merge lands the pull request the rule judged (TriageActor), at the head the
-// rule read and at no other.
+// repoFor is the repository the run was for, derived once and from the side
+// this daemon can check: the slug the run was found under, resolved the way
+// every other reader resolves one (followUpsRepo) — the run's launcher-written
+// task.json, accepted only while this machine's own resolution of it gives back
+// this slug, and otherwise this machine's own config. The record's repo field
+// is never read: the job writes it, and a job that could name another
+// repository would have this seam ask a forge about a repository the run never
+// touched (F24, F30) — which is the forge the merge judgement would then rest
+// on.
 //
-// The provider's own call carries the expected head (E8), so a branch that
-// moved between the read and this call is refused by the host rather than
-// merged at whatever head it now has, and no admin or bypass flag is sent. The
-// daemon marks nothing ready here: the rule only ever says MergeAsIs about a
-// pull request it read as open and not a draft, so a draft pull request is
-// never this call's.
-func (t *orchestratorTriage) Merge(ctx context.Context, target orchestrator.TriageTarget, pr gitprov.PRInfo) error {
-	prov, err := t.provider(ctx, repoOf(nil, target))
-	if err != nil {
-		return err
+// The item's repo stands in when the task names none: the daemon wrote the item
+// itself, and followUpsRepo checks it against the slug like any other candidate.
+func (t *orchestratorTriage) repoFor(ctx context.Context, store *runstore.Store, slug string, target orchestrator.TriageTarget) (string, error) {
+	spec, err := store.ReadTask(ctx)
+	if err != nil || spec == nil {
+		spec = &task.Spec{}
 	}
-	return prov.Merge(ctx, pr.Number, pr.HeadSHA)
+	if spec.Repo == "" {
+		spec.Repo = target.Item.Repo
+	}
+	return followUpsRepo(ctx, t.env, slug, target.RunID, spec)
+}
+
+// Merge is the merge the rule judged (TriageActor), and it refuses — always,
+// under the closed code `uncorroborated`.
+//
+// The rule's merge gate classifies the changed paths in the run's own record,
+// and that record is written by the job from inside the container it shares
+// with the agent (design §6.1): the paths are the run's account of its diff and
+// not evidence about it. A run that touched internal/creds/** and wrote
+// "docs/" into its record would otherwise be merged with nobody asked, because
+// only docs/ and website/ are routine. D1245's premise — a diff cannot be
+// described away — is not enforced by a set the run wrote.
+//
+// Nothing in the tree corroborates that set at the judged head: gitprov
+// answers a pull request, its head, its checks and a tree at a ref, and no read
+// of a pull request's changed files, and this task may not add one to that
+// interface. So the merge stays a person's: no host call is made here at all,
+// nothing is marked ready, and the pull request is left exactly as the run
+// opened it. The tick reads this as the rule's own refusal, records it under
+// the closed code and raises the run's question; the corroborating read the
+// plan names for this slice is what removes this refusal.
+func (t *orchestratorTriage) Merge(context.Context, orchestrator.TriageTarget, gitprov.PRInfo) error {
+	return orchestrator.ErrTriageUncorroborated
 }
 
 // Cancel stops the run the rule judged (TriageActor), through the run's own
@@ -196,7 +232,7 @@ func (t *orchestratorTriage) Merge(ctx context.Context, target orchestrator.Tria
 // request that says what the run did, which is the one thing this path exists
 // to avoid.
 func (t *orchestratorTriage) Cancel(ctx context.Context, target orchestrator.TriageTarget) error {
-	store, err := t.storeOf(ctx, target.RunID)
+	store, _, err := t.storeOf(ctx, target.RunID)
 	if err != nil {
 		return err
 	}
@@ -276,22 +312,15 @@ func (t *orchestratorTriage) warnOnce(repo string, err error) {
 		safetext.Field(t.id), safetext.Field(repo), safetext.OneLine(err.Error()))
 }
 
-// storeOf is the run's own storage, found by the run id alone.
-func (t *orchestratorTriage) storeOf(ctx context.Context, runID string) (*runstore.Store, error) {
+// storeOf is the run's own storage, found by the run id alone, and the slug it
+// was found under — the one thing in this file's reach that ties a run to a
+// repository the run cannot name for itself.
+func (t *orchestratorTriage) storeOf(ctx context.Context, runID string) (*runstore.Store, string, error) {
 	slug, run, err := runstore.Locate(ctx, t.bucket, runID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return runstore.Open(t.bucket, slug, run), nil
-}
-
-// repoOf is the repository a run was for: the record's own, which is what the
-// host and the storage agree on, and the item's only when there is no record.
-func repoOf(rec *runstore.Record, target orchestrator.TriageTarget) string {
-	if rec != nil && rec.Repo != "" {
-		return rec.Repo
-	}
-	return target.Item.Repo
+	return runstore.Open(t.bucket, slug, run), slug, nil
 }
 
 // GatherTriageInput is the one reading of the rule's input: the run's record as

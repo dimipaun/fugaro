@@ -3,6 +3,7 @@ package orchestrator_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // The reconcile tick's tests (O7).
@@ -621,6 +623,10 @@ type triageStub struct {
 	triaged   map[string]bool
 	readErr   error
 	logErr    error
+	// mergeErr is what the actor's merge answers with: nil lands the merge, a
+	// sentinel is the refusal a host or a seam gives, anything else is an
+	// outage.
+	mergeErr error
 }
 
 func (s *triageStub) TriageInput(_ context.Context, target orchestrator.TriageTarget) (orchestrator.TriageInput, error) {
@@ -633,7 +639,7 @@ func (s *triageStub) TriageInput(_ context.Context, target orchestrator.TriageTa
 
 func (s *triageStub) Merge(_ context.Context, target orchestrator.TriageTarget, _ gitprov.PRInfo) error {
 	s.merged = append(s.merged, target)
-	return nil
+	return s.mergeErr
 }
 
 func (s *triageStub) Cancel(_ context.Context, target orchestrator.TriageTarget) error {
@@ -728,5 +734,125 @@ func TestTickTriagesNothingWithoutSeams(t *testing.T) {
 	}
 	if got := h.state(); len(got.Decisions) != 0 || len(got.WorkItems) != 1 {
 		t.Errorf("a tick with no triage seams wrote the state: %+v", got)
+	}
+}
+
+// triageMergeable is the input the rule answers MergeAsIs about: a run that
+// ended, pushed, is green at the head its pull request is at, changed nothing
+// but routine paths, and left no finding open.
+func triageMergeable(runID string, threshold time.Duration) orchestrator.TriageInput {
+	const head = "0b0c1d2e3f405162738495a6b7c8d9e0f1234567"
+	return orchestrator.TriageInput{
+		Record: &runstore.Record{
+			Version: 1, RunID: runID, Status: runstore.StatusSucceeded, Stage: "finalize",
+			HeadSHA: head, PushedHead: head,
+			ChangedFiles: &runstore.ChangedFiles{Paths: []string{"docs/design/sweep.md"}, Total: 1},
+		},
+		PR:       &gitprov.PRInfo{Number: 7, State: gitprov.PROpen, HeadSHA: head},
+		CI:       gitprov.CIGreen,
+		Findings: orchestrator.Findings{Read: orchestrator.FindingsReadable},
+		Elapsed:  30 * time.Hour, Threshold: threshold,
+	}
+}
+
+// TestTickRecordsAMergeRefusalAsItsClosedCode: a merge the actor refused is not
+// an outage and not a landing — the line carries the outcome, the refusal and
+// the closed code the refusal is known by, a person's question is raised, and
+// none of the host's own words reach the log.
+func TestTickRecordsAMergeRefusalAsItsClosedCode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		code string
+	}{
+		{name: "the paths nobody corroborated", err: orchestrator.ErrTriageUncorroborated, code: "uncorroborated"},
+		{name: "the head moved", err: gitprov.ErrHeadMoved, code: "head_moved"},
+		{name: "no expected-head precondition", err: gitprov.ErrMergeNoHeadPrecondition, code: "no_head_precondition"},
+		{name: "no merge mint", err: gitprov.ErrNoMergeMint, code: "no_merge_mint"},
+		{name: "the pull request is not open", err: gitprov.ErrPRNotOpen, code: "pull_request_not_open"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := o6Now()
+			const runID = "20261106-090000-aaaa"
+			w, it := o6OpenItem("wi-old", runID, now.Add(-30*time.Hour), now.Add(-20*time.Hour))
+			h := newHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
+			h.reader.reports = []orchestrator.RunReport{{RunID: runID, Started: true}}
+			stub := &triageStub{
+				input: triageMergeable(runID, orchestrator.TriageAfter(rigor.Default)),
+				// A host's own words are untrusted text: the refusal reaches
+				// the tick wrapped in whatever it said, and none of it is the
+				// log's or the question's business.
+				mergeErr: fmt.Errorf("merging pull request 7 for acme/app: %w", tc.err),
+			}
+			h.tick.Triage = orchestrator.TriageSeams{Read: stub, Act: stub, Log: stub}
+
+			rep := h.step()
+			if len(stub.merged) != 1 {
+				t.Fatalf("the cycle asked for %d merge(s), want the one the rule judged", len(stub.merged))
+			}
+			if len(stub.cancelled) != 0 {
+				t.Errorf("a refused merge stopped the run: %+v", stub.cancelled)
+			}
+			if rep.Triaged != 1 {
+				t.Errorf("the cycle reports %d triaged run(s), want one", rep.Triaged)
+			}
+			if len(stub.logged) != 1 {
+				t.Fatalf("the cycle logged %d entries, want one: %+v", len(stub.logged), stub.logged)
+			}
+			text := stub.logged[0].Text
+			for _, want := range []string{string(orchestrator.MergeAsIs), string(orchestrator.ReasonMergeRefused), tc.code} {
+				if !strings.Contains(text, want) {
+					t.Errorf("the line %q does not carry %s", text, want)
+				}
+			}
+			for _, unwanted := range []string{"(merged)", "acme/app", "pull request 7"} {
+				if strings.Contains(text, unwanted) {
+					t.Errorf("the line carries %q, and a refusal is not that: %q", unwanted, text)
+				}
+			}
+			d, ok := h.state().Decision(runID + "-" + "triage")
+			if !ok || d.WaitingOn != orchestrator.OnPerson || d.Resolved() {
+				t.Fatalf("a refused merge raised %+v, want an open question waiting on a person", d)
+			}
+			if !strings.Contains(d.Question, tc.code) {
+				t.Errorf("the question %q does not carry the closed code %s", d.Question, tc.code)
+			}
+			if tc.code == "uncorroborated" && !strings.Contains(d.Question, "corroborate") {
+				t.Errorf("the question does not say why the daemon will not land it: %q", d.Question)
+			}
+			if got := h.state().WorkItems; len(got) != 1 {
+				t.Errorf("a refused merge filed work: %+v", got)
+			}
+		})
+	}
+}
+
+// TestTickEndsTheCycleOnAMergeThatFailed: a merge the actor failed at for a
+// reason that is not a refusal is an outage — the host did not answer — so the
+// cycle ends for the next one to retry, and the run is left unfenced and
+// unasked rather than half documented.
+func TestTickEndsTheCycleOnAMergeThatFailed(t *testing.T) {
+	now := o6Now()
+	const runID = "20261106-090000-aaaa"
+	w, it := o6OpenItem("wi-old", runID, now.Add(-30*time.Hour), now.Add(-20*time.Hour))
+	h := newHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
+	h.reader.reports = []orchestrator.RunReport{{RunID: runID, Started: true}}
+	stub := &triageStub{
+		input:    triageMergeable(runID, orchestrator.TriageAfter(rigor.Default)),
+		mergeErr: errors.New("the host answered 500"),
+	}
+	h.tick.Triage = orchestrator.TriageSeams{Read: stub, Act: stub, Log: stub}
+
+	if _, err := h.tick.Step(context.Background()); err == nil {
+		t.Fatal("a merge that failed for an outage ended the cycle as a success")
+	}
+	if len(stub.logged) != 0 {
+		t.Errorf("a cycle that died in the act fenced the run: %+v", stub.logged)
+	}
+	if got := h.state().Decisions; len(got) != 0 {
+		t.Errorf("an outage raised a question, and a retry asks it again: %+v", got)
+	}
+	if got := h.state().WorkItems; len(got) != 1 {
+		t.Errorf("an outage filed work: %+v", got)
 	}
 }
