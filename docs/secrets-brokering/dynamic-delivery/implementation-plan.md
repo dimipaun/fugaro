@@ -65,7 +65,7 @@ named tests only.
 
 ### DS0.2 Checks 510 and 511, written (one task, one writer of the register)
 - **Files:** `scripts/live-checks/check510.sh` (new), `scripts/live-checks/check511.sh` (new), `docs/gcp-live-checklist.md` (edit), `docs/secrets-brokering/dynamic-delivery/check510-steps.md` (new), `docs/secrets-brokering/dynamic-delivery/check511-steps.md` (new), `internal/cli/docs_dynamic_delivery_test.go` (new: pins this folder's files, links and numbers), and each check's sibling shell test as `scripts/live-checks/check191.sh` has: `scripts/live-checks/check510_test.sh` (new) and `scripts/live-checks/check511_test.sh` (new), both entered in `scripts/live_checks_test.go`'s table
-- **What they measure:** **510** (U3, F30): in the sandbox project, a name-prefix IAM condition admits `versions.add`/`secrets.delete` for a `fugaro_u_` secret and refuses the same on another name, create works unconditioned, and the maximum secret ID length. **511** (U4): a request every N seconds keeps one service instance up between runs. (U5 is answered already: the agent can reach the metadata server, F22.)
+- **What they measure:** **510** (U3, F30): in the sandbox project, a name-prefix IAM condition admits `secrets.create`/`versions.add`/`secrets.delete` for a `fugaro_u_` secret and refuses the same on another name, `secrets.list` is refused under that condition, and the maximum secret ID length (the create half was answered the other way by the owner's runs: 2026-11-11 admitted it under the condition, and the 2026-11-12 re-run refused it outside both prefixes — the ruling DS2.2 builds). **511** (U4): a request every N seconds keeps one service instance up between runs. (U5 is answered already: the agent can reach the metadata server, F22.)
 - **Tests:** `TestDynamicDeliveryDocsPinned` (new), the register pins in `go test ./internal/cli/ -run 'TestDynamicDeliveryDocsPinned'`, `bash -n` on both scripts.
 - **Command:** `go test ./internal/cli/ -run Docs -count=1`
 - **Depends on:** none. **Commit:** `live-checks: Checks 510 and 511, written (not run)`
@@ -289,7 +289,7 @@ Terraform needs the function and the owner's Check 510.
 
 | Check | Measures | Run by |
 | --- | --- | --- |
-| 510 | IAM name-prefix conditions on version-add and delete, unconditioned create, secret ID length (U3) | Owner (DS0.3), sandbox project |
+| 510 | IAM name-prefix conditions on create, version-add and delete, unconditioned list, secret ID length (U3) | Owner (DS0.3), sandbox project |
 | 511 | A request every N seconds keeps an instance up (U4) | Owner (DS0.3) |
 | 512–519 | Reserved, unused | |
 
