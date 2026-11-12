@@ -281,7 +281,7 @@ read, so **0.9.0's accounts need all four of these**, in this order:
 1. **Upgrade the CLI, per installation machine:**
 
    ```bash
-   brew upgrade dimipaun/tap/fugaro && fugaro upgrade
+   brew upgrade dimipaun/tap/fugaro && fugaro update
    ```
 
 2. **Republish the policy, per installation.** A publish refuses to overwrite a node written in
