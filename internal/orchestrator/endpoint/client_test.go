@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -361,6 +362,87 @@ func TestClientStreamFollowsTheEndpoint(t *testing.T) {
 			t.Error("a stream to an endpoint that is gone ended without an error")
 		}
 	})
+}
+
+// chattyPeer is a port that answers the stream route as the endpoint itself
+// would -- the id and the nonce the registry file carries, and the token it
+// answers to -- and then writes one event that never ends: `data:` lines of a
+// case's own size, one after another, with no blank line between them.
+//
+// It is the peer the credential cannot rule out, because holding the file's
+// token and nonce is exactly what it does, and the reader's only defence is the
+// bound on what it accumulates. What it wrote before the reader hung up is
+// counted here, because "bounded" is a claim about bytes and not about an error
+// message: a reader that refused only after reading the whole payload would be
+// the leak with an error at the end of it.
+func chattyPeer(t *testing.T, id, nonce string, line, lines int) (Live, *atomic.Int64) {
+	t.Helper()
+	token := freshToken(t)
+	written := &atomic.Int64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(authorizationHeader) != bearerScheme+" "+token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set(headerOrchestrator, id)
+		w.Header().Set(headerNonce, nonce)
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		payload := []byte("data: " + strings.Repeat("x", line) + "\n")
+		for i := 0; i < lines; i++ {
+			n, err := w.Write(payload)
+			written.Add(int64(n))
+			if err != nil {
+				return
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	return Live{reg: Registry{ID: id, Addr: addr, Token: token, Nonce: nonce}}, written
+}
+
+// TestClientStreamRefusesAnEventLongerThanADocument: one event is bounded by
+// maxDocument however many data lines it is joined from. The peer is one that
+// answers with the endpoint's own identity and never ends its event, which is
+// the shape a same-user process -- or one that took the port after a daemon died
+// -- can take, and what it would otherwise do is make this reader hold as much
+// as it is sent.
+//
+// The payload is far more than one document, so a reader without the bound
+// answers "the stream ended" after reading all of it: the error below is the
+// refusal, and the count is the proof that most of it was never read.
+func TestClientStreamRefusesAnEventLongerThanADocument(t *testing.T) {
+	ctx := context.Background()
+	c, _, _ := clientFor(t)
+	const line, lines = 64 << 10, 1024
+	live, written := chattyPeer(t, endpointID, freshToken(t), line, lines)
+
+	read := 0
+	err := c.Stream(ctx, live, func(orchestrator.State, time.Time) error {
+		read++
+		return nil
+	})
+	if err == nil {
+		t.Fatal("a stream of one endless event ended without an error")
+	}
+	if !strings.Contains(err.Error(), "longer than") {
+		t.Errorf("the stream ended with %v, want the refusal of an event longer than one document", err)
+	}
+	if read != 0 {
+		t.Errorf("the reader handed %d events to the callback, want none: the event never ended", read)
+	}
+	// The peer has 64 MiB to send and the reader may hold 4 MiB of it. What the
+	// peer got out is that document plus the read-ahead the transport does on
+	// the reader's behalf -- the two socket buffers, several MiB on loopback --
+	// and nowhere near the whole payload, which is the fact a reader without the
+	// bound cannot show: it reads to the end of whatever it is sent.
+	if n, total := written.Load(), int64(line*lines); n > 16<<20 {
+		t.Errorf("the peer wrote %d of its %d bytes before the reader hung up, want about one document: the reader read past its own bound", n, total)
+	}
 }
 
 // TestTheTokenIsNeverPrintedOrLogged is the rule the whole design is written

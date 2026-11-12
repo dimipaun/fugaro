@@ -34,10 +34,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// maxDocument bounds one answer and one event: a state document is JSON, and
-// the peer that sends it is a local process whose length a reader must not
-// trust with its own memory. It is far above a state's size and far below what
-// would matter to the machine.
+// maxDocument bounds one answer and one event -- the whole of an event, however
+// many data lines it is joined from: a state document is JSON, and the peer that
+// sends it is a local process whose length a reader must not trust with its own
+// memory. It is far above a state's size and far below what would matter to the
+// machine.
 const maxDocument = 4 << 20
 
 // refusalReason is the reason an endpoint refused with, as one line, and the
@@ -197,11 +198,20 @@ func (c Client) Get(ctx context.Context, live Live) (orchestrator.State, time.Ti
 // a reader that opens a watch see the same thing happen.
 //
 // It returns when ctx ends, when fn returns an error (returned unchanged: a
-// writer that refused is the caller's to report), or when the stream ends --
-// the daemon is shutting down -- which is an error, because a stream that
-// stopped is not a stream that is following the endpoint any more. Nothing here
-// writes a keep-alive: the endpoint is silent while the state stands, and the
-// reader that needs one owns its own timer (CG7's stream does).
+// writer that refused is the caller's to report), when the stream ends -- the
+// daemon is shutting down -- which is an error, because a stream that stopped is
+// not a stream that is following the endpoint any more, and when the peer sends
+// an event longer than one document may be.
+//
+// The last of those is the bound the token does not give this reader: the peer
+// here holds the credential by definition, so "who is asking" is no defence
+// against "what is sent", and an event is accumulated a line at a time. Nothing
+// grows past maxDocument -- one line or a thousand of them joined -- so a peer
+// that never ends an event costs this process one document's worth of memory and
+// then its refusal, rather than its memory until something kills it.
+//
+// Nothing here writes a keep-alive: the endpoint is silent while the state
+// stands, and the reader that needs one owns its own timer (CG7's stream does).
 func (c Client) Stream(ctx context.Context, live Live, fn func(orchestrator.State, time.Time) error) error {
 	resp, err := c.open(ctx, live, routeStream)
 	if err != nil {
@@ -232,6 +242,13 @@ func (c Client) Stream(ctx context.Context, live Live, fn func(orchestrator.Stat
 			// dropped, so a frame this release did not write is decoded as the
 			// event it claims to be and refused by the decoder if it is not one.
 			value := strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " ")
+			joined := 0
+			if data != nil {
+				joined = 1
+			}
+			if len(data)+joined+len(value) > maxDocument {
+				return fmt.Errorf("endpoint: an event at %s is longer than the %d bytes one document may be", live.reg.Addr, maxDocument)
+			}
 			if data == nil {
 				data = []byte(value)
 			} else {
