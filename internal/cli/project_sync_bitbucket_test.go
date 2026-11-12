@@ -304,9 +304,11 @@ func TestProjectSyncBitbucketRefusesAnUnnamedOrDoubledProvider(t *testing.T) {
 	} {
 		before := nodeOf(t, f.db)
 		_, _, err := execute(t, args...)
-		if err == nil {
-			t.Errorf("%v was accepted", args)
-			continue
+		// The refusal names the flag the operator wrote: a run that answered
+		// this with GitHub's own missing-App-ID sentence would send them to a
+		// flag they did not type.
+		if err == nil || !strings.Contains(err.Error(), syncBitbucketFlag) {
+			t.Errorf("%v: err = %v, want a refusal naming %s", args, err, syncBitbucketFlag)
 		}
 		if nodeOf(t, f.db) != before {
 			t.Errorf("%v changed the policy node", args)
