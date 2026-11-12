@@ -3383,9 +3383,10 @@ the document built as `coordinatorOutcomeDoc`. Cited by symbol, not by line, for
 §6.11's reason. It documents the coordinator's roadmap group (D2110, D2122):
 `need`, `unneed`, `releases set` and §6.25's `move` queue one change to the
 project's roadmap record, and `roadmap request <id>` reads one back. The four
-writes are the six tools of the coordinator's front door over `roadmap:write`, and the front door
-holds **no database write**: it queues, and an apply job that this command never
-reaches changes the record as the coordinator's own account (D2118, D922/H3).
+writes are the six tools of the coordinator's front door over `roadmap:write`,
+and the front door holds **no database write**: it queues, and an apply job that
+this command never reaches changes the record as the coordinator's own account
+(D2118, D922/H3).
 
 **The document is one object, and it is the same one in both directions.**
 `need`, `unneed` and `releases set` print their request's outcome — after
