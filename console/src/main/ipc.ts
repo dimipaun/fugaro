@@ -609,8 +609,10 @@ export const LAUNCH_PAYLOAD_WIDTH =
  *
  * **`models ls --json` is this surface's twentieth argv** (console 0.119.0's
  * read-only models panel; the CLI half is M1, #1553, and
- * `console/docs/json-contract.md` §6.18 describes its document). It is the one
- * argv here whose **group** the console may otherwise not touch: `fugaro models`
+ * `console/docs/json-contract.md` §6.18 describes its document). It is one of
+ * the two argvs here whose **group** the console may otherwise not touch -- the
+ * other is `user ls --json` below (the roles-and-scopes plan's RS7), whose
+ * group's four words are on the never table the same way: `fugaro models`
  * has four other words -- `search`, `add`, `rm` and `use` -- and each is on the
  * never table below, the three writers as commands and all four as words of
  * `models`, so this row is the group's whole reachable argv. It takes no

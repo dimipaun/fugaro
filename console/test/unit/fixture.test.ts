@@ -663,12 +663,13 @@ describe('the committed synthetic fixture', () => {
       // (`internal/cli/user_ls.go`) so the Members view's read has a document to
       // run over without a CLI. It is the fixture of the plan's own file list,
       // and it is the **only one here whose document is a roster**: every value
-      // a screen draws -- a person, a role, a canonical scope and the
-      // repositories a pattern matched on this machine -- is spelled the way the
-      // CLI spells it, and each array is seeded empty rather than null, as
-      // `user_ls.go` seeds them. Its own pin in `test/unit/schema.test.ts` holds
-      // every key of it, and of each object in it, to the four structs of the
-      // read, both directions. It is JSON and not `.ndjson`, so
+      // a screen draws -- a person as `access.Member` writes one, a role, a
+      // canonical scope and the repositories a pattern matched on this machine --
+      // is spelled the way the CLI spells it, and each array is seeded empty
+      // rather than null, as `user_ls.go` seeds them. Its own pins in
+      // `test/unit/schema.test.ts` hold every key of it, and of each object in
+      // it, to the four structs of the read, both directions, and hold every
+      // value to the grammar those writers implement. It is JSON and not `.ndjson`, so
       // the loader sweep above never reads it, and no arm of the e2e stub
       // answers with it yet: the view it is for is not built.
       'members.json',

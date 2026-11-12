@@ -1228,6 +1228,66 @@ describe("the allow-list's read-only invariant", () => {
     ).toThrow(/models\.add drives add/)
   })
 
+  it('reaches no `user` word but `ls`, and refuses each of the four writes in both shapes', () => {
+    // **The user group's fence** (the roles-and-scopes plan's RS7). `fugaro
+    // user ls --json` is the one word of this group the console may drive --
+    // the Members view's read -- and the group's other four words each change
+    // who may do what, so the table draws them in the two shapes the models
+    // group's fence is drawn in: a `command` row per write and an `argv` row
+    // per word. Both are read back here in an argv that could actually be
+    // spawned, because the checks above read a row's `command` and never its
+    // `value`: a typo there (`grant` for `grnat`), or a dropped row, would
+    // leave the half of the fence a command row cannot see unguarded while
+    // every test above stayed green.
+    const refusedBy = (command: string, flags: readonly string[]): string | null =>
+      isNeverReachable({ command, flags })?.value ?? null
+
+    expect(CONSOLE_OPERATIONS.filter((operation) => operation.name === 'members.list').map(argvOf)).toEqual([
+      'user ls --json',
+    ])
+    expect(refusedBy('user ls', ['--json'])).toBeNull()
+    expect(refusedBy('user ls', ['--json', '--project', 'chosen'])).toBeNull()
+    // The read's one argument is a repository *value*, and the table refuses
+    // words: the CLI is what validates the repository, and a pattern in the
+    // flag is its own refusal.
+    expect(refusedBy('user ls', ['--json', '--repo', 'example-owner/example-repo'])).toBeNull()
+
+    for (const word of ['grant', 'revoke', 'add', 'rm'] as const) {
+      expect(
+        NEVER_REACHABLE.filter((row) => row.shape === 'command' && row.value === `user ${word}`),
+        word,
+      ).toHaveLength(1)
+      expect(
+        NEVER_REACHABLE.filter(
+          (row) => row.shape === 'argv' && row.command === 'user' && row.value === word,
+        ),
+        word,
+      ).toHaveLength(1)
+      // The command path the design's never list names...
+      expect(refusedBy(`user ${word}`, ['--json']), word).toBe(`user ${word}`)
+      // ...the same word spelled into a longer command path...
+      expect(refusedBy(`user ls ${word}`, ['--json']), word).toBe(word)
+      // ...and into the flags, which is the half a command row cannot see.
+      expect(refusedBy('user ls', ['--json', word]), word).toBe(word)
+    }
+
+    // The whole-table control: an operation driving a `user` write cannot be
+    // added to the surface at all, and the refusal names it.
+    expect(() =>
+      assertReachableSurface([
+        ...CONSOLE_OPERATIONS,
+        {
+          name: 'user.grant',
+          method: 'grantRole',
+          command: 'user grant',
+          flags: ['--json'],
+          summary: 'a write this console must not have',
+          args: [],
+        },
+      ]),
+    ).toThrow(/user\.grant drives user grant/)
+  })
+
   it('drives no command whose argv carries a never-table flag', () => {
     for (const operation of CONSOLE_OPERATIONS) {
       for (const flag of operation.flags) {

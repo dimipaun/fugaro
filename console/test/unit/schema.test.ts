@@ -2323,4 +2323,66 @@ describe('the Members view’s document (roles-and-scopes RS7)', () => {
       expect(tags.map((tag) => tag.key), what).toEqual([...keys])
     }
   })
+
+  it('holds only values the read can print, in the spellings the CLI gives them', () => {
+    // The keys above are one half of a stand-in for a real `user ls --json`;
+    // the values are the other half, and a value the CLI cannot print would
+    // prove the Members view's decoder against a shape no installation can hand
+    // it -- a scope `ParseScope` refuses, a repository that is not canonical, a
+    // legacy member on no list of this machine's. The grammar below is the one
+    // those writers implement: a grant's person is `access.Member`'s
+    // (`internal/access/store.go`, the `user:` prefix, one fold), a scope is
+    // `ParseScope`'s canonical patterns (`internal/access/scope.go`), and a
+    // repository is `projectpolicy.Canonical`'s `provider/owner/name`
+    // (`internal/projectpolicy/match.go`).
+    const patternsOf = (scope: string): readonly string[] =>
+      scope === 'project' || scope === 'all-repos' ? [] : scope.split(',')
+    for (const grant of MEMBERS.grants as readonly JSONDoc[]) {
+      const user = grant.user as string
+      const role = grant.role as string
+      expect(user, 'grants[].user').toMatch(/^user:[^@\s]+@[^@\s]+$/)
+      expect(user, 'grants[].user').toBe(user.toLowerCase())
+      expect(['viewer', 'operator', 'admin'], 'grants[].role').toContain(role)
+      const patterns = patternsOf(grant.scope as string)
+      // A list of patterns is what `Scope.String` writes: sorted, comma-joined,
+      // and never a lone `*` — that is `all-repos` — nor a wildcard provider,
+      // which `ParseScope` refuses so a pattern cannot widen past its own
+      // provider.
+      expect(patterns, 'grants[].scope').toEqual([...patterns].sort())
+      for (const pattern of patterns) {
+        expect(pattern.split('/').length, pattern).toBeGreaterThanOrEqual(3)
+        expect(pattern.split('/')[0], pattern).not.toContain('*')
+        expect(pattern, pattern).not.toContain('**')
+        expect(pattern, pattern).not.toContain('.git')
+      }
+      for (const known of grant.known as readonly string[]) {
+        expect(known.split('/').length, known).toBeGreaterThanOrEqual(3)
+        expect(known, known).not.toContain('*')
+      }
+    }
+    for (const row of MEMBERS.effective as readonly JSONDoc[]) {
+      const repo = row.repo as string
+      expect(repo.split('/').length, repo).toBeGreaterThanOrEqual(3)
+      expect(repo, repo).not.toContain('*')
+    }
+    // A legacy member is one of this machine's own IAM lists rather than a
+    // grant, so it is spelled with its IAM prefix and it is on the list its own
+    // role names (`userLsLegacy`, `internal/cli/user_ls.go`).
+    const lists: readonly (readonly [string, readonly string[]])[] = [
+      ['operator', MEMBERS.run_operators as readonly string[]],
+      ['admin', MEMBERS.admins as readonly string[]],
+    ]
+    for (const [, list] of lists) {
+      for (const entry of list) {
+        expect(entry, 'the config lists').toMatch(/^(user|group|domain|serviceAccount):/)
+      }
+    }
+    for (const row of MEMBERS.legacy as readonly JSONDoc[]) {
+      const member = row.member as string
+      const role = row.role as string
+      expect(member, 'legacy[].member').toMatch(/^(group|domain|serviceAccount):/)
+      const on = lists.find(([name]) => name === role)?.[1] ?? []
+      expect(on, `${member} is on no ${role} list`).toContain(member)
+    }
+  })
 })
