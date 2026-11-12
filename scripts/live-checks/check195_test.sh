@@ -183,6 +183,16 @@ def die(msg):
     sys.exit(1)
 
 
+def tsv(*lines):
+    """What gcloud's value printer writes for `--format=value(a,b)`: the columns
+    it was asked for, separated by a TAB, and a TAB even where the entry has
+    nothing in the column -- a step's `echo` is a textPayload and never a
+    jsonPayload.message, so every line the real CLI returns for one ends in a
+    TAB. The check reads the build's status and the token's email claim out of
+    such a line, so the fake writes the separator the real printer writes."""
+    emit(*[line + "\t" for line in lines])
+
+
 # ---------------- the service and its own IAM policy
 def service_members():
     if mode == "public-invoker":
@@ -256,8 +266,16 @@ elif sub == ("iam", "service-accounts", "delete"):
         die("iam.serviceAccounts.delete failed")
     state_set("account", "0")
 elif sub == ("projects", "get-iam-policy"):
-    member = state_get("loggrant")
-    emit(policy_json(["serviceAccount:" + member] if member and member != "0" else []))
+    if mode == "project-policy-unreadable":
+        die("resourcemanager.projects.getIamPolicy was refused: the session has expired")
+    if mode == "project-policy-names-account":
+        # A leftover binding at the account's own address: the member reads as a
+        # deletion, which is what a binding that outlived its account looks like,
+        # and the address is still in the policy's text.
+        emit(policy_json(["deleted:serviceAccount:%s?uid=1029384756" % CALLER]))
+    else:
+        member = state_get("loggrant")
+        emit(policy_json(["serviceAccount:" + member] if member and member != "0" else []))
 elif sub == ("projects", "add-iam-policy-binding"):
     if mode == "logwriter-fails":
         die("resourcemanager.projects.setIamPolicy denied on resource")
@@ -321,12 +339,12 @@ elif sub == ("logging", "read"):
     if mode == "log-missing":
         pass
     elif mode == "call-refused":
-        emit("Step #0: CHK195 status=403 email=%s" % CALLER,
-             "Step #0: Authorization: Bearer FAKE-BUILD-LOG-TOKEN")
+        tsv("Step #0: CHK195 status=403 email=%s" % CALLER,
+            "Step #0: Authorization: Bearer FAKE-BUILD-LOG-TOKEN")
     elif mode == "wrong-email":
-        emit("Step #0: CHK195 status=200 email=somebody-else@fugaro-dev.iam.gserviceaccount.com")
+        tsv("Step #0: CHK195 status=200 email=somebody-else@fugaro-dev.iam.gserviceaccount.com")
     else:
-        emit("Step #0: CHK195 status=200 email=%s" % CALLER)
+        tsv("Step #0: CHK195 status=200 email=%s" % CALLER)
 GCLOUD_EOF
   chmod +x "$1/bin/gcloud"
 }
@@ -388,13 +406,17 @@ run195() { # dir extra-env...
   : >"$dir/logs/gcloud.calls"
   : >"$dir/logs/fugaro.calls"
   : >"$dir/logs/curl.calls"
+  # CHECK195_TEST_XTRACE starts the shell the way an owner might by habit: with
+  # tracing on, which is the one leak this check's own redaction cannot catch.
+  local -a runner=(bash)
+  if [ -n "${CHECK195_TEST_XTRACE:-}" ]; then runner=(bash -x); fi
   status=0
   env \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" \
     CHECK195_GRANT_SECONDS=0 CHECK195_BUILD_WAIT_SECONDS=0 CHECK195_LOG_WAIT_SECONDS=0 \
     ${1+"$@"} \
-    bash "$script" >"$dir/out" 2>"$dir/err" || status=$?
+    "${runner[@]}" "$script" >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
   err=$(cat "$dir/err")
   scratch=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
@@ -698,6 +720,37 @@ test_an_account_list_that_cannot_be_read_stops_the_run() {
   expect_absent "$calls" "builds submit" "account list failed: no build was submitted"
 }
 
+# The third leftover, and the one the two lists cannot see: a binding on the
+# PROJECT at the account's own address while no account of that name exists.
+# This run adds a binding at that address and reads the policy back to prove it
+# removed it again, so a leftover would turn that read-back into a FAIL about a
+# binding this run never made — and once the account is deleted, the leftover can
+# never be removed at all.
+test_a_project_binding_already_naming_the_account_stops_the_run() {
+  local dir=$work/polnames
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=project-policy-names-account
+  expect_status "$status" 1 "policy names the account: the verdict"
+  expect_contains "$err" "own IAM policy already names" "policy names the account: the stop"
+  expect_contains "$err" "projects remove-iam-policy-binding fugaro-dev --member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "policy names the account: how to remove it by hand"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "run deploy" "policy names the account: nothing was deployed"
+  expect_absent "$calls" "service-accounts create" "policy names the account: no account was created"
+}
+
+# A policy read that FAILED is not the answer "it does not name the account": it
+# is the same guard as the two lists, on the one leftover a list cannot show.
+test_a_project_policy_that_cannot_be_read_stops_the_run() {
+  local dir=$work/polunread
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=project-policy-unreadable
+  expect_status "$status" 1 "policy unreadable: the verdict"
+  expect_contains "$err" "a failed call is not the answer" "policy unreadable: the stop"
+  expect_contains "$err" "gcloud projects get-iam-policy fugaro-dev --format=json" "policy unreadable: how to read it by hand"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "run deploy" "policy unreadable: nothing was deployed"
+}
+
 # The grant is read back from the service's OWN policy before the build: a
 # binding that did not land would otherwise turn into a 403 the block would
 # report as the account having been refused, which is a different fact.
@@ -794,6 +847,11 @@ test_a_grant_that_fails_stops_before_the_build() {
   expect_contains "$out" "FACT invoker-grant: FAIL" "grant fails: the row"
   expect_contains "$err" "roles/run.invoker" "grant fails: the stop names the role"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "builds submit" "grant fails: no build was submitted"
+  # The project-level binding is attempted whenever this run created anything,
+  # NOT only when a call that adds it came back: the account is already created
+  # here, and a binding left behind by a call interrupted in flight could not be
+  # removed once the account is deleted.
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "projects remove-iam-policy-binding fugaro-dev --member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "grant fails: the project binding is attempted although the logWriter grant never ran"
 }
 
 test_a_service_that_cannot_be_deleted_is_a_failure() {
@@ -821,6 +879,27 @@ test_an_account_that_cannot_be_deleted_is_a_failure() {
   expect_contains "$out" "gcloud iam service-accounts delete fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "account leftover: how to delete it by hand"
   expect_contains "$out" "FACT binding-removed: PASS" "account leftover: the binding was removed first"
   expect_contains "$out" "FACT restore: FAIL" "account leftover: the Restore row"
+}
+
+# The one leak this check's own redaction cannot catch: a shell started with
+# tracing on prints every command as it runs, into the same stderr an owner is
+# told to paste, and this check's commands carry the project's names and the
+# build's own line. The refusal therefore has to come before the first tool is
+# called -- a run that stopped later would already have printed the trace.
+test_xtrace_is_refused() {
+  local dir=$work/xtrace
+  prepare "$dir"
+  CHECK195_TEST_XTRACE=1 run195 "$dir"
+  expect_status "$status" 1 "xtrace: the verdict"
+  expect_contains "$err" "this shell is tracing (bash -x)" "xtrace: the refusal"
+  expect_contains "$out" "FACT aborted: FAIL" "xtrace: the row"
+  expect_contains "$out" "CHECK 195 RESULT END (exit 1)" "xtrace: the end line carries the refusal"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls" "$dir/logs/fugaro.calls" "$dir/logs/curl.calls")
+  if [ -n "$calls" ]; then
+    fail "xtrace: a tool was called before the refusal: $(printf '%s' "$calls" | head -c 300)"
+  fi
+  if [ -d "$scratch" ]; then fail "xtrace: the scratch directory survived"; fi
 }
 
 # The rule the whole family is built on: this check runs on the installation's
@@ -878,6 +957,9 @@ t test_a_service_already_there_is_a_hard_stop
 t test_an_account_already_there_is_a_hard_stop
 t test_a_service_list_that_cannot_be_read_stops_the_run
 t test_an_account_list_that_cannot_be_read_stops_the_run
+t test_a_project_binding_already_naming_the_account_stops_the_run
+t test_a_project_policy_that_cannot_be_read_stops_the_run
+t test_xtrace_is_refused
 t test_a_grant_that_does_not_land_stops_before_the_build
 t test_a_call_the_service_refuses_is_a_failure
 t test_a_token_for_another_account_is_a_failure

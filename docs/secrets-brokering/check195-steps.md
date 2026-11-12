@@ -77,6 +77,13 @@ worth knowing by name:
   a stop of its own, never the answer "it is not there": read that way, the check would go on over a
   service or an account it did not create and then **delete** it. The stop names the exact list to read
   by hand.
+- **The project's own IAM policy already names the account** — the third leftover, and the only one the
+  two lists cannot see: a binding on the project at the check's account address whose account is gone
+  (a `deleted:serviceAccount:…` member, usually a leftover of an earlier attempt whose removal failed).
+  It stops the run before anything is created — this check adds a binding at that same address and then
+  reads the policy back to prove it removed it again, and once its account is deleted that leftover can
+  never be removed — and the stop prints the exact `remove-iam-policy-binding` to run by hand. A policy
+  read that **failed** stops the run too, for the same reason a failed list does.
 - **The grant does not land** (`invoker-grant`) — the service's own policy is read back after the
   binding and must name the throwaway account and nobody else. A binding that did not land is a stop
   rather than a 403 the block would report as the account having been refused, which is a different

@@ -174,7 +174,6 @@ SCRATCH=""
 SCRATCH_MARKER=".chk195-mine"
 SERVICE_MINE=""
 ACCOUNT_MINE=""
-LOGRANT_ADDED=no
 BUILD_ID=""
 SCRATCH_REMOVED=no
 PRINTED=""
@@ -262,10 +261,15 @@ restore_run() {
   if [ -f "$SERVICE_MINE" ]; then
     gcloud run services delete "${SVC:?}" --project="${P:?}" --region="${L:?}" --quiet >&2 || true
   fi
-  if [ "$LOGRANT_ADDED" = yes ]; then
-    gcloud projects remove-iam-policy-binding "${P:?}" \
-      --member="serviceAccount:${CALLER_EMAIL:?}" --role=roles/logging.logWriter --condition=None --quiet >&2 || true
-  fi
+  # Attempted whenever this run created anything at all, and NOT only when the
+  # grant call came back: a Ctrl-C during that call reaches gcloud too, so a
+  # binding that landed can outlive a flag set only after it returned — and once
+  # the account below is deleted, a binding naming it reads back as
+  # deleted:serviceAccount:... and can never be removed again. Removing one that
+  # was never added is refused, harmlessly, and the read-back below is what says
+  # whether the policy still names the account.
+  gcloud projects remove-iam-policy-binding "${P:?}" \
+    --member="serviceAccount:${CALLER_EMAIL:?}" --role=roles/logging.logWriter --condition=None --quiet >&2 || true
   if [ -f "$ACCOUNT_MINE" ]; then
     gcloud iam service-accounts delete "${CALLER_EMAIL:?}" --project="${P:?}" --quiet >&2 || true
   fi
@@ -478,12 +482,38 @@ guard_resources() {
     [ -f "$ACCOUNT_MINE" ] \
       || stop "a service account named ${CALLER_EMAIL} is already in ${P}, and it is not this check's: this check never adopts, grants on or deletes an account it did not create. Look at it first (gcloud iam service-accounts describe ${CALLER_EMAIL} --project=${P}) and delete it yourself if you know it is a leftover of an earlier attempt, then run again. Nothing was created"
   fi
+  # The third leftover this check must not walk past, and the only one the two
+  # lists cannot see: a binding on the PROJECT that names the account's address
+  # while no account of that name exists — a leftover of an earlier attempt
+  # whose removal failed. This run adds a binding at that same address and then
+  # reads the project policy back to prove it removed it again; a leftover makes
+  # that read-back say the binding is still there, and once this run's own
+  # account is deleted the leftover can never be removed at all.
+  local pol
+  pol=$(project_naming_account)
+  case "$pol" in
+  named)
+    stop "${P}'s own IAM policy already names ${CALLER_EMAIL}, though no account of that name is in ${P}: a binding left at this address by an earlier attempt would make this run's read-back of the project policy report its own removal as incomplete, and once this run deletes its account that leftover can never be removed again. Remove it by hand — gcloud projects remove-iam-policy-binding ${P} --member=serviceAccount:${CALLER_EMAIL} --role=<the role the policy shows> --condition=None — then run this check again. Nothing was created"
+    ;;
+  unread)
+    stop "whether ${P}'s own IAM policy already names ${CALLER_EMAIL} cannot be read: the policy read failed, and a failed call is not the answer 'it is not there'. Read it with gcloud projects get-iam-policy ${P} --format=json and look for the address, then run this check again. Nothing was created"
+    ;;
+  esac
   fact baseline PASS "neither the service ${SVC} nor the account ${CALLER_EMAIL} was in ${P} when this check started, and its own project policy was read for the account's name"
 }
 
 # ------------------------------------------------------------------- the steps
-field_of() { # field_of TEXT NAME: the value of NAME= in TEXT, or nothing
-  printf '%s' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -n 1
+# field_of TEXT NAME: the value of NAME= in TEXT, or nothing. The text is one
+# line of what gcloud's value printer wrote, and that printer separates the
+# columns it was asked for with a TAB — and writes one even for a column the
+# entry has nothing in. A step's own `echo` is a textPayload and never a
+# jsonPayload.message, so the build's line reaches this with a trailing tab and
+# the value ends at the first blank of either kind: a separator left inside it
+# made the email claim compare unequal to the account's own address, which reads
+# as a token minted for another identity — a FALSE FAIL on the reading S4 stops
+# on.
+field_of() {
+  printf '%s' "$1" | tr ' \t' '\n\n' | sed -n "s/^$2=//p" | head -n 1 | sed -e 's/[[:space:]]*$//'
 }
 
 # names_the_caller RESOURCE: whether a build's own serviceAccount field names the
@@ -633,7 +663,6 @@ step_caller() {
     fact invoker-grant FAIL "${CALLER_EMAIL} could not be granted roles/logging.logWriter on ${P}: $(last_lines "$SCRATCH/logwriter.err")"
     stop "${CALLER_EMAIL} could not be granted roles/logging.logWriter on ${P}, which a build that names its own service account needs to write its log: without it the build's own line — the token's email claim — is never written anywhere this check can read. YOUR account needs resourcemanager.projects.setIamPolicy (an Owner has it). Nothing was built; the account and the service are deleted by this run's Restore"
   fi
-  LOGRANT_ADDED=yes
 
   # The grant, read back from the service's own IAM policy: exactly one member,
   # the throwaway account, with the invoker role — which is what "on it alone"
@@ -826,7 +855,7 @@ step_build() {
 # delete. Printed by --dry-run, which runs NOTHING: no gcloud, no fugaro and no
 # curl is called, so this mode is safe on a machine with no credentials at all.
 print_plan() {
-  say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro, not curl. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro), then read whether the two names below already exist, then run, in this order:"
+  say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro, not curl. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro), then read whether the two names below already exist — a filtered list for the service, a filtered list for the account, and the project's own IAM policy, which must not already name the account — and stop there on a name that is already there or on a list that could not be read; then run, in this order:"
   say "  [network, writes] gcloud run deploy ${SVC} ${DEPLOY_FLAGS[*]}"
   say "  [network] gcloud run services describe ${SVC} --project=${P} --region=${L} --format=value(status.url)  (the URL the token's audience is)"
   say "  [network] gcloud run services get-iam-policy ${SVC} --project=${P} --region=${L} --format=json  (no public member, or the run stops)"
