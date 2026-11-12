@@ -28,7 +28,7 @@
 
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
@@ -56,7 +56,7 @@ import {
 } from '../../tools/record-fixture/index'
 import type { RecorderOptions } from '../../tools/record-fixture/index'
 
-const CWD = '/home/operator/src/fugaro/console'
+const CWD = resolve('/home/operator/src/fugaro/console')
 const OUT = `${FIXTURE_DIRECTORY}/normal.ndjson`
 
 /** opts parses one invocation against a fixed checkout, with nothing existing
@@ -291,7 +291,7 @@ describe("the recorder's arguments", () => {
   })
 
   it('never overwrites a fixture without --force', () => {
-    const existing = (path: string): boolean => path === `${CWD}/${OUT}`
+    const existing = (path: string): boolean => path === resolve(CWD, OUT)
     expect(
       refusal(() =>
         parseRecorderArgs(['--out', OUT, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1'], CWD, {
@@ -350,7 +350,7 @@ describe("the recorder's arguments", () => {
       '/tmp/fugaro-config.json',
     )
     expect(options).toEqual({
-      out: `${CWD}/${OUT}`,
+      out: resolve(CWD, OUT),
       project: 'sandbox',
       configPath: '/tmp/fugaro-config.json',
       binaryPath: '/opt/homebrew/bin/fugaro',
@@ -866,7 +866,7 @@ describe('the whole tool', () => {
     expect(lines.join('\n')).toContain('argv: <binary> watch --json --project (')
     expect(lines.join('\n')).toContain(`wrote ${CWD}/${OUT}: 1 records`)
     const [entry] = written
-    expect(entry?.path).toBe(`${CWD}/${OUT}`)
+    expect(entry?.path).toBe(resolve(CWD, OUT))
     // Nothing is printed about the documents themselves: the owner's scrollback
     // is a leak this tool does not create.
     expect(lines.join('\n')).not.toContain('fixture-sandbox')
