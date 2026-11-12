@@ -182,12 +182,13 @@ func TestOAuthLaunchOnALegacyJobIsUnchanged(t *testing.T) {
 	projectJobCheckoutYAML(t, strings.Replace(projectJobOAuthRepoYAML, "    checkout: clone\n", "", 1))
 
 	// The variant job of the named account, and the build record that says the
-	// image's runner knows task.Spec.OAuthToken (checkImageSince) and reads the
-	// sealed budget token (the seal gate, sealSince — this fixture publishes a
-	// policy, so this launch mints).
+	// image's runner knows task.Spec.OAuthToken (checkImageSince), reads the
+	// sealed budget token (the seal gate, sealSince) and reads the policy node
+	// this release writes (policyImageGate, projectpolicy's VersionSince — this
+	// fixture publishes a policy, so this launch mints).
 	perRepo := gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal"))
 	f.run.AddJob(perRepo, "2", "4Gi")
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSeal)
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releasePolicy)
 
 	const run = "20261017-110000-bbbb"
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", "acme-personal", "Add a feature"); err != nil {

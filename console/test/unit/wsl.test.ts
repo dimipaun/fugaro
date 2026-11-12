@@ -55,6 +55,7 @@ import {
 } from '../../src/main/wsl'
 import { installWslStub } from './wslstub'
 import type { WslFixture, WslPathPair, WslStub, WslStubOptions } from './wslstub'
+import { itHostRoute } from '../support/hostRoute'
 
 /** SENTINELS are the variables a hostile environment would carry into the
  * distribution if the boundary were one line thinner. Each is a name the cloud
@@ -184,7 +185,7 @@ describe('where wsl.exe is', () => {
 })
 
 describe('the distribution list', () => {
-  it('returns both, in the order wsl.exe gave them, with the default marked', async () => {
+  itHostRoute('returns both, in the order wsl.exe gave them, with the default marked', async () => {
     const { wsl, cwd } = install(TWO_DISTROS)
     const outcome = await wslDistributions({ appEnv: APP_ENV, cwd, wslPath: wsl.binary })
     expect(outcome.kind).toBe('listed')
@@ -201,7 +202,7 @@ describe('the distribution list', () => {
     expect(wsl.childCalls()).toBe(0)
   })
 
-  it('marks nothing when --status names no default, so the caller must ask', async () => {
+  itHostRoute('marks nothing when --status names no default, so the caller must ask', async () => {
     // The state the picker draws as a question rather than as a choice. A
     // console that marked the first row would be choosing a distribution the
     // operator never chose, and the choice is the one thing Part G asks for.
@@ -215,7 +216,7 @@ describe('the distribution list', () => {
     }
   })
 
-  it('marks nothing when --status names a distribution --list did not report', async () => {
+  itHostRoute('marks nothing when --status names a distribution --list did not report', async () => {
     // The two answers disagreeing is a real machine state -- a distribution
     // removed, or a stale `--status` -- and neither answer is the console's to
     // prefer: marking a name it cannot resolve would offer the operator a
@@ -227,7 +228,7 @@ describe('the distribution list', () => {
     expect(outcome.distributions.some((row) => row.isDefault)).toBe(false)
   })
 
-  it('answers absent, not an empty list, when wsl.exe cannot answer at all', async () => {
+  itHostRoute('answers absent, not an empty list, when wsl.exe cannot answer at all', async () => {
     // The failure this module exists to prevent: "Windows Subsystem for Linux
     // has no installed distributions" read as "the list is empty" sends the
     // operator looking for a distribution to install, when the thing that is
@@ -262,7 +263,7 @@ describe('the distribution list', () => {
     expect(outcome.reason).toContain('did not answer')
   })
 
-  it('answers listed and empty when WSL is there and has none', async () => {
+  itHostRoute('answers listed and empty when WSL is there and has none', async () => {
     // The third state, and the one that must not be confused with `absent`: WSL
     // answered, and the answer is "none". Part G draws it as its own page --
     // install a distribution -- which is a different instruction from install
@@ -274,7 +275,7 @@ describe('the distribution list', () => {
     expect(outcome.distributions).toEqual([])
   })
 
-  it('answers listed when --list answered and --status did not', async () => {
+  itHostRoute('answers listed when --list answered and --status did not', async () => {
     // The default is a detail of the list, not the answer to the question that
     // was asked: an operator whose `--status` is broken still has distributions,
     // and hiding them behind an `absent` would be a console refusing to show a
@@ -369,7 +370,7 @@ describe('the query is a spawn like any other', () => {
     for (const report of wsl.reports()) expect(report.cwd).toBe(cwd)
   })
 
-  it('records the query in the spawn log, wrapper and all', async () => {
+  itHostRoute('records the query in the spawn log, wrapper and all', async () => {
     // The spawn log's rule is one line per child process the app starts
     // (`spawnlog.ts`), and a query is a child process. A query that bypassed the
     // log would be the one child the app ran that its own audit does not have.
@@ -456,7 +457,7 @@ describe('the answer’s encoding (T-F2)', () => {
   const bytesAs = (text: string, encoding: 'utf8' | 'utf16le'): string =>
     Buffer.from(text, encoding).toString('latin1')
 
-  it('decodes both encodings --list --quiet answers in to the same names', async () => {
+  itHostRoute('decodes both encodings --list --quiet answers in to the same names', async () => {
     // U9: which encoding `wsl.exe` prints in is not knowable from here, and the
     // two machines are two different answers. The console asks for UTF-8
     // (`WSL_UTF8=1`) and decodes the bytes anyway, so the list is the same list
@@ -544,7 +545,7 @@ describe('translating a path with wslpath', () => {
     return install(TWO_DISTROS, { paths })
   }
 
-  it('reads a Windows spelling and answers the distribution’s, in one call inside it', async () => {
+  itHostRoute('reads a Windows spelling and answers the distribution’s, in one call inside it', async () => {
     // D4(a): one `wsl.exe -d <distro> -e wslpath -a -u <path>` per distinct
     // path, through the ordinary spawn path. The fake's report is the account of
     // what the distribution was asked -- the console's own plan object would
@@ -576,7 +577,7 @@ describe('translating a path with wslpath', () => {
     expect(wsl.childCalls()).toBe(0)
   })
 
-  it('carries the same allow-list as any other child, on the translation’s own invocation', async () => {
+  itHostRoute('carries the same allow-list as any other child, on the translation’s own invocation', async () => {
     // SECURITY-SENSITIVE: the credential boundary's near side, on the third
     // shape of query this module makes. A translation is a new invocation of
     // `wsl.exe`, and a new invocation is a new place for the boundary to be one
@@ -608,7 +609,7 @@ describe('translating a path with wslpath', () => {
     expect(report.env['HOME']).toBe('/home/dimi')
   })
 
-  it('reads the distribution’s spelling and answers Windows’ own, in the other direction', async () => {
+  itHostRoute('reads the distribution’s spelling and answers Windows’ own, in the other direction', async () => {
     const { wsl, cwd } = arrangement()
     const answer = await wslpath({
       direction: 'toWindows',
@@ -627,7 +628,7 @@ describe('translating a path with wslpath', () => {
     expect(report.wslpath?.direction).toBe('toWindows')
   })
 
-  it('refuses a path the distribution cannot translate, and says which path', async () => {
+  itHostRoute('refuses a path the distribution cannot translate, and says which path', async () => {
     // The half that makes the rest honest: a mapping computed from `C:` would
     // answer here, and answer wrongly. The distribution's own refusal is the
     // answer, and it names the path so the operator can see which one failed.
@@ -652,7 +653,7 @@ describe('translating a path with wslpath', () => {
     expect(wsl.childCalls()).toBe(0)
   })
 
-  it('refuses an answer that is not an absolute path rather than passing it on', async () => {
+  itHostRoute('refuses an answer that is not an absolute path rather than passing it on', async () => {
     // The fake's table is the test's, so it can carry a nonsense answer -- and
     // a value that is not a path must not reach a child as a working directory.
     const { wsl, cwd } = arrangement([{ windows: 'C:\\Users\\dimi\\odd', linux: 'nonsense' }])
@@ -668,7 +669,7 @@ describe('translating a path with wslpath', () => {
     if (!answer.ok) expect(answer.reason).toContain('not an absolute path')
   })
 
-  it('refuses an answer Windows would not open, in the direction where it matters most', async () => {
+  itHostRoute('refuses an answer Windows would not open, in the direction where it matters most', async () => {
     // The `-w` direction's whole purpose is the spelling **Windows opens**
     // (D3(a)): it is what a reveal-in-Explorer or a file dialog is handed. An
     // answer that is not an absolute Windows path -- a relative one, a bare
@@ -739,7 +740,7 @@ describe('translating a path with wslpath', () => {
     expect(wsl.calls()).toBe(0)
   })
 
-  it('asks once per path for the life of the window, and asks again after a refusal', async () => {
+  itHostRoute('asks once per path for the life of the window, and asks again after a refusal', async () => {
     // D4(a)'s cache: the same path in the same direction is one process, not one
     // process per call -- and a refusal is not kept, because the answer depends
     // on a running distribution and a mount that may have arrived.

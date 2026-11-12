@@ -62,7 +62,8 @@ func TestLaunchRefusesSharedJobOnOldRunner(t *testing.T) {
 
 	check := func() (string, error) {
 		var warn bytes.Buffer
-		err := checkSharedImageSince(ctx, env, appSlug, spec, sharedSince, &warn)
+		err := checkSharedImageSince(ctx, env, appSlug, spec, sharedSince,
+			"this checkout: shared workflow", "how to clone for a shared image (FUGARO_CHECKOUT)", &warn)
 		return warn.String(), err
 	}
 	if warn, err := check(); err != nil || warn != "" {

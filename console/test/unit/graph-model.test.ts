@@ -24,8 +24,8 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { PLAN_STATES, decodePlanStatus } from '../../src/shared/schema'
-import type { PlanStatusView } from '../../src/shared/schema'
+import { GRAPH_DOCUMENT_VERSION, PLAN_STATES, decodeGraphDocument, decodePlanStatus } from '../../src/shared/schema'
+import type { GraphView, PlanStatusView } from '../../src/shared/schema'
 import type { Sanitized } from '../../src/shared/sanitize'
 import { MIN_ENDING } from '../../src/shared/shortid'
 import { GraphLayout, crossStreamRoute, graphOf, structureHash } from '../../src/renderer/graph/layout'
@@ -39,11 +39,17 @@ import {
   GRAPH_MAX_TITLE_CODE_POINTS,
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_WIDTH,
+  GRAPH_SCOPE_DANGLING,
+  GRAPH_SCOPE_NEEDS,
+  GRAPH_SCOPE_SEPARATOR,
+  GRAPH_SCOPE_UNASSIGNED,
   STATE_WORDS,
   buildGraphModel,
+  buildScopeModel,
   stateWords,
 } from '../../src/renderer/graph/model'
 import type { GraphColumn, GraphInputs, GraphModel, GraphNode } from '../../src/renderer/graph/model'
+import type { ScopeLane, ScopeModel, ScopeNode } from '../../src/renderer/graph/model'
 
 /** FakeWorker is the protocol without a browser: it records what was posted and
  * answers when the test says so. */
@@ -125,9 +131,10 @@ function model(tab: GraphInputs['tab']): GraphModel {
   return buildGraphModel({ document: DOCUMENT, tab })
 }
 
-/** text is a drawn string, or the empty string for a refusal. */
-function text(value: Sanitized | undefined): string {
-  return value !== undefined && value.ok ? value.text : ''
+/** text is a drawn string, or the empty string for a refusal and for a member
+ * the document named none of (the scope's optional members are `null`). */
+function text(value: Sanitized | null | undefined): string {
+  return value !== null && value !== undefined && value.ok ? value.text : ''
 }
 
 /**
@@ -575,6 +582,329 @@ describe('the graph model', () => {
     const none = model('')
     expect(none.columns.map((column) => column.stream)).toEqual([''])
     expect(none.columns[0]?.plans.map((plan) => plan.id)).toEqual([DOCUMENT.plans[1]?.id])
+  })
+})
+
+/**
+ * RECORD_RAW is one `graph --json` document of a project whose coordinator has
+ * written a roadmap record (GV4.1), as the wire has it: two release boxes, one
+ * per stream, six nodes and three edges.
+ *
+ * **The record's own nodes are the ones that name a plan**, and the document
+ * says so the way the CLI does: `plan` is the plan document the task belongs to,
+ * `stream` is the lane it is drawn in, `version` is the plan's own target --
+ * carried for a task the record draws in no box and `''` for one inside a box,
+ * because a box is drawn by its name and the number beside a task in it would
+ * read as the box's own (D2114) -- and `release` is the **key** of one of the
+ * boxes above, which is what makes the join from a task to its box a join on a
+ * key and not on a name. The pull request is the stored view's and names no
+ * plan, so it is grouped by the release string its repository wrote, exactly as
+ * it was before the record existed.
+ *
+ * The three edges are the record's own cross-plan ones: `place` waits on a task
+ * of the **style** stream in a **finished** box (cross-stream *and*
+ * cross-release), `ship` waits on a task of its own stream and its own box (not
+ * cross at all), and the third names a task this document does not carry, which
+ * is the edge that must draw nothing rather than a marker with no end.
+ */
+const RECORD_NODES: readonly Record<string, unknown>[] = [
+  recordNode('plans/style/paint', 'style', 'release-style-mango', '', 'done', 'paint the banner'),
+  recordNode('plans/cli/place', 'cli', 'release-cli-camel', '', 'waiting', 'place the loader'),
+  recordNode('plans/cli/ship', 'cli', 'release-cli-camel', '', 'waiting', 'ship the loader'),
+  recordNode('plans/cli/free', 'cli', '', '1.6.0', 'waiting', 'free the loader'),
+  { ...recordNode('plans/gone/left', 'cli', 'release-cli-camel', '', '', 'the id the record left behind'), dangling: true },
+  {
+    key: 'coordinator:acme/widgets#42',
+    source: 'coordinator',
+    kind: 'pull_request',
+    id: 'acme/widgets#42',
+    title: 'Tidy the widget loader',
+    repo: 'acme/widgets',
+    state: 'open',
+    release: 'v1.4.0',
+    updated: null,
+  },
+]
+
+const RECORD_RAW: Readonly<Record<string, unknown>> = {
+  version: GRAPH_DOCUMENT_VERSION,
+  stream_id: '',
+  seq: 0,
+  generated_at: '2026-11-11T09:00:00Z',
+  sources: [{ source: 'coordinator', state: 'up', as_of: '2026-11-11T08:00:00Z', reason: '' }],
+  releases: [
+    { key: 'release-cli-camel', stream: 'cli', id: 'v1.5.0', name: 'Camel', state: 'open', order: 2 },
+    { key: 'release-style-mango', stream: 'style', id: 'v1.4.0', name: 'Mango', state: 'finished', order: 1 },
+  ],
+  nodes: RECORD_NODES,
+  edges: [
+    {
+      from: 'coordinator:plans/cli/place',
+      to: 'coordinator:plans/style/paint',
+      kind: 'depends_on',
+    },
+    { from: 'coordinator:plans/cli/ship', to: 'coordinator:plans/cli/place', kind: 'depends_on' },
+    { from: 'coordinator:plans/cli/place', to: 'coordinator:plans/cli/a-task-no-plan-carries', kind: 'depends_on' },
+  ],
+  warnings: [],
+}
+
+/** recordNode is one task of the record's own shape: a qualified id, the plan it
+ * belongs to, the stream it is in, the box it is in (the key above, or `''` for
+ * a task nobody has placed), the plan's version -- `''` wherever the record
+ * draws the task in a box, which is where the CLI writes no number -- and the
+ * state the plan wrote. */
+function recordNode(
+  id: string,
+  stream: string,
+  release: string,
+  version: string,
+  state: string,
+  title: string,
+): Record<string, unknown> {
+  const plan = id.slice(0, id.lastIndexOf('/'))
+  return {
+    key: `coordinator:${id}`,
+    source: 'coordinator',
+    kind: 'task',
+    id,
+    title,
+    repo: '',
+    state,
+    release,
+    updated: null,
+    plan,
+    stream,
+    version,
+  }
+}
+
+/** recordDocument is RECORD_RAW through the real decoder: the scope model is a
+ * function of the decoded view, exactly as the plan's is. */
+function recordDocument(raw: Readonly<Record<string, unknown>> = RECORD_RAW): GraphView {
+  const result = decodeGraphDocument(raw, 'graph.read')
+  if (!result.ok) throw new Error(result.skew.because)
+  return result.value
+}
+
+/** laneIn is one lane of a scope model, by its stream. */
+function laneIn(value: ScopeModel, stream: string): ScopeLane {
+  const lane = value.lanes.find((each) => each.stream === stream)
+  if (lane === undefined) throw new Error(`the scope drew no lane for ${stream}`)
+  return lane
+}
+
+/** scopeNodeIn is one drawn node of a scope model, by its key, wherever it was
+ * drawn -- a record task is in a lane and a stored-view record in a release
+ * group, and a test that looked in one of the two would find the other. */
+function scopeNodeIn(value: ScopeModel, key: string): ScopeNode {
+  const drawn = [
+    ...value.lanes.flatMap((lane) => [...lane.boxes.flatMap((box) => box.nodes), ...lane.unassigned]),
+    ...value.releases.flatMap((release) => release.nodes),
+  ]
+  const found = drawn.find((node) => node.key === key)
+  if (found === undefined) throw new Error(`the scope drew no node for ${key}`)
+  return found
+}
+
+describe('the coordinator scope over the roadmap record (GV4.1)', () => {
+  it('draws a release box per stream, and the tasks the record placed in them', () => {
+    const scope = buildScopeModel(recordDocument())
+
+    // Two lanes, in the order the document listed their tasks: the stream is a
+    // key the model joins on, and the name a reader sees is the `Sanitized`
+    // heading beside it.
+    expect(scope.lanes.map((lane) => lane.stream)).toEqual(['style', 'cli'])
+    expect(scope.lanes.map((lane) => text(lane.heading))).toEqual(['style', 'cli'])
+
+    // A box is the record's own document: its name is its heading, its state is
+    // the record's word drawn as a word, and its tasks are inside it.
+    const cli = laneIn(scope, 'cli')
+    expect(cli.boxes.map((box) => box.key)).toEqual(['release-cli-camel'])
+    expect(cli.boxes.map((box) => text(box.heading))).toEqual(['Camel'])
+    expect(cli.boxes.map((box) => text(box.state))).toEqual(['open'])
+    expect(cli.boxes[0]?.nodes.map((node) => node.key)).toEqual([
+      'coordinator:plans/cli/place',
+      'coordinator:plans/cli/ship',
+      'coordinator:plans/gone/left',
+    ])
+    // The plan is what marks a node as the record's, and the two other members
+    // the record wrote about it are carried raw for the drawing to join on.
+    const place = scopeNodeIn(scope, 'coordinator:plans/cli/place')
+    expect([place.plan, place.stream, place.release]).toEqual(['plans/cli', 'cli', 'release-cli-camel'])
+    // A second stream is a lane of its own, with its own box.
+    const style = laneIn(scope, 'style')
+    expect(style.boxes.map((box) => text(box.heading))).toEqual(['Mango'])
+    expect(style.boxes.map((box) => text(box.state))).toEqual(['finished'])
+
+    // The stored view's own record names no plan, so it is grouped as it always
+    // was: by the release string its repository wrote, and not by a box.
+    expect(scope.releases.map((release) => release.release)).toEqual(['v1.4.0'])
+    expect(scopeNodeIn(scope, 'coordinator:acme/widgets#42').plan).toBe('')
+  })
+
+  it('draws a task nobody placed in its stream’s unassigned group, with the plan’s version marked', () => {
+    const scope = buildScopeModel(recordDocument())
+    const cli = laneIn(scope, 'cli')
+
+    // D2114: the record writes no document for an unplaced task, so a drawing
+    // that only had boxes would drop every task a person has not moved yet.
+    expect(cli.unassigned.map((node) => node.key)).toEqual(['coordinator:plans/cli/free'])
+    expect(text(cli.unassignedHeading)).toBe(GRAPH_SCOPE_UNASSIGNED)
+    // The version beside it is the **plan's own target** and not a release the
+    // record holds it in -- a box carries a name and no version, so the two are
+    // never matched -- and the mark is what says whose number it is.
+    const free = cli.unassigned[0]
+    expect(text(free?.version)).toBe('1.6.0')
+    // A task the record **is** drawn in a box carries no version at all: the box
+    // answers for it with a name and a state, and the plan's target beside it
+    // would read as the box's own -- the match D2114 refuses, and why the CLI
+    // writes the number only for a task in no box.
+    expect(scopeNodeIn(scope, 'coordinator:plans/cli/place').version).toBeNull()
+    // And a task the plan gave no version says nothing rather than `undefined`.
+    expect(scopeNodeIn(scope, 'coordinator:plans/gone/left').version).toBeNull()
+  })
+
+  it('marks a dangling endpoint, and draws it in its real box', () => {
+    const scope = buildScopeModel(recordDocument())
+
+    // D2115: the record holds an edge for an id no plan document carries, and
+    // the id is drawn -- in the box its own `release` names, which the document
+    // does carry -- with the record's own word for the state it is in.
+    const left = scopeNodeIn(scope, 'coordinator:plans/gone/left')
+    expect(text(left.dangling)).toBe(GRAPH_SCOPE_DANGLING)
+    expect(left.dangling?.ok).toBe(true)
+    expect(left.stream).toBe('cli')
+    expect(laneIn(scope, 'cli').boxes[0]?.nodes.map((node) => node.key)).toContain('coordinator:plans/gone/left')
+    // A task the record is happy with carries no mark at all.
+    expect(scopeNodeIn(scope, 'coordinator:plans/cli/place').dangling).toBeNull()
+  })
+
+  it('draws a cross-plan edge as the marker its task carries, and counts the ones it cannot', () => {
+    const scope = buildScopeModel(recordDocument())
+
+    // **The red step.** Before this change a document with a cross-plan edge
+    // drew the tasks and no edge at all: the record's edges are between its own
+    // tasks, and a drawing that showed one stream at a time could not show them
+    // as lines. Each is the marker its *needing* task carries, spelling the
+    // stream and the box the needed task is in.
+    const place = scopeNodeIn(scope, 'coordinator:plans/cli/place')
+    expect(place.needs.map((need) => need.key)).toEqual(['coordinator:plans/style/paint'])
+    expect(text(place.needs[0]?.label)).toBe(`${GRAPH_SCOPE_NEEDS} style${GRAPH_SCOPE_SEPARATOR}Mango`)
+    // The two ends are in different streams **and** different boxes, which is
+    // the case a lane drawing cannot show on its own.
+    expect(place.needs.map((need) => need.cross)).toEqual([true])
+    // A dependency inside one stream and one box is a marker too, and it is not
+    // cross: what tells the drawing to draw it faintly is false here.
+    const ship = scopeNodeIn(scope, 'coordinator:plans/cli/ship')
+    expect(text(ship.needs[0]?.label)).toBe(`${GRAPH_SCOPE_NEEDS} cli${GRAPH_SCOPE_SEPARATOR}Camel`)
+    expect(ship.needs.map((need) => need.cross)).toEqual([false])
+    // The other end of a marker is drawn even when the marker's own task is not
+    // the one the tab shows: that is what makes the marker survive the stream
+    // filter instead of being a line that leaves the frame.
+    expect(scopeNodeIn(scope, 'coordinator:plans/style/paint').needs).toEqual([])
+    // An edge whose other end this document does not carry draws nothing: there
+    // is no marker a reader could act on, and the task it names is not a node.
+    expect(place.needs).toHaveLength(1)
+  })
+
+  it('names the marker’s box by the box’s own name and never by its key', () => {
+    // A task's `release` is the box's **key** -- `coordinator.ReleaseID` hashes
+    // two strings into one, so the key is a hash and nothing a reader could
+    // read (D2113), and a marker built from the task's own field would draw 64
+    // hex characters in the middle of a sentence. The name comes from the box.
+    expect(text(scopeNodeIn(buildScopeModel(recordDocument()), 'coordinator:plans/cli/place').needs[0]?.label)).toBe(
+      `${GRAPH_SCOPE_NEEDS} style${GRAPH_SCOPE_SEPARATOR}Mango`,
+    )
+    // And where the document carries no box for the key the task names -- a read
+    // that could not decode it, or a box the record dropped -- the marker is the
+    // console's own word for a task nobody has placed rather than the hash.
+    const noBoxes = buildScopeModel(recordDocument({ ...RECORD_RAW, releases: [] }))
+    expect(text(scopeNodeIn(noBoxes, 'coordinator:plans/cli/place').needs[0]?.label)).toBe(
+      `${GRAPH_SCOPE_NEEDS} style${GRAPH_SCOPE_SEPARATOR}${GRAPH_SCOPE_UNASSIGNED}`,
+    )
+  })
+
+  it('draws the record’s streams as tabs, and narrows to one of them', () => {
+    const scope = buildScopeModel(recordDocument())
+
+    // The filter is the record's own streams, and `All` is always one of them
+    // (`buildGraphModel`'s rule): a document with no stream draws no filter at
+    // all, which is what keeps a scope read before the record existed drawing
+    // exactly the picture it always drew.
+    expect(scope.tabs.map((option) => [option.tab, text(option.label)])).toEqual([
+      ['style', 'style'],
+      ['cli', 'cli'],
+      [null, 'All'],
+    ])
+    expect(scope.tab).toBeNull()
+
+    const narrowed = buildScopeModel(recordDocument(), null, 'style')
+    expect(narrowed.lanes.map((lane) => lane.stream)).toEqual(['style'])
+    expect(narrowed.tab).toBe('style')
+    // The stored view's group is not a stream and is drawn under every tab: it
+    // is the project's own records and not the record's plan.
+    expect(narrowed.releases.map((release) => release.release)).toEqual(['v1.4.0'])
+    // A stream the document does not carry is All rather than an empty frame.
+    expect(buildScopeModel(recordDocument(), null, 'a-stream-the-record-dropped').tab).toBeNull()
+    expect(buildScopeModel(recordDocument(), null, 'a-stream-the-record-dropped').lanes).toHaveLength(2)
+
+    // A document from a CLI before these members existed carries no box, no
+    // `plan` and no `stream`, and it draws exactly the picture it drew before the
+    // record did: every node of it is the stored view's, in a release group and
+    // with no lane, no tab and no marker.
+    const older = buildScopeModel(
+      recordDocument({
+        ...RECORD_RAW,
+        releases: [],
+        edges: [],
+        nodes: RECORD_NODES.filter((node) => !('plan' in node)),
+      }),
+    )
+    expect(older.lanes).toEqual([])
+    expect(older.tabs).toEqual([])
+    expect(older.releases.map((release) => release.release)).toEqual(['v1.4.0'])
+    expect(scopeNodeIn(older, 'coordinator:acme/widgets#42').needs).toEqual([])
+  })
+
+  it('draws a box the record holds with no task in it, in the record’s own order', () => {
+    // A lane and its boxes come from the record's own releases and not from the
+    // tasks that landed in them (D2113): a drawing seeded from the nodes alone
+    // would lose a release nobody has been placed in, and a stream whose every
+    // box is empty would vanish -- lane, tab and all -- leaving the screen to say
+    // the scope has nothing to draw about a project whose record is full.
+    const scope = buildScopeModel(
+      recordDocument({
+        ...RECORD_RAW,
+        releases: [
+          { key: 'release-cli-camel', stream: 'cli', id: 'v1.5.0', name: 'Camel', state: 'open', order: 2 },
+          { key: 'release-cli-badger', stream: 'cli', id: 'v1.4.0', name: 'Badger', state: 'finished', order: 1 },
+          { key: 'release-mobile-robin', stream: 'mobile', id: 'v0.3.0', name: 'Robin', state: 'open', order: 3 },
+        ],
+        nodes: [recordNode('plans/cli/place', 'cli', 'release-cli-camel', '1.6.0', 'waiting', 'place the loader')],
+      }),
+    )
+
+    // The record's `order` is the order its boxes are drawn in, and never the
+    // order the document happened to list them in: Badger is listed second and is
+    // drawn first, whatever array the two arrived in.
+    const cli = laneIn(scope, 'cli')
+    expect(cli.boxes.map((box) => [text(box.heading), text(box.state)])).toEqual([
+      ['Badger', 'finished'],
+      ['Camel', 'open'],
+    ])
+    // An empty box is drawn and holds nothing, which is the fact a reader acts
+    // on: the release is open and no task is in it.
+    expect(cli.boxes[0]?.nodes).toEqual([])
+    expect(cli.boxes[1]?.nodes.map((node) => node.key)).toEqual(['coordinator:plans/cli/place'])
+    // A stream whose only box holds no task is a lane and a tab of its own.
+    expect(scope.lanes.map((lane) => lane.stream)).toEqual(['cli', 'mobile'])
+    expect(laneIn(scope, 'mobile').boxes.map((box) => box.nodes)).toEqual([[]])
+    expect(scope.tabs.map((option) => option.tab)).toEqual(['cli', 'mobile', null])
+    // An empty box is not an unassigned task: the console's own word is for a
+    // task the record has placed nowhere, and no task is here to draw in it.
+    expect(laneIn(scope, 'cli').unassigned).toEqual([])
+    expect(laneIn(scope, 'mobile').unassigned).toEqual([])
   })
 })
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
 
@@ -746,5 +748,159 @@ func TestCatalogCheckJobNeedsItsSpec(t *testing.T) {
 	}
 	if len(lines) != 1 || lines[0].Decision != imagecheck.CheckFailed || lines[0].Severity != "ERROR" {
 		t.Fatalf("lines = %+v", lines)
+	}
+}
+
+// TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt: a rebuild is
+// submitted from the copy this job reads, and that copy is the one a build
+// composed (imagebake, the image setup skill's bake step, IS8b). The smoke is
+// the manual build's own spec, so it has to read the checkout where the
+// definition put it — /work/baked/<slug> — rather than at /work/repo, or the
+// nightly rebuild of every baked entry fails against an image that is exactly
+// what the build before it verified.
+func TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	slug := f.slugs["acme/other"]
+	baked, err := imagebake.Append([]byte(catalogCheckOtherDef), imagebake.Plan{Baked: &imagebake.Repo{
+		Repo: "acme/other", Slug: slug,
+		URL: "https://bitbucket.org/acme/other.git", Branch: "main",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The base has moved, which is what the schedule rebuilds for.
+	f.seed(t, "runtime", "acme/other", string(baked), "sha256:"+strings.Repeat("9", 64))
+
+	if _, err := runCatalogCheck(t); err != nil {
+		t.Fatal(err)
+	}
+	if got := buildPosts(f.fb); got != 1 {
+		t.Fatalf("builds submitted = %d, want 1", got)
+	}
+	b64, _ := catalogBuildSubs(t, f.fb)["_SELFTEST_B64"].(string)
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("_SELFTEST_B64 = %q: %v", b64, err)
+	}
+	var spec image.SelftestSpec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		t.Fatal(err)
+	}
+	want := "/work/baked/" + slug
+	if spec.RepoDir != want {
+		t.Errorf("the rebuild's smoke reads %s, want %s: the definition this job read bakes the checkout there", spec.RepoDir, want)
+	}
+	if spec.Commit != catalogCheckCommit || spec.Origin != "https://bitbucket.org/acme/other.git" {
+		t.Errorf("the rebuild's smoke is %+v, want the committed checkout of acme/other", spec)
+	}
+}
+
+// TestCatalogCheckJobRefusesADefinitionBakedForAnotherRepository: the generated
+// stage clones the composing repository's own checkout and pins the build to
+// that repository's URL, so a definition that bakes one repository cannot be
+// rebuilt from another checkout (O3 (b)). The nightly check is where that
+// arrives, because it rebuilds an entry as whichever repository the spec
+// assigns it to, and such a rebuild would fail inside the stage — after the
+// build was submitted and paid for. It is refused here, before a build is
+// submitted, and the line says which repository the definition bakes.
+func TestCatalogCheckJobRefusesADefinitionBakedForAnotherRepository(t *testing.T) {
+	// The entry is assigned to acme/other and the definition bakes acme/app's
+	// checkout: the rebuild's REPO_URL would be acme/other's, and the generated
+	// stage would refuse it inside the build — after the build was submitted
+	// and paid for. Here the check refuses it first, and the fix it names is the
+	// one the assignment is made from.
+	appSlug := mustSlug("bitbucket", "acme/app")
+	baked, err := imagebake.Append([]byte(catalogCheckOtherDef), imagebake.Plan{Baked: &imagebake.Repo{
+		Repo: "acme/app", Slug: appSlug,
+		URL: "https://bitbucket.org/acme/app.git", Branch: "main",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		cat  *config.Catalog
+		want []string
+	}{
+		// The composing repository is one this installation builds in (the
+		// catalog gives it an entry of its own), so the check names it and the
+		// map command that makes the assignment agree with the definition.
+		"the composing repository is in the spec": {
+			cat:  catalogCheckCatalog("tools", "runtime"),
+			want: []string{"acme/app", "fugaro image map set acme/app runtime"},
+		},
+		// It is not — a repository of the project with no entry of its own — so
+		// the line names the directory the definition bakes, and the build that
+		// composes a definition for the repository the rebuild would run as.
+		"the composing repository is not in the spec": {
+			cat:  catalogCheckCatalog("runtime"),
+			want: []string{"/work/baked/" + appSlug, "fugaro image build runtime"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, tc.cat, 5))
+			f.seed(t, "runtime", "acme/other", string(baked), "sha256:"+strings.Repeat("9", 64))
+
+			lines, err := runCatalogCheck(t)
+			if err == nil || !strings.Contains(err.Error(), "runtime") {
+				t.Fatalf("err = %v, want the entry the check failed for", err)
+			}
+			if got := buildPosts(f.fb); got != 0 {
+				t.Fatalf("builds submitted = %d, want 0: the rebuild cannot run as the repository whose checkout the definition bakes", got)
+			}
+			l := lineFor(t, lines, "runtime")
+			if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" || !strings.Contains(l.Error, "acme/other") {
+				t.Fatalf("runtime line = %+v, want the failure naming the repository the rebuild would run as", l)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(l.Error, want) {
+					t.Errorf("the line %q does not name %q", l.Error, want)
+				}
+			}
+		})
+	}
+}
+
+// TestCatalogCheckJobRebuildsADefinitionComposedFromANonCanonicalOrigin: a
+// definition is composed from a checkout's origin — the operator's own remote —
+// while the check's own REPO_URL is repourl.CloneURL's canonical form, and the
+// two are the same repository whenever the origin differs only in git's own
+// spellings of it: no ".git", a trailing slash, a capital letter. Such an entry
+// is not held back by the check: it is submitted, and the URL the submission
+// carries is the rebuild's own canonical one — the pair the stage's guard has
+// to accept (imagebake's repoURLGuard, which is where the guard itself is run,
+// because a guard is shell and this job never builds anything for real).
+func TestCatalogCheckJobRebuildsADefinitionComposedFromANonCanonicalOrigin(t *testing.T) {
+	for name, origin := range map[string]string{
+		"no .git":          "https://bitbucket.org/acme/app",
+		"a trailing slash": "https://bitbucket.org/acme/app/",
+		"a capital letter": "https://Bitbucket.org/Acme/App",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools"), 5))
+			baked, err := imagebake.Append([]byte(catalogCheckAppDef), imagebake.Plan{Baked: &imagebake.Repo{
+				Repo: "acme/app", Slug: f.slugs["acme/app"], URL: origin, Branch: "main",
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.seed(t, "tools", "acme/app", string(baked), "sha256:"+strings.Repeat("9", 64))
+
+			lines, err := runCatalogCheck(t)
+			if err != nil {
+				t.Fatalf("err = %v: a definition composed from %s bakes acme/app, which is the repository this entry rebuilds as", err, origin)
+			}
+			if got := buildPosts(f.fb); got != 1 {
+				t.Fatalf("builds submitted = %d, want 1: the entry's definition bakes the repository the rebuild runs as", got)
+			}
+			if l := lineFor(t, lines, "tools"); l.Decision != imagecheck.Rebuild {
+				t.Fatalf("tools line = %+v, want a rebuild", l)
+			}
+			// The build's own argument is the canonical spelling, which is the
+			// one the composed definition does not carry: the guard is what
+			// has to see through that, not this test's fixture.
+			if subs := catalogBuildSubs(t, f.fb); subs["_REPO_URL"] != "https://bitbucket.org/acme/app.git" {
+				t.Fatalf("_REPO_URL = %v, want the rebuild's own canonical URL", subs["_REPO_URL"])
+			}
+		})
 	}
 }

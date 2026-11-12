@@ -935,9 +935,8 @@ func (c *repoCtx) effectiveImageMap() map[string]string {
 //
 // The backend is the installation's own, read from the config and not written
 // as a constant: the docker rule is a rule about the backend the job will run
-// on (D1149), and today's only backend is Cloud Run — a config that names
-// cloud-batch is refused where it is read until the task that makes a Batch
-// run safe, which is also the point this line starts meaning something else.
+// on (D1149), and an installation that names cloud-batch is judged by the rule
+// for the backend it actually runs on rather than by Cloud Run's.
 func (c *repoCtx) imageRequest(w config.Workflow) catalog.ImageRequest {
 	return catalog.ImageRequest{
 		Catalog:   c.effectiveCatalog(),

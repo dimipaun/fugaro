@@ -412,7 +412,17 @@ func (s *Server) serveRegister(w http.ResponseWriter, r *http.Request) {
 		TokenEndpointAuthMethod: string(oidc.AuthMethodNone),
 		GrantTypes:              []string{string(oidc.GrantTypeCode), string(oidc.GrantTypeRefreshToken)},
 		ResponseTypes:           []string{"code"},
-		Scope:                   strings.Join(ScopeVocabulary, " "),
+		// The scope a registration answers is the default rather than the
+		// whole vocabulary (R1), and this member is where a client reads what
+		// it should ask for: a registration that answered
+		// "tasks:read tasks:write state:read state:write" would have every MCP
+		// client request the scope that rewrites the orchestrator's state, and
+		// the door an installation is wired with narrows nothing
+		// (coordinator_serve.go leaves Config.Limits at its zero value), so the
+		// client would be handed it. DefaultScopes is the list
+		// `requestedScopes` answers an authorization that names no scope with,
+		// which is what makes the two defaults one.
+		Scope: strings.Join(DefaultScopes, " "),
 	})
 }
 

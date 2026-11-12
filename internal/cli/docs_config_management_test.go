@@ -183,7 +183,7 @@ const (
 // (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
 // list does not.
 const (
-	cfmRegistryRows   = 412
+	cfmRegistryRows   = 415
 	cfmAllowlistNamed = 101
 )
 

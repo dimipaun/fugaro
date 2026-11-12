@@ -36,11 +36,11 @@ jobs:
             fi
           fi
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-  test:
+  check:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,7 +60,80 @@ jobs:
       - run: go vet -tags terraform ./...
       # Type-checks the emulator tests of the database rules (the rules job runs them).
       - run: go vet -tags firebase ./...
-      - run: go test -race -timeout 40m ./...
+  # The Go tests run on parallel runners: scripts and internal/runner are split
+  # by test name (a stable hash of the name, mod the shard count, so a new test
+  # lands in a shard on its own and none is dropped or run twice), internal/cli
+  # and internal/issues each get a runner, and one runner takes every other
+  # package. internal/cli is not split: its update tests hang when a subset of
+  # the package runs without the tests that precede them, so the package has to
+  # run whole. A runner that is a whole package has of: 1.
+  shard:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: test-shard (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: cli, pkg: ./internal/cli, index: 0, of: 1}
+          - {name: scripts-0, pkg: ./scripts, index: 0, of: 2}
+          - {name: scripts-1, pkg: ./scripts, index: 1, of: 2}
+          - {name: runner-0, pkg: ./internal/runner, index: 0, of: 2}
+          - {name: runner-1, pkg: ./internal/runner, index: 1, of: 2}
+          - {name: issues, pkg: ./internal/issues, index: 0, of: 1}
+          - {name: rest, pkg: rest, index: 0, of: 1}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: go test -race
+        env:
+          PKG: ${{ matrix.pkg }}
+          INDEX: ${{ matrix.index }}
+          OF: ${{ matrix.of }}
+        run: |
+          set -euo pipefail
+          if [ "$PKG" = rest ]; then
+            pkgs=$(go list ./... | grep -vE '/(internal/cli|scripts|internal/runner|internal/issues)$')
+            go test -race -timeout 40m $pkgs
+            exit 0
+          fi
+          if [ "$OF" = 1 ]; then
+            go test -race -timeout 40m "$PKG"
+            exit 0
+          fi
+          go test -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all.txt
+          total=$(wc -l < all.txt)
+          while read -r name; do
+            if [ $(( $(printf '%s' "$name" | cksum | cut -d' ' -f1) % OF )) -eq "$INDEX" ]; then
+              echo "$name"
+            fi
+          done < all.txt > mine.txt
+          echo "shard $INDEX of $OF: $(wc -l < mine.txt) of $total tests"
+          test -s mine.txt
+          run="^($(paste -sd'|' mine.txt))\$"
+          go test -race -timeout 40m -run "$run" "$PKG"
+  # The one check name the release gate and branch rules know: it passes when
+  # every shard and the vet job passed, and when they were skipped for a
+  # documentation-only change.
+  test:
+    needs: [check, shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          CHECK: ${{ needs.check.result }}
+          SHARD: ${{ needs.shard.result }}
+        run: |
+          for r in "$CHECK" "$SHARD"; do
+            case "$r" in success|skipped) ;; *) echo "a test job ended $r"; exit 1;; esac
+          done
   # The budget database rules are the only thing between a compromised run's
   # token and every shared counter, so their tests run against the Realtime
   # Database emulator: a firebase-tools pinned by

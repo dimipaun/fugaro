@@ -17,6 +17,11 @@ No job runs that suite in CI: the change that would is staged
 and the service runs (T13, S8.1) keys are **minted by hand** (S2.10), and every sentence below
 about the running service is a design rather than a description.
 
+**Superseded 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the format and claim set this design
+restates (§2) are the v2 `fgk_` keys', and the service's "no revocation, by design" gives way to a
+revocation list the customer's own job checks (D2130, D2131).**
+
 This is subscriptions **S3.1**, the first task of slice S3: the design the tasks after it are written
 against — the issuing service (S3.2), the admin page and the manual queue (S3.4), the dedicated
 project's infrastructure (S3.5), the register of the slice's checks (S3.6), the website's forms

@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -25,12 +26,19 @@ import (
 // not refused by the seal's image gate.
 const releaseSeal = "ghcr.io/dimipaun/fugaro-base:" + sealSince
 
-// releaseSealAndPair is releaseSeal for a fixture that is also launched with a
-// pair registered: a runner at or past abSince decodes the ab block both arms'
-// tasks carry (pairImageWhy), which the seal's own release predates. The two
-// gates judge the same image from different releases, and the later one is the
-// whole of what the fixture's build record has to satisfy.
-const releaseSealAndPair = "ghcr.io/dimipaun/fugaro-base:" + abSince
+// nodeRelease is the release that introduced the policy node's current version
+// (projectpolicy.VersionSince): the floor of every fixture whose launch must
+// pass the launcher's policy gate, which holds a job image to the release that
+// introduced the node version it is about to read (policyImageGate). A fixture
+// that publishes a policy and then launches needs it, whether the launch's
+// image is the installation's base (base_images, a checkout: clone workflow) or
+// a build record of its own.
+var nodeRelease = projectpolicy.VersionSince[projectpolicy.Version]
+
+// releasePolicy is a derived base image at that release. It is the newest of
+// the fixtures' base images, so a fixture that publishes a policy and then
+// launches needs this one and not releaseSeal.
+var releasePolicy = "ghcr.io/dimipaun/fugaro-base:" + nodeRelease
 
 // markerKey is the seal key a launch handed its execution: the marker's value,
 // strictly parsed. A launch that minted and handed anything else is a failure.

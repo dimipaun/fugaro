@@ -888,7 +888,19 @@ var propertyAgentSites = map[string]string{
 	// running with the operator's ADC, and that is what the first test drives.
 	// The second one drives the same function WITHOUT a marker, so the two
 	// together say the skip is the marker's and not a site that does nothing.
-	"init_stages.go pinCredentialsImage": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker) and TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate (with none)",
+	"init_stages.go ensureCredentialsService": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker) and TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate (with none)",
+	// The credentials-service stage's skip is the same shape again, and it is
+	// what the session's own plan reports for the stage: the test below asserts
+	// the sentence it answers with, so removing the arm is visible in the run's
+	// output. What would resolve the image and rewrite the tfvars is the stage's
+	// run, which no marker reaches — moveCredentialsImage's own arm is the
+	// second guard and is outside, for that reason.
+	"init_stages.go newCredentialsStage": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker: the run reports the stage skipped with its own sentence) and TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService (with none: the stage moves the image and applies the root after the policy stage)",
+	// credentialsMoveHeld answers the same question one stage earlier, for the
+	// policy stage: a session replaces no service, so it may not raise the
+	// node's version either, and the test drives that through the door — the
+	// session's own run leaves the node at its version and the stage says so.
+	"init_stages.go credentialsMoveHeld": "TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion (under a marker: the policy stage holds the node at its version and says why), and TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode and TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService drive the same decision with no marker",
 	// The audience fill is the same shape and for the same reason: it applies
 	// from inside the installation stage, so it must not run in a session whose
 	// apply is a plan the owner has not confirmed. Under a marker it returns
@@ -941,10 +953,11 @@ var propertyAgentSites = map[string]string{
 // outsideAgentSites are the agent-marker sites the property does not cover,
 // each with the reason.
 var outsideAgentSites = map[string]string{
-	"init.go runInit":                 "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
-	"init.go publishSharedConfig":     "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
-	"initsecrets.go Check":            "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
-	"init_repo_gate.go convergeOptIn": "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
+	"init.go runInit":                     "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
+	"init.go publishSharedConfig":         "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
+	"initsecrets.go Check":                "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
+	"init_stages.go moveCredentialsImage": "OUTSIDE: unreachable under a marker through the loop — the credentials-service stage's own skip answers first (newCredentialsStage, in propertyAgentSites) and the loop never runs a stage it skipped, so this is the second of the two guards and no test drives it under one. It stays because what it guards is the resolve (cosign and the registry on the operator's ADC) and the tfvars write after it, which a session must not do even if a caller reaches the method by another route",
+	"init_repo_gate.go convergeOptIn":     "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
 }
 
 // Every inline decision refuses under each marker, and only under a marker:
