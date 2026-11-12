@@ -472,7 +472,8 @@ func (c *cycle) triaged(ctx context.Context, target TriageTarget, in TriageInput
 		// merge this package ever asks for: the head is the one the rule
 		// judged, and the provider's own call refuses a head that moved.
 		err := c.tick.Triage.Act.Merge(ctx, target, *in.PR)
-		switch code := mergeRefusalCode(err); {
+		code := mergeRefusalCode(err)
+		switch {
 		case err == nil:
 			text = triageLine(out) + " (merged)"
 			if op, ok := c.followUp(target, in); ok {
@@ -482,11 +483,10 @@ func (c *cycle) triaged(ctx context.Context, target TriageTarget, in TriageInput
 			// A refusal is not an outage: the host said no to this merge —
 			// the head moved, its merge cannot be bound to one, it holds no
 			// merge credential — and what the rule judged is not what lands.
-			// That is a person's to read, and the run is not re-judged for
-			// it: the line below fences it.
-			// The line says both what the rule decided and what the host did
-			// with it: the outcome and its evidence, then the refusal and its
-			// closed code, so the log is not read as a merge that landed.
+			// That is a person's to read, and the line below fences the run
+			// for it. The line carries both: the outcome and its evidence,
+			// then the refusal and its closed code, so the log is never read
+			// as a merge that landed.
 			text = triageLine(out) + " " + string(ReasonMergeRefused) + " (" + code + ")"
 			if op, question, ok := c.askPerson(target, mergeRefusedQuestion(target, code)); ok {
 				ops, told = append(ops, op), append(told, question)
@@ -585,7 +585,7 @@ func (c *cycle) smallerScopes(target TriageTarget, out TriageOutcome) []Op {
 		ops = append(ops, newItemOp(id,
 			"a smaller scope: "+target.Item.Title,
 			"The triage restarted run "+target.RunID+" ("+string(reason)+"): the run is over or going nowhere, and what it was asked to do is not one attempt's work. Split it into a scope a person can approve; this item waits for that approval.",
-			target.Item, c.state))
+			target.Item))
 	}
 	return ops
 }
@@ -608,13 +608,15 @@ func (c *cycle) followUp(target TriageTarget, in TriageInput) (Op, bool) {
 	return newItemOp(id,
 		"the findings run "+target.RunID+" left open",
 		"Run "+target.RunID+" was merged with these findings still open: "+strings.Join(lines, ", ")+". Decide each one; this item waits for a person's approval.",
-		target.Item, c.state), true
+		target.Item), true
 }
 
 // newItemOp is one work item a cycle files: the repo, the recipe and the tier
 // of the item the run was for, the phase work starts in, and no approval —
-// only a person's own work_item_approve is one (D1226).
-func newItemOp(id, title, brief string, of WorkItem, s State) Op {
+// only a person's own work_item_approve is one (D1226). The title and the
+// brief are the store's to clip to their bounds, which is why this never
+// builds one longer than they allow.
+func newItemOp(id, title, brief string, of WorkItem) Op {
 	phase := PhaseQueued
 	repo, recipe, tier := of.Repo, of.Recipe, of.RigorTier
 	return Op{Op: OpWorkItemUpsert, WorkItem: &WorkItemOp{
