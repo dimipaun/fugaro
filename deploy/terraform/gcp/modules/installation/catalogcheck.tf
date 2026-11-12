@@ -271,17 +271,21 @@ resource "google_cloud_scheduler_job" "catalog_check" {
 # The role is spelled literally in the binding, for the reason
 # credentials.tf's own states: google_project_iam_custom_role's name attribute
 # is computed, so a binding through it reaches the plan as an unknown role and
-# internal/infra/tf's cover could not say which role the confirmation covers.
+# internal/infra/tf's cover could not say which role the plan grants.
 # var.catalog_check.firebase_project is known at plan time (the variable's
 # validation), so the literal is.
 #
 # Neither resource is on internal/infra/tf's tables, and that is the design's
 # own rule for this account rather than an omission: the catalog check job is a
-# kind of principal of its own (toCatalogCheck), so every grant to it is a plan
-# the review did not announce — the update that first carries this one asks its
-# owner, and a coding agent's session is refused — which is what keeps a grant
-# to this account from being covered silently by a row (cover.go's
-# CatalogCheckAccountID).
+# kind of principal of its own (toCatalogCheck), so no row accepts a grant to
+# it, and the binding below is a grant no row covers. What that
+# costs is a warning and not a confirmation: D1545 makes the cover's grant
+# table a CONTENT site, so the `fugaro update` that first carries this binding
+# records it as a finding, prints it and files a warned audit record that
+# `doctor` reports — and then applies it, a coding agent's session included and
+# with nothing typed. A row would be the quieter of the two: the grant would be
+# covered and announced by the gate's own line (cover.go's
+# CatalogCheckAccountID reads the same fence).
 resource "google_project_iam_custom_role" "catalog_lease" {
   count = local.catalog_lease_on ? 1 : 0
 

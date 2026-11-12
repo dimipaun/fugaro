@@ -467,16 +467,25 @@ const VerifierAccountID = "fugaro-verifier"
 // package reads differently. It is NOT among FugaroAccounts, for the
 // credentials and coordinator accounts' reason: its grants are a project-wide
 // reach that no `fugaro update` confirmation announced, so it is read as a
-// kind of its own (toCatalogCheck) and every role it is given is refused
-// unless a row carries that bit — which ONE row does: the bucket rows'
-// objectUser, and only through bucketCondition's catalogRecordsGrant, the
-// check that pins the grant to one repository's records condition (D1148). Its
-// grant of CatalogLeaseRole below is deliberately NOT a row: a lease role the
-// tables accepted would be one `fugaro update` applied as a plan the review
-// announced, without saying whose reach it grows. Out of the tables, the
-// update that first carries it is a plan the review did not announce — its
-// owner is asked at their terminal, as for the account's other grants, and a
-// coding agent's session is refused.
+// kind of its own (toCatalogCheck), and a row accepts it only where the row
+// carries that bit — which ONE row does, the bucket rows' objectUser, and only
+// through bucketCondition's catalogRecordsGrant, the check that pins the grant
+// to one repository's records condition (D1148).
+//
+// Every other grant to it is one the tables do not cover, and what a managed
+// apply then does with it is D1545's answer and not the pre-D1545 one: the
+// grant table is one of that decision's three CONTENT sites
+// (managed_cover.go's NotCoveredSplit names them), so the grant is a finding
+// the gate records and warns about — the run prints it, files a warned record
+// in the audit family and `doctor` reports that record as a finding — while
+// the verdict's OK stays true and the apply goes ahead, a coding agent's
+// session included, with nothing typed and no terminal. The grant of
+// CatalogLeaseRole below is one of these, and deliberately not a row: a row
+// would be the quieter outcome of the two, since the grant would be covered
+// and announced by the gate's own line, and what the tables' silence buys is
+// that the reach is never granted without the run naming it in its own words.
+// Read the paragraph above at that size: the fence is a warning the owner can
+// find again in `doctor`, not a question asked before the grant is made.
 const CatalogCheckAccountID = "fugaro-catalog-check"
 
 // CatalogLeaseRole is the custom role the catalog check job's account holds in
