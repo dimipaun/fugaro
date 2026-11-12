@@ -88,7 +88,10 @@ const SigningHeader = "Paddle-Signature"
 
 // RenewalLead is T26's 30 days: the next key is minted inside this window
 // before the term it follows ends, so two keys overlap for a month and an
-// issuing outage bites only once it lasts past 60 days (§8).
+// issuing outage bites only once it lasts past 60 days (§8). It is the lead for
+// every term longer than twice it, and `Renew` holds a shorter term's window to
+// that term's own half — a monthly row's term is 28 to 31 days, so this lead
+// would open the window before the purchase that starts it.
 const RenewalLead = 30 * 24 * time.Hour
 
 var (
@@ -558,8 +561,9 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 }
 
 // Renew mints the next key for one subscription when T26's window is open: 30
-// days before the term it follows ends, its `issued` on the day the service
-// runs, its `expires` at the end of the term it covers.
+// days before the term it follows ends, or half that term where half is shorter
+// than the lead, which every monthly row's is, its `issued` on the day the
+// service runs, its `expires` at the end of the term it covers.
 //
 // The key is a v1 one, minted through the same path a purchase uses and not
 // through the older format's `mint`: what every issue path hands a customer is
@@ -626,7 +630,21 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (MintedV1, b
 		return MintedV1{}, false, nil
 	}
 	now := s.now()
-	if now.Before(sub.Expires.Add(-RenewalLead)) {
+	// T26's lead is 30 days and a monthly row's term is 28 to 31, so a fixed
+	// lead opens the window at or before the purchase itself: the trigger that
+	// fires then mints a second key for the whole of the term the customer is in
+	// and the next one, and the month the merchant billed has bought two. The
+	// term's own half is the bound, and it is the half the lead may not exceed:
+	// the window still opens inside the term the customer is in, which is the
+	// overlap T26 wants — an issuing outage is survived by the key already
+	// installed — and it opens in the term's second half rather than on its first
+	// day. A year's half is far longer than the lead, so an annual or an
+	// Enterprise row renews exactly where it did.
+	lead := RenewalLead
+	if half := time.Duration(sub.TermDays) * 12 * time.Hour; sub.TermDays > 0 && half < lead {
+		lead = half
+	}
+	if now.Before(sub.Expires.Add(-lead)) {
 		return MintedV1{}, false, nil
 	}
 	next := sub.Expires.Add(time.Duration(sub.TermDays) * 24 * time.Hour)
@@ -796,8 +814,10 @@ func (s *Service) paidRequest(policy, workspaceID, organisation string, seats, d
 // recorded one: it is a second live key, with no issuance and no key state, so
 // nothing can renew it, a refund mapped to the recorded key_id leaves it live,
 // and the operator reading the store cannot see it at all. The issuance write is
-// therefore the one that withdraws the key it was about when it fails, which is
-// what puts that key in §8's list where the licensor can see and act on it. A
+// therefore the one that withdraws the key it was about when it fails — where
+// the store really holds no record of that key, which is read back rather than
+// taken from the write's answer — which is what puts that key in §8's list where
+// the licensor can see and act on it. A
 // failed key state withdraws nothing: it is the pair's safe half (above), and
 // the key it belongs to is one the store holds, so a revocation can name it and
 // a redelivery can finish it.
@@ -824,10 +844,36 @@ func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source str
 		// the key the customer actually keeps, which is the path the older format
 		// took by minting the same key twice — and it is the source, not the key,
 		// that has to be unspent for that to work.
-		if withdrawErr := s.withdrawUnrecorded(ctx, answer.Record.KeyID); withdrawErr != nil {
-			return MintedV1{}, errors.Join(err, withdrawErr)
+		//
+		// The store's answer is not the state, though, and this is the one place
+		// the difference matters: a store that commits and then reports the
+		// failure — a timeout on the way back, or an internal retry that answers
+		// ErrAlreadyRecorded — has this key in hand, and withdrawing it would take
+		// the customer's own key away. Worse, the redelivery that follows finds
+		// the source spent and repairs nothing but the subscription, so the key the
+		// customer paid for would be one withdrawn entry and nothing else, with no
+		// key state for the term after it. So the record is re-read before
+		// anything is withdrawn: only a source the store really holds no record
+		// for, or one it holds under a different key — the delivery that lost its
+		// race — has this key withdrawn.
+		held, recorded, readErr := s.recorded(ctx, source)
+		if readErr != nil {
+			// A store that cannot be read is a store that cannot be asked, so
+			// nothing is withdrawn on its answer: a withdrawal that lands on a
+			// recorded key is the customer's licence gone for good, while a key
+			// whose record cannot be read is one the merchant's retry re-reads.
+			return MintedV1{}, errors.Join(err, readErr)
 		}
-		return MintedV1{}, err
+		if !recorded || held.KeyID != answer.Record.KeyID {
+			if withdrawErr := s.withdrawUnrecorded(ctx, answer.Record.KeyID); withdrawErr != nil {
+				return MintedV1{}, errors.Join(err, withdrawErr)
+			}
+			return MintedV1{}, err
+		}
+		// The record is this key's, so the write landed and the pair is finished
+		// below rather than left for the redelivery, which would find the source
+		// spent and write no key state: a key the customer holds and can never
+		// renew is the half this path exists to avoid.
 	}
 	if err := s.store.SaveKeyState(ctx, KeyState{
 		KeyID:             answer.Record.KeyID,

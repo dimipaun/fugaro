@@ -676,9 +676,21 @@ type failingIssuances struct {
 	*Memory
 	refuse     int
 	duplicated int
+	// committed is how many writes land in the store and are then reported as
+	// failed, which is what a store that times out on the way back — or that
+	// answers ErrAlreadyRecorded from an internal retry after its own write —
+	// does: the row is there and the caller is told it is not.
+	committed int
 }
 
 func (f *failingIssuances) SaveIssuance(ctx context.Context, r Record) error {
+	if f.committed > 0 {
+		f.committed--
+		if err := f.Memory.SaveIssuance(ctx, r); err != nil {
+			return err
+		}
+		return errors.New("the store wrote the record and then reported the write as failed")
+	}
 	if f.duplicated > 0 {
 		f.duplicated--
 		return ErrAlreadyRecorded
@@ -822,6 +834,56 @@ func TestTheDeliveryThatLosesTheRecordWithdrawsItsOwnKey(t *testing.T) {
 	}
 }
 
+// TestAStoreThatRecordsAndThenFailsKeepsTheMailedKey: the withdrawal above is
+// for a key the store really has nothing about, and a store's answer is not the
+// state — one that commits and then reports the failure has this key in hand. It
+// is the case that turns the withdrawal into a loss: the key is in the
+// customer's mailbox, the source is spent, so the redelivery repairs the
+// subscription and mints nothing, and what the customer is left with is a
+// withdrawn key with no renewal state — a licence they paid for and cannot use,
+// with nothing the merchant can retry into existence.
+func TestAStoreThatRecordsAndThenFailsKeepsTheMailedKey(t *testing.T) {
+	f, store := newFailingIssuances(t)
+	purchase := Event{
+		ID:           "evt-1",
+		Type:         EventPurchase,
+		Mode:         ModeFor(f.env),
+		OccurredAt:   f.now,
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
+		Email:        buyerAddress("acme.example"),
+		Seats:        5,
+		TermDays:     365,
+	}
+	store.committed = 1
+	if rec := f.deliver(purchase); rec.Code != http.StatusOK {
+		t.Fatalf("a purchase whose store recorded the issuance and then reported the failure was answered %d, want 200: the record is there and the key is the customer's", rec.Code)
+	}
+	records := f.records()
+	if len(records) != 1 {
+		t.Fatalf("the purchase recorded %d key(s), want the one the store's write landed", len(records))
+	}
+	if got := len(f.mail.sent); got != 1 {
+		t.Fatalf("the purchase mailed %d message(s), want the one bundle it minted", got)
+	}
+	key, secret := mailedBundle(t, f.mail.sent[0].Body)
+	claimed := v1Verified(t, f, key)
+	if claimed.KeyID != records[0].KeyID {
+		t.Errorf("the mailed key is %q and the record is %q, want the key the store holds", claimed.KeyID, records[0].KeyID)
+	}
+	if entry, held, _ := f.store.Revocation(context.Background(), claimed.KeyID); held {
+		t.Errorf("the key the store recorded was withdrawn (%+v), want it live: the store's answer is not the state", entry)
+	}
+	state, held, err := f.store.KeyState(context.Background(), claimed.KeyID)
+	if err != nil || !held || state.RenewalSecretHash != secretHash(secret) {
+		t.Errorf("the store holds the key state %+v (held=%v, err=%v), want the digest of the secret the mail carried (D2135): without it the term after this one can never be renewed", state, held, err)
+	}
+	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); !held {
+		t.Error("the answered purchase saved no subscription, want the state written: the merchant has nothing to send again")
+	}
+}
+
 // TestRenewalKeyIssuesThirtyDaysBeforeExpiry: T26 — the next key issues 30 days
 // before the current one expires, its `issued` is the day the service runs and
 // its `expires` is the end of the term it covers, so the two keys overlap and
@@ -893,6 +955,52 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 
 	if _, again, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || again {
 		t.Errorf("a second renewal for the same term minted (renewed=%v, err=%v), want one mint per (subscription, term, seats)", again, err)
+	}
+}
+
+// TestAMonthlyPurchaseIsNotRenewableAtOnce: T26's lead is 30 days and the
+// monthly row the checkout sells runs 28 to 31, so a fixed lead opens the
+// renewal window at — or, for February, before — the purchase itself. A trigger
+// that fired then would mint a second team-monthly key covering the rest of the
+// term the customer is in and the whole of the next one: one month billed, two
+// months issued, and the second key is one no cancellation withdraws. The window
+// is therefore inside the term it follows, in its second half, and a fresh
+// monthly purchase is not renewable at all.
+func TestAMonthlyPurchaseIsNotRenewableAtOnce(t *testing.T) {
+	f := newFixture(t)
+	first := f.purchase("evt-1", "acme.example", 5, 30)
+	if first.Plan != PolicyTeamMonthly {
+		t.Fatalf("a 30-day purchase was minted under the row %q, want the monthly one (%q)", first.Plan, PolicyTeamMonthly)
+	}
+
+	if minted, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || renewed || minted.Key != "" {
+		t.Errorf("renewing a fresh monthly purchase answered (key=%q, renewed=%v, err=%v), want nothing: its term has not been reached, and a second key would be a second month issued for one billed", minted.Key, renewed, err)
+	}
+	if got := len(f.records()); got != 1 {
+		t.Errorf("the renewal of a fresh monthly purchase left %d record(s), want the purchase's alone", got)
+	}
+	if got := len(f.mail.sent); got != 1 {
+		t.Errorf("the renewal of a fresh monthly purchase mailed %d message(s), want the purchase's alone", got)
+	}
+	if sub, _, _ := f.store.Subscription(context.Background(), "sub-acme.example"); !sub.Expires.Equal(first.Expires) {
+		t.Errorf("the refused renewal moved the term's end to %s, want the purchase's %s", sub.Expires, first.Expires)
+	}
+
+	// The window opens in the term's second half, and what it mints then covers
+	// to the end of the term after the one the customer is in — the same overlap
+	// an annual renewal has, fifteen days of it rather than thirty.
+	f.advance(15 * day)
+	minted, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example")
+	if err != nil || !renewed {
+		t.Fatalf("the monthly renewal in the term's second half answered (renewed=%v, err=%v), want the next key", renewed, err)
+	}
+	wantExpiry := first.Expires.Add(30 * day)
+	claims := v1Verified(t, f, minted.Key)
+	if !claims.PaidThrough.Equal(wantExpiry) || !minted.Record.Expires.Equal(wantExpiry) {
+		t.Errorf("the monthly renewal covers to %s, want the end of the term it follows (%s): the lead moves the mint and never the term", claims.PaidThrough, wantExpiry)
+	}
+	if minted.Record.Plan != PolicyTeamMonthly || claims.KeyID == first.KeyID {
+		t.Errorf("the monthly renewal minted under the row %q with key id %q, want the row the month is sold under (%q) and a key of its own", minted.Record.Plan, claims.KeyID, PolicyTeamMonthly)
 	}
 }
 
