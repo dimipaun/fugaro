@@ -9,6 +9,16 @@ import (
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
+// problemText is a problem list as one string, so a test can ask whether a
+// refusal names the field rather than merely counting the problems.
+func problemText(ps []config.Problem) string {
+	parts := make([]string, 0, len(ps))
+	for _, p := range ps {
+		parts = append(parts, p.String())
+	}
+	return strings.Join(parts, "; ")
+}
+
 // escalationBlock is the ladder's block written out whole: every key the local
 // file may hold, one scalar and one mode's own member among them.
 const escalationBlock = `escalation:
@@ -183,14 +193,23 @@ func TestEscalationKeysRefuseUnreadableValues(t *testing.T) {
 // by name, no config.Scopes key spells it, and the local file is the only
 // store the same lines are read from.
 func TestEscalationKeysRefusedInRepo(t *testing.T) {
-	const head = "version: 1\nproject: acme\ngcp_project: acme-1\n"
+	// escalationRepoHead is the smallest `fugaro.yaml` config.Parse accepts, so
+	// the only problem the documents below can carry is the block itself: a
+	// head with a problem of its own would make this test pass whatever the
+	// decoder does with the key.
+	const escalationRepoHead = "version: 1\nproject: acme\ngit: { provider: github }\n" +
+		"workflows:\n  web:\n    commands: { test: go test ./..., build: go build ./... }\n"
+	if _, ps := config.Parse([]byte(escalationRepoHead)); len(ps) > 0 {
+		t.Fatalf("the head this test is built on is refused: %v", ps)
+	}
 	for _, doc := range []string{
-		head + "escalation:\n  r2_after_hours: 6\n",
-		head + "escalation:\n  ready_drafts: true\n",
-		head + "escalation:\n  merge_judge: strongest\n",
+		escalationRepoHead + "escalation:\n  r2_after_hours: 6\n",
+		escalationRepoHead + "escalation:\n  ready_drafts: true\n",
+		escalationRepoHead + "escalation:\n  merge_judge: strongest\n",
 	} {
-		if _, ps := config.Parse([]byte(doc)); len(ps) == 0 {
-			t.Errorf("a repository's fugaro.yaml accepts:\n%s", doc)
+		_, ps := config.Parse([]byte(doc))
+		if !strings.Contains(problemText(ps), "escalation") {
+			t.Errorf("a repository's fugaro.yaml does not refuse the block by name (%v):\n%s", ps, doc)
 		}
 	}
 	for _, s := range config.Scopes {
@@ -209,13 +228,20 @@ func TestEscalationKeysRefusedInRepo(t *testing.T) {
 // the layer's own strict parsers refuse it by name, the published shared file
 // never holds it, and the receiver that published it keeps its own copy.
 func TestEscalationKeysRefusedInProjectLayer(t *testing.T) {
+	// The same guard as the repository's: a head the layer parser accepts, so
+	// the block is the only problem the documents below can carry.
+	const escalationLayerHead = "version: 1\nproject: acme\ngcp_project: acme-1\n"
+	if _, ps := config.ParseProjectLayer([]byte(escalationLayerHead), config.LayerAnchor{}); len(ps) > 0 {
+		t.Fatalf("the head this test is built on is refused: %v", ps)
+	}
 	for _, doc := range []string{
-		"escalation:\n  r2_after_hours: 6\n",
-		"defaults:\n  escalation:\n    ready_drafts: true\n",
-		"profiles:\n  web:\n    escalation:\n      r2_coder: strongest\n",
+		escalationLayerHead + "escalation:\n  r2_after_hours: 6\n",
+		escalationLayerHead + "defaults:\n  escalation:\n    ready_drafts: true\n",
+		escalationLayerHead + "profiles:\n  web:\n    escalation:\n      r2_coder: strongest\n",
 	} {
-		if _, ps := config.ParseProjectLayer([]byte(doc), config.LayerAnchor{}); len(ps) == 0 {
-			t.Errorf("the project layer accepts:\n%s", doc)
+		_, ps := config.ParseProjectLayer([]byte(doc), config.LayerAnchor{})
+		if !strings.Contains(problemText(ps), "escalation") {
+			t.Errorf("the project layer does not refuse the block by name (%v):\n%s", ps, doc)
 		}
 	}
 	lc, err := Parse([]byte(sample + escalationBlock))
