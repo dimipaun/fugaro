@@ -417,6 +417,10 @@ func (d *fakeFrontDoor) answerError(w http.ResponseWriter, id int, sentence stri
 // asked for is asserting the door's vocabulary and not this file's.
 func fakeRequestKind(tool string) (string, bool) {
 	switch tool {
+	case "roadmap_publish_plan":
+		return string(mcpauth.RequestPublishPlan), true
+	case "roadmap_unpublish_plan":
+		return string(mcpauth.RequestUnpublishPlan), true
 	case "roadmap_need":
 		return string(mcpauth.RequestNeed), true
 	case "roadmap_unneed":
