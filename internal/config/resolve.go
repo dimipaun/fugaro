@@ -117,6 +117,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoPlanningSet = setsPlanning(tree)
 		repo.RepoStopFractionSet = setsStopFraction(tree)
 		repo.RepoTriageSet = setsTriage(tree)
+		repo.RepoModelGradesSet = setsModelGrades(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -168,6 +169,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoPlanningSet = setsPlanning(tree)
 	c.RepoStopFractionSet = setsStopFraction(tree)
 	c.RepoTriageSet = setsTriage(tree)
+	c.RepoModelGradesSet = setsModelGrades(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -567,6 +569,15 @@ func levelsNoneModel(agent any) bool {
 // answer becomes Config.RepoPlanningSet.
 func setsPlanning(tree map[string]any) bool {
 	_, ok := tree["planning"]
+	return ok
+}
+
+// setsModelGrades is ProjectLayer.SetsModelGrades for a repository file's own
+// tree: whether the text writes the model_grades key, at any value, which is
+// the same question setsPlanning answers for planning:, for the same reason.
+// Its answer becomes Config.RepoModelGradesSet.
+func setsModelGrades(tree map[string]any) bool {
+	_, ok := tree["model_grades"]
 	return ok
 }
 

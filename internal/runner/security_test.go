@@ -523,3 +523,204 @@ func TestRunRecordGainsTheFieldAdditively(t *testing.T) {
 		t.Fatalf("a record written before the field decodes with an escalation: %+v", old.Security)
 	}
 }
+
+// resolveAgain is the run's own resolution taken again with whatever the test
+// changed since its bootstrap: the same two calls resolvePolicy makes, in the
+// same order, so what a test reads is what a run that resolved that
+// configuration would have read.
+func resolveAgain(t *testing.T, r *run) {
+	t.Helper()
+	if err := r.resolveLevels(); err != nil {
+		t.Fatalf("resolving the levels: %v", err)
+	}
+	if err := r.buildPlan(); err != nil {
+		t.Fatalf("building the plan: %v", err)
+	}
+}
+
+// TestSecurityFieldForcesLevelThreeAtBootstrap: the task's own request — the
+// field `fugaro run --security` writes — turns level 3 on for the run, whatever
+// paths it changed, and the plan the run builds already holds the adversarial
+// step (SC10, D1517). Nothing here reads the diff: the request is a resolution
+// input (securityForcedLevels), not a classification, which is what separates
+// it from SC6's escalation and what makes it true before the agent has run.
+//
+// The layer's `none` does not defeat it: the forced resolution clears the
+// level's off-switch (plan.go's forcedLevelsAreRaiseOnly), the raise-only rule
+// the request is held to. The last case is the one that shows the model beside
+// the switch is kept: the off-switch is cleared, not the level's own settings.
+func TestSecurityFieldForcesLevelThreeAtBootstrap(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  *config.LevelSetting
+	}{
+		{"no layer setting", nil},
+		{"the layer's none", &config.LevelSetting{Off: true}},
+		{"the layer's literal none model", &config.LevelSetting{Model: config.NoneModel}},
+		{"the layer's none beside a model", &config.LevelSetting{Model: "claude-opus-5-5"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := securityRun(t, rigor.Pro)
+			r.spec.Security = true
+			if tc.cfg != nil {
+				r.cfg.Agent.Levels.L3 = tc.cfg
+			}
+			resolveAgain(t, r)
+			if !levelOn(r.levels, policy.LevelL3) {
+				t.Fatalf("a task that says security: true resolved without level 3: %+v", r.levels)
+			}
+			if !hasAdversarialStep(r.plan) {
+				t.Fatalf("the plan carries no adversarial step: %+v", r.plan)
+			}
+			if r.rec.Security != nil {
+				t.Fatalf("the run's own request was recorded as an escalation: %+v", r.rec.Security)
+			}
+		})
+	}
+}
+
+// TestAlwaysLevelThreeRaisesEveryRun: the project layer's always_level_3 puts
+// every run of the project at level 3, whatever paths it changed (SC10, D1503,
+// D1517). The table is the modes that do not run level 3 by themselves, so
+// every case is one the switch decided, and the run's diff here is the branch
+// it was cut from — nothing on the list, which is the point: nothing is
+// classified for this to hold.
+func TestAlwaysLevelThreeRaisesEveryRun(t *testing.T) {
+	for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro, rigor.Hotfix} {
+		t.Run(string(mode), func(t *testing.T) {
+			r, _ := securityRun(t, mode)
+			if levelOn(r.levels, policy.LevelL3) {
+				t.Fatalf("mode %s runs level 3 by itself, so the switch proves nothing", mode)
+			}
+			r.cfg.Layer = &config.ProjectLayer{Security: &config.LayerSecurity{AlwaysLevel3: true}}
+			resolveAgain(t, r)
+			if !levelOn(r.levels, policy.LevelL3) {
+				t.Fatalf("a project whose layer sets always_level_3 resolved a %s run without level 3: %+v", mode, r.levels)
+			}
+			if !hasAdversarialStep(r.plan) {
+				t.Fatalf("the plan carries no adversarial step: %+v", r.plan)
+			}
+			if r.rec.Security != nil {
+				t.Fatalf("the project's switch was recorded as an escalation: %+v", r.rec.Security)
+			}
+		})
+	}
+}
+
+// TestSecurityAlwaysLevelThreeRaisesARunThatTouchesNothing: the switch is not a
+// classification, so a run whose diff touches no path in the list at all still
+// comes out at level 3 — the case the whole setting exists for (a project that
+// says everything it builds is security-sensitive, D1503), and the one an
+// implementation built on the escalation would get wrong: the escalation needs
+// a matched row, and this run has none to match.
+func TestSecurityAlwaysLevelThreeRaisesARunThatTouchesNothing(t *testing.T) {
+	r, repo := securityRun(t, rigor.Pro)
+	r.cfg.Layer = &config.ProjectLayer{Security: &config.LayerSecurity{AlwaysLevel3: true}}
+	resolveAgain(t, r)
+	change(t, repo, map[string]string{routinePath: "routine\n"}, "work no row matches")
+	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
+	if r.rec.Security != nil {
+		t.Fatalf("a diff that matches no row recorded an escalation: %+v", r.rec.Security)
+	}
+	if !levelOn(r.levels, policy.LevelL3) {
+		t.Fatalf("level 3 is off for a run the project put at level 3: %+v", r.levels)
+	}
+}
+
+// TestSecurityFieldCannotLowerTheLevel: the field is a bool that only turns on,
+// so `security: false` is not an exemption — it changes nothing (SC10, D1517).
+// The run below asks for nothing and its diff matches a row, so the escalation
+// is the only thing that can turn level 3 on and the test fails if a false is
+// read as a way to ask for less.
+//
+// Mutation (run and restored): let `security: false` suppress the escalation
+// (an early return in escalateSecurity on `!r.spec.Security`) — this case fails
+// with no level and no record, which is exactly the run an exemption would
+// produce.
+func TestSecurityFieldCannotLowerTheLevel(t *testing.T) {
+	r, repo := securityRun(t, rigor.Pro)
+	r.spec.Security = false
+	resolveAgain(t, r)
+	if levelOn(r.levels, policy.LevelL3) {
+		t.Fatal("security: false turned level 3 on, so the test proves nothing")
+	}
+	change(t, repo, map[string]string{listedPath: "package creds\n"}, "work on the credentials tree")
+	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
+	if !levelOn(r.levels, policy.LevelL3) {
+		t.Fatalf("a task that says security: false was exempt from the escalation: %+v", r.levels)
+	}
+	if r.rec.Security == nil || r.rec.Security.Refused {
+		t.Fatalf("a task that says security: false recorded no escalation: %+v", r.rec.Security)
+	}
+	if !hasAdversarialStep(r.plan) {
+		t.Fatalf("the plan carries no adversarial step: %+v", r.plan)
+	}
+}
+
+// TestSecurityRequestIsNotHonouredByAReviewRecipe: a mode: review recipe allows
+// exactly one review step and nothing else (recipe.Parse), and config's
+// resolver refuses every other level of it — level 3 included — so a run whose
+// request for the strongest review meets such a recipe cannot honour it. The
+// run is not failed for it: the job is paid for by then, the attempt to force
+// the level is what dies, and the level it asks for has nowhere to run. The
+// levels the run resolved stand, and the warning says why (F9's rule for the
+// escalation's own row).
+//
+// Both homes of the request are here, since neither is the recipe's business:
+// the task's own field and the project layer's always_level_3. `fugaro review`
+// is the reachable one — a review run of a project whose layer sets the switch
+// — because the launcher refuses the launch first wherever it can
+// (internal/cli's launchReviewLevelsAsk resolves the same force).
+//
+// Mutation (run and restored): drop the review-only branch from
+// securityForcedLevels — the resolution refuses level 3 and this fails with
+// "level 3 is required by the owner's floor for mode review", the bootstrap
+// death the branch exists to prevent.
+func TestSecurityRequestIsNotHonouredByAReviewRecipe(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		asked func(r *run)
+	}{
+		{"the task's field", func(r *run) { r.spec.Security = true }},
+		{"the layer's always_level_3", func(r *run) {
+			r.cfg.Layer = &config.ProjectLayer{Security: &config.LayerSecurity{AlwaysLevel3: true}}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := securityRun(t, rigor.Pro)
+			r.rcp = parseRecipe(t, "version: 1\nname: review-only\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n")
+			var logs bytes.Buffer
+			r.d.Log = slog.New(slog.NewTextHandler(&logs, nil))
+			tc.asked(r)
+			resolveAgain(t, r)
+			if levelOn(r.levels, policy.LevelL3) {
+				t.Fatalf("level 3 resolved on for a mode: review recipe, which allows one review step and nothing else: %+v", r.levels)
+			}
+			if hasAdversarialStep(r.plan) {
+				t.Fatalf("the plan carries an adversarial step a review recipe has no place for: %+v", r.plan)
+			}
+			if want := "mode: review"; !strings.Contains(logs.String(), want) {
+				t.Errorf("the dropped request was not warned about (%q absent): %s", want, logs.String())
+			}
+		})
+	}
+}
+
+// TestSecurityRequestIsHonouredByARecipeThatKeepsTheLoop: the review-only
+// tolerance above is the recipe's mode and not a general quieting of the
+// request: a recipe in the implement mode is resolved with level 3 forced on,
+// whatever its steps, because the level's step is one the resolver inserts
+// (O7) where the recipe has none. An implementation that dropped the force
+// wherever a recipe was involved would pass the test above and fail this one.
+func TestSecurityRequestIsHonouredByARecipeThatKeepsTheLoop(t *testing.T) {
+	r, _ := securityRun(t, rigor.Pro)
+	r.rcp = parseRecipe(t, "version: 1\nname: loop\nmode: implement\nsteps:\n  - review: {}\n")
+	r.spec.Security = true
+	resolveAgain(t, r)
+	if !levelOn(r.levels, policy.LevelL3) {
+		t.Fatalf("an implement-mode recipe dropped the run's own security request: %+v", r.levels)
+	}
+	if !hasAdversarialStep(r.plan) {
+		t.Fatalf("the plan carries no adversarial step: %+v", r.plan)
+	}
+}

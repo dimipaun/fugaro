@@ -56,6 +56,7 @@ var seamSetterNames = []string{
 	"SetHandoff",
 	"SetBatch",
 	"SetSubscriptionLimit",
+	"RegisterLaunchPlanner",
 }
 
 // eeRegisterDir is the one directory whose non-test files may call a setter.

@@ -77,9 +77,16 @@ func (e *poolRefusal) Error() string { return e.message }
 // narrowed is false when the node writes no crafts block at all, and the caller
 // then offers the whole bundle. A true narrowed with an empty list and a nil
 // error cannot happen: that case is the refusal.
-func poolOffering(p *projectpolicy.Policy, b *Bundle) (offering []creds.Credential, narrowed bool, err error) {
+//
+// strategy is how this list is shared out among the runs that arrive, which is
+// the one thing about a pool the list itself does not carry: round-robin when
+// every craft that contributed goes out on a pool asking for the rotation, and
+// the cascade's own rule otherwise (roundrobin.go, MC7). It is answered from
+// this walk rather than from a second one, so the list and the rule it is
+// served under cannot be about two different sets of crafts.
+func poolOffering(p *projectpolicy.Policy, b *Bundle) (offering []creds.Credential, strategy creds.Strategy, narrowed bool, err error) {
 	if p == nil || p.Crafts == nil {
-		return nil, false, nil
+		return nil, creds.StrategyFailover, false, nil
 	}
 	eff, _ := craft.Resolve([]craft.Layer{{
 		Name:        craft.SourceProject,
@@ -92,6 +99,7 @@ func poolOffering(p *projectpolicy.Policy, b *Bundle) (offering []creds.Credenti
 	held := bundleTiers(b)
 	var out []creds.Credential
 	var gaps []string
+	var rotating, pinned int
 	seen := map[string]bool{}
 	for _, name := range config.CraftNames {
 		e, ok := eff[name]
@@ -101,6 +109,15 @@ func poolOffering(p *projectpolicy.Policy, b *Bundle) (offering []creds.Credenti
 		own, gap := craftOffering(name, e, p, held)
 		if gap != "" {
 			gaps = append(gaps, gap)
+		} else if pool, ok := namedPool(e.Access, p); ok && poolStrategy(pool) == creds.StrategyRoundRobin {
+			// A craft that put a candidate in through a pool asking for the
+			// rotation, counted beside the ones that put one in any other way:
+			// offeringStrategy reads the two together (roundrobin.go). A craft
+			// with a gap contributed nothing and is in neither count — what it
+			// would have asked for is not what this call is served by.
+			rotating++
+		} else {
+			pinned++
 		}
 		for _, c := range own {
 			// A credential two crafts both name is one candidate: the list is a
@@ -121,9 +138,9 @@ func poolOffering(p *projectpolicy.Policy, b *Bundle) (offering []creds.Credenti
 		// here rather than answered as "no credential is offered", which would
 		// send the operator looking in the bundle for a fault that is in the
 		// crafts.
-		return nil, true, &poolRefusal{message: poolRefusalHead + strings.Join(gaps, "; ")}
+		return nil, creds.StrategyFailover, true, &poolRefusal{message: poolRefusalHead + strings.Join(gaps, "; ")}
 	}
-	return out, true, nil
+	return out, offeringStrategy(rotating, pinned), true, nil
 }
 
 // poolRefusalHead is what every crafts refusal begins with.

@@ -43,7 +43,7 @@ const workflowSecretsYAML = "version: 1\nproject: aurora\ngit: { provider: githu
 // here starts from, so what a test varies is the one thing it is about.
 func workflowSecretsRig(t *testing.T) (*convergeRig, string) {
 	t.Helper()
-	r := newConvergeRigYAML(t, v5Node(), workflowSecretsYAML)
+	r := newConvergeRigYAML(t, v6Node(), workflowSecretsYAML)
 	r.appendConfig(t, "workflow_secrets:\n  deploy-token: { allow_data_to: [acme/*] }\n")
 	// A run selected by its checkout reads the copy registerInstallation made in
 	// the projects directory and not this file (FUGARO_CONFIG is empty here), so

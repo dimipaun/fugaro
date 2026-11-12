@@ -56,6 +56,16 @@ type credentialsFixture struct {
 	// admits their user members, and the module renders them into the service's
 	// own environment as bare addresses (FUGARO_PERSON_ACCOUNTS).
 	Operators []string `json:"operators"`
+	// LauncherAccounts is the launcher class the roster derives (D1938, F25,
+	// internal/infra/launchers.go), which the module renders into the service's
+	// own environment as bare addresses (FUGARO_LAUNCHER_ACCOUNTS, DS2.2). It
+	// is the class the grant route and the intake answer to, and it is NOT
+	// var.launchers: that one is the same roster as IAM members, for the
+	// invoker grants. This fixture names the accounts without naming the
+	// members, which is the combination the plan's cover admits — the members
+	// would put the project jobs' launcher grants, whose role is the
+	// installation's computed custom role, into this plan.
+	LauncherAccounts []string `json:"launcher_accounts"`
 }
 
 // credentialsReadPeople is the admitted people as the module derives them from
@@ -126,8 +136,10 @@ func credentialsServiceEnvOf(t *testing.T, rc ResourceChange) (plain map[string]
 // fixture names and which the process reads as an optional value (C3.9g1,
 // D1068), the ninth, the read mint's admitted people (BB4), the tenth, the
 // read mint's coordinator class (BB5), which arrives with the installation's
-// coordinator account, and the eleventh, the review-only jobs (C3.9a), which
-// arrive with the installation's review variants. So a variable the Go side
+// coordinator account, the eleventh, the review-only jobs (C3.9a), which
+// arrive with the installation's review variants, and the twelfth, the
+// launcher class (D1938, F25; DS2.2), which arrives with the roster's own
+// people. So a variable the Go side
 // computes and the module drops — or one the module sets from a value the
 // fixture does not carry — is a service that never answers a job, or a verify
 // route that admits nobody, on an installation whose init reports success.
@@ -173,6 +185,13 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	if f.Coordinator.AccountID == "" {
 		t.Fatalf("the credentials fixture names no coordinator: this plan is the one that exercises the module's conditional tenth entry, and a fixture that names none could not tell it from the seven the module always sets: %v", f)
 	}
+	if len(f.LauncherAccounts) == 0 {
+		t.Fatalf("the credentials fixture names no launcher: this plan is the one that exercises the module's conditional twelfth entry — the launcher class the grant route and the intake answer to (D1938, F25) — and a fixture that names none could not tell it from the names the module always sets: %v", f)
+	}
+	launchers, err := json.Marshal(f.LauncherAccounts)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// The coordinator class's one address, spelled the way Google spells the
 	// account the module creates from these two inputs — the same derivation
 	// the service's own revision runs as (below).
@@ -189,6 +208,7 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 		"FUGARO_VERIFIER_ACCOUNTS":       string(verifiers),
 		"FUGARO_PERSON_ACCOUNTS":         string(people),
 		"FUGARO_COORDINATOR_ACCOUNT":     coordinator,
+		"FUGARO_LAUNCHER_ACCOUNTS":       string(launchers),
 	}
 	// The map's keys are the allow-list the cover holds the service to, and the
 	// two are equal rather than nested: a name here that the allow-list does not
@@ -200,10 +220,10 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	// (CredentialsServiceEnvAwaitingTheModule), so the plan plus that list is
 	// what the allow-list must hold — and each name on that list is checked
 	// against the plan first, which is the tripwire that fails once the module
-	// starts rendering it and the entry is left behind. The list holds one name
-	// here -- FUGARO_LAUNCHER_ACCOUNTS, the launcher class's list, which arrives
-	// with the class and is rendered by the module in a later change (DS2.2) --
-	// so the plan plus that list spells the allow-list.
+	// starts rendering it and the entry is left behind. That list is empty
+	// since DS2.2: its last entry, FUGARO_LAUNCHER_ACCOUNTS, left it in the
+	// change that made credentials.tf render the name, so the plan alone
+	// spells the allow-list.
 	names := slices.Sorted(maps.Keys(want))
 	allowed := slices.Clone(credentialsServiceEnv)
 	slices.Sort(allowed)

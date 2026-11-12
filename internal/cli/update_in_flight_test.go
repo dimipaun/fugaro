@@ -126,6 +126,46 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	run.laterWrites(t, r)
 }
 
+// TestRunInFlightSurvivesPolicyBump is CLAUDE.md's HARD RULE read against this
+// release's own bump: the installation is one policy version behind (v6Node,
+// the node 0.24.0 leaves), a run of its repository has bootstrapped under that
+// release, and `fugaro update` raises the node to version 7 while the run keeps
+// running. The node's version moves — the policy stage is what carries a
+// version-6 node forward, and the migration is the shape-free step the banner
+// above the policy stage promises — and every write the run makes afterwards
+// still lands, because the bump asks no run to finish first and rewrites
+// nothing a run holds.
+//
+// The difference from TestUpdateLeavesARunInFlightRunning is the version, and
+// it is the whole point: that fixture's node is so old the update refuses the
+// node as older than the chain's first step in one place and republishes it in
+// another, while this one is the ordinary state of an installation the release
+// before this one left behind — the window the bump's own migration exists for,
+// and the one a person meets on the day they upgrade.
+func TestRunInFlightSurvivesPolicyBump(t *testing.T) {
+	r := newConvergeRig(t, v6Node())
+	run := startRunInFlight(t, r)
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if got := convergeNode(t, r).Version; got != projectpolicy.Version {
+		t.Errorf("after the update the published node is version %d, want this binary's %d: the policy stage did not carry a version-6 node forward, and a run that re-reads the policy mid-run meets a node the release that left it cannot explain", got, projectpolicy.Version)
+	}
+
+	// What the run holds is what it held before the update: its record is the
+	// one it bootstrapped with, not one the update rewrote or removed.
+	ctx := context.Background()
+	rec, err := run.store.ReadRecord(ctx)
+	if err != nil {
+		t.Fatalf("the run's record could not be read after the update: %v", err)
+	}
+	if rec.Status != runstore.StatusRunning || rec.Stage != "implement" {
+		t.Errorf("the run's record reads status %q stage %q after the update, want the running/implement it bootstrapped with: the update rewrote a record a run holds", rec.Status, rec.Stage)
+	}
+
+	run.laterWrites(t, r)
+}
+
 // TestUpdateSaysNothingWhenNothingRuns: the line is about runs in flight, so an
 // installation with none gets the update's ordinary transcript and nothing
 // about runs. The converse of the test above, and the reason the line is not
@@ -305,7 +345,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
 	}
 	t.Run("the node's version rises and the service moves", func(t *testing.T) {
-		got := line(t, v5Node())
+		got := line(t, v6Node())
 		for _, want := range []string{"the credentials service this update replaces", "does not understand"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("the line does not say %q over a run whose node is raised before the service that reads it is replaced:\n%s", want, got)
@@ -316,7 +356,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		}
 	})
 	t.Run("the service moves over a node that does not", func(t *testing.T) {
-		got := line(t, v6Node())
+		got := line(t, v7Node())
 		if strings.Contains(got, "credentials service") {
 			t.Errorf("the line names the credentials service over a run that raises no node, so no call can meet a service that cannot read it:\n%s", got)
 		}
