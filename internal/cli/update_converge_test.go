@@ -394,6 +394,7 @@ func TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService(t *testing.T
 	// installation's other facts.
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
 	})}
 	r.save(t)
 
@@ -449,7 +450,21 @@ func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
 	// model credential at all).
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
 	})}
+	// The installation root's plan is NOT empty here, and the fixture says so
+	// rather than leaving it to the rig's default: this release's run writes the
+	// secrets intake's block into an installation that has none (DS4.1), the
+	// module's whole intake file is gated on that variable, so the apply that
+	// follows it creates the service — and an installation stage whose plan
+	// reports no changes while its tfvars gained a service is the shape the
+	// audience fill refuses (TF.Plan's exit code is what says a plan has
+	// something to apply). The plan's own content is not what this test is
+	// about; where the run STOPS is, and a stage that plans nothing never
+	// reaches the policy stage's precondition.
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
 	r.save(t)
 	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
 
@@ -488,6 +503,7 @@ func TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion(t *testing.T) {
 	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
 	})}
 	r.save(t)
 	r.managedRuns(t, initProjectName, initProject)

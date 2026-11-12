@@ -737,10 +737,53 @@ func (e *initEngine) writeCarriedCredentials(doc []byte) ([]byte, error) {
 			next = refreshed
 		}
 	}
+	// And the intake, which the same apply deploys and which no earlier release
+	// wrote: an installation whose tfvars carry the service's block and no
+	// intake's is every installation this release upgrades, and the two are
+	// deployed by one run because they are one pin of one image — the intake is
+	// a subcommand of it (IntakeSpec). It is added here, where the block the
+	// run is about to apply is read, and never in an agent's session or a
+	// development build: this function's callers have already refused those
+	// (ensureCredentialsService, moveCredentialsImage).
+	//
+	// A document this run cannot read or write leaves the entry where it is,
+	// which is the fail-closed direction and never a reason to stop the upgrade
+	// (the job-table refresh above answers the same way): an installation whose
+	// intake is not written keeps the one it has, and an installation that has
+	// none is up to date about everything else.
+	if withIntake, err := carriedIntake(next); err != nil {
+		fmt.Fprintf(e.r.w, "the secrets intake is not deployed: %v\n", err)
+	} else {
+		next = withIntake
+	}
 	if err := e.wd.WriteVars(next); err != nil {
 		return nil, userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
 	return next, nil
+}
+
+// carriedIntake is doc with the secrets intake's block added when it holds
+// none, carrying the image doc already records for the credentials service.
+//
+// The image is the recorded one and not a resolve of this run's: the intake
+// runs the same reference the service does, the credentials-service stage moves
+// both onto this release's pin a few stages later, and a second resolve here
+// would be a second registry read for one answer — and, on the path this
+// function exists for (an installation that has the service and no intake yet),
+// the only resolve of the run.
+//
+// A document that carries no image for the service gets no intake: without one
+// there is nothing for the module's container to run, and the block would be a
+// revision that never comes up.
+func carriedIntake(doc []byte) ([]byte, error) {
+	if _, have, err := infra.IntakeOf(doc); err != nil || have {
+		return doc, err
+	}
+	image, ok, err := infra.CredentialsServiceImageOf(doc)
+	if err != nil || !ok {
+		return doc, err
+	}
+	return infra.SetIntake(doc, infra.Intake(image))
 }
 
 // The two reasons a run deploys no credentials service at all: a coding agent's
@@ -934,6 +977,18 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 	if err != nil {
 		return userErr("setting the credentials service's image in the installation's %s: %v", infra.VarsFile, err)
 	}
+	// The intake moves with the service it shares the pin with, in one write:
+	// both run the released image, and a run that replaced the service's
+	// process alone would leave the intake serving the release behind's binary
+	// — a binary whose own reader is what decides whether this run's published
+	// node is one it can serve at all.
+	if _, haveIntake, err := infra.IntakeOf(updated); err != nil {
+		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
+	} else if haveIntake {
+		if updated, err = infra.SetIntakeImage(updated, pinned); err != nil {
+			return userErr("setting the secrets intake's image in the installation's %s: %v", infra.VarsFile, err)
+		}
+	}
 	if err := e.wd.WriteVars(updated); err != nil {
 		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
@@ -1039,6 +1094,17 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 	doc, err := infra.SetCredentialsService(base, svc)
 	if err != nil {
 		return userErr("setting the credentials service in the installation's %s: %v", infra.VarsFile, err)
+	}
+	// And the intake, in the same document and off the same resolve: the run
+	// that deploys the service on an installation that has none is the run that
+	// deploys the intake beside it, because the intake is a subcommand of the
+	// very image just pinned (`fugaro intake serve`). Nothing about the
+	// installation has to be read for it: the intake holds no bundle and no
+	// database, so the facts CredentialsInstallationFacts refused above are the
+	// service's alone.
+	doc, err = infra.SetIntake(doc, infra.Intake(pinned))
+	if err != nil {
+		return userErr("setting the secrets intake in the installation's %s: %v", infra.VarsFile, err)
 	}
 	if err := e.wd.WriteVars(doc); err != nil {
 		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
@@ -1208,12 +1274,42 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	if err != nil {
 		return false, userErr("reading the installation's tfvars: %v", err)
 	}
-	if current == url {
+	// The intake's audience is the same write, on the same apply, and for the
+	// same reason: it is a second Cloud Run service with its own URL, its own
+	// unassigned placeholder on the apply that creates it and its own callers
+	// whose ID tokens are minted for that URL — so a run that filled only the
+	// service's would leave an intake that is healthy, reachable by IAM and
+	// admits nobody.
+	//
+	// An installation whose tfvars carry no intake is left alone: the block is
+	// that installation's record of not having the feature, and this function
+	// may not turn it on by inventing one (SetIntakeURL refuses to).
+	intakeURL := ""
+	if _, haveIntake, err := infra.IntakeOf(vars); err != nil {
+		return false, userErr("reading the installation's tfvars: %v", err)
+	} else if haveIntake {
+		if outs.Intake == nil {
+			return false, userErr("the installation's tfvars carry a secrets intake and its outputs carry none: the tfvars key is not the variable the installation root reads, so nothing was deployed, and every caller of the intake mints an ID token for a URL that does not exist")
+		}
+		if intakeURL = outs.Intake.URL; intakeURL == "" {
+			return false, userErr("the installation's outputs carry the secrets intake %s with no URL: the module's output reads the service's own uri, so an empty one means the state holds something other than the service this run's apply created, and a revision whose audience is not its own URL admits no caller", outs.Intake.Name)
+		}
+	}
+	currentIntake, err := infra.IntakeURLOf(vars)
+	if err != nil {
+		return false, userErr("reading the installation's tfvars: %v", err)
+	}
+	if current == url && currentIntake == intakeURL {
 		return false, nil
 	}
 	updated, err := infra.SetCredentialsServiceURL(vars, url)
 	if err != nil {
 		return false, userErr("setting the credentials service's URL in the installation's %s: %v", infra.VarsFile, err)
+	}
+	if intakeURL != "" {
+		if updated, err = infra.SetIntakeURL(updated, intakeURL); err != nil {
+			return false, userErr("setting the secrets intake's URL in the installation's %s: %v", infra.VarsFile, err)
+		}
 	}
 	if err := e.wd.WriteVars(updated); err != nil {
 		return false, userErr("writing the installation's %s: %v", infra.VarsFile, err)
@@ -1223,7 +1319,7 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 		return false, remote(err)
 	}
 	if !changed {
-		return false, userErr("the installation plans nothing with credentials_service.url set to the service's own URL: the module does not carry that value onto the revision, so no revision would ever carry the audience its callers' ID tokens are minted for")
+		return false, userErr("the installation plans nothing with credentials_service.url set to the service's own URL: the module does not carry that value onto the revision, so no revision would ever carry the audience its callers' ID tokens are minted for (the secrets intake's url is written in the same apply, and one that plans nothing is just as wrong for it)")
 	}
 	plan, err := e.t.Show(ctx, infra.PlanFile)
 	if err != nil {
@@ -1250,6 +1346,9 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	}
 	r.res.Applied = true
 	fmt.Fprintf(r.w, "the credentials service's audience is its own URL: %s\n", url)
+	if intakeURL != "" {
+		fmt.Fprintf(r.w, "the secrets intake's audience is its own URL: %s\n", intakeURL)
+	}
 	return true, nil
 }
 

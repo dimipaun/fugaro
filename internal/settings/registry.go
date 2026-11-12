@@ -1188,6 +1188,49 @@ var localRows = []Row{
 	// whose own target_layer is `local`.
 	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config local", Doc: docTroubleshoot},
 	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config local", Doc: docTroubleshoot},
+
+	// The outer loop's ladder (E3, D2032). Every row here is local-only and
+	// every one is `settings set`'s: a threshold, a grade the ladder's rungs
+	// run at and the switch that decides whether the daemon acts at all are the
+	// machine owner's own, and the one door they are written through is this
+	// CLI's generic path — which is what makes the agent-session fence and the
+	// typed form reach them at all. A row naming the file instead would be
+	// refused by the write and print "not by the generic path" beside a key the
+	// generic path does write.
+	//
+	// The four scalars are what every mode reads, and the `modes.*` rows are
+	// the override one mode reads instead; both take their default from the
+	// shipped table (escalation.DefaultThresholds, E1), so the sentence names
+	// that table rather than a figure this table would then have to keep in
+	// step with the code. critical_path_factor and ready_drafts are the two
+	// with a value of their own, and they come from defaultValues below.
+	//
+	// ready_drafts is the one row here whose widening direction is its truth:
+	// the daemon readying a stalled draft is new authority over work a person
+	// left alone (D2041, D2046), so the row carries TypedWhy and the write of
+	// `true` is the typed form.
+	locLocal("escalation.r2_after_hours", "the shipped table's own, one row per mode (escalation.DefaultThresholds)", "settings set", docEscalation),
+	locLocal("escalation.r2_after_attempts", "the shipped table's own, one row per mode (escalation.DefaultThresholds)", "settings set", docEscalation),
+	locLocal("escalation.r3_after_hours", "the shipped table's own, one row per mode (escalation.DefaultThresholds)", "settings set", docEscalation),
+	locLocal("escalation.r2_coder", "the shipped table's own, one row per mode (escalation.DefaultThresholds)", "settings set", docEscalation),
+	locLocal("escalation.cost_ceiling", "none: a file that states no ceiling gets no cost trigger", "settings set", docEscalation),
+	// A literal rather than a locLocal call, as max_parallel is: its default is
+	// a value the loader leaves in place, so it comes from defaultValues below
+	// rather than from an "unset means" sentence.
+	{Key: "escalation.critical_path_factor", Layers: []string{LayerLocal}, Merge: Replace, Owner: "settings set", Doc: docEscalation},
+	locLocal("escalation.merge_judge", "none: a judge nobody named is a question for the owner (escalation.Grades)", "settings set", docEscalation),
+	locLocal("escalation.modes.*.r2_after_hours", "the block's own, or the shipped table's when it states none", "settings set", docEscalation),
+	locLocal("escalation.modes.*.r2_after_attempts", "the block's own, or the shipped table's when it states none", "settings set", docEscalation),
+	locLocal("escalation.modes.*.r3_after_hours", "the block's own, or the shipped table's when it states none", "settings set", docEscalation),
+	locLocal("escalation.modes.*.r2_coder", "the block's own, or the shipped table's when it states none", "settings set", docEscalation),
+	{
+		Key:      "escalation.ready_drafts",
+		Layers:   []string{LayerLocal},
+		Merge:    Replace,
+		Owner:    "settings set",
+		Doc:      docEscalation,
+		TypedWhy: "this lets the orchestrator ready a stalled draft on its own: it then acts on work a person left alone, which is the owner's own decision",
+	},
 }
 
 // cloudRows are the Realtime Database's own keys (spec §2.1, §2.2): the mode a
@@ -1262,6 +1305,11 @@ var defaultValues = map[string]Default{
 	// default" are one reading here.
 	"issues.nudge_after_days": value("7", "localcfg.DefaultIssuesNudgeAfterDays"),
 	"issues.nudge_recurrence": value("3", "localcfg.DefaultIssuesNudgeRecurrence"),
+	// The ladder's own two (E3): the scale a critical-path item's times are
+	// multiplied by, and the switch that decides whether the orchestrator may
+	// ready a stalled draft itself (off, D2046).
+	"escalation.critical_path_factor": value("0.5", "localcfg.DefaultEscalationCriticalPathFactor"),
+	"escalation.ready_drafts":         value("false", "localcfg.DefaultEscalationReadyDrafts"),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the

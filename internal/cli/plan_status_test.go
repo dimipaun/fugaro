@@ -180,22 +180,6 @@ func planStatusJSON(t *testing.T, args ...string) (planStatusDoc, string) {
 	return got, errOut
 }
 
-// TestPlanIDFromPath: the join's plan id is where the artifact sits, and the
-// two places a plan is written — beside docs/ itself and in docs/plans/ — are
-// the two the launch's --plan-task spells.
-func TestPlanIDFromPath(t *testing.T) {
-	for path, want := range map[string]string{
-		"docs/plan.graph.json":                    "plan",
-		"docs/plans/2026-10-25-a-plan.graph.json": "plans/2026-10-25-a-plan",
-		"docs/setup-wizard/graph.graph.json":      "setup-wizard",
-		"docs/a/b/c.graph.json":                   "a/b",
-	} {
-		if got := planIDFromPath(path); got != want {
-			t.Errorf("planIDFromPath(%q) = %q, want %q", path, got, want)
-		}
-	}
-}
-
 // TestArtifactCountCap: the walk reads a checkout's plans, and a directory that
 // carries more of them than the cap is refused rather than read without end.
 // Mutation caught: counting only what a read later succeeded on, or reading

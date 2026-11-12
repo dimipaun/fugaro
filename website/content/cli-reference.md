@@ -1984,10 +1984,56 @@ Flags:
 
 Subcommands:
 
+- `fugaro coordinator roadmap move` -- Put a task in a release, or take it out of one
 - `fugaro coordinator roadmap need` -- Record that one task needs another
+- `fugaro coordinator roadmap publish` -- Put a checkout's plan graphs into the roadmap record
 - `fugaro coordinator roadmap releases` -- Write a stream's releases
 - `fugaro coordinator roadmap request` -- Read back what happened to a roadmap request
 - `fugaro coordinator roadmap unneed` -- Remove a recorded dependency between two tasks
+- `fugaro coordinator roadmap unpublish` -- Remove a published plan from the record
+
+## `fugaro coordinator roadmap move`
+
+Put a task in a release, or take it out of one
+
+Move one task between the record's releases (roadmap_move, D2113).
+
+The task is named as <plan>/<task>, and `--to` is a release key the
+record holds — not a version from a checkout's release catalogue — or the
+word none to take the task out of every release.
+
+**`--expect` is not a formality: it is the release the record held when you
+read it.** The move is a compare-and-set, so a task somebody else has moved
+since your read is refused — with the release the record holds now, which is
+what you send next — rather than written over theirs. A task the record
+holds no assignment for is expected as `none` (D2114), and a release the
+record calls finished is refused by the record's own state.
+
+It queues the move at the installation's front door, as every write here
+does, and prints the request's id and then the record's answer to it. The
+command holds no database credential and writes no node. The inverse move
+— the same task back to the release you read, expected as the one you moved
+it into — is how a mistake is undone: the record keeps the release it
+replaced for exactly that.
+
+Usage: `fugaro coordinator roadmap move <plan>/<task>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the release the record holds for this task now, or none for a task with no assignment; a move without it is refused |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for move |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--to` | string | "" | yes | the release key to put the task in, or none to take it out of one (required) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro coordinator roadmap need`
 
@@ -2016,6 +2062,63 @@ Flags:
 | `--reason` | string | "" | yes | why the dependency exists, which a reviewer reads (required) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--task` | string | "" | yes | the qualified task id: <plan>/<task> that needs another (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap publish`
+
+Put a checkout's plan graphs into the roadmap record
+
+Publish the graph artifact beside a plan document, from any checkout
+(roadmap_publish_plan, D2111).
+
+Read the plan's graph where it sits — `docs/plans/x.md` is described by
+`docs/plans/x.graph.json` — and send it, trimmed to what the record holds
+and carrying where it came from: this repository, the artifact's path and
+the commit HEAD names. A symlink anywhere on the way to the file, a file
+that is not a regular file, and a graph this build refuses all end the run
+before anything is sent; an artifact with uncommitted changes is refused
+too, because what is published is what is committed.
+
+`--expect` is the version of the plan document you last read, and the
+record compares it with the version it holds: an empty `--expect` is the
+claim that the record holds no such plan, so leave it out for a plan the
+record does not hold and send what the record holds for one it does. A
+publish that carries the version it read and sends the same artifact
+writes nothing the second time — the record compares the document it holds
+with the one it is sent — and one that carries a version the record has
+moved past is refused, which is what keeps two people publishing one plan
+from two checkouts from overwriting each other. This command holds no read
+that would fetch the version for you: the refusal names it, and sending it
+back is the next run.
+
+`--all` publishes every graph artifact under the checkout's docs/, each its
+own request. `--releases <file>` imports a release catalogue — this
+repository's `docs/release-streams.yaml` is the one that exists — one
+release per stream, named by the catalogue. It is a flag a person passes
+and never a default: a repository with no such file publishes its plans
+the same way.
+
+Nothing is read from the checkout but the artifact, and nothing leaves it
+but the trimmed document and its provenance.
+
+Usage: `fugaro coordinator roadmap publish [<plan>]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | publish every graph artifact under the checkout's docs/ |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the version of the plan document you last read; leave it out for a plan the record does not hold |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for publish |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--releases` | string | "" | no | a release catalogue to import, such as docs/release-streams.yaml (never a default) |
 
 Subcommands:
 
@@ -2130,6 +2233,41 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--task` | string | "" | yes | the qualified task id: <plan>/<task> the dependency starts at (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap unpublish`
+
+Remove a published plan from the record
+
+Remove one plan document from the roadmap record (roadmap_unpublish_plan).
+
+The plan is named by its id — the `plan` field of what `roadmap publish
+--json` printed, which is the part of a task's qualified name before the
+slash. The tasks it carried are left dangling in the assignments and edges
+that still name them, and a reader shows them as dangling until a later
+publish or an unneed removes them (D2115).
+
+`--expect` is the version of the plan document you read before asking to
+remove it. A plan the record does not hold is the state this asks for
+already, so an unpublish of one that is gone is answered rather than
+refused.
+
+Usage: `fugaro coordinator roadmap unpublish <plan>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the version of the plan document you last read; leave it out for a plan the record does not hold |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for unpublish |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -2298,7 +2436,8 @@ resolves to the project's default credential.
 Every half names where it came from: the layer that wrote it (repo, local or
 project), the craft it was inherited from, or default when nothing set it. A
 pool holding two or more Claude OAuth credentials serves nothing until the
-project's subscription-spread switch is on, and the row says so.
+project's subscription-spread switch is on — the switch this machine's own
+config writes — and the row says so.
 
 The read is offline: it reads this checkout's fugaro.yaml, the installation's
 own config and the project layer file the last cloud read cached, and reaches
@@ -6250,6 +6389,7 @@ Subcommands:
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
 - `fugaro runs summary` -- Count the window's runs and their spend, without reading a run object
+- `fugaro runs watch` -- Print the triage the daemon would decide about the window's long runs
 
 ## `fugaro runs digest`
 
@@ -6632,6 +6772,63 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | the window of UTC days ending today (7d, 36h, 90m; a summary is per day, so 0 is refused) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs watch`
+
+Print the triage the daemon would decide about the window's long runs
+
+Print, for every run in the window, what the daemon's long-run triage would
+decide about it: the outcome, the closed codes behind it, the input nobody
+could read, and the threshold the decision is taken against.
+
+The window is runs ls's: the same --repo, --all, --mine, --since and --batch,
+and the same listing behind them. Each run of it is read the way the daemon
+reads one — its record from its own storage, its pull request and its checks
+from the host the run's repository is on, and the findings artifact it
+finalized with — and the outcome is the rule's own, so the print is what the
+daemon would decide and not a second opinion about it.
+
+This command changes nothing at all. It writes no record, no audit line, no
+cancel marker and no work item, it merges nothing, it cancels nothing, and it
+has no flag that acts on a run: everything the triage does is the daemon's,
+on its own evidence, and this is the reading a person takes before that.
+
+An input that cannot be read is never an error: the rule answers
+recommend-only, which merges, cancels and restarts nothing, and the print
+names the input — record, findings, changed paths or ci — beside the outcome.
+A run under the threshold is printed as not-due: the rule read nothing about
+it, and that is not one of the four outcomes.
+
+The age is the run's own mint time against now. The daemon ages a run from
+the attempt it recorded in its own database, which this command does not
+read: the two agree to the minute for a run the daemon started, and a run
+somebody else started has no attempt for the daemon to age at all.
+
+--json prints {version, project, threshold_seconds, runs[], warnings}; runs
+carries {run, repo, age_seconds, outcome, reasons[], unreadable,
+without_a_person}.
+
+Usage: `fugaro runs watch`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | every repository in the runs bucket |
+| `--batch` | string | "" | no | only runs of this batch |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for watch |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--mine` | bool | `false` | no | only runs you requested |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
+| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 
 Subcommands:
 
