@@ -843,6 +843,18 @@
         "layer.defaults.git.provider": {
           "default": "unset = none"
         },
+        "layer.defaults.model_grades.strong.access": {
+          "default": "unset = the project's default credential"
+        },
+        "layer.defaults.model_grades.strong.model": {
+          "default": "unset = none: a rung whose grade the project sets nowhere refuses and asks"
+        },
+        "layer.defaults.model_grades.strongest.access": {
+          "default": "unset = the project's default credential"
+        },
+        "layer.defaults.model_grades.strongest.model": {
+          "default": "unset = none: a rung whose grade the project sets nowhere refuses and asks"
+        },
         "layer.defaults.rigor.areas.*.match": {
           "default": "unset = none"
         },
@@ -1084,6 +1096,18 @@
         "max_parallel": {
           "$comment": "localcfg.DefaultMaxParallel",
           "default": "20"
+        },
+        "model_grades.strong.access": {
+          "default": "unset = the project's default credential"
+        },
+        "model_grades.strong.model": {
+          "default": "unset = none: a rung whose grade the project sets nowhere refuses and asks"
+        },
+        "model_grades.strongest.access": {
+          "default": "unset = the project's default credential"
+        },
+        "model_grades.strongest.model": {
+          "default": "unset = none: a rung whose grade the project sets nowhere refuses and asks"
         },
         "model_prices.*.cache_read": {
           "default": "unset = the built-in price"

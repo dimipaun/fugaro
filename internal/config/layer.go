@@ -271,6 +271,21 @@ func (l *ProjectLayer) SetsPlanning() bool {
 	return ok
 }
 
+// SetsModelGrades reports whether the layer's text writes
+// defaults.model_grades, at any value, for the question SetsPlanning answers
+// about defaults.planning: a runner before modelGradesSince decodes the layer
+// with KnownFields, so the key alone is what it refuses, and LayerDefaults'
+// block cannot tell an absent one from a written empty one (both empty it) —
+// while the skew gate judges the text, not the value.
+func (l *ProjectLayer) SetsModelGrades() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	_, ok := d["model_grades"]
+	return ok
+}
+
 // SetsRigor reports whether the layer's text writes defaults.rigor, at any
 // value: a runner before 0.11.0 decodes the layer with KnownFields, so the key
 // alone is what it refuses, and LayerRigor's zero value cannot tell an empty

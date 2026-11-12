@@ -4208,6 +4208,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gatePlanning(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The model_grades: block, in either file, is the same kind of break, on
+	// modelGradesSince. The repository's half is gated although the merge
+	// drops and records what it writes: what an older runner refuses is
+	// the key, not the grade.
+	if err := r.gateModelGrades(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	if !o.forget {
 		w := r.w
 		if o.printVars {
@@ -4803,6 +4810,22 @@ func (r *initRun) gatePlanning(o *initOptions, repo string, lc *localcfg.Config,
 		w = r.cmd.ErrOrStderr()
 	}
 	return refusePlanningSkew(repo, cfg.RepoPlanningSet, cfg.Layer.SetsPlanning(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateModelGrades is fugaro update --repo's gate for modelGradesSince:
+// refuseModelGradesSkew, with gateRigor's escapes and for its reason, and
+// gatePlanning's shape: the key has two homes — the repository's own file and
+// the project layer's defaults.model_grades — so both halves are judged, each
+// by the key being written rather than the grade it holds.
+func (r *initRun) gateModelGrades(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseModelGradesSkew(repo, cfg.RepoModelGradesSet, cfg.Layer.SetsModelGrades(), lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates

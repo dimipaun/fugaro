@@ -177,6 +177,14 @@ type Config struct {
 	// (internal/cli). Like the fields above it is never part of the file or of
 	// SHA256.
 	RepoTriageSet bool `yaml:"-" json:"-"`
+	// RepoModelGradesSet is whether the repository's own file wrote the
+	// model_grades key at all, at any value: the question RepoRigorSet answers
+	// for rigor:, and ModelGrades cannot answer it — the block written empty
+	// (`model_grades: {}`) decodes to the same nil pointer as the key being
+	// absent, and a runner older than modelGradesSince refuses the key itself,
+	// whatever it says (internal/cli). Like the fields above it is never part
+	// of the file or of SHA256.
+	RepoModelGradesSet bool `yaml:"-" json:"-"`
 }
 
 // Planning is fugaro.yaml's planning: block and the project layer's

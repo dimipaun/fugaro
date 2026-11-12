@@ -305,7 +305,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
 	}
 	t.Run("the node's version rises and the service moves", func(t *testing.T) {
-		got := line(t, v5Node())
+		got := line(t, v6Node())
 		for _, want := range []string{"the credentials service this update replaces", "does not understand"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("the line does not say %q over a run whose node is raised before the service that reads it is replaced:\n%s", want, got)
@@ -316,7 +316,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		}
 	})
 	t.Run("the service moves over a node that does not", func(t *testing.T) {
-		got := line(t, v6Node())
+		got := line(t, v7Node())
 		if strings.Contains(got, "credentials service") {
 			t.Errorf("the line names the credentials service over a run that raises no node, so no call can meet a service that cannot read it:\n%s", got)
 		}

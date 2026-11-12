@@ -39,7 +39,7 @@ const convergeLegacyYAML = "version: 1\nproject: aurora\ngit: { provider: github
 // blocked, the pin and the plugin never move, and the local plugin stays on
 // the previous release.
 func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
-	r := newConvergeRigYAML(t, v5Node(), convergeLegacyYAML)
+	r := newConvergeRigYAML(t, v6Node(), convergeLegacyYAML)
 	currentRelease(t)
 	// The line is once per process and this test is about the process's only
 	// one: an earlier test's run may have spent it.
@@ -123,7 +123,7 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 // line reads "ran fugaro upgrade's pin, plugin, cloud for this checkout" and
 // the change that edit asked for reaches Cloud Build.
 func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
-	r := newConvergeRigYAML(t, v5Node(), refreshYAML)
+	r := newConvergeRigYAML(t, v6Node(), refreshYAML)
 	currentRelease(t)
 	skillWarned.Store(false)
 	t.Cleanup(func() { skillWarned.Store(false) })
@@ -180,7 +180,7 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 // (initflow/loop.go) — and this test fails: the checkout runs its cloud step,
 // submits the job image builds and fails on them.
 func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T) {
-	r := newConvergeRig(t, v5Node())
+	r := newConvergeRig(t, v6Node())
 	currentRelease(t)
 	skillWarned.Store(false)
 	t.Cleanup(func() { skillWarned.Store(false) })
@@ -259,7 +259,7 @@ func dropAppID(t *testing.T, r *convergeRig) {
 // one that installs it — the step the line used to point at was the checkout
 // stage's and is this stage's own.
 func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T) {
-	r := newConvergeRigYAML(t, v5Node(), convergeLegacyYAML)
+	r := newConvergeRigYAML(t, v6Node(), convergeLegacyYAML)
 	currentRelease(t)
 	skillWarned.Store(false)
 	t.Cleanup(func() { skillWarned.Store(false) })
