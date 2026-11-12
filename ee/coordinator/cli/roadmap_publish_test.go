@@ -302,6 +302,72 @@ func TestPublishSendsTheTrimmedArtifactAndItsProvenance(t *testing.T) {
 	}
 }
 
+// TestPublishAllSendsEveryArtifact is the sweep: one call per artifact under
+// docs/, in path order, each with its own provenance, and a file that is not a
+// graph left where it is.
+//
+// It is the shape a person reaches for after adding a plan, and it is the one
+// path the test list above does not name — the confinement test drives `--all`
+// only as far as its refusal, and a sweep that read nothing would pass that.
+func TestPublishAllSendsEveryArtifact(t *testing.T) {
+	door := publishDoor(t)
+	publishCheckout(t, map[string]string{
+		"docs/notes.txt":                     "not a graph\n",
+		"docs/plans/2026-11-12-a.md":         "# a\n",
+		"docs/plans/2026-11-12-a.graph.json": publishGraph,
+		"docs/setup-wizard/b.md":             "# b\n",
+		"docs/setup-wizard/b.graph.json": strings.Replace(publishGraph,
+			`"plan": "docs/plans/2026-11-12-the-plan.md"`, `"plan": "docs/setup-wizard/b.md"`, 1),
+	})
+
+	out, _, err := execute(t, "coordinator", "roadmap", "publish", "--all", "--json")
+	if err != nil {
+		t.Fatalf("roadmap publish --all: %v\n%s", err, out)
+	}
+	calls := door.toolCalls()
+	if len(calls) != 4 {
+		t.Fatalf("the door served %v; want two publishes and their two outcome reads", publishTools(calls))
+	}
+	// The ids are the artifacts' own places under docs/, by the rule
+	// internal/plan holds for both readers: docs/plans/ is the one directory
+	// whose files are named by their stem.
+	for i, want := range []string{"plans/2026-11-12-a", "setup-wizard"} {
+		doc := publishSent(t, calls[i*2])
+		if doc.Plan != want {
+			t.Errorf("call %d published %q; want %q, the artifacts in path order", i+1, doc.Plan, want)
+		}
+		if v, _ := calls[i*2].Arguments["expect"].(string); v != "" {
+			t.Errorf("the sweep sent expect=%q; --all is refused with --expect, because one version cannot stand for many documents", v)
+		}
+	}
+	var sent coordinatorPublishDoc
+	if err := json.Unmarshal([]byte(out), &sent); err != nil {
+		t.Fatalf("the --json document: %v\n%s", err, out)
+	}
+	if len(sent.Plans) != 2 {
+		t.Fatalf("the document reported %d plans; want the two artifacts", len(sent.Plans))
+	}
+	// docs/notes.txt is not a graph and is not sent: the suffix is the rule,
+	// and a sweep that read every file under docs/ would publish the plan
+	// documents themselves.
+	for _, c := range calls {
+		if strings.Contains(string(mustJSON(t, c.Arguments)), "notes.txt") {
+			t.Error("the sweep read a file that is not a graph artifact")
+		}
+	}
+}
+
+// mustJSON marshals a call's arguments for a test that is looking for a string
+// in what was sent.
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 // TestPublishTwiceWritesOnce is the red step, and it is the property the whole
 // idempotence rests on: the two runs send the same bytes.
 //
