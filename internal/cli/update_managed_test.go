@@ -1619,7 +1619,8 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // the one a PERSON at the terminal on a managed project gets.
 //
 // The shape is therefore that person: the installation root planned for a
-// change §4.1 refuses to apply (the removal of a data-bearing bucket), and the fourth read of
+// change §4.1 refuses to apply (an authoritative IAM resource, D1549's kind:
+// a bucket removal now leaves the owner a command, T9), and the fourth read of
 // its saved plan — the credentials stage's own — refused. The two arms are the
 // entry's own answer and its mutation: under the gate the step is left for the
 // owner and the run carries on, and with the entry dropped the same refusal
@@ -1658,17 +1659,15 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
 				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
 			}
-			// LeftCommand and not LeftRefused: the plan this fixture refuses
-			// carries a removal (the runs bucket), and a removal is the owner's
-			// own decision rather than the gate's, so the step is the
-			// --allow-delete command and not D1012's "nothing here is yours to
-			// type or to run" refusal (gateDeleteLeft, the
-			// initflow.GateRefusedDelete arm of update_managed.go).
+			// LeftCommand and not LeftRefused: the plan this stage holds is the
+			// installation's own, and the refusal it carries is a removal the
+			// owner has to name, which is the step gateDeleteLeft leaves as the
+			// command that names it (update_managed.go, D1012).
 			left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand)
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
 			}
-			for _, want := range []string{"managed gate refused this step", "google_storage_bucket.runs"} {
+			for _, want := range []string{"managed gate refused this step", "an authoritative IAM resource"} {
 				if !strings.Contains(left, want) {
 					t.Errorf("the step left for the owner does not name %q:\n%s", want, left)
 				}
@@ -1697,7 +1696,7 @@ func credentialsStageRun(t *testing.T) (string, int) {
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	admitted := map[string]any{"stdout": planJSON(t, change("module.installation.google_service_account.scheduler", "create"))}
-	refused := map[string]any{"stdout": planJSON(t, change("module.installation.google_storage_bucket.runs", "delete"))}
+	refused := map[string]any{"stdout": planJSON(t, iamBindingCreate())}
 	r.script["show@installation"] = []any{admitted, admitted, admitted, refused}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
 	r.save(t)
