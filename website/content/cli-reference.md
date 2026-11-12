@@ -72,7 +72,7 @@ Subcommands:
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
 - `fugaro update-skills` -- Install or update the Fugaro plugin in your own Claude Code
 - `fugaro upgrade` -- Bring checkouts up to this fugaro: install or update the plugin in Claude Code, refresh the repository's images
-- `fugaro user` -- List, add and remove the installation's operators and admins
+- `fugaro user` -- Grant, revoke and list the installation's roles, and its two IAM lists
 - `fugaro validate` -- Check a fugaro.yaml against the schema and the repository
 - `fugaro verify` -- Run and record this repository's build, test or lint command (inside a Fugaro run)
 - `fugaro version` -- Print the fugaro version
@@ -89,8 +89,11 @@ Report model A/B results from the runs the launcher sampled.
 A sampled task launches a champion (the run the developer sees) and a
 challenger (the same task, at the same commit, on another coder model, run as a
 shadow that pushes nothing and opens nothing). Both records carry the pair, and
-this command scores the pairs from those records alone: no model call, no
-judgement, and the same records always give the same table.
+this command scores the pairs from those records and from what the repository's
+judge runs wrote under their own prefixes: no model call is made here, and the
+same records and verdicts always give the same table. A pair at Critical counts
+only once a judge has decided it (D561), and every other mode shows the judge's
+verdict beside the hard signals it is ranked on.
 
 Rows are one per rigor mode x tier x model pair. A pair the arms do not make --
 a different start commit, mode, tier or recipe, or an arm that never started --
@@ -98,7 +101,11 @@ is in no figure at all. WINS and LOSSES are the challenger's; a TIE decided
 nothing and no figure is drawn from one. HALTS is each arm's halt count: a halt
 is already a loss, and the count says how often a limit rather than the work
 decided a pair. COST is the median pair cost ratio, the challenger's model
-dollars over the champion's.
+dollars over the champion's. JUDGE FAMILY is the family of the model that judged
+the group's pairs -- a Claude ID is anthropic, a provider model's family is its
+ID's vendor prefix -- and SAME FAMILY says one of them is an arm's own, which
+blindness does not remove (D553). UNJUDGED counts the pairs no judge has decided
+and TRUNCATED those whose patch was cut short and can never be judged.
 
 ADVICE is D565's rule at the mode's exchange rate: the challenger is recommended
 when it is clearly better (the lower bound of its win share above a half) and its
@@ -109,14 +116,16 @@ approximating one. Nothing here changes a default: this is a report, not a
 switch.
 
 No person, repository or task text reaches the output: a row is a mode, a tier and
-two coder models.
+two coder models, with the family of the model that judged them.
 
 --since is how far back the read goes (default 30d: a day count, a Go duration,
 or 0 for no bound). --json prints {project, source, since, until, rows[{mode,
 tier, champion, challenger, pairs, wins, losses, ties, champion_halts,
-challenger_halts, champion_follow_ups, recommendation{decision, rule, decisive,
-p, win_share_lo, win_share_hi, median_cost_ratio, exchange_rate}}], warnings};
-median_cost_ratio is null when no pair of the group carried both arms' costs.
+challenger_halts, champion_follow_ups, judge_families, judge_same_family,
+unjudged, truncated, recommendation{decision, rule, decisive, p, win_share_lo,
+win_share_hi, median_cost_ratio, exchange_rate}}], warnings};
+median_cost_ratio is null when no pair of the group carried both arms' costs,
+and judge_families is empty when no judge has decided a pair of the group.
 
 Usage: `fugaro ab`
 
@@ -1977,9 +1986,11 @@ Subcommands:
 
 - `fugaro coordinator roadmap move` -- Put a task in a release, or take it out of one
 - `fugaro coordinator roadmap need` -- Record that one task needs another
+- `fugaro coordinator roadmap publish` -- Put a checkout's plan graphs into the roadmap record
 - `fugaro coordinator roadmap releases` -- Write a stream's releases
 - `fugaro coordinator roadmap request` -- Read back what happened to a roadmap request
 - `fugaro coordinator roadmap unneed` -- Remove a recorded dependency between two tasks
+- `fugaro coordinator roadmap unpublish` -- Remove a published plan from the record
 
 ## `fugaro coordinator roadmap move`
 
@@ -2051,6 +2062,63 @@ Flags:
 | `--reason` | string | "" | yes | why the dependency exists, which a reviewer reads (required) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--task` | string | "" | yes | the qualified task id: <plan>/<task> that needs another (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap publish`
+
+Put a checkout's plan graphs into the roadmap record
+
+Publish the graph artifact beside a plan document, from any checkout
+(roadmap_publish_plan, D2111).
+
+Read the plan's graph where it sits — `docs/plans/x.md` is described by
+`docs/plans/x.graph.json` — and send it, trimmed to what the record holds
+and carrying where it came from: this repository, the artifact's path and
+the commit HEAD names. A symlink anywhere on the way to the file, a file
+that is not a regular file, and a graph this build refuses all end the run
+before anything is sent; an artifact with uncommitted changes is refused
+too, because what is published is what is committed.
+
+`--expect` is the version of the plan document you last read, and the
+record compares it with the version it holds: an empty `--expect` is the
+claim that the record holds no such plan, so leave it out for a plan the
+record does not hold and send what the record holds for one it does. A
+publish that carries the version it read and sends the same artifact
+writes nothing the second time — the record compares the document it holds
+with the one it is sent — and one that carries a version the record has
+moved past is refused, which is what keeps two people publishing one plan
+from two checkouts from overwriting each other. This command holds no read
+that would fetch the version for you: the refusal names it, and sending it
+back is the next run.
+
+`--all` publishes every graph artifact under the checkout's docs/, each its
+own request. `--releases <file>` imports a release catalogue — this
+repository's `docs/release-streams.yaml` is the one that exists — one
+release per stream, named by the catalogue. It is a flag a person passes
+and never a default: a repository with no such file publishes its plans
+the same way.
+
+Nothing is read from the checkout but the artifact, and nothing leaves it
+but the trimmed document and its provenance.
+
+Usage: `fugaro coordinator roadmap publish [<plan>]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | publish every graph artifact under the checkout's docs/ |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the version of the plan document you last read; leave it out for a plan the record does not hold |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for publish |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--releases` | string | "" | no | a release catalogue to import, such as docs/release-streams.yaml (never a default) |
 
 Subcommands:
 
@@ -2165,6 +2233,41 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--task` | string | "" | yes | the qualified task id: <plan>/<task> the dependency starts at (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap unpublish`
+
+Remove a published plan from the record
+
+Remove one plan document from the roadmap record (roadmap_unpublish_plan).
+
+The plan is named by its id — the `plan` field of what `roadmap publish
+--json` printed, which is the part of a task's qualified name before the
+slash. The tasks it carried are left dangling in the assignments and edges
+that still name them, and a reader shows them as dangling until a later
+publish or an unneed removes them (D2115).
+
+`--expect` is the version of the plan document you read before asking to
+remove it. A plan the record does not hold is the state this asks for
+already, so an unpublish of one that is gone is answered rather than
+refused.
+
+Usage: `fugaro coordinator roadmap unpublish <plan>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the version of the plan document you last read; leave it out for a plan the record does not hold |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for unpublish |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -8328,27 +8431,40 @@ This command has no subcommands.
 
 ## `fugaro user`
 
-List, add and remove the installation's operators and admins
+Grant, revoke and list the installation's roles, and its two IAM lists
 
-List the installation's operators and admins, and add a person to one of
-the two lists or remove them from it.
+Grant a person a role at a scope, take one away, and list who holds what.
 
-The two lists are terraform.operators and terraform.admins in this machine's own project config. They are what the admin's next
-fugaro update applies to the installation, so a change made here takes effect
-then, and nothing is applied by this command: no IAM grant is written, no
-repository is touched and no invitation is sent.
+grant and revoke are the roles model's own door: one person, one role and the
+scope the role is held at, written into the installation's grants node at
+config/admin/access. That node is the installation's record of who may do
+what, and its next fugaro update derives the installation's IAM lists from it.
+The command reads the node with its ETag, judges the change (a grant is a
+subset of the grantor's own scope, a revoke needs admin at a scope covering
+the pair, and the installation keeps at least one project admin), and writes
+conditionally on that ETag, so a change another admin made in the meantime is
+re-read rather than overwritten. Writing the node needs
+roles/firebasedatabase.admin, which the project's owners, editors and
+terraform.budget_admins hold.
 
-A member is one person, written as user:<email>. Only user: members are
-written here: domain:, group:, serviceAccount:, allUsers,
-allAuthenticatedUsers and wildcards are refused (reconciliation F42 — the
-operator and admin roles carry the token signer's own role, so a domain:
-member would grant a whole domain the right to mint an operator's identity).
-fugaro setup --operator/--admin remains the door for a whole list, group
-members included.
+ls lists the stored pairs, the repositories a pattern matches among those this
+machine knows, and — with --repo — the role each person holds in one
+repository.
 
-Both keys are derived from the installation's grants node, and this command
-writes this machine's file alone: a member added here is dropped by that
-machine's next fugaro update, which says so.
+add and rm are the older door, and they change THIS MACHINE's own copy of the
+two IAM lists — terraform.operators and terraform.admins in this machine's own project config. They are what an installation
+with no Firebase budget backend has: there is no grants node there, so the two
+lists are the roles. On an installation that has a node, a member written here
+alone is dropped by that machine's next fugaro update, which says so; use grant
+and revoke.
+
+Every member every subcommand writes is one person, written as user:<email>:
+domain:, group:, serviceAccount:, allUsers, allAuthenticatedUsers and
+wildcards are refused (reconciliation F42 — the operator and admin roles carry
+the token signer's own role, so a domain: member would grant a whole domain the
+right to mint an operator's identity, and a grant cannot be matched against a
+caller the CLI cannot read). fugaro setup --operator/--admin remains the door
+for a whole list, group members included.
 
 add and rm read the installation's own outputs first and refuse when they
 disagree with this machine's config: a list written here replaces the
@@ -8366,7 +8482,9 @@ Flags:
 Subcommands:
 
 - `fugaro user add` -- Add a person to the installation's operators or admins
-- `fugaro user ls` -- List the installation's operators and admins
+- `fugaro user grant` -- Give a person a role at a scope
+- `fugaro user ls` -- List the installation's grants, and the role held in a repository
+- `fugaro user revoke` -- Take a role and scope pair away from a person
 - `fugaro user rm` -- Remove a person from the installation's operators or admins
 
 ## `fugaro user add`
@@ -8410,22 +8528,90 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro user grant`
+
+Give a person a role at a scope
+
+Give one role and scope pair to one person, in the
+installation's own record of who may do what: the grants node at
+config/admin/access, which is what its next fugaro update derives the
+installation's IAM lists from.
+
+A pair is a person, a role and the scope the role is held at. The roles are
+viewer, operator and admin; a scope is project (the whole installation),
+all-repos (every repository the published policy admits), or a comma-separated
+list of repository patterns ("github/acme/api", "github/acme/*"). A person may
+hold several pairs, and the highest role whose scope covers a repository is the
+role they hold there.
+
+--role and --scope are both required and neither has a default: a default would decide a grant.
+
+The command reads the grants node with its ETag, judges, and writes
+conditionally on that ETag, so a change another admin made in the meantime is
+re-read and re-judged rather than overwritten. It refuses:
+
+  - a grant wider than your own scope, or at a role above your own: a grant is
+    a subset of the grantor's scope (a repository admin holding github/acme/api
+    cannot grant github/acme/*);
+  - a grant that would take the installation's last project admin away, your own
+    demotion included.
+
+Writing the node needs roles/firebasedatabase.admin, held by the GCP project's
+owners and editors and by terraform.budget_admins — an admin stored in the node
+holds no database write of its own (D1592), so the command refuses for them
+with that sentence rather than pretending the change landed.
+
+An agent session is refused: granting here is a change to who may do
+what, and a person runs it at their own terminal.
+
+Usage: `fugaro user grant MEMBER`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for grant |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--role` | string | "" | no | the role: viewer, operator or admin (required) |
+| `--scope` | string | "" | no | what it covers: project, all-repos, or a comma-separated list of repository patterns (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro user ls`
 
-List the installation's operators and admins
+List the installation's grants, and the role held in a repository
 
-List the members of terraform.operators and terraform.admins in this machine's own project config, as they are written there now.
+List the installation's grants: every stored role and scope pair, from the
+grants node at config/admin/access.
 
-It is this machine's own copy of the two lists: no member is fetched from the
-cloud and none is granted, and no Terraform runs. What the installation itself
-holds can differ — a change another admin applied, or one made here and not
-yet applied by a fugaro update — and only the outputs would tell, which is the
-read add and rm make.
+Each pair is a person, a role and the scope the role is held at, and a pattern's
+line names the repositories it matches among those this machine knows — its own
+config's list — labelled "known": the answer is deliberately about this machine,
+because a pattern may admit repositories nothing here can enumerate and Fugaro
+has no directory to ask. Nothing here claims to be every repository a pattern
+admits.
 
-A machine with no project config of its own is refused rather than answered
-with two empty lists: the lists are not in the shared config, and selection's
-fallback to it is a fetch of the runs bucket that only this machine's own file
-would have made unnecessary.
+--repo names one repository and prints the role each person holds in it: the
+highest role whose scope covers the repository, with the published policy's
+allow_repos taken into account (a repository the policy does not admit cannot
+run at all, so nobody holds a role in it). A repository outside allow_repos is
+reported as such rather than as a role of nobody.
+
+Legacy members are listed as legacy: a group:, domain: or serviceAccount:
+member in this machine's own config keeps the IAM grant the installation
+derives, and the resolver ranks none of them, because the CLI cannot read a
+caller's groups.
+
+The command reads the grants node and the published policy with your own
+credentials and writes nothing. An installation with no Firebase budget backend
+has no grants node at all: its roles are still this machine's own
+terraform.operators and terraform.admins, and this command prints those and
+says so.
 
 Usage: `fugaro user ls`
 
@@ -8439,6 +8625,60 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository to print the effective role in (provider/owner/name, or owner/name for a repository this machine's config lists) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro user revoke`
+
+Take a role and scope pair away from a person
+
+Take one role and scope pair from one person, in the
+installation's own record of who may do what: the grants node at
+config/admin/access, which is what its next fugaro update derives the
+installation's IAM lists from.
+
+A pair is a person, a role and the scope the role is held at. The roles are
+viewer, operator and admin; a scope is project (the whole installation),
+all-repos (every repository the published policy admits), or a comma-separated
+list of repository patterns ("github/acme/api", "github/acme/*"). A person may
+hold several pairs, and the highest role whose scope covers a repository is the
+role they hold there.
+
+--role and --scope are both required and neither has a default: naming the pair is what a revoke is.
+
+The command reads the grants node with its ETag, judges, and writes
+conditionally on that ETag, so a change another admin made in the meantime is
+re-read and re-judged rather than overwritten. It refuses:
+
+  - a pair outside the scope your own admin covers (a repository admin cannot
+    revoke a project-scope pair);
+  - a revoke that would take the installation's last project admin away, your own
+    removal included.
+
+Writing the node needs roles/firebasedatabase.admin, held by the GCP project's
+owners and editors and by terraform.budget_admins — an admin stored in the node
+holds no database write of its own (D1592), so the command refuses for them
+with that sentence rather than pretending the change landed.
+
+An agent session is refused: revoking here is a change to who may do
+what, and a person runs it at their own terminal.
+
+Usage: `fugaro user revoke MEMBER`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for revoke |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--role` | string | "" | no | the role: viewer, operator or admin (required) |
+| `--scope` | string | "" | no | what it covers: project, all-repos, or a comma-separated list of repository patterns (required) |
 
 Subcommands:
 

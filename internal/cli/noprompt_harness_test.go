@@ -373,6 +373,8 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro settings get":         {args: []string{"a.b"}},
 	"fugaro stats runs":           {args: []string{"--project", "proj-1234"}},
 	"fugaro user add":             {args: []string{"someone@example.com"}},
+	"fugaro user grant":           {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
+	"fugaro user revoke":          {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
 	"fugaro user rm":              {args: []string{"someone@example.com"}},
 	"fugaro verify":               {args: []string{"build"}},
 	"fugaro workspace add":        {args: []string{"ws"}},
