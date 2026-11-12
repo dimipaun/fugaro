@@ -156,20 +156,28 @@ func TestUpdateWorkflowSecretsFollowTheAllowList(t *testing.T) {
 	}
 }
 
-// TestUpdateWorkflowSecretsAreTheUpgradesStepAlone: the two states the step
-// writes nothing in, each with the fixture that writes under `fugaro update` —
-// so the assertion is about the gate and not about a fixture that could never
-// have written anything.
+// TestUpdateWorkflowSecretsAreWrittenByAnyDoorThatAppliedTheRoot: what the
+// step is gated on is the applied root and not the command that asked for it.
 //
-// The door is the setup one, which converges the same installation through the
-// same engine: a project it has just created has no repository whose workflows
-// a service reads, and the record is the upgrade's. The plan is --plan-only,
-// and it is also where a coding agent's session reaches this engine (the loop
-// plans an engine stage read-only, and a session applies none): `--yes`'s help
-// promises that a session "changes nothing outside this machine", and a record
-// published out of a run that applied nothing is exactly the write that
-// promise does not have.
-func TestUpdateWorkflowSecretsAreTheUpgradesStepAlone(t *testing.T) {
+// The plan is the state it writes nothing in: --plan-only is where a coding
+// agent's session reaches this engine (the loop plans an engine stage
+// read-only, and a session applies none), and `--yes`'s help promises that a
+// session "changes nothing outside this machine" — a record published out of a
+// run that applied nothing is exactly the write that promise does not have,
+// and the mounts such a run resolved are ones no job carries.
+//
+// Both doors that apply a repository's root write, and the same fixture writes
+// under each: `fugaro setup --repo` onboards a repository by applying its root
+// and deploying its job exactly as `fugaro update --repo` does (runInitRepo →
+// repoEngine, one engine, no door condition), so a repository onboarded that
+// way mounts its secrets and — with the door refused here — would have been
+// served nothing by the service until a later `fugaro update` ran in its
+// checkout, which is a cascade job halted with no command that fixes it.
+//
+// The fixture's ready carries the mounted container because that is what
+// repoEngine hands this step: Readiness's output for a root that was applied,
+// never the pre-Readiness spec and never a re-resolution (update_workflowsecrets.go).
+func TestUpdateWorkflowSecretsAreWrittenByAnyDoorThatAppliedTheRoot(t *testing.T) {
 	slug := mustSlug("github", "acme/app")
 	call := func(t *testing.T, o *initOptions) *gcpfake.RTDB {
 		t.Helper()
@@ -192,33 +200,29 @@ func TestUpdateWorkflowSecretsAreTheUpgradesStepAlone(t *testing.T) {
 		return db
 	}
 
-	t.Run("fugaro setup", func(t *testing.T) {
-		db := call(t, &initOptions{door: setupDoor.name})
-		if v := db.Value(creds.PathWorkflowSecrets(slug)); v != nil {
-			t.Errorf("%s exists after a `fugaro setup` run (%v): the record is the upgrade's step, and a project the setup door just created has no repository a service reads", creds.PathWorkflowSecrets(slug), v)
-		}
-	})
 	t.Run("a plan", func(t *testing.T) {
 		db := call(t, &initOptions{door: updateDoor.name, planOnly: true})
 		if v := db.Value(creds.PathWorkflowSecrets(slug)); v != nil {
 			t.Errorf("%s exists after a plan (%v): --plan-only changes nothing outside this machine, and a coding agent's session reaches this engine the same way", creds.PathWorkflowSecrets(slug), v)
 		}
 	})
-	t.Run("fugaro update, applied", func(t *testing.T) {
-		db := call(t, &initOptions{door: updateDoor.name})
-		if db.Value(creds.PathWorkflowSecrets(slug)) == nil {
-			t.Fatalf("%s is not there after an update that applied: this is the fixture the two refusals above are refusals because of", creds.PathWorkflowSecrets(slug))
-		}
-		client, err := newBudgetClient(t.Context(), db.URL, true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rec, found, err := creds.ReadWorkflowSecrets(t.Context(), client, slug)
-		if err != nil || !found {
-			t.Fatalf("the record the update wrote does not read back: found=%v err=%v", found, err)
-		}
-		if got := rec.Workflows["app"]; len(got) != 1 || got[0].Env != "NPM_TOKEN" || got[0].ID != "fugaro-acme-app-npm-token-1a2b" {
-			t.Errorf("the record's app workflow holds %v; want the container the fixture's spec mounts", got)
-		}
-	})
+	for _, door := range []string{setupDoor.name, updateDoor.name} {
+		t.Run(door+", applied", func(t *testing.T) {
+			db := call(t, &initOptions{door: door})
+			if db.Value(creds.PathWorkflowSecrets(slug)) == nil {
+				t.Fatalf("%s is not there after `%s` applied the repository's root: the job this run deployed mounts the fixture's secret, and the service reads the record and no config of ours", creds.PathWorkflowSecrets(slug), door)
+			}
+			client, err := newBudgetClient(t.Context(), db.URL, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec, found, err := creds.ReadWorkflowSecrets(t.Context(), client, slug)
+			if err != nil || !found {
+				t.Fatalf("the record the run wrote does not read back: found=%v err=%v", found, err)
+			}
+			if got := rec.Workflows["app"]; len(got) != 1 || got[0].Env != "NPM_TOKEN" || got[0].ID != "fugaro-acme-app-npm-token-1a2b" {
+				t.Errorf("the record's app workflow holds %v; want the container the fixture's spec mounts", got)
+			}
+		})
+	}
 }

@@ -32,9 +32,14 @@ import (
 // name" — reads that decision back rather than taking it again. A step that
 // resolved the names itself from live state (infra.ResolveSecretID) would be a
 // second spelling of the precedence the Terraform merge spells, and could point
-// the service at a container the plan never mounted. Both doors that apply a
-// repository's root reach it: `fugaro update --repo` and the converge's
-// repository stage.
+// the service at a container the plan never mounted. Every door that applies a
+// repository's root reaches it: `fugaro update --repo` and `fugaro setup
+// --repo` are the same engine (runInitRepo → repoEngine) and the converge's
+// repository stage runs that one, and which door it was decides nothing here
+// — a repository whose root was applied has a deployed job mounting the
+// containers this record has to name, whichever command applied it, and a
+// repository onboarded by `fugaro setup --repo` alone is served by the service
+// exactly as one onboarded by the converge.
 //
 // Nothing here stops an upgrade, and nothing here fails one. Every refusal is a
 // warning and the run goes on: a repository whose record was not written is
@@ -45,7 +50,7 @@ import (
 // writes one, with no other step and nothing asked of the person.
 //
 // A coding agent's session needs no gate of its own here, and what keeps this
-// step out of one is the plan-only gate above rather than a second reading of
+// step out of one is the plan-only gate alone rather than a second reading of
 // the environment: a session applies no engine at all (initflow's loop plans
 // an engine stage read-only and leaves what it found to the person), so the
 // repository stage reaches this engine with planOnly set, and a plan changes
@@ -62,10 +67,15 @@ import (
 // derived from the repository's own config and the operator's allow-list
 // rather than chosen by the caller.
 func (r *initRun) writeWorkflowSecrets(ctx context.Context, lc *localcfg.Config, ready infra.RepoSpec, cfg *config.Config) {
-	// The door first: this is the upgrade's step, and `fugaro setup --repo`
-	// onboards a repository without converging it. --plan-only changes nothing
-	// outside this machine and so writes nothing, exactly as its help says.
-	if r.o.doorName() != updateDoor.name || r.o.planOnly {
+	// The plan, and only the plan: this step is reached after planRepo, so
+	// `ready` is an applied root — except under --plan-only, where the same
+	// function planned and applied nothing and the mounts `ready` names are
+	// ones no job has. --plan-only changes nothing outside this machine and so
+	// writes nothing, exactly as its help says. Which door ran it is not asked
+	// here: `fugaro setup --repo` applies this repository's root and deploys
+	// its job, so a repository onboarded that way needs the record as much as
+	// one the converge applied (the file's header).
+	if r.o.planOnly {
 		return
 	}
 	// The record is a node of the installation's budget database, reached over

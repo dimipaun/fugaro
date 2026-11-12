@@ -153,10 +153,16 @@ func ReadWorkflowSecrets(ctx context.Context, db DB, slug string) (WorkflowSecre
 // G19 bounds.
 //
 // The write is conditional on the value read (cas), so a concurrent update of
-// the same repository leaves one of the two answers rather than a torn one,
-// and a node this release cannot read — one a newer fugaro wrote — is refused
-// instead of clobbered: fail closed at the writer, where the mistake would
-// otherwise become a record nothing can be decided from.
+// the same repository leaves one of the two answers rather than a torn one, and
+// a node whose version member is not this release's — one a newer fugaro wrote
+// — is refused instead of clobbered: fail closed at the writer, where the
+// mistake would otherwise become a record nothing can be decided from. The
+// version member exists because the writer and the reader are two binaries, so
+// the check belongs where the record is replaced: a newer release's members
+// this one happens to decode strictly are not the whole of what it recorded,
+// and rewriting the node as version 1 would drop them with no error anywhere.
+// The refusal is on the version and not on the decode, which is the one case
+// decodeStrict cannot see.
 //
 // The entries are put in env order here rather than left to the caller, so the
 // node is byte-identical for the same mounts however the config listed them,
@@ -186,7 +192,10 @@ func PutWorkflowSecrets(ctx context.Context, db DB, slug string, rec WorkflowSec
 		}
 	}
 	path := PathWorkflowSecrets(slug)
-	_, err := cas(ctx, db, path, DefaultAttempts, func(WorkflowSecrets, bool) (WorkflowSecrets, error) {
+	_, err := cas(ctx, db, path, DefaultAttempts, func(cur WorkflowSecrets, found bool) (WorkflowSecrets, error) {
+		if found && cur.Version != WorkflowSecretsVersion {
+			return WorkflowSecrets{}, fmt.Errorf("%w (version %d)", ErrWorkflowSecretsVersion, cur.Version)
+		}
 		return next, nil
 	})
 	if err != nil {

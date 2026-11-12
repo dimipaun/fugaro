@@ -1,6 +1,7 @@
 package creds
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -209,6 +210,40 @@ func TestWorkflowSecretsWriterRefusesARecordNothingCanBeDecidedFrom(t *testing.T
 				t.Errorf("a refused write left the node at found=%v err=%v; want nothing written", found, err)
 			}
 		})
+	}
+}
+
+// TestWorkflowSecretsWriterRefusesANodeOfAnotherVersion: the version member is
+// a member because the writer and the reader are two binaries, and the writer
+// is where it has to be held. A node a newer release wrote decodes strictly
+// whenever that release kept the members it knows — {"version":2,"workflows":{}}
+// is exactly such a node — so the decode that refuses an unknown member is not
+// what keeps it: without this check the update would rewrite the node as
+// version 1 and drop whatever version 2 recorded, with no error on either side.
+//
+// The assertion is the whole node: the write fails with the sentinel AND what
+// was there is still there, byte for byte, which is what "refused instead of
+// clobbered" means.
+func TestWorkflowSecretsWriterRefusesANodeOfAnotherVersion(t *testing.T) {
+	db := newFakeDB()
+	newer := map[string]any{"version": WorkflowSecretsVersion + 1, "workflows": map[string]any{}}
+	db.put(PathWorkflowSecrets(run.Slug), newer)
+	err := PutWorkflowSecrets(ctx, db, run.Slug, WorkflowSecrets{Workflows: map[string][]WorkflowSecret{
+		"app": {{Env: "A_TOKEN", ID: "a"}},
+	}})
+	if !errors.Is(err, ErrWorkflowSecretsVersion) {
+		t.Fatalf("writing over a newer version's node: err=%v, want ErrWorkflowSecretsVersion", err)
+	}
+	if got, want := rawNode(t, db, PathWorkflowSecrets(run.Slug)), mustJSON(t, newer); !bytes.Equal(got, want) {
+		t.Errorf("the refused write left %s; want the node as it was, %s", got, want)
+	}
+	// The same node at this release's version is not a refusal: the check is
+	// the version and not the presence of a node.
+	db.put(PathWorkflowSecrets(run.Slug), map[string]any{"version": WorkflowSecretsVersion, "workflows": map[string]any{}})
+	if err := PutWorkflowSecrets(ctx, db, run.Slug, WorkflowSecrets{Workflows: map[string][]WorkflowSecret{
+		"app": {{Env: "A_TOKEN", ID: "a"}},
+	}}); err != nil {
+		t.Fatalf("writing over this release's own record: %v", err)
 	}
 }
 
