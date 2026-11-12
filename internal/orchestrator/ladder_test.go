@@ -377,6 +377,21 @@ func TestThirdNormalRunIsCoveredByLadder(t *testing.T) {
 		t.Fatalf("the ladder launches %+v while the person's approval still plans the item's retry", a)
 	}
 
+	// And a run the loop itself refuses to retry: a refusal is the loop's own
+	// answer, and the person's one remaining attempt is not the ladder's to
+	// spend on work a run has already declined.
+	refused, was := o6FailedItem("wi-1", at, now.Add(-30*time.Minute))
+	refused.Escalation = atRung1(now.Add(-90*time.Minute), 3)
+	was.Outcome = orchestrator.OutcomeRefused
+	hold := o6Node(t, now, refused)
+	hold.Intents = []orchestrator.Intent{was}
+	if got := orchestrator.Plan(hold, orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
+		t.Fatalf("the plan holds %+v for a refused run, and a refusal is not one a retry answers", got)
+	}
+	if a, ok := orchestrator.LadderLaunch(hold, refused, orchestrator.RunView{}); ok {
+		t.Fatalf("the ladder launches %+v over a run the item's own loop refuses to retry", a)
+	}
+
 	inFlight := workItemOf("wi-1")
 	inFlight.Phase = orchestrator.PhaseFailed
 	inFlight.Attempts = 3

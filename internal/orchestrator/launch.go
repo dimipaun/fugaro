@@ -310,6 +310,13 @@ func Queue(s State, view RunView) []WorkItem {
 // 2, the judge, the review of a rebased head (Escalation.OuterAttempts, E7) —
 // and the intents carry rung 1's resumes, which are runs of the item's own
 // recipe and are the ladder's past the ones a person's approval covers.
+//
+// A run the executor writes into both records — an outer run recorded as an
+// intent under the approval beside the ledger's own count — is counted twice
+// here, and that is deliberate: the two records carry no key that joins them,
+// and a count that cannot place a run gives the answer that spends less (D4).
+// The executor that records them (E10a) writes a ladder run into one of the two
+// and not both, which is what makes the sum the count rather than a bound on it.
 func LadderRuns(s State, w WorkItem) int {
 	n := 0
 	if w.Escalation != nil {
@@ -344,14 +351,15 @@ func LadderRuns(s State, w WorkItem) int {
 // a person set one, escalation.cost_ceiling (E3).
 //
 // It is the ladder's executor that asks for this (E10a), for an item a plan
-// holds nothing for: wherever the person's own approval still plans an attempt,
-// nextAttempt plans that one, and this is what is left when it cannot. It
-// answers false for an item whose own loop still holds work — an attempt left
-// under the approval, or one committed and not reported — because a launch
-// beside either of those is the loop's and not the ladder's. What comes back is
-// a launch like any other — the run id is minted and the intent committed before
-// anything starts (D1231) — and it approves nothing: the approval covers it, and
-// the ladder has no approval of its own (G6, F21).
+// holds nothing for: wherever the person's own approval still has an attempt to
+// give, that attempt is the loop's — started, retried, or declining to be
+// retried — and this is what is left once the approval has no attempt left. It
+// answers false for an item whose own loop still holds work — an attempt under
+// the approval's allowance, or one committed and not reported — because a
+// launch beside either of those is the loop's and not the ladder's. What comes
+// back is a launch like any other — the run id is minted and the intent
+// committed before anything starts (D1231) — and it approves nothing: the
+// approval covers it, and the ladder has no approval of its own (G6, F21).
 //
 // Nothing else on the ladder is this. Every other rung launches a run of
 // another recipe — a rebase, the one stronger pass, the judge, a merge, a split
@@ -370,10 +378,14 @@ func LadderLaunch(s State, w WorkItem, view RunView) (Action, bool) {
 		// id asked for twice.
 		return Action{}, false
 	}
-	if _, ok := nextAttempt(s, w); ok {
+	if a := w.Approved; a != nil && normalRunsUnder(s, w, *a) < a.Attempts {
 		// The approval still has an attempt to give the item, and rung 1 is where
-		// the item goes back to its own recipe loop: the loop's own retry is the
-		// resume, and the ladder launches nothing beside it.
+		// the item goes back to its own recipe loop: what the loop does with that
+		// attempt is its own answer (nextAttempt), and the ladder launches nothing
+		// beside it. A run the loop will not retry — a refusal, a cancellation —
+		// is not one the ladder overrides either: the resume is the run past the
+		// two an approval covers, and a person's own attempt is not the ladder's
+		// to spend on work a run already declined.
 		return Action{}, false
 	}
 	at, ok := ladderCoveredAt(w)
