@@ -158,6 +158,8 @@ func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo,
 			}
 			return me, nil
 		},
+		noBackend: fmt.Sprintf("fugaro: warning: project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config), so this build takes no lease and nothing counts its cost: `fugaro update --firebase-project %s` in the checkout adds one (D1543)\n",
+			lc.Name, firebaseProjectIDWord(lc.GCPProject)),
 	})
 }
 
