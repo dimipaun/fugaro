@@ -4437,6 +4437,15 @@ func squash(s string) string { return strings.Join(strings.Fields(s), " ") }
 // permissions, project and member. What this test still refuses is every
 // SECOND way to reach the project: an authoritative binding or policy, an
 // audit config, a key.
+//
+// D1931 (DS2.2) adds the dynamic class's half of the fence to this file and
+// NOT to the bundle's: a project-level prefix-conditioned secretAccessor on the
+// service's account (credentials_prefix_accessor) and the lister that cannot
+// ride that condition (credentials_lister). Q6 is untouched by it — the bundle
+// keeps its one container and its one unconditioned grant — so the sweep below
+// is now "exactly one condition block, and it is the prefix accessor's": a
+// condition on the bundle's grant, or a third one anywhere in the file, is
+// still a finding.
 func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	const path = "gcp/modules/installation/credentials.tf"
 	b, err := os.ReadFile(path)
@@ -4498,19 +4507,35 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 		}
 	}
 
-	// The account's lifecycle precondition is the one `condition` this file
-	// is allowed to carry, and it is taken out before the sweep below so the
-	// sweep is an assertion about conditions rather than a search that
-	// happens to pass: any other one — on the service, on the container, on
-	// the grant — is a finding.
+	// The account's lifecycle precondition is the one `precondition` this file
+	// carries, and it stays that way.
 	const precondition = "condition     = var.credentials_service != null"
 	if strings.Count(code, "precondition") != 1 || !strings.Contains(code, precondition) {
 		t.Fatalf("%s: the account's lifecycle precondition is the only `precondition` in this file, and it must stay that way:\n%s", path, code)
 	}
-	// A `condition` attribute or block, wherever it stands: "precondition"
-	// does not match, and neither does a comment (the code is stripped).
-	if rest := strings.Replace(code, precondition, "", 1); regexp.MustCompile(`(?m)^\s*condition\s*[={]`).MatchString(rest) {
-		t.Errorf("%s: a condition outside the account's precondition. Q6 replaced the name-prefix fence and the secretId filter with one unconditioned grant on one container:\n%s", path, rest)
+
+	// The conditions, both forms, in two assertions that together say "exactly
+	// the prefix accessor's". The attribute form first, with the precondition
+	// taken out so the sweep is about conditions and not about a search that
+	// happens to pass: "precondition" does not match, and neither does a
+	// comment (the code is stripped).
+	if rest := strings.Replace(code, precondition, "", 1); regexp.MustCompile(`(?m)^\s*condition\s*=`).MatchString(rest) {
+		t.Errorf("%s: a `condition` attribute outside the account's precondition. The one IAM condition this file may carry is the dynamic class's prefix accessor, and it is written as a block (D1931); a condition attribute anywhere else — on the bundle's grant above all — is the fence Q6 replaced:\n%s", path, rest)
+	}
+	// ... and then the block form, read per resource so the finding names the
+	// resource that carries it: exactly one, and it is the prefix accessor.
+	conditioned := 0
+	for _, blk := range allResourceBlocks(t, path, b) {
+		if !regexp.MustCompile(`(?m)^\s*condition\s*\{`).MatchString(blk.body) {
+			continue
+		}
+		conditioned++
+		if blk.name != "google_project_iam_member.credentials_prefix_accessor" {
+			t.Errorf("%s: %s carries a condition block. The one this file is allowed is the dynamic class's prefix accessor (D1931); Q6's bundle grant holds one unconditioned accessor on one container, and the account's precondition is a lifecycle block rather than an IAM condition:\n%s", path, blk.name, squash(blk.body))
+		}
+	}
+	if conditioned != 1 {
+		t.Errorf("%s: %d resources carry a condition block, want exactly one — credentials_prefix_accessor, the fence's reader half (D1931)", path, conditioned)
 	}
 
 	// Every resource in the file is gated on the one boolean, which is what the
@@ -4704,12 +4729,28 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	}
 
 	// The one binding: on that role, in that project, to the service's own
-	// account, with no condition and no second member.
-	grants := resourceBlocks(t, path, b, "google_project_iam_member")
-	if len(grants) != 1 {
-		t.Fatalf("%s declares %d project grants, want exactly one — the database role, to the service's own account", path, len(grants))
+	// account, with no condition and no second member. The file's project
+	// grants are split rather than counted: this test's subject is the database
+	// role's, selected by its role, and the OTHER two are D1931's (the prefix
+	// accessor and the lister, TestServicePrefixAccessorIsConditioned), named
+	// here so a third one in this file still fails this test.
+	var database []block
+	var others []string
+	for _, g := range resourceBlocks(t, path, b, "google_project_iam_member") {
+		if strings.Contains(firstAttr(g.body, "role"), tf.CredentialsDatabaseRole) {
+			database = append(database, g)
+			continue
+		}
+		others = append(others, g.name)
 	}
-	grant := squash(grants[0].body)
+	if len(database) != 1 {
+		t.Fatalf("%s declares %d grants of %s, want exactly one — to the service's own account", path, len(database), tf.CredentialsDatabaseRole)
+	}
+	slices.Sort(others)
+	if want := []string{"google_project_iam_member.credentials_lister", "google_project_iam_member.credentials_prefix_accessor"}; !slices.Equal(others, want) {
+		t.Errorf("%s: the file's project grants are %v and %v, want the database role's and exactly %v (D1931's two halves)", path, database[0].name, others, want)
+	}
+	grant := squash(database[0].body)
 	for _, want := range []string{
 		"project = var.credentials_service.firebase_project",
 		`role = "projects/${var.credentials_service.firebase_project}/roles/` + tf.CredentialsDatabaseRole + `"`,
@@ -4727,7 +4768,7 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	// google_project_iam_custom_role's name is computed, so the reference
 	// reaches a plan as an unknown role and the cover could no longer say which
 	// role the grant is (tf's checkGrant, the unknown-role arm).
-	if roleAttr := firstAttr(grants[0].body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
+	if roleAttr := firstAttr(database[0].body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
 		t.Errorf("%s: the database grant reads its role from the role resource (%s), which a plan sees as unknown:\n%s", path, roleAttr, grant)
 	}
 
@@ -5378,11 +5419,15 @@ func installationGrants(t *testing.T) []moduleGrant {
 // the Terraform string unquoted so that two spellings of one expression can be
 // compared. A block with no condition is "".
 //
-// An expression that is not a plain string — a variable's field, a local, a
-// coalesce — is returned as written and not resolved: every test below compares
-// against the fence's own text, so a condition that hides behind a reference
-// fails the comparison rather than slipping through, and one assertion reads
-// the reference on purpose (a condition titled from a variable).
+// An expression that is not a plain string — a variable's field, a coalesce —
+// is returned as written and not resolved: every test below compares against
+// the fence's own text, so a condition that hides behind a reference fails the
+// comparison rather than slipping through, and one assertion reads the
+// reference on purpose (a condition titled from a variable). The one reference
+// that IS followed is `local.<name>.expression`, the form both halves of
+// D1931's fence carry: "the condition is written once" is a promise about the
+// source, and resolveLocal is what keeps it one — two bindings of one local
+// compare equal on the fence's text, and a local holding something else fails.
 func conditionExpression(t *testing.T, path, name, body string) string {
 	t.Helper()
 	m := regexp.MustCompile(`(?s)(?:^|\n)\s*condition\s*\{`).FindStringIndex(body)
@@ -5394,9 +5439,50 @@ func conditionExpression(t *testing.T, path, name, body string) string {
 	if end < 0 {
 		t.Fatalf("%s: unbalanced braces in %s's condition", path, name)
 	}
-	raw := firstAttr(body[open+1:end], "expression")
-	if expr, err := strconv.Unquote(raw); err == nil {
-		return expr
+	return resolveLocal(t, path, firstAttr(body[open+1:end], "expression"))
+}
+
+// localExpressionRE matches a local's field as an expression writes it.
+var localExpressionRE = regexp.MustCompile(`^local\.([A-Za-z0-9_]+)\.expression$`)
+
+// resolveLocal follows a `local.<name>.expression` reference to the literal the
+// local's own block holds, reading the locals of the referring file's own
+// directory (a module's locals are its own). A reference the directory does not
+// define, and a local whose field is itself a reference or a quoted template,
+// are returned as written — the caller's comparison against the fence's text
+// then fails, which is the point: the fence has one home and one spelling.
+func resolveLocal(t *testing.T, path, raw string) string {
+	t.Helper()
+	m := localExpressionRE.FindStringSubmatch(raw)
+	if m == nil {
+		return raw
+	}
+	dir := filepath.Dir(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(m[1]) + `\s*=\s*\{`)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tf") {
+			continue
+		}
+		p := dir + "/" + e.Name()
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := stripComments(string(b))
+		idx := block.FindStringIndex(code)
+		if idx == nil {
+			continue
+		}
+		body := code[idx[1]:matchBrace(code, idx[1]-1)]
+		inner := firstAttr(body, "expression")
+		if expr, err := strconv.Unquote(inner); err == nil {
+			return expr
+		}
+		return inner
 	}
 	return raw
 }
