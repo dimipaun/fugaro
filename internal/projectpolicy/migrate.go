@@ -42,6 +42,7 @@ type migrator func(raw json.RawMessage) (json.RawMessage, Change, error)
 var migrators = map[int]migrator{
 	3: migrateV3ToV4,
 	4: migrateV4ToV5,
+	5: migrateV5ToV6,
 }
 
 // tooOld names the versions this Fugaro reads but has no migrator for. The
@@ -80,6 +81,57 @@ func Migratable(v int) bool {
 	}
 	for from := v; from < Version; from++ {
 		if _, ok := migrators[from]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// shapeFreeSteps names the versions whose step moves the node's number and
+// nothing else: its node is, member for member, the node above it. Version 5
+// is one — the `binaries` block version 6 models is a top-level key no
+// version-5 release wrote, so a version-5 node is a version-6 node that states
+// no grant, which is what a project that never set the key means.
+//
+// The counter-examples are version 3 and version 4, and they are why this
+// table is a table and not a rule about numbers. Version 4's step marks every
+// ownerless pool legacy-open, so its node is not the one above it. Version 3's: that step's node needs a block (the Bitbucket
+// token's allow_repos) that only a publish derives, so its Change carries a
+// Note and a reader cannot read every version-3 node as a version-4 one.
+// TestShapeFreeStepsOnlyMoveTheNumber holds every entry here to the first
+// sentence, over a node carrying a member of every kind.
+var shapeFreeSteps = map[int]bool{
+	5: true,
+}
+
+// ReadsVersion reports whether a node written in version v is one this reader
+// reads as one of its own: v is this Version, or every step between them is
+// shape-free.
+//
+// It exists because a bump of Version is otherwise a window and not a safety
+// (version.go, D990): `fugaro update` moves the credentials service onto its
+// own release in the stage immediately after the policy stage, so the shape
+// question is asked of a node that is already migrated — but the release
+// behind's service is the one deployed until that stage applies, the job
+// images of the update are replaced at other stages still, and every reader of
+// this release meets the older node while those are in flight. A reader that
+// refused a shape-identical node would refuse every cascade and
+// Bitbucket-proxied model call for the length of the image builds, for a
+// policy it reads member for member. A version that is not shape-free is
+// refused exactly as it was, with the *VersionError and the remedy
+// SkewSentence words: a version-3 node means something the version-4 reader's
+// own release had to derive, and reading it as a version-4 one would run a
+// policy nobody published.
+//
+// A version above this reader's is never one: there the reader is the side
+// that is behind, and the move is an upgrade of the reader and not a tolerance
+// in it.
+func ReadsVersion(v int) bool {
+	if v > Version {
+		return false
+	}
+	for from := v; from < Version; from++ {
+		if !shapeFreeSteps[from] {
 			return false
 		}
 	}
@@ -668,3 +720,31 @@ func (e *MalformedError) Error() string {
 // Unwrap is the refusal behind the class, for a caller that reports the
 // reader's own sentence (the CLI's error handling) rather than this one.
 func (e *MalformedError) Unwrap() error { return e.Err }
+
+// migrateV5ToV6 writes the version field version 6 reads, and nothing else.
+//
+// Version 6 changed what a reader must enforce, not the node's shape: the
+// `binaries` block is a new top-level key, and a version-5 node without one is a
+// version-6 node that admits no binary, which is what every project that never
+// set the key means. So the step edits the node's own bytes, and the entries
+// the owner wrote by hand survive it exactly as the steps before it leave them.
+//
+// It carries no Note: the block is absent by default rather than required, so
+// there is nothing for the operator to republish for. A project that wants a
+// list publishes one, and never a half-written node the reader refuses.
+func migrateV5ToV6(raw json.RawMessage) (json.RawMessage, Change, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, Change{}, fmt.Errorf("projectpolicy: the version-5 node is not a JSON object: %w", err)
+	}
+	out, err := writeVersionField(raw, 5, 6)
+	if err != nil {
+		return nil, Change{}, err
+	}
+	return out, Change{
+		From:    5,
+		To:      6,
+		Changed: "the version field: 5 to 6",
+		Kept:    keptKeys(doc, "version"),
+	}, nil
+}

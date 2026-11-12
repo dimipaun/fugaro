@@ -58,6 +58,15 @@ type initEngine struct {
 	repo      *repositoryStage
 	policy    *policyMigrateStage
 
+	// The credentials service's image as this run resolved it
+	// (credentialsResolve): the policy stage asks for it before it raises the
+	// published node's version and the credentials-service stage pins the
+	// answer after that write, and one resolve is what makes the two the same
+	// read.
+	pinnedCredentials string
+	credentialsRead   bool
+	credentialsErr    error
+
 	// checkoutBehind: this run found the checkout behind this release, which
 	// the plugin stage is where to read (the pin it wires is this release's tag,
 	// and the plugin in Claude Code is this release's too). The checkout stage
@@ -249,6 +258,13 @@ func initStages(e *initEngine) []initflow.Stage {
 	// from (initRun.writeConfig), so the stage is reachable from there too.
 	e.r.policyStage = e.policy
 	stages = append(stages, e.policy)
+	// The credentials service's own stage, immediately after the policy one and
+	// with nothing between them: the service reads the published node on every
+	// call and refuses a node its own binary does not understand, so the node
+	// has to be this release's before the process that reads it is replaced
+	// (initflow.CredentialsService has the order and the window the order
+	// leaves; the owner's ruling of 2026-11-10).
+	stages = append(stages, newCredentialsStage(e))
 	// The workspace's own project's root BEFORE the record, and both after the
 	// policy one: this stage creates the identity the workspace's own service
 	// runs as — its own service account and the one grant that reaches the
@@ -591,13 +607,18 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	return initflow.Outcome{Changed: true, Detail: "applied"}, nil
 }
 
-// pinCredentialsImage writes the installation's credentials service into the
-// installation root's tfvars, before the stage that plans that root. It is the
-// one writer of that variable: `fugaro update` deploys the service on every
-// installation, with no flag and no typed confirmation of its own (the owner's
-// ruling of 2026-11-05, docs/credentials-service/default-on.md), so the block
-// is part of the state the installation stage's own confirmed apply converges
-// and not an opt-in.
+// ensureCredentialsService writes the installation's credentials service into
+// the installation root's tfvars, before the stage that plans that root. It is
+// the one writer of that variable's EXISTENCE: `fugaro update` deploys the
+// service on every installation, with no flag and no typed confirmation of its
+// own (the owner's ruling of 2026-11-05, docs/credentials-service/default-on.md),
+// so the block is part of the state the installation stage's own confirmed
+// apply converges and not an opt-in. The image inside an existing block is not
+// this function's: moving it onto this release's is the credentials-service
+// stage's own step (moveCredentialsImage), which runs AFTER the policy stage,
+// because the service reads the published node per call and refuses a node its
+// own binary does not understand (the owner's ruling of 2026-11-10;
+// initflow.CredentialsService has the order).
 //
 // Two jobs meet here, and which one runs is what the tfvars already carry:
 //
@@ -606,35 +627,26 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 //     installation's own database, and the job accounts that may call it. The
 //     image is this release's, resolved and pinned by digest — the same
 //     resolve, so the very first apply that creates the service already runs
-//     the released image.
-//   - An installation that already HAS one keeps it, byte for byte, with the
-//     image moving forward to this release's. The block is the record of a
-//     service that exists — its URL is the audience every caller's ID token is
-//     minted for, and nothing on this side knows it — so it is carried as it
-//     is found (init.go's prepare, CarriedCredentialsService) and only the
-//     image inside it is rewritten here. That is what makes an ordinary
-//     `fugaro update` the whole upgrade: without it the recorded reference
-//     keeps naming the release the service was created with, and the module's
-//     own decisions that read the release out of it — credentials.tf's
-//     credentials_image_release, which names the Cloud Run container port h2c
-//     at and above the release that serves HTTP/2 — stay where they were.
+//     the released image. This half has to run where it does and no later: the
+//     block is what the repository stage reads to decide whether a job mounts a
+//     model credential at all, so an installation that has none gets one before
+//     that stage, and the stage that would otherwise deploy it runs after it.
+//   - An installation that already HAS one keeps it, byte for byte, with its
+//     job tables brought up to date with this machine's config. The block is
+//     the record of a service that exists — its URL is the audience every
+//     caller's ID token is minted for, and nothing on this side knows it — so
+//     it is carried as it is found (init.go's prepare,
+//     CarriedCredentialsService) and the apply that follows deploys exactly
+//     what the earlier release wrote, image and all. The image's move is the
+//     later stage's, and that is what makes an ordinary `fugaro update` the
+//     whole upgrade: without it the recorded reference keeps naming the release
+//     the service was created with, and the module's own decisions that read
+//     the release out of it — credentials.tf's credentials_image_release, which
+//     names the Cloud Run container port h2c at and above the release that
+//     serves HTTP/2 — stay where they were.
 //
-// It pins through resolveCredentialsImage: the release's signed "-pinned"
-// image, its signature verified and its digest read back through the
-// installation's remote repository. A digest nothing verified is never
-// written.
+// Three things it deliberately does not do:
 //
-// Four things it deliberately does not do:
-//
-//   - It moves an existing reference forward only. A CLI older than the release
-//     the recorded image names — two machines of one installation upgraded at
-//     different times — finds the recorded release newer than its own and
-//     leaves it alone (newer, init_images.go: the rule the base image's own pin
-//     follows). Re-pinning DOWN would put the previous release's process back,
-//     and those two machines would flip the service on every update. A
-//     reference naming no release at all — an operator's hand-written digest,
-//     which the module's validation admits — has nothing to compare and is
-//     replaced by the release's image, which is the upgrade's own direction.
 //   - It runs nothing in a coding agent's session. The engine stages are
 //     PLANNED there rather than skipped, so a plan-only run would reach cosign
 //     and the registry with the operator's ADC and write the block into the
@@ -651,76 +663,72 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 //     admit, cannot carry it at all (infra.Credentials), and a registry or
 //     cosign this run cannot reach is not a reason to stop the rest of the
 //     upgrade: the deploy is what is missing, nothing is left stale, and the
-//     next run tries again. An installation that already HAS the block is the
-//     other way round — there the resolve's failure is returned, because an
-//     update that cannot reach the registry cannot report the service as moved
-//     either. (A run that does not apply — a plan-only run, or one whose
-//     confirmation the owner declines — leaves the tfvars naming this release's
-//     image while the deployed service is still the previous one. That is
-//     prepare's own plan-time write, unchanged by this: the tfvars ARE the
-//     desired state, and the next run that applies converges the service on
-//     them.)
-func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
+//     next run tries again.
+func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 	if m := agentMarker(os.Getenv, e.r.stdinTerminal()); m != "" {
 		return nil
 	}
-	ver := releaseVersion()
-	if ver == "" {
+	if releaseVersion() == "" {
 		// A development build resolves no released image (resolveCredentialsImage
-		// refuses it), so there is nothing here for it to pin: the recorded
-		// reference is left as it stands rather than made an error of.
+		// refuses it), so there is nothing here for it to deploy: the recorded
+		// block is left as it stands rather than made an error of.
 		return nil
 	}
-	doc, image, err := e.recordedCredentialsImage()
+	doc, _, err := e.recordedCredentialsImage()
 	if err != nil {
 		return err
 	}
 	if doc == nil { // no credentials_service in the installation's tfvars: this run deploys it
 		return e.deployCredentialsService(ctx)
 	}
-	// The document goes back on disk BEFORE anything that can fail. prepare
-	// (init.go) is what rewrites the installation's tfvars from this run's spec
-	// and carries the block forward, and it is steps away: PrepareWorkdir has
-	// already deleted the file, so a failure in between — the resolve below,
-	// which reaches for cosign and for the registry and can fail for either —
-	// would leave an installation whose tfvars hold no block at all. The next
-	// run reads that as "no service yet", composes a fresh one from the local
-	// config alone, and applies it: the block's URL — the audience every
-	// caller's ID token is minted for, which only the tfvars and the module's
-	// outputs carry — is gone from the desired state, so the revision is left
-	// admitting nobody until the audience fill puts it back, and any member the
-	// deployed block carried beyond what this machine's config states is lost
-	// with it. Putting the document the carry is about to use back closes the
-	// window this resolve opened, and costs one write of a file prepare
-	// rewrites a few steps later.
-	//
-	// A run that fails before that rewrite leaves the file on disk, and that is
-	// the point rather than a leak to clean up: nothing removes a workdir on
-	// the error path (the next run's PrepareWorkdir is what replaces the tree),
-	// and every reader of this file reads it AS the earlier run's document —
-	// prepare and --print-vars carry forward from it the keys this run's spec
-	// never holds, and installationFenceRecorded reads the managed deployer's
-	// fence out of it. What is written is those same bytes, the ones
-	// recordedCredentialsImage just read (Workdir.PrevVars in an ordinary
-	// update), so the file and the snapshot agree; deleting it here would put
-	// the block back out of reach and repeat the failure above.
-	//
-	// What goes back is not quite what was read: the block's two job tables —
-	// the coding one and the review-only one — are brought up to date with this
-	// machine's config first, because the deploy is their only other writer and
-	// a repository onboarded after it would hold an invoker grant on a service
-	// whose table refuses its jobs (infra.RefreshCredentialsServiceJobAccounts).
-	// The repository this run
-	// onboards is in the config before this stage plans
-	// (makeOnboardingRepoEntry), so the table names its jobs in the run that
-	// grants them the invoker: a row only a later run would add leaves this
-	// run's own repository refused by the service it was just switched onto.
-	// A refusal there is not a failure of the run: the block is written exactly
-	// as the workdir held it, which is the fail-closed direction — an
-	// installation whose config cannot describe the table keeps the table it
-	// has — and the same shape the deploy path answers a config that cannot
-	// carry the service with.
-	var next = doc
+	_, err = e.writeCarriedCredentials(doc)
+	return err
+}
+
+// writeCarriedCredentials writes the carried block back into the installation
+// root's tfvars, with its two job tables — the coding one and the review-only
+// one — brought up to date with this machine's config, and returns the document
+// it wrote.
+//
+// The document goes back on disk BEFORE anything that can fail. prepare
+// (init.go) is what rewrites the installation's tfvars from this run's spec and
+// carries the block forward, and it is steps away: PrepareWorkdir has already
+// deleted the file, so a failure in between — the resolve below, which reaches
+// for cosign and for the registry and can fail for either — would leave an
+// installation whose tfvars hold no block at all. The next run reads that as
+// "no service yet", composes a fresh one from the local config alone, and
+// applies it: the block's URL — the audience every caller's ID token is minted
+// for, which only the tfvars and the module's outputs carry — is gone from the
+// desired state, so the revision is left admitting nobody until the audience
+// fill puts it back, and any member the deployed block carried beyond what this
+// machine's config states is lost with it. Putting the document the carry is
+// about to use back closes the window this resolve opened, and costs one write
+// of a file prepare rewrites a few steps later.
+//
+// A run that fails before that rewrite leaves the file on disk, and that is the
+// point rather than a leak to clean up: nothing removes a workdir on the error
+// path (the next run's PrepareWorkdir is what replaces the tree), and every
+// reader of this file reads it AS the earlier run's document — prepare and
+// --print-vars carry forward from it the keys this run's spec never holds, and
+// installationFenceRecorded reads the managed deployer's fence out of it. What
+// is written is those same bytes, the ones recordedCredentialsImage just read
+// (Workdir.PrevVars in an ordinary update), so the file and the snapshot agree;
+// deleting it here would put the block back out of reach and repeat the failure
+// above.
+//
+// The refresh is not cosmetic: the deploy is the job tables' only other writer,
+// and a repository onboarded after it would hold an invoker grant on a service
+// whose table refuses its jobs (infra.RefreshCredentialsServiceJobAccounts).
+// The repository this run onboards is in the config before the first stage
+// plans (makeOnboardingRepoEntry), so the table names its jobs in the run that
+// grants them the invoker: a row only a later run would add leaves this run's
+// own repository refused by the service it was just switched onto. A refusal
+// there is not a failure of the run: the block is written exactly as the
+// workdir held it, which is the fail-closed direction — an installation whose
+// config cannot describe the table keeps the table it has — and the same shape
+// the deploy path answers a config that cannot carry the service with.
+func (e *initEngine) writeCarriedCredentials(doc []byte) ([]byte, error) {
+	next := doc
 	if e.lc != nil {
 		refreshed, err := infra.RefreshCredentialsServiceJobAccounts(doc, e.lc)
 		if err != nil {
@@ -730,20 +738,195 @@ func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
 		}
 	}
 	if err := e.wd.WriteVars(next); err != nil {
-		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
+		return nil, userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
-	// A reference that names NO release is replaced rather than compared: it
-	// is an operator's hand-written digest, and there is no release in it to
-	// say the installation is ahead of this binary. The check is written out
-	// because the comparison alone answers the wrong way for it — newer splits
-	// both sides on "." and atoi's each part, so an empty operand reads as one
-	// zero part and compares equal to a release whose major is 0, which is
-	// every release this program has cut so far.
-	recorded := infra.CredentialsServiceImageRelease(image)
-	if recorded != "" && !newer(ver, recorded) {
+	return next, nil
+}
+
+// The two reasons a run deploys no credentials service at all: a coding agent's
+// session deploys nothing (the service is the identity that holds every model
+// credential the installation has, and the deploy is the owner's own act), and
+// a development build resolves no released image to deploy. They are constants
+// because two readers say them: the credentials-service stage, which skips on
+// them, and the policy stage, which holds the published node's version with
+// them (credentialsMoveHeld) — the sentence the node is held with and the
+// sentence the stage skips with are one fact about the run.
+const (
+	credentialsSessionHeld  = "a coding agent's session deploys nothing"
+	credentialsDevBuildHeld = "a development build resolves no released image"
+)
+
+// credentialsMoveHeld is why a run may not write a node whose version rises:
+// the installation's tfvars carry a credentials service, and this run is one
+// that replaces nothing — a coding agent's session, or a development build (the
+// two constants above).
+//
+// The service reads the published node on every cascade and Bitbucket-proxied
+// call and refuses a node its own binary does not understand, so a node that
+// moves while the process reading it stays where it is refuses every such call
+// until a later update succeeds. The migration is held instead, and with it the
+// whole write of the policy stage — a node written without the version it is
+// behind is the same node the config half would rewrite on the next run, so the
+// two halves of that write stay one — and the owner's own `fugaro update` does
+// the pair together: its policy stage migrates the node, and the
+// credentials-service stage immediately after it replaces the service.
+//
+// Nothing else holds it. An installation whose tfvars carry no block runs no
+// service to refuse the node at all, and the other two runs answer "" here:
+// the one whose recorded image is already this release's (the apply before the
+// policy stage converges that service, and there is no stale process left) and
+// the one that is about to move it (credentialsResolveBeforeRaise).
+func (e *initEngine) credentialsMoveHeld() string {
+	var why string
+	switch {
+	case agentMarker(os.Getenv, e.r.stdinTerminal()) != "":
+		why = credentialsSessionHeld
+	case releaseVersion() == "":
+		why = credentialsDevBuildHeld
+	default:
+		return ""
+	}
+	doc, _, err := e.recordedCredentialsImage()
+	if err != nil || doc == nil {
+		return ""
+	}
+	return why
+}
+
+// credentialsBehindHeld is why a door that replaces no credentials service may
+// not raise the node either, when the service this installation runs is one
+// another release pinned.
+const credentialsBehindHeld = "this door replaces no credentials service, and the image the installation records for it is the release behind this binary's"
+
+// credentialsRaiseHeld is why `fugaro upgrade`'s policy step may not write a
+// node whose version rises: the installation's tfvars carry a credentials
+// service, and this door replaces none — its cloud step is fugaro image
+// refresh, job images only, and the service's image lives in the installation
+// root's tfvars, which only `fugaro update`'s stages write
+// (newCredentialsStage). It is the same pair of facts the update door's own
+// hold is read from — credentialsMoveHeld for the block,
+// credentialsResolveBeforeRaise for the staleness — asked by the door that
+// cannot answer either by moving the service, and the state it may not leave is
+// the one the update door's hold exists for: the service reads the published
+// node on every cascade and Bitbucket-proxied call and refuses a node its own
+// binary does not understand, so a node raised here refuses every such call of
+// the project until a later `fugaro update` succeeds (the owner's ruling of
+// 2026-11-10; the migration and the replacement are that one command's).
+//
+// A development build holds it whatever the reference says, which is the update
+// door's own answer to that run (credentialsDevBuildHeld): it resolves no
+// released image, so there is none to compare the record against and none for
+// it to move to. An installation whose tfvars carry no block runs no service to
+// refuse the node at all, and one whose recorded image is already this binary's
+// release is the state the last update left — no stale process — and neither is
+// held. A tfvars this binary cannot read is silence, the answer
+// credentialsMoveHeld gives it: the failure of that read belongs to the run
+// that applies the file.
+func credentialsRaiseHeld(lc *localcfg.Config) string {
+	if lc == nil {
+		return ""
+	}
+	doc, image, err := installationCredentialsImage(lc)
+	if err != nil || doc == nil {
+		return ""
+	}
+	ver := releaseVersion()
+	switch {
+	case ver == "":
+		return credentialsDevBuildHeld
+	case credentialsImageStale(ver, image):
+		return credentialsBehindHeld
+	}
+	return ""
+}
+
+// credentialsResolveBeforeRaise resolves the image this run's own move of the
+// credentials service will pin, and it is the policy stage's precondition for a
+// write whose version rises. It is where the resolve's failure has to land: an
+// image this run cannot reach is a move that will not happen, and after the
+// write the same failure leaves a node at this version with the release
+// behind's service deployed — a service that refuses every cascade and
+// Bitbucket-proxied call until a later update succeeds (the owner's ruling of
+// 2026-11-10; credentialsMoveHeld is the rule's other half).
+//
+// A tfvars this run cannot read is no move to resolve: the failure of that read
+// is the run's at the stage that applies the file (the installation root, whose
+// engines run before this one), and this precondition has nothing to answer
+// about a document it cannot read.
+func (e *initEngine) credentialsResolveBeforeRaise(ctx context.Context) error {
+	ver := releaseVersion()
+	if ver == "" {
 		return nil
 	}
-	pinned, err := resolveCredentialsImage(ctx, e)
+	doc, image, err := e.recordedCredentialsImage()
+	if err != nil || doc == nil || !credentialsImageStale(ver, image) {
+		return nil
+	}
+	_, err = e.credentialsResolve(ctx)
+	return err
+}
+
+// credentialsResolve is the run's one resolve of the credentials service's
+// image, memoized: the policy stage asks for it before it writes a node whose
+// version moves, and the credentials-service stage pins the answer after that
+// write. The failure of a resolve has to land before the node moves — a pinned
+// image this run cannot reach is a move that will not happen, and the state it
+// may not leave is a node at this version with the release behind's service
+// deployed — and one answer is what keeps the two readers of it from spending
+// the operator's ADC on the same read twice.
+func (e *initEngine) credentialsResolve(ctx context.Context) (string, error) {
+	if !e.credentialsRead {
+		e.credentialsRead = true
+		e.pinnedCredentials, e.credentialsErr = resolveCredentialsImage(ctx, e)
+	}
+	return e.pinnedCredentials, e.credentialsErr
+}
+
+// moveCredentialsImage moves the installation's recorded credentials image
+// forward onto this release's, in the installation root's tfvars, and it is the
+// credentials-service stage's step (init_stages.go's newCredentialsStage): it
+// runs after the policy stage, so the node every call of the service is read
+// under is this release's before the process that reads it is replaced (the
+// owner's ruling of 2026-11-10; initflow.CredentialsService has the order and
+// the window it leaves). The resolve behind it is the policy stage's own read
+// (credentialsResolve): the write is this stage's, and what it would fail on is
+// already answered by the time it runs.
+//
+// It pins through resolveCredentialsImage: the release's signed "-pinned"
+// image, its signature verified and its digest read back through the
+// installation's remote repository. A digest nothing verified is never written.
+//
+// Unlike the deploy, a resolve it cannot make is returned rather than tolerated:
+// an installation that already HAS the block has something to report as moved,
+// and an update that cannot reach the registry cannot report it. (A run that
+// does not apply — a plan-only run, or one whose confirmation the owner
+// declines — leaves the tfvars naming this release's image while the deployed
+// service is still the previous one. That is prepare's own plan-time write,
+// unchanged by this: the tfvars ARE the desired state, and the next run that
+// applies converges the service on them.)
+func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
+	if m := agentMarker(os.Getenv, e.r.stdinTerminal()); m != "" {
+		return nil
+	}
+	ver := releaseVersion()
+	if ver == "" {
+		return nil
+	}
+	doc, image, err := e.recordedCredentialsImage()
+	if err != nil {
+		return err
+	}
+	if doc == nil { // no block: nothing to move (the stage's own skip says why)
+		return nil
+	}
+	next, err := e.writeCarriedCredentials(doc)
+	if err != nil {
+		return err
+	}
+	if !credentialsImageStale(ver, image) {
+		return nil
+	}
+	pinned, err := e.credentialsResolve(ctx)
 	if err != nil {
 		return err
 	}
@@ -755,6 +938,33 @@ func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
 		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
 	return nil
+}
+
+// credentialsImageStale reports whether a recorded credentials-service
+// reference is one this release's move replaces, ver being the release this
+// binary is.
+//
+// A reference that names NO release is replaced rather than compared: it is an
+// operator's hand-written digest, and there is no release in it to say the
+// installation is ahead of this binary. The check is written out because the
+// comparison alone answers the wrong way for it — newer splits both sides on
+// "." and atoi's each part, so an empty operand reads as one zero part and
+// compares equal to a release whose major is 0, which is every release this
+// program has cut so far.
+//
+// The other direction is the rule the base image's own pin follows (newer,
+// init_images.go): a CLI older than the release the recorded image names — two
+// machines of one installation upgraded at different times — finds the recorded
+// release newer than its own and leaves it alone. Re-pinning DOWN would put the
+// previous release's process back, and those two machines would flip the
+// service on every update.
+//
+// It is one function because two callers ask it: the move itself, and the
+// credentials-service stage's own skip, which may not answer "nothing to do"
+// about a block the move would rewrite.
+func credentialsImageStale(ver, image string) bool {
+	recorded := infra.CredentialsServiceImageRelease(image)
+	return recorded == "" || newer(ver, recorded)
 }
 
 // deployCredentialsService writes the block an installation that has none gets:
@@ -836,6 +1046,33 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 	return nil
 }
 
+// installationCredentialsImage is the installation root's tfvars as they stand
+// on disk, and the image they carry for the credentials service: nil when they
+// carry no block at all.
+//
+// It is recordedCredentialsImage's read for a caller that holds no workdir —
+// the checks' own case, and the read `fugaro upgrade` makes
+// (credentialsRaiseHeld): that door runs no stage of the converge at all, so
+// the file the last update left is the only document it has.
+func installationCredentialsImage(lc *localcfg.Config) ([]byte, string, error) {
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return nil, "", userErr("%v", err)
+	}
+	doc, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		return nil, "", userErr("%v", err)
+	}
+	image, ok, err := infra.CredentialsServiceImageOf(doc)
+	if err != nil {
+		return nil, "", userErr("reading the installation's tfvars: %v", err)
+	}
+	if !ok {
+		return nil, "", nil
+	}
+	return doc, image, nil
+}
+
 // recordedCredentialsImage is the installation root's tfvars as they carry the
 // credentials service, and the image in them: nil when they carry no block at
 // all, which is the state this run deploys the service into.
@@ -848,12 +1085,33 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 // and that is what the pin's second pass (the loop plans and then applies)
 // reads: the block is there, its image is this release's, and nothing is
 // resolved twice.
+//
+// A run with no workdir yet reads the installation's tfvars on disk instead,
+// and that is the checks' own case rather than an edge: the loop checks every
+// stage before the first one runs, and the workdir is what the FIRST stage's
+// run prepares (setup), so a check that reached for it would take the run down
+// before it printed its plan. The file on disk is what prepare is about to
+// read and carry, so the two agree there as well — and a stage that has
+// prepared its workdir uses it, because by then the file on disk may be the
+// run's own newer write (deployCredentialsService) and the workdir is the
+// document both the carry and the move are working on.
 func (e *initEngine) recordedCredentialsImage() ([]byte, string, error) {
-	now, err := e.wd.Vars()
-	if err != nil {
-		return nil, "", userErr("reading the installation's tfvars: %v", err)
+	var docs [][]byte
+	switch {
+	case e.wd != nil:
+		now, err := e.wd.Vars()
+		if err != nil {
+			return nil, "", userErr("reading the installation's tfvars: %v", err)
+		}
+		docs = append(docs, now, e.wd.PrevVars)
+	case e.lc != nil:
+		doc, _, err := installationCredentialsImage(e.lc)
+		if err != nil {
+			return nil, "", err
+		}
+		docs = append(docs, doc)
 	}
-	for _, doc := range [][]byte{now, e.wd.PrevVars} {
+	for _, doc := range docs {
 		image, ok, err := infra.CredentialsServiceImageOf(doc)
 		if err != nil {
 			return nil, "", userErr("reading the installation's tfvars: %v", err)
@@ -904,7 +1162,7 @@ func (e *initEngine) recordedCredentialsImage() ([]byte, string, error) {
 // Two runs it does nothing in, and both are the same rule:
 //
 //   - A coding agent's session, where the service is not deployed at all (see
-//     pinCredentialsImage): the agent's apply is a plan the owner has not
+//     ensureCredentialsService): the agent's apply is a plan the owner has not
 //     confirmed, and this one has no confirmation to keep it out.
 //   - --plan-only, which applies nothing by its own definition.
 func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) {
@@ -1021,7 +1279,7 @@ func newInstallationStage(e *initEngine) *engineStage {
 					return err
 				}
 			}
-			if err := e.pinCredentialsImage(ctx); err != nil {
+			if err := e.ensureCredentialsService(ctx); err != nil {
 				return err
 			}
 			if err := e.r.install(ctx, e.c, e.t, e.wd, e.lc, e.spec, e.path, e.old); err != nil {
@@ -1079,7 +1337,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 					}
 				}
 			}
-			if err := e.pinCredentialsImage(ctx); err != nil {
+			if err := e.ensureCredentialsService(ctx); err != nil {
 				return err
 			}
 			if err := e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old); err != nil {
@@ -1132,6 +1390,66 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			}
 			return promptLeft(initflow.Installation2, "run the command below: it asks you nothing and applies the catalog check job", e.r.o.doorName())
 		},
+	}
+}
+
+// newCredentialsStage is the stage immediately after the policy one: the
+// installation root once more, with the credentials service's image moved onto
+// this release's.
+//
+// It is here and nowhere else because the service reads the published node on
+// every call and refuses a node its own binary does not understand, so a
+// release whose node version moves has to move the node before the process
+// that reads it is replaced (initflow.CredentialsService has the order and the
+// window the order leaves; the owner's ruling of 2026-11-10). The block's
+// EXISTENCE is still the installation stage's own work (ensureCredentialsService):
+// this stage moves an image that is already there, and the two are one step
+// apart in the tfvars — the block, then the image inside it.
+//
+// Its skip is what keeps a converged installation from planning the root a
+// second time: a run whose recorded image is already this release's, or whose
+// tfvars carry no block at all, has nothing to move and answers with the
+// sentence rather than an apply. It asks the same predicate the move does
+// (credentialsImageStale), so the two can never disagree about whether there is
+// anything to do.
+func newCredentialsStage(e *initEngine) *engineStage {
+	return &engineStage{e: e, name: initflow.CredentialsService, isolate: true,
+		skip: func() string {
+			if m := agentMarker(os.Getenv, e.r.stdinTerminal()); m != "" {
+				return credentialsSessionHeld
+			}
+			ver := releaseVersion()
+			if ver == "" {
+				return credentialsDevBuildHeld
+			}
+			doc, image, err := e.recordedCredentialsImage()
+			switch {
+			case err != nil:
+				// The run reports the read's own failure: a stage that could not
+				// read the tfvars may not answer "nothing to move" about them.
+				return ""
+			case doc == nil:
+				return "the installation's tfvars carry no credentials service"
+			case !credentialsImageStale(ver, image):
+				return "the recorded image is already this release's"
+			}
+			return ""
+		},
+		run: func(ctx context.Context) error {
+			if err := e.setup(ctx); err != nil {
+				return err
+			}
+			if err := e.moveCredentialsImage(ctx); err != nil {
+				return err
+			}
+			e.r.installLabel = " (this release's credentials service)"
+			_, stop, err := e.r.installRoot(ctx, e.c, e.t, e.wd, e.lc, e.spec)
+			if err != nil || stop {
+				return err
+			}
+			return nil
+		},
+		left: promptLeft(initflow.CredentialsService, "run the command below: it asks you nothing and moves the credentials service onto this release's image", e.r.o.doorName()),
 	}
 }
 

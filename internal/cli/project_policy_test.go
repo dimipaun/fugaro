@@ -2994,9 +2994,40 @@ func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) 
 	}
 }
 
+// TestProjectPolicyPublishReplacesAShapeFreePredecessor: a node one shape-free
+// step behind this binary is read rather than refused (projectpolicy's
+// ReadsVersion), and the publish is what writes it forward: the node it leaves
+// is this release's version, and the members the owner had written into the
+// older node survive it — the `binaries` block is kept, the same keep the
+// update door pins (TestUpdateKeepsAHandWrittenBinariesBlock).
+//
+// The state is one `fugaro update` passes through rather than one an
+// installation rests in: the policy stage migrates the node, and a publish run
+// against the same node must reach the same answer instead of stopping on a
+// node it reads member for member.
+func TestProjectPolicyPublishReplacesAShapeFreePredecessor(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version - 1,
+		"budget":      map[string]any{"mode": "enforce"},
+		"allow_repos": []string{"github/acme/app"},
+		"binaries":    map[string]any{"allow": []string{"brand/*.png"}},
+	})
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("the publish refused a node one shape-free version behind this binary: %v", err)
+	}
+	p := publishedPolicy(t, f)
+	if p.Version != projectpolicy.Version {
+		t.Errorf("the published node is version %d, want %d: the publish writes this release's node over a shape-free predecessor", p.Version, projectpolicy.Version)
+	}
+	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("BinariesAllow() = %v, want %v: the block the older node carried did not survive the publish", p.BinariesAllow(), want)
+	}
+}
+
 // TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate: the other older
-// state, and the one an operator meets most — a version-4 node is what every
-// installation holds between the binary upgrade and `fugaro update`. The
+// state, and the one an operator meets most — a node one step older than the shape-free
+// predecessor is what an installation holds between the binary upgrade and `fugaro update`. The
 // migration chain carries it, so the publish names the update's in-place
 // rewrite rather than the delete: the delete works here, but a publish that
 // follows rebuilds the node from this machine's config and drops the members
@@ -3004,7 +3035,7 @@ func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) 
 // of the same node and names the same move.
 func TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate(t *testing.T) {
 	f := newProjectFixture(t, "")
-	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version - 1, "budget": map[string]any{"mode": "enforce"}})
+	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version - 2, "budget": map[string]any{"mode": "enforce"}})
 	_, _, err := execute(t, "project", "policy", "publish")
 	if err == nil {
 		t.Fatal("publishing over an older node was allowed")
@@ -3596,6 +3627,96 @@ func TestPublishKeepsReviewFloorTheConfigIsSilentAbout(t *testing.T) {
 	}
 	if !strings.Contains(out, "review_floor kept: pro: l2") {
 		t.Errorf("the publish does not say the floor was kept:\n%s", out)
+	}
+}
+
+// TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing: the binaries
+// block is the owner's grant of the paths a run may add a binary at and of the
+// cap it is held to, and no key of the operator's config states it (D986 keeps
+// it off `fugaro.yaml` and the shared config), so a publish keeps the node's —
+// the clone_urls and credentials rule.
+//
+// This is a review finding on the version-5 bump rather than a nicety. While
+// the key was unmodelled, a publish over a node carrying it was *refused*
+// (publishedPolicyOf's unknown-key refusal, "publishing would drop them"), so a
+// publish that rewrote such a node without the block would be a loosening this
+// release introduced: the allow list gone, and max_bytes back at the 2 MiB
+// ceiling the owner had lowered it from. Hand-writing the node is the only way
+// to state the block until AR1 gives the operator's config the key, which is
+// why the fixture writes the node and not the file — and the diff has to say
+// the block was kept, because nothing else in it would mention an unchanged
+// member.
+func TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"allow_repos": []string{"github/acme/app"},
+		"binaries":    map[string]any{"allow": []string{"website/public/**", "brand/*.png"}, "max_bytes": 1048576},
+	})
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("the publish refused a node carrying a binaries block: %v", err)
+	}
+	p := publishedPolicy(t, f)
+	if want := []string{"website/public/**", "brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("BinariesAllow() = %v, want %v: the publish dropped the owner's grant", p.BinariesAllow(), want)
+	}
+	if got := p.BinariesMaxBytes(); got != 1048576 {
+		t.Errorf("BinariesMaxBytes() = %d, want 1048576: the publish put the cap back at the ceiling it had been lowered from", got)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"binaries"`) {
+		t.Errorf("the node no longer carries the block:\n%s", raw)
+	}
+	if !strings.Contains(out, "binaries kept: allow website/public/**, brand/*.png, max_bytes 1048576") {
+		t.Errorf("the publish does not say the block was kept:\n%s", out)
+	}
+
+	// An empty list is not a member the node holds: an RTDB list is an object
+	// with numeric keys, so `{"allow": []}` is an empty object and a write
+	// leaves no member for it (dropAbsentMembers, the rule internal/cli already
+	// keeps the publish's own node comparison to, #1658). A node hand-written
+	// with that spelling therefore reads back exactly like a node nothing was
+	// written to, and a publish over it has no block to keep — what it writes
+	// admits nothing either way, which is the answer the spelling was asking
+	// for.
+	//
+	// The seed is folded here rather than by the fake because the fake is not
+	// the database: gcpfake keeps the empty list it is handed, and teaching it
+	// to fold is not this change's to make — it would move four unrelated
+	// nodes this package seeds and the doctor line one of them pins
+	// (internal/access/store_test.go's foldAsTheDatabaseKeeps says the same
+	// and folds the same way). The fold is the tree's own rule and not a test
+	// convenience: dropAbsentMembers is what the publish compares nodes with.
+	//
+	// The empty block is D987's mechanism and it stays a publish-time one: it
+	// belongs to the file the *publisher* reads (which says nothing, or writes
+	// the block), not to the node, where the database keeps no such member.
+	// Nothing this release deletes or invents a member over it, and a node that
+	// carries a block with a value member in it is still carried over whole
+	// (the assertions above).
+	empty := map[string]any{
+		"version":     projectpolicy.Version,
+		"allow_repos": []string{"github/acme/app"},
+		"binaries":    map[string]any{"allow": []any{}},
+	}
+	if folded, err := json.Marshal(dropAbsentMembers(empty)); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(folded), "binaries") {
+		t.Fatalf("the spelling %s is a member the database keeps: %s", `{"allow": []}`, folded)
+	}
+	f.db.Set(projectpolicy.PathShared(), dropAbsentMembers(empty))
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.Binaries != nil {
+		t.Errorf("the published node carries binaries %+v, and the write that spelled it was an empty list: the database keeps no member for one, so the node the publish read held no block to keep", p.Binaries)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); strings.Contains(raw, "binaries") {
+		t.Errorf("the published node carries a binaries member:\n%s", raw)
+	}
+	if strings.Contains(out, "binaries") {
+		t.Errorf("the diff mentions a binaries block the node does not carry:\n%s", out)
 	}
 }
 

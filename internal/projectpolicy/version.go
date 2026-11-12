@@ -94,14 +94,28 @@ import (
 // makes the migration run: `fugaro update` carries a version-4 node forward
 // (migrate.go), marking every ownerless pool legacy-open so the upgrade serves
 // exactly whom the installation served before it.
-const Version = 5
+//
+// Version 6 (binary-allow-rule, plan task AR0; decisions D981-D985 and D990) is
+// the node that carries the project's `binaries` block: binaries.allow (the
+// path globs a run may add a binary at) and binaries.max_bytes (the cap an
+// admitted one is held to, 2 MiB unless the project lowers it). What a
+// version-6 runner enforces and a version-5 one does not is that admission in
+// finalize, where an added binary under an admitted pattern and within the cap
+// is committed rather than held back as a stray file. The block is a
+// *top-level* key, which is exactly the shape P8 tolerates: a version-5 reader
+// lists `binaries` in UnknownKeys and decodes past it, so it would enforce no
+// rule at all while the owner believed a list was published. The bump is what
+// turns that silence into the documented refusal (RunnerSkew on the job side,
+// CLISkew on the operator's). The migration step that carries a version-5 node
+// forward is shape-free (internal/projectpolicy/migrate.go): the node keeps its
+// bytes and only the number moves, because a node with no `binaries` block
+// admits nothing, which is what a project that never set one means.
+const Version = 6
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
 // is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
-// Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0, the
-// release this change ships in — 0.22.0 shipped with version 4, and 0.22.1
-// writes no version 5). It
+// Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0), 6 the binaries block (0.24.0). It
 // sits beside Version because a bump of
 // Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
@@ -121,6 +135,7 @@ var VersionSince = map[int]string{
 	3: "0.9.0",
 	4: "0.14.0",
 	5: "0.23.0",
+	6: "0.24.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false

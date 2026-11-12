@@ -767,7 +767,8 @@ func doctorProviderZDR(lc *localcfg.Config) *doctorCheck {
 //
 // The credentials service's image is resolved the same way and through the
 // same binary, and since 0.15.0 an ordinary `fugaro update` re-pins it
-// (init_stages.go's pinCredentialsImage): an installation that opted in needs
+// (init_stages.go's moveCredentialsImage, in the credentials-service stage): an
+// installation that opted in needs
 // cosign on PATH for an upgrade that names no flag, which is why the message
 // names that path as well.
 //

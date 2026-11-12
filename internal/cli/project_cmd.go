@@ -1138,6 +1138,27 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		pol.CraftCredentials = old.CraftCredentials
 		pol.CraftPools = old.CraftPools
 		pol.Crafts = old.Crafts
+		// The binaries block is kept for the clone_urls reason, and this member
+		// is the one where dropping it would be silent *and* a loosening: no key
+		// of the operator's config states it (D986 keeps it off `fugaro.yaml` and
+		// the shared config), so the node's block is the only one, and a publish
+		// that wrote a node without it would take the owner's grant away — an
+		// allow list gone, and max_bytes back at the 2 MiB ceiling it was lowered
+		// from. Before this member was modelled the same node was *refused* rather
+		// than rewritten (publishedPolicyOf's unknown-key refusal, "publishing
+		// would drop them"), so a drop here would be a loosening this release
+		// introduced.
+		//
+		// The typed copy is what the diff reads (printPolicyDiff's kept line) and
+		// what the node is built from; the *bytes* are carried over on top of it
+		// (policyNodeBytes), the clone_urls way, so a publish is never the thing
+		// that picks a spelling for a member the operator hand-wrote. The block's
+		// own spellings are the reason it is carried rather than re-encoded: a
+		// written empty list and the absent member are different statements to the
+		// publisher (D987), and while the database keeps no member for an empty
+		// list — so the empty spelling cannot be a node's answer — the carry is
+		// what keeps this binary from being the one that decides.
+		pol.Binaries = old.Binaries
 	}
 	return pol, keepRouting, nil
 }
@@ -1349,6 +1370,26 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouti
 		return nil, userErr("%s cannot be read back as a document, so its clone_urls block cannot be kept: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
 	} else if ok && keepCloneURLs {
 		if node, err = patchPolicyJSON(node, "clone_urls", member); err != nil {
+			return nil, userErr("building the policy: %v", err)
+		}
+	}
+	// The binaries member is carried over byte for byte for the same reason: no
+	// command of this release writes it (D986 keeps it off the operator's
+	// config), so the node's block is the only one, and a publish that
+	// re-encoded it would be choosing a spelling for a member the operator
+	// hand-wrote. `binaries.allow` is a list, and its *empty* spelling is a
+	// statement to the publisher — a written block that admits nothing, which
+	// D987 tells from the silence a file that says nothing leaves alone — while
+	// an absent member is that silence. The node is not where the difference
+	// lives: the database keeps no member for an empty list, so the empty
+	// spelling is one the node cannot hold, and what a node carries is the
+	// block's value members (an allow list with entries in it, a lowered cap),
+	// which a re-encode would keep. Carrying the bytes is what keeps this
+	// function from answering a question that is the operator's.
+	if member, ok, err := jsonMember(oldRaw, "binaries"); err != nil {
+		return nil, userErr("%s cannot be read back as a document, so its binaries block cannot be kept: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
+	} else if ok && !projectpolicy.IsNull(member) {
+		if node, err = patchPolicyJSON(node, "binaries", member); err != nil {
 			return nil, userErr("building the policy: %v", err)
 		}
 	}
@@ -2005,6 +2046,16 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if new.Credentials != nil {
 		fmt.Fprintf(out, "  credentials kept: %s\n", credentialsText(new.Credentials))
 	}
+	// The binaries block is the owner's grant of the paths a run may add a
+	// binary at and of the cap it is held to, and no key of this release's
+	// config states it (buildProjectPolicy), so a publish keeps it — a fact the
+	// operator reading this diff has to be told, the way the clone URLs' line
+	// tells them: the block is unchanged, so no +/- line of the diff above
+	// mentions it, and an operator who hand-wrote the block would read that
+	// silence as "it is gone".
+	if new.Binaries != nil {
+		fmt.Fprintf(out, "  binaries kept: %s\n", binariesText(new.Binaries))
+	}
 	// The floor is the one member a publish keeps when the config is silent
 	// about it (buildProjectPolicy), and a kept member that prints nothing is
 	// the diff an operator who deleted the key reads as "it is gone": the
@@ -2067,6 +2118,30 @@ func credentialsText(c *projectpolicy.Credentials) string {
 	}
 	if len(parts) == 0 {
 		return "written with every member absent: the defaults"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// binariesText is the binaries block as one line, member by member and only the
+// members the block writes: an absent max_bytes is the shipped bound and not a
+// cap of zero (projectpolicy.BinariesMaxBytes), and this line is about what the
+// block says. A written empty block prints as the block it is — the spelling
+// that takes an admission away on purpose — which is a value a *document* holds
+// and not one the database keeps for an empty list (Policy's Binaries field
+// comment), so it is reachable from a hand-written node or from a value a test
+// hands this function, never from a node a publish wrote.
+func binariesText(b *projectpolicy.Binaries) string {
+	if b == nil {
+		return "none"
+	}
+	var parts []string
+	if len(b.Allow) == 0 {
+		parts = append(parts, "allow written empty: nothing admitted")
+	} else {
+		parts = append(parts, "allow "+strings.Join(b.Allow, ", "))
+	}
+	if b.MaxBytes != 0 {
+		parts = append(parts, fmt.Sprintf("max_bytes %d", b.MaxBytes))
 	}
 	return strings.Join(parts, ", ")
 }

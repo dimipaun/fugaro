@@ -38,8 +38,15 @@ func newLauncherFixture(t *testing.T) *launcherFixture {
 	// enough that the tier and the title would be refused — which is a fact
 	// about those tests and not about this one. The base is a release past the
 	// newest skew gate rather than a literal, so the next gate does not turn
-	// every daemon test into a refusal.
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, securitySince, 1))
+	// every daemon test into a refusal — and the policy's own floor is one of
+	// those gates (policyImageGate, whose floor is the release that introduced
+	// the node's version): a base below it is refused before this fixture's
+	// launches reach the gate they are about.
+	base := shiftRelease(t, securitySince, 1)
+	if newer(nodeRelease, base) {
+		base = nodeRelease
+	}
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+base)
 	return f
 }
 

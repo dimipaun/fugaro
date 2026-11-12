@@ -37,7 +37,7 @@ func TestTriageMemberIsReadStrictly(t *testing.T) {
 		{name: "an object", body: `"triage":{"off":true}`, why: "triage"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			raw := []byte(`{"version":5,` + tc.body + `}`)
+			raw := []byte(`{"version":6,` + tc.body + `}`)
 			p, found, err := Decode(raw)
 			if tc.why != "" {
 				if err == nil {
@@ -66,7 +66,7 @@ func TestTriageMemberIsReadStrictly(t *testing.T) {
 	// is unknown, listed and read past rather than refused, which is the
 	// additive-member promise a node of a later release relies on (P8). What it
 	// must not do is answer the switch.
-	p, found, err := Decode([]byte(`{"version":5,"triage_off":true}`))
+	p, found, err := Decode([]byte(`{"version":6,"triage_off":true}`))
 	if err != nil || !found {
 		t.Fatalf("a node with a misspelt member was refused: (%v, %v, %v)", p, found, err)
 	}

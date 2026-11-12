@@ -369,27 +369,6 @@ type Policy struct {
 	// that sets neither publishes no member: the node of such a project stays
 	// byte for byte what it was before this member existed.
 	Triage *bool `json:"triage,omitempty"`
-	// Binaries is the project's binary allow rule (D981, D986): the paths a run
-	// may add a binary at, and the largest one it may add. It belongs to this
-	// node for the floor's reason — the owner writes it and the runner fails
-	// closed on it, while the shared file is writable by any launcher — and for
-	// the sharper one the block's own comment gives: the rule's writer must not
-	// be a file the subject of the rule can write, and the repository's
-	// fugaro.yaml is inside the checkout the run's own agent writes.
-	//
-	// Nothing decodes it yet: `binaries` is deliberately not in
-	// knownTopLevelKeys, so a node that writes the key has it listed in
-	// UnknownKeys and this field stays nil, which is the strict end — the run
-	// admits no binary. The member, its validation and the version bump that
-	// publishes them are the plan's AR0 and land together, because a block read
-	// before its patterns, count, lengths and cap are checked would be an
-	// unvalidated rule in force (see internal/projectpolicy/binaries.go).
-	//
-	// The runner reads it at bootstrap and puts the block on the ceiling layer
-	// (internal/runner's policyCeiling), where Merge intersects the list and
-	// takes the smaller cap, so a layer under the ceiling can remove an admitted
-	// path and can never add one.
-	Binaries *Binaries `json:"binaries,omitempty"`
 
 	// VerifierAccounts are the identities that may ask the credentials
 	// service's verify route whether a verdict's signature is that service's
@@ -465,6 +444,43 @@ type Policy struct {
 	// member and its node is byte for byte what it was before this member
 	// existed.
 	ImageMap ImageMap `json:"image_map,omitempty"`
+
+	// Binaries is the rule that says which paths a run may add a binary at and
+	// how large one may be (D981–D983, AR0): the owner's own grant, on this
+	// node and nowhere else. It travels every member's road — the owner writes
+	// it and the run fails closed on it — and it is here rather than in a
+	// repository's `fugaro.yaml` for a sharper reason than most: that file
+	// lives in the checkout the run's own agent writes, so a key there would
+	// let the coder grant itself the payload it is refused by (D986, F1). The
+	// shared config in the runs bucket is refused it too (any launcher can
+	// write that one), and the managed publish gate judges the member like
+	// every other key no rule reads.
+	//
+	// It is a pointer because the member's *presence* is a statement: a
+	// written block is how an operator takes an admission away on purpose
+	// (`binaries: {allow: []}`), while a file that says nothing keeps the
+	// list the node already carries (D987, review_floor's rule). So an
+	// absent member and a written empty block are the same answer at admission
+	// time — both admit nothing — and two different answers at publish time,
+	// and folding them together here would leave the publisher unable to tell
+	// "clear it" from "say nothing".
+	//
+	// The distinction is the publisher's, and the node holds no empty block for
+	// it to read: an RTDB list is an object with numeric keys, so a written
+	// `{"allow": []}` is a write that leaves no member at all (internal/cli's
+	// storesNoMember, the rule a publish's own node comparison converges on),
+	// and a node that spelling was written to reads back exactly like one
+	// nothing was written to. What tells the two apart is the file the publish
+	// reads — a pointer that is nil where the file says nothing — while the
+	// answer a written empty block asks for is reached by the member being
+	// absent: nothing is admitted. A block that carries a value member (an
+	// allow list with entries in it, a lowered cap) is a member the database
+	// keeps, and is read as the grant it is.
+	//
+	// The block's own rules are Binaries' decode (binaries.go): the pattern
+	// rule of §2.1, the cap's positivity and ceiling, and the strict member
+	// reading every block of this node gets.
+	Binaries *Binaries `json:"binaries,omitempty"`
 
 	// ImageServices is the services each catalog entry's image provides
 	// (D1904): the entry's own list, keyed by the entry's name, which a run
@@ -555,8 +571,8 @@ var knownTopLevelKeys = map[string]bool{
 	"default_claude_account": true, "claude_account_stages": true,
 	"crafts": true, "craft_credentials": true, "craft_pools": true,
 	"subscription_spread": true,
-	"orchestrator":        true,
-	"triage":              true,
+	"orchestrator":        true, "binaries": true,
+	"triage": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -1116,7 +1132,14 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 	if err := json.Unmarshal(vraw, &p.Version); err != nil {
 		return nil, true, fmt.Errorf("projectpolicy: the policy version is not an integer: %w", err)
 	}
-	if p.Version != Version {
+	// A node this reader is a shape-free step behind is read rather than
+	// refused (ReadsVersion): its members are this version's members, and the
+	// refusal would be a window an update's own stages open — this release's
+	// readers are at work while the node one step behind is still the published
+	// one, and the release behind's credentials service is on the project until
+	// the update replaces it (migrate.go's ReadsVersion has the whole
+	// argument). Any other version is the skew it always was.
+	if p.Version != Version && !ReadsVersion(p.Version) {
 		return nil, true, &VersionError{Found: p.Version, Understood: Version}
 	}
 
@@ -1479,6 +1502,13 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		if len(p.ImageMap) == 0 {
 			p.ImageMap = nil
 		}
+	}
+	if nraw, ok := doc["binaries"]; ok && !IsNull(nraw) {
+		block, err := decodeBinaries(nraw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.Binaries = block
 	}
 	if sraw, ok := doc["image_services"]; ok && !IsNull(sraw) {
 		if err := json.Unmarshal(sraw, &p.ImageServices); err != nil {

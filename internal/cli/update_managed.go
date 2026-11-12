@@ -54,14 +54,13 @@ import (
 //
 // What the gate can never do here. It can only narrow. A stage it does not
 // open keeps today's refusal exactly — the secrets stage is never asked about
-// (with a secret, the session has nothing the gate could read), and the
-// Credentials and Compute stages are `noYes` in the stage table and are not
-// gated (spec §4.2: they create an identity and provision money-bearing
-// infrastructure, and neither is a plan the gate can bound). A step whose
-// class is Typed is refused by the Converge itself, whatever the plan looked
-// like (D1026), and a step the gate does not admit falls back to its own
-// confirmation, which in a coding agent's session is the refusal it always
-// was.
+// (with a secret, the session has nothing the gate could read), and the Compute
+// stage is `noYes` in the stage table and is not gated (spec §4.2: it
+// provisions money-bearing infrastructure, which is not a plan the gate can
+// bound). A step whose class is Typed is refused by the Converge itself,
+// whatever the plan looked like (D1026), and a step the gate does not admit
+// falls back to its own confirmation, which in a coding agent's session is the
+// refusal it always was.
 
 // gatedStages are the stages of this run the gate may open (D1016, spec §4.2):
 // the Terraform plan stages, whose steps are the roots Fugaro embeds and whose
@@ -85,9 +84,9 @@ import (
 // through the registry and writes this machine's config — it plans nothing, so
 // the pair this gate judges a Terraform stage with has no document to read),
 // secrets (spec §3.2: never admitted, and an agent's session is where a secret
-// would have to be typed), plugin (local files), credentials and compute
-// (`noYes` in the stage table today and under a managed project), the layer
-// stage and the checkout's own steps.
+// would have to be typed), plugin (local files), compute (`noYes` in the stage
+// table and under a managed project: it provisions money-bearing
+// infrastructure), the layer stage and the checkout's own steps.
 //
 // The workspace stage is here with the policy one, and for the same reason: its
 // document is the node it publishes (docs/workspaces/spec.md §6 — W2's publish
@@ -113,7 +112,23 @@ var gatedStages = map[string]bool{
 	initflow.Repository:    true,
 	initflow.Rules:         true,
 	initflow.Policy:        true,
-	initflow.Workspace:     true,
+	// The credentials-service stage is the installation root planned once more
+	// (the stage after the policy one, whose one change is the service's image),
+	// so its document is a saved plan exactly as Installation2's is — the same
+	// root, the same kinds, and the same gate. Its own position in the run is
+	// not this map's business: the gate judges the plan in front of it, and the
+	// loop reaches this stage after the policy migration either way.
+	//
+	// This entry answers for a PERSON at a terminal and never for a coding
+	// agent's session, which is the opposite of how the entries above read: the
+	// stage's own skip returns credentialsSessionHeld for a marker before the
+	// loop asks this map at all (newCredentialsStage, and every stage is
+	// checked before it is run), so a session reads the refusal it always read
+	// and pays for no read here. What the entry decides is what becomes of the
+	// refusal the stage makes either way — the owner's own step with it, a run
+	// failure without it (TestUpdateManagedGatesTheCredentialsServiceStage).
+	initflow.CredentialsService: true,
+	initflow.Workspace:          true,
 }
 
 // initGate is this run's use of the gate: M6's helper, and the one read of the

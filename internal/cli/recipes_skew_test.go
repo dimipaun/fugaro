@@ -1116,16 +1116,22 @@ func TestRecipesSkewRefusesReviewLevelsWithoutABuildRecord(t *testing.T) {
 // nil): the 0.15.0 launch below succeeds.
 func TestRecipesSkewRefusesTheOwnerFloorOnOldImage(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
+	// The node is the current version's, so policyImageGate judges the image
+	// first: a job image older than the release that introduced the node's
+	// version is refused there, before the floor's own gate is reached. That
+	// is what the 0.15.0 image meets below, and it is the refusal that matters
+	// to the owner (the run never starts on an image that cannot read the node,
+	// floor or no floor).
+	publishPolicy(t, f, `{"version":6,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
 	isolateCache(t)
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())
 	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "pro", "--run-id", "20261007-100000-abcd", "Fix it.")
-	if err == nil || !strings.Contains(err.Error(), "the owner's review-level floor") || ExitCode(err) != ExitUserError {
-		t.Fatalf("0.15.0: err = %v, want the floor's refusal", err)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: err = %v, want a user-error refusal of the old image", err)
 	}
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+projectpolicy.VersionSince[projectpolicy.Version])
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "pro", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
 		t.Fatalf("0.16.0: %v", err)
 	}

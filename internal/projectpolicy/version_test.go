@@ -3,6 +3,7 @@ package projectpolicy
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,7 @@ func TestSkewMessagesShareTheSentence(t *testing.T) {
 			t.Errorf("%s does not start with Skew: %q", name, msg)
 		}
 	}
-	if Version != 5 {
+	if Version != 6 {
 		t.Errorf("Version = %d: a version bump needs the plan's skew handling, this test and the CLI's", Version)
 	}
 }
@@ -249,5 +250,104 @@ func TestDecodeRefusesAVersion3Node(t *testing.T) {
 	}
 	if got, want := err.Error(), fmt.Sprintf(Skew, 3, Version); got != want {
 		t.Errorf("Decode of a version-3 node: err = %q, want %q", got, want)
+	}
+}
+
+// TestDecodeReadsAShapeFreePredecessor: version 6 is the binaries block's
+// lockstep (D990), and the step that carries a version-5 node forward moves the
+// number and nothing else (migrateV5ToV6), so a version-5 node is a version-6
+// node whose binaries block is absent — which is what a project that never set
+// the key means, and what a version-5 release could write. Refusing it would be
+// refusing a node this reader reads member for member, and the refusal is a
+// *window* rather than a safety: `fugaro update` re-pins the credentials
+// service to this release in its installation stage (init_stages.go) and
+// migrates the node in its policy stage, which runs after the image builds, so
+// every cascade and Bitbucket-proxied model call in between met a service that
+// refused the node (internal/credsvc refuses the call on the VersionError). The
+// tolerance is ReadsVersion's, and it is the reader's one answer for all three
+// readers — the credentials service, the launcher and the runner.
+//
+// It is not a general laxness, and the version below shows it: version 3 is
+// still refused by its own test, because that step carries a Note — a profile
+// mounting the Bitbucket credential needs a block only a publish derives — so a
+// version-3 node is not a node a version-5 reader can read.
+//
+// The two nodes below are the two spellings a version-5 release could write:
+// the first carries a binaries block (hand-written into a version-5 node, which
+// is a member this release models), and the second carries none. What a
+// version-5 node can never carry is a member this Fugaro does not know — that
+// is refused by UnknownKeys' own rule, version or no version.
+func TestDecodeReadsAShapeFreePredecessor(t *testing.T) {
+	p, found, err := Decode([]byte(`{"version": 5, "budget": {"mode": "enforce"}, "binaries": {"allow": ["brand/*.png"]}}`))
+	if err != nil || p == nil || !found {
+		t.Fatalf("Decode of a version-5 node = (%v, %v, %v), want the policy and no error: the step from 5 to 6 moves the version field alone, and an update reaches the node before it replaces the process that reads it", p, found, err)
+	}
+	if p.Version != 5 {
+		t.Errorf("the policy reads version %d, want 5: the node's own number is what the readers report", p.Version)
+	}
+	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("BinariesAllow() = %v, want %v: a member a version-5 node carries is read, not dropped", p.BinariesAllow(), want)
+	}
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none", p.UnknownKeys)
+	}
+
+	p, found, err = Decode([]byte(`{"version": 5, "budget": {"mode": "enforce"}}`))
+	if err != nil || p == nil || !found {
+		t.Fatalf("Decode of a version-5 node with no binaries block = (%v, %v, %v), want the policy and no error", p, found, err)
+	}
+	if got := p.BinariesAllow(); got != nil {
+		t.Errorf("BinariesAllow() = %v, want nil: a version-5 node has no block, and no block admits nothing", got)
+	}
+	if got := p.BinariesMaxBytes(); got != DefaultBinariesMaxBytes {
+		t.Errorf("BinariesMaxBytes() = %d, want the shipped %d: an absent block is the default cap, not a written one", got, DefaultBinariesMaxBytes)
+	}
+
+	// A version-4 node is not shape-free either: its step marks the pools that
+	// name no owner, so the reader refuses it until the update migrates it.
+	if _, _, err := Decode([]byte(`{"version": 4, "budget": {"mode": "enforce"}}`)); err == nil {
+		t.Error("Decode of a version-4 node = no error, want the skew refusal: the 4-to-5 step is not shape-free")
+	}
+	// A version this reader is *not* one step behind is still the documented
+	// skew, with the remedy that fits the direction: the node is older, so the
+	// move is the update that migrates it.
+	_, _, err = Decode([]byte(`{"version": 3, "budget": {"mode": "enforce"}}`))
+	var ve *VersionError
+	if !errors.As(err, &ve) || ve.Found != 3 || ve.Understood != Version {
+		t.Fatalf("Decode of a version-3 node: err = %v, want a VersionError found 3, understood %d", err, Version)
+	}
+	if msg := SkewSentence(ve, ReaderCLI); !strings.Contains(msg, "fugaro update") {
+		t.Errorf("SkewSentence(%d over %d, CLI) = %q, want the older-node remedy: the update that migrates the node, not the upgrade a node ahead of its reader gets", ve.Found, ve.Understood, msg)
+	}
+}
+
+// TestReadsVersionIsTheShapeFreeWalk: ReadsVersion is what Decode admits a
+// behind node through, and the two answers that must never drift are this one
+// and the walk's own — a version the predicate admits is one every step up to
+// Version leaves the node's members alone for. The assertions are the whole
+// table rather than version 5 alone, so a step added later cannot be called
+// shape-free without a node's worth of members surviving it.
+func TestReadsVersionIsTheShapeFreeWalk(t *testing.T) {
+	if !ReadsVersion(Version) {
+		t.Errorf("ReadsVersion(%d) = false: a node at this version is the one the reader is", Version)
+	}
+	if ReadsVersion(Version + 1) {
+		t.Errorf("ReadsVersion(%d) = true: a node ahead of this reader is the upgrade's case, never a tolerance", Version+1)
+	}
+	for v := 0; v <= Version; v++ {
+		want := true
+		for from := v; from < Version; from++ {
+			if !shapeFreeSteps[from] {
+				want = false
+			}
+		}
+		if got := ReadsVersion(v); got != want {
+			t.Errorf("ReadsVersion(%d) = %v, want %v: the predicate and shapeFreeSteps are one answer", v, got, want)
+		}
+	}
+	for v := range shapeFreeSteps {
+		if _, ok := migrators[v]; !ok {
+			t.Errorf("shapeFreeSteps names version %d and the chain has no step for it: a version a reader admits must be one a publish can move forward", v)
+		}
 	}
 }

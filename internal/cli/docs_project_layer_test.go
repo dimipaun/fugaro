@@ -508,12 +508,11 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 
 // TestDocsProjectLayerStatesThePolicyVersionItShips: docs/project-layer.md's
 // reference paragraph said, in the present tense, that "the policy is version 2
-// from fugaro 0.8.5" — and the bump to version 5 raises `projectpolicy.Version`
-// (VersionSince[5] = "0.23.0", the release that gives a pool its owner and the
-// users it serves — 0.22.0 shipped with version 4), so the sentence must name
-// the version and release this
-// tree writes. The paragraph now leads with version 5 and keeps version 4 as
-// the node that came before it, which is what the table says.
+// from fugaro 0.8.5" — and the bump to version 6 raises `projectpolicy.Version`
+// (VersionSince[6] = "0.24.0", the release that states the binaries block in
+// the node), so the sentence must name the version and release this tree
+// writes. The paragraph now leads with version 6 and keeps version 4 as the
+// node that came before it, which is what the table says.
 //
 // The version the page names is read from the constants rather than typed
 // twice, so the next bump fails here instead of shipping a page describing
@@ -528,7 +527,7 @@ func TestDocsProjectLayerStatesThePolicyVersionItShips(t *testing.T) {
 	if !ok {
 		t.Fatalf("projectpolicy.VersionSince has no row for Version %d, and this page names the release each version came in", projectpolicy.Version)
 	}
-	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that gives a pool its owner and the users it serves**", projectpolicy.Version, rel)
+	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that states the binaries block in it**", projectpolicy.Version, rel)
 	if !strings.Contains(doc, want) {
 		t.Errorf("docs/project-layer.md does not say %q: the page describes the node this release writes, and projectpolicy.Version/%d is that node", want, projectpolicy.Version)
 	}
@@ -634,6 +633,80 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 	} {
 		if strings.Contains(doc, notWant) {
 			t.Errorf("docs/project-layer.md still says %q, which task 4.1 made false", notWant)
+		}
+	}
+}
+
+// TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes pins §5's published
+// policy table, row by row. The table is the only place an operator reads what
+// a run does with each key of the node, and the `binaries` member shipped
+// without a row at all (review finding on AR0 of binary-allow-rule): the
+// reference described every key of the node but the one that release added, and
+// nothing read the table, so the gap was silent. `providers` is the precedent
+// the row has to follow — a key this release decodes, validates and accepts and
+// no run applies yet — and `binaries` is the one row whose *written block* is a
+// statement at publish time, which the row has to state because a publisher
+// reading it is deciding whether to write `{"allow": []}` or nothing — and
+// because the database keeps no member for an empty list, so the spelling a
+// publisher writes is one the node cannot hold (the review finding on AR0: the
+// row promised a difference at the node that exists only at the publish).
+//
+// The row set is pinned as a list rather than derived from the Policy struct:
+// the table groups the four `budget` members into one row and deliberately
+// leaves out the members whose effect is not a run's (base_branch, credentials,
+// accounts, clone_urls, the crafts), so a reflection over the struct would
+// refuse the table as it stands. What the list catches is the removal of a row
+// and the return of a claim the row no longer carries.
+//
+// Mutation (verified, run and restored): delete the `binaries` row — this fails
+// naming it; put "decoded, validated and accepted, **not applied**" back as the
+// row's whole description without the written-block half — it fails naming that.
+func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
+	const header = "| Policy key | What the run does with it today |"
+	doc := readDoc(t, "docs/project-layer.md")
+	i := strings.Index(doc, header)
+	if i < 0 {
+		t.Fatalf("docs/project-layer.md's §5 has no %q table: the reference for the node's keys has moved", header)
+	}
+	// The `|---|` separator sits between the header and the first key row.
+	rows := strings.Split(doc[i+len(header):], "\n")
+	for len(rows) > 0 && !strings.HasPrefix(rows[0], "| `") {
+		rows = rows[1:]
+	}
+	var keys []string
+	for _, line := range rows {
+		if !strings.HasPrefix(line, "| `") {
+			break
+		}
+		cell, _, _ := strings.Cut(strings.TrimPrefix(line, "| "), " |")
+		for _, key := range strings.Split(cell, ", ") {
+			keys = append(keys, strings.Trim(key, "`"))
+		}
+	}
+	want := []string{
+		"version",
+		"budget.mode", "budget.per_run_usd", "budget.max_run_tokens", "budget.allowed_models",
+		"model_prices",
+		"allow_repos",
+		"providers",
+		"binaries",
+		"routing",
+		"profiles",
+	}
+	if !slices.Equal(keys, want) {
+		t.Errorf("docs/project-layer.md's policy table lists %v, want %v: every key of the node the page describes has a row, and a member that ships without one is invisible to the operator reading what a run does with it", keys, want)
+	}
+	for _, want := range []string{
+		"| `binaries` | decoded, validated and accepted, **not applied**",
+		"the block is the owner's grant of the paths a run may add a binary at",
+		"no run does that yet",
+		"the one key of this table whose *written block* is a statement at publish time and not at admission time",
+		"the database keeps no member for an empty list, so the node never *holds* that spelling",
+		"an empty block and a write of nothing leave the same node, and both admit nothing",
+		"A version-5 reader lists the key as unknown and enforces no rule at all, which is why the node is version 6",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md's `binaries` row lacks %q: the row is where an operator reads what the member does today and what writing an empty one means", want)
 		}
 	}
 }

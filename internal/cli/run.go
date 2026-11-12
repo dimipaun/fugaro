@@ -1807,7 +1807,8 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// not what built the shared one, and the other branch's is a build
 	// record a repository that adopted a sibling's image never wrote.
 	if shared {
-		if err := checkSharedImageSince(ctx, env, slug, spec, sharedSince, warn); err != nil {
+		if err := checkSharedImageSince(ctx, env, slug, spec, sharedSince,
+			"this checkout: shared workflow", "how to clone for a shared image (FUGARO_CHECKOUT)", warn); err != nil {
 			return config.Inputs{}, err
 		}
 	}
@@ -1897,9 +1898,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	}
 	// The project's policy, read with the operator's own credentials
 	// before anything of this launch is written (plan task 1.5 step 4):
-	// the repository must be admitted, and the policy must not be newer
-	// than this binary. Before createTask and before the launch claim, so
-	// a refused launch leaves no task, no token and no execution behind.
+	// the repository must be admitted, the policy must not be newer than
+	// this binary, and the job image the launch would run — judged on
+	// whichever of the three checkout modes it is, the image lock included
+	// — has to be one whose runner can read the node at all
+	// (policyImageGate). Before
+	// createTask and before the launch claim, so a refused launch leaves
+	// no task, no token and no execution behind.
 	// Outside the --no-budget-check branch, which is deliberate: neither
 	// check is a budget check, so neither is an operator's to skip. After
 	// the budget pre-check, so an unreachable database is refused by the
@@ -1907,7 +1912,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// refuses it itself, with the node named, when it does not. Before the
 	// attach upload below as well, so a repository the policy does not
 	// admit never gets its inputs into the bucket either.
-	if err := launchPolicyGates(ctx, env, slug, spec); err != nil {
+	if err := launchPolicyGates(ctx, env, slug, spec, kind, clone, shared, warn); err != nil {
 		return config.Inputs{}, err
 	}
 	return caps, nil

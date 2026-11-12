@@ -51,7 +51,7 @@ func TestVersionSinceCoversEveryVersion(t *testing.T) {
 	// release this change ships in — not 0.22.0, which shipped with version
 	// 4, and not 0.22.1, which writes no version 5). An off-by-one table
 	// fails here.
-	for v, want := range map[int]string{1: "0.8.0", 2: "0.8.5", 3: "0.9.0", 4: "0.14.0", 5: "0.23.0"} {
+	for v, want := range map[int]string{1: "0.8.0", 2: "0.8.5", 3: "0.9.0", 4: "0.14.0", 5: "0.23.0", 6: "0.24.0"} {
 		if got := VersionSince[v]; got != want {
 			t.Errorf("VersionSince[%d] = %q, want %q", v, got, want)
 		}
