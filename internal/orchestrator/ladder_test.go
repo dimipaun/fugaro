@@ -365,6 +365,35 @@ func TestThirdNormalRunIsCoveredByLadder(t *testing.T) {
 	if a, ok := orchestrator.LadderLaunch(s, edited, orchestrator.RunView{}); ok {
 		t.Fatalf("the ladder launches %+v over a spec no approval covers", a)
 	}
+
+	// The ladder launches on top of the item's own loop and never beside it: an
+	// approval that still has an attempt to give the item is the loop's to spend,
+	// and an attempt committed and not reported is the recovery's to re-issue.
+	looping, first := o6FailedItem("wi-1", at, now.Add(-30*time.Minute))
+	looping.Escalation = atRung1(now.Add(-90*time.Minute), 3)
+	loop := o6Node(t, now, looping)
+	loop.Intents = []orchestrator.Intent{first}
+	if a, ok := orchestrator.LadderLaunch(loop, looping, orchestrator.RunView{}); ok {
+		t.Fatalf("the ladder launches %+v while the person's approval still plans the item's retry", a)
+	}
+
+	inFlight := workItemOf("wi-1")
+	inFlight.Phase = orchestrator.PhaseFailed
+	inFlight.Attempts = 3
+	inFlight.Escalation = atRung1(now.Add(-90*time.Minute), 1)
+	atSpent := at.UTC()
+	inFlight.SpentApprovalAt = &atSpent
+	crash := o6Node(t, now, inFlight)
+	crash.Intents = append(twoAttempts("wi-1", at, now.Add(-100*time.Minute), inFlight), orchestrator.Intent{
+		ID:         orchestrator.IntentID("wi-1", 3),
+		RunID:      "20261107-110000-ffff",
+		SpecDigest: orchestrator.SpecDigest(inFlight),
+		ApprovalAt: atSpent,
+		At:         now.Add(-time.Minute),
+	})
+	if a, ok := orchestrator.LadderLaunch(crash, inFlight, orchestrator.RunView{}); ok {
+		t.Fatalf("the ladder launches %+v while the item has an attempt committed and not reported", a)
+	}
 }
 
 // TestLadderLaunchStopsAtCostCeiling is G15's optional extra, read as G9 states

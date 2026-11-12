@@ -288,8 +288,8 @@ func importanceRank(view RunView, w WorkItem) int {
 }
 
 // Queue is the work waiting for a person: the items no approval covers and
-// whose phase an attempt starts from, which are exactly the items a launcher
-// would start the moment somebody approved them, the important follow-ups
+// whose phase an attempt starts from — the items nothing may start for want of
+// somebody's go — in the order a launcher takes work, the important follow-ups
 // first. It is what a message to a person, or a list they read, is built from,
 // and it decides nothing: what comes back is an order to put in front of them,
 // and every item in it is one no daemon may start (G6, F21).
@@ -345,10 +345,13 @@ func LadderRuns(s State, w WorkItem) int {
 //
 // It is the ladder's executor that asks for this (E10a), for an item a plan
 // holds nothing for: wherever the person's own approval still plans an attempt,
-// nextAttempt plans that one, and this is what is left when it cannot. What
-// comes back is a launch like any other — the run id is minted and the intent
-// committed before anything starts (D1231) — and it approves nothing: the
-// approval covers it, and the ladder has no approval of its own (G6, F21).
+// nextAttempt plans that one, and this is what is left when it cannot. It
+// answers false for an item whose own loop still holds work — an attempt left
+// under the approval, or one committed and not reported — because a launch
+// beside either of those is the loop's and not the ladder's. What comes back is
+// a launch like any other — the run id is minted and the intent committed before
+// anything starts (D1231) — and it approves nothing: the approval covers it, and
+// the ladder has no approval of its own (G6, F21).
 //
 // Nothing else on the ladder is this. Every other rung launches a run of
 // another recipe — a rebase, the one stronger pass, the judge, a merge, a split
@@ -359,6 +362,18 @@ func LadderLaunch(s State, w WorkItem, view RunView) (Action, bool) {
 		return Action{}, false
 	}
 	if !startable(w.Phase) || !dependenciesDone(s, w) {
+		return Action{}, false
+	}
+	if _, open := openIntentOf(s, w.ID); open {
+		// An attempt is in flight or never started, and the tick's business with
+		// it is its own recovery. A launch beside it would be that attempt's run
+		// id asked for twice.
+		return Action{}, false
+	}
+	if _, ok := nextAttempt(s, w); ok {
+		// The approval still has an attempt to give the item, and rung 1 is where
+		// the item goes back to its own recipe loop: the loop's own retry is the
+		// resume, and the ladder launches nothing beside it.
 		return Action{}, false
 	}
 	at, ok := ladderCoveredAt(w)
