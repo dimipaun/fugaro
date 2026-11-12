@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -729,6 +730,61 @@ func doctorChecks(t *testing.T, root string) doctorOutput {
 		t.Fatalf("doctor --json: %v (err %v)\n%s\n%s", jerr, err, out, errOut)
 	}
 	return o
+}
+
+// TestUpdateConvergesImageBake: the two inputs the bake step is decided from —
+// image_map and bake_repos — reach an installation one release behind through
+// `fugaro update` alone, and they are the whole input: the definition a build
+// of an entry then composes is decided from the published node's own values,
+// so the machine that runs the build needs nothing this checkout's file has
+// (IS8b, the owner's O3 reading (b); the HARD RULE, F15).
+//
+// The image itself converges at the rebuild the catalog already has (D1148's
+// schedule, O1): `fugaro update` builds and copies no entry, so a bake arrives
+// only at a build an operator runs, and a project that never mapped anything
+// and whose checkouts name no entry keeps byte for byte what it had. What such
+// a build then writes is pinned by TestCatalogBuildBakesTheMappedReposCheckout
+// and TestCatalogBuildBakesTheEntryAWorkflowsNeedsChoose, what it leaves alone
+// by TestCatalogBuildBakesNothingWithoutTheMap, and the same bytes are what the
+// nightly rebuild reads
+// (TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt).
+func TestUpdateConvergesImageBake(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	// What an operator of this release writes: `fugaro image map set acme/app
+	// app` (D1906) and the setup wizard's own answer to "bake your repos?"
+	// (D1901, IS7).
+	r.appendConfig(t, "image_map:\n  acme/app: app\nbake_repos: true\n")
+	registerInstallation(t, r.initRig)
+	if p := convergeNode(t, r); p.ImageMap != nil || p.BakeRepos != nil {
+		t.Fatalf("the fixture's node already carries image_map = %v and bake_repos = %v: it is not an installation whose policy predates both", p.ImageMap, p.BakeRepos)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	if got := p.ImageMap["acme/app"]; got != "app" {
+		t.Errorf("after one fugaro update, the published node's image_map = %v, want acme/app on app: a build decides its bake from the node every machine of the project reads, not from the file this one wrote", p.ImageMap)
+	}
+	if !p.BakesRepos() {
+		t.Error("after one fugaro update, the published node turns baking off: the switch the local config states did not reach it")
+	}
+	// The node is the whole input: the decision the next build of the entry
+	// makes is one an installation at the previous version could not make at
+	// all, and nothing about it needs a second command.
+	plan := imagebake.Decide(imagebake.Request{
+		Entry: "app",
+		Repo: imagebake.Repo{
+			Repo: "acme/app", Slug: mustSlug("github", "acme/app"),
+			URL: "https://github.com/acme/app.git", Branch: "main",
+		},
+		// The node's own switch, and what a build reads it as: a written true
+		// (the answer this test converged) and an absent one decide the same
+		// way (imagebake.Decide, Policy.BakesRepos).
+		Map: p.ImageMap, Bake: p.BakeRepos,
+	})
+	if plan.Baked == nil {
+		t.Fatalf("the converged node decides no bake (%s): the map and the switch the one update published are exactly what a build reads for it", plan.Reason)
+	}
 }
 
 // executeConsole runs the command tree with stdout and stderr on ONE writer,
