@@ -9,12 +9,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/ee/ab"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -158,6 +160,61 @@ func (f *abFixture) publishLayer(t *testing.T, yaml string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// judgeVerdictFixture is one pair's outcome in a verdicts object, as A5.2
+// writes it: the pair it decided, the arm the judge took and the word beside it.
+type judgeVerdictFixture struct {
+	PairID string `json:"pair_id"`
+	Winner string `json:"winner,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// judgeVerdictsFixture is a judge run's verdicts object (runstore.VerdictsName):
+// the model that judged every pair in it, and the pairs themselves.
+type judgeVerdictsFixture struct {
+	Version    int                   `json:"version"`
+	JudgeModel string                `json:"judge_model"`
+	Pairs      []judgeVerdictFixture `json:"pairs"`
+}
+
+// seedJudge writes one judge run: the record the read tells a judge run by — the
+// catalog recipe A5.2's step runs — and the verdicts object it left under its
+// own prefix, which is the only place a verdict is written (D559).
+func (f *abFixture) seedJudge(t *testing.T, runID, model string, verdicts ...judgeVerdictFixture) {
+	t.Helper()
+	body, err := json.Marshal(judgeVerdictsFixture{Version: 1, JudgeModel: model, Pairs: verdicts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.seedJudgeRun(t, runID, body)
+}
+
+// seedJudgeRun is seedJudge with the object's own bytes, so a test can leave an
+// object this read cannot open.
+func (f *abFixture) seedJudgeRun(t *testing.T, runID string, body []byte) {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	start, err := runstore.RunTime(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &runstore.Record{
+		RunID: runID, Repo: "acme/app", Status: "succeeded", StartedAt: start,
+		Recipe: &runstore.RecipeRecord{Name: ab.RecipeName, Source: "catalog", SHA256: strings.Repeat("cd", 32)},
+	}
+	store := runstore.Open(b, abAppSlug, runID)
+	if err := store.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.WriteAll(ctx, store.Prefix()+runstore.VerdictsName, body, nil); err != nil {
 		t.Fatal(err)
 	}
 }
