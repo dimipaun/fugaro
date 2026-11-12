@@ -267,7 +267,7 @@ export const BRIDGE_VERSION = 1
  * and D1480 and D1481, and rule 6 carries a row for each) and left the other
  * thirty-two exactly where they were. They are **not in 0.119.0** or 0.120.0 as
  * they shipped: they land with CM4, in the release that carries the managed
- * screens' plan. They sit directly under `coordinator.intents`, the declarations
+ * screens' plan. They sit under `coordinator.intents`, the declarations
  * read, because the three are the same tab's reads of what the project has
  * stored, and **each declares no argument at all**: neither command has a
  * positional word, and the two project flags are main-process state rather than
@@ -311,6 +311,26 @@ export const BRIDGE_VERSION = 1
  * consults no key, licence or server -- and what comes back is a count of
  * people: no string of it is a credential, and the two tables it carries are
  * drawn through the classes `src/shared/sanitize.ts` declares.
+ *
+ * **The dependency-graph plan's GV3.2 added the thirty-ninth** (`roadmap.move` /
+ * `moveRoadmapTask`, the Graph screen's drag: one task of the project's roadmap
+ * record into a release box or out of one) and left the other thirty-eight
+ * exactly where they were. It is **not in 0.119.0** through 0.122.0 as they
+ * shipped: it lands in the release that carries GV3.2. It is this surface's
+ * **third write** (rule 14 of section 5.1, after V2.5.1a's launch and the
+ * settings write of C3) and it sits under `coordinator.intents` with the
+ * project's stored reads, because the record it writes is the one the Graph
+ * draws. Its row is the only place a renderer's own two arguments reach a
+ * command line at all, and they reach it as **ids**: `src/main/ipc.ts` holds
+ * them to the node and release-key grammars, `src/source/cli.ts` admits only the
+ * keys the graph document it read listed (F21), and the three words the CLI
+ * reads are spelled there out of that document -- the qualified `<plan>/<task>`
+ * id, the box's key (or the CLI's `none`) and the release the record holds for
+ * the task, which is GV3.1's compare-and-set. `confirmed` is the operation's
+ * third argument and the fourth on this surface to reach no word of an argv: a
+ * call without it is the move's preview -- the exact command line, and no child
+ * -- and a confirmation is spawned only when its plan builds the line that
+ * preview answered, so what the operator read is what runs.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -437,6 +457,30 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // comes back as a **declaration** -- the string a writer put in its own
   // record -- never as an identity this process establishes.
   ['coordinator.intents', 'coordinatorIntents'],
+  // The record's move (the dependency-graph plan's GV3.2): one task of the
+  // project's roadmap record into a release box, or out of one --
+  // `coordinator roadmap move <plan>/<task> --to <release> --expect <release>
+  // --json`.
+  // It is this surface's **third write**, and the row declares the two keys a
+  // renderer names and nothing else: `node` is the document key of the task it
+  // dragged, `toRelease` is the key of the box it was dropped on (or the empty
+  // string for the unassign), and `confirmed` is the boolean that decides
+  // whether the main process spawns at all -- **the fourth argument on this
+  // surface that reaches no word of any argv** (`graph.watch`'s `visible` is the
+  // third, and the settings write's layer and the licence section's key are the
+  // others). A call without it is the move's **preview**: the exact command line
+  // and the before/after, and no child. A confirmation is spawned only when its
+  // plan builds the line that preview answered (`ROADMAP_MOVE_MOVED`,
+  // `src/source/source.ts`). The words of the command line are the console's:
+  // the task's qualified id and the release the record holds for it come out of
+  // the graph document this process read, the box key is one that document
+  // listed (or the CLI's own `none` for the unassign), and a key no read listed
+  // is refused before a child exists (F21). The write asks for `--json`, so its
+  // answer is the group's outcome document -- the request's id, what the record
+  // did with it (`applied`, `refused`, `failed` or `pending`) and why (contract
+  // §6.24) -- and a screen draws that as a status rather than parsing a
+  // sentence.
+  ['roadmap.move', 'moveRoadmapTask'],
   // The managed state and its audit trail (the managed screens' plan, CM4,
   // D1472 to D1477): `managed status --json`, one project's two marks and
   // whether they agree, plus D1476's bounded subset of the newest audit record.

@@ -498,6 +498,13 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--layer',
   '--dry-run',
   '--yes',
+  // The roadmap move's two (GV3.2), and `roadmap.move`'s argv is the only place
+  // either can appear: `--to` is the release box the task was dropped on (or the
+  // CLI's `none`), and `--expect` is the release the document this installation
+  // last read recorded for it -- the compare-and-set's whole safety (GV3.1),
+  // which no renderer argument and no field of the operation's schema names.
+  '--to',
+  '--expect',
 ])
 
 /** DEFAULT_BACKOFF is the CLI's own stream backoff (`backMin`/`backMax`,
@@ -626,6 +633,21 @@ export interface Backoff {
  * reads every word after that terminator as a value rather than as a flag. It
  * is not `value`: that kind is held to the renderer's own alphabet, which a
  * value carrying a space or a leading dash is not in.
+ *
+ * **`roadmapTask` and `roadmapRelease` are the move's two (GV3.2), and neither
+ * of them emits a word a renderer sent.** A move's caller names two *keys* --
+ * the document key of the card that was dragged and the record's key for the box
+ * it was dropped on -- and the three words the CLI reads (`<plan>/<task>`,
+ * `--to`, `--expect`) are the main process's own, taken from the document those
+ * keys were checked against (`context.roadmapMove`, below). The two kinds exist
+ * for the reason `runIdFlag` and `layerFlag` are columns rather than arguments:
+ * what they spell is a fact of the main process's copy of the document, and a
+ * payload only decides *which* fact -- this node, that box -- among the ids that
+ * document listed. `roadmapTask` emits the document's own `id` for the node as
+ * the bare positional word, `roadmapRelease` emits its row's flag with the box
+ * key or the CLI's own `none` for the unassign, and the row's `expectFlag`
+ * column emits the release the record held, which is the compare-and-set's
+ * whole safety (GV3.1).
  */
 export type SpawnArgumentKind =
   | 'value'
@@ -639,6 +661,8 @@ export type SpawnArgumentKind =
   | 'summarySince'
   | 'settingOp'
   | 'settingValue'
+  | 'roadmapTask'
+  | 'roadmapRelease'
   | 'stdin'
 
 /**
@@ -688,6 +712,13 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   settingKey: 'value',
   settingOp: 'settingOp',
   settingValue: 'settingValue',
+  // The move's two (GV3.2). Both are kinds of their own rather than `value`
+  // because neither emits the caller's string: the task word is the document's
+  // own `id` for the key the payload named, and the release word is that
+  // document's `releases[]` name for it -- a sentence `value` could not spell
+  // and a word no renderer sends.
+  roadmapNode: 'roadmapTask',
+  roadmapRelease: 'roadmapRelease',
   // `licenceKey` is the second kind whose operation spawns nothing
   // (`licence.read`/`licence.save`, S2.7, carry `command: null`), for
   // `gitProvider`'s reason: the mapping is total over ipc.ts's kinds, and
@@ -760,6 +791,17 @@ export interface SpawnCommand {
    * from `argvFor`'s own `settingsEdit`, never from `args`.
    */
   readonly layerFlag?: string
+  /**
+   * `expectFlag` is the flag the move's **compare-and-set** is emitted under,
+   * and it too is present on exactly one row (`roadmap.move`). It is a column
+   * for `runIdFlag`'s reason and one more: its value is the release the document
+   * this installation last read records for the task, so it is a fact of the
+   * main process's copy of the record rather than of any renderer's payload
+   * (GV3.1), and it is emitted from `argvFor`'s own `roadmapMove`, never from
+   * `args`. A move without it is the blind write the compare-and-set exists to
+   * stop -- the CLI refuses one -- so the table cannot build one either.
+   */
+  readonly expectFlag?: string
 }
 
 /**
@@ -945,6 +987,47 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     args: [
       { key: 'source', flag: '--source', kind: 'value' },
       { key: 'visible', flag: null, kind: 'boolean' },
+    ],
+    dirFlag: false,
+  },
+  {
+    // The roadmap record's write (the dependency-graph plan's GV3.2; §5.1 rule
+    // 14): `fugaro coordinator roadmap move <plan>/<task> --to <release|none>
+    // --expect <release|none>`, the call that puts one task of the record into a
+    // release box or takes it out of one.
+    //
+    // **Its whole argv is the main process's, and that is what the two kinds
+    // are for.** Neither declared argument emits the caller's string: the
+    // positional word is the document's own `id` for the node the payload keyed
+    // (`roadmapTask`, `context.roadmapMove.task`), `--to` carries that document's
+    // key for the box -- or the CLI's own `none` when the payload named the
+    // unassign -- and `--expect` carries the release the same document recorded
+    // for the node (the `expectFlag` column, `context.roadmapMove.expect`). A
+    // renderer's two keys are checked against that document in the source before
+    // this row is ever reached (`createBoundSource`), so what reaches this
+    // function is a node key and a box key the last read listed, and every word
+    // is spelled from the record's own copy of them.
+    //
+    // **`confirmed` is declared and emits nothing at all** (`flag: null`, the
+    // way `graph.watch`'s `visible` above is declared): it decides whether the
+    // child runs, not what it is asked, and the preview this operation answers
+    // without it is the same words this row builds.
+    //
+    // **`--json` is a word of the command path**, and the document it prints is
+    // the one the source reads after a move: `coordinatorOutcomeDoc`, the
+    // shape the group's four writes answer with (contract §6.24, §6.25), whose
+    // `status` says whether the record applied, refused, failed or has not yet
+    // reached the request. Without it the command answers in sentences and the
+    // console would be parsing prose for a status; `settings.edit` beside it is
+    // the other case, where the write's answer is a sentence and nothing else.
+    operation: 'roadmap.move',
+    words: ['coordinator', 'roadmap', 'move', '--json'],
+    takesProject: true,
+    expectFlag: '--expect',
+    args: [
+      { key: 'node', flag: null, kind: 'roadmapTask' },
+      { key: 'toRelease', flag: '--to', kind: 'roadmapRelease' },
+      { key: 'confirmed', flag: null, kind: 'boolean' },
     ],
     dirFlag: false,
   },
@@ -1310,6 +1393,72 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
 ] as const satisfies readonly SpawnCommand[])
 
 /**
+ * ROADMAP_MOVE_OPERATION is the roadmap record's write (GV3.2), named here
+ * rather than inline because the surface check below keys off it: the three
+ * words a move spells out of main-process state -- its positional, its `--to`
+ * and its `--expect` -- are one row's, and no other row may declare a kind that
+ * carries one.
+ */
+export const ROADMAP_MOVE_OPERATION = 'roadmap.move'
+
+/**
+ * RoadmapMoveWords is the three words a move spells out of main-process state
+ * (GV3.2): `task` is the document's own `id` for the node the payload keyed,
+ * `to` is the release key the payload named and the empty string for the
+ * unassign, and `expect` is the release the same document recorded for that
+ * node -- the compare-and-set (GV3.1). It is a named type rather than three
+ * repeated object literals because it crosses one seam: `createBoundSource`
+ * reads the three out of the last document it holds and hands them to the
+ * `CliSource` that builds the plan, so the shape the readers agree on is
+ * written once.
+ *
+ * `to` and `expect` carry the **document's** spelling, the empty string for a
+ * task in no box, and `argvFor` is what turns either into the word the command
+ * reads (`ROADMAP_MOVE_NONE`): the translation lives in the module that builds
+ * command lines and nowhere else.
+ */
+export interface RoadmapMoveWords {
+  readonly task: string
+  readonly to: string
+  readonly expect: string
+}
+
+/**
+ * ROADMAP_MOVE_NONE is the word `coordinator roadmap move` names a task the
+ * record holds no assignment for by, in `--to` (the unassign) and in `--expect`
+ * alike (`coordinatorMoveNone`, `ee/coordinator/cli/roadmap_move.go`; D2114).
+ *
+ * **It is spelled here, and the empty string is what it replaces.** A graph
+ * document carries `''` for a task the record places in no box and for the
+ * `release` of a node that belongs to no record at all, and the command carries
+ * `none`; both spellings are the same fact, so the translation is one function
+ * (`roadmapReleaseWord`) in the module that builds command lines. The word is
+ * not imported from the CLI -- a Go constant is not reachable from here -- and
+ * nothing else in this module may spell it, so there is one place to change if
+ * the record's own word ever changes.
+ */
+export const ROADMAP_MOVE_NONE = 'none'
+
+/** roadmapReleaseWord is a document's own value for a release as the word the
+ * command reads: the record's key, or `none` for the empty string. */
+function roadmapReleaseWord(value: string): string {
+  return value === '' ? ROADMAP_MOVE_NONE : value
+}
+
+/** assertMoveWord holds one word a move spells to what an argv element can be at
+ * all: a non-empty value, no NUL, a leading dash and the console's own alphabet
+ * refused by `isSafeArgumentValue`. It is the same rule every `value` case
+ * applies, asked here of a word that came from main-process state rather than
+ * from a payload -- the document is read off a CLI's stdout, so its own fields
+ * are untrusted text like any other, and a task id carrying a newline must be
+ * refused rather than spawned. */
+function assertMoveWord(operation: string, key: string, word: string): void {
+  if (word === '' || word.includes('\u0000') || !isSafeArgumentValue(word)) {
+    refused(`${operation}'s ${key} is not a value this console will pass to the CLI`)
+  }
+}
+
+/**
  * SETTINGS_EDIT_OPERATION is the settings write (C3), and it is named here
  * rather than inline because three things key off it: the phase words below,
  * the `layerFlag` assertion and `assertArgvFlags`'s terminator.
@@ -1555,6 +1704,15 @@ export function argvFor(
      * layer and the `--yes` are the two words a renderer must not be able to
      * choose (D1105, D1107). */
     readonly settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string } | undefined
+    /** `roadmapMove` is the move's own three words (GV3.2): the document's `id`
+     * for the node the payload keyed, the release key the payload named (or the
+     * CLI's `none` for the unassign), and the release the same document recorded
+     * for that node. All three are required by the one row that declares the two
+     * roadmap kinds and refused by every other row, for `runId`'s reason -- and
+     * one turn further: the move's caller names two *ids* and no word of the
+     * command line at all, so the three words here are the whole of what a
+     * renderer could otherwise have spelled. */
+    readonly roadmapMove?: RoadmapMoveWords | undefined
   },
 ): readonly string[] {
   const row = spawnCommandFor(operation)
@@ -1711,6 +1869,39 @@ export function argvFor(
         argv.push(value)
         break
       }
+      case 'roadmapTask': {
+        // The document's own `id` for the node the payload keyed: the bare
+        // positional word `<plan>/<task>` the command reads (D2111). **The
+        // payload's own value is not emitted** -- it is the node's document key,
+        // which named *which* task this is and is refused if the last read did
+        // not list it -- so the word here is main-process state and the caller
+        // cannot spell a task into an argv.
+        if (typeof value !== 'string') refused(`${operation}'s ${spec.key} is not a string`)
+        const move = context.roadmapMove
+        if (move === undefined) {
+          refused(`${operation} has no move to spell: only the record's own row carries one`)
+        }
+        assertMoveWord(operation, spec.key, move.task)
+        argv.push(move.task)
+        break
+      }
+      case 'roadmapRelease': {
+        // `--to <release key>` or `--to none`, and again the payload's value is
+        // not the word: the key it sent was checked against the document's own
+        // `releases[]`, and what is emitted is that document's key for the box
+        // -- or the CLI's own word for the unassign, which is the console's
+        // spelling of the empty string the caller sent (`ROADMAP_MOVE_NONE`).
+        if (typeof value !== 'string') refused(`${operation}'s ${spec.key} is not a string`)
+        const move = context.roadmapMove
+        if (move === undefined) {
+          refused(`${operation} has no move to spell: only the record's own row carries one`)
+        }
+        const word = roadmapReleaseWord(move.to)
+        assertMoveWord(operation, spec.key, word)
+        if (spec.flag !== null) argv.push(spec.flag)
+        argv.push(word)
+        break
+      }
       case 'settingValue': {
         // The operator's new value, and the one argument of this console that
         // is passed behind the terminator -- so it emits no word here and is
@@ -1733,6 +1924,25 @@ export function argvFor(
         break
       }
     }
+  }
+
+  // The move's compare-and-set, emitted from the main process's own copy of the
+  // record after the row's declared arguments and before the installation's
+  // flags -- the order §5.1 rule 14 writes. It is the one word of a move a
+  // renderer must not be able to state: it is the release the document this
+  // installation last read recorded for the task, and a move that named it
+  // wrongly would overwrite somebody else's move rather than be refused by the
+  // record (GV3.1).
+  if (row.expectFlag !== undefined) {
+    const move = context.roadmapMove
+    if (move === undefined) {
+      refused(`${operation} needs the release the record holds for this task: only the main process knows it`)
+    }
+    const word = roadmapReleaseWord(move.expect)
+    assertMoveWord(operation, row.expectFlag, word)
+    argv.push(row.expectFlag, word)
+  } else if (context.roadmapMove !== undefined) {
+    refused(`${operation} takes no move: only the record's own row carries one`)
   }
 
   if (row.layerFlag !== undefined) {
@@ -1857,6 +2067,8 @@ function emitsArgvWord(spec: SpawnArgument, value: ValidatedArgument): boolean {
     case 'planTask':
     case 'settingOp':
     case 'settingValue':
+    case 'roadmapTask':
+    case 'roadmapRelease':
       return true
   }
 }
@@ -2216,6 +2428,28 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
       if (!SPAWN_FLAGS.includes(row.layerFlag)) {
         refused(`${row.operation} would emit ${row.layerFlag}, which is not a flag this console may spawn`)
       }
+    }
+    // The move's two kinds and its compare-and-set column, held the same way:
+    // all three belong to the record's own row and to no other, and the flag is
+    // one this module may spawn. The three are asserted together because they
+    // are one thing -- the command line a move is, whose every word apart from
+    // the flag names comes from the document the main process read.
+    const moves = row.args.filter(
+      (spec) => spec.kind === 'roadmapTask' || spec.kind === 'roadmapRelease',
+    )
+    const isMove = row.operation === ROADMAP_MOVE_OPERATION
+    if ((moves.length > 0) !== isMove) {
+      refused(
+        `${row.operation} ${moves.length > 0 ? 'spells a word of a move' : 'declares no move argument'}: only the record's own row builds a move`,
+      )
+    }
+    if ((row.expectFlag !== undefined) !== isMove) {
+      refused(
+        `${row.operation} ${row.expectFlag === undefined ? 'has no compare-and-set' : 'carries a compare-and-set'}: only the record's own row has one`,
+      )
+    }
+    if (row.expectFlag !== undefined && !SPAWN_FLAGS.includes(row.expectFlag)) {
+      refused(`${row.operation} would emit ${row.expectFlag}, which is not a flag this console may spawn`)
     }
     const terminates = row.args.some((spec) => spec.kind === 'settingValue')
     if (terminates !== (row.operation === SETTINGS_EDIT_OPERATION)) {
@@ -3436,6 +3670,13 @@ export function planFor(
      * from every other row's, and it is the **only** way a layer or a phase
      * reaches an argv. */
     readonly settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string } | undefined
+    /** `roadmapMove` is the move's own three words (`argvFor`'s
+     * `context.roadmapMove`), for `runId`'s reason: it is present on
+     * `roadmap.move`'s plan -- the preview's and the write's alike, since they
+     * are one plan built twice -- and absent from every other row's, and it is
+     * the only way a task id, a release key or an expected release reaches an
+     * argv. */
+    readonly roadmapMove?: RoadmapMoveWords | undefined
     /** `licenceKey` is the installation's key, already read from the console's
      * store for this spawn (`LicenceStore.keyFor`), or absent when it has none.
      * It is a value rather than a reader so this function stays a pure assembler
@@ -3451,6 +3692,7 @@ export function planFor(
       directory: wsl.directory,
       runId: context.runId,
       settingsEdit: context.settingsEdit,
+      roadmapMove: context.roadmapMove,
     })
     // Both rules of this route, and both before a process exists: the words the
     // distribution's shell would read as syntax, and the paths spelled for the
@@ -3514,6 +3756,7 @@ export function planFor(
     directory: context.directory,
     runId: context.runId,
     settingsEdit: context.settingsEdit,
+    roadmapMove: context.roadmapMove,
   })
   return Object.freeze({
     operation,

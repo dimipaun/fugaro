@@ -259,6 +259,58 @@ const GRAPH_SCOPE_RE = /^(?:all|coordinator|(?:orchestrator|local):[a-z0-9][a-z0
 export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 40
 
 /**
+ * ROADMAP_NODE_RE is the shape of the **document key** a move names: the
+ * `<source>:<id>` a graph document's `nodes[].key` is (contract §6.22), which is
+ * the identity the drawing carries on every row and the one value a renderer
+ * may name a task of the record by.
+ *
+ * It is a *shape* and not an identity: no pattern could say whether a node of
+ * that spelling exists, and this one deliberately does not try -- the id of a
+ * local scope's own key carries a colon of its own (`local:o1:t-042`), so a
+ * grammar that took a key apart would refuse a key the document wrote. Whether
+ * the node exists is the **source's** question, asked of the last document this
+ * installation read (`createBoundSource`'s move, the graph read's own F21 rule):
+ * a key no answer listed is refused before a child exists and before any word of
+ * an argv is built.
+ *
+ * What the pattern is for is the other half: a key that could never be one, so a
+ * payload cannot make this process carry a path, a newline or a megabyte into a
+ * refusal sentence. It is `isSafeArgumentValue`'s alphabet (`src/main/spawn.ts`)
+ * with the length bound of its own, even though no node key ever reaches argv --
+ * the value a node key reaches is the document's own `id`, and that one is
+ * emitted from main-process state.
+ */
+const ROADMAP_NODE_RE = /^[A-Za-z0-9._:@/+-]{1,300}$/
+
+/** MAX_ROADMAP_NODE_LENGTH is the length `ROADMAP_NODE_RE` admits, read out
+ * here so the check that runs before the grammar and the pattern it feeds cannot
+ * disagree about where a key ends. */
+const MAX_ROADMAP_NODE_LENGTH = 300
+
+/**
+ * ROADMAP_RELEASE_RE is the shape of the release a move names: **the record's
+ * own key for a release box**, or the empty string for "the record holds no
+ * assignment for this task" (D2114's `none`).
+ *
+ * The key is opaque: `coordinator.ReleaseID` builds it as a hash (`ee/graph`),
+ * so this is the only thing a renderer's value can be checked against here --
+ * and, as above, it is not an identity. Membership is the source's, taken from
+ * the `releases[]` of the document this installation last read.
+ *
+ * **The empty string is the unassign and not an absent argument.** A missing
+ * `toRelease` is refused by the schema (the field is required), so the two
+ * readings cannot be confused, and the word the empty string becomes is the
+ * CLI's own `none` -- spelled by the main process (`spawn.ts`), never by a
+ * renderer.
+ */
+const ROADMAP_RELEASE_RE = /^(?:[0-9a-f]{64})?$/
+
+/** MAX_ROADMAP_RELEASE_LENGTH is the length of one release key: the record
+ * builds it as a sha-256 hex digest (`coordinator.ReleaseID`), so 64 is the
+ * pattern's own bound and, in `kindLimit`, the bound the check runs first. */
+const MAX_ROADMAP_RELEASE_LENGTH = 64
+
+/**
  * ArgumentKind is the closed set of things an operation's argument may be. Every
  * kind is a value the CLI's own flags already accept *in that position*, and
  * none of them is a path, a command, a flag name or a free-form string: a
@@ -406,6 +458,8 @@ export type ArgumentKind =
   | 'settingKey'
   | 'settingValue'
   | 'graphSource'
+  | 'roadmapNode'
+  | 'roadmapRelease'
   | 'licenceKey'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
@@ -1607,6 +1661,63 @@ export const CONSOLE_OPERATIONS = [
     flags: ['--all', '--json'],
     summary: 'what the fleet’s writers have declared, newest first',
     args: [],
+  },
+  // The roadmap record's one write (the dependency-graph plan's GV3.2; the
+  // console's third write, after rule 11's launch and rule 12's settings edit):
+  // `fugaro coordinator roadmap move <plan>/<task> --to <release|none> --json`,
+  // the call that puts a task of the record into a release box or takes it out
+  // of one.
+  //
+  // **A renderer names two keys and no word of the command line.** `node` is the
+  // document key of the card that was dragged (`coordinator:plans/x/T1`) and
+  // `toRelease` is the record's own key for the box it was dropped on, or the
+  // empty string for "no release" -- both **ids the last graph read printed**,
+  // and both checked against that document in the source before anything is
+  // built (`createBoundSource`'s move, on F21's terms). The three words the CLI
+  // reads are the main process's own: the task word is the document's `id` for
+  // the node that key names, `--to` is the key the box was named by (or the
+  // CLI's `none`), and `--expect` is the `release` the same document recorded
+  // for that node -- the compare-and-set's whole safety (GV3.1), which a
+  // renderer must not be able to state.
+  //
+  // **`confirmed` is the one argument of this table that reaches no word of any
+  // argv** (`src/main/spawn.ts`'s row declares it with `flag: null`, exactly as
+  // `graph.watch`'s `visible` is declared), and it is what makes one operation
+  // do the two halves of a confirmed write: without it the answer is the move's
+  // **preview** -- the exact argv, the task and the two boxes, and no child --
+  // and with it the child runs, refused if the argv the preview drew is not the
+  // one this call builds (the record moved under the confirmation). The
+  // preview is the same operation rather than a second one because the two
+  // answers must be the same words: a table where a screen asked one row for the
+  // command line and another to run it could be shown one argv and spawn
+  // another, and no test could tell.
+  {
+    name: 'roadmap.move',
+    method: 'moveRoadmapTask',
+    command: 'coordinator roadmap move',
+    flags: ['--json'],
+    summary: 'one task of the record into a release, or out of one',
+    refusedAfterLapse: true,
+    args: [
+      {
+        key: 'node',
+        kind: 'roadmapNode',
+        required: true,
+        why: 'the document key of the task the operator dragged: the `nodes[].key` of the graph document this installation last read, which is what the drawing puts on the row (`data-key`, `src/renderer/screens/graph.ts`). It is an **id and not a word**: the positional the CLI reads is the document’s own `id` for the node this key names, emitted by the main process out of the document it checked the key against, so a renderer cannot name a task the record does not hold and cannot spell one either. The kind’s own pattern keeps a payload from carrying something no key could be.',
+      },
+      {
+        key: 'toRelease',
+        kind: 'roadmapRelease',
+        required: true,
+        why: 'the record’s key for the release box the task was dropped on -- a `releases[].key` of the same document -- or the empty string for the unassign, which is the operator dropping a task out of every release (D2114). It is required rather than optional because the two readings must not be confusable: an absent argument would be "the caller said nothing", and the empty string is "the record holds no assignment for this task", which is a value a caller who read the document may state. The word behind `--to` is the main process’s spelling of it (`none` for the empty string), so the record’s own word never comes from a renderer.',
+      },
+      {
+        key: 'confirmed',
+        kind: 'flag',
+        required: false,
+        why: '**the one argument on this surface that reaches no word of any argv**: it decides whether the child runs at all, which is what makes this operation answer a preview and a write both. A caller that leaves it out (or sends `false`) is answered the move’s own command line, the task and the two boxes, and no child is spawned; `true` runs it, and only if the argv this process builds is the argv the preview drew. It is the launch’s `visible` argument read the other way round -- there `false` stops a feed, here `true` is the write -- and it is `false` by default for the same reason Cancel is the focused button of a confirmation: the state a caller reaches by forgetting is the one that writes nothing.',
+      },
+    ],
   },
   // The Project tab's managed state and its audit trail (the managed screens'
   // plan, CM4; D1472 to D1477, and rule 6 carries its row). It is the console's
@@ -2880,6 +2991,27 @@ function validateValue(
         )
       }
       return { ok: true, value }
+    case 'roadmapNode':
+      // The node a move is about, named by the key the drawing carries. **The
+      // two words of the move's argv are not this value** -- the task word is
+      // the document's own `id` and the `--expect` word is the node's own
+      // `release`, both read out of main-process state (`spawn.ts`) -- so what
+      // this check does is keep a payload from carrying something a key could
+      // not be, and the identity is the source's question, asked of the last
+      // document this installation read.
+      if (!ROADMAP_NODE_RE.test(value)) {
+        return refuse(`${spec.key} must be a node key of the graph the console last read`)
+      }
+      return { ok: true, value }
+    case 'roadmapRelease':
+      // The release box the task is moved into, or the empty string for the
+      // unassign. The key is the record's own opaque id, so this is the whole
+      // of what a shape can say about it; that the box is one the document held
+      // is the source's check.
+      if (!ROADMAP_RELEASE_RE.test(value)) {
+        return refuse(`${spec.key} must be a release key of the record, or empty for no release`)
+      }
+      return { ok: true, value }
     case 'link': {
       const decision = validateExternalUrl(value)
       if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
@@ -3073,6 +3205,14 @@ function kindLimit(kind: ArgumentKind): number {
     // so the grammar never runs on a string longer than one it could accept.
     case 'graphSource':
       return MAX_GRAPH_SCOPE_LENGTH
+    // The move's two (GV3.2): the longest node key `ROADMAP_NODE_RE` admits, and
+    // the length of a release key -- the empty string is the unassign, so a
+    // bound of 64 is the pattern's own longest value and not a bound a shorter
+    // word could be refused by.
+    case 'roadmapNode':
+      return MAX_ROADMAP_NODE_LENGTH
+    case 'roadmapRelease':
+      return MAX_ROADMAP_RELEASE_LENGTH
     default:
       return 0
   }
