@@ -86,7 +86,7 @@ func TestRunRefusesTheSecurityRequestOnAnOlderBaseImage(t *testing.T) {
 				"knows " + securityRequestKnows,
 				"fugaro " + securityRequestSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%v lacks %q", err, want)
@@ -205,7 +205,7 @@ func TestRunRefusesTheLayersSecurityRequestOnAnOlderBaseImage(t *testing.T) {
 				"knows " + securitySwitchKnows,
 				"fugaro " + securityRequestSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+				imageGateRemedy,
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%v lacks %q", err, want)
