@@ -1499,6 +1499,16 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// argument an operation's schema fills -- the window is the command's
 		// own and no word of it reaches a renderer.
 		"seats --json --project <name> [--config <path>]",
+		// The Members view's read (the roles-and-scopes plan's RS7, the
+		// `members.list` operation, roles.md D691(b)): the installation's
+		// grants as `fugaro user ls --json` prints them, and — with `--repo R`
+		// — the role each person holds in one repository. Read-only in the
+		// strongest sense this table can state: the two commands that change a
+		// roster, `user grant` and `user revoke`, are on the never table below.
+		// `--repo` is the operation's one argument and it is optional, so the
+		// row spells the command's own argv with the argument the schema fills
+		// and the two project flags every cloud read carries (rule 3).
+		"user ls --json --repo R --project <name> [--config <path>]",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
 		// the console's first write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
