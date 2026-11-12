@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -106,6 +107,28 @@ type Config struct {
 	MaxRepositories int
 	// Throttle is the intake's rate (§7.2).
 	Throttle Limits
+	// AdminAccount is the one account the admin page answers to: the project
+	// owner's (§6, D455). There is exactly one Licensor, so this is one account
+	// and never a list.
+	AdminAccount string
+	// AdminSecret is what the page's tokens are signed with (§6's CSRF row). It
+	// is the deploy's, and it is what makes a token unforgeable: with it, a page
+	// the owner visits cannot mint, because nothing else can render a token this
+	// service accepts.
+	AdminSecret []byte
+	// AdminTokenTTL is how long a rendered form stays submittable. It is short,
+	// because the token is bound to one account and one action and there is no
+	// reason for a page opened this morning to still be good this evening.
+	AdminTokenTTL time.Duration
+	// MintCaps are D454's per-tier caps, one per tier a key can be issued for.
+	// They are configuration and the numbers are the owner's; a tier the deploy
+	// does not cap is not capped, which is why New refuses a deployment that
+	// leaves one out rather than running one tier unlimited.
+	MintCaps map[string]Limits
+	// PagePlans are the plans only the page reaches (§5.5's Enterprise keys).
+	// They are here rather than in Paid because a merchant event's plan is the
+	// event's and this one is an Order Form's.
+	PagePlans []Plan
 }
 
 // Deps is everything the intake reaches. There is no signer here and there is
@@ -120,7 +143,22 @@ type Deps struct {
 	// refuses the open-source programme rather than treating a public
 	// repository as proof of who is asking (§4.4).
 	Proofs Proofs
-	Now    func() time.Time
+	// Owner is the project's own identity, which is what the admin page reads to
+	// find the account a request is signed in as (§6).
+	Owner Owner
+	// StepUp may be nil: **D455 is open**, and a service with no second factor
+	// mints nothing from the page and renders it read-only rather than trusting
+	// a session alone (§6).
+	StepUp StepUp
+	// Notifier tells the owner a request is in the queue (§4.5). It is not the
+	// applicant's mail path and it is not optional: a queue nobody is told about
+	// is one nobody reads.
+	Notifier Notifier
+	// Auditor may be nil: **D456 is open**, and with none the audit line goes to
+	// the process's own log, which is the project's log sink as far as this
+	// package can express one (§6).
+	Auditor Auditor
+	Now     func() time.Time
 }
 
 // Service is the intake.
@@ -133,8 +171,25 @@ type Service struct {
 	mail       Mailer
 	host       CodeHost
 	proofs     Proofs
+	signedIn   Owner
+	stepUp     StepUp
+	alerts     Notifier
+	auditor    Auditor
 	now        func() time.Time
 	limiter    *throttle
+	// pageMu is the page's actions one at a time. A minting action is a count,
+	// an audit line and a key, and the count reads the record the key writes:
+	// two of them in flight together would each count a record that does not
+	// hold the other's key yet, which is D454's cap minted past and one
+	// approval minted twice over a source the store was asked about too early
+	// (TestConcurrentMintsRespectTheCap, TestConcurrentApprovalsMintOnce).
+	//
+	// It is the page's and not the intake's: §5.1's events are idempotent by
+	// their own ids in the store, and the page is one person clicking. What a
+	// lock in one process cannot reach is a second process, whose record is its
+	// own until the store is a service — which is the store that reserves a
+	// source (mint's own comment, §5.2).
+	pageMu sync.Mutex
 }
 
 // New builds the intake. Everything it refuses here is a deployment that would
@@ -182,6 +237,43 @@ func New(cfg Config, deps Deps) (*Service, error) {
 			return nil, fmt.Errorf("the intake is configured to read repositories from %q, and a host is a name and not a URL", host)
 		}
 	}
+	if strings.TrimSpace(cfg.AdminAccount) == "" {
+		return nil, errors.New("the admin page has no account, and the page mints any key for any tier: the one account it answers to is the deploy's to name (D455)")
+	}
+	if len(cfg.AdminSecret) < minAdminSecret {
+		return nil, fmt.Errorf("the admin page's token secret is %d byte(s), and a secret that short is one the page's own tokens can be forged with", len(cfg.AdminSecret))
+	}
+	if cfg.AdminTokenTTL <= 0 {
+		return nil, errors.New("the admin page's forms have no life, and a form rendered once would stay submittable for ever")
+	}
+	if len(cfg.PagePlans) == 0 {
+		return nil, errors.New("the admin page has no plan of its own, so it could mint nothing the site's forms cannot (§5.5)")
+	}
+	named := map[string]bool{}
+	for _, plan := range []Plan{*cfg.FreeSeat, *cfg.OpenSource, cfg.Paid} {
+		named[plan.Name] = true
+	}
+	for _, plan := range cfg.PagePlans {
+		if strings.TrimSpace(plan.Name) == "" {
+			return nil, errors.New("a plan with no name is one a record cannot name")
+		}
+		if named[plan.Name] {
+			return nil, fmt.Errorf("the admin page's plan %q is a name one of the site's forms already mints under, and a name two plans share is one a record reads wrongly", plan.Name)
+		}
+		named[plan.Name] = true
+		if _, known := tierMaxTerm[plan.Tier]; !known {
+			return nil, fmt.Errorf("the plan %q names the tier %q, which is not one a key can be issued for", plan.Name, plan.Tier)
+		}
+	}
+	for tier := range tierMaxTerm {
+		cap, capped := cfg.MintCaps[tier]
+		if !capped {
+			return nil, fmt.Errorf("the admin page has no mint cap for the tier %q, and a page that mints any key for any tier with a tier left uncapped is one session away from draining the key ring's authority (D454)", tier)
+		}
+		if cap.Requests < 1 || cap.Window <= 0 {
+			return nil, fmt.Errorf("the mint cap for %q is %d mint(s) per %s: a cap the deploy names, and a cap of none is not a limit", tier, cap.Requests, cap.Window)
+		}
+	}
 	switch {
 	case deps.Store == nil:
 		return nil, errors.New("the intake has no store, so it can neither remember a mint nor tell a redelivery from a first one")
@@ -191,6 +283,10 @@ func New(cfg Config, deps Deps) (*Service, error) {
 		return nil, errors.New("the intake has no mail path, and an unverified application is no application")
 	case deps.CodeHost == nil:
 		return nil, errors.New("the intake cannot read a code host, so the open-source check can read no repository")
+	case deps.Owner == nil:
+		return nil, errors.New("the intake has no identity to read, so the admin page could not tell the owner from anyone else")
+	case deps.Notifier == nil:
+		return nil, errors.New("the intake has no notifier, so a queued request would wait for an owner who is never told")
 	}
 	now := deps.Now
 	if now == nil {
@@ -210,14 +306,19 @@ func New(cfg Config, deps Deps) (*Service, error) {
 		mail:       deps.Mailer,
 		host:       deps.CodeHost,
 		proofs:     deps.Proofs,
+		signedIn:   deps.Owner,
+		stepUp:     deps.StepUp,
+		alerts:     deps.Notifier,
+		auditor:    deps.Auditor,
 		now:        now,
 		limiter:    limiter,
 	}, nil
 }
 
-// Handler serves the intake. The methods are part of the routes: the three
+// Handler serves the intake. The methods are part of its routes: the three
 // forms are POSTs because an application carries an address, and the
-// verification link is a GET because it is a link in a mail.
+// verification link is a GET because it is a link in a mail. The page below is
+// the one surface whose routes carry none.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+RouteFreeSeat, s.freeSeatForm)
@@ -225,6 +326,14 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST "+RouteRequest, s.requestForm)
 	mux.HandleFunc("GET "+RouteVerify, s.verifyLink)
 	mux.HandleFunc("POST "+RouteWebhook, s.webhook)
+	// §6's page: where the queue is read and where the owner's key is minted.
+	// The patterns carry no method, and the exact one beside the subtree is
+	// what keeps the mux from answering a bare /admin with a redirect to
+	// /admin/ before anything is asked: the account is asked before the route
+	// is chosen, so nothing here tells a stranger the page exists
+	// (adminSurface).
+	mux.HandleFunc(RouteAdmin, s.adminSurface)
+	mux.HandleFunc(RouteAdmin+"/", s.adminSurface)
 	return mux
 }
 
@@ -258,7 +367,7 @@ func (s *Service) freeSeatForm(w http.ResponseWriter, r *http.Request) {
 			fail(w, err)
 			return
 		}
-		if err := s.store.SaveApplication(ctx, Application{
+		if err := s.enqueue(ctx, Application{
 			ID:     id,
 			Plan:   s.freeSeat.Name,
 			Email:  email,
@@ -350,7 +459,7 @@ func (s *Service) requestForm(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if err := s.store.SaveApplication(r.Context(), Application{
+	if err := s.enqueue(r.Context(), Application{
 		ID:     id,
 		Email:  email,
 		Domain: domain,
