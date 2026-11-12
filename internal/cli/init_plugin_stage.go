@@ -77,7 +77,7 @@ func (*pluginStage) Name() string { return initflow.Plugin }
 // instead of leaving it for the user (initflow.LocalUnderAgent), because every
 // write it makes is on this machine — the plugin in the user's own Claude Code
 // through the claude CLI — and that is the write the user's own session makes
-// with fugaro upgrade, on files it reads anyway.
+// with the converge, on files it reads anyway.
 func (*pluginStage) LocalUnderAgent() {}
 
 func (s *pluginStage) Left() initflow.Left {

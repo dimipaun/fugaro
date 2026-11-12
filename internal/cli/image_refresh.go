@@ -51,13 +51,13 @@ type refreshOptions struct {
 	// dir is the checkout to refresh ("" is the working directory).
 	dir string
 	// rerun, when set, is the whole line a stop names instead of again()
-	// (fugaro upgrade's own, which already names the checkout). It is
+	// (the caller's own, which already names the checkout). It is
 	// printed as it is: the caller must quote every word with quoteWord
 	// (and sanitise what it builds from), as again() does.
 	rerun string
 	// onPlan, when set, sees the plan once preflight is done, before
 	// anything changes. It is READ-ONLY and gets a copy (refreshPlan.snapshot):
-	// changing it changes nothing about the run (fugaro upgrade only needs
+	// changing it changes nothing about the run (the caller only needs
 	// current()). It fires BEFORE installOptions, which can still fail at
 	// step 1, so a caller must take the final state from the error runImageRefresh
 	// returns, never from the hook alone.
@@ -484,8 +484,8 @@ var refreshStepNames = []string{"preflight", "base", "check job", "builds"}
 
 // refreshStopped is decision D12: the step's own error and exit code, which
 // steps finished, and the line to rerun (every flag kept: o.rerunLine). A
-// rerun line from fugaro upgrade already names the checkout, so no "in this
-// checkout" follows it.
+// rerun line a caller passes in (the converge's checkout stage) already names
+// the checkout, so no "in this checkout" follows it.
 func refreshStopped(step int, done []string, o refreshOptions, err error) error {
 	var as *refusedAsIs
 	if errors.As(err, &as) {
@@ -521,8 +521,8 @@ var refreshStepLines = []struct{ name, header string }{
 // refreshStep is one of steps 2 to 4 as one run prints it. A refresh this
 // command owns (refreshOptions.out is nil) prints the reporter's step: one
 // line, at the step's end, and nothing else on the default view (D1354). A
-// refresh a caller drives — the converge's checkout stage, fugaro upgrade's
-// cloud step — prints the header line it has always printed: that run owns the
+// refresh a caller drives — the converge's checkout stage, through the cloud
+// step — prints the header line it has always printed: that run owns the
 // screen and has an account of its own, this refresh is one stage of it, and
 // its reporter is the caller's (CL5b), so no second account is opened beside
 // it.

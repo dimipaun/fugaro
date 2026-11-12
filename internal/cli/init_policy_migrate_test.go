@@ -73,7 +73,7 @@ func (h *migrationRig) apply(t *testing.T, yes bool) (string, error) {
 // managedGate makes the rig's run one whose project reads as managed: the
 // answer initGate.underway gives, which is the reading the rest of init makes
 // for "is this project managed" and the one the in-flight guard takes (the
-// update door passes it; `fugaro upgrade` has no gate and passes false).
+// update door passes it; a caller under no gate passes false).
 func (h *migrationRig) managedGate() *migrationRig {
 	h.s.e.r.gate = &initGate{managed: true}
 	return h

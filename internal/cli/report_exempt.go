@@ -25,9 +25,9 @@ package cli
 //   - exemptAnswers: everything else, and each reason says which of two things
 //     it is. Most print one answer — a code, a path, a preview, a help screen,
 //     a live screen — and there is no run to give an account of. Some print an
-//     account of their own, by hand: `upgrade` prints a block per checkout and
-//     a summary under it, `project sync` and `workspace add` print what they
-//     wrote. Those are the migration's remaining work rather than a design
+//     account of their own, by hand: `project sync` and `workspace add` print
+//     what they wrote. Those are the migration's remaining work rather than a
+//     design
 //     decision, and they are listed here with the reason saying so rather than
 //     called listings, which they are not.
 //
@@ -257,7 +257,6 @@ var exemptAnswers = map[string]string{
 	"settings unset":         "removes one setting from one of the three documents, and prints the row it dropped",
 	"stats runs":             "publishes per-recipe percentiles over a window, and prints the numbers it published",
 	"update-skills":          "pins the Fugaro plugin in the checkout's .claude/settings.json, and prints the pin",
-	"upgrade":                "brings checkouts up, printing its own account of each by hand rather than through the reporter",
 	"user add":               "adds one person to the installation's launchers or operators, and prints the entry",
 	"user grant":             "grants one person a role at a scope in the installation's grants node, and prints the pair it stored",
 	"user revoke":            "takes one role and scope pair away from one person, and prints the pair it dropped",

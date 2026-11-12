@@ -513,7 +513,6 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro troubleshoot":  "refuses from inside its body: this world's machine has logged no failed command, and a bare run takes the newest one",
 	"fugaro update":        "refuses on this world's runs bucket name before its first stage",
 	"fugaro update-skills": "reports that a development build has no release to pin the plugin to",
-	"fugaro upgrade":       "skips every step: a development build has no release to pin or install",
 	"fugaro user ls":       "prints the no-project-config refusal",
 	"fugaro validate":      "refuses with no fugaro.yaml in the world",
 	"fugaro version":       "prints the version",

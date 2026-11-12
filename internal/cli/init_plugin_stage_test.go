@@ -146,7 +146,7 @@ func TestPluginStageWritesNoSettingsFile(t *testing.T) {
 }
 
 // The stage installs the plugin in Claude Code at user scope through the claude
-// CLI: fugaro upgrade's own plugin step, whose fixed calls are the whole of what
+// CLI: the converge's own plugin step, whose fixed calls are the whole of what
 // this stage runs. A second run finds the marketplace and the install where the
 // first left them and has nothing to do.
 func TestInitPluginStageInstallsInClaudeCode(t *testing.T) {

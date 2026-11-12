@@ -39,6 +39,55 @@ func stubCurrentRefresh(t *testing.T, r *anchorModeRig) {
 	putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.5.1"))
 }
 
+// runCloudStep is the cloud step itself, which is what most of the cases below
+// are about: U4 of docs/plugin-user-scope/implementation-plan.md retires
+// `fugaro update` and the step answers to the converge's checkout stage now
+// (init_checkout_upgrade.go), so they drive it the way the stage does — the
+// door's own command and flags (newUpdateCmdWith, so a flag a case passes is
+// read exactly as the door reads it), the step context the engine builds for it
+// (stepCtx), the step's own line (printStep) and the exit a failed step gives
+// the run. What went with the command is the loop over several paths, the
+// per-checkout summary and the checkout's own "nothing to do" line: `fugaro
+// update` onboards one repository, and the mode that answers read-only is
+// `fugaro update --check`, which the cases that are about that mode go through.
+func runCloudStep(t *testing.T, args ...string) (string, string, error) {
+	t.Helper()
+	out, errOut := &syncBuf{}, &syncBuf{}
+	o := &initOptions{}
+	cmd := newUpdateCmdWith(o)
+	cmd.SetContext(context.Background())
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+	if err := cmd.ParseFlags(args); err != nil {
+		t.Fatalf("fugaro update %q: %v", args, err)
+	}
+	path := "."
+	if rest := cmd.Flags().Args(); len(rest) > 0 {
+		path = rest[0]
+	}
+	loc, ok := pluginwire.Locate(path)
+	if !ok {
+		t.Fatalf("%s is not in a checkout, so there is no checkout for the step to run on", path)
+	}
+	u := &stepCtx{cmd: cmd, w: out, loc: loc,
+		o: stepOptions{yes: o.yes, refresh: refreshOptions{
+			imageSource: o.imageSource, expectDigests: o.expectDigests, cloud: o.cloud,
+			in: cmd.InOrStdin(), out: out}},
+		agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))}
+	r := cloudStep(context.Background(), u)
+	r.name = "cloud"
+	printStep(out, r)
+	if r.state != stepFailed {
+		return out.String(), errOut.String(), nil
+	}
+	code := r.code
+	if code == 0 {
+		code = ExitUserError
+	}
+	return out.String(), errOut.String(), &ExitError{Code: code, Err: errors.New(r.reason)}
+}
+
 // upgradeRigWithGitHubAppID is upgradeRig with acme/app's github_app_id set
 // and the runs bucket switched to a file:// directory of the test's own,
 // carrying the installation's project marker. Every other upgrade test
@@ -119,7 +168,7 @@ func TestUpgradeCloudReportsStaleJobConfigCopy(t *testing.T) {
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -159,7 +208,7 @@ func TestUpgradeNoteSaysTheEnvCopyIsInert(t *testing.T) {
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -228,7 +277,7 @@ func TestUpgradeNoteNamesTheMountCase(t *testing.T) {
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -260,7 +309,7 @@ func TestUpgradeNoteSaysWhatNeedsNoRerun(t *testing.T) {
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -294,7 +343,7 @@ func TestUpgradeNoteNamesTheMountCaseWithNothingElseStale(t *testing.T) {
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil) // exactly what this local config writes now
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -328,7 +377,7 @@ func TestUpgradeCloudStaleJobConfigNoteNeverLeaksAValue(t *testing.T) {
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -367,7 +416,7 @@ func TestUpgradeCloudCopyNoteNeverReadsTheCloudUnderCheckOrAgent(t *testing.T) {
 		r.appendConfig(t, providersConfig)
 		stubCurrentRefresh(t, r)
 		setJobConfigCopyEnv(t, r, "api", nil)
-		out, _, err := executeStdin(t, "", "upgrade", "--check")
+		out, _, err := executeStdin(t, "", "update", "--check")
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit %d\n%s", ExitCode(err), out)
 		}
@@ -384,7 +433,7 @@ func TestUpgradeCloudCopyNoteNeverReadsTheCloudUnderCheckOrAgent(t *testing.T) {
 		stubCurrentRefresh(t, r)
 		setJobConfigCopyEnv(t, r, "api", nil)
 		t.Setenv("CLAUDECODE", "1")
-		out, _, err := executeStdin(t, "", "upgrade")
+		out, _, err := runCloudStep(t)
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -412,7 +461,7 @@ func TestUpgradeCloudReportsStaleBudgetConfigCopy(t *testing.T) {
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil) // no budget on the job's copy
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -445,7 +494,7 @@ func TestUpgradeCloudReportsStaleBudgetConfigCopy(t *testing.T) {
 func TestUpgradeCloudCheckCaveatFiresEvenWithAnEmptyLocalConfig(t *testing.T) {
 	r, _ := upgradeRig(t) // refreshYAML's local config sets no providers, model_prices or budget at all
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--check")
+	out, _, err := executeStdin(t, "", "update", "--check")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d\n%s", ExitCode(err), out)
 	}
@@ -490,7 +539,7 @@ func TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError(t *testing.T) {
 	setJobConfigCopyEnv(t, r, "api", nil)
 	r.run.SetJobFaults(gcpfake.JobFaults{GetStatus: 500, GetError: jobReadErrorMarker})
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -547,7 +596,7 @@ func TestJobConfigCopyNoteReportsCloudFailedInsteadOfGoingSilent(t *testing.T) {
 // openCloudFor and JobFullEnv directly with its own cctx, so it could not
 // catch jobConfigCopyNote itself forgetting to use the bounded one, and it
 // needed a real unresponsive httptest server plus a 200ms wall-clock wait.
-// This version instead runs the real fugaro upgrade command, through
+// This version instead runs the real converge, through
 // jobConfigCopyNote, against upgradeRigWithGitHubAppID's ordinary, healthy
 // fake Cloud Run and file:// bucket, with jobConfigCopyTimeout set to a
 // negative duration: context.WithTimeout's deadline is then already in the
@@ -579,7 +628,7 @@ func TestJobConfigCopyTimeoutBoundsASlowCloudCall(t *testing.T) {
 	t.Cleanup(func() { jobConfigCopyTimeout = old })
 
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -608,7 +657,7 @@ func TestUpgradeCloudChecksEveryWorkflowsJobNotJustTheFirst(t *testing.T) {
 	// baseline only: no providers, no model_prices).
 	setJobConfigCopyEnv(t, r, "app", nil)
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -638,7 +687,7 @@ func TestUpgradeCloudUnionsDiffsAcrossWorkflowsDeduplicated(t *testing.T) {
 	setJobConfigCopyEnv(t, r, "api", nil) // stale: no providers/model_prices
 	setJobConfigCopyEnv(t, r, "app", nil) // also stale, the same way
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -737,7 +786,7 @@ func TestUpgradeCloudSecretValueSourceEntriesAreNeverConfigCopy(t *testing.T) {
 		spec := jobConfigCopyRealSpec(t, "api")
 		r.run.SetJobJSON(spec.Job, jobBodyWithSecretValueSources(t, spec.Job, spec.Env))
 		fakeSteps(t, "", nil)
-		out, _, err := executeStdin(t, "", "upgrade", "--yes")
+		out, _, err := runCloudStep(t, "--yes")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -754,7 +803,7 @@ func TestUpgradeCloudSecretValueSourceEntriesAreNeverConfigCopy(t *testing.T) {
 		stale["FUGARO_GITHUB_APP_ID"] = "99999" // the local config's is "12345"
 		r.run.SetJobJSON(spec.Job, jobBodyWithSecretValueSources(t, spec.Job, stale))
 		fakeSteps(t, "", nil)
-		out, _, err := executeStdin(t, "", "upgrade", "--yes")
+		out, _, err := runCloudStep(t, "--yes")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -772,7 +821,7 @@ func TestUpgradeCloudSecretValueSourceEntriesAreNeverConfigCopy(t *testing.T) {
 // upgradeRig is an onboarded checkout of acme/app (two workflows, both on
 // the one base kind) whose local config records no base image yet, at
 // version 0.5.1, with no claude; it returns the rig and the checkout's top
-// as fugaro upgrade sees it.
+// as the checkout stage sees it.
 func upgradeRig(t *testing.T) (*anchorModeRig, string) {
 	t.Helper()
 	fakeTerraform(t) // builds with go, which convergeEnv takes off PATH
@@ -790,12 +839,12 @@ func TestUpgradeInAnAgentSessionNeverTouchesTheCloud(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 	noRecordReads(t)
 	ran := fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade")
+	out, _, err := runCloudStep(t)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"plugin: skipped: claude is not on PATH", "cloud: skipped: a coding agent's session (CLAUDECODE is set) never applies cloud changes",
-		"in your own terminal window, not through the agent, run fugaro upgrade --yes " + root, "or fugaro upgrade " + root + " to be asked at each step"} {
+	for _, want := range []string{"cloud: skipped: a coding agent's session (CLAUDECODE is set) never applies cloud changes",
+		"in your own terminal window, not through the agent, run fugaro update --yes --repo " + root, "or fugaro update --repo " + root + " to be asked at each step"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -811,7 +860,7 @@ func TestUpgradeCheckSeesTheCloudWithoutTouchingIt(t *testing.T) {
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "none.json"))
 	noRecordReads(t)
 	ran := fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--check")
+	out, _, err := executeStdin(t, "", "update", "--check")
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cloud: stale: base images to move: base: none recorded; this release pins it by digest through proj-1234/fugaro-ghcr") {
 		t.Fatalf("exit %d\n%s", ExitCode(err), out)
 	}
@@ -823,23 +872,15 @@ func TestUpgradeCheckSeesTheCloudWithoutTouchingIt(t *testing.T) {
 	}
 }
 
-func TestUpgradeLocalNamesTheCloudCommand(t *testing.T) {
-	_, root := upgradeRig(t)
-	noRecordReads(t)
-	ran := fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--local")
-	if err != nil || len(*ran) != 0 || !strings.Contains(out, "cloud: skipped: --local; for the cloud step, run in your own terminal window: fugaro upgrade "+root) {
-		t.Fatalf("%v, steps %q\n%s", err, *ran, out)
-	}
-}
-
-// TestUpgradePassesYesToTheRefresh: the cloud step runs after the plugin
-// step (skipped here: no claude on PATH), and --yes reaches the refresh
-// unchanged.
+// TestUpgradePassesYesToTheRefresh: --yes reaches the refresh unchanged, and
+// an interactive run is the refresh's own: the step hands it the flag the door
+// parsed and nothing of its own. The order the run took its steps in and its
+// per-checkout summary were the retired command's (U4): the converge decides
+// the order now, and its own tests pin it.
 func TestUpgradePassesYesToTheRefresh(t *testing.T) {
 	for _, yes := range []bool{true, false} {
 		t.Run(map[bool]string{true: "yes", false: "interactive"}[yes], func(t *testing.T) {
-			_, root := upgradeRig(t)
+			_, _ = upgradeRig(t)
 			var seen *initOptions
 			old := newRefreshSteps
 			newRefreshSteps = func(r *initRun, e *initEngine, p *refreshPlan) refreshSteps {
@@ -852,34 +893,34 @@ func TestUpgradePassesYesToTheRefresh(t *testing.T) {
 				}
 			}
 			t.Cleanup(func() { newRefreshSteps = old })
-			args := []string{"upgrade"}
+			args := []string{}
 			if yes {
 				args = append(args, "--yes")
 			} else {
 				fakeTerminal(t)
 			}
-			out, _, err := executeStdin(t, "", args...)
-			if err != nil || seen == nil || seen.yes != yes {
+			out, _, err := runCloudStep(t, args...)
+			if err != nil || seen == nil || seen.yes != yes || !strings.Contains(out, "cloud: done") {
 				t.Fatalf("%v, options %+v\n%s", err, seen, out)
-			}
-			plugin, base, cloud := strings.Index(out, "plugin: skipped"), strings.Index(out, "step 2, base:"), strings.Index(out, "cloud: done")
-			if plugin < 0 || base < plugin || cloud < base || !strings.Contains(out, "  "+root+": plugin skipped, cloud done, rules skipped, policy skipped") {
-				t.Fatalf("order or summary wrong:\n%s", out)
 			}
 		})
 	}
 }
 
-func TestUpgradeCloudFailureNamesTheUpgradeRerun(t *testing.T) {
+// TestCloudFailureNamesTheRerunLine: a failing refresh fails the step, in one
+// line naming the refresh's own stop and the command that runs this checkout
+// again — the door and the flags the user passed, the checkout named with the
+// flag this door names one with (--repo). The "once that is fixed, rerun:" line
+// beside it was the retired command's summary (U4).
+func TestCloudFailureNamesTheRerunLine(t *testing.T) {
 	_, root := upgradeRig(t)
 	fakeSteps(t, "check job", &ExitError{Code: ExitRemoteError, Err: errors.New("Cloud Run refused the update")})
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d\n%s", ExitCode(err), out)
 	}
 	for _, want := range []string{
-		"cloud: failed: Cloud Run refused the update; fugaro image refresh stopped at step 3 (check job), steps finished: preflight, base; once that is fixed, rerun fugaro upgrade --yes " + root + ": finished steps say No changes",
-		"once that is fixed, rerun: fugaro upgrade --yes " + root,
+		"cloud: failed: Cloud Run refused the update; fugaro image refresh stopped at step 3 (check job), steps finished: preflight, base; once that is fixed, rerun fugaro update --yes --repo " + root + ": finished steps say No changes",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
@@ -890,39 +931,21 @@ func TestUpgradeCloudFailureNamesTheUpgradeRerun(t *testing.T) {
 	}
 }
 
-func TestUpgradeOneCheckoutsCloudFailureDoesNotHideAnother(t *testing.T) {
-	_, root := upgradeRig(t)
-	other, otherSettings := skillCheckout(t, wiredAt("v0.5.0"))
-	fakeSteps(t, "base", userErr("the base copy was declined"))
-	out, _, err := executeStdin(t, "", "upgrade", "--yes", root, other)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "stopped in 1 of 2 checkout(s)") {
-		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
-	}
-	// Nothing in the tree writes a pin any more (U2, D949): the other
-	// checkout's own settings come out of the run byte for byte as they went
-	// in, and its steps are named all the same.
-	if got := convergeRead(t, otherSettings); got != wiredAt("v0.5.0") {
-		t.Errorf("the other checkout's settings changed:\n%s", got)
-	}
-	if !strings.Contains(out, "  "+other+": plugin skipped, cloud skipped, rules skipped, policy skipped") {
-		t.Fatalf("the other checkout:\n%s", out)
-	}
-}
-
 func TestUpgradeTeammateSkipsTheCloud(t *testing.T) {
 	_, _ = upgradeRig(t)
 	ran := fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes", "--config", filepath.Join(t.TempDir(), "none.yaml"))
+	out, _, err := runCloudStep(t, "--yes", "--config", filepath.Join(t.TempDir(), "none.yaml"))
 	if err != nil || len(*ran) != 0 || !strings.Contains(out, "cloud: skipped: no local project config selects this checkout") {
 		t.Fatalf("%v, steps %q\n%s", err, *ran, out)
 	}
 }
 
-// TestUpgradeRerunWhenCurrentIsNothingToDo: the cloud step is current and the
-// plugin step skipped (no claude on PATH), so the checkout is "nothing to do":
-// no settings write — the pin a checkout still carries is left byte for byte
-// as it was (U2 of docs/plugin-user-scope/implementation-plan.md, D949) — and
-// a cloud plan with no base to copy and no build.
+// TestUpgradeRerunWhenCurrentIsNothingToDo: with this release's own pin
+// recorded and nothing to rebuild, the cloud step is current — no base to copy
+// and no build — and the write path touches neither terraform nor the registry.
+// The line the run printed about the checkout ("nothing to do") was the retired
+// command's; what the checkout is left as, byte for byte, is what this case is
+// about (U2 of docs/plugin-user-scope/implementation-plan.md, D949).
 func TestUpgradeRerunWhenCurrentIsNothingToDo(t *testing.T) {
 	r, root := upgradeRig(t)
 	// This release's own pin, recorded with the owner it is checked
@@ -939,11 +962,9 @@ func TestUpgradeRerunWhenCurrentIsNothingToDo(t *testing.T) {
 		t.Fatal(err)
 	}
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil || convergeRead(t, settings) != wiredAt("v0.5.1") ||
-		!strings.Contains(out, "plugin: skipped: claude is not on PATH") ||
-		!strings.Contains(out, "cloud: current: no base image to pin and no image to rebuild") ||
-		!strings.Contains(out, "nothing to do: "+root) {
+		!strings.Contains(out, "cloud: current: no base image to pin and no image to rebuild") {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if len(r.calls(t)) != 0 || len(r.ar.Requests()) != 0 {
@@ -968,7 +989,7 @@ func TestUpgradeCloudCheckFailureIsAFailedStep(t *testing.T) {
 			_, root := upgradeRig(t)
 			testutil.Git(t, root, "remote", "remove", "origin")
 			ran := fakeSteps(t, "", nil)
-			out, _, err := executeStdin(t, "", append([]string{"upgrade"}, tc.args...)...)
+			out, _, err := runCloudStep(t, tc.args...)
 			if ExitCode(err) != tc.exit || !strings.Contains(out, "cloud: failed:") || !strings.Contains(out, "origin") ||
 				strings.Contains(out, "stopped at step 1") {
 				t.Fatalf("exit %d, want %d\n%s", ExitCode(err), tc.exit, out)
@@ -980,42 +1001,31 @@ func TestUpgradeCloudCheckFailureIsAFailedStep(t *testing.T) {
 	}
 }
 
-// TestUpgradeCloudFailedIsSkippedBeforeReadingUnderLocalAndAgent: per U7 the
-// cloud step is skipped before anything is read under --local and in an
-// agent's session, so a broken checkout (no origin) does not fail it: exit 0,
-// skipped, the command to run named. --check and a real run still fail it
+// TestUpgradeCloudFailedIsSkippedBeforeReadingInAnAgentSession: per U7 the
+// cloud step is skipped before anything is read in an agent's session, so a
+// broken checkout (no origin) does not fail it: exit 0, skipped, the command to
+// run named. --check and a real run still fail it
 // (TestUpgradeCloudCheckFailureIsAFailedStep).
-func TestUpgradeCloudFailedIsSkippedBeforeReadingUnderLocalAndAgent(t *testing.T) {
-	for _, tc := range []struct{ name, want string }{
-		{"local", "cloud: skipped: --local; for the cloud step, run in your own terminal window: fugaro upgrade "},
-		{"agent", "cloud: skipped: a coding agent's session (CLAUDECODE is set) never applies cloud changes"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, root := upgradeRig(t)
-			testutil.Git(t, root, "remote", "remove", "origin")
-			args := []string{"upgrade"}
-			if tc.name == "local" {
-				args = append(args, "--local")
-			} else {
-				t.Setenv("CLAUDECODE", "1")
-			}
-			ran := fakeSteps(t, "", nil)
-			out, _, err := executeStdin(t, "", args...)
-			if err != nil || len(*ran) != 0 || !strings.Contains(out, tc.want) || strings.Contains(out, "cloud: failed") || !strings.Contains(out, "fugaro upgrade") {
-				t.Fatalf("%v, steps %q\n%s", err, *ran, out)
-			}
-		})
+func TestUpgradeCloudFailedIsSkippedBeforeReadingInAnAgentSession(t *testing.T) {
+	_, root := upgradeRig(t)
+	testutil.Git(t, root, "remote", "remove", "origin")
+	t.Setenv("CLAUDECODE", "1")
+	ran := fakeSteps(t, "", nil)
+	out, _, err := runCloudStep(t)
+	if err != nil || len(*ran) != 0 || !strings.Contains(out, "cloud: skipped: a coding agent's session (CLAUDECODE is set) never applies cloud changes") ||
+		strings.Contains(out, "cloud: failed") || !strings.Contains(out, "fugaro update --yes --repo "+root) {
+		t.Fatalf("%v, steps %q\n%s", err, *ran, out)
 	}
 }
 
 // TestUpgradeYesRefreshesTheNamedCheckoutNotTheWorkingDirectory: run from
-// another directory, fugaro upgrade --yes <root> refreshes root.
+// another directory, `fugaro update --yes --repo <root>` refreshes root.
 // Mutation (run, restore): in cloudStep, ro.dir = "" instead of u.loc.Root.
 func TestUpgradeYesRefreshesTheNamedCheckoutNotTheWorkingDirectory(t *testing.T) {
 	_, root := upgradeRig(t)
 	t.Chdir(t.TempDir())
 	ran := fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes", root)
+	out, _, err := runCloudStep(t, "--yes", root)
 	if err != nil || len(*ran) == 0 || !strings.Contains(out, "cloud: done") || !strings.Contains(out, "fugaro image refresh of acme/app is done") {
 		t.Fatalf("%v, steps %q\n%s", err, *ran, out)
 	}
@@ -1041,15 +1051,22 @@ func TestUpgradePassesTheCloudFlagsToTheRefresh(t *testing.T) {
 	}
 	t.Cleanup(func() { newRefreshSteps = old })
 	digest := "go=sha256:" + strings.Repeat("a", 64)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes", "--config", r.cfg, "--project", "aurora", "--region", "us-east5",
-		"--workflow", "app", "--image-source", "ghcr.io/acme", "--expect-digest", digest)
+	out, _, err := runCloudStep(t, "--yes", "--config", r.cfg, "--project", "aurora", "--region", "us-east5",
+		"--image-source", "ghcr.io/acme", "--expect-digest", digest)
 	if err != nil || seen == nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	c := seen.cloud
 	if c.config != r.cfg || c.project != "aurora" || c.region != "us-east5" || seen.imageSource != "ghcr.io/acme" ||
-		len(seen.expectDigests) != 1 || seen.expectDigests[0] != digest || len(plan.workflows) != 1 || plan.workflows[0] != "app" {
-		t.Fatalf("flags not passed: cloud %+v, image source %q, digests %q, workflows %q", c, seen.imageSource, seen.expectDigests, plan.workflows)
+		len(seen.expectDigests) != 1 || seen.expectDigests[0] != digest {
+		t.Fatalf("flags not passed: cloud %+v, image source %q, digests %q", c, seen.imageSource, seen.expectDigests)
+	}
+	// --workflow was the retired command's, and the checkout stage's refresh
+	// options carry none (init_checkout_upgrade.go): the converge's cloud step
+	// refreshes every workflow in fugaro.yaml, and picking one is `fugaro image
+	// refresh --workflow`'s own (U4).
+	if len(plan.workflows) != 2 {
+		t.Fatalf("workflows %q, want every workflow in the file", plan.workflows)
 	}
 }
 
@@ -1062,11 +1079,11 @@ func TestUpgradeCheckBlockedIsAFailureWithTheRerunLine(t *testing.T) {
 	r, root := upgradeRig(t)
 	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
 	ran := fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--check")
+	out, _, err := executeStdin(t, "", "update", "--check")
 	if ExitCode(err) != ExitUserError || len(*ran) != 0 || !strings.Contains(out, "cloud: stale:") || strings.Contains(out, "cloud: skipped") {
 		t.Fatalf("exit %d, steps %q\n%s", ExitCode(err), *ran, out)
 	}
-	if again := "fugaro upgrade --check " + root; !strings.Contains(out, again) {
+	if again := "fugaro update --check " + root; !strings.Contains(out, again) {
 		t.Fatalf("the reason lacks the rerun line %q:\n%s", again, out)
 	}
 }
@@ -1082,14 +1099,14 @@ func TestUpgradeCheckCurrentCloudIsCurrent(t *testing.T) {
 	r, _ := upgradeRig(t)
 	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--check")
+	out, _, err := executeStdin(t, "", "update", "--check")
 	if !strings.Contains(out, "cloud: current:") {
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
 
 // TestUpgradeSaysTheBaseMustMoveForACopiedEntryAtTheSameVersion is B3 on
-// fugaro upgrade's offline path: an installation whose entry is the copy an
+// the check mode's offline path: an installation whose entry is the copy an
 // earlier CLI made, at this very version, still needs the migration, so
 // --check must not answer "no base image to pin and no image to rebuild"
 // and leave it unmigrated. The reason names the shape rather than a value
@@ -1098,7 +1115,7 @@ func TestUpgradeSaysTheBaseMustMoveForACopiedEntryAtTheSameVersion(t *testing.T)
 	r, _ := upgradeRig(t)
 	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.5.1")+"}\n")
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--check")
+	out, _, err := executeStdin(t, "", "update", "--check")
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cloud: stale:") ||
 		!strings.Contains(out, "base: "+managedRef("base", "0.5.1")+"; this release pins it by digest through proj-1234/fugaro-ghcr") {
 		t.Fatalf("exit %d\n%s", ExitCode(err), out)

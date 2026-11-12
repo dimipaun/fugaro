@@ -488,7 +488,7 @@ func TestUpgradePluginCurrentRunsOnlyTheLists(t *testing.T) {
 // planned in the checkout for it: what applies there is a question this step
 // asks nowhere (claudeplugin.Effective, D942, which nothing reads). The
 // version the line names is the machine's
-// own, so this line and fugaro upgrade --check's say the same thing about the
+// own, so this line and `fugaro update --check`'s say the same thing about the
 // same machine.
 func TestUpgradePluginLeavesThisCheckoutsProjectInstall(t *testing.T) {
 	convergeEnv(t, "0.5.2")

@@ -569,8 +569,8 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// checkout stage is LocalUnderAgent too, and what that buys there is the
 	// run's own account of its cloud half: the plan drops the image refresh,
 	// whose writes are not this machine's, and the apply leaves it for the user
-	// as a named step rather than one line naming `fugaro upgrade` and nothing
-	// of what became of the images (checkoutStage.planFor's repositoryStopped;
+	// as a named step rather than one line naming the door and nothing of what
+	// became of the images (checkoutStage.planFor's repositoryStopped;
 	// the repository stop it applies past is #1836's, initflow's RunsPastStop).
 	// The help has to say that rather than promise a session a write it may not
 	// get to.

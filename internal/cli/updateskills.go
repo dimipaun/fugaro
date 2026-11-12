@@ -153,7 +153,7 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, asJSON bool) error {
 		}
 		return nil
 	}
-	// The machine-side half: fugaro upgrade's own plugin step, the same
+	// The machine-side half: the converge's own plugin step, the same
 	// function the plugin stage runs, which installs or updates the plugin in
 	// the user's own Claude Code at user scope.
 	u := &stepCtx{cmd: cmd, w: w, loc: loc}

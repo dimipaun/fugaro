@@ -70,7 +70,7 @@ type initEngine struct {
 	// checkoutBehind: this run found the checkout behind this release, which
 	// the plugin stage is where to read (the pin it wires is this release's tag,
 	// and the plugin in Claude Code is this release's too). The checkout stage
-	// runs the cloud half of fugaro upgrade for this checkout, and this is the
+	// runs the checkout's cloud half for this checkout, and this is the
 	// fact it decides on: the cloud step's own check reads fugaro.yaml and the
 	// local config and never a build record (cloudCheck, U9), and the images
 	// stage has already pinned this release's base in that config by the time
@@ -292,7 +292,7 @@ func initStages(e *initEngine) []initflow.Stage {
 	// layer whose claims the older node could not carry is judged by the same
 	// installation it is published for (init_layer_stage.go).
 	stages = append(stages, newLayerStage(e))
-	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
+	// The checkout's own steps (the cloud half; the pin and the plugin are
 	// are a stage of this run too: fugaro update is the whole upgrade, so the
 	// one command the user runs may not leave the checkout it runs in behind
 	// (init_checkout_upgrade.go, the owner's rule of 2026-10-30).
