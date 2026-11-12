@@ -1688,13 +1688,15 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * so a console with an installation and no checkout still answers. */
     readSeats: (args) => read('seats.read', (source) => source.readSeats(args)),
     /** listMembers has no precondition and no cadence, and both halves are
-     * deliberate. It needs no directory: the read is this machine's own config
-     * and the installation's grants node, never a checkout, so a console with an
-     * installation and no checkout still answers -- and it holds no floor
-     * between two calls either, because a roster is somebody else's edit: an
-     * admin's `fugaro user grant` lands in the node the moment they run it, and
-     * a minute-old answer in front of a newer one would show a role that has
-     * already moved. */
+     * deliberate. It passes no `--dir` and needs none: the installation is the
+     * `--project` the spawn fixes, so a console with an installation and no
+     * checkout still answers. The checkout the child stands in is read the way
+     * every cloud read reads it -- to name the installation it lists -- and
+     * remembered by none, which is what puts the read on `consoleReadPaths`. It
+     * holds no floor between two calls either, because a roster is somebody
+     * else's edit: an admin's `fugaro user grant` lands in the node the moment
+     * they run it, and a minute-old answer in front of a newer one would show a
+     * role that has already moved. */
     listMembers: (args) => read('members.list', (source) => source.listMembers(args)),
     /** readSettings has no precondition and no cadence either: the read is the
      * registry, the project layer's cache, the local config and the checkouts
