@@ -170,6 +170,7 @@ var exemptListings = map[string]exemptListing{
 	"runs show":            {"a listing: one run's chain and what is left of its limits, table or document", true},
 	"runs stats":           {"a listing: run records aggregated by the person who started each run", true},
 	"runs summary":         {"a listing: the window's run count and spend, without reading a run object", true},
+	"runs watch":           {"a listing: the triage the daemon would decide about the window's long runs", true},
 	"seats":                {"a listing: the estimate a subscription's seat rule would count, table or document", true},
 	"secrets ls":           {"a listing: the secrets' names, scope and versions, never a value", true},
 	"secrets shared ls":    {"a listing: the project-shared secrets' names and dates, never a value", true},

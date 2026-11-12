@@ -488,6 +488,16 @@ var jsonCases = map[string]jsonCase{
 			return []string{"runs", "summary"}
 		},
 	},
+	"runs watch": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The daemon's own rig with this command's host seam pointed at the
+			// same fake host, so the document is the triage's real answer rather
+			// than the fail-closed one a window with no host would give.
+			newWatchFixture(t, green())
+			return []string{"runs", "watch"}
+		},
+	},
 	"seats": {
 		reads: true,
 		run: func(t *testing.T) []string {

@@ -499,6 +499,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro runs ls":                "prints the no-project-config refusal",
 	"fugaro runs stats":             "prints the no-project-config refusal",
 	"fugaro runs summary":           "prints the no-project-config refusal",
+	"fugaro runs watch":             "prints the no-project-config refusal",
 	"fugaro secrets":                "is a name for set, ls and rm: a bare run prints its own usage and returns",
 	"fugaro secrets ls":             "prints the no-project-config refusal",
 	"fugaro secrets shared":         "is a name for set, ls and rm: a bare run prints its own usage and returns",
