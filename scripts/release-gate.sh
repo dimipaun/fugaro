@@ -99,19 +99,22 @@ deadline=$(($(date +%s) + wait_seconds))
 # names is the required-check set: what must be success on the tag's commit
 # and, in the identical_tree_checks fallback, on the pull request head whose
 # tree matches. An array so every loop keeps a name whole.
-# The console checks (`console (ubuntu-latest)`, `console (macos-latest)`) are
-# intentionally not required: the console releases on its own stream
-# (console-vX.Y.Z), so a CLI or mobile tag must not wait on, or be refused for,
-# console tests.
 #
-# The `#   ` lines below are this list in prose, and
-# TestReleaseGateDoesNotRequireTheConsoleChecks reads both and asserts they name
-# the same set: keep them in step, one name per line, with no prose between the
+# The `#   ` lines below are the base set in prose, and
+# TestReleaseGateRequiresTheConsoleCheck reads both and asserts they name the
+# same set: keep them in step, one name per line, with no prose between the
 # last of them and the assignment (that adjacency is what the test reads).
 #   test
 #   terraform
 #   rules
 names=("test" "terraform" "rules")
+# A CLI or mobile tag must not wait on, or be refused for, console tests: the
+# console releases on its own stream (console-vX.Y.Z). Only console-release.yml
+# sets GATE_REQUIRE_CONSOLE=1, which adds the two matrix legs GitHub names for
+# the console job; the bare `console` is a check run on no commit.
+if [ "${GATE_REQUIRE_CONSOLE:-}" = 1 ]; then
+  names+=("console (ubuntu-latest)" "console (macos-latest)")
+fi
 
 # check_state SHA NAME prints missing | cancelled | failed | pending | success
 # for the GitHub Actions runs named NAME on SHA. Only the GitHub Actions app
@@ -146,7 +149,8 @@ lookup_failed() {
 #     of that moment (pull_request jobs check out the merge ref), not on the
 #     head alone; that is accepted because the tree equals the merged result
 #     that became the target;
-#   - every check in `names` (the same set the target is held to) is success on it, with the same strictness as on
+#   - every check in `names` (the same set the target is held to, console legs included when
+#     GATE_REQUIRE_CONSOLE=1) is success on it, with the same strictness as on
 #     the target (a failed, cancelled, still running or missing run, or a
 #     check from another app, is never accepted).
 # The commits/SHA/pulls listing needs no token on a public repository, so the

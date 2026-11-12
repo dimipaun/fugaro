@@ -2369,12 +2369,12 @@ func TestWatchCancelReturnsNilSoTheChildExitsZero(t *testing.T) {
 //     deleted (unlike images.yml), and while both files exist they must be
 //     byte-identical, so an edit to one without the other fails here rather
 //     than drifting silently.
-//   - TestConsoleWorkflowJobIsGateable pins the job's name and triggers. The
-//     release gate no longer requires its check runs
-//     (`TestReleaseGateDoesNotRequireTheConsoleChecks`, below): the console
-//     releases on its own stream. The shape stays pinned because the check
-//     names are what a person reads on a console pull request and what a
-//     later decision to gate on them would need.
+//   - TestConsoleWorkflowJobIsGateable pins the job's name and triggers: the
+//     console release's gate (GATE_REQUIRE_CONSOLE=1) requires the matrix legs
+//     `console (ubuntu-latest)` and `console (macos-latest)`, and a check that
+//     does not exist is not a success, so a renamed job or a `paths:` filter
+//     would refuse every console release
+//     (`TestReleaseGateRequiresTheConsoleCheck`, below).
 // ---------------------------------------------------------------------------
 
 const (
@@ -2622,12 +2622,12 @@ func TestConsoleTestsWorkflowIsStagedAndPinned(t *testing.T) {
 	}
 }
 
-// TestConsoleWorkflowJobIsGateable pins the job name and the triggers. The
-// release gate does not require this job's check runs (they are, because the
-// job is a matrix, `console (ubuntu-latest)` and `console (macos-latest)`), but
-// the shape is kept so the names stay stable: the two mutations to try first
-// are renaming the job to `console-tests` and adding `paths: ['console/**']` to
-// its trigger.
+// TestConsoleWorkflowJobIsGateable pins the job name and the triggers, which is
+// what keeps a console release's gate (GATE_REQUIRE_CONSOLE=1) from refusing
+// every console tag: the check runs are, because the job is a matrix,
+// `console (ubuntu-latest)` and `console (macos-latest)`. The two mutations to
+// try first are renaming the job to `console-tests` and adding
+// `paths: ['console/**']` to its trigger.
 func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 	_, wf, on, rawJobs := readConsoleTestsWorkflow(t)
 
@@ -5436,14 +5436,15 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// The release gate does not require the console checks.
+// The release gate requires the console checks only for a console release.
 //
 // scripts/release-gate.sh requires the checks in its `names` list on the tag's
 // commit and, in its identical_tree_checks fallback, on the pull request head
 // whose tree matches. That list is test, terraform and rules. The console
 // releases independently (console-vX.Y.Z), so its matrix legs
-// (`console (ubuntu-latest)`, `console (macos-latest)`) are deliberately not in
-// it: a CLI or mobile tag must not wait on, or be refused for, console tests.
+// (`console (ubuntu-latest)`, `console (macos-latest)`) are not in it: a CLI
+// or mobile tag must not wait on, or be refused for, console tests. Only
+// console-release.yml sets GATE_REQUIRE_CONSOLE=1, which adds the two legs.
 //
 // The behaviour is exercised, not just read: a fake gh answers the gate's three
 // API calls and runs the gate's own `--jq` expression through a real jq, so the
@@ -5626,48 +5627,91 @@ func TestConsoleCheckNamesFollowTheMatrix(t *testing.T) {
 	}
 }
 
-// TestReleaseGateDoesNotRequireTheConsoleChecks holds scripts/release-gate.sh
-// to exactly test, terraform and rules, and proves the gate's verdict follows
-// them: it passes only when every required check is green on the tagged
-// commit, and refuses when one is missing, pending, failed, cancelled or green
-// only from some other app. The console releases on its own stream
-// (console-vX.Y.Z), so a CLI or mobile tag must not wait on its tests: the
-// mutation to try first is putting a console leg back into the list.
-func TestReleaseGateDoesNotRequireTheConsoleChecks(t *testing.T) {
-	script, required, commented := readReleaseGate(t)
-
-	want := []string{"rules", "terraform", "test"}
-	got := slices.Clone(required)
-	slices.Sort(got)
-	if !slices.Equal(got, want) {
-		t.Errorf("%s requires the checks %v, want %v", releaseGatePath, got, want)
+// TestReleaseGateRequiresTheConsoleCheck holds scripts/release-gate.sh to its
+// two required sets. By default (a CLI or mobile tag) it is exactly test,
+// terraform and rules: the console releases on its own stream
+// (console-vX.Y.Z), so console tests must not hold those tags. With
+// GATE_REQUIRE_CONSOLE=1, which only console-release.yml sets, the two matrix
+// legs .github/workflows/console-tests.yml reports are required as well. The
+// mutations to try first: put a console leg in the base array, drop one leg
+// from the opt-in, or stop console-release.yml setting the variable.
+func TestReleaseGateRequiresTheConsoleCheck(t *testing.T) {
+	script, base, commented := readReleaseGate(t)
+	consoleNames := consoleGateCheckNames(t)
+	if len(consoleNames) != 2 {
+		t.Fatalf("%s's console job reports %v: this test's opt-in is written for two legs", appliedConsoleTestsPath, consoleNames)
 	}
-	for _, name := range required {
-		if strings.HasPrefix(name, "console") {
-			t.Errorf("%s requires %q: the console releases independently, so its tests must not hold a CLI or mobile tag", releaseGatePath, name)
+
+	baseWant := []string{"rules", "terraform", "test"}
+	gotBase := slices.Clone(base)
+	slices.Sort(gotBase)
+	if !slices.Equal(gotBase, baseWant) {
+		t.Errorf("%s's base set is %v, want %v", releaseGatePath, gotBase, baseWant)
+	}
+	commentedSorted := slices.Clone(commented)
+	slices.Sort(commentedSorted)
+	if !slices.Equal(commentedSorted, gotBase) {
+		t.Errorf("%s's names array is %v but the comment above it lists %v: they have to name the same set", releaseGatePath, gotBase, commentedSorted)
+	}
+	if strings.Contains(script, "for name in $names") {
+		t.Errorf("%s iterates `for name in $names`: word splitting takes a console leg apart", releaseGatePath)
+	}
+	if n := strings.Count(script, `for name in "${names[@]}"`); n != 2 {
+		t.Errorf("%s has %d loops over \"${names[@]}\", want 2", releaseGatePath, n)
+	}
+	for _, name := range consoleNames {
+		if !strings.Contains(script, `"`+name+`"`) {
+			t.Errorf("%s does not add %q under GATE_REQUIRE_CONSOLE", releaseGatePath, name)
 		}
 	}
 
-	commentedSorted := slices.Clone(commented)
-	slices.Sort(commentedSorted)
-	if !slices.Equal(commentedSorted, got) {
-		t.Errorf("%s's names array is %v but the comment above it lists %v: they have to name the same set", releaseGatePath, got, commentedSorted)
+	// Only the console's release gate opts in, in both of its steps.
+	release := readDoc(t, "docs/pending-workflows/console-release.yml")
+	if n := strings.Count(release, `scripts/release-gate.sh "v$VERSION"`); n != 2 {
+		t.Errorf("console-release.yml calls the gate %d times, want 2", n)
 	}
-
-	if strings.Contains(script, "for name in $names") {
-		t.Errorf("%s iterates `for name in $names`: the required set is an array and is read as one", releaseGatePath)
-	}
-	if n := strings.Count(script, `for name in "${names[@]}"`); n != 2 {
-		t.Errorf("%s has %d loops over \"${names[@]}\", want 2 (the target's own checks and identical_tree_checks')", releaseGatePath, n)
+	if n := strings.Count(release, `GATE_REQUIRE_CONSOLE: "1"`); n != 2 {
+		t.Errorf("console-release.yml sets GATE_REQUIRE_CONSOLE in %d steps, want 2 (one per gate call)", n)
 	}
 
 	for _, doc := range []string{"docs/release.md", ".claude/skills/new-release/SKILL.md"} {
-		text := readDoc(t, doc)
-		for _, stale := range []string{"console (ubuntu-latest)", "console (macos-latest)", "both console checks"} {
-			if strings.Contains(text, stale) && !strings.Contains(text, "not part of the") {
-				t.Errorf("%s names %q as a gate check without saying the console checks are not part of the gate", doc, stale)
-			}
+		if !strings.Contains(readDoc(t, doc), "GATE_REQUIRE_CONSOLE") {
+			t.Errorf("%s does not name GATE_REQUIRE_CONSOLE, the switch that adds the console legs to the console release's gate", doc)
 		}
+	}
+
+	t.Run("default set", func(t *testing.T) { releaseGateSuite(t, baseWant, nil) })
+	full := append(slices.Clone(baseWant), consoleNames...)
+	slices.Sort(full)
+	t.Run("console release set", func(t *testing.T) {
+		releaseGateSuite(t, full, []string{"GATE_REQUIRE_CONSOLE=1"})
+	})
+}
+
+// releaseGateSuite runs the gate's verdict cases against the required set
+// want, with env added to the gate's environment.
+func releaseGateSuite(t *testing.T, want []string, env []string) {
+	// The gate walks the array in this order, so its messages name the first
+	// of these that is not green.
+	required := []string{"test", "terraform", "rules"}
+	if len(env) > 0 {
+		required = append(required, "console (ubuntu-latest)", "console (macos-latest)")
+	}
+	if len(env) == 0 {
+		t.Run("a red console check beside the three green ones is not a refusal", func(t *testing.T) {
+			h := newGateHarness(t)
+			checks := []string{}
+			for _, name := range want {
+				checks = append(checks, gateCheckRun(name, "github-actions", "success"))
+			}
+			checks = append(checks,
+				gateCheckRun("console (ubuntu-latest)", "github-actions", "failed"),
+				gateCheckRun("console (macos-latest)", "github-actions", "failed"))
+			h.setTargetChecks(t, checks)
+			if ok, out := h.run(t); !ok {
+				t.Fatalf("the gate refused a CLI or mobile tag because of a console check:\n%s", out)
+			}
+		})
 	}
 
 	// requiredChecks is the three checks of a fully green commit, with one entry
@@ -5689,7 +5733,7 @@ func TestReleaseGateDoesNotRequireTheConsoleChecks(t *testing.T) {
 	t.Run("every required check green is a pass", func(t *testing.T) {
 		h := newGateHarness(t)
 		h.setTargetChecks(t, requiredChecks("", "", "", false))
-		ok, out := h.run(t)
+		ok, out := h.run(t, env...)
 		if !ok {
 			t.Fatalf("the gate refused a commit whose every required check is green:\n%s", out)
 		}
@@ -5735,7 +5779,7 @@ func TestReleaseGateDoesNotRequireTheConsoleChecks(t *testing.T) {
 			}
 			h := newGateHarness(t)
 			h.setTargetChecks(t, requiredChecks(leg, c.app, c.state, c.drop))
-			ok, out := h.run(t)
+			ok, out := h.run(t, env...)
 			if ok {
 				t.Fatalf("the gate passed with %s:\n%s", c.name, out)
 			}
@@ -5745,19 +5789,6 @@ func TestReleaseGateDoesNotRequireTheConsoleChecks(t *testing.T) {
 			}
 		})
 	}
-
-	t.Run("a red console check beside the three green ones is not a refusal", func(t *testing.T) {
-		h := newGateHarness(t)
-		checks := requiredChecks("", "", "", false)
-		checks = append(checks,
-			gateCheckRun("console (ubuntu-latest)", "github-actions", "failed"),
-			gateCheckRun("console (macos-latest)", "github-actions", "failed"))
-		h.setTargetChecks(t, checks)
-		ok, out := h.run(t)
-		if !ok {
-			t.Fatalf("the gate refused a commit because of a console check:\n%s", out)
-		}
-	})
 
 	// check_state's coexistence rule -- cancelled runs (superseded by a newer
 	// one) are ignored while another run of the name exists -- run rather than
@@ -5770,7 +5801,7 @@ func TestReleaseGateDoesNotRequireTheConsoleChecks(t *testing.T) {
 			checks = append(checks, gateCheckRun(name, "github-actions", "cancelled"))
 		}
 		h.setTargetChecks(t, checks)
-		ok, out := h.run(t)
+		ok, out := h.run(t, env...)
 		if !ok {
 			t.Fatalf("the gate refused a commit whose every required name has a green run beside a superseded cancelled one:\n%s", out)
 		}
@@ -5786,7 +5817,7 @@ func TestReleaseGateDoesNotRequireTheConsoleChecks(t *testing.T) {
 			checks = append(checks, gateCheckRun(name, "github-actions", "cancelled"))
 		}
 		h.setTargetChecks(t, checks)
-		ok, out := h.run(t)
+		ok, out := h.run(t, env...)
 		if ok {
 			t.Fatalf("the gate passed on a commit whose only runs of every required name were cancelled:\n%s", out)
 		}
@@ -5803,7 +5834,7 @@ func TestReleaseGateDoesNotRequireTheConsoleChecks(t *testing.T) {
 		}
 		checks = append(checks, gateCheckRun(required[0], "github-actions", "failed"))
 		h.setTargetChecks(t, checks)
-		ok, out := h.run(t)
+		ok, out := h.run(t, env...)
 		if ok {
 			t.Fatalf("the gate passed with %s failed beside a cancelled run:\n%s", required[0], out)
 		}
@@ -5818,7 +5849,7 @@ func TestReleaseGateDoesNotRequireTheConsoleChecks(t *testing.T) {
 		h.setTargetChecks(t, nil)
 		h.setHeadChecks(t, requiredChecks("", "", "", false))
 		h.setMergedPR(t, h.sha, head)
-		ok, out := h.run(t)
+		ok, out := h.run(t, env...)
 		if !ok {
 			t.Fatalf("the gate refused a commit whose merged pull request head carries every required check:\n%s", out)
 		}
@@ -5843,7 +5874,7 @@ func TestReleaseGateDoesNotRequireTheConsoleChecks(t *testing.T) {
 			h.setTargetChecks(t, nil)
 			h.setHeadChecks(t, requiredChecks(c.leg, c.app, c.state, c.drop))
 			h.setMergedPR(t, h.sha, head)
-			ok, out := h.run(t)
+			ok, out := h.run(t, env...)
 			if ok {
 				t.Fatalf("the gate passed on a head with %s:\n%s", c.label, out)
 			}
@@ -7629,7 +7660,7 @@ func TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 		"git rm docs/pending-workflows/console-linux.yml",
 		"build-only",
 		"deriveConsoleCheckNames",
-		"TestReleaseGateDoesNotRequireTheConsoleChecks",
+		"TestReleaseGateRequiresTheConsoleCheck",
 		"ubuntu-latest",
 		"0.0.0",
 	} {

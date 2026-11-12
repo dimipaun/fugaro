@@ -729,7 +729,7 @@ path exercised only on a tag is one that breaks silently between releases.
 The task that wrote it asked for "a new `console-linux` job for the existing CI
 workflow", and it is a separate file for one reason, which is a test rather than
 a taste: **the release gate's required-check list is derived from
-`console-tests.yml`'s job set.** `TestReleaseGateDoesNotRequireTheConsoleChecks`
+`console-tests.yml`'s job set.** `TestReleaseGateRequiresTheConsoleCheck`
 (`internal/cli/docs_desktop_console_test.go`) reads that workflow and asserts
 that `scripts/release-gate.sh`'s `names=(...)` array is exactly the check names
 it reports plus `test`, `terraform` and `rules` — and `deriveConsoleCheckNames`
@@ -1424,7 +1424,7 @@ thing to whoever opens the file rather than this page.
 **Why it is its own workflow rather than a second job in `console-tests.yml`,
 or a third leg of that job's matrix.** Exactly `console-linux.yml`'s reason,
 which is a test rather than a taste: **the release gate's required-check list is
-derived from `console-tests.yml`'s job set.** `TestReleaseGateDoesNotRequireTheConsoleChecks`
+derived from `console-tests.yml`'s job set.** `TestReleaseGateRequiresTheConsoleCheck`
 (`internal/cli/docs_desktop_console_test.go`) reads that workflow and asserts
 that `scripts/release-gate.sh`'s `names=(...)` array is exactly the check names
 it reports plus `test`, `terraform` and `rules` — and `deriveConsoleCheckNames`

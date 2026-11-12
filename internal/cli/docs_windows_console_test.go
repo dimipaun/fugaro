@@ -536,7 +536,7 @@ func TestWindowsConsoleWorkflowIsReleaseTimeOnly(t *testing.T) {
 // trigger is not what keeps the Windows pack out of it, and a sentence saying
 // otherwise would be false in the tree it ships in.
 //
-// The gate's list itself is TestReleaseGateDoesNotRequireTheConsoleChecks's subject,
+// The gate's list itself is TestReleaseGateRequiresTheConsoleCheck's subject,
 // and it is re-read here rather than restated: the console's names are derived
 // from the applied workflow by that test's own derivation, so a tree in which
 // it would fail fails here too, by name.
@@ -566,7 +566,7 @@ func TestWindowsConsolePackIsNotInTheReleaseGate(t *testing.T) {
 		}
 	}
 
-	// And the tree is in the state TestReleaseGateDoesNotRequireTheConsoleChecks
+	// And the tree is in the state TestReleaseGateRequiresTheConsoleCheck
 	// requires: the console's names still derive from the applied workflow, and
 	// none of them is this job's. A derivation that refused would fatal inside
 	// consoleGateCheckNames, which is that test's first half failing here by name.
