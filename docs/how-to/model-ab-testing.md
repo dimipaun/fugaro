@@ -37,7 +37,7 @@ A launch is paired only when all of this holds: it is a first run of a code task
 
 A Hotfix, a follow-up, a retry, a best-of-N attempt, a review, artifact or digest run, and a launch whose `--run-id` you chose (the hash would be steerable) are never sampled. Where anything above fails, the champion launches alone and the launcher prints one line saying why, as `--json` does too. Two facts refuse every challenger at once: a Bitbucket repository, and a GitHub repository whose App key the credentials service holds, because neither can mint the read-only token a challenger's clone needs.
 
-Both arms share one batch label, `ab-pair-<the champion's run ID>`, so `fugaro runs ls --batch ab-pair-<id>` shows the pair. The challenger's outcome is `none` and it owns no pull request: the work to continue is the champion's.
+Both arms share one batch label — `ab-pair-<the champion's run ID>`, or the label the launch passed with `--batch`, which wins over the derived one — so `fugaro runs ls --batch <label>` shows the pair either way. The challenger's outcome is `none` and it owns no pull request: the work to continue is the champion's.
 
 ## Read the result
 
