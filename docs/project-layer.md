@@ -57,12 +57,19 @@ policy publish` refuses one, while an installation's own config keeps loading wi
 written before owners existed still starts a run on this release. Such a pool is what the migration
 `fugaro update` runs marks instead (D1942): every ownerless pool of the published node comes out
 with `legacy_open`, so a reader can tell a pool that predates owners from one whose owner is still
-to be named. **Nothing reads the owner and the roster yet**: they are decoded, validated and
-published by this release and by no run of it, so a `fugaro_p_` name is still granted to any
-launcher that asks for it and `config.Pool.Serves`, the function that answers whether a pool is
-served to a person, has no caller here — whether a pool admits the person asking for one of its
-credentials is DS3.2's check, made where the credential is resolved, and until that ships the owner
-and the roster are a declaration of intent rather than a gate. A
+to be named. **The credentials service reads the owner and the roster at the grant** (DS3.2): a
+launch's slip that names a pool — a craft's `access` may name one — or a project-shared `fugaro_p_`
+credential some pool lists among its members is granted only to that pool's `owner` and to the
+people its `allowed_users` names, and a launcher that is neither gets no slip at all, refused
+before anything is written and with no credential of the call in the answer. The rule is
+`config.Pool.Serves`, read where the slip is issued; a roster is therefore resolved at every issue
+and never remembered, so a person taken off one is refused at that person's next launch, while a
+`legacy_open` pool serves whoever asks — which is what keeps a run that worked before the upgrade
+working after it, and what makes the marker a gate and not a reminder. A name no pool governs, a
+bundle entry's own name above all, is granted exactly as it was: a slip that names no pool is a
+launch nothing has changed for. A refused grant costs the run its slip and not its launch — the
+launcher warns and the run starts without one, and the credentials only a slip serves are refused
+at the call (R9). A
 version-4 reader refuses a version-5 node — the two members sit *inside* a pool entry, which its
 own decode reads strictly, so it is unreadable there rather than listed in the unknown keys — and
 the other direction refuses too: a version-4 node is refused by this release's runs, by `fugaro
