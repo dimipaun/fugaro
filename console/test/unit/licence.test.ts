@@ -69,13 +69,20 @@ import {
   GRACE_DAYS,
   PRODUCTION_KEYRING,
   TIER_MAX_LIFETIME_DAYS,
+  V1_PREFIX,
+  V1_UPGRADE_MESSAGE,
   latestLicence,
   verifyLicenceKey,
+  verifyLicenceKeyV1,
   type LicenceClaims,
   type LicenceKeyring,
   type LicenceRead,
   type LicenceState,
   type LicenceTier,
+  type LicenceV1Claims,
+  type LicenceV1Read,
+  type LicenceV1Refusal,
+  type LicenceV1State,
 } from '../../src/main/licence'
 
 const DAY = 86_400
@@ -592,5 +599,272 @@ describe('the module itself', () => {
       'node:https',
       'node:net',
     ])
+  })
+})
+
+// The v1 key: the licence-key-v2 format (spec sections 3, 4 and 6; decisions
+// D2130-D2146), whose Go verifier is `ee/licence/keyv1.go` and whose cases are
+// the file below.
+//
+// **The vectors are read, never copied.** `ee/licence/testdata/vectors_v1.json`
+// is the one set of claim sets, states and refusals the Go verifier and this one
+// are both held against (K1.1's `TestVectorsV1RoundTrip`, K1.4), so a copy here
+// would be a second contract that agrees with neither verifier. The file carries
+// the fixture's public half and signed key texts and never a private half, which
+// is what makes it a fixture a repository may hold at all.
+describe('the v1 key', () => {
+  /** VectorKeyV1, VectorCaseV1 and VectorFileV1 are the file's own shape. Its
+   * `state` and `refused` are plain strings and not this module's types on
+   * purpose: a vector naming a state or a refusal neither verifier reads has to
+   * be a failure of this test, and a type the file does not carry could not say
+   * that. */
+  interface VectorKeyV1 {
+    readonly id: string
+    readonly public_key: string
+  }
+
+  interface VectorCaseV1 {
+    readonly name: string
+    readonly key: string
+    readonly state?: string
+    readonly claims?: LicenceV1Claims
+    readonly refused?: string
+  }
+
+  interface VectorFileV1 {
+    readonly now: number
+    readonly firebase_project_id: string
+    readonly keyring: Readonly<Record<string, string>>
+    readonly staging: VectorKeyV1
+    readonly vectors: readonly VectorCaseV1[]
+  }
+
+  const file = JSON.parse(
+    readFileSync(
+      fileURLToPath(new URL('../../../ee/licence/testdata/vectors_v1.json', import.meta.url)),
+      'utf8',
+    ),
+  ) as VectorFileV1
+
+  /** REFUSAL_NAMES is the eight names the two v1 verifiers share, and the file
+   * must carry a vector for every one of them. */
+  const REFUSAL_NAMES: readonly LicenceV1Refusal[] = [
+    'malformed',
+    'unknown-key-id',
+    'signature',
+    'claims',
+    'lifetime',
+    'newer-version',
+    'workspace',
+    'duration',
+  ]
+
+  /** BOUNDARY_VECTORS are the cases that sit on a second a verifier can get
+   * wrong while every other vector still answers the same: both ends of the paid
+   * term, both ends of the grace, and the tier's longest term from both sides. */
+  const BOUNDARY_VECTORS: readonly string[] = [
+    'a key at the second its paid term ends',
+    'a key a second into its grace',
+    'a key at the last second of its grace',
+    'a key a second past its grace',
+    'a key at the longest term its tier allows',
+    "a term a second past the tier's maximum",
+    'a check interval longer than a duration holds',
+    'a grace longer than a duration holds',
+  ]
+
+  /** SPKI_ED25519_PREFIX is the DER header in front of the 32 raw bytes of an
+   * Ed25519 public key. The file spells a keyring entry as the raw half -- the
+   * shape the Go `Keyring` holds -- and this console's ring holds the PEM, so
+   * the two are the same key in the two spellings each build reads. */
+  const SPKI_ED25519_PREFIX = Buffer.from('302a300506032b6570032100', 'hex')
+
+  function pemOf(encoded: string, what: string): string {
+    const raw = Buffer.from(encoded, 'base64url')
+    expect(raw, `${what} is not a 32-byte Ed25519 public key`).toHaveLength(32)
+    return createPublicKey({
+      key: Buffer.concat([SPKI_ED25519_PREFIX, raw]),
+      format: 'der',
+      type: 'spki',
+    }).export({ type: 'spki', format: 'pem' })
+  }
+
+  function ringOf(keys: Readonly<Record<string, string>>): LicenceKeyring {
+    const ring: Record<string, string> = {}
+    for (const [id, encoded] of Object.entries(keys)) ring[id] = pemOf(encoded, id)
+    return ring
+  }
+
+  const ring = ringOf(file.keyring)
+  const now = at(file.now)
+
+  function readV1(key: string): LicenceV1Read {
+    return verifyLicenceKeyV1(key, now, file.firebase_project_id, ring)
+  }
+
+  function vectorNamed(name: string): VectorCaseV1 {
+    const found = file.vectors.find((vector) => vector.name === name)
+    if (found === undefined) throw new Error(`the vectors carry no case named ${name}`)
+    return found
+  }
+
+  /** verifiedV1 narrows a read to what it holds, failing the case by name if the
+   * key was refused. */
+  function verifiedV1(
+    read: LicenceV1Read,
+    what: string,
+  ): { readonly claims: LicenceV1Claims; readonly state: LicenceV1State } {
+    if (!read.ok) throw new Error(`${what} was refused: ${read.reason}`)
+    return read
+  }
+
+  /** refusalName holds a vector's `refused` to the eight names the two verifiers
+   * share: a vector naming a ninth would otherwise compare two strings and pass
+   * while proving nothing. */
+  function refusalName(named: string): LicenceV1Refusal {
+    expect(REFUSAL_NAMES, `the vectors name the refusal ${named}`).toContain(named)
+    return named as LicenceV1Refusal
+  }
+
+  it('VectorsV1RoundTrip: every vector answers the state, the claims or the refusal the file names', () => {
+    expect(Object.keys(file.keyring), 'the vectors’ keyring is not the fixture’s one key').toHaveLength(1)
+    expect(file.vectors.length, 'the vectors carry too few cases to cover both halves').toBeGreaterThanOrEqual(15)
+
+    const seen: string[] = []
+    for (const vector of file.vectors) {
+      if (vector.refused !== undefined) {
+        const refusal = refusalName(vector.refused)
+        expect(readV1(vector.key), vector.name).toEqual({ ok: false, refusal, reason: expect.any(String) })
+        seen.push(refusal)
+        continue
+      }
+      const read = verifiedV1(readV1(vector.key), vector.name)
+      expect(vector.claims, `${vector.name}: the vector carries no claim set`).toBeDefined()
+      expect(read.claims, vector.name).toEqual(vector.claims)
+      expect(read.state, vector.name).toBe(vector.state)
+      seen.push(read.state)
+    }
+
+    // Each refusal and each state is in the file, and each boundary case is
+    // there by name: a vector set that lost its negative half, or that dropped a
+    // boundary, would still round-trip green.
+    for (const refusal of REFUSAL_NAMES) {
+      expect(seen, `no vector in the file is refused as ${refusal}`).toContain(refusal)
+    }
+    for (const state of ['active', 'grace', 'expired']) {
+      expect(seen, `no vector in the file is ${state}`).toContain(state)
+    }
+    for (const name of BOUNDARY_VECTORS) expect(vectorNamed(name).name).toBe(name)
+  })
+
+  it('a higher v is refused with the spec’s sentence, and never read as a state or as Free', () => {
+    expect(V1_UPGRADE_MESSAGE).toBe(
+      'This licence key requires a newer version of Fugaro. Upgrade Fugaro to use it.',
+    )
+
+    const vector = vectorNamed('a key of a version this build does not read')
+    // The whole read and not just its sentence: a refusal carries no claim set
+    // and no state, so a caller has nothing to fall back to.
+    expect(readV1(vector.key)).toEqual({
+      ok: false,
+      refusal: 'newer-version',
+      reason: V1_UPGRADE_MESSAGE,
+    })
+  })
+
+  it('StagingKeyIDIsRefusedV1: the ring refuses a key it does not hold, and the same key reads under the ring its id names', () => {
+    const vector = vectorNamed('a staging key')
+    expect(vector.refused, 'the vectors no longer carry a staging key').toBe('unknown-key-id')
+    expect(readV1(vector.key)).toEqual({ ok: false, refusal: 'unknown-key-id', reason: expect.any(String) })
+
+    const staging = ringOf({ [file.staging.id]: file.staging.public_key })
+    const read = verifiedV1(
+      verifyLicenceKeyV1(vector.key, now, file.firebase_project_id, staging),
+      'the staging key under the ring its id names',
+    )
+    expect(read.claims.kid).toBe(file.staging.id)
+  })
+
+  it('TestKeyIDIsNotInTheProductionKeyring: the ring this build ships holds no key minted for the vectors', () => {
+    for (const id of [...Object.keys(file.keyring), file.staging.id]) {
+      expect(PRODUCTION_KEYRING[id], `${id} is a key minted for the vectors`).toBeUndefined()
+    }
+  })
+
+  it('the workspace binds the key: a caller with no project id accepts nothing', () => {
+    const key = vectorNamed('a team key inside its paid term').key
+
+    expect(verifyLicenceKeyV1(key, now, '', ring)).toEqual({
+      ok: false,
+      refusal: 'workspace',
+      reason: expect.any(String),
+    })
+  })
+
+  it('the two key shapes do not read each other', () => {
+    // The v1 text is not the older format's three parts, so the older verifier
+    // refuses it as a shape it does not read...
+    const v1 = vectorNamed('a team key inside its paid term').key
+    expect(v1.startsWith(V1_PREFIX), 'the vector is not an fgk_ key').toBe(true)
+    expect(verifyLicenceKey(v1, now, ring).ok).toBe(false)
+
+    // ...and the older format carries no fgk_ prefix, so the v1 verifier refuses
+    // it as malformed before any keyring is consulted -- which is what keeps the
+    // console reading the shape it was given while a key of the other shape is
+    // refused rather than half-read.
+    const older = vectorNamed('a key text that is not a v1 key')
+    expect(readV1(older.key)).toEqual({ ok: false, refusal: 'malformed', reason: expect.any(String) })
+  })
+
+  it('a text that is not the format is refused as malformed, and the whitespace around a key is not part of it', () => {
+    const key = vectorNamed('a team key inside its paid term').key
+    const parts = key.slice(V1_PREFIX.length).split('.')
+
+    for (const [what, text] of [
+      ['an empty text', ''],
+      ['a text that is not a key', 'not a key'],
+      ['a key with no prefix', key.slice(V1_PREFIX.length)],
+      ['a key with one part', V1_PREFIX + (parts[0] ?? '')],
+      ['a key with three parts', `${key}.AAAA`],
+      ['an empty payload', `${V1_PREFIX}.AAAA`],
+      ['a part outside base64url', `${V1_PREFIX}%%%.%%%`],
+    ] as const) {
+      expect(readV1(text), what).toEqual({ ok: false, refusal: 'malformed', reason: expect.any(String) })
+    }
+
+    // A key arrives from a file's line or a paste, and neither adds meaning to
+    // the whitespace around it.
+    expect(verifyLicenceKeyV1(`  ${key}\n`, now, file.firebase_project_id, ring).ok).toBe(true)
+  })
+
+  it('a signature that is not 64 bytes is refused as a signature, not as a shape', () => {
+    // The signature decodes, so the text is the format; it is the key's
+    // signature that does not verify, which is the refusal the shared set names
+    // `signature` and the one the Go verifier answers with (it asks ed25519,
+    // which answers false for any length but 64).
+    const key = vectorNamed('a team key inside its paid term').key
+    const short = key.replace(/\.[^.]+$/, `.${Buffer.alloc(32, 7).toString('base64url')}`)
+
+    expect(readV1(short)).toEqual({ ok: false, refusal: 'signature', reason: expect.any(String) })
+  })
+
+  it('a non-canonical spelling of a part is refused: one key has one spelling', () => {
+    const key = vectorNamed('a team key inside its paid term').key
+    const signature = key.slice(key.lastIndexOf('.') + 1)
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+
+    // The last character of a 64-byte signature carries bits a decoder ignores:
+    // flipping the lowest one decodes to the same bytes, so the two spellings
+    // would be one key -- and one key has one spelling.
+    const malleable = signature.slice(0, -1) + alphabet.charAt(alphabet.indexOf(signature.slice(-1)) ^ 1)
+    expect(malleable, 'the vector is not malleable').not.toBe(signature)
+    expect(Buffer.from(malleable, 'base64url').equals(Buffer.from(signature, 'base64url'))).toBe(true)
+
+    for (const [what, text] of [
+      ['a non-canonical part', key.replace(/\.[^.]+$/, `.${malleable}`)],
+      ['a padded part', `${key}=`],
+    ] as const) {
+      expect(readV1(text), what).toEqual({ ok: false, refusal: 'malformed', reason: expect.any(String) })
+    }
   })
 })
