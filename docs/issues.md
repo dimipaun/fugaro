@@ -83,11 +83,11 @@ it has no file of, refuses.
 
 ## Filing one: `fugaro issue submit [REF]`
 
-`submit` is the one command of the family that sends text out of this machine,
-and it sends nothing until a person has read the exact bytes. It builds the
-post once — the title, the body and the sha256 of those bytes — and prints
-them. With no reference it visits every `pending` issue and skips the ones
-already filed or set aside. Without `--ask` it files nothing and uploads
+`submit` is the one command of the family that sends text to a public
+repository, and it sends nothing until a person has read the exact bytes. It
+builds the post once — the title, the body and the sha256 of those bytes — and
+prints them. With no reference it visits every `pending` issue and skips the
+ones already filed or set aside. Without `--ask` it files nothing and uploads
 nothing: a plain run is a preview.
 
 `--ask` uploads this machine's own pending issues first, exactly as `issue sync`
@@ -273,12 +273,15 @@ counts included; no other reporter's name or digest is in the document.
 ## In a coding agent's session
 
 An agent's session may read what is on this machine and may not write to the
-cloud, so the family splits there. `list`, `show` and `mine` print this
-machine's own files and the last shared read it cached, and read nothing from
-the project. `sync` refuses, because uploading is a write to the project's
-store. `dismiss` refuses even for an issue that exists only on this machine: a
-steered diagnosis could otherwise bury a real bug, so a person sets one aside.
-`submit` previews as usual, and `--ask` refuses, because the upload and the
-claim are writes — a session ends up with the same post and the same sha256 a
-person files themselves. Each refusal names the command a person runs at their
-own terminal rather than saying that an agent may not.
+cloud, so the family splits there. `list` and `show` print this machine's own
+files and read nothing from the project; `mine` is the one of the three that
+also prints the last shared read it cached, because the rows it shows are the
+project's and an offline `mine` would otherwise have none. `sync` refuses,
+because uploading is a write to the project's store. `dismiss` refuses even for
+an issue that exists only on this machine: a steered diagnosis could otherwise
+bury a real bug, so a person sets one aside. `submit` previews as usual, and
+what it previews is the bytes this machine holds rather than the project's
+record of a numbered issue; `--ask` refuses, because the upload and the claim
+are writes, so a person's own run re-reads that record and shows what it will
+file. Each refusal names the command a person runs at their own terminal
+rather than saying that an agent may not.
