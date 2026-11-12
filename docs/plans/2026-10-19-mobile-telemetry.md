@@ -795,6 +795,15 @@ all three in the shape the tree already uses (`mobile/src/mailbox/write-path.tes
 1. **The source scan.** Every `.js` under `mobile/` is walked (comments stripped, test files
    exempt, the scanner exempt from itself — the existing rule). The scan refuses:
    - any `logEvent(` whose **first string argument is not a name in §7.2's list**;
+   - **and, amended 2026-11-11 (P7.3), the parameters under an allowed name**: the second
+     argument must be a single object literal carrying exactly the keys §7.2's entry for that
+     name declares, each value a boolean or a member of that parameter's closed set. The
+     sentence above reads only the name, and a name is half of this document's §7.1 — *"No
+     free text at all. Every parameter value is a boolean or an enum"* is a claim about the
+     **parameters**, so `logEvent('screen_shown', { screen: message.text })` was a leak the
+     name check could not see. A second argument that is not an object literal is refused
+     with it, because `logEvent('screen_shown', message)` hands the SDK the message's own
+     fields all the same;
    - any `setUserId(`, `setUserProperty(`, or `setAttribute(`/`setAttributes(` call at all;
    - any `@react-native-firebase/…` import outside the telemetry module and the entry —
      **a rule the tree does not have today** (`write-path.test.js`'s rule 2, whose pattern is
