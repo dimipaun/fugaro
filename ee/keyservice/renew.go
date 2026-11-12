@@ -307,7 +307,7 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	// hands the customer exactly that (TestConcurrentRenewalsMintOneKey). What it
 	// costs is that a renewal waits for the one before it, which is a mint's
 	// round trip; what a lock here cannot reach is a second instance, and the
-	// store's record of the rotation is what answers that one (`recordRotation`).
+	// store's record of the rotation is what answers that one (answerRotation).
 	s.renewMu.Lock()
 	defer s.renewMu.Unlock()
 	key, ok, err := s.proved(r.Context(), call)
