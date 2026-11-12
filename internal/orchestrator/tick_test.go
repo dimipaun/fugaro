@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // The reconcile tick's tests (O7).
@@ -605,4 +607,126 @@ func intentByID(t *testing.T, s orchestrator.State, id string) orchestrator.Inte
 	}
 	t.Fatalf("the node carries no intent %q: %+v", id, s.Intents)
 	return orchestrator.Intent{}
+}
+
+// triageStub is the three seams a cycle's triage runs through (O14b), as one
+// value a test sets: the targets each seam was handed, the input the reader
+// answers with, and the runs the log already carries.
+type triageStub struct {
+	targets   []orchestrator.TriageTarget
+	merged    []orchestrator.TriageTarget
+	cancelled []orchestrator.TriageTarget
+	logged    []orchestrator.Entry
+	input     orchestrator.TriageInput
+	triaged   map[string]bool
+	readErr   error
+	logErr    error
+}
+
+func (s *triageStub) TriageInput(_ context.Context, target orchestrator.TriageTarget) (orchestrator.TriageInput, error) {
+	s.targets = append(s.targets, target)
+	if s.readErr != nil {
+		return orchestrator.TriageInput{}, s.readErr
+	}
+	return s.input, nil
+}
+
+func (s *triageStub) Merge(_ context.Context, target orchestrator.TriageTarget, _ gitprov.PRInfo) error {
+	s.merged = append(s.merged, target)
+	return nil
+}
+
+func (s *triageStub) Cancel(_ context.Context, target orchestrator.TriageTarget) error {
+	s.cancelled = append(s.cancelled, target)
+	return nil
+}
+
+func (s *triageStub) Triaged(_ context.Context, run string) (bool, error) { return s.triaged[run], nil }
+
+// Append derives the id and the instant the way the log itself does: a caller
+// hands over its subject, its transition and its text, and the log owns the
+// rest.
+func (s *triageStub) Append(_ context.Context, e orchestrator.Entry) error {
+	if s.logErr != nil {
+		return s.logErr
+	}
+	e.ID, e.At = orchestrator.EntryID(e.Subject, e.Transition), time.Now()
+	s.logged = append(s.logged, e)
+	return nil
+}
+
+// TestTickTriagesOnlyRunsPastTheThreshold: the cycle asks the rule about the
+// runs the ladder's threshold has passed and about no others, acts on what it
+// answers, and leaves the one line of audit that fences the run (O14b).
+//
+// The input here carries no record at all, which is the rule's unreadable
+// record: recommend-only, the outcome that acts on nothing — so what this
+// pins about the acting half is that a cycle handed nothing to act on acts on
+// nothing, and a repeated cycle over the same node appends nothing.
+func TestTickTriagesOnlyRunsPastTheThreshold(t *testing.T) {
+	now := o6Now()
+	const (
+		oldRun    = "20261106-090000-aaaa"
+		recentRun = "20261107-110000-bbbb"
+	)
+	old, oldIntent := o6OpenItem("wi-old", oldRun, now.Add(-30*time.Hour), now.Add(-20*time.Hour))
+	recent, recentIntent := o6OpenItem("wi-recent", recentRun, now.Add(-2*time.Hour), now.Add(-90*time.Minute))
+	h := newHarness(t, tickState(t, now, []orchestrator.WorkItem{old, recent}, []orchestrator.Intent{oldIntent, recentIntent}), now)
+	h.reader.reports = []orchestrator.RunReport{{RunID: oldRun, Started: true}, {RunID: recentRun, Started: true}}
+	stub := &triageStub{}
+	h.tick.Triage = orchestrator.TriageSeams{Read: stub, Act: stub, Log: stub}
+
+	threshold := orchestrator.TriageAfter(rigor.Default)
+	if threshold <= 0 {
+		t.Fatalf("the ladder carries no threshold for %s, the mode an item is judged under", rigor.Default)
+	}
+	rep := h.step()
+	if len(stub.targets) != 1 || stub.targets[0].RunID != oldRun {
+		t.Fatalf("the cycle triaged %+v, and the only run past the threshold is %s", stub.targets, oldRun)
+	}
+	if got := stub.targets[0]; got.Age != 20*time.Hour || got.Threshold != threshold {
+		t.Errorf("the target carries age %s and threshold %s, want 20h0m0s and %s", got.Age, got.Threshold, threshold)
+	}
+	if stub.targets[0].Item.ID != "wi-old" {
+		t.Errorf("the target names item %q, want the item whose attempt it is", stub.targets[0].Item.ID)
+	}
+	if rep.Triaged != 1 {
+		t.Errorf("the cycle reports %d triaged run(s), want one", rep.Triaged)
+	}
+	if len(stub.merged) != 0 || len(stub.cancelled) != 0 {
+		t.Errorf("a recommend-only outcome merged %d and cancelled %d run(s)", len(stub.merged), len(stub.cancelled))
+	}
+	if len(stub.logged) != 1 {
+		t.Fatalf("the cycle logged %d entries, want one: %+v", len(stub.logged), stub.logged)
+	}
+	if got := stub.logged[0]; got.ID != orchestrator.TriageAuditID(oldRun) || got.Subject != oldRun || got.Transition != "triage" {
+		t.Errorf("the line is %+v, want the run's own triage id %s", got, orchestrator.TriageAuditID(oldRun))
+	}
+
+	// The run's line is in the log now, which is the whole fence: the next
+	// cycle over the same node judges nothing and appends nothing.
+	stub.triaged = map[string]bool{oldRun: true}
+	rep = h.step()
+	if rep.Triaged != 0 || len(stub.targets) != 1 || len(stub.logged) != 1 {
+		t.Fatalf("a repeated cycle triaged %d run(s) and logged %d, want none and one", rep.Triaged, len(stub.logged))
+	}
+}
+
+// TestTickTriagesNothingWithoutSeams: a tick with no seams at all is the
+// daemon this release was before O14b — it reads no triage, writes none and
+// acts on nothing, however long the runs behind its items have been going.
+func TestTickTriagesNothingWithoutSeams(t *testing.T) {
+	now := o6Now()
+	const runID = "20261106-090000-aaaa"
+	w, it := o6OpenItem("wi-old", runID, now.Add(-30*time.Hour), now.Add(-20*time.Hour))
+	h := newHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
+	h.reader.reports = []orchestrator.RunReport{{RunID: runID, Started: true}}
+
+	rep := h.step()
+	if rep.Triaged != 0 {
+		t.Fatalf("a tick with no triage seams reports %d triaged run(s)", rep.Triaged)
+	}
+	if got := h.state(); len(got.Decisions) != 0 || len(got.WorkItems) != 1 {
+		t.Errorf("a tick with no triage seams wrote the state: %+v", got)
+	}
 }

@@ -2,11 +2,12 @@
 //
 // A tick is level-triggered (D1229). It reads the node, reads what the runs
 // behind the node's intents reported, folds the finished ones into the items,
-// plans (O6), carries the plan out (O6's starter, intent first), and commits.
-// There is no cursor and no replay: a tick derives its whole answer from the
-// node as it now stands, so a tick that ran twice over one node is the same as
-// one that ran once (TestTickIsIdempotentOnRepeat), and a daemon that crashed
-// mid-cycle resumes by running the next tick.
+// plans (O6), carries the plan out (O6's starter, intent first), triages the
+// runs the ladder's threshold has passed (O14b) and commits. There is no
+// cursor and no replay: a tick derives its whole answer from the node as it
+// now stands, so a tick that ran twice over one node is the same as one that
+// ran once (TestTickIsIdempotentOnRepeat), and a daemon that crashed mid-cycle
+// resumes by running the next tick.
 //
 // Nothing here calls a model, a cloud or a person (D1221): the state is the
 // store's (O3), the runs are the reader's, a launch is the launcher's, the
@@ -20,7 +21,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/escalation"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // Tick is one daemon's cycle and everything it acts through. It is a value
@@ -57,6 +63,12 @@ type Tick struct {
 	// Notifier is where a finished run and a question for a person go, or nil
 	// for a daemon that tells nobody.
 	Notifier Notifier
+	// Triage is what this cycle acts on the long-run rule through (O14b): the
+	// readings, the two actions an outcome can ask for that are not a state
+	// write, and the audit log every outcome leaves a line in. Left unset the
+	// cycle triages nothing at all, which is the direction a daemon that was
+	// given no host, no run storage and no log fails in.
+	Triage TriageSeams
 	// Now is the database server's clock (rtdb.ServerNow). Every stamp a cycle
 	// writes comes from it, and a cycle that cannot read it refuses rather
 	// than stamping anything with this machine's clock (D1230).
@@ -72,6 +84,11 @@ type Report struct {
 	// Carried is how many of the plan's actions the starter carried out — a
 	// launch, a retry, a re-issue or an abandonment.
 	Carried int
+	// Triaged is how many runs the cycle judged past the threshold and acted
+	// on. A run the rule was read about but did not have an outcome for — one
+	// under the threshold — is not counted, and neither is one whose line the
+	// log already carries.
+	Triaged int
 	// NotifyErr is a notification a sink would not take. It never fails the
 	// cycle: what a cycle must not lose is the write behind the notification.
 	NotifyErr error
@@ -153,6 +170,9 @@ func (c *cycle) run(ctx context.Context) error {
 	if err := c.carry(ctx, viewOf(reports)); err != nil {
 		return err
 	}
+	if err := c.triage(ctx); err != nil {
+		return err
+	}
 	c.rep.Outcome = c.outcome()
 	return nil
 }
@@ -204,7 +224,7 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // go by (D1228) — and anything else did nothing at all.
 func (c *cycle) outcome() CycleOutcome {
 	switch {
-	case c.rep.Folded > 0 || c.rep.Carried > 0:
+	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0:
 		return CycleProgress
 	case hasOpenIntent(c.state):
 		return CycleInFlight
@@ -277,4 +297,357 @@ func (c *cycle) say(ctx context.Context, n Notification) {
 	if err := c.tick.Notifier.Notify(ctx, n); err != nil {
 		c.rep.NotifyErr = errors.Join(c.rep.NotifyErr, err)
 	}
+}
+
+// TriageSeams is what one cycle acts on the long-run rule through (O14b): the
+// read that gathers the rule's input, the two things an outcome can ask for
+// that are not a state write, and the log every outcome leaves a line in. All
+// three or none — a Tick built with none triages nothing, which is where a
+// daemon with no host, no run storage or no audit log stands.
+type TriageSeams struct {
+	Read TriageReader
+	Act  TriageActor
+	Log  TriageLog
+}
+
+// Set reports whether every seam is there.
+func (s TriageSeams) Set() bool { return s.Read != nil && s.Act != nil && s.Log != nil }
+
+// TriageTarget is one run this cycle is due to judge: the item waiting on it,
+// the run id its attempt recorded, how long that attempt has been going and
+// the threshold it passed.
+type TriageTarget struct {
+	Item      WorkItem
+	RunID     string
+	Age       time.Duration
+	Threshold time.Duration
+}
+
+// TriageReader gathers the rule's input for one run: the record, the pull
+// request, the CI state and the findings file, each from where it lives. A
+// reading that could not be made is reported inside the input — the rule's own
+// unreadable inputs, which it fails closed on — and an error is a read that
+// did not happen, which ends the cycle instead of judging a run on nothing.
+//
+// The age and the threshold are not the reader's: the cycle overwrites them
+// from the target, so a run is due by the daemon's clock and the ladder's
+// figure and by nothing else.
+type TriageReader interface {
+	TriageInput(ctx context.Context, target TriageTarget) (TriageInput, error)
+}
+
+// TriageActor carries out the two things an outcome can ask for beside a state
+// write: landing the pull request the rule judged, and stopping the run it
+// judged. A merge is at the head the rule read — a host that refuses it is a
+// refusal the cycle reports to a person — and a cancel is the run's own cancel
+// path, so the runner it stops still finalizes what it has.
+type TriageActor interface {
+	Merge(ctx context.Context, target TriageTarget, pr gitprov.PRInfo) error
+	Cancel(ctx context.Context, target TriageTarget) error
+}
+
+// TriageLog is O3's audit log as one cycle writes it. Triaged answers whether
+// this run's line is already there, which is what makes a repeated cycle
+// append nothing and act on nothing; Append writes one line under the id the
+// entry derives from its subject and transition.
+type TriageLog interface {
+	Triaged(ctx context.Context, run string) (bool, error)
+	Append(ctx context.Context, entry Entry) error
+}
+
+// TriageAfter is the age at which the long-run rule is due: the ladder's own
+// ceiling for the mode, `escalation.r3_after_hours` — the moment its rung 3,
+// this rule's MergeAsIs, applies — and never a key of its own, because the
+// local key this slice was once planned around was never built and is retired
+// with the ladder's own figure (D2032). Zero when the ladder carries no row
+// for the mode, which the rule reads as not due.
+//
+// A work item carries a rigor *tier* and the ladder is keyed by rigor *mode*,
+// and nothing maps one to the other yet (the mode is gathered per run, which
+// no release does): every item is therefore judged under the default mode's
+// row. The critical-path factor is not applied here either — it scales the
+// review rounds a mode gets, not the age at which a long run is judged.
+func TriageAfter(mode rigor.Mode) time.Duration {
+	row, ok := escalation.DefaultThresholds().Rows[mode]
+	if !ok || row.CeilingHours <= 0 {
+		return 0
+	}
+	return time.Duration(row.CeilingHours * float64(time.Hour))
+}
+
+// triage is one cycle's turn at the rule: every item with a run recorded whose
+// attempt has passed the threshold, the rule read about each of them, and what
+// it answered carried out — unless the log already carries the run's line, in
+// which case the cycle leaves it alone, which is the whole of the idempotence.
+//
+// A cycle that no longer holds the node does not triage at all: the outcomes
+// act on the world (a merge, a cancel) and file work, and one read from a node
+// this cycle cannot write is not a state to act from.
+func (c *cycle) triage(ctx context.Context) error {
+	if !c.tick.Triage.Set() || !c.fresh {
+		return nil
+	}
+	for _, target := range triageDue(c.state, c.now, TriageAfter(rigor.Default)) {
+		done, err := c.tick.Triage.Log.Triaged(ctx, target.RunID)
+		if err != nil {
+			return err
+		}
+		if done {
+			continue
+		}
+		in, err := c.tick.Triage.Read.TriageInput(ctx, target)
+		if err != nil {
+			return err
+		}
+		in.Elapsed, in.Threshold = target.Age, target.Threshold
+		out := Triage(in)
+		if !out.Due() {
+			// A run the rule read no outcome for is left undocumented: it is
+			// judged again next cycle, which is what makes a threshold that
+			// comes due later one the daemon still reaches.
+			continue
+		}
+		if err := c.triaged(ctx, target, in, out); err != nil {
+			return err
+		}
+		c.rep.Triaged++
+	}
+	return nil
+}
+
+// triageDue is the runs a cycle's triage is about: every item with a run
+// recorded whose attempt for that run has been going at least the threshold.
+// The attempt is found by the run id the item names rather than by whether it
+// has reported: the rule has an outcome for a run that has ended (the merge
+// gate reads a terminal record) and one for a run still going, so both are
+// judged here.
+func triageDue(s State, now time.Time, threshold time.Duration) []TriageTarget {
+	if threshold <= 0 {
+		return nil
+	}
+	var out []TriageTarget
+	for _, w := range s.WorkItems {
+		if w.RunID == "" {
+			continue
+		}
+		it, ok := attemptOf(s, w.RunID)
+		if !ok {
+			continue
+		}
+		age := now.Sub(it.At)
+		if age < threshold {
+			continue
+		}
+		out = append(out, TriageTarget{Item: w, RunID: w.RunID, Age: age, Threshold: threshold})
+	}
+	return out
+}
+
+// attemptOf is the intent recorded for one run id, reported or not.
+func attemptOf(s State, runID string) (Intent, bool) {
+	for _, it := range s.Intents {
+		if it.RunID == runID {
+			return it, true
+		}
+	}
+	return Intent{}, false
+}
+
+// triaged carries one outcome out and writes the line that fences it.
+//
+// The order is the rule's: the act first — the merge the rule judged with
+// every input read, the cancel that stops the run — then the state the outcome
+// demands, then the line. A line is therefore only ever written for something
+// that happened, and a cycle that died in the act leaves the run unfenced for
+// the next one, which is the direction a lost write has to fail in.
+func (c *cycle) triaged(ctx context.Context, target TriageTarget, in TriageInput, out TriageOutcome) error {
+	text := triageLine(out)
+	var (
+		ops  []Op
+		told []Notification
+	)
+	switch out.Kind {
+	case MergeAsIs:
+		// The one outcome that lands work without a person, and the only
+		// merge this package ever asks for: the head is the one the rule
+		// judged, and the provider's own call refuses a head that moved.
+		err := c.tick.Triage.Act.Merge(ctx, target, *in.PR)
+		switch code := mergeRefusalCode(err); {
+		case err == nil:
+			text = triageLine(out) + " (merged)"
+			if op, ok := c.followUp(target, in); ok {
+				ops = append(ops, op)
+			}
+		case code != "":
+			// A refusal is not an outage: the host said no to this merge —
+			// the head moved, its merge cannot be bound to one, it holds no
+			// merge credential — and what the rule judged is not what lands.
+			// That is a person's to read, and the run is not re-judged for
+			// it: the line below fences it.
+			// The line says both what the rule decided and what the host did
+			// with it: the outcome and its evidence, then the refusal and its
+			// closed code, so the log is not read as a merge that landed.
+			text = triageLine(out) + " " + string(ReasonMergeRefused) + " (" + code + ")"
+			if op, question, ok := c.askPerson(target, mergeRefusedQuestion(target, code)); ok {
+				ops, told = append(ops, op), append(told, question)
+			}
+		default:
+			return err
+		}
+	case Escalate:
+		if err := c.tick.Triage.Act.Cancel(ctx, target); err != nil {
+			return err
+		}
+		if op, question, ok := c.askPerson(target, escalateQuestion(target, out)); ok {
+			ops, told = append(ops, op), append(told, question)
+		}
+	case Restart:
+		// A run that is going nowhere is stopped here, and the smaller scopes
+		// the rule named are filed for a person to approve: the daemon files
+		// them unapproved, and only a person's own approval starts them
+		// (D1226).
+		if err := c.tick.Triage.Act.Cancel(ctx, target); err != nil {
+			return err
+		}
+		ops = append(ops, c.smallerScopes(target, out)...)
+	case RecommendOnly:
+		// The outcome that raises nothing, files nothing, merges nothing and
+		// cancels nothing: what it does is the line below, which names the
+		// input nobody could read.
+	}
+	if len(ops) > 0 {
+		next, err := Apply(c.state, Patch{BaseRev: c.state.Rev, Ops: ops}, Actor{Class: Daemon, Now: c.now})
+		if err != nil {
+			return err
+		}
+		if err := c.commit(ctx, next); err != nil {
+			return err
+		}
+	}
+	if err := c.tick.Triage.Log.Append(ctx, Entry{Subject: target.RunID, Transition: triageTransition, Text: text}); err != nil {
+		return err
+	}
+	for _, n := range told {
+		c.say(ctx, n)
+	}
+	return nil
+}
+
+// mergeRefusalCode is the closed code of a merge the provider refused, or ""
+// when the error is not a refusal at all. A refusal is a person's: the head
+// moved under the call, the provider's merge cannot be bound to an expected
+// head at all, it holds no merge credential, or the pull request is no longer
+// open. Everything else is an outage — a host that did not answer — which the
+// next cycle retries.
+//
+// The codes are this file's own vocabulary and never the provider's message:
+// O3's line carries closed codes and no untrusted text, and two providers
+// spell one refusal two ways.
+func mergeRefusalCode(err error) string {
+	for code, sentinel := range map[string]error{
+		"head_moved":            gitprov.ErrHeadMoved,
+		"no_head_precondition":  gitprov.ErrMergeNoHeadPrecondition,
+		"no_merge_mint":         gitprov.ErrNoMergeMint,
+		"pull_request_not_open": gitprov.ErrPRNotOpen,
+	} {
+		if errors.Is(err, sentinel) {
+			return code
+		}
+	}
+	return ""
+}
+
+// askPerson is the question an outcome raises for a person: one decision per
+// run, under the run's own id, and nothing when the node already carries it — a
+// decision_add on an id that is there is refused, so a cycle that re-runs
+// after a write that landed asks once.
+func (c *cycle) askPerson(target TriageTarget, question string) (Op, Notification, bool) {
+	id := target.RunID + "-" + triageTransition
+	if _, ok := c.state.Decision(id); ok {
+		return Op{}, Notification{}, false
+	}
+	op := Op{Op: OpDecisionAdd, Decision: &DecisionOp{ID: id, Question: question, WaitingOn: OnPerson}}
+	return op, Notification{Kind: NotifyDecisionNeeded, Subject: id, Text: question}, true
+}
+
+// smallerScopes is the work a restart files: one item per reason the rule gave,
+// each waiting for a person's approval — never approved here, because a daemon
+// that approved its own work items would be the standing approval D1226
+// refuses. An item whose name the node already carries is not filed again, so a
+// cycle that re-runs after a committed write adds nothing.
+func (c *cycle) smallerScopes(target TriageTarget, out TriageOutcome) []Op {
+	var ops []Op
+	for _, reason := range out.Reasons {
+		id := target.RunID + "-" + string(reason)
+		if _, ok := c.state.Item(id); ok {
+			continue
+		}
+		ops = append(ops, newItemOp(id,
+			"a smaller scope: "+target.Item.Title,
+			"The triage restarted run "+target.RunID+" ("+string(reason)+"): the run is over or going nowhere, and what it was asked to do is not one attempt's work. Split it into a scope a person can approve; this item waits for that approval.",
+			target.Item, c.state))
+	}
+	return ops
+}
+
+// followUp is the work a merge leaves behind: the findings the run wrote that
+// did not block the landing are still open, and a person decides what to do
+// about them. A merge with nothing open leaves nothing to file.
+func (c *cycle) followUp(target TriageTarget, in TriageInput) (Op, bool) {
+	if len(in.Findings.List) == 0 || in.Record == nil {
+		return Op{}, false
+	}
+	id := target.RunID + "-follow-up"
+	if _, ok := c.state.Item(id); ok {
+		return Op{}, false
+	}
+	lines := make([]string, 0, len(in.Findings.List))
+	for _, f := range in.Findings.List {
+		lines = append(lines, string(f.Severity))
+	}
+	return newItemOp(id,
+		"the findings run "+target.RunID+" left open",
+		"Run "+target.RunID+" was merged with these findings still open: "+strings.Join(lines, ", ")+". Decide each one; this item waits for a person's approval.",
+		target.Item, c.state), true
+}
+
+// newItemOp is one work item a cycle files: the repo, the recipe and the tier
+// of the item the run was for, the phase work starts in, and no approval —
+// only a person's own work_item_approve is one (D1226).
+func newItemOp(id, title, brief string, of WorkItem, s State) Op {
+	phase := PhaseQueued
+	repo, recipe, tier := of.Repo, of.Recipe, of.RigorTier
+	return Op{Op: OpWorkItemUpsert, WorkItem: &WorkItemOp{
+		ID: id, Title: &title, Repo: &repo, Recipe: &recipe, RigorTier: &tier, Brief: &brief, Phase: &phase,
+	}}
+}
+
+// triageLine is what the audit log carries for one outcome: the outcome and
+// the reasons it was taken for, in the rule's own words, so a person reading a
+// long run's ending reads the evidence and not a story about it.
+func triageLine(out TriageOutcome) string {
+	return string(out.Kind) + ": " + triageCodes(out)
+}
+
+// triageCodes is an outcome's reasons as one line of closed codes.
+func triageCodes(out TriageOutcome) string {
+	codes := make([]string, 0, len(out.Reasons))
+	for _, r := range out.Reasons {
+		codes = append(codes, string(r))
+	}
+	return strings.Join(codes, " ")
+}
+
+// escalateQuestion is what a person is asked about a run the triage escalated:
+// the codes the rule read it for, and the run they were read in.
+func escalateQuestion(target TriageTarget, out TriageOutcome) string {
+	return "The triage escalated run " + target.RunID + " (" + triageCodes(out) + "). The run was stopped; read the finding and decide what happens to it."
+}
+
+// mergeRefusedQuestion is what a person is asked about a merge the host
+// refused: the refusal is theirs to act on — a moved head is a review, an
+// unbound merge and a missing credential are configuration — and the run keeps
+// its own record either way.
+func mergeRefusedQuestion(target TriageTarget, code string) string {
+	return "The triage could not land the pull request of run " + target.RunID + " (" + code + "). Decide what happens to it."
 }
