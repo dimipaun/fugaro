@@ -2038,6 +2038,22 @@ the answer those fields come back as.
 `project_layer` is `launchProjectLayer`: `sha256`, `generation`° (**int64** —
 which one layer the stored task actually carries, and never its text).
 
+**The chain a launch joined is added by D1056, and it is the same block
+`fugaro runs show --json` prints** (`docs/run-limit-carry-over`, L7): `chain`
+(the root run id), `run_count` (**int**), `enforced` (**bool**),
+`limits_read` (**bool**) and `limits[]`, whose rows are `dimension`, `limit`,
+`used`, `remaining` and `source`. The five are inlined from the one
+`ChainLimits` block both documents are written from
+(`internal/cli/runs_show.go`), so a member or a figure the one carries and the
+other lacks is not a state this pair can be in, and the amounts are in the
+dimension's own unit (micro-dollars for the money, whole tokens, seconds and a
+count). **All five are absent for a launch that begins a chain** — a first run,
+an attempt of a batch — because that launch joins none: its chain is the run
+the reply's own `run_id` names, and a block naming it would read as a chain of
+one. `enforced` false means the figures are the run records' rather than the
+budget database's, which is what a chain is when the installation's budget is
+off (D1046).
+
 **Four of the fields are the launch's own identity, and the fifth is a version
 of it the console built.** `project` is the Fugaro project the launch was cut
 for. `run` and `run_id` are the same run id under the CLI's two keys, and it is
@@ -2069,16 +2085,23 @@ inside the CLI, not on this surface: a batch launch prints a batch document once
 per attempt (`printBatch`), and the console never asks for one — the batch flag
 is on rule 11's excluded-flag list — so that shape is not this operation's.
 
-**The decoder is closed, and it is the contract's enforcer.** The main process
-reads this document with `decodeLaunchResult`
-(`console/src/main/launchrules.ts`): the keys must be exactly the ones above, the
-types are the ones the CLI writes, `status` must be one of the two words, and
-**an unknown key or a wrong type refuses the whole reply** rather than being
-ignored (rule 11). Every string is kept as text and bounded — nothing here is
+**The decoder names the keys it draws, and a key it does not know is ignored.**
+The main process reads this document with `decodeLaunchResult`
+(`console/src/main/launchrules.ts`): the types of the keys it names are the ones
+the CLI writes, `status` must be one of the two words, and **an unknown key is
+ignored** rather than refusing the reply, while a key it names carrying a value
+of the wrong type is still refused. The reply arrives *after* the spend, and the
+CLI's JSON only grows and never re-means a member, so refusing it over a member
+a newer CLI added would tell the operator that a launch which happened did not
+(the owner's ruling of 2026-10-30, which replaced rule 11's "refuses the whole
+reply" — the chain members above are the kind of addition it was made for). The
+value is built from the named keys alone, so a key this console does not name
+reaches no screen. Every string is kept as text and bounded — nothing here is
 read as a sentence, a path or a link — and the renderer mirrors that decoder
-(`console/src/renderer/screens/launch.ts`'s `launchOutcomeOf`), so a reply with
-a key of its own draws the console's one "unreadable reply" sentence and never a
-partial set of facts. A replayed answer — a second click on the window's own
+(`console/src/renderer/screens/launch.ts`'s `launchOutcomeOf`), so a reply
+carrying a key this console does not know is drawn from the keys it does and
+never as a partial set of facts, and a key of the document's own never becomes
+a figure of its own. A replayed answer — a second click on the window's own
 button, or a re-sent call — is the app's own in-memory record of the first
 `launchResult` and reaches no child at all (design §5.1 rule 11).
 
