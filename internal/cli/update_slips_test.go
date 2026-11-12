@@ -8,17 +8,20 @@
 // The secrets intake is deployed by that run and by nothing else: the module's
 // whole file is gated on `var.intake != null` (modules/installation/intake.tf),
 // no release before this one wrote the variable — internal/infra's
-// InstallationSpec still carries no block of that name and InstallationVars
-// writes no such key, and spec.go's Intake is the OTHER direction, the
-// installation root's own `intake` output, which is what the audience fill
-// reads back — and the service is a subcommand of the image the credentials
-// service already runs (there is no intake image kind in images/, and
-// .github/workflows/images.yml builds history, base and credentials), so
-// nothing else in the tree could deploy it. The block is written by the
-// installation stage (deployCredentialsService, carriedIntake), moved onto this
-// release with the service's own pin by the credentials-service stage, and
-// carried forward by prepare: the test below pins the whole of that, in the
-// tfvars an installation converges to and in the URL its revision would carry.
+// InstallationSpec carries no field of that name, and it is the struct
+// InstallationVars serializes for the root, so the document the release behind
+// wrote has no `intake` key at all rather than one set to null; spec.go's
+// `Intake *IntakeService` is the OTHER direction, a field of
+// InstallationOutputs that DecodeOutputs fills from the root's own outputs and
+// that the audience fill reads the URL back from — and the service is a
+// subcommand of the image the credentials service already runs (there is no
+// intake image kind in images/, and .github/workflows/images.yml builds
+// history, base and credentials), so nothing else in the tree could deploy it.
+// The block is written by the installation stage (deployCredentialsService,
+// carriedIntake), moved onto this release with the service's own pin by the
+// credentials-service stage, and carried forward by prepare: the test below
+// pins the whole of that, in the tfvars an installation converges to and in the
+// URL its revision would carry.
 //
 // The launcher class (D1938, F25) is the list the intake and the credentials
 // service answer to. Cloud Run grants the invoker per service, so the roster's
@@ -68,34 +71,40 @@ func TestUpdateConvergesFromPreviousInstallation(t *testing.T) {
 	r := newConvergeRig(t, staleNode(t))
 	publishCredentialsImage(t, r.imagesRig, convergeRelease)
 	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
-	// The root's plan holds the service's own revision moving, which is the
-	// plan this run applies (a plan that reports no changes is never applied,
-	// TF.Plan's exit code being what says so). The rig's document answers the
-	// state reads under "show -json" while the plan answers under
-	// "show@installation": without the first, the fallback the fake documents
-	// (a script naming only "show" answers the state too) would let this stage's
-	// plan be read as the installation's state, which manages nothing.
+	// The root's plan holds the two changes this run really makes: the secrets
+	// intake's own service, which the block this run writes into an
+	// installation that has none creates, and the credentials service's
+	// revision, which the same run moves onto this release's pin. A plan that
+	// reports no changes is never applied (TF.Plan's exit code is what says
+	// so), and the audience fill refuses an installation whose tfvars gained a
+	// service under one. The rig's document answers the state reads under
+	// "show -json" while the plan answers under "show@installation": without
+	// the first, the fallback the fake documents (a script naming only "show"
+	// answers the state too) would let this stage's plan be read as the
+	// installation's state, which manages nothing.
 	//
-	// What the plan DOES NOT hold is the intake's own creation, and that is not
-	// an omission to fix here: this door is not the managed gate (the fixture is
-	// the owner's own terminal on an installation the run does not gate), so no
-	// cover judges this plan, and a change planted in it would pass whatever it
-	// said. That the module's intake IS admitted by the cover — the rule that
-	// makes the apply deploy it on a managed installation — is pinned where it
-	// is judged: internal/infra/tf's
-	// TestCoverRefusesAnIntakeServiceThatIsNotTheModules, over the same fixture
-	// intake.tf writes.
+	// What this door does NOT do is judge the plan's content: it is the owner's
+	// own terminal on an installation the run does not gate, so no cover reads
+	// this plan and a change planted in it would pass whatever it said. That
+	// the module's intake IS admitted by the cover — the rule that makes the
+	// apply deploy it on a managed installation — is pinned where it is judged:
+	// internal/infra/tf's TestCoverRefusesAnIntakeServiceThatIsNotTheModules,
+	// over the same fixture intake.tf writes.
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation",
+		change("module.installation.google_cloud_run_v2_service.intake", "create"),
+		change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	// The roster the installation root reports, which is the one the class is
 	// derived from: a launcher and an operator (who launches too). A group is
 	// not in it: the roster the module records is a list of people, and what
 	// the class does with one is internal/infra's own rule, pinned where
 	// launcherAccounts is (launchers_test.go).
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
-		"launchers": []string{"user:" + launcher},
-		"operators": []string{"user:" + operator},
+		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
+		"launchers":           []string{"user:" + launcher},
+		"operators":           []string{"user:" + operator},
 	})}
 	r.save(t)
 

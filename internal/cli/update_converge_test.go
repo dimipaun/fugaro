@@ -394,6 +394,7 @@ func TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService(t *testing.T
 	// installation's other facts.
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
 	})}
 	r.save(t)
 
@@ -449,6 +450,7 @@ func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
 	// model credential at all).
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
 	})}
 	// The installation root's plan is NOT empty here, and the fixture says so
 	// rather than leaving it to the rig's default: this release's run writes the
@@ -501,6 +503,7 @@ func TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion(t *testing.T) {
 	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
 	})}
 	r.save(t)
 	r.managedRuns(t, initProjectName, initProject)

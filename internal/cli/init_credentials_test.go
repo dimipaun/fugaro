@@ -593,6 +593,24 @@ func TestAnOnboardingConvergeNamesTheNewRepositoriesJobs(t *testing.T) {
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	// The installation root's plan is not empty: this release's run writes the
+	// secrets intake's block into an installation that has none (DS4.1), the
+	// module's intake file is gated on that variable, and the apply that
+	// follows the write creates the service — so an installation stage whose
+	// plan reports no changes while its tfvars gained a service is the shape
+	// the audience fill refuses (TF.Plan's exit code is what says a plan has
+	// something to apply). The plan's content is not what this test is about;
+	// the table the same run's installation apply writes is, and a stage that
+	// plans nothing never reaches it.
+	//
+	// The two reads are scripted apart, as the fake's own contract has them:
+	// "show -json" is the root's state (no plan file) and a root-scoped
+	// "show@installation" is the plan. Without the first, the fallback the
+	// fake documents would hand this plan document to the state read, which
+	// decodes it as an installation that manages nothing.
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
 	// The table the deploy left: a repository this machine's config no longer
 	// describes, which is what stands in for "the config has moved on since".
 	setCredentialsJobTable(t, r, []any{map[string]any{
@@ -1122,15 +1140,20 @@ func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 			t.Errorf("credentials_service.%s = %v, want %v: the re-pin rewrote a fact of the service it does not own", k, svc[k], want)
 		}
 	}
-	// Two applies, and no audience fill: the installation root's own, and the
-	// credentials-service stage's — the root once more, whose one change is
-	// the moved image. The second apply is what the reorder costs (the
-	// owner's ruling of 2026-11-10): the service may not be replaced before
-	// the node it reads per call is one its own binary understands, so its
-	// apply is the stage after the policy migration rather than part of the
-	// installation stage's.
-	if apps := r.ran(t, "apply"); len(apps) != 2 {
-		t.Errorf("applies = %v, want the installation root's and the credentials-service stage's own", apps)
+	// Three applies: the installation root's own, the audience fill's — the
+	// second apply inside the installation stage, which writes the credentials
+	// service's URL and the secrets intake's back from the root's outputs, and
+	// which this run makes because it also deploys the intake (DS4.1: the
+	// installation at the previous version has none, so the block this run
+	// writes is the one whose URL the apply after it carries onto the
+	// revision) — and the credentials-service stage's. That last one is the
+	// root once more, whose one change is the moved image; it is what the
+	// reorder costs (the owner's ruling of 2026-11-10): the service may not be
+	// replaced before the node it reads per call is one its own binary
+	// understands, so its apply is the stage after the policy migration rather
+	// than part of the installation stage's.
+	if apps := r.ran(t, "apply"); len(apps) != 3 {
+		t.Errorf("applies = %v, want the installation root's, the audience fill's own and the credentials-service stage's", apps)
 	}
 
 	// The next ordinary update is the converged one, and it asks the registry

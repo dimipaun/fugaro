@@ -254,13 +254,14 @@ func outputsJSONWith(t *testing.T, over map[string]any) string {
 		"operators":                []string{},
 		"log_view":                 initLogView,
 		"registry_cleanup_dry_run": true,
-		// The installation's two Cloud Run services, as this release's module
-		// publishes them: a run whose tfvars carry either block and whose
-		// outputs name none is the half-carried state the audience fill
-		// refuses, and the rigs that seed one of the blocks have no other
-		// document to read the URL back from.
-		"credentials_service": credentialsServiceOutput(),
-		"intake":              intakeServiceOutput(),
+		// The installation's two Cloud Run services are NOT here by default:
+		// an installation whose outputs name one is one whose root publishes it,
+		// and a rig that seeds a block into the tfvars says so itself
+		// (credentialsOutputs, or the member written into this document by the
+		// tests with a bigger answer to give — update_converge_test.go). A
+		// default would tell every other rig the installation has services it
+		// does not, which the readers of this document act on (the switch's own
+		// bundle read, the audience fill).
 	}
 	maps.Copy(vals, over)
 	out := map[string]any{}
