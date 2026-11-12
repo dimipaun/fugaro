@@ -76,8 +76,15 @@ var updateRetryBucket = func(ctx context.Context, o cloudOptions, p retryProject
 	if err != nil {
 		return nil, err
 	}
-	return blobx.Open(ctx, url)
+	return updateRetryOpen(ctx, url)
 }
+
+// updateRetryOpen opens the URL retryBucketURL resolved: the store the offer
+// reads and marks an issue in. It is a var of its own rather than the record
+// bucket's opener because the tests replace that one with a fixture of build
+// records while this is the offer's own store, and a test of the offer drives
+// updateRetryBucket itself.
+var updateRetryOpen = blobx.Open
 
 // retryBucketURL is the bucket the offer reads, from the config the run
 // selected and the --runs-bucket the run was given: loadInitConfig's own two

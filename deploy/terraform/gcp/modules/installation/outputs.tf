@@ -124,6 +124,15 @@ output "credentials_service" {
   }
 }
 
+output "intake" {
+  description = "The secrets intake's Cloud Run service name, region and URL, or null while the installation has not opted in. url is the service's own URL as Cloud Run assigned it (the resource's uri), which is the audience a caller's Google ID token is minted for: it is what the update stage writes back into var.intake.url, because nothing inside the service resource can read its own uri (intake.tf, the same shape as credentials_service above)."
+  value = var.intake == null ? null : {
+    name   = google_cloud_run_v2_service.intake[0].name
+    region = var.region
+    url    = google_cloud_run_v2_service.intake[0].uri
+  }
+}
+
 output "project_secrets" {
   description = "The project-wide secret containers by logical name (their secret IDs), so a consumer waits for the container: the project job module grants each job the ones its profile mounts."
   value       = { for name, s in google_secret_manager_secret.project : name => s.secret_id }

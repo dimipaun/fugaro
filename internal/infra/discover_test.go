@@ -1059,9 +1059,11 @@ func TestReadinessImageHintNamesTheLogicalWorkflow(t *testing.T) {
 // TestReadinessGatesCheckJob: the check job's gate and the fix line the
 // operator is handed for its unversioned credential. The check job mounts the
 // provider credential at latest, which Cloud Run checks when it creates the
-// job, so like a workflow job it waits until the credential has a version;
-// the invoker grant and the Scheduler job wait with it. A check job that
-// exists stays, whatever its secrets.
+// job, so a check job that exists is reported missing that credential until it
+// has a version — and D1900 (IS2) is what the rest of the gate is now: the job
+// is not emitted, so nothing about the credential brings one into being, and
+// only a cloud that already holds one keeps it (TestNoRepoCheckJobEmitted is
+// the emission rule itself).
 //
 // The assertion pins the whole command, not a prefix of it: the check job's
 // credential is the sandbox's git token, which is the one reserved name D2's
@@ -1077,8 +1079,14 @@ func TestReadinessImageHintNamesTheLogicalWorkflow(t *testing.T) {
 func TestReadinessGatesCheckJob(t *testing.T) {
 	ctx := context.Background()
 	spec := sandboxSpec(t)
+	if spec.Check == nil {
+		t.Fatal("the fixture must carry a check spec: this test is about the job it would emit")
+	}
+	// The ungated spec keeps the job's shape (spec.go's own note): what
+	// decides whether it is deployed is Readiness, and it decides by the
+	// cloud — none there, none deployed (TestNoRepoCheckJobEmitted).
 	if !spec.Check.DeployJob {
-		t.Fatal("the ungated spec must deploy the check job")
+		t.Fatal("the spec of a repository with checked workflows must still describe the check job")
 	}
 	creds := slices.Sorted(maps.Values(spec.Check.SecretEnv))
 	if len(creds) != 1 {
@@ -1130,11 +1138,13 @@ func TestReadinessGatesCheckJob(t *testing.T) {
 		t.Error("the schedule must stay paused")
 	}
 
-	// Once the credential has a version, the check job is deployed; the
-	// other secrets don't matter to it.
+	// The credential having a version changes nothing about the emission: a
+	// repository whose cloud holds no check job keeps none (D1900). The only
+	// thing the version settles is the fix line above, which an unresolvable
+	// credential is reported with and a resolvable one is not.
 	f.seedVersions(spec, creds[0])
-	if got, missing := gate(f); !got.Check.DeployJob || len(missing) != 0 {
-		t.Errorf("with the credential: deploy %v, missing %+v", got.Check.DeployJob, missing)
+	if got, missing := gate(f); got.Check.DeployJob || len(missing) != 0 {
+		t.Errorf("with the credential and no check job in the cloud: deploy %v, missing %+v", got.Check.DeployJob, missing)
 	}
 
 	// An existing check job is never removed by the gate: a missing
@@ -1146,6 +1156,84 @@ func TestReadinessGatesCheckJob(t *testing.T) {
 	got, missing = gate(f)
 	if !got.Check.DeployJob || len(missing) != 1 || !missing[0].Deployed || !strings.Contains(missing[0].String(), "stays deployed") {
 		t.Errorf("an existing check job: deploy %v, missing %+v", got.Check.DeployJob, missing)
+	}
+}
+
+// TestNoRepoCheckJobEmitted: D1900 (2026-11-09) disables repo-level images
+// and keeps the code, so the per-repository daily image check job -- whose
+// whole work is rebuilding the repository's own image on a schedule -- is no
+// longer emitted. A repository that has none gets none: the readiness output
+// says deploy_job false, Addresses names none of the three resources
+// check.tf declares, and the plan of the repository root therefore creates no
+// job, no invoker grant and no Scheduler job.
+//
+// The other half is the one that keeps `fugaro update` converging (the HARD
+// RULE): a repository that already has one keeps it. check.tf's count reads
+// the same deploy_job, so a false one for a job the state holds would be a
+// destroy of a deletion-protected job, and an address the state holds that
+// the spec stops producing is a retirement -- D1194's second command, which
+// is not this task's (nothing is deleted).
+func TestNoRepoCheckJobEmitted(t *testing.T) {
+	ctx := context.Background()
+	spec := sandboxSpec(t)
+	if spec.Check == nil {
+		t.Fatal("the fixture must carry a check spec: this test is about the job it would emit")
+	}
+	creds := slices.Sorted(maps.Values(spec.Check.SecretEnv))
+	if len(creds) != 1 {
+		t.Fatalf("check secrets = %v, want the provider credential alone", creds)
+	}
+	// A fresh repository, with the credential the check job mounts stored:
+	// nothing but the emission rule below decides.
+	f := newCloud(t)
+	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	f.seedVersions(spec, creds[0])
+	_, ex, err := DiscoverRepo(ctx, f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.CheckJob {
+		t.Fatal("this fixture's cloud must hold no check job")
+	}
+	got, _, err := Readiness(ctx, f.c, spec, ex, false, "update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Check == nil {
+		t.Fatal("the check spec left the readiness output: discovery reads it to find a job an earlier release made")
+	}
+	if got.Check.DeployJob {
+		t.Error("a repository with no check job must emit none (D1900)")
+	}
+	for _, a := range got.Addresses() {
+		if strings.Contains(a, "check") {
+			t.Errorf("the spec still produces %s, which check.tf would deploy", a)
+		}
+	}
+
+	// A repository that already has one keeps it, and every address the state
+	// holds stays in the spec: this is what leaves the update planning no
+	// destroy and no retirement.
+	g := newCloud(t)
+	g.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	g.seedVersions(spec)
+	g.m5(t, spec)
+	_, ex, err = DiscoverRepo(ctx, g.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ex.CheckJob {
+		t.Fatal("the fixture's own apply must be found: it is the job this half keeps")
+	}
+	kept, _, err := Readiness(ctx, g.c, spec, ex, false, "update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !kept.Check.DeployJob {
+		t.Error("an existing check job must stay deployed: nothing here deletes one")
+	}
+	if !slices.Contains(kept.Addresses(), "module.repo.google_cloud_run_v2_job.check[0]") {
+		t.Errorf("the spec no longer produces the deployed check job: %v", kept.Addresses())
 	}
 }
 
@@ -1779,8 +1867,17 @@ func TestReadinessCheckJobResolvesProjectSecretsToo(t *testing.T) {
 	if id := got.ProjectSecrets["bitbucket-token"]; id != want {
 		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want %q", id, want)
 	}
-	if !got.Check.DeployJob {
-		t.Errorf("the check job is not deployed: %v", missing)
+	// The job's own spec is where the check half of B4 is read: the ID it
+	// hands its rebuilds is the one this pass resolved, which is the project
+	// copy here (setCheckGitSecretID). It is not the deployment that says so
+	// any more — D1900 stopped the job being emitted (IS2), and the fixture's
+	// cloud holds none.
+	var cs CheckJobSpec
+	if err := json.Unmarshal([]byte(got.Check.Env[CheckSpecEnv]), &cs); err != nil {
+		t.Fatalf("the check job's spec does not parse: %v", err)
+	}
+	if cs.GitSecretID != want {
+		t.Errorf("the check job's GitSecretID = %q, want %q (missing %v)", cs.GitSecretID, want, missing)
 	}
 }
 

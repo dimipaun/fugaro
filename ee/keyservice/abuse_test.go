@@ -332,6 +332,8 @@ func TestTheOpenSourceCheckRefusesWithoutProofs(t *testing.T) {
 		Mailer:   f.mail,
 		CodeHost: f.host,
 		Proofs:   nil,
+		Owner:    f.owner,
+		Notifier: f.notifier,
 		Now:      f.clock,
 	})
 	if err != nil {

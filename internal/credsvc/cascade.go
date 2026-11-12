@@ -39,7 +39,23 @@ import (
 // than after the selector because this function is the one place that decides
 // which credentials a call may be offered — a review caller's list must never
 // contain an entry the cascade could fall to.
-func (s *Server) candidates(ctx context.Context, id Identity, canonical string, b *Bundle) ([]creds.Credential, []Tried, error) {
+//
+// The project's crafts narrow it once more (poolOffering, MC6): a node that
+// publishes crafts offers the union of what they go out on and nothing beside
+// it, which is where a pool's members enter this list and where a credential no
+// craft names leaves it. A node that publishes none — every installation today
+// — is not narrowed at all. The list the crafts produce is kept in their own
+// order, because that order is the owner's and the tier rule reads it: a pool's
+// listed order only breaks a tie (F7).
+//
+// The strategy the list is served under travels back with it, because the same
+// walk of the crafts answers both (poolOffering, MC7): a caller that took the
+// list and not the strategy would serve a round-robin pool's members under the
+// cascade's own rule and never rotate them. Every list that is not the crafts'
+// — a review caller's, a node that publishes no crafts — is answered with the
+// cascade's rule, which is what a list no strategy was written for has always
+// had.
+func (s *Server) candidates(ctx context.Context, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle) ([]creds.Credential, creds.Strategy, []Tried, error) {
 	// b.Credentials() and never b.Entries(): the bundle holds the GitHub App
 	// key (C2.1), the upstream Bitbucket token (D506), the read consumer (F21),
 	// the review-signing keys (D1069) and the provider key (AK6b) as well, and
@@ -61,13 +77,36 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		// on a state it cannot name would be the worse answer to it.
 		ra, ok := s.reviewAccount(id.JobAccount)
 		if !ok {
-			return nil, nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
+			return nil, creds.StrategyFailover, nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
 		}
 		out, skipped := reviewCandidates(reviewOfferings(b), ra.Account)
-		return out, skipped, nil
+		return out, creds.StrategyFailover, skipped, nil
+	}
+	cands := all
+	strategy := creds.StrategyFailover
+	var skipped []Tried
+	if offer, offerStrategy, narrowed, err := poolOffering(shared, b); err != nil {
+		// The crafts leave this call nothing at all (poolRefusal): the refusal's
+		// own sentence is the answer, and it travels as this error rather than
+		// as an empty list, which the selector would answer with a sentence
+		// about the bundle.
+		return nil, creds.StrategyFailover, nil, err
+	} else if narrowed {
+		cands, strategy = offer, offerStrategy
+		// The credentials the crafts leave out are ones this call may not be
+		// served by, which is what not_admitted means for a caller (the rule a
+		// review caller's list is built by). They are reported rather than
+		// dropped, so the run's halt message reads the same list either way:
+		// what was considered, and why each one was skipped. A fifth reason
+		// would be a value this contract's closed set does not carry.
+		for _, c := range all {
+			if !named(offer, c.Name) {
+				skipped = append(skipped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
+			}
+		}
 	}
 	hasA := false
-	for _, c := range all {
+	for _, c := range cands {
 		if c.Tier == creds.TierA {
 			hasA = true
 			break
@@ -78,19 +117,18 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		var err error
 		admitted, err = s.admittedAccounts(ctx, id.Slug, canonical)
 		if err != nil {
-			return nil, nil, err
+			return nil, creds.StrategyFailover, nil, err
 		}
 	}
-	out := make([]creds.Credential, 0, len(all))
-	var skipped []Tried
-	for _, c := range all {
+	out := make([]creds.Credential, 0, len(cands))
+	for _, c := range cands {
 		if c.Tier == creds.TierA && !admitted[c.Name] {
 			skipped = append(skipped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
 			continue
 		}
 		out = append(out, c)
 	}
-	return out, skipped, nil
+	return out, strategy, skipped, nil
 }
 
 // reviewOfferings is the set a review caller is offered FROM: the bundle's

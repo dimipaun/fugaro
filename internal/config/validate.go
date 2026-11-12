@@ -204,6 +204,9 @@ func Validate(c *Config) []Problem {
 		add("agent.compression", "cannot be combined with agent.auth: %s: the proxy is refused for that auth (docs/design/headroom-compression.md §4)", c.Agent.Auth)
 	}
 	ps = append(ps, validateAgentModels(c.Agent)...)
+	if c.ModelGrades != nil {
+		ps = append(ps, ValidateModelGrades(*c.ModelGrades, "model_grades")...)
+	}
 	ps = append(ps, validateCascadeFollowup(c.Agent, c.Followup)...)
 	ps = append(ps, validateBudget(c.Budget)...)
 	ps = append(ps, validateFollowup(c.Git.Provider, c.Followup)...)

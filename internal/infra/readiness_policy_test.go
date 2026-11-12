@@ -223,10 +223,15 @@ func TestReadinessBlocksAJobThatCannotReadAPublishedPolicy(t *testing.T) {
 			t.Errorf("the gate does not say %q: %s", want, gate)
 		}
 	}
-	// The check job calls no model and reads no policy: it is not gated by a
-	// requirement about reading one.
-	if !got.Check.DeployJob {
-		t.Errorf("the check job is not deployed: %v", missing)
+	// The check job calls no model and reads no policy, so the requirement
+	// above was never about it — and it is not in this repository's plan at
+	// all any more (D1900, IS2; the emission rule itself is
+	// TestNoRepoCheckJobEmitted). What is left to pin is that none of the
+	// gates is the check job's.
+	for _, m := range missing {
+		if m.Check {
+			t.Errorf("the check job answered the policy requirement: %v", m)
+		}
 	}
 }
 

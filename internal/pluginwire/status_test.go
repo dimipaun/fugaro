@@ -61,12 +61,20 @@ func TestPinStates(t *testing.T) {
 func TestSeverities(t *testing.T) {
 	for s, want := range map[State]Severity{
 		OK: SeverityNone, "": SeverityNone,
-		Outdated: SeverityWarning, Newer: SeverityWarning, Unpinned: SeverityWarning, Foreign: SeverityWarning, NotWired: SeverityWarning, InstalledDiffers: SeverityWarning,
+		Outdated: SeverityWarning, Newer: SeverityWarning, Unpinned: SeverityWarning, Foreign: SeverityWarning, InstalledDiffers: SeverityWarning,
+		// not wired is informational since D942: nothing in the tree writes a
+		// pin any more (D949), so the normal repository is the un-wired one,
+		// and a CI mode may not fail it (F21, U3 of
+		// docs/plugin-user-scope/implementation-plan.md).
+		NotWired:     SeverityInfo,
 		NotInstalled: SeverityInfo, CannotCompare: SeverityInfo,
 	} {
 		if s.Severity() != want {
-			t.Errorf("%q severity = %v", s, s.Severity())
+			t.Errorf("%q severity = %v, want %v", s, s.Severity(), want)
 		}
+	}
+	if r := (Report{Pin: NotWired}); r.Worst() != SeverityInfo {
+		t.Error("not wired must be informational: a repository that never opted in is the normal one")
 	}
 	if r := (Report{Pin: OK, Install: NotInstalled}); r.Worst() != SeverityInfo {
 		t.Error("not installed must stay informational")

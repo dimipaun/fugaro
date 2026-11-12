@@ -662,7 +662,7 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	for _, ra := range cfg.ReviewAccounts {
 		if ra.Email == "" || ra.Account == "" {
-			return nil, errors.New("credsvc: a review job account with no email or no Claude account binds nothing")
+			return nil, errors.New("credsvc: a review job account with no email or no value on the account axis binds nothing")
 		}
 		// Keyed by the folded email, exactly as the verifier keys its own
 		// review table: the account Verify answers with is the CONFIGURED
@@ -676,7 +676,7 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 		if prev, dup := s.review[folded]; dup {
 			if prev.Account != ra.Account {
-				return nil, errors.New("credsvc: the same review job account is bound to two Claude accounts")
+				return nil, errors.New("credsvc: the same review job account is bound to two values of the account axis")
 			}
 			continue
 		}
@@ -1046,8 +1046,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
-	cands, notAdmitted, err := s.candidates(ctx, id, canonical, b)
+	cands, strategy, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
 	if err != nil {
+		// Two refusals share this branch and they are not the same answer. A
+		// state the caller cannot fix — the admissions or the crafts could not
+		// be read — is this service's own sentence. A narrowing the crafts
+		// leave empty is the operator's configuration, and it carries its own
+		// sentence, built from the published node: the pool, the access and the
+		// switch or the path that would let it serve.
+		var refusal *poolRefusal
+		if errors.As(err, &refusal) {
+			s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, refusal.message)
+			return
+		}
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return
 	}
@@ -1056,7 +1067,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// person or to the project is served only under a slip that names it.
 	binding, _ := callSlipOf(ctx)
 	cands, notAdmitted = slipOffering(binding, cands, notAdmitted)
-	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now}
+	// The strategy travels with the candidate list it was answered for
+	// (candidates, roundrobin.go; MC7): a pool asking for round-robin is served
+	// by the rotation, and every other list by the cascade's own rule. It is
+	// read once, here, for the whole call — the selector is rebuilt per call and
+	// never per attempt — so WHICH rule decides a call is settled before the
+	// first credential is chosen and no retry can turn a failover call into a
+	// rotating one or the other way round.
+	//
+	// That is a statement about the strategy, not about the counter: forward
+	// selects once per attempt, so a retry after a 429 selects again over the
+	// pool the failed attempt was taken out of (retryPool), the placement the
+	// first selection wrote names a member that pool no longer holds, and the
+	// rotation takes a second turn — which is what it should do, because that
+	// retry is a fresh choice among the members that remain and two of them
+	// sharing one turn would land on one member. A call that meets a 429 on its
+	// first member therefore reads the counter at 2 for the one client call.
+	// D154 and D874 are untouched by that: a run stays on the credential its
+	// placement names, and the retry leaves it only when the attempt that just
+	// failed was that same credential — the one case where staying would spend
+	// the retry on the mark that was just written.
+	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now, Strategy: strategy}
 	s.forward(ctx, w, cl, sel, id, b, cands, notAdmitted)
 }
 

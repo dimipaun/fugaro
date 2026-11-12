@@ -243,8 +243,14 @@ type FirebaseSpec struct {
 	// IAM binding. It is empty, and nothing is granted, on an installation
 	// whose owner has not opted in to the coordinator (InstallOptions.
 	// Coordinator), which is every installation by default.
-	Launchers          []string `json:"launchers"`
-	Operators          []string `json:"operators"`
+	Launchers []string `json:"launchers"`
+	Operators []string `json:"operators"`
+	// Viewers read the database and the spend history and write nothing
+	// (roles.md §4, RS4): the Firebase module grants them a read of this
+	// project's database, and they are NOT part of the people the token
+	// signer mints for, which is what keeps a viewer unable to claim anyone's
+	// identity. Left out of the tfvars when empty, like the installation's.
+	Viewers            []string `json:"viewers,omitempty"`
 	Admins             []string `json:"admins"`
 	BudgetAdmins       []string `json:"budget_admins"`
 	HistoryAccount     string   `json:"history_account"`
@@ -338,6 +344,7 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 		ManageAPIs:         inst.ManageAPIs,
 		Launchers:          members(inst.Launchers, nil),
 		Operators:          members(inst.Operators, nil),
+		Viewers:            members(inst.Viewers, nil),
 		Admins:             sortedUnique(in.Admins),
 		BudgetAdmins:       sortedUnique(in.BudgetAdmins),
 		HistoryAccount:     history,
@@ -363,7 +370,8 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 		s.SkipAPIs = slices.Clone(SharedAPIs)
 	}
 	if err := CheckFirebaseMembers(inst.Project, in.FP, map[string][]string{
-		"launchers": s.Launchers, "operators": s.Operators, "admins": s.Admins, "budget admins": s.BudgetAdmins,
+		"launchers": s.Launchers, "operators": s.Operators, "viewers": s.Viewers,
+		"admins": s.Admins, "budget admins": s.BudgetAdmins,
 	}); err != nil {
 		return FirebaseSpec{}, err
 	}
@@ -374,6 +382,7 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 func FirebaseVars(spec FirebaseSpec) ([]byte, error) {
 	spec.Launchers = launchersWithOperators(spec.Launchers, spec.Operators)
 	spec.Operators = sortedUnique(spec.Operators)
+	spec.Viewers = sortedUnique(spec.Viewers)
 	return sortedJSON(spec)
 }
 

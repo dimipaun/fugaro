@@ -80,7 +80,12 @@ func TestCascadeNeverRetriesAfterStreamStarted(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the answer is %d, want 200: a limit inside a stream is the client's answer", resp.StatusCode)
 	}
-	if got := resp.Header.Get(HeaderCredential); got != "alice" {
+	// The credential the round robin lands on first is the first of the tier's
+	// never-exhausted candidates, and that set is now in the OFFERED order: the
+	// bundle's own document order, since no craft narrows this installation
+	// (internal/creds' tie-break, F7). The default account is the document's
+	// first entry.
+	if got := resp.Header.Get(HeaderCredential); got != "default" {
 		t.Fatalf("%s = %q, want the credential the round robin picked", HeaderCredential, got)
 	}
 	var stream strings.Builder
@@ -102,12 +107,12 @@ func TestCascadeNeverRetriesAfterStreamStarted(t *testing.T) {
 		t.Fatalf("the upstream saw %d requests, want 1: a limit inside a stream is never retried", n)
 	}
 	waitFor(t, "the credential to be marked", func() bool {
-		m, ok := s.state.mark("alice")
+		m, ok := s.state.mark("default")
 		return ok && m.State == creds.StateBackedOff
 	})
 	// The limit named no reset, which is the shape U3 leaves open until a
 	// subscription usage limit is observed: C1.9's backoff, not a reset.
-	m, _ := s.state.mark("alice")
+	m, _ := s.state.mark("default")
 	if want := s.now.Add(creds.DefaultBackoffInitial); !m.Until.Equal(want) {
 		t.Errorf("the mark holds until %v, want %v", m.Until, want)
 	}
@@ -139,8 +144,8 @@ func TestCascadeSwitchesOnUsageLimitBeforeFirstByte(t *testing.T) {
 	if got := resp.Header.Get(HeaderTier); got != TierA {
 		t.Errorf("%s = %q, want %q", HeaderTier, got, TierA)
 	}
-	if got := resp.Header.Get(HeaderCredential); got != "default" {
-		t.Errorf("%s = %q, want default: alice answered the usage limit", HeaderCredential, got)
+	if got := resp.Header.Get(HeaderCredential); got != "alice" {
+		t.Errorf("%s = %q, want alice: default answered the usage limit", HeaderCredential, got)
 	}
 	sw, ok, err := SwitchHeader(resp.Header)
 	if err != nil {
@@ -149,8 +154,8 @@ func TestCascadeSwitchesOnUsageLimitBeforeFirstByte(t *testing.T) {
 	if !ok {
 		t.Fatal("the answer carries no switch header: this call moved")
 	}
-	if sw.From != "alice" || sw.To != "default" || sw.Reason != ReasonExhausted {
-		t.Errorf("switch = %+v, want alice -> default because it was exhausted", sw)
+	if sw.From != "default" || sw.To != "alice" || sw.Reason != ReasonExhausted {
+		t.Errorf("switch = %+v, want default -> alice because it was exhausted", sw)
 	}
 	if strings.Contains(string(body), rateLimitEventType) {
 		t.Fatal("the upstream's usage limit reached the client: it is about a credential the run does not hold")
@@ -160,12 +165,12 @@ func TestCascadeSwitchesOnUsageLimitBeforeFirstByte(t *testing.T) {
 	}
 	// The retry went out with the second credential: a retry on the same one
 	// would be a second charge for one call.
-	if got, want := s.up.Seen()[1].Header.Get("Authorization"), "Bearer "+fakeCred(t, "default"); got != want {
+	if got, want := s.up.Seen()[1].Header.Get("Authorization"), "Bearer "+fakeCred(t, testAccount); got != want {
 		t.Errorf("the retry's Authorization is not the second credential's")
 	}
-	m, ok := s.state.mark("alice")
+	m, ok := s.state.mark("default")
 	if !ok || m.State != creds.StateExhausted {
-		t.Fatalf("alice's mark is %q/%v, want an exhaustion until the reset the answer named", m.State, ok)
+		t.Fatalf("the default account's mark is %q/%v, want an exhaustion until the reset the answer named", m.State, ok)
 	}
 	if want := s.now.Add(time.Hour); !m.Until.Equal(want) {
 		t.Errorf("the hold is until %v, want %v (Retry-After: 3600)", m.Until, want)
@@ -190,22 +195,22 @@ func TestCascade401MarksBroken(t *testing.T) {
 	if strings.Contains(string(body), "authentication_error") {
 		t.Fatal("the upstream's authentication error reached the client: it is about a credential the run does not hold")
 	}
-	if got := resp.Header.Get(HeaderCredential); got != "default" {
-		t.Errorf("%s = %q, want default", HeaderCredential, got)
+	if got := resp.Header.Get(HeaderCredential); got != "alice" {
+		t.Errorf("%s = %q, want alice", HeaderCredential, got)
 	}
 	sw, ok, err := SwitchHeader(resp.Header)
 	if err != nil || !ok {
 		t.Fatalf("the answer carries no readable switch header (err %v)", err)
 	}
-	if sw.From != "alice" || sw.To != "default" || sw.Reason != ReasonBroken {
-		t.Errorf("switch = %+v, want alice -> default because it answered 401", sw)
+	if sw.From != "default" || sw.To != "alice" || sw.Reason != ReasonBroken {
+		t.Errorf("switch = %+v, want default -> alice because it answered 401", sw)
 	}
 	if n := s.up.Count(); n != 2 {
 		t.Fatalf("the upstream saw %d requests, want 2", n)
 	}
-	m, ok := s.state.mark("alice")
+	m, ok := s.state.mark("default")
 	if !ok || m.State != creds.StateBroken {
-		t.Fatalf("alice's mark is %q, want %q", m.State, creds.StateBroken)
+		t.Fatalf("the default account's mark is %q, want %q", m.State, creds.StateBroken)
 	}
 }
 
@@ -382,7 +387,7 @@ func TestReviewCallerIsOfferedNoTierBOrCAndNoOtherAccount(t *testing.T) {
 	}
 
 	id := Identity{Slug: s.slug, JobAccount: testReviewSA, JobClass: ClassReview}
-	cands, skipped, err := s.server.candidates(context.Background(), id, testRepo, b)
+	cands, _, skipped, err := s.server.candidates(context.Background(), id, testRepo, s.policy.shared, b)
 	if err != nil {
 		t.Fatalf("candidates: %v", err)
 	}
@@ -613,8 +618,8 @@ func TestProviderKeyEntryIsNotOfferedToAnyOtherCaller(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("a coding caller's call through a bundle that holds the provider key was answered %d, want the upstream's 200: %s", resp.StatusCode, body)
 	}
-	if got := resp.Header.Get(HeaderCredential); got != testAccount {
-		t.Errorf("%s = %q, want the account the round robin picked (%q): a provider key changes nothing for a coding caller", HeaderCredential, got, testAccount)
+	if got := resp.Header.Get(HeaderCredential); got != "default" {
+		t.Errorf("%s = %q, want the account the round robin picked (the bundle's first, %q): a provider key changes nothing for a coding caller", HeaderCredential, got, "default")
 	}
 	if got := resp.Header.Get(HeaderTier); got != TierA {
 		t.Errorf("%s = %q, want %q: a coding caller reaches the provider key in no way", HeaderTier, got, TierA)
@@ -634,8 +639,8 @@ func TestProviderKeyEntryIsNotOfferedToAnyOtherCaller(t *testing.T) {
 		t.Fatalf("the fixture's bundle does not hold the provider key at tier C: %+v, %v", e, ok)
 	}
 
-	cands, skipped, err := s.server.candidates(context.Background(),
-		Identity{Slug: s.slug, JobAccount: testJobSA, JobClass: ClassRepository}, testRepo, b)
+	cands, _, skipped, err := s.server.candidates(context.Background(),
+		Identity{Slug: s.slug, JobAccount: testJobSA, JobClass: ClassRepository}, testRepo, s.policy.shared, b)
 	if err != nil {
 		t.Fatalf("candidates: %v", err)
 	}

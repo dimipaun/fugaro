@@ -110,6 +110,10 @@
       "type": "boolean",
       "description": "True marks a task filed from a triage deferral (task.Spec.Debt, docs/post-review-triage), which is what `fugaro runs ls --debt` lists. Absent — and so false — for every task that is not one, which is every task written before this field, so such a spec is byte-identical to the previous release's. Like `follow_up_of` it needs a runner that knows it (task.Parse decodes with DisallowUnknownFields), which is why a launch that writes it is to be gated the same way (the launcher-side gate T-TR10 of that plan adds)."
     },
+    "security": {
+      "type": "boolean",
+      "description": "The launch's own request that this run's review be the strongest one it can be (task.Spec.Security, docs/security-classification, D1517): `fugaro run --security` writes it, and a task may say it by hand. It is raise-only — true turns review level 3 on whatever paths the run changed, and false changes nothing, since there is no value that asks for less — so it needs no fence and no allow-list, exactly as --mode's own raise needs neither. The project layer's security.always_level_3 (schemas/project-layer.schema.json) makes the same request for every run of the project, and the repository's own security: rows escalate a matching diff independently of either. Absent — and so false — for every task that did not ask, which is every task written before this field, so such a spec is byte-identical to the previous release's. Like the spec's other new fields it needs a runner that knows it (task.Parse decodes with DisallowUnknownFields), so a launch that writes it is refused on a job image older than the release whose runner reads it (securityRequestSince, internal/cli/recipes_skew.go)."
+    },
     "overrides": {
       "type": "object",
       "additionalProperties": false,
@@ -126,8 +130,8 @@
     },
     "requested_by": { "type": "string" },
     "mode": {
-      "enum": ["implement", "review", "artifact"],
-      "description": "The resolved recipe's mode, written by the launching CLI (\"artifact\" today; an implement or review recipe writes nothing, so those specs are unchanged). The runner selects the run's shape from it at bootstrap, before the recipe is resolved, and cross-checks it against the resolved recipe afterwards. Needs a 0.8.0 runner, which is why an artifact launch at a job image older than that is refused at launch."
+      "enum": ["implement", "review", "artifact", "evaluate"],
+      "description": "The resolved recipe's mode, written by the launching CLI (\"artifact\" and \"evaluate\" today; an implement or review recipe writes nothing, so those specs are unchanged). The runner selects the run's shape from it at bootstrap, before the recipe is resolved, and cross-checks it against the resolved recipe afterwards. Needs a 0.8.0 runner, which is why an artifact launch at a job image older than that is refused at launch; \"evaluate\" is the judge run's mode (docs/model-ab-testing A5.2) and needs the runner that carries it."
     },
     "rigor": {
       "enum": ["poc", "startup", "pro", "critical", "hotfix"],

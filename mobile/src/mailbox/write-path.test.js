@@ -47,6 +47,20 @@
 //      five names there. Rule 1 fences what is WRITTEN; this fences what is
 //      REFUSED, and it is the same shape of claim
 //      -- a rule is only as good as the second caller it misses.
+//   5. An `@react-native-firebase/...` import -- the telemetry SDK, the second
+//      Firebase this app reaches (P7.1, D256). Its allow-list is the entry and
+//      nothing else, the same single file rule 2 allows: the entry is what knows
+//      what a device is, and a screen that imported the SDK could report
+//      whatever it held. The pattern reads an import (`import`, `require`,
+//      `from`) rather than a bare quoted specifier, because `app.config.js`
+//      names the three packages as build config, which P7.1's own
+//      `ad-id.test.js` holds; and it is spelled out instead of widening rule
+//      2's, because `@react-native-firebase/analytics` does not match
+//      `/['"]@?firebase\/[a-z-]+['"]/` and never did -- the gap the telemetry
+//      plan's §7.4 found and this rule closes. The specifier may also name a
+//      file INSIDE the package: the SDK's own entry points are not its only
+//      door, and `@react-native-firebase/crashlytics/lib/index` reaches the same
+//      object a screen is not allowed to hold.
 //
 // **What this scan does NOT claim.** It is about MOBILE's source. The consumer
 // (Go) writes the outbox, the heartbeat and everything else; the rules in
@@ -135,14 +149,32 @@ const RULES = [
     ],
     why: 'S6.3, D436: only the one write path may reach the rules; a screen gets the door, which hands out no rule',
   },
+  {
+    name: 'the telemetry SDK is imported in one file',
+    pattern: /(?:\bimport\b|\brequire\b|\bfrom\b)\s*\(?\s*['"]@react-native-firebase\/[a-z-]+(?:\/[^'"]*)?['"]/,
+    allow: ['index.js'],
+    controls: [
+      "import analytics from '@react-native-firebase/analytics';",
+      "import crashlytics from '@react-native-firebase/crashlytics';",
+      "import '@react-native-firebase/analytics';",
+      "const app = require('@react-native-firebase/app');",
+      "await import('@react-native-firebase/analytics');",
+      "export { default } from '@react-native-firebase/crashlytics';",
+      // A file inside the package is the same object by another specifier.
+      "import crashlytics from '@react-native-firebase/crashlytics/lib/index';",
+      "const { getAnalytics } = require('@react-native-firebase/analytics/lib/modular');",
+    ],
+    why: 'P7.1, D256: the entry is the one file that may reach the SDK, as rule 2 has it for the database; a screen that imported the analytics or the crashlytics package could report whatever it held',
+  },
 ];
 
-/** The rule whose allowed file really does contain the offence, and the two
- * whose allow-lists are promises about files that do not do it yet. Read by
- * name rather than by index: the vacuity test below is about them. */
+/** The two rules whose allowed files really do contain the offence they fence,
+ * and the three whose allow-lists are promises about files that do not do it
+ * yet. Read by name rather than by index: the vacuity test below is about them,
+ * and it says of each which of the two kinds it is. */
 const [WRITE_RULE] = RULES;
-const LAPSE_RULE = RULES[RULES.length - 1];
-const SDK_RULES = RULES.slice(1, -1);
+const LAPSE_RULE = RULES[RULES.length - 2];
+const PROMISE_RULES = RULES.filter((rule) => rule !== WRITE_RULE && rule !== LAPSE_RULE);
 
 /** Apply one rule to a map of path -> text, returning the offences. */
 function offences(rule, files) {
@@ -194,20 +226,19 @@ test('the scan is not vacuous: the file each rule allows really does match it', 
   // otherwise the rule matches nothing anywhere and the green runs above would
   // be tests about a pattern that no longer exists.
   const files = sourceFiles().map((file) => [file, readFileSync(join(ROOT, file), 'utf8')]);
-  // Two rules allow exactly one file, and both files really do the thing they
-  // are allowed to do: the store is written there (D113) and the lapse is
-  // enforced there (S6.3). Each is flagged the moment its exemption goes.
-  for (const rule of [WRITE_RULE, LAPSE_RULE]) {
-    assert.deepEqual(
-      offences({ ...rule, allow: [] }, new Map(files)),
-      ['src/mailbox/client.js'],
-      rule.name,
-    );
+  // Two rules allow a file that really does the thing they fence, so each is
+  // flagged the moment its exemption goes: the store is written in `client.js`
+  // (D113) and the lapse is enforced there (S6.3).
+  for (const [rule, flagged] of [
+    [WRITE_RULE, ['src/mailbox/client.js']],
+    [LAPSE_RULE, ['src/mailbox/client.js']],
+  ]) {
+    assert.deepEqual(offences({ ...rule, allow: [] }, new Map(files)), flagged, rule.name);
   }
-  // And the two SDK rules match nothing in the tree at all, which is why their
-  // allow-list (`index.js`, the entry that will wire the adapter) is a promise
+  // And the three SDK rules match nothing in the tree at all, which is why their
+  // allow-list (`index.js`, the entry that will wire both adapters) is a promise
   // about a file that does not do it yet.
-  for (const rule of SDK_RULES) {
+  for (const rule of PROMISE_RULES) {
     assert.deepEqual(offences({ ...rule, allow: [] }, new Map(files)), [], rule.name);
   }
 });

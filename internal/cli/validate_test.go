@@ -3293,6 +3293,50 @@ func TestValidateNotesTheSubscriptionStageBound(t *testing.T) {
 	}
 }
 
+// TestValidateNoteNamesTheAxisAndNotAClaudeAccount is AK9's (SEC) other half:
+// the note about a per-run cap names the ACCOUNT AXIS and never "a Claude
+// account", and it is still the note that is written where the cap is set and a
+// profile lists an account.
+//
+// The note is the one of AK9's sentences an operator reads rather than a
+// comment, and the distinction it has to keep is the same one the service's own
+// refusals keep: a review job's calls are served by the value the axis names —
+// an account, or the project's own Anthropic key (config.AnthropicKeyAccount),
+// which is not an account — and a note that said "a Claude account" would tell
+// an owner whose review runs on the key that the ceiling it describes does not
+// apply to them.
+func TestValidateNoteNamesTheAxisAndNotAClaudeAccount(t *testing.T) {
+	path := reviewInstallation(t, true, "", "", "budget: { per_run_usd: 5 }\n")
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("validate refused an installation whose cap it only notes: %v\nout: %s\nerr: %s", err, out, errOut)
+	}
+	var note string
+	for _, line := range strings.Split(errOut, "\n") {
+		if rest, ok := strings.CutPrefix(line, "note: budget.per_run_usd: "); ok {
+			note = rest
+		}
+	}
+	if note == "" {
+		t.Fatalf("the cap was not noted at all: %s", errOut)
+	}
+	if !strings.Contains(note, "account axis") {
+		t.Errorf("the note does not name the axis: %q", note)
+	}
+	if strings.Contains(note, "Claude account") {
+		t.Errorf("the note says a review job runs on a Claude account: %q", note)
+	}
+	// The facts the note is worth reading for are still in it (the prefix
+	// above is the key whose promise it qualifies): the half of the run it is
+	// about, the one ceiling there is, and the figure an owner would otherwise
+	// be trusting by mistake.
+	for _, want := range []string{"gateway", "agent.max_budget_usd", "twenty-five times too high"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the note no longer says %q: %q", want, note)
+		}
+	}
+}
+
 // TestValidateNotesTheCredentialsServicePrecondition (CSR6, E7): a review job
 // mounts no credential of its own, so its read-only installation token and its
 // account's model calls both come from the installation's credentials service
