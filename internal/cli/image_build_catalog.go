@@ -426,6 +426,10 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			Entry: e.Name, Slug: rs.Slug,
 			ServiceAccount: rs.BuildServiceAccountEmail, MachineType: lc.Build.MachineType,
 			Bucket: lc.RecordBucketURL(), NoSmoke: o.noSmoke,
+			// The record carries the template this build ran, so a release that
+			// changes how catalog images are built reaches the entry the next
+			// time the check reads it (F33, D1402).
+			TemplateSalt: gcp.TemplateSalt(Version),
 		}
 		if e.Source.Kind == config.SourceImage {
 			spec.Prebuilt, spec.Selftest = e.Source.Image, prebuiltSelftest

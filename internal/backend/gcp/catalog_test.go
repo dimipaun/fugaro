@@ -58,6 +58,10 @@ func catalogBuildSpec(t *testing.T) CatalogBuildSpec {
 		WorkflowSecrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}},
 		Bucket:          "gs://fugaro-runs-proj-1234",
 		Selftest:        []byte(`{"skip_verify":true,"tools":"critical"}`),
+		// What a submitter states about the build itself: the digest of the
+		// template it would build with, which the record carries so the check
+		// sees an engine-side change (F33, D1402).
+		TemplateSalt: strings.Repeat("c", 64),
 	}
 }
 
@@ -234,6 +238,7 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 		"GENERATION=" + strconv.FormatInt(s.Definition.Generation, 10),
 		"SHA256=" + s.Definition.SHA256, "COMMIT=" + s.Definition.SourceCommit,
 		"CONTEXT_COMMIT=", "CONTEXT_SHA256=",
+		"TEMPLATE_SALT=" + s.TemplateSalt,
 		"BASE=" + s.Base, "TAG=${_CATALOG_TAG}",
 	}
 	if env := rec.Env; !slices.Equal(env, want) {
@@ -244,14 +249,14 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 	// human wants: the image, its content tag and the build that wrote it.
 	for _, field := range []string{
 		`"version":`, `"entry":"`, `"source_commit":"`, `"context_commit":"`, `"context_sha256":"`, `"definition_generation":`,
-		`"definition_sha256":"`, `"base_ref":"`, `"base_digest":"`, `"image":"`,
+		`"definition_sha256":"`, `"template_salt":"`, `"base_ref":"`, `"base_digest":"`, `"image":"`,
 		`"content_tag":"`, `"image_digest":"`, `"build_id":"`, `"built_at":"`,
 	} {
 		if !strings.Contains(script, field) {
 			t.Fatalf("the record does not carry %s: %q", field, script)
 		}
 	}
-	for _, value := range []string{"$$SHA256", "$$GENERATION", "$$COMMIT", "/workspace/out/image-digest", "/workspace/base-digest"} {
+	for _, value := range []string{"$$SHA256", "$$GENERATION", "$$COMMIT", "$$TEMPLATE_SALT", "/workspace/out/image-digest", "/workspace/base-digest"} {
 		if !strings.Contains(script, value) {
 			t.Fatalf("the record does not read %s: %q", value, script)
 		}
@@ -820,6 +825,48 @@ func TestCatalogBuildRefusesAContextOutsideTheCheckout(t *testing.T) {
 			if dir != "/workspace/src" && !strings.HasPrefix(dir, "/workspace/src/") {
 				t.Errorf("the context %q builds from %q, which resolves outside the checkout", tc.context, dir)
 			}
+		}
+	}
+}
+
+// TestCatalogBuildRefusesATemplateSaltThatIsNotAHexDigest: the record step
+// composes its JSON with printf and no escaping, so the salt a submitter states
+// is constrained by the request rather than written into the record: a quote, a
+// newline or anything else that is not the digest this package computes would
+// break the record every reader parses. A submitter states a salt or states
+// none, and a smoke-only run writes the same record, so it is held to it too.
+func TestCatalogBuildRefusesATemplateSaltThatIsNotAHexDigest(t *testing.T) {
+	for _, salt := range []string{
+		`"`, "x", "c", strings.Repeat("c", 63), strings.Repeat("c", 65),
+		"sha256:" + strings.Repeat("c", 64), strings.Repeat("C", 64), "c\n", "c c",
+	} {
+		s := catalogBuildSpec(t)
+		s.TemplateSalt = salt
+		_, err := CatalogBuildRequest("proj-1234", s)
+		switch {
+		case err == nil:
+			t.Errorf("the request accepts the template salt %q, which the record step would write into its JSON unescaped", salt)
+		case !errors.Is(err, ErrBadBuildSpec):
+			t.Errorf("the template salt %q is refused with %v, which is not %v", salt, err, ErrBadBuildSpec)
+		case !strings.Contains(err.Error(), strconv.Quote(salt)):
+			t.Errorf("the refusal of the template salt %q does not name it: %v", salt, err)
+		}
+	}
+	p := catalogPrebuiltSpec(t)
+	p.TemplateSalt = `"`
+	if _, err := CatalogBuildRequest("proj-1234", p); !errors.Is(err, ErrBadBuildSpec) || !strings.Contains(err.Error(), "template salt") {
+		t.Errorf("the smoke-only run accepts the template salt %q: %v", p.TemplateSalt, err)
+	}
+	// The salt this package computes is what a submitter states, and both kinds
+	// of run accept it.
+	for _, s := range []CatalogBuildSpec{catalogBuildSpec(t), catalogPrebuiltSpec(t)} {
+		s.TemplateSalt = TemplateSalt("1.2.3")
+		if _, err := CatalogBuildRequest("proj-1234", s); err != nil {
+			t.Errorf("the request refuses the salt it computed: %v", err)
+		}
+		s.TemplateSalt = ""
+		if _, err := CatalogBuildRequest("proj-1234", s); err != nil {
+			t.Errorf("the request refuses a submitter that states no salt: %v", err)
 		}
 	}
 }
