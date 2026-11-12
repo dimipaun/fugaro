@@ -106,6 +106,18 @@ type launchResult struct {
 	// arm has started, and Reason is why nothing was sampled when a planner
 	// was asked and declined.
 	Pair *launchPair `json:"pair,omitempty"`
+	// ChainLimits is the chain this launch joined and what is left of its
+	// limits (docs/run-limit-carry-over L7, D1056): the same block `fugaro runs
+	// show --json` prints — chain, run_count, enforced, limits_read, limits[] —
+	// so a consumer reading the document a launch answered and the document
+	// that command prints is reading one shape and not two (ChainLimits,
+	// ChainLimit).
+	//
+	// It is nil for a launch that begins a chain, and the whole block is then
+	// absent from the document: its chain is the run this reply's own run_id
+	// names, and a block naming it would say a chain of one where the launch
+	// began the chain (D1045, D1047).
+	*ChainLimits
 	// account is the account this launch resolved and the alias it read it
 	// through, which the launch's own line prints as ALIAS -> ACCOUNT
 	// (docs/account-aliases/spec.md §7, D2099). It is unexported on purpose:
@@ -1064,7 +1076,46 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			res.Pair = &launchPair{Reason: pairWhy}
 		}
 	}
+	// The chain this launch joined and what is left of its limits (L7, D1056).
+	// Last of everything the reply carries, and after both arms of a pair have
+	// gone: the read is a report about a launch that has already happened, so
+	// no run waits on it and a launch that cannot read it is still a launch.
+	res.ChainLimits = launchChainLimits(ctx, env, o, slug, spec)
 	return res, nil
+}
+
+// launchChainLimits is the chain this launch joined and what is left of its
+// limits, as the reply carries it (docs/run-limit-carry-over L7, D1056): the
+// block `fugaro runs show` prints, read by the same builder (chainLimitsOf), so
+// the two documents cannot spell a member or a figure differently.
+//
+// The read is anchored at the link the launch named and not at the run it
+// started, which is the one read that answers the question: a run writes its
+// record as it starts, so a chain read from a run that has just been launched
+// reaches no further than that run and would answer a chain of one carrying the
+// figures this launch just wrote — the shortening D1047 forbids. chainFrom
+// resolves the same link chainInherit inherited from, and the runs it reaches
+// are the chain the run joins.
+//
+// nil is a launch that begins a chain — a first run, each attempt of a batch —
+// and every read that did not reach the run that began one: the reply's members
+// are additions, so a launch with no chain to name leaves them out rather than
+// printing an empty block, and a chain the bucket has aged past its root has no
+// id to name at all (chainLimitsOf). Nothing here can fail a launch that has
+// already started: the link was resolved, and the chain gone through its gates,
+// before the run was launched, so a read that fails now — a record deleted in
+// between, a chain that aged out — is answered as an absent block rather than
+// as a refusal of a launch that happened.
+func launchChainLimits(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec) *ChainLimits {
+	from, err := chainFrom(ctx, env, slug, o, spec, io.Discard)
+	if err != nil || from == "" {
+		return nil
+	}
+	lim, err := chainLimitsOf(ctx, env, slug, from, io.Discard)
+	if err != nil || lim.Chain == "" {
+		return nil
+	}
+	return lim
 }
 
 // sampledPair asks the build's planner whether this launch samples a pair,
@@ -4570,9 +4621,9 @@ func launchWhat(res launchResult) string {
 	return what
 }
 
-// launchDetail prints what is under a launch's line — the branch it cut, and
-// the run's own cloud log when the launcher named one — which is the same
-// whatever that line was.
+// launchDetail prints what is under a launch's line — the branch it cut, the
+// chain it joined and the run's own cloud log when the launcher named one —
+// which is the same whatever that line was.
 func launchDetail(w io.Writer, res launchResult) error {
 	branch := oneLine(res.Branch)
 	if res.Ref != "" {
@@ -4581,11 +4632,37 @@ func launchDetail(w io.Writer, res launchResult) error {
 	if _, err := fmt.Fprintf(w, "  branch %s\n", branch); err != nil {
 		return err
 	}
+	if line := launchChainLine(res.ChainLimits); line != "" {
+		if _, err := fmt.Fprintf(w, "  %s\n", line); err != nil {
+			return err
+		}
+	}
 	if res.LogURL != "" {
 		_, err := fmt.Fprintf(w, "  logs %s\n", oneLine(res.LogURL))
 		return err
 	}
 	return nil
+}
+
+// launchChainLine is the chain a launch joined, as the text reply names it: the
+// run that began it, how many runs the link reached and whether the figures are
+// the budget database's (D1056, D1046). It is empty for a launch that begins a
+// chain, whose chain is the run the launch's own line already names.
+//
+// The figures are not repeated here: they are a table, and the two commands
+// that print one are `runs show` and `diagnose` (D1055). What this line adds is
+// the one thing a caller of a launch cannot see anywhere else on the screen —
+// that the run it just started is bounded by a chain and not by itself, and by
+// how much.
+func launchChainLine(lim *ChainLimits) string {
+	if lim == nil || lim.Chain == "" {
+		return ""
+	}
+	word := "ENFORCED"
+	if !lim.Enforced {
+		word = "UNENFORCED"
+	}
+	return fmt.Sprintf("chain %s (%d runs, %s)", oneLine(lim.Chain), lim.RunCount, word)
 }
 
 // recordedLaunch is what a run recorded about its own launch, read without
