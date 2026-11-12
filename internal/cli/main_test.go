@@ -145,26 +145,13 @@ func TestMain(m *testing.M) {
 	// while their configs carry fake endpoints, so they turn the skip off and
 	// the tests of the skip itself turn it on.
 	skipGSOnFakeEndpoints = false
-	// Every read of the runs bucket goes through openRecordBucket, which is
-	// where a rig whose config computes a gs:// runs bucket URL — most of them
-	// — ends up the first time anything resolves a project layer or reads the
-	// installation's record: the tests turn the fake-endpoint skip off above,
-	// so nothing but this stops the open. Opening does no network I/O of its
-	// own, but the read behind it retries inside the storage client with no
-	// bound, and a whole-package run only ever got away with it because a test
-	// earlier in the package had left a failing opener behind — in a subset
-	// that test is in another shard, and thirteen tests in one shard sat in the
-	// retry instead. A gs:// URL is answered with the error a failed open would
-	// give (the layer stage skips with it, the update offer prints nothing), so
-	// what a test sees stays what it saw; a test that means to read a bucket
-	// gives its rig a bucket_url: file:// fixture or replaces this var itself.
-	recordOpen := openRecordBucket
-	openRecordBucket = func(ctx context.Context, url string) (*blobx.Bucket, error) {
-		if strings.HasPrefix(url, "gs://") {
-			return nil, errors.New("fugaro: test tried to open a real gs:// runs bucket: " + url + "; use a bucket_url: file:// fixture or override openRecordBucket")
-		}
-		return recordOpen(ctx, url)
-	}
+	// The two bucket openers a converge reaches on its own — the record
+	// bucket's (readPublishedLayer, updateResolvedWindow) and the update
+	// offer's (updateRetryOpen) — each get a rig's gs:// runs bucket URL, which
+	// they would otherwise open for real: the fake-endpoint skip above is off
+	// for the tests, so nothing else stops it.
+	openRecordBucket = offGoogle(openRecordBucket, "openRecordBucket")
+	updateRetryOpen = offGoogle(updateRetryOpen, "updateRetryOpen")
 	// Neither shipped gate needs a seam any more: managedDeployerShipped is
 	// true as of 0.10.0 and batchProvisionShipped as of 0.9.5, so the managed
 	// paths and the Batch provisioning run as they ship, with nothing opened
@@ -223,6 +210,25 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	cleanupFakes()
 	os.Exit(code)
+}
+
+// offGoogle wraps one of the package's bucket openers so that no test reaches
+// the cloud: a gs:// URL — the runs bucket a rig's own config computes, which
+// no test means to touch — is answered with the error a failed open would
+// give, and anything else (a file:// or mem:// fixture, the tests' own
+// buckets) is opened as before. The open itself does no I/O, so what a test
+// would wait on is the read behind it: the storage client retries a failed one
+// with no bound a test can outwait, which is what hung a shard for its whole
+// timeout while a whole-package run got away with it only because an earlier
+// test had left a failing opener behind. name is the var to replace for a test
+// that means to read a bucket of its own.
+func offGoogle(open func(context.Context, string) (*blobx.Bucket, error), name string) func(context.Context, string) (*blobx.Bucket, error) {
+	return func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		if strings.HasPrefix(url, "gs://") {
+			return nil, errors.New("fugaro: test tried to open the real gs:// bucket " + url + "; use a bucket_url: file:// fixture or override " + name)
+		}
+		return open(ctx, url)
+	}
 }
 
 // stubBucket is the base of a test blob driver: the embedded driver.Bucket is
