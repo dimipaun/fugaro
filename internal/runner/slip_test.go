@@ -244,6 +244,27 @@ func TestClaimAtRunnerStart(t *testing.T) {
 	if got := r.redact("the answer was " + slipFixtureSecret); strings.Contains(got, slipFixtureSecret) {
 		t.Errorf("the claim's secret is not redacted: %q", got)
 	}
+
+	// A URL this run will not send its own identity to is not claimed at. The
+	// claim carries the job's Google ID token, and over plain http to a host
+	// that is not this machine it would travel in cleartext: the run proceeds
+	// without a slip, the way it does for a service that cannot be reached.
+	t.Run("a cleartext URL to another host is not claimed at", func(t *testing.T) {
+		svc := newSlipService(t, nil)
+		r := slipRun(t, svc, nil, func(r *run) {
+			r.d.Env = []string{
+				credentialsServiceURLEnv + "=http://creds.example",
+				SlipEnv + "=" + slipFixtureID,
+			}
+		})
+		r.claimSlip(context.Background())
+		if got := len(svc.seen("")); got != 0 {
+			t.Errorf("the run made %d calls to the service it was given at a cleartext URL", got)
+		}
+		if r.slipHold() != nil {
+			t.Error("the run holds a slip it claimed at a URL it will not send its own identity to")
+		}
+	})
 }
 
 // TestSlipNotExportedToAgentEnv: the slip reaches the agent as nothing at all

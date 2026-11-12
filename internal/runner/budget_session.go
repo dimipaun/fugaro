@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -94,6 +96,10 @@ const SlipEnv = "FUGARO_SLIP"
 type slipHold struct {
 	id     string
 	secret string
+	// service is the URL the slip was claimed at, kept with it so the beat
+	// asks the same service the claim did without reading the environment
+	// again: where the run claimed is a fact about the claim.
+	service string
 	// cancel ends the beat and done is closed when its goroutine has
 	// returned, so a caller that waits on it knows nothing of the run is
 	// still in flight. Both are written once, by startSlipBeat, and cleared
@@ -766,6 +772,16 @@ func (r *run) claimSlip(ctx context.Context) {
 		r.d.Log.Warn("this run holds no slip: its job carries " + SlipEnv + " and no " + credentialsServiceURLEnv + ", so the slip cannot be claimed and a credential that only a slip serves is refused at the call (D1933)")
 		return
 	}
+	if err := checkSlipServiceURL(serviceURL); err != nil {
+		// The rule the run's other service calls hold their URLs to, and the
+		// launcher's own grant call before this one: the claim carries the
+		// job's own Google ID token, and over plain http to a host that is
+		// not this machine it would travel in cleartext. The run proceeds
+		// without a slip, and the gateway refuses the same URL with its own
+		// refusal before any model call is made.
+		r.d.Log.Warn("this run holds no slip: " + err.Error())
+		return
+	}
 	body, err := json.Marshal(credsvc.SlipClaimRequest{Execution: slipExecution(r.d.Execution)})
 	if err != nil {
 		r.d.Log.Warn("this run holds no slip: the claim call could not be built, so a credential that only a slip serves is refused at the call", "err", r.redact(err.Error()))
@@ -800,13 +816,36 @@ func (r *run) claimSlip(ctx context.Context) {
 		r.d.Log.Warn("this run holds no slip: the credentials service answered the claim with no usable claim secret")
 		return
 	}
-	r.setSlipHold(slipID, claim.ClaimSecret)
+	r.setSlipHold(slipID, claim.ClaimSecret, serviceURL)
 	// Registered before anything can print it: the answer that carried it is
 	// already out of this function, and the beat, the gateway and any failure
 	// after it are redacted of it from here on.
 	r.addSecret(claim.ClaimSecret)
 	r.startSlipBeat(ctx)
 	r.d.Log.Info("this run claimed its slip: the credentials service serves it the credentials the slip names, and this run keeps one instance of it warm for as long as it lives (D1933, D1934)")
+}
+
+// checkSlipServiceURL refuses a URL this run will not send its own identity
+// to: https, or http on a loopback address, which is a test's own service. The
+// rule is the run's other service calls' and the launcher's grant call's,
+// respelled because none of those helpers is reachable from here with a
+// sentence fit for this call — this package's own checkReviewServiceURL wraps
+// its refusals in the review signature's family, and a slip warning that named
+// the review artifact would be a sentence about the wrong call.
+func checkSlipServiceURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("the credentials service URL in this job's environment is not a scheme and a host")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if ip := net.ParseIP(u.Hostname()); (ip != nil && ip.IsLoopback()) || u.Hostname() == "localhost" {
+			return nil
+		}
+	}
+	return errors.New("the credentials service URL in this job's environment is not https: the claim would carry the job's own identity token in cleartext")
 }
 
 // slipSecretUsable reports whether s is one claim secret this run will carry:
@@ -1006,7 +1045,7 @@ func (r *run) beatSlip(ctx context.Context, hold *slipHold) {
 	if err != nil {
 		return
 	}
-	ans, err := r.slipRetryCall(ctx, envLookup(r.d.Env, credentialsServiceURLEnv), hold.id, hold.secret, body)
+	ans, err := r.slipRetryCall(ctx, hold.service, hold.id, hold.secret, body)
 	switch {
 	case slipRouteAbsent(ans.status):
 		// The service stopped serving the claim route under a run that holds
@@ -1042,8 +1081,8 @@ func (r *run) slipHold() *slipHold {
 }
 
 // setSlipHold takes the claim. It is written once, by the claim.
-func (r *run) setSlipHold(id, secret string) {
+func (r *run) setSlipHold(id, secret, service string) {
 	r.slipMu.Lock()
 	defer r.slipMu.Unlock()
-	r.slip = &slipHold{id: id, secret: secret}
+	r.slip = &slipHold{id: id, secret: secret, service: service}
 }
