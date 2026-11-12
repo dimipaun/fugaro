@@ -188,7 +188,7 @@ func TestUpdateWorkflowSecretsAreTheUpgradesStepAlone(t *testing.T) {
 		cfg := &config.Config{Workflows: map[string]config.Workflow{
 			"app": {Secrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}}},
 		}}
-		(&initRun{o: o, w: &strings.Builder{}}).writeWorkflowSecrets(t.Context(), &infra.Clients{}, lc, ready, cfg)
+		(&initRun{o: o, w: &strings.Builder{}}).writeWorkflowSecrets(t.Context(), lc, ready, cfg)
 		return db
 	}
 

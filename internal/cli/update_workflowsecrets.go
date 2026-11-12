@@ -61,7 +61,7 @@ import (
 // job account of the repository AND the workflow (G19) — and every ID in it is
 // derived from the repository's own config and the operator's allow-list
 // rather than chosen by the caller.
-func (r *initRun) writeWorkflowSecrets(ctx context.Context, c *infra.Clients, lc *localcfg.Config, ready infra.RepoSpec, cfg *config.Config) {
+func (r *initRun) writeWorkflowSecrets(ctx context.Context, lc *localcfg.Config, ready infra.RepoSpec, cfg *config.Config) {
 	// The door first: this is the upgrade's step, and `fugaro setup --repo`
 	// onboards a repository without converging it. --plan-only changes nothing
 	// outside this machine and so writes nothing, exactly as its help says.
