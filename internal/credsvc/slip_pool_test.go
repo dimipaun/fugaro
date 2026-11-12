@@ -63,9 +63,9 @@ import (
 )
 
 const (
-	// testPoolName is the pool the fixtures publish, and it is a name of the
+	// slipTestPoolName is the pool the fixtures publish, and it is a name of the
 	// shape a craft's access holds (config.ValidCredentialRef).
-	testPoolName = "team-pool"
+	slipTestPoolName = "team-pool"
 	// testPoolCredential is the credential the fixtures' pools list as a member
 	// and the fixture's document defines: a shared token is that credential's
 	// project-shared secret, fugaro_p_<name> (R7's mapping of a name to its
@@ -121,10 +121,10 @@ func poolPolicyDoc(t *testing.T, pools ...config.Pool) string {
 	}`
 }
 
-// poolSvc is the fixture with the pools the test publishes and three launchers
+// slipPoolSvc is the fixture with the pools the test publishes and three launchers
 // the class admits, so that one of them is the pool's owner, one is a user it
 // allows and one is neither.
-func poolSvc(t *testing.T, pools ...config.Pool) *slips {
+func slipPoolSvc(t *testing.T, pools ...config.Pool) *slips {
 	t.Helper()
 	s := newSlips(t, testLauncherAccount, testSecondLauncherAccount, testThirdLauncherAccount)
 	s.policy.shared = decodeTestPolicy(t, poolPolicyDoc(t, pools...))
@@ -231,29 +231,29 @@ func wantOneGrantRefusal(t *testing.T, s *slips, resp *http.Response, body []byt
 func TestOwnerOnlyByDefault(t *testing.T) {
 	shared := mustSharedToken(t, testPoolCredential)
 	pool := config.Pool{
-		Name:    testPoolName,
+		Name:    slipTestPoolName,
 		Owner:   testLauncherAccount,
 		Members: []string{testPoolCredential},
 	}
 
 	t.Run("the owner is granted the pool's own name", func(t *testing.T) {
-		s := poolSvc(t, pool)
-		ans := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testPoolName))
+		s := slipPoolSvc(t, pool)
+		ans := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, slipTestPoolName))
 		sl := s.slip(t, ans.Slip)
-		if sl.Pool != testPoolName {
-			t.Errorf("the slip records the pool %q, want %q: the grant named it", sl.Pool, testPoolName)
+		if sl.Pool != slipTestPoolName {
+			t.Errorf("the slip records the pool %q, want %q: the grant named it", sl.Pool, slipTestPoolName)
 		}
-		if !slices.Contains(sl.Allowed, testPoolName) {
+		if !slices.Contains(sl.Allowed, slipTestPoolName) {
 			t.Errorf("the slip permits %v, want the name the grant asked for", sl.Allowed)
 		}
 	})
 
 	t.Run("the owner is granted the pool's shared token", func(t *testing.T) {
-		s := poolSvc(t, pool)
+		s := slipPoolSvc(t, pool)
 		ans := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, shared))
 		sl := s.slip(t, ans.Slip)
-		if sl.Pool != testPoolName {
-			t.Errorf("the slip records the pool %q, want %q: the pool lists the credential the name holds", sl.Pool, testPoolName)
+		if sl.Pool != slipTestPoolName {
+			t.Errorf("the slip records the pool %q, want %q: the pool lists the credential the name holds", sl.Pool, slipTestPoolName)
 		}
 		if !slices.Contains(sl.Allowed, shared) {
 			t.Errorf("the slip permits %v, want the name the grant asked for", sl.Allowed)
@@ -261,10 +261,10 @@ func TestOwnerOnlyByDefault(t *testing.T) {
 	})
 
 	t.Run("a launcher who is not the owner is refused", func(t *testing.T) {
-		s := poolSvc(t, pool)
+		s := slipPoolSvc(t, pool)
 		body := grantBody(t, s.slug, s.run, testJobSA, 3600, shared)
 		resp, answer := s.grantAs(t, testSecondLauncherAccount, testSecondLauncherSub, body)
-		wantOneGrantRefusal(t, s, resp, answer, testSecondLauncherAccount, shared, testPoolCredential, testPoolName)
+		wantOneGrantRefusal(t, s, resp, answer, testSecondLauncherAccount, shared, testPoolCredential, slipTestPoolName)
 	})
 }
 
@@ -281,7 +281,7 @@ func TestOwnerOnlyByDefault(t *testing.T) {
 func TestSlipRefusedForNonMember(t *testing.T) {
 	shared := mustSharedToken(t, testPoolCredential)
 	pool := config.Pool{
-		Name:         testPoolName,
+		Name:         slipTestPoolName,
 		Owner:        testLauncherAccount,
 		AllowedUsers: []string{testSecondLauncherAccount},
 		Members:      []string{testPoolCredential},
@@ -291,7 +291,7 @@ func TestSlipRefusedForNonMember(t *testing.T) {
 	}
 
 	t.Run("a user the pool allows is served it", func(t *testing.T) {
-		s := poolSvc(t, pool)
+		s := slipPoolSvc(t, pool)
 		resp, answer := s.grantAs(t, testSecondLauncherAccount, testSecondLauncherSub, body(s))
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("the grant is answered %d, want 200: a user the pool allows is served it: %s", resp.StatusCode, answer)
@@ -299,9 +299,9 @@ func TestSlipRefusedForNonMember(t *testing.T) {
 	})
 
 	t.Run("a person the pool does not name is refused", func(t *testing.T) {
-		s := poolSvc(t, pool)
+		s := slipPoolSvc(t, pool)
 		resp, answer := s.grantAs(t, testThirdLauncherAccount, testThirdLauncherSub, body(s))
-		wantOneGrantRefusal(t, s, resp, answer, testThirdLauncherAccount, shared, testPoolCredential, testPoolName)
+		wantOneGrantRefusal(t, s, resp, answer, testThirdLauncherAccount, shared, testPoolCredential, slipTestPoolName)
 	})
 }
 
@@ -325,7 +325,7 @@ func TestSlipRefusedForNonMember(t *testing.T) {
 // one slip.
 func TestEachNameIsAuthorisedByThePoolThatGovernsIt(t *testing.T) {
 	mine := config.Pool{
-		Name:    testPoolName,
+		Name:    slipTestPoolName,
 		Owner:   testLauncherAccount,
 		Members: []string{testPoolCredential},
 	}
@@ -340,38 +340,38 @@ func TestEachNameIsAuthorisedByThePoolThatGovernsIt(t *testing.T) {
 	}
 
 	t.Run("two pools, one of them the launcher's own", func(t *testing.T) {
-		s := poolSvc(t, mine, theirs)
-		resp, answer := pair(s, testPoolName, testSecondPoolName)
-		wantOneGrantRefusal(t, s, resp, answer, testLauncherAccount, testPoolName, testSecondPoolName)
+		s := slipPoolSvc(t, mine, theirs)
+		resp, answer := pair(s, slipTestPoolName, testSecondPoolName)
+		wantOneGrantRefusal(t, s, resp, answer, testLauncherAccount, slipTestPoolName, testSecondPoolName)
 	})
 
 	t.Run("the same two names the other way round", func(t *testing.T) {
-		s := poolSvc(t, mine, theirs)
-		resp, answer := pair(s, testSecondPoolName, testPoolName)
-		wantOneGrantRefusal(t, s, resp, answer, testLauncherAccount, testPoolName, testSecondPoolName)
+		s := slipPoolSvc(t, mine, theirs)
+		resp, answer := pair(s, testSecondPoolName, slipTestPoolName)
+		wantOneGrantRefusal(t, s, resp, answer, testLauncherAccount, slipTestPoolName, testSecondPoolName)
 	})
 
 	t.Run("the second name is that pool's shared token", func(t *testing.T) {
-		s := poolSvc(t, mine, theirs)
-		resp, answer := pair(s, testPoolName, theirToken)
+		s := slipPoolSvc(t, mine, theirs)
+		resp, answer := pair(s, slipTestPoolName, theirToken)
 		wantOneGrantRefusal(t, s, resp, answer, testLauncherAccount, theirToken, testSecondPoolCredential, testSecondPoolName)
 	})
 
 	t.Run("a launcher both rosters serve is granted both names", func(t *testing.T) {
-		s := poolSvc(t, mine, config.Pool{
+		s := slipPoolSvc(t, mine, config.Pool{
 			Name:         testSecondPoolName,
 			Owner:        testSecondLauncherAccount,
 			AllowedUsers: []string{testLauncherAccount},
 			Members:      []string{testSecondPoolCredential},
 		})
-		sl := s.slip(t, s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testPoolName, testSecondPoolName)).Slip)
-		for _, name := range []string{testPoolName, testSecondPoolName} {
+		sl := s.slip(t, s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, slipTestPoolName, testSecondPoolName)).Slip)
+		for _, name := range []string{slipTestPoolName, testSecondPoolName} {
 			if !slices.Contains(sl.Allowed, name) {
 				t.Errorf("the slip permits %v, want both names the grant asked for", sl.Allowed)
 			}
 		}
-		if sl.Pool != testPoolName {
-			t.Errorf("the slip records the pool %q, want %q: the first pool of the policy that admitted a name", sl.Pool, testPoolName)
+		if sl.Pool != slipTestPoolName {
+			t.Errorf("the slip records the pool %q, want %q: the first pool of the policy that admitted a name", sl.Pool, slipTestPoolName)
 		}
 	})
 }
@@ -412,7 +412,7 @@ func TestPoolRosterIsComparedByTheAddressFold(t *testing.T) {
 
 	t.Run("the roster is spelled in another case than the launcher list", func(t *testing.T) {
 		s := build(t, []string{"owner@example.invalid"}, config.Pool{
-			Name: testPoolName, Owner: "Owner@Example.INVALID", Members: members,
+			Name: slipTestPoolName, Owner: "Owner@Example.INVALID", Members: members,
 		})
 		if resp, answer := grantAs(t, s, "owner@example.invalid"); resp.StatusCode != http.StatusOK {
 			t.Fatalf("the grant is answered %d, want 200: the pool names this person as its owner (D1936): %s", resp.StatusCode, answer)
@@ -421,7 +421,7 @@ func TestPoolRosterIsComparedByTheAddressFold(t *testing.T) {
 
 	t.Run("the launcher list is spelled in another case than the roster", func(t *testing.T) {
 		s := build(t, []string{"Owner@Example.INVALID"}, config.Pool{
-			Name: testPoolName, Owner: "owner@example.invalid", Members: members,
+			Name: slipTestPoolName, Owner: "owner@example.invalid", Members: members,
 		})
 		if resp, answer := grantAs(t, s, "owner@example.invalid"); resp.StatusCode != http.StatusOK {
 			t.Fatalf("the grant is answered %d, want 200: the pool names this person as its owner (D1936): %s", resp.StatusCode, answer)
@@ -430,7 +430,7 @@ func TestPoolRosterIsComparedByTheAddressFold(t *testing.T) {
 
 	t.Run("an allowed user is spelled in another case too", func(t *testing.T) {
 		s := build(t, []string{"Allowed@Example.INVALID"}, config.Pool{
-			Name: testPoolName, Owner: "owner@example.invalid",
+			Name: slipTestPoolName, Owner: "owner@example.invalid",
 			AllowedUsers: []string{"allowed@example.invalid"}, Members: members,
 		})
 		if resp, answer := grantAs(t, s, "Allowed@Example.INVALID"); resp.StatusCode != http.StatusOK {
@@ -440,10 +440,10 @@ func TestPoolRosterIsComparedByTheAddressFold(t *testing.T) {
 
 	t.Run("a roster entry that is no printable-ASCII address names nobody", func(t *testing.T) {
 		s := build(t, []string{"owner@example.invalid"}, config.Pool{
-			Name: testPoolName, Owner: "owner@exämple.invalid", Members: members,
+			Name: slipTestPoolName, Owner: "owner@exämple.invalid", Members: members,
 		})
 		resp, answer := grantAs(t, s, "owner@example.invalid")
-		wantOneGrantRefusal(t, s, resp, answer, "owner@example.invalid", shared, testPoolCredential, testPoolName)
+		wantOneGrantRefusal(t, s, resp, answer, "owner@example.invalid", shared, testPoolCredential, slipTestPoolName)
 	})
 }
 
@@ -465,15 +465,15 @@ func TestPoolResolvedAtIssue(t *testing.T) {
 	shared := mustSharedToken(t, testPoolCredential)
 	pools := func(allowed ...string) string {
 		return poolPolicyDoc(t, config.Pool{
-			Name:         testPoolName,
+			Name:         slipTestPoolName,
 			Owner:        testLauncherAccount,
 			AllowedUsers: allowed,
 			Members:      []string{testPoolCredential},
 		})
 	}
 
-	s := poolSvc(t, config.Pool{
-		Name:         testPoolName,
+	s := slipPoolSvc(t, config.Pool{
+		Name:         slipTestPoolName,
 		Owner:        testLauncherAccount,
 		AllowedUsers: []string{testSecondLauncherAccount},
 		Members:      []string{testPoolCredential},
@@ -490,7 +490,7 @@ func TestPoolResolvedAtIssue(t *testing.T) {
 
 	grantsSoFar := len(s.slipIDs(t))
 	resp, answer = s.grantAs(t, testSecondLauncherAccount, testSecondLauncherSub, grantBody(t, s.slug, s.run, testJobSA, 3600, shared))
-	wantGrantRefusal(t, s, resp, answer, testSecondLauncherAccount, shared, testPoolCredential, testPoolName)
+	wantGrantRefusal(t, s, resp, answer, testSecondLauncherAccount, shared, testPoolCredential, slipTestPoolName)
 	if got := s.slipIDs(t); len(got) != grantsSoFar {
 		t.Errorf("the refused grant wrote %v, want the %d record(s) already there", got, grantsSoFar)
 	}
@@ -501,7 +501,7 @@ func TestPoolResolvedAtIssue(t *testing.T) {
 	// And the owner still is: the pool was not emptied, one user was taken off
 	// it.
 	s.policy.shared = decodeTestPolicy(t, pools(testSecondLauncherAccount))
-	if ans := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testPoolName)); ans.Slip == "" {
+	if ans := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, slipTestPoolName)); ans.Slip == "" {
 		t.Fatal("the grant answered no slip id")
 	}
 }
@@ -522,8 +522,8 @@ func TestPoolResolvedAtIssue(t *testing.T) {
 // person no roster names, and the grant is served.
 func TestLegacyOpenPoolServesWhomItServedBefore(t *testing.T) {
 	shared := mustSharedToken(t, testPoolCredential)
-	s := poolSvc(t, config.Pool{
-		Name:       testPoolName,
+	s := slipPoolSvc(t, config.Pool{
+		Name:       slipTestPoolName,
 		Members:    []string{testPoolCredential},
 		LegacyOpen: true,
 	})
@@ -535,8 +535,8 @@ func TestLegacyOpenPoolServesWhomItServedBefore(t *testing.T) {
 	if err := json.Unmarshal(answer, &granted); err != nil {
 		t.Fatalf("the grant's answer is not one this contract reads: %v", err)
 	}
-	if sl := s.slip(t, granted.Slip); sl.Pool != testPoolName {
-		t.Errorf("the slip records the pool %q, want %q", sl.Pool, testPoolName)
+	if sl := s.slip(t, granted.Slip); sl.Pool != slipTestPoolName {
+		t.Errorf("the slip records the pool %q, want %q", sl.Pool, slipTestPoolName)
 	}
 }
 
@@ -556,8 +556,8 @@ func TestLegacyOpenPoolServesWhomItServedBefore(t *testing.T) {
 // slip-less, and a credential only a slip serves is refused at the call (R9).
 func TestGrantRefusedWhenThePolicyCannotBeRead(t *testing.T) {
 	shared := mustSharedToken(t, testPoolCredential)
-	s := poolSvc(t, config.Pool{
-		Name:    testPoolName,
+	s := slipPoolSvc(t, config.Pool{
+		Name:    slipTestPoolName,
 		Owner:   testLauncherAccount,
 		Members: []string{testPoolCredential},
 	})
