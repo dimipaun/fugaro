@@ -182,12 +182,29 @@ func toLogEntry(e *logging.LogEntry) (backend.LogEntry, error) {
 	return le, nil
 }
 
+// JobResourceType is the resource type every one of a Batch job's own log
+// entries carries (design §1.5, §2.3; 57a-10 read one raw entry and found
+// exactly this). It is exported because the installation's log sink routes on
+// it -- modules/installation/logging.tf writes the Batch arm of its filter with
+// this string -- and because `fugaro doctor`'s sink check reads the installed
+// filter back and holds it to this value rather than to a literal of its own:
+// a filter that spelled the type differently would route nothing, and a check
+// with its own copy of the string could not see that.
+const JobResourceType = "batch.googleapis.com/Job"
+
+// TaskLogsName is the log a job's task lines go to
+// (projects/<p>/logs/batch_task_logs), the other half of the filter below.
+// Batch may serve its task logs in a second log later (there is a
+// batch_agent_logs one), which is why this is a function of the project and
+// not a constant.
+func TaskLogsName(project string) string { return "projects/" + project + "/logs/batch_task_logs" }
+
 // jobFilter selects one Batch job's task logs, by its UID (design §2.3).
 // uid must have passed checkJobUID: the filter is built by concatenation,
 // and an unchecked UID could carry clauses of its own.
 func jobFilter(id backend.ExecID, uid string) string {
 	return `labels.job_uid=` + strconv.Quote(uid) +
-		` AND logName=` + strconv.Quote("projects/"+id.GCPProject+"/logs/batch_task_logs")
+		` AND logName=` + strconv.Quote(TaskLogsName(id.GCPProject))
 }
 
 // logURL is where to read a job's logs in the console: a Logs Explorer query

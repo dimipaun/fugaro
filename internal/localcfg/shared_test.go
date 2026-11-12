@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
@@ -352,6 +353,47 @@ func TestMergeSharedKeepsThePublishedBatchBlock(t *testing.T) {
 	}
 	if out, _ := MergeShared(nil, sharedBase(t, "")).Marshal(); strings.Contains(string(out), "batch") {
 		t.Errorf("the merged file carries a batch key nobody set:\n%s", out)
+	}
+}
+
+// TestSharedNeverPublishesTheBackendName: the `batch:` block is published for
+// the reason above, and `backend:` is not, and the difference is what
+// publishes them can be judged. An operator reading doctor's Batch findings
+// sees the machine's own config; a launcher who wrote `backend: cloud-batch`
+// into the runs bucket would move every teammate with no local config onto VMs,
+// on a block that same launcher chose, with no check in the way — the
+// escalation plan 2026-10-19-compute-backend.md Task 10 step 4 forbids. So the
+// choice is the writing machine's own, in both directions: Shared drops it and
+// MergeShared never adopts a published one.
+//
+// Mutation (verified, kept in the test): put `keep(&out.BackendName,
+// published.BackendName)` back into MergeShared and the merge assertions fail;
+// drop `s.BackendName = ""` from Shared and the golden comparison does.
+func TestSharedNeverPublishesTheBackendName(t *testing.T) {
+	lc := sharedBase(t, "backend: cloud-batch\n")
+	if lc.BackendName != backend.CloudBatch {
+		t.Fatalf("the fixture's own config lost the name: %q", lc.BackendName)
+	}
+	s := lc.Shared()
+	if s.BackendName != "" {
+		t.Errorf("Shared() published the backend choice %q", s.BackendName)
+	}
+	if out, err := s.Marshal(); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(out), "backend") {
+		t.Errorf("the published file carries the key:\n%s", out)
+	}
+	if lc.BackendName != backend.CloudBatch {
+		t.Errorf("the receiver changed: %q", lc.BackendName)
+	}
+	// A published object that carries the key is not merged back in either,
+	// whether the local config names a backend or nothing at all: the merge
+	// output is what goes into the runs bucket, so no name it sees — the
+	// published one or the merging machine's own — may reach it.
+	for _, local := range []*Config{sharedBase(t, ""), sharedBase(t, "backend: cloud-run\n")} {
+		if got := MergeShared(sharedBase(t, "backend: cloud-batch\n"), local); got.BackendName != "" {
+			t.Errorf("MergeShared wrote the backend %q into the file it publishes", got.BackendName)
+		}
 	}
 }
 

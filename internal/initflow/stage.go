@@ -116,6 +116,21 @@ const (
 	// runs are admitted by, and it is the one stage whose change is a
 	// document rather than an installation.
 	Policy = "policy"
+	// CredentialsService is the credentials service's own stage
+	// (internal/cli/init_stages.go's newCredentialsStage): the installation
+	// root once more, with the service's image moved onto this release's. It
+	// comes immediately AFTER the policy stage, and that position is the whole
+	// of it (the owner's ruling of 2026-11-10): the service reads the published
+	// node per call and refuses a node its own binary does not understand, so a
+	// release whose node version moves has to have the node moved before the
+	// process that reads it is replaced — a service replaced first refuses
+	// every cascade and Bitbucket-proxied call until the node catches up. The
+	// reverse direction is the gap between this stage and the one before it,
+	// and it is as short as the order allows: an older service meeting the new
+	// node refuses a call for the length of this stage's own plan and apply,
+	// and no shorter gap exists, because the node is one database write and the
+	// service's replacement is a Terraform apply of the installation root.
+	CredentialsService = "credentials-service"
 	// Workspace is the workspace OWNER's published record
 	// (internal/cli/update_workspace.go, D1292): `workspaces/<name>` in the
 	// workspace's own database, built from the record this installation
@@ -244,6 +259,12 @@ var order = []slot{
 	// the repository stage is the last writer of the installation those runs
 	// read it against.
 	{name: Policy, needs: []string{Repository, Rules}},
+	// The credentials service's image moves after the node does, and nothing
+	// else in the run is between them: the service refuses a node its own
+	// binary does not understand, so the node has to be this release's before
+	// the process that reads it is replaced (CredentialsService's own comment,
+	// the owner's ruling of 2026-11-10).
+	{name: CredentialsService, needs: []string{Policy}},
 	// The workspace's own project's root, before the record it serves: what it
 	// creates is the identity the workspace's own service runs as, and the
 	// record stage publishes the node that service reads. It needs the
@@ -328,6 +349,7 @@ var order = []slot{
 // door owns.
 var runCovered = map[string]bool{
 	Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true, Rules: true,
+	CredentialsService: true,
 }
 
 // RunCovers reports whether the run's one confirmation may cover the stage's

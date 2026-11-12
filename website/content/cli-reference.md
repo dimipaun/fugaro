@@ -863,9 +863,16 @@ which one the selected project uses:
   cloud-batch  Cloud Batch jobs, one VM per run (the VM backend)
 
 A config that names no backend runs on cloud-run. A config that names
-cloud-batch is refused by this build ("not enabled yet"): the backend and its
-opener are built and tested, and nothing selects them until Fugaro has passed
-the live checklist for it.
+cloud-batch is ACCEPTED: fugaro doctor reports the Batch checks for an
+installation that selects it -- the Compute and Batch APIs, the preloaded boot
+image and the socket gid it records beside it, the network and subnetwork a
+run's VMs are placed in, the log isolation, the run accounts and their grants,
+the price table and the reaper -- and FAILS until every one of them passes.
+What doctor does is report: fugaro run reads none of those checks, so it does
+not hold a launch back, and an installation that selects the name before it is
+provisioned runs anyway (its output stays in _Default and its VMs are left to
+the job's own duration). Run fugaro doctor first, rather than reading a green
+one as a fence around the launcher.
 
 This is a local, read-only lookup: it reads the project config and the backend
 names internal/backend defines, and it calls no cloud API. With --json it
@@ -7243,7 +7250,7 @@ Flags:
 | `--plan-only` | bool | `false` | no | stop after showing the plan (never takes --yes: it creates nothing on a flag's word) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--provision-batch` | bool | `false` | no | after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it takes a person at a real terminal; nothing runs it by default, and no run can use the backend until the enable task. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
+| `--provision-batch` | bool | `false` | no | after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it takes a person at a real terminal; nothing runs it by default, and an installation reaches the backend only after this has run and `doctor` passes its gate. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (setup does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |

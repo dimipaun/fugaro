@@ -564,6 +564,9 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 			fmt.Fprintln(w, "                  "+d)
 		}
 	}
+	if todo[initflow.CredentialsService] {
+		fmt.Fprintln(w, "  credentials-service: Terraform apply of the installation root again, moving the credentials service onto this release's image after the policy migration — the service reads the published node on every call and refuses a node its own binary does not understand (planned when applied)")
+	}
 	fmt.Fprintln(w, "Fixed, announced and free, so they need no plan: the Terraform state bucket (cents a month) and the Cloud Resource Manager API when missing, the local config (its diff is shown first).")
 	fmt.Fprintf(w, "IAM changes announced: removes project Viewers' read access to the runs bucket gs://%s and the state bucket gs://%s when they have it.\n", e.spec.RunsBucket, e.spec.StateBucket)
 	fmt.Fprintln(w, "Who gets access (the effective lists; a plan that grants anyone else is shown and then applied, and where nobody is at the terminal the run leaves it to you):")

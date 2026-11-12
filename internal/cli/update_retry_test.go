@@ -214,7 +214,7 @@ func retryBucketFiles(t *testing.T, dir string) map[string]string {
 // the one that fixed it (D1733). The release comes from the shared record and
 // the command and the "offered" flag from this machine's own file (D1735, F28).
 func TestUpdatePrintsRetryForResolvedIssue(t *testing.T) {
-	newConvergeRig(t, v4Node())
+	newConvergeRig(t, v5Node())
 	currentRelease(t)
 
 	// The release behind the one this run installs fixed the issue this machine

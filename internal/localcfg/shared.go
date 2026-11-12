@@ -149,6 +149,17 @@ func (c *Config) Shared() *Config {
 	s.SecretExpires = nil
 	s.Build.ServiceAccount = ""
 	s.BaseBranch = ""
+	// BackendName is dropped for BaseBranch's reason, and one of its own: it
+	// is a whole backend for every machine that reads the file, and the
+	// checks that keep that safe are `fugaro doctor`'s, which reads the
+	// selected config on the machine running it and is what the enable task
+	// puts in front of the name -- not something a launch consults. A
+	// launcher who could write `backend: cloud-batch` into the runs bucket
+	// would therefore move every teammate who has no local config onto VMs
+	// with a `batch:` block they wrote, while the machine that ran the
+	// provisioning and the doctor reading never sees the file at all
+	// (docs/design/shared-config.md §4; the reader refuses the key besides).
+	s.BackendName = ""
 	// ReviewFloor is the owner's policy and travels the way BaseBranch does,
 	// through `fugaro project policy publish` into the policy node. It is
 	// dropped here for a sharper reason than the keys above it: the floor is
@@ -284,7 +295,6 @@ func MergeShared(published, local *Config) *Config {
 	}
 	keep(&out.Region, published.Region)
 	keep(&out.RegistryHost, published.RegistryHost)
-	keep(&out.BackendName, published.BackendName)
 	keep(&out.LogView, published.LogView)
 	keep(&out.ImageSource, published.ImageSource)
 	keep(&out.SchedulerRegion, published.SchedulerRegion)

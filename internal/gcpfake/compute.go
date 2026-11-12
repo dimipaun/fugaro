@@ -2,6 +2,7 @@ package gcpfake
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -59,9 +60,9 @@ type Compute struct {
 	// preload image family a run's bootDisk names, and the network and
 	// subnetwork the batch block names. A name the test did not add is
 	// NOT_FOUND, which is a fact doctor reports rather than a failure.
-	families   map[string]bool   // image family, under defProject
-	networks   map[string]bool   // network name, under defProject
-	subnetwork map[string]string // "region/name" → name, under defProject
+	families   map[string]map[string]string // image family → its generation's labels, under defProject
+	networks   map[string]bool              // network name, under defProject
+	subnetwork map[string]string            // "region/name" → name, under defProject
 	ops        int
 }
 
@@ -146,13 +147,27 @@ func (f *Compute) Instances() []string {
 // family, never one of its generations. The get answers the family with a
 // generation behind it, as the real API does once the preload stage has built
 // one.
+//
+// The generation carries no labels, which is the shape of one the preload
+// build labelled with nothing: AddImageFamilyLabels is the same family whose
+// generation carries labels, which is what `fugaro doctor`'s socket-gid
+// comparison reads (plan 2026-10-19-compute-backend.md Task 10 step 2).
 func (f *Compute) AddImageFamily(family string) {
+	f.AddImageFamilyLabels(family, nil)
+}
+
+// AddImageFamilyLabels makes the family exist with labels as the labels of the
+// generation it serves -- the image the family's get resolves, which is where
+// the preload build records the Docker socket's gid
+// (infra.SocketGIDLabel: preload.sh writes it on every rebuild, so the value a
+// local config recorded is a copy a later generation can leave behind).
+func (f *Compute) AddImageFamilyLabels(family string, labels map[string]string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.families == nil {
-		f.families = map[string]bool{}
+		f.families = map[string]map[string]string{}
 	}
-	f.families[family] = true
+	f.families[family] = maps.Clone(labels)
 }
 
 // AddNetwork makes the network named (its bare name, as the full resource
@@ -278,14 +293,22 @@ func (f *Compute) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 // generation. A family with no generation behind it is NOT_FOUND, as the real
 // API answers for a family the preload stage never published.
 func (f *Compute) getImageFamily(w http.ResponseWriter, project, family string) {
-	if project != f.defProject() || !f.families[family] {
+	labels, ok := f.families[family]
+	if project != f.defProject() || !ok {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "The resource 'projects/"+project+"/global/images/family/"+family+"' was not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"kind": "compute#image", "name": family + "-1", "family": family, "status": "READY",
 		"selfLink": "https://www.googleapis.com/compute/v1/projects/" + project + "/global/images/" + family + "-1",
-	})
+	}
+	// The generation's labels, when the family's get was given any: the real
+	// API serves the newest generation's own labels here, and an empty set is
+	// left off exactly as the API leaves it off.
+	if len(labels) > 0 {
+		out["labels"] = maps.Clone(labels)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (f *Compute) render(i *computeInstance) map[string]any {

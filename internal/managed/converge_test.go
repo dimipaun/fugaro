@@ -108,6 +108,59 @@ func TestConvergeDigestIsOfTheBytesRead(t *testing.T) {
 	}
 }
 
+// The ruling of 2026-11-11: a document the integrity rules refused can carry
+// the content findings the gate raised beside them, and the record of the
+// refusal holds both. Carrying them is NOT being applied with them — that is
+// the whole reason refused is a field of its own — so Warned stays false and
+// Refuse still refuses, whatever the findings say. The other half is what the
+// session reads: the refusal's own sentence names the rules that stopped it and
+// not the findings, because a session that was refused acts on what refused and
+// the findings are the record's business.
+func TestConvergeRefusedWithWarningsStillRefuses(t *testing.T) {
+	doc := []byte(`{"the":"document the rules read"}`)
+	const rule = "the plan removes a bucket that holds state"
+	const finding = "the plan sets a cost attribute the tables do not carry"
+	c := ConvergeRefusedWithWarnings(doc, initflow.YesOrTyped, []string{rule}, []string{finding})
+
+	err := c.Refuse()
+	if err == nil {
+		t.Fatal("a refusal that carries findings admits the step: the findings passed for an admission")
+	}
+	if !errors.Is(err, ErrNotConverged) {
+		t.Errorf("the refusal does not carry ErrNotConverged: %v", err)
+	}
+	if c.Warned() {
+		t.Error("a refused document reports Warned, so a record of it would say it was applied with the findings")
+	}
+	if got := c.Warnings(); len(got) != 1 || got[0] != finding {
+		t.Errorf("the refusal carries the findings %q, want the one the gate raised", got)
+	}
+	if got := c.Rules(); len(got) != 1 || got[0] != rule {
+		t.Errorf("the refusal carries the rules %q, want the one that fired", got)
+	}
+	sum := sha256.Sum256(doc)
+	if want := hex.EncodeToString(sum[:]); c.Digest() != want {
+		t.Errorf("the refusal's digest is %q, want the judged document's %q", c.Digest(), want)
+	}
+	if !strings.Contains(err.Error(), rule) {
+		t.Errorf("the refusal does not name the rule that fired:\n%q", err.Error())
+	}
+	if strings.Contains(err.Error(), finding) {
+		t.Errorf("the refusal prints the findings beside the rules, which the record holds and this sentence does not:\n%q", err.Error())
+	}
+
+	// The class rule is not weakened by the findings: a Typed step is refused
+	// with them exactly as without them (D1026), and a plainly refused Converge
+	// with no findings is the same verdict.
+	if err := ConvergeRefusedWithWarnings(doc, initflow.Typed, []string{rule}, []string{finding}).Refuse(); err == nil {
+		t.Error("a refusal that carries findings admits a Typed step")
+	}
+	plain := ConvergeRefused(doc, initflow.YesOrTyped, []string{rule})
+	if plain.Warned() || len(plain.Warnings()) != 0 {
+		t.Errorf("a plainly refused Converge reports Warned %v with findings %q, want neither", plain.Warned(), plain.Warnings())
+	}
+}
+
 // The refusal prints the rules that fired, and a rule's own words can quote a
 // plan — an address, an attribute, a cloud API's error. It is therefore one of
 // the sites this package's own enumeration is about

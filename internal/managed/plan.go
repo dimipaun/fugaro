@@ -141,12 +141,13 @@ type Verdict struct {
 	// Warnings are the findings the gate recorded and did not refuse on
 	// (D1545): the guard's content removals (a delete or a replace of a
 	// classified, non-data-bearing type no list admits), the cover's content
-	// refusals (the type and grant tables) and the cost list's blocked
-	// attributes. They never affect OK, and they are not dropped: the command
-	// the gate stands in for records them in the audit record and prints them
-	// (D1025), and `fugaro managed apply` — which writes no record, D1011 —
-	// refuses a plan carrying any of them, folding them into this verdict's
-	// Refusals before it decides (apply.go's gateAndApply).
+	// refusals (the type and grant tables), the cost list's blocked attributes,
+	// and the budget-evidence warning of a project whose creation fact records
+	// no amount (enable.go). They never affect OK, and they are not dropped:
+	// every command the gate stands in for — `fugaro managed apply` included,
+	// since the ruling of 2026-11-11 — records them in the audit record and
+	// prints them (D1025), and a command that refuses the plan for an integrity
+	// rule records them beside the rules that refused (ConvergeRefusedWithWarnings).
 	Warnings []Refusal
 	// Flags are the findings of entries that only flag (Task 1.3, D62): recorded
 	// here for whoever confirms, from the cost list's non-blocking findings. They
@@ -298,6 +299,27 @@ type Refusal struct {
 	Why     string
 }
 
+// RuleLines is a verdict's refusals or its warnings as the rules that fired,
+// one per item, in the gate's own gate/address/why shape: what a Converge
+// carries (converge.go), what a refusal sentence names after NotConverged, what
+// a command prints when the gate warned, and what the audit record holds. It is
+// here, beside the type it reads, so the record's rules and the record's
+// warnings are rendered by one function — a command that shaped its own would
+// be the second rendering of a finding to keep in step with the first — and
+// this package bounds them where they are rendered: a rule can quote a plan,
+// and a plan is not this program's text.
+func RuleLines(refs []Refusal) []string {
+	rules := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		why := ref.Gate + ": " + ref.Why
+		if ref.Address != "" {
+			why = ref.Gate + ": " + ref.Address + " — " + ref.Why
+		}
+		rules = append(rules, why)
+	}
+	return rules
+}
+
 // Gate is a managed apply's first step: it reads the saved plan at planPath
 // and judges it with both deterministic gates, the guard first and the cover
 // second, in that order — what a plan would delete or replace is decided
@@ -311,9 +333,10 @@ type Refusal struct {
 // Refusals and OK is false when either is non-empty; the guard's warned
 // removals, the cover's content refusals and the cost list's blocked attributes
 // are the plan's Warnings and never affect OK. That split is the gate's; what a
-// warning MEANS is the caller's, and the caller whose command writes no audit
-// record refuses the warned plan rather than applying it (apply.go's
-// gateAndApply). Nothing here applies anything — Gate reads a plan and returns,
+// warning MEANS is the caller's, and every command in the set answers the way
+// the ruling of 2026-11-11 says: the plan is applied with the findings in the
+// record of it (apply.go's gateAndApply, which records them on the refusal it
+// returns too). Nothing here applies anything — Gate reads a plan and returns,
 // and applying the saved plan is a separate step with its own caller (Tasks 3.1
 // and 3.2).
 //
