@@ -86,7 +86,7 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"**A stolen member token is unchanged.**",
 		// No rotation, stated as the absence of a claim, and revocation bounded
 		// by two lifetimes rather than instantaneous.
-		"**There is no rotation here, and the design does not claim one**",
+		"**There is no rotation here, and the design does not claim one.**",
 		"not detectable by rotation",
 		"**Revocation at the workspace ends the person's ability to exchange, and nothing else**",
 		"neither revocation is instantaneous across members",
@@ -100,13 +100,13 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"**a failed settle refuses**",
 		// And the limit this release does not hide: the meter is not wired, so
 		// the cap binds nothing on this tree.
-		"**And the limit this release does not hide**",
+		"**And the limit this release does not hide.**",
 		"no code path takes them on this tree",
 		"**a workspace's cap binds nothing today**",
 		// The alarm, and the unbound member that fails closed rather than
 		// counting as zero.
 		"**The reconciliation alarm.**",
-		"**A member the per-member table does not bind is reported as an alarm rather than counted as zero**",
+		"A member the per-member table does not bind is reported as an alarm rather than counted as zero",
 		// The cross-project read: a whole-database read that bypasses the rules,
 		// the write that is gone, and what the service cannot reach at all.
 		"**What the workspace's service can read, and what it cannot.**",
@@ -128,21 +128,24 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"**An unattended agent as a caller.**",
 		"no workspace-level token limit to get wrong",
 		// The residual risks, every one of spec §8's seven, the withdrawn
-		// fifth included.
+		// fifth included -- and each carrying the number spec §8 gives it, so a
+		// reader can put the two lists beside each other. The numbers are part
+		// of the pinned phrase rather than a second loop, because the section is
+		// read flattened and a line-anchored check cannot survive the wrap.
 		"**What this design accepts, as residual risk.**",
-		"**A member's operator can spend the workspace's pool**",
-		"**A workspace revocation does not reach a member token already minted.**",
-		"**The workspace's identity provider is a single point of sign-in**",
-		"**The workspace service is on the critical path of every shared-credential call.**",
-		"**Withdrawn on 2026-11-04.**",
+		"1. **A member's operator can spend the workspace's pool**",
+		"2. **A workspace revocation does not reach a member token already minted.**",
+		"3. **The workspace's identity provider is a single point of sign-in**",
+		"4. **The workspace service is on the critical path of every shared-credential call.**",
+		"5. **Withdrawn on 2026-11-04.**",
 		"the number is kept rather than reused",
-		"**Anyone who can mint a custom token for the workspace's project can set `email` and `email_verified` to anything, and reach every member as anybody.**",
+		"6. **Anyone who can mint a custom token for the workspace's project can set `email` and `email_verified` to anything, and reach every member as anybody.**",
 		"`signBlob`",
 		"`TokenCreator`",
 		"**refuse `custom` and `anonymous`**",
 		"`google.com`",
 		"`password`",
-		"**A shared credential is served where the member's own service would refuse it: the run's repository is not held to the calling job account.**",
+		"7. **A shared credential is served where the member's own service would refuse it: the run's repository is not held to the calling job account.**",
 		"**The second way this risk is reachable is the account's class**",
 		"**this release ships both stated and not enforced**",
 		// Spec §9 as prohibitions, which is how the spec writes them.
@@ -159,16 +162,6 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		}
 	}
 
-	// The seven residual risks are numbered 1 to 7, so a reader can put this
-	// section beside docs/workspaces/spec.md §8's list and find each one. A
-	// numbered list that dropped a number would hide exactly the risk nobody
-	// wanted to write down.
-	for _, n := range []string{"1.", "2.", "3.", "4.", "5.", "6.", "7."} {
-		if !strings.Contains(section, "\n"+n+" **") {
-			t.Errorf("the `%s` section writes no residual risk %s: spec §8's list is numbered 1 to 7 and this section is read against it", wsSecurityHeading, n)
-		}
-	}
-
 	// The overclaims a rewrite drifts into, read out of the whole document.
 	for _, banned := range []string{
 		// The workspace as a boundary: it groups projects, and a member's own
@@ -180,9 +173,12 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		// no IAM policy narrows it to the nodes the service uses.
 		"the workspace service reads only the ledger, the policy and the outcomes",
 		"the workspace's grant is limited to the nodes it reads",
-		// Revocation, which the design buys back with token lifetime.
+		// Revocation, which the design buys back with token lifetime. The
+		// banned spelling is the overclaim, not the honest sentence beside it:
+		// "neither revocation is instantaneous across members" is what the
+		// section has to say, so the pin cannot be a substring of it.
 		"a workspace revocation reaches a member token already minted",
-		"revocation is instantaneous across members",
+		"a workspace revocation is immediate",
 		// The meter, which is machinery on this tree and not yet a fence.
 		"the workspace's cap is enforced on every shared-credential call",
 		"every shared-credential call is metered",
