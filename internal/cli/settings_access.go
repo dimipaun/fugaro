@@ -9,9 +9,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// settingsAccessGate is the one question every settings, config, policy and
-// recipe write asks before it lands: may this caller make this write? (RS6b of
-// docs/roles-scopes.)
+// Every settings, config, policy and recipe write asks one question before it
+// lands: may this caller make this write? (RS6b of docs/roles-scopes.)
+// settingsAccessGate asks it for a project-level write and settingsAccessWrite
+// for `settings set` and `settings unset`, whose layer decides which write it
+// is.
 //
 // What is new is only WHO MAY CALL the write. What the write then does is
 // unchanged: a repository's own value already goes through the project layer's
