@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -322,6 +323,71 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		}
 		if !strings.Contains(got, "no step of it can reach them") {
 			t.Errorf("the line names no step at all over a run this update leaves where it is:\n%s", got)
+		}
+	})
+}
+
+// TestUpdateInFlightLineNamesTheMarkerConvergence is the fifth step the line
+// names, and the one D1543 adds: this update rewrites the installation's
+// creation fact out of version 3 (update_marker_version.go, T10), and the run
+// in flight is the release behind, whose reader REFUSES the version it is
+// rewritten to rather than reading it as the shape it resembles. So the step is
+// one that changes what a run in flight makes of the marks — a command of that
+// run re-reads them per command (D1015) and will answer "not managed", keeping
+// the typed confirmation it would have applied without — and a person who sees
+// a run stop taking the gate is owed the step that did it.
+//
+// The second case is the negative half: the same run over a fact this build
+// already writes, where the step leaves the object exactly where it is and the
+// line names no such thing. The third is the other gate: a version-3 object on a
+// project nothing has labelled is not a fact the read believes, so the step has
+// nothing to converge and says nothing.
+//
+// All three are read off the line the door really printed, over a run really in
+// flight and over the real marker read — the bucket's project number, the
+// bucket's own label and the project's label — rather than off the question the
+// clause is gated on.
+func TestUpdateInFlightLineNamesTheMarkerConvergence(t *testing.T) {
+	line := func(t *testing.T, fact string, isManaged bool) string {
+		t.Helper()
+		// The rig is the marker's own (convergeRigWithMarker), so this test reads
+		// the line the door prints over the very installation
+		// TestPreviousMarkerVersionConvergesOnUpdate converges.
+		var r *convergeRig
+		if isManaged {
+			r = convergeRigWithMarker(t, fact)
+		} else {
+			r = newConvergeRig(t, v3Node(nil))
+			r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
+		}
+		startRunInFlight(t, r)
+		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"}))
+	}
+	t.Run("a version-3 fact is rewritten", func(t *testing.T) {
+		got := line(t, markerBuildsFact, true)
+		for _, want := range []string{"the creation fact this update rewrites", "refuses a version it does not know", "keeps the typed confirmation"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the line does not say %q over a run whose installation still carries a version-3 creation fact:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "no step of it can reach them") {
+			t.Errorf("the line claims no step can reach a run in flight, over the fact this update rewrites:\n%s", got)
+		}
+	})
+	t.Run("a fact this build already writes is left alone", func(t *testing.T) {
+		got := line(t, markerNowFact, true)
+		if strings.Contains(got, "the creation fact this update rewrites") {
+			t.Errorf("the line names the marker's convergence over a fact that is already this build's:\n%s", got)
+		}
+	})
+	t.Run("a version-3 object the read does not believe", func(t *testing.T) {
+		got := line(t, markerBuildsFact, false)
+		if strings.Contains(got, "the creation fact this update rewrites") {
+			t.Errorf("the line names the marker's convergence over an object the managed read does not believe, so the step has nothing to converge:\n%s", got)
+		}
+		if !strings.Contains(got, "no step of it can reach them") {
+			t.Errorf("the line names a step over a run this update leaves where it is:\n%s", got)
 		}
 	})
 }
