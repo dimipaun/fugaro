@@ -257,19 +257,21 @@ func openLease(ctx context.Context, w io.Writer, a leaseArgs) (*buildLease, erro
 // Where its values come from, since it has no checkout and no local config: the
 // project's name and GCP project are the job's own environment, the database URL
 // is the same budget.rtdb_url every other job of the installation carries
-// (CatalogCheck renders it into this job's env), the machine type and the region
-// are its assignment's, and the identity is its own service account — the
-// account `roles/firebasedatabase.admin` is granted to (the installation
-// module's catalogcheck.tf), because a lease is an IAM write and not a rules
-// one: the account's access token bypasses the database rules, and the
-// /buildleases path is denied whole to every client token (internal/budget's
-// rules).
+// (CatalogCheck renders it into this job's env), the Firebase project is its
+// assignment's, the machine type and the region are its assignment's, and the
+// identity is its own service account — the one account the installation module
+// grants its own database role to (catalogcheck.tf's two data permissions, and
+// no lifecycle one), because a lease is an IAM write and not a rules one: an
+// access token carries the permissions its principal holds and the rules'
+// /buildleases family is denied whole to every client token (internal/budget's
+// rules, which is why the lease path is an IAM grant at all).
 //
 // The three guards are called rather than restated. They are asked with a config
-// holding exactly what they read — Name, GCPProject and the database URL — so
-// the database a lease is written into is proved to be this installation's own
-// by the same function that proves it for every other writer, which is the one
-// thing here that may not have a second wording (requireOwnBudgetDB's doc).
+// holding exactly what they read — Name, GCPProject, the Firebase project and
+// the database URL — so the database a lease is written into is proved to be
+// this installation's own by the same function that proves it for every other
+// writer, which is the one thing here that may not have a second wording
+// (requireOwnBudgetDB's doc).
 //
 // The identity is derived from the job's own account name and project rather
 // than read from a metadata call: the figure is informational (BuildLease.By),
@@ -282,7 +284,7 @@ func openCatalogJobLease(ctx context.Context, w io.Writer, e catalogJobEnv, s ca
 			// client this job opens (checkEndpoints, the check job's own
 			// endpoints): the job's service account is the real one.
 			Endpoints: localcfg.Endpoints{NoAuth: checkEndpoints.NoAuth},
-			Budget:    &localcfg.Budget{RTDBURL: e.budgetURL},
+			Budget:    &localcfg.Budget{RTDBURL: e.budgetURL, FirebaseProject: s.FirebaseProject},
 		},
 		repo: repo, slug: slug,
 		machine: s.MachineType, region: s.BuildRegion,

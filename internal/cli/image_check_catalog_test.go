@@ -17,6 +17,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -25,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // The project's catalog check job (D1148 (i)): one run of the project's own
@@ -81,6 +83,11 @@ func catalogCheckSpecFor(t *testing.T, cat *config.Catalog) catalogCheckSpec {
 		Version: infra.CatalogCheckSpecVersion, Catalog: cat,
 		BaseImages:  map[string]string{config.BaseKind: checkBase},
 		MachineType: "E2_HIGHCPU_8", BuildRegion: "us-east5",
+		// The installation's Firebase project, deliberately not the GCP
+		// project the job runs in: the lease proves the pair it was handed,
+		// and a fixture that handed it one value for both would pass over a
+		// job that never read the field.
+		FirebaseProject: "aurora-fp",
 	}
 	for i, repo := range []string{"acme/app", "acme/other"} {
 		slug := mustSlug("bitbucket", repo)
@@ -701,6 +708,140 @@ func TestCatalogCheckJobStopsAtTheRunBuildCap(t *testing.T) {
 			t.Fatalf("%s check.json = %+v", e.entry, st)
 		}
 	}
+}
+
+// TestCatalogCheckJobLeasesEachBuild: a build the nightly job submits is money
+// nobody is watching, so it leases its estimated cost from the same budget the
+// project's runs spend from, before Cloud Build is asked for it (D1554): the
+// reservation is the whole estimate at the assignment's own machine and region,
+// taken under the job's own service account — the account the installation
+// grants the database role to, because a lease is an IAM write and the
+// /buildleases path is denied to every client token — and the day counts it,
+// since nothing here watches the build to its end.
+//
+// The two negative halves are the ones a quiet job would fail at silently. An
+// installation whose database holds no budget backend submits its builds
+// uncounted, after one warning naming the command that adds one: `fugaro
+// update` re-deploys this job with the backend the same run sets up, and until
+// then nothing counts what the schedule spends. And a build the project's caps
+// have no room for is not submitted at all (D1550): the entry is recorded as a
+// check failure naming the lease, rather than built past the cap it met.
+func TestCatalogCheckJobLeasesEachBuild(t *testing.T) {
+	t.Run("each build leases its cost from the project's budget", func(t *testing.T) {
+		db := gcpfake.NewRTDB(t)
+		adoptBudgetFake(db)
+		buildBudgetCaps(db)
+		stubBuildPricer(t)
+		t.Setenv(infra.RTDBURLEnv, db.URL)
+
+		f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools")))
+		f.seed(t, "tools", "acme/app", catalogCheckAppDef, "sha256:"+strings.Repeat("9", 64))
+		lines, err := runCatalogCheck(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := buildPosts(f.fb); got != 1 {
+			t.Fatalf("builds submitted = %d, want the one the changed entry asks for", got)
+		}
+		if l := lineFor(t, lines, "tools"); l.Decision != imagecheck.Rebuild || *l.BuildID == "" {
+			t.Fatalf("tools line = %+v, want the rebuild this run submitted", l)
+		}
+		// The lease, read the way every writer of this database reads one.
+		client, err := newBudgetClient(context.Background(), db.URL, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		slug := f.slugs["acme/app"]
+		var leases map[string]budget.BuildLease
+		if _, err := client.Get(context.Background(), budget.PathBuildLeases(slug), &leases); err != nil {
+			t.Fatalf("reading the repository's build leases: %v", err)
+		}
+		if len(leases) != 1 {
+			t.Fatalf("the run left %d build leases (%v), want the one lease of the one build it submitted", len(leases), leases)
+		}
+		var lease budget.BuildLease
+		for _, l := range leases {
+			lease = l
+		}
+		if want := buildRate(t).Estimate(); lease.Reserved != want {
+			t.Errorf("the lease reserves %d µ$, want the build's whole estimate (%d µ$): a build nothing watches records all of it", lease.Reserved, want)
+		}
+		if lease.Settled != lease.Reserved || lease.Released != 0 || lease.State != budget.BuildLeaseSettled {
+			t.Errorf("the lease is %+v after the submission, want it settled at the whole reservation: this job never watches the build to an end (SubmitCatalog returns as soon as Cloud Build accepts it)", lease)
+		}
+		if want := tf.CatalogCheckAccountID + "@" + initProject + ".iam.gserviceaccount.com"; lease.By != want {
+			t.Errorf("the lease was taken by %q, want the job's own account (%q): a lease is an IAM write, and that account is the one the installation grants the database role to", lease.By, want)
+		}
+		if lease.Repo != slug || lease.MachineType != "E2_HIGHCPU_8" || lease.Region != "us-east5" {
+			t.Errorf("the lease is %+v, want it for %s at the assignment's machine and region", lease, slug)
+		}
+		wholeReservationCounted(t, db, slug, "the catalog check job's build")
+	})
+
+	t.Run("an installation with no budget backend builds uncounted", func(t *testing.T) {
+		f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools")))
+		f.seed(t, "tools", "acme/app", catalogCheckAppDef, "sha256:"+strings.Repeat("9", 64))
+		out, stderr, err := executeJob(t, "image", "check", "--job", "--catalog")
+		if err != nil {
+			t.Fatalf("the job failed on an installation with no budget backend: %v\n%s\n%s", err, out, stderr)
+		}
+		for _, want := range []string{
+			"has no Firebase budget backend",
+			"nothing counts their cost",
+			"fugaro update --firebase-project " + initProject,
+		} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("the job does not say %q over an installation with no budget backend:\n%s", want, stderr)
+			}
+		}
+		if got := buildPosts(f.fb); got != 1 {
+			t.Errorf("builds submitted = %d, want 1: a backend this installation does not have is not a reason to stop refreshing its catalog, and the warning says what it means", got)
+		}
+		if l := lineFor(t, catalogLines(t, out), "tools"); l.Decision != imagecheck.Rebuild || *l.BuildID == "" {
+			t.Errorf("tools line = %+v, want the rebuild the run submitted: a lease nobody can take is not a reason to keep an image stale", l)
+		}
+	})
+
+	t.Run("a build the caps have no room for is not submitted", func(t *testing.T) {
+		db := gcpfake.NewRTDB(t)
+		adoptBudgetFake(db)
+		buildBudgetCaps(db)
+		stubBuildPricer(t)
+		// Less room on the day than one build reserves, with the mode in
+		// enforce: the whole point of a lease is that this build does not run.
+		db.Set(budget.PathCapsGlobal, map[string]any{"perRunMicros": 1, "dailyMicros": 1})
+		t.Setenv(infra.RTDBURLEnv, db.URL)
+
+		f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools")))
+		f.seed(t, "tools", "acme/app", catalogCheckAppDef, "sha256:"+strings.Repeat("9", 64))
+		lines, err := runCatalogCheck(t)
+		if err == nil {
+			t.Fatal("the catalog check reported no failure for a build no cap has room for")
+		}
+		if got := buildPosts(f.fb); got != 0 {
+			t.Fatalf("builds submitted = %d, want 0: the lease is taken before the submission, so a build no cap has room for is refused rather than built", got)
+		}
+		l := lineFor(t, lines, "tools")
+		if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" || !strings.Contains(l.Error, "leasing the rebuild") {
+			t.Fatalf("tools line = %+v, want the failure the lease's refusal is", l)
+		}
+		// And the entry is left due rather than recorded as a build that
+		// happened: the next run reads it as a rebuild again.
+		if st := f.state(t, "tools", "acme/app"); st == nil || st.Decision != imagecheck.CheckFailed || st.BuildID != "" {
+			t.Fatalf("tools check.json = %+v", st)
+		}
+		client, err := newBudgetClient(context.Background(), db.URL, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var leases map[string]budget.BuildLease
+		if _, err := client.Get(context.Background(), budget.PathBuildLeases(f.slugs["acme/app"]), &leases); err != nil {
+			t.Fatal(err)
+		}
+		if len(leases) != 0 {
+			t.Errorf("the refused build left %v: a lease no cap has room for is never written", leases)
+		}
+	})
 }
 
 // TestCatalogCheckJobSkipsWhileItsLastRebuildRuns: an entry whose last build of

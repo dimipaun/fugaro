@@ -47,11 +47,11 @@ const catalogNotInstalledReason = "run fugaro update"
 // It carries the catalog and the repositories because the job can read neither
 // on its own: the published catalog lives in the project's policy node, whose
 // rules grant a read to a Fugaro-minted token alone (internal/budget/rules), so
-// a service account's IAM read of it would be a project-level database role,
-// and this job's account holds no project-level role at all (D1148). The
-// catalog therefore reaches the job here, as the published catalog the
-// operator's own fugaro update read, and the repositories come with it: which
-// entries each one builds, and the facts a build of them is submitted with.
+// a service account's IAM read of it would be a project-level database role
+// (D1148). The catalog therefore reaches the job here, as the published
+// catalog the operator's own fugaro update read, and the repositories come
+// with it: which entries each one builds, and the facts a build of them is
+// submitted with.
 type catalogCheckSpec struct {
 	Version int `json:"version"`
 	// Catalog is the project's published image catalog, config.Catalog's own
@@ -76,6 +76,15 @@ type catalogCheckSpec struct {
 	// config because this job has no checkout.
 	MachineType string `json:"machine_type"`
 	BuildRegion string `json:"build_region"`
+	// FirebaseProject is the installation's Firebase project: the database
+	// every lease this run takes is written into is that project's own, and
+	// the job proves it with the predicate every writer into that database
+	// asks (requireOwnBudgetDB). It is not read out of the database URL, which
+	// is the very pair the proof is about. Empty on an installation whose
+	// config names no Firebase project, where the lease is refused by name
+	// rather than written into a database nothing proves is the
+	// installation's.
+	FirebaseProject string `json:"firebase_project"`
 }
 
 // catalogRunBuildCap is how many builds one run of the catalog check job may

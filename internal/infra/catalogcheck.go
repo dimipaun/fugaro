@@ -55,15 +55,25 @@ const (
 // installation planned before the job existed).
 //
 // The job's whole assignment is Env's CatalogCheckSpecEnv: the job's account
-// holds six grants and no project role at all, so it can read neither the
-// published catalog (a database node its account has no role for) nor anything
-// else it would have to decide itself (D1148).
+// holds no project role beyond the two data permissions of its own database
+// role (catalogcheck.tf), so it can read neither the published catalog (a
+// database node its account has no role for) nor anything else it would have
+// to decide itself (D1148).
 type CatalogCheckSpec struct {
 	AccountID       string `json:"account_id"`
 	Job             string `json:"job"`
 	Image           string `json:"image"`
 	SchedulerJob    string `json:"scheduler_job"`
 	SchedulerRegion string `json:"scheduler_region"`
+	// FirebaseProject is the installation's Firebase project, and it is here
+	// because the job's lease is written into that project's database
+	// (D1554): the module creates the job account's own database role in it
+	// and binds it there, and a binding cannot name a project the plan does
+	// not know (credentials.tf renders its own the same way). Empty on an
+	// installation that has no Firebase backend at all, where the job submits
+	// its builds unleased and says so, and where there is no database for a
+	// role to be granted on.
+	FirebaseProject string `json:"firebase_project,omitempty"`
 	// Paused stops the schedule. The module's variable defaults it to true and
 	// applies whatever it is given on every apply, which is why this field has
 	// to exist: paused was a variable no run could set, so the operator note
@@ -118,6 +128,17 @@ type CatalogCheckJobSpec struct {
 	// priced at (internal/cli's openCatalogJobLease).
 	MachineType string `json:"machine_type"`
 	BuildRegion string `json:"build_region"`
+	// FirebaseProject is the installation's Firebase project, the one the
+	// job's build leases are written into (D1554): the job proves the database
+	// it was handed is that project's own before it writes a lease, with the
+	// same predicate every other writer into that database asks
+	// (requireOwnBudgetDB), and that predicate is given a project and a URL
+	// and not a URL it is meant to read the project out of. It is the same
+	// value the spec above carries for the module, written beside it from one
+	// local: the job's own assignment and the grant that lets it write are two
+	// halves of one fact, and a release that wrote them differently would
+	// deploy a job that leases nothing or a role nobody holds.
+	FirebaseProject string `json:"firebase_project,omitempty"`
 }
 
 // CatalogCheckRepoSpec is one repository's part of the assignment: the facts a
@@ -207,13 +228,22 @@ func CatalogCheck(lc *localcfg.Config, bucket string, paused bool) (*CatalogChec
 		}
 		region = r
 	}
+	// The installation's Firebase project, "" when there is none: the module
+	// binds the job account's database role in it, and the job names it in its
+	// own spec, so the lease the job takes is written into the database the
+	// grant is on. One local read twice, because the two are one fact.
+	firebaseProject := ""
+	if b := lc.Budget; b != nil {
+		firebaseProject = b.FirebaseProject
+	}
 	raw, err := json.Marshal(CatalogCheckJobSpec{
-		Version:      CatalogCheckSpecVersion,
-		Catalog:      cat,
-		Repositories: repos,
-		BaseImages:   maps.Clone(lc.BaseImages),
-		MachineType:  lc.Build.MachineType,
-		BuildRegion:  lc.BuildRegion(),
+		Version:         CatalogCheckSpecVersion,
+		Catalog:         cat,
+		Repositories:    repos,
+		BaseImages:      maps.Clone(lc.BaseImages),
+		MachineType:     lc.Build.MachineType,
+		BuildRegion:     lc.BuildRegion(),
+		FirebaseProject: firebaseProject,
 	})
 	if err != nil {
 		return nil, err
@@ -238,6 +268,7 @@ func CatalogCheck(lc *localcfg.Config, bucket string, paused bool) (*CatalogChec
 		Image:           image,
 		SchedulerJob:    CatalogCheckSchedulerJob,
 		SchedulerRegion: region,
+		FirebaseProject: firebaseProject,
 		Paused:          paused,
 		Env:             env,
 		DefinitionsCondition: Condition{
