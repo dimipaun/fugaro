@@ -54,6 +54,7 @@ import type { LiveFeed, Snapshot } from '../../src/source/source'
 import { GRAPH_DOCUMENT_VERSION } from '../../src/shared/schema'
 import { installStub } from './stub'
 import type { Stub, StubAnswer } from './stub'
+import { itHostRoute } from '../support/hostRoute'
 
 /** PROJECT is the installation every child here is spawned for. */
 const PROJECT = 'fugaro'
@@ -143,7 +144,7 @@ function seqsOf(drawn: readonly Record<string, unknown>[]): readonly unknown[] {
 }
 
 describe('the graph feed’s argv', () => {
-  it('spawns exactly the declared row, and no word a caller can spell', async () => {
+  itHostRoute('spawns exactly the declared row, and no word a caller can spell', async () => {
     // §5.1 rule 6's row is the whole of what this console may say to the command
     // (`graph --watch --json [--source <v>]`), so the row's shape is written out
     // here rather than read back off the table, and then checked against a real
@@ -200,7 +201,7 @@ describe('the graph feed’s argv', () => {
 })
 
 describe('the graph feed’s documents', () => {
-  it('keeps the latest document, and refuses a stale seq whole', async () => {
+  itHostRoute('keeps the latest document, and refuses a stale seq whole', async () => {
     // The child prints a document and then an older one -- what a reader sees
     // when the CLI reconnects and replays, or when two children's lines meet on
     // one pipe. The second is not a state change: it is not counted, it reaches
@@ -227,7 +228,7 @@ describe('the graph feed’s documents', () => {
     await waitFor(() => stub.kills().length === 1)
   })
 
-  it('treats a new stream id as a new snapshot, whatever seq it carries', async () => {
+  itHostRoute('treats a new stream id as a new snapshot, whatever seq it carries', async () => {
     // `stream_id` is drawn once per child and `seq` rises within it, so the two
     // children behind one feed's lifetime -- a restart after a killed CLI, the
     // reconnect the child does itself -- are told apart by the id alone. A rule
@@ -256,7 +257,7 @@ describe('the graph feed’s documents', () => {
 })
 
 describe('the graph feed’s lifetime', () => {
-  it('stops the child when the tab is hidden, and starts none', async () => {
+  itHostRoute('stops the child when the tab is hidden, and starts none', async () => {
     // H6: the CLI holds a subscription on the project's scope subtree for as
     // long as this child lives, so a Graph tab that left the screen gives it up.
     // The handler is the door: `visible: false` stops the feed and answers
@@ -289,7 +290,7 @@ describe('the graph feed’s lifetime', () => {
     await waitFor(() => stub.kills().length === 2)
   })
 
-  it('stops the running child when the source the app builds is told the tab is hidden', async () => {
+  itHostRoute('stops the running child when the source the app builds is told the tab is hidden', async () => {
     // The case above drives the handler over a `CliSource`, and `entry-wiring`
     // drives a fake bridge; neither reaches `createBoundSource`, which is the one
     // source the shipped app constructs (`src/main/index.ts`) and which keys its
@@ -324,7 +325,7 @@ describe('the graph feed’s lifetime', () => {
     await waitFor(() => stub.kills().length === 2)
   })
 
-  it('refuses a scope no answer of this installation listed, and starts no child for it', async () => {
+  itHostRoute('refuses a scope no answer of this installation listed, and starts no child for it', async () => {
     // **F21 at the feed's own door, which is a door of its own.** The scope
     // grammar admits an id that exists nowhere, and this row is a *child* rather
     // than a read: one named for a scope no document ever listed would have the
@@ -377,7 +378,7 @@ describe('the graph feed’s lifetime', () => {
     await waitFor(() => stub.kills().length === 2)
   })
 
-  it('answers a dead child’s refusal again instead of spawning one child per poll', async () => {
+  itHostRoute('answers a dead child’s refusal again instead of spawning one child per poll', async () => {
     // A `graph --watch` child that exits at once -- a scope its own CLI refuses,
     // no database, no bucket -- leaves a refusal and not a stream, and the poll
     // is what starts the child: the Graph tab polls once a second, so a feed with
@@ -428,7 +429,7 @@ describe('the graph feed’s lifetime', () => {
     await source.close()
   })
 
-  it('counts toward MAX_LIVE_FEEDS with the live feeds, and evicts the oldest', async () => {
+  itHostRoute('counts toward MAX_LIVE_FEEDS with the live feeds, and evicts the oldest', async () => {
     // One ceiling for both kinds, over one map: the graph's child is as
     // expensive as the watch's -- each is a long-lived CLI process -- so a
     // second ceiling would be twice the bound the first exists to be.
@@ -468,7 +469,7 @@ describe('the graph feed’s lifetime', () => {
     await waitFor(() => stub.kills().length === 5)
   })
 
-  it('stops the graph child when the source closes', async () => {
+  itHostRoute('stops the graph child when the source closes', async () => {
     // `close()` is the console's own shutdown path, and it is the backstop
     // behind H6: a child a screen forgot to stop is one this ends.
     const stub = installStub(freshDirectory(), {
@@ -484,7 +485,7 @@ describe('the graph feed’s lifetime', () => {
     expect(stub.kills()[0]?.argv).toContain('--watch')
   })
 
-  it('keeps one child for one scope, and a second scope is a second child', async () => {
+  itHostRoute('keeps one child for one scope, and a second scope is a second child', async () => {
     // `subscribeLive`'s contract word for word (the interface's own doc): the
     // surface is `invoke`-only, so a screen reaches `graph.watch` once per poll,
     // and a subscription per call would leave one `fugaro graph --watch` child
@@ -506,7 +507,7 @@ describe('the graph feed’s lifetime', () => {
     await waitFor(() => stub.kills().length === 2)
   })
 
-  it('answers the same arguments with the same feed, and a stopped one with a new child', async () => {
+  itHostRoute('answers the same arguments with the same feed, and a stopped one with a new child', async () => {
     // A feed the console stopped is not a live feed: the next poll of the tab
     // has to start a child again rather than hand back the child it ended.
     const stub = installStub(freshDirectory(), {

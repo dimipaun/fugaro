@@ -33,6 +33,7 @@ import {
 } from '../../src/main/spawn'
 import { DISTRO_DIRECTORY, DISTRO_PATH, installWslStub } from './wslstub'
 import type { WslFixture, WslPathPair, WslStub, WslStubOptions } from './wslstub'
+import { itHostRoute } from '../support/hostRoute'
 
 /** WINDOWS_SRC is a path spelled the way Windows spells one, and it is the
  * `wslpath` table's key: the console asks `wslpath` for the Linux spelling
@@ -164,7 +165,7 @@ async function waitForPidOnStderr(said: () => string, marker: string): Promise<n
 }
 
 describe('the fake wsl.exe', () => {
-  it('records its own argv, its distro and the child it started', () => {
+  itHostRoute('records its own argv, its distro and the child it started', () => {
     // T-A1's first case. The two hops are read apart: the fake's own account of
     // what the console asked for, and the child's own account of what it got --
     // the second one written by the stub `fugaro` itself, so a test that reads
@@ -189,7 +190,7 @@ describe('the fake wsl.exe', () => {
     expect(wsl.childCalls()).toBe(1)
   })
 
-  it('starts the child in the directory the console named, and the Linux side reports it', () => {
+  itHostRoute('starts the child in the directory the console named, and the Linux side reports it', () => {
     // `--cd` is the distribution's own spelling (T-C5, T-D4), so the fake uses it
     // as it stands -- and the child's own `cwd` is the proof that it was *used*
     // rather than merely recorded (T-A1 step 4). The mutation this catches: drop
@@ -206,7 +207,7 @@ describe('the fake wsl.exe', () => {
     expect(hop.cwd).not.toBe(linux)
   })
 
-  it('refuses a Windows spelling in --cd rather than starting a child in it', () => {
+  itHostRoute('refuses a Windows spelling in --cd rather than starting a child in it', () => {
     // The console translates with `wslpath` and sends the distribution's own
     // spelling (T-C5, T-D3, T-D4), so a Windows path here is a Part C or D bug.
     // The mutation this catches: accept it, and the child is started in a
@@ -221,7 +222,7 @@ describe('the fake wsl.exe', () => {
     expect(only(wsl.reports()).kind).toBe('refused')
   })
 
-  it('gives the child the distribution’s PATH, not the host’s', () => {
+  itHostRoute('gives the child the distribution’s PATH, not the host’s', () => {
     // T-A2, the fake's half of F5. The fake's own `PATH` is the Windows-shaped
     // one -- the report says so -- and the child's is the distribution's, because
     // on the WSL leg the child is a Linux process. The mutation this catches is
@@ -241,7 +242,7 @@ describe('the fake wsl.exe', () => {
     expect(child.path).not.toContain(';')
   })
 
-  it('passes CHILD_ENV_KEYS and nothing else across the boundary', () => {
+  itHostRoute('passes CHILD_ENV_KEYS and nothing else across the boundary', () => {
     // The double's half of D5(a). A sentinel that is not one of the boundary keys
     // is planted in the environment the console hands `wsl.exe`, and it must not
     // reach the child: a fake that forwarded its whole environment would make
@@ -264,7 +265,7 @@ describe('the fake wsl.exe', () => {
     for (const key of childKeys) expect([...CHILD_ENV_KEYS]).toContain(key)
   })
 
-  it('consumes the share list rather than handing it to the child', () => {
+  itHostRoute('consumes the share list rather than handing it to the child', () => {
     // T-E1 and T-E2. `WSLENV` is `wsl.exe`'s own share list -- the thing that
     // says which *Windows* variables the distribution receives -- and not a
     // variable of the distribution's, so the double takes it off the environment
@@ -295,7 +296,7 @@ describe('the fake wsl.exe', () => {
     expect(only(second.wsl.children()).envKeys).not.toContain('NOT_A_CHILD_KEY')
   })
 
-  it('refuses to be a general-purpose shell', () => {
+  itHostRoute('refuses to be a general-purpose shell', () => {
     // T-A3. The children are the stub `fugaro`, the `wslpath` query and the
     // `sh -c` wrapper the plan writes -- and nothing else, because a double that
     // runs anything makes every assertion about *what was run* meaningless. The
@@ -333,7 +334,7 @@ describe('the fake wsl.exe', () => {
     expect(wsl.reports()).toHaveLength(8)
   })
 
-  it('answers --list --quiet and --status from the fixture, and starts no child', () => {
+  itHostRoute('answers --list --quiet and --status from the fixture, and starts no child', () => {
     // T-A1 step 5. The two queries are the resolver's and the picker's, and they
     // are answered rather than run: no child, and a report line that says what
     // the console asked for (T-C4 and T-F2 read that line back).
@@ -350,7 +351,7 @@ describe('the fake wsl.exe', () => {
     expect(run(wsl, ['--status', '--verbose']).status).not.toBe(0)
   })
 
-  it('models a wsl.exe that cannot answer at all', () => {
+  itHostRoute('models a wsl.exe that cannot answer at all', () => {
     // T-C4's `absent` outcome: WSL is not installed, or the feature is off, and
     // `wsl.exe` fails instead of listing nothing. A double that could only answer
     // would leave that classification untestable -- and "no distributions" and
@@ -370,7 +371,7 @@ describe('the fake wsl.exe', () => {
     expect(wsl.children()).toHaveLength(0)
   })
 
-  it('answers wslpath in both directions from the table, and refuses a path it does not carry', () => {
+  itHostRoute('answers wslpath in both directions from the table, and refuses a path it does not carry', () => {
     // T-D2, and the reason the table is the test's own: the console asks
     // `wslpath` rather than computing a mapping, because a computed one is right
     // for a `C:` drive path and wrong for every custom mount (D4(b)). The
@@ -412,7 +413,7 @@ describe('the fake wsl.exe', () => {
     expect(run(wsl, ['-d', 'Ubuntu', '-e', 'wslpath', '-z', '-u', '/home/dimi/src']).status).not.toBe(0)
   })
 
-  it('runs the sh -c wrapper the way the distribution would, pid and all', async () => {
+  itHostRoute('runs the sh -c wrapper the way the distribution would, pid and all', async () => {
     // T-F4: the CLI runs inside `wsl.exe -d <d> -e sh -c '<script>'`, where the
     // script reports its own pid on stderr and then `exec`s the CLI -- which is
     // how the pid inside the distribution is captured at all (D6(a)). The
@@ -465,7 +466,7 @@ describe('the fake wsl.exe', () => {
     expect(grandchild.cwd).toBe(linux)
   })
 
-  it('writes the fixture in the encoding the test chose', () => {
+  itHostRoute('writes the fixture in the encoding the test chose', () => {
     // U9, and the vector T-F2's decoder needs: some `wsl.exe` builds answer in
     // UTF-16LE with a BOM and `\r\n`, and the test says so rather than hoping.
     const utf16: WslFixture = {
@@ -480,7 +481,7 @@ describe('the fake wsl.exe', () => {
     expect(Buffer.from(result.stdout).toString('utf8')).not.toBe(utf16.list)
   })
 
-  it('reads the stub fugaro as the child hop, not the shared report file', () => {
+  itHostRoute('reads the stub fugaro as the child hop, not the shared report file', () => {
     // The two hops share one file, so the handle named after the child has to
     // answer with the child's lines: a `stub.reports()` that returned the
     // `wsl.exe` hop too would be the one place the separation this file is built

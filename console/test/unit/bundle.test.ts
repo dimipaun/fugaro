@@ -44,7 +44,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { createContext, runInContext } from 'node:vm'
 
 import { describe, expect, it } from 'vitest'
@@ -883,7 +883,7 @@ describe('the bundler', () => {
     expect(isRelative('electron')).toBe(false)
     expect(isRelative('node:fs')).toBe(false)
     expect(isRelative('/etc/passwd')).toBe(false)
-    expect(resolveSpecifier('/tmp/dist/renderer/entry.js', '../shared/version')).toBe('/tmp/dist/shared/version.js')
+    expect(resolveSpecifier('/tmp/dist/renderer/entry.js', '../shared/version')).toBe(resolve('/tmp/dist/shared/version.js'))
     expect(isEntryPoint('/work/repo/console/.bundle-renderer/index.js')).toBe(true)
     expect(isEntryPoint('/work/repo/console/node_modules/vitest/vitest.mjs')).toBe(false)
   })

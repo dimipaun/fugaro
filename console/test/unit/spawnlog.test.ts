@@ -34,6 +34,8 @@ import type { SpawnLogFs } from '../../src/main/spawnlog'
 import { planFor, spawnedArgv } from '../../src/main/spawn'
 import { CliSource, createInstallationStore } from '../../src/source/cli'
 import { installStub } from './stub'
+import { reportedMode } from '../support/fsMode'
+import { itHostRoute } from '../support/hostRoute'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 const PROJECT = 'fugaro'
@@ -110,7 +112,7 @@ describe('the spawn log', () => {
     expect(readdirSync(directory)).toEqual([])
   })
 
-  it('a full session of spawns writes no file anywhere when it is unset', async () => {
+  itHostRoute('a full session of spawns writes no file anywhere when it is unset', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' }, 'budget show': { stdout: '{}\n' } },
@@ -165,7 +167,7 @@ describe('the spawn log', () => {
     expect(unused.opened).toEqual([])
   })
 
-  it('an installation check closes the log it opened, so each add leaks no descriptor', async () => {
+  itHostRoute('an installation check closes the log it opened, so each add leaks no descriptor', async () => {
     // `verifyCandidate` opens its own log when it is not handed one, and at
     // da86190 never closed it: one descriptor per installation added, held
     // until the process exits. Counted on /dev/fd, which macOS and Linux both
@@ -184,7 +186,7 @@ describe('the spawn log', () => {
     expect(readFileSync(logPath, 'utf8').split('\n').filter((line) => line !== '')).toHaveLength(22)
   })
 
-  it('creates the file with mode 0600 and one line per spawn', async () => {
+  itHostRoute('creates the file with mode 0600 and one line per spawn', async () => {
     const directory = freshDirectory()
     const logPath = join(directory, 'spawn.jsonl')
     const stub = installStub(directory, {
@@ -202,7 +204,7 @@ describe('the spawn log', () => {
     const lines = readFileSync(logPath, 'utf8').split('\n').filter((line) => line !== '')
     // The handshake, doctor and runs ls.
     expect(lines).toHaveLength(3)
-    expect(statSync(logPath).mode & 0o777).toBe(SPAWN_LOG_MODE)
+    expect(statSync(logPath).mode & 0o777).toBe(reportedMode(SPAWN_LOG_MODE))
   })
 
   it('writes exactly the four keys, checked against a planted fifth', () => {
@@ -243,7 +245,7 @@ describe('the spawn log', () => {
     expect(entry.ts).not.toContain('.')
   })
 
-  it('records the argv, the cwd and the project the spawn actually used', async () => {
+  itHostRoute('records the argv, the cwd and the project the spawn actually used', async () => {
     const directory = freshDirectory()
     const logPath = join(directory, 'spawn.jsonl')
     const stub = installStub(directory, {
@@ -272,7 +274,7 @@ describe('the spawn log', () => {
     expect(new Set(entries.map((entry) => entry.project))).toEqual(new Set(['chosen']))
   })
 
-  it('is closed by the source that opened it, and only by that one', async () => {
+  itHostRoute('is closed by the source that opened it, and only by that one', async () => {
     // Review round 3 of PR 478: `verifyCandidate` closed only the log it opened,
     // but `CliSource.close()` closed an injected one too -- a caller's writer
     // ended under it. The ownership is now the same in both.
