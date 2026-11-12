@@ -173,6 +173,10 @@ func (s *Store) Keys(ctx context.Context) ([][]byte, error) {
 // The text is written as it is given: whether this build accepts it is the
 // read's answer (Active), and a writer holding a keyring refuses a key the
 // verifier refuses before it reaches here.
+//
+// An object this store cannot read refuses the install rather than being
+// replaced: the object is the project's only copy of a key, and overwriting
+// what cannot be read is how a key is lost.
 func (s *Store) Install(ctx context.Context, raw []byte) error {
 	key := strings.TrimSpace(string(raw))
 	if key == "" {

@@ -217,7 +217,7 @@ func TestProjectStoreKeepsTwoKeys(t *testing.T) {
 	if err := json.Unmarshal(raw, &written); err != nil {
 		t.Fatalf("%s is not this store's object: %v", Object, err)
 	}
-	if written.V != recordVersion || !sameKeys(text2bytes(written.Keys), []string{short, third}) {
+	if written.V != recordVersion || !reflect.DeepEqual(written.Keys, []string{short, third}) {
 		t.Errorf("%s holds version %d and %d keys, want version %d and the two newest", Object, written.V, len(written.Keys), recordVersion)
 	}
 	again, err := New(r.bucket).Keys(ctx)
@@ -469,16 +469,6 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 			t.Errorf("an answer after silence reads %+v, want the streak cleared and the answer's own time in LastOK", view.Check)
 		}
 	})
-}
-
-// text2bytes is the written object's keys as the key sets the assertions above
-// compare: the record holds the texts a JSON object carries.
-func text2bytes(keys []string) [][]byte {
-	out := make([][]byte, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, []byte(key))
-	}
-	return out
 }
 
 // fieldNames is a struct's fields in the order they are declared.
