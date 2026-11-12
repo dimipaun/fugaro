@@ -5449,6 +5449,10 @@ func (r *run) finalize(ctx context.Context) error {
 	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
+	// The cap's leftovers are filed beside them and before the body is built:
+	// they are what the pull request's body and the report name as the
+	// follow-ups the run left (T-TR8, T-TR9).
+	r.recordCapDeferrals()
 	// The answer is replaced whole rather than having its sentence rewritten:
 	// the one reason this fires on is Decide's own, and the kind it came with is
 	// the one the replacement keeps (Decision, D995).

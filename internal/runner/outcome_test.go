@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"reflect"
@@ -1002,5 +1003,149 @@ func TestFindingsBlocksStayFailed(t *testing.T) {
 		if dec.Reason != "review round 2 still has 1 finding" {
 			t.Errorf("%s: reason = %q, want the count's own", mode, dec.Reason)
 		}
+	}
+}
+
+// capRound is the round the cap cases below read: one finding of each kind the
+// modes' rows separate on. Its summaries are what a case names a filed entry
+// by, and the file each one sits in is what makes their keys differ.
+var capRound = []Finding{
+	{File: "a.go", Summary: "the doc comment drifts", Likelihood: 1, Impact: 1, FixCost: 1, Class: "cosmetic"},
+	{File: "b.go", Summary: "the retry loop never stops", Likelihood: 3, Impact: 3, FixCost: 2, Class: "correctness"},
+	{File: "c.go", Summary: "the index is rebuilt on every call", Likelihood: 1, Impact: 4, FixCost: 4, Class: "maintainability"},
+	{File: "d.go", Summary: "the token is logged in the clear", Likelihood: 2, Impact: 2, FixCost: 1, Class: "security"},
+	{File: "e.go", Summary: "a write drops the row it rewrote", Likelihood: 2, Impact: 3, FixCost: 1, Class: "data_loss"},
+	{File: "f.go", Summary: "the reviewer scored nothing"},
+}
+
+// capRun is a run of the mode block names whose rounds the cap ended, with the
+// findings the case reads as its deciding round.
+func capRun(t *testing.T, block string, findings []Finding) *run {
+	t.Helper()
+	r := raisedRun(t, raisedCase{block: block, findings: findings})
+	r.stopAt = runstore.StopRoundsSpent
+	return r
+}
+
+// TestCapDeferralsAreTheStopsOwn is T-TR8's rule at the table's own data (D1845,
+// D1858): a cap files the round's findings the stop does not hold the run on,
+// under the cap's own source. The same round is read at every mode, so the
+// column each mode gets is the mode's own answer and not the case's:
+//
+//   - POC and Startup file everything but the catastrophic ones, which is what
+//     their stop accepts — a correctness finding above Startup's floor is one
+//     of them, because the stop is wider than the round there.
+//   - Pro files the findings its own rule lets through — the trivial one and
+//     the rare, expensive one its escape names — and not the risk 9 one its
+//     floor blocks, however little the run can do about it now.
+//   - Critical files nothing: every finding blocks there, so it tolerates
+//     nothing to leave open (D7).
+//   - Hotfix files its own column: the security class is the one thing it
+//     blocks on, so a data loss finding is one it leaves open like any other
+//     (F28).
+//   - The security finding and the unscored one are floor in every mode and
+//     appear nowhere.
+func TestCapDeferralsAreTheStopsOwn(t *testing.T) {
+	cases := []struct {
+		mode rigor.Mode
+		want []string
+	}{
+		{rigor.POC, []string{"the doc comment drifts", "the retry loop never stops", "the index is rebuilt on every call"}},
+		{rigor.Startup, []string{"the doc comment drifts", "the retry loop never stops", "the index is rebuilt on every call"}},
+		{rigor.Pro, []string{"the doc comment drifts", "the index is rebuilt on every call"}},
+		{rigor.Critical, nil},
+		{rigor.Hotfix, []string{"the doc comment drifts", "the retry loop never stops", "the index is rebuilt on every call", "a write drops the row it rewrote"}},
+	}
+	for _, c := range cases {
+		t.Run(string(c.mode), func(t *testing.T) {
+			r := capRun(t, "rigor:\n  default: "+string(c.mode)+"\n", capRound)
+			if got := r.reachedRigor(); got != c.mode {
+				t.Fatalf("the run resolved %q, want the case's own mode", got)
+			}
+			var got []string
+			for _, d := range r.capDeferrals() {
+				got = append(got, d.Summary)
+				if d.Source != runstore.TriageSourceCap || d.Reason != capDeferredReason {
+					t.Errorf("the entry = %+v, want the cap's own source and one-line reason", d)
+				}
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("the cap deferred %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestCapDeferralsNeverNameAFloorFinding is D1845's floor clause read at the
+// table's whole input space: no score, in any mode, is ever filed by a cap where
+// the mode's floor names it (rigor.Floor), because the floor is what a stop
+// never accepts — so a draft can never be made ready by a deferral this block
+// writes, and a floor finding is never a follow-up task. It is the check that
+// fails if the cap's rule is ever loosened into "file everything the round
+// left".
+func TestCapDeferralsNeverNameAFloorFinding(t *testing.T) {
+	var round []Finding
+	for _, class := range rigor.Classes {
+		for l := 1; l <= 5; l++ {
+			for i := 1; i <= 5; i++ {
+				for fc := 1; fc <= 5; fc++ {
+					round = append(round, Finding{
+						File: "x.go", Class: string(class),
+						Summary:    fmt.Sprintf("a %s finding of %d x %d at fix cost %d", class, l, i, fc),
+						Likelihood: l, Impact: i, FixCost: fc,
+					})
+				}
+			}
+		}
+	}
+	round = append(round, Finding{File: "x.go", Summary: "the reviewer scored nothing"})
+	byKey := make(map[string]Finding, len(round))
+	for _, f := range round {
+		byKey[findingKey(f)] = f
+	}
+	for _, mode := range rigor.Modes {
+		r := capRun(t, "rigor:\n  default: "+string(mode)+"\n", round)
+		got := r.capDeferrals()
+		if mode == rigor.Critical {
+			if len(got) != 0 {
+				t.Errorf("Critical deferred %d findings, want none: it tolerates nothing (D7)", len(got))
+			}
+			continue
+		}
+		if len(got) == 0 {
+			t.Fatalf("%s deferred nothing out of %d findings, so the case proves nothing", mode, len(round))
+		}
+		for _, d := range got {
+			f, known := byKey[d.Key]
+			if !known {
+				t.Errorf("%s: the cap filed a key no finding of the round has: %q", mode, d.Key)
+				continue
+			}
+			if rigor.Floor(mode, scoreOf(f)) {
+				t.Errorf("%s: the cap deferred a finding the mode's floor names: %+v", mode, f)
+			}
+		}
+	}
+}
+
+// TestCapDeferralsNeedACapAndAnOptIn: each of the two conditions the plan states
+// withholds the block whole. A run whose rounds ended for a reason of their own
+// has no cap (BF1m), and a repository that never opted in files nothing however
+// its run stops (D1858, D1852) — the record it always had.
+func TestCapDeferralsNeedACapAndAnOptIn(t *testing.T) {
+	noStop := raisedRun(t, raisedCase{block: "rigor:\n  default: startup\n", findings: capRound[:1]})
+	if noStop.stopAt != "" {
+		t.Fatalf("the case built a stopped run (%q), want one whose rounds ended on their own", noStop.stopAt)
+	}
+	if got := noStop.capDeferrals(); got != nil {
+		t.Errorf("a run with no cap filed %+v, want none: no cap ended its rounds", got)
+	}
+
+	unconfigured := capRun(t, "", capRound[:1])
+	if unconfigured.rigorCfg.Configured() {
+		t.Fatal("the case's repository counts as opted in, so it proves nothing")
+	}
+	if got := unconfigured.capDeferrals(); got != nil {
+		t.Errorf("an unconfigured repository filed %+v, want none", got)
 	}
 }

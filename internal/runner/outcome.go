@@ -893,6 +893,98 @@ func (r *run) acceptedRecord(pol FindingsPolicy, last *runstore.ReviewSummary) *
 	return runstore.NewAccepted(pol.Mode, last.Round, pol.AtStop, r.toleratedEntries(pol, r.lastSenior.Findings))
 }
 
+// capDeferredReason is what a cap's deferral says put it there: the run's
+// rounds ended — spent, or cut by the time threshold — with the finding still
+// open and no review round left to spend on it. It is one line, like the
+// table's own reason for the findings it tolerates (internal/triage), and it
+// reaches a follow-up task's brief and the pull request's deferred section
+// (T-TR9).
+const capDeferredReason = "the run reached its review cap with this finding still open"
+
+// capDeferrals is what a cap leaves open (T-TR8, D1845): the deciding round's
+// findings the cap does not hold the run on, each recorded under
+// runstore.TriageSourceCap so a reader can tell it from a judge's deferral —
+// the block's other writer (T-TR7b).
+//
+// The set is the stop's own rule and not the mode's round rule: a cap defers
+// what it lets go, so a finding the mode's table blocks in a round but the stop
+// takes is a leftover here, and one the mode tolerates in a round is one too.
+// Read as the stop's split it is D1845's "non-floor leftovers" in each mode's
+// own terms rather than as a list of modes: for Startup and POC the finding the
+// stop holds is exactly the floor (rigor.BlocksAtStop), so what is filed is
+// every non-floor finding the round left; for Pro, whose row names no stop and
+// whose floor the stop does not widen, it is the findings the mode tolerates;
+// and for Critical, which tolerates nothing, it is empty (D7). It is BF1m's cap
+// rule that says which findings a stopped run merges with, which is why a cap's
+// deferrals are not the judge's and survive agent.triage off (D1858).
+//
+// A floor finding is never one of them, and no line here has to say so:
+// rigor.BlocksAtStop holds every finding rigor.Floor names, mode by mode and
+// class by class, so a stop that lets a floor finding through is not one the
+// table has. That is what makes D1845's "a floor finding always holds the
+// draft" true of this block and not only of Decide, which never reads it.
+//
+// The repository's opt-in is asked before anything else (D1858, D1852): a
+// deferral recorded for a repository that never asked for the mode would file a
+// follow-up task out of a reading the run does not publish under, and an
+// unconfigured repository resolves Pro and keeps the record it always had. A
+// run whose rounds ended for a reason of their own has no cap at all and files
+// nothing, which is what r.stopAt — the half of the stop rule that ended them
+// (BF1m) — is empty for.
+func (r *run) capDeferrals() []runstore.DeferredFinding {
+	if r.stopAt == "" || !r.rigorCfg.Configured() {
+		return nil
+	}
+	mode := r.reachedRigor()
+	var out []runstore.DeferredFinding
+	for _, f := range r.lastSenior.Findings {
+		if rigor.BlocksAtStop(mode, scoreOf(f)) {
+			continue
+		}
+		out = append(out, runstore.DeferredFinding{
+			Key:     findingKey(f),
+			Summary: r.redact(f.Summary),
+			Reason:  capDeferredReason,
+			Source:  runstore.TriageSourceCap,
+		})
+	}
+	return out
+}
+
+// recordCapDeferrals folds the cap's leftovers into the run's deferral ledger
+// and the record's block. It is called from finalize beside the tolerated and
+// accepted blocks — the three are one account of what the run left open, and
+// the pull request's body and the report read them (T-TR9) — and from the
+// shadow arm's ending, which mirrors the champion's record so the two arms can
+// be compared.
+//
+// An entry an earlier rule already filed stands: a judge's deferral carries the
+// judge's own word for the finding and the table's carries the table's
+// (T-TR7b), and a cap that rewrote either would report who deferred the finding
+// first as the moment the rounds ran out. The key is what says it is the same
+// finding (D1850), so a round a cap ends on files nothing for a finding an
+// earlier round already filed, and the record keeps the count it had.
+func (r *run) recordCapDeferrals() {
+	filed := false
+	for _, e := range r.capDeferrals() {
+		known := false
+		for _, d := range r.deferred {
+			if d.Key == e.Key {
+				known = true
+				break
+			}
+		}
+		if known {
+			continue
+		}
+		r.rememberDeferred(e)
+		filed = true
+	}
+	if filed {
+		r.rec.Deferred = runstore.NewDeferred(r.deferred)
+	}
+}
+
 // toleratedEntries pairs the policy's tolerated scores back with the round's
 // findings, as the record's entries.
 //
