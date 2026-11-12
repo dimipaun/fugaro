@@ -356,6 +356,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Depends on:** #1367 (`working/SKILL.md`).
 - **Red step:** the new test fails on the current skill.
 - **Commit:** `plugin: job max in the parallelism skill`.
+- **Done (PR #1413, `da056ce7`).** Landed 2026-10-30, before this line was written, with the three files the **Files** line names and nothing else; its commit subject is the **Commit** line's own with the pull request's number appended. The task was picked up again on 2026-11-12, and nothing was re-implemented: the definition (`plugin/skills/parallelism/SKILL.md:33`), the three techniques (line 35), the one-yes-per-batch default with the `/jobmax` exception (line 122) and the `working` pointer (line 16) are the text #1413 wrote, both gates are green, and the run's change is the pin `TestParallelismSkillDefinesJobMax` was missing — the stub technique's own clause, "so neither side waits", which the skill's bold markers had split off from the name the test matched, so a skill keeping the name and dropping the clause passed. [Evidence, clause by clause](../review-levels-ab-jobmax-j1.1-already-landed.md).
 
 #### J1.2 The `/jobmax` skill (D729, D730 as ruled)
 
