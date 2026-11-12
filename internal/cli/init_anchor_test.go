@@ -544,7 +544,9 @@ func TestInitAnchorJSON(t *testing.T) {
 // A record read that fails in the cloud is exit 2, and nothing is written.
 func TestInitAnchorRecordReadFailureIsRemote(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
+	prev := openRecordBucket
 	openRecordBucket = func(context.Context, string) (*blobx.Bucket, error) { return nil, errors.New("boom") }
+	t.Cleanup(func() { openRecordBucket = prev })
 	out, _, err := anchorExec(t, "", "setup", "--anchor", "--yes")
 	if ExitCode(err) != ExitRemoteError || out != wantFail("app", "base", r.cfg, false, reasonUnreadable("boom")) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)

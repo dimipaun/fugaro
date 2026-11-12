@@ -324,7 +324,7 @@ func TestTheSealGateRefusesAnImageThatPredatesTheSeal(t *testing.T) {
 			if err == nil || ExitCode(err) != ExitUserError {
 				t.Fatalf("err = %v, want a user error", err)
 			}
-			wants := []string{tc.refused, "fugaro " + sealSince, "seal", "fugaro image refresh"}
+			wants := []string{tc.refused, "fugaro " + sealSince, "seal", imageGateRemedy}
 			if tc.base == devSealBase {
 				wants = []string{tc.refused, devSealBase, "fugaro image build"}
 			}

@@ -47,7 +47,9 @@ func layerName(i int) string {
 // default branch, tighten[1] as the run's branch). A later layer may only
 // tighten: the smaller positive cap, the stricter mode (enforce > observe >
 // off), the intersection of allow-lists, a craft that selects among the
-// project's credentials and pools and narrows a pool. A key a layer leaves
+// project's credentials and pools and narrows a pool. A grade of the escalation
+// ladder is the one block a later layer may not write at all: the project owns
+// the model choice, so its entry is dropped and recorded (tightenGrades). A key a layer leaves
 // unset passes the earlier layers through. A value a later layer sets that does
 // not tighten is dropped and recorded in Ignored (equal values are not ignored;
 // the ceiling is never ignored). Later layers are compared to the running
@@ -178,6 +180,11 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		// privileged rather than merely being merged first, so the rule is told
 		// which layer it is looking at (tightenCraft).
 		e.tightenCraft(l.Craft, src, i == 0)
+
+		// The model grades of the escalation ladder are the project's own
+		// model choice, so they are the one block a layer under the first may
+		// not write at all: its entry is dropped and recorded (G3, D2039).
+		e.tightenGrades(l.Grades, src, i == 0)
 
 		if r := modeRank(l.Mode); r > 0 {
 			cur := modeRank(e.Mode)

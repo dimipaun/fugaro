@@ -34,7 +34,7 @@ import (
 // the intake reads afterwards is the roster's answer at the moment of the run
 // and nothing the earlier list held.
 func TestUpdateRewritesListAfterRoleChange(t *testing.T) {
-	r := newConvergeRig(t, v5Node())
+	r := newConvergeRig(t, v6Node())
 	// The roster as it stands now: two project admins, a viewer and an admin
 	// whose scope is every repository rather than the project — only the first
 	// two are the intake's business (D1935, D1940).
@@ -75,7 +75,7 @@ func TestUpdateRewritesListAfterRoleChange(t *testing.T) {
 // The fixture is that staleness: the rig holds no roster node, and the bucket
 // holds a list derived from a roster that had one.
 func TestUpdateRevokesWhenTheRosterIsGone(t *testing.T) {
-	r := newConvergeRig(t, v5Node())
+	r := newConvergeRig(t, v6Node())
 	setAdminList(t, r, []roleaccess.Admin{{Email: "gone@example.com"}})
 
 	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
@@ -176,7 +176,7 @@ func adminListStepEngine(t *testing.T, mutate func(*localcfg.Config)) (e *initEn
 // test holds: the roster below is seeded and the runs bucket is one a write
 // would reach, so a step that ran under the setup door would leave the object.
 func TestSetupWritesNoAdminList(t *testing.T) {
-	r := newConvergeRig(t, v5Node())
+	r := newConvergeRig(t, v6Node())
 	setRoster(t, r, rosterGrant("owner@example.com", "admin", "project"))
 
 	out, _, err := executeStdin(t, "", "setup", "--yes")
@@ -214,7 +214,7 @@ func TestSetupWritesNoAdminList(t *testing.T) {
 // nothing left the machine.
 func TestUpdateInACodingAgentsSessionWritesNoAdminList(t *testing.T) {
 	currentRelease(t)
-	r := newConvergeRig(t, v5Node())
+	r := newConvergeRig(t, v6Node())
 	setRoster(t, r, rosterGrant("owner@example.com", "admin", "project"))
 	// The marker last, as the rigs that drive a session do
 	// (agentUpdateCheckout): the fixture's own helpers clear every marker

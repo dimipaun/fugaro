@@ -673,7 +673,7 @@ func TestUpdateDoesNotAdvanceRecordInExcludedModes(t *testing.T) {
 	}
 
 	t.Run("a failed apply", func(t *testing.T) {
-		r := newConvergeRig(t, v5Node())
+		r := newConvergeRig(t, v6Node())
 		currentRelease(t)
 		// The installation's plan fails, so the run has no success to hang a
 		// step off at all (init_stages.go's outcome returns before the hooks).
@@ -792,7 +792,7 @@ func TestUpdateAgentSessionPrintsNoSharedCommand(t *testing.T) {
 // the first update after this feature — converges with `fugaro update` alone and
 // leaves the record that says which two releases it spanned.
 func TestUpdateAtPreviousVersionConverges(t *testing.T) {
-	newConvergeRig(t, v5Node())
+	newConvergeRig(t, v6Node())
 	currentRelease(t)
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")

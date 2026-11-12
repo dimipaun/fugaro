@@ -229,10 +229,16 @@ type RoadmapOutcome struct {
 // oracle about other people's writes.
 var ErrRoadmapRequestUnknown = errors.New("mcpauth: no roadmap request of that id was queued for you")
 
-// roadmapAnswerVersion is the version of the two documents the roadmap tools
+// RoadmapAnswerVersion is the version of the two documents the roadmap tools
 // answer with, so that a later shape is a version and not a field that means
 // something new (the console and P9f's command read these documents).
-const roadmapAnswerVersion = 1
+//
+// It is exported because the client on the other side has to be able to refuse
+// a document whose number it does not read instead of reading the fields of a
+// shape it does not know: `fugaro coordinator roadmap` compares the number the
+// door answers with against this one, and one constant with two names is two
+// numbers that can drift.
+const RoadmapAnswerVersion = 1
 
 // The argument schemas, one per tool. Every one of them is closed
 // (`additionalProperties: false`), which is the rule the decoders behind them
@@ -379,7 +385,7 @@ func (t roadmapTools) submit(ctx context.Context, call Call, req RoadmapRequest)
 		asked = json.RawMessage(`{}`)
 	}
 	return answerJSON(roadmapQueued{
-		Version: roadmapAnswerVersion, Request: id, Kind: req.Kind, Asked: asked,
+		Version: RoadmapAnswerVersion, Request: id, Kind: req.Kind, Asked: asked,
 	})
 }
 
@@ -575,7 +581,7 @@ func (t roadmapTools) request(ctx context.Context, call Call) (any, error) {
 		status = RoadmapPending
 	}
 	return answerJSON(roadmapOutcomeDoc{
-		Version: roadmapAnswerVersion, Request: a.ID, Kind: out.Kind,
+		Version: RoadmapAnswerVersion, Request: a.ID, Kind: out.Kind,
 		Status: status, Reason: out.Reason, Current: out.Current,
 	})
 }
