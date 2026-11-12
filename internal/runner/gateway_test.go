@@ -1326,6 +1326,87 @@ func TestACoderWithoutAnImageRateRunsTheVisionModel(t *testing.T) {
 	}
 }
 
+// visionFirstLine is the configuration the pin question needs: the provider's
+// coder, which has no image rate, the vision model for the stages that reach
+// it, a first-line review so level 1's own stage runs, and a senior reviewer on
+// a model of its own — which the rewrite never moves (D2004).
+func visionFirstLine(t *testing.T) string {
+	t.Helper()
+	cfg := withVision(t, providerFirstLine(t, "on"), sonnet)
+	out := strings.Replace(cfg, "reviewer: "+sonnet, "reviewer: "+opus, 1)
+	if out == cfg {
+		t.Fatal("the fixture has no reviewer line")
+	}
+	return out
+}
+
+// TestTheVisionModelIsPinnedForTheStagesItRuns (V7, D2002, D2004): the model a
+// run names for images is a pin of the stages it reaches — the pins the stage's
+// own process is given, the set the gateway admits its calls with and the
+// report it leaves (StageTiming.Model) are one answer — while the coder's own
+// model stops being a pin of any stage. Level 1's stage runs the coder's slot,
+// so it moves with it; the reviewer's stage keeps its own.
+//
+// Mutation (rewrite the pins without writing them where the gateway reads
+// them): the stage's report names the vision model while its calls are refused
+// as not pinned, which is the disagreement stageModel exists to prevent.
+func TestTheVisionModelIsPinnedForTheStagesItRuns(t *testing.T) {
+	g := providerRun(t, visionFirstLine(t), "enforce", "50", nil, "acme/app")
+	g.fake.Script = []anthropicfake.Reply{
+		anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 100}),
+		anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 100}),
+	}
+	var status int
+	var body string
+	checks := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if got := envValue(req.Env, "CLAUDE_CODE_SUBAGENT_MODEL"); got != sonnet {
+			t.Errorf("the implement stage's pins name %q, want the vision model %q", got, sonnet)
+		}
+		status, body = postImage(t, req, sonnet)
+		if status != 200 {
+			return agent.Result{}, fmt.Errorf("the image call was refused (%d): %s", status, body)
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	firstLine := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if s, b := postImage(t, req, sonnet); s != 200 {
+			t.Errorf("the first-line stage's image call is answered %d, want 200: level 1 runs in the coder's slot (%s)", s, b)
+		}
+		return review("ship", 0)(t, ctx, req)
+	}
+	rec, err := g.run(t, checks, firstLine, review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("the image call was answered %d %s; rec = %+v, err = %v", status, body, rec, err)
+	}
+	if !eq(stageNames(rec), "implement", "review_first", "review") {
+		t.Fatalf("stages = %v", stageNames(rec))
+	}
+	for i, want := range []string{sonnet, sonnet, opus} {
+		if got := rec.Stages[i].Model; got != want {
+			t.Errorf("stage %s runs %q, want %q: every coder-role stage runs the vision model and the reviewer keeps its own (D2004)",
+				rec.Stages[i].Name, got, want)
+		}
+	}
+	// The other direction, on a run of its own because a refused call fails its
+	// stage: the model the configuration pinned for the coder is no stage's any
+	// more, so a call naming it is refused rather than admitted on the old pin.
+	t.Run("the coder's own model is no stage's", func(t *testing.T) {
+		g := providerRun(t, visionFirstLine(t), "enforce", "50", nil, "acme/app")
+		var refusal string
+		stale := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			_, refusal = post(t, req, deepseek, 1000)
+			return implement("feature")(t, ctx, req)
+		}
+		rec, err := g.run(t, stale, review("ship", 0))
+		if err != nil || rec.Status != runstore.StatusFailed {
+			t.Fatalf("a run whose coder model is stale is not failed by it: rec = %+v, err = %v", rec, err)
+		}
+		if !strings.Contains(refusal, "is not pinned for stage implement") {
+			t.Errorf("the refusal %q does not say the call is unpinned for the stage that runs the vision model", refusal)
+		}
+	})
+}
+
 // TestGatewayStageSpecCarriesTheVisionModel (V4, D2009): the run's
 // agent.models.vision travels into the stage the gateway is told about, so the
 // image refusal a stage meets names the model the owner configured — priced as
