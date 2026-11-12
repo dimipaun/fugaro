@@ -148,16 +148,23 @@ operators` section:
 
 - **Not implemented.** Not in full: the decisions are answered and the plan's
   [OWNER APPROVAL GATE](implementation-plan.md#owner-approval-gate) is passed, and
-  part of the plan is built — Slice 0, Slice 1's mode layers and where they show
-  (the run record, `fugaro runs ls`, `fugaro diagnose`, the pull request's status
-  line, and the run's own `fugaro run --mode`/`--path` request), T2.1–T2.3 of
-  Slice 2 (a score the run loop does not act on yet), the backlog (T4.3–T4.7),
-  T5.1 (the task field that request travels in, `task.Spec.Rigor` and
-  `task.Spec.Paths`, with its image-skew gate), T5.2 (a follow-up keeps the mode
-  its pull request recorded and may only raise it) and the per-mode budgets
-  (T6.1). The rest is not: Slice 3, which is what would make the mode decide
-  readiness, Slice 5's Hotfix gate, ready PR and recorded follow-up task
-  (T5.3–T5.5), and Slices 7 and 8.
+  most of the plan is built — Slice 0; Slice 1's mode layers and everywhere they
+  show (the run record, `fugaro runs ls`, `fugaro diagnose`, the pull request's
+  status line, and the run's own `fugaro run --mode`/`--path` request); Slice 2's
+  score **and Slice 3, which is what puts it to work** — where the repository
+  opted in, the run loop splits each round's findings by the mode's own table and
+  settles the pull request on the same answer, so the mode decides what a run
+  blocks, what it files and whether the pull request it opens is ready or stays a
+  draft; the backlog (T4.3–T4.7); T5.1 (the task field that request travels in,
+  `task.Spec.Rigor` and `task.Spec.Paths`, with its image-skew gate); T5.2 (a
+  follow-up keeps the mode its pull request recorded and may only raise it); the
+  per-mode budgets (T6.1, and T6.2's `fugaro budget preview --mode`); and T7.1,
+  the product document this folder's promise now lives on
+  ([docs/rigor-modes.md](../rigor-modes.md)). What is left is the plan's own list:
+  Slice 5's Hotfix gate, its ready PR and the recorded follow-up task
+  (T5.3–T5.5) — the gate being the one piece
+  [docs/rigor-modes.md](../rigor-modes.md) names as missing — T6.3's per-mode
+  `typical:` line, and the documentation tasks (T7.2, T8.1, T8.3).
 - **Not a product document — the product document is
   [`docs/rigor-modes.md`](../rigor-modes.md).** This folder is where the design,
   the reconciliation and the plan live, and the two are separate on purpose: a
