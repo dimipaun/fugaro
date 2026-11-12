@@ -171,6 +171,18 @@ numstat side too; a path absent from the map is *unreadable*, and the design ref
 treating it as text (F1's rule: the check fails closed). AR4's `TestTheTwoReadingsPairByPath` pins
 this with a range whose two orderings differ, so an index-based pairing is red rather than latent.
 
+**F15 — the design's first draft took a readable pattern for an unreadable one, and AR0's red step
+named it first.** spec.md §2.1 and AR0's red step both made `website/public/**.png` an entry the
+task "exists to refuse". It is not one: `**` means "any depth" in doublestar only as a whole path
+segment, and inside one it matches like `*`, so that entry is a pattern the matcher reads — a lock
+over exactly one level, admitting `website/public/a.png` and refusing `website/public/deep/a.png`.
+Refusing it would be a sixth check, a second and stricter pattern language beside the one
+`rigor.areas` and `rebuild.paths` already share, which F8's count and F9 forbid. The shipped rule
+accepts it, AR0's `TestBinariesAllowTakesAMisplacedDoubleStar` pins the lock the owner actually gets,
+§2.1 and the red step are corrected to say so, and AR1 adds no check for it. What the "no lock that
+is not there" rule *does* cover is a pattern the matcher cannot read (`brand/[.png`), which is
+refused where it is written.
+
 ## 2. The decisions
 
 Each is written as a **recommendation** with the cost of the alternative, so that "as recommended"
@@ -252,7 +264,12 @@ happened to omit a block is the surprise this folder exists to remove. *Cost of 
 project's admissions on a machine whose local file was written before the key existed — the exact
 class of the HARD RULE in `CLAUDE.md` (a change `fugaro update` makes that nobody asked for).
 *Why:* a publish must never widen by omission, and a written empty block is the one way to say
-"take it away".
+"take it away". *Added 2026-11-10, on AR0's review:* the two spellings are the publisher's — an
+empty list is not a member the Realtime Database keeps (it stores an RTDB list as an object with
+numeric keys), so the node a written empty block leaves behind is the node a silent file leaves
+behind, and neither carries the block. The decision stands, and its mechanism for `binaries` when
+AR1 gives the file the key is the publish choosing between the node's block and none, never a
+member the database cannot hold.
 
 **D988 — where a refusal happens, and what it does.** **Answered 2026-11-04: as recommended** —
 both checks run in **finalize, before the pull request is settled**: an untracked stray is held out
@@ -282,11 +299,12 @@ already happened once: this design's first draft counted four committers and mis
 the diff finalize already holds is the reading.
 
 **D990 — the policy version.** **Recommended (not ruled on 2026-11-04):** **bump
-`projectpolicy.Version` 4 → 5**, add
-`VersionSince[5] = "0.20.0"` (the slot, implementation-plan.md §4), and carry the convergence test
-the HARD RULE asks for. A version-4
+`projectpolicy.Version` 5 → 6**, add
+`VersionSince[6] = "0.24.0"` (the release that ships it; implementation-plan.md §4's slot read 0.20.0
+when this decision was recorded), and carry the convergence test
+the HARD RULE asks for. A version-5
 image tolerates a new *top-level* key (it lands in `UnknownKeys`), so tolerating would not be
-fail-open — but it would be **fail-silent**: the owner publishes a path list, the version-4 image
+fail-open — but it would be **fail-silent**: the owner publishes a path list, the version-5 image
 refuses the very file the list admits, and the run ends a draft with nothing saying why. That is the
 "published change that silently does nothing" class `CLAUDE.md`'s HARD RULE forbids, and `fugaro
 update` refreshes the image in the same command, so the lockstep costs the operator nothing.

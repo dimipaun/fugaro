@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,15 +11,16 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
-	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -39,8 +41,9 @@ var argsUpdUser = []string{"plugin", "update", "fugaro@fugaro", "--scope", "user
 // convergeRig is an installation set up at convergePrev and left alone since,
 // in a checkout of its own repository:
 //
-//   - the policy node is the one the fixture's release left published (v4Node
-//     or v3Node), so the policy stage has to migrate it when it is behind;
+//   - the policy node is the one the fixture's release left published (v6Node,
+//     v5Node or v3Node), so the policy stage has to migrate it when it is
+//     behind and leave it alone when it is not;
 //   - the deployed rules carry the previous generation's marker, so
 //     policy-rules-skew fires and the rules stage has to deploy;
 //   - the local config records the previous release's base image, so
@@ -65,15 +68,55 @@ type convergeRig struct {
 	builder *fakeBuilder
 }
 
-// v4Node is the published node the release before this one leaves behind: the
-// version this binary writes too, so nothing has to be migrated, only the
-// rules generation, the base image and the plugin moved.
-func v4Node() map[string]any {
+// v6Node is the published node this binary writes: nothing has to be migrated,
+// only the rules generation, the base image and the plugin moved. It is the
+// fixture for "an installation that already published under this release and is
+// behind on everything else", and it is what tells a door that leaves a current
+// node alone from one that rewrites it every time.
+func v6Node() map[string]any {
 	return map[string]any{
-		"version":     4,
+		"version":     6,
 		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": []string{"github/acme/app"},
 	}
+}
+
+// v5Node is the published node the release before this one leaves behind: one
+// policy version below this binary's, so the run's policy stage has to carry it
+// forward as well as move the rules generation, the base image and the plugin.
+// This reader reads such a node as it stands (ReadsVersion: the step from 5 to
+// 6 moves the number and nothing else), so the fixture is stale on everything
+// else and on nothing about the node's own shape — which is the state the bump
+// leaves an installation in between the update's image stages and its policy
+// stage.
+func v5Node() map[string]any {
+	n := v6Node()
+	n["version"] = 5
+	return n
+}
+
+// newestRefusedVersion is the newest policy version below this binary's that
+// the reader still refuses and the chain carries forward: a shape-free
+// predecessor is read as it stands (ReadsVersion), so it is not the previous
+// release's node in the sense the update's fixtures need.
+func newestRefusedVersion(t *testing.T) int {
+	t.Helper()
+	v := projectpolicy.Version - 1
+	for projectpolicy.ReadsVersion(v) {
+		v--
+	}
+	if !projectpolicy.Migratable(v) {
+		t.Fatalf("version %d is no longer one the chain carries forward: the fixture needs the newest version that is", v)
+	}
+	return v
+}
+
+// staleNode is the node a release the reader refuses leaves published: the
+// update's policy stage has to migrate it in place.
+func staleNode(t *testing.T) map[string]any {
+	n := v6Node()
+	n["version"] = newestRefusedVersion(t)
+	return n
 }
 
 func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
@@ -233,20 +276,236 @@ func currentRelease(t *testing.T) {
 // the door stopped at: that is a gap the update door owns, and the one command
 // the user is told to run may not be two.
 func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
-	// The node the previous release publishes: the version this binary writes
-	// too, so the run moves the rules generation, the base image and the
-	// plugin and leaves the node alone.
-	t.Run("the node the previous release publishes", func(t *testing.T) {
-		converge(t, v4Node(), []string{"policy-rules-skew", "plugin-pin"})
+	// The node this binary writes: nothing to migrate, so the run moves the
+	// rules generation, the base image and the plugin and leaves the node
+	// alone.
+	t.Run("the node this binary writes", func(t *testing.T) {
+		converge(t, v6Node(), []string{"policy-rules-skew", "plugin-pin"})
 	})
-	// The node one version back: a v3 node, which an installation that has not
+	// The node the previous release publishes: one policy version below this
+	// binary's, so the policy stage has to carry it forward by the same run
+	// that moves everything else (D990). It is *not* a skew this binary reports
+	// (ReadsVersion reads the node's own shape), which is why the fixture's
+	// staleness here is the rules generation and the plugin alone: the node is
+	// written forward by the run, and the node it leaves is what the assertion
+	// in converge reads.
+	t.Run("the node the previous release publishes", func(t *testing.T) {
+		converge(t, v5Node(), []string{"policy-rules-skew", "plugin-pin"})
+	})
+	// The node two releases back: version 4, whose step to 5 is not shape-free
+	// (it marks every ownerless pool legacy-open), so the reader refuses it
+	// until the same run's policy stage has carried it through both steps.
+	t.Run("the node two releases back", func(t *testing.T) {
+		node := v6Node()
+		node["version"] = 4
+		converge(t, node, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
+	})
+	// The node two versions back: a v3 node, which an installation that has not
 	// republished since 0.13.0 carries. 0.14.0's operator notes removed that
 	// node by hand and published again; the migration chain (a later release's)
 	// does it inside `fugaro update` instead, so this is the fixture the update
 	// door has to converge.
-	t.Run("the node one version back", func(t *testing.T) {
+	t.Run("the node two versions back", func(t *testing.T) {
 		converge(t, v3Node(nil), []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 	})
+}
+
+// TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService is the order
+// the owner ruled on 2026-11-10, and the half of AR0's first finding this
+// release answers by ordering rather than by tolerance: the credentials service
+// reads the published node on every cascade and Bitbucket-proxied call and
+// refuses a node its own binary does not understand (credsvc's RTDBPolicy reads
+// it through projectpolicy.Decode and refuses the call on the error), so the
+// release that replaces the service may not be the release that hands it a node
+// it has not migrated yet. The node is migrated first and the service is
+// replaced in the stage immediately after it, with no stage between the two —
+// which is the whole of what the order buys, and what this test pins.
+//
+// The installation is one release behind in both halves of the pair — a v4 node
+// published, and the service on the previous release's image — and neither is a
+// second command: one `fugaro update` reaches this release's node and this
+// release's service, which is the HARD RULE's own shape and the reason the
+// ruling is a reorder and not an operator step.
+//
+// The order is checked on the canonical order and on the order initStages
+// registers, exactly as the rules-before-policy stage's own test is
+// (TestUpdateRulesStageRunsBeforePolicy): the loop sorts by the first, and a
+// reader of the second sees who runs when. The job images are held to the same
+// rule in the same assertion — an image built by this release is what reads the
+// migrated node, so the run moves them before the node and never after it. What
+// the update cannot reach is an image it does not rebuild: a launch on one is
+// refused by the launcher's own gate (run_allowlist_test.go's
+// TestRunRefusesAJobImageThatCannotReadThePolicyNode), not left to halt a run at
+// bootstrap.
+func TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService(t *testing.T) {
+	pos := func(names []string, name string) int {
+		for i, n := range names {
+			if n == name {
+				return i
+			}
+		}
+		return -1
+	}
+	canonical := initflow.Names()
+	images, policy, creds := pos(canonical, initflow.Images), pos(canonical, initflow.Policy), pos(canonical, initflow.CredentialsService)
+	switch {
+	case images < 0 || policy < 0:
+		t.Fatalf("%s or %s is not a canonical stage: %v", initflow.Images, initflow.Policy, canonical)
+	case creds < 0:
+		t.Fatalf("%s is not a canonical stage: %v", initflow.CredentialsService, canonical)
+	case images > policy:
+		t.Errorf("the canonical order runs %s at %d and %s at %d: the job images are rebuilt before the node is migrated, or the run leaves an installation whose images cannot read its own policy", initflow.Images, images, initflow.Policy, policy)
+	case policy > creds:
+		t.Errorf("the canonical order runs %s at %d and %s at %d: the node is migrated before the service that reads it per call is replaced, so the service is never handed a node its own binary does not understand", initflow.Policy, policy, initflow.CredentialsService, creds)
+	}
+	if !slices.Contains(initflow.Needs(initflow.CredentialsService), initflow.Policy) {
+		t.Errorf("the credentials-service stage does not need %s: %v", initflow.Policy, initflow.Needs(initflow.CredentialsService))
+	}
+	registered := namesOf(initStages(prodEngine(initOptions{door: updateDoor.name})))
+	i, p, c := pos(registered, initflow.Images), pos(registered, initflow.Policy), pos(registered, initflow.CredentialsService)
+	if i < 0 || p < 0 || c < 0 || i > p || p > c {
+		t.Errorf("update registers the images stage at %d, the policy stage at %d and the credentials-service stage at %d in %v: the order is images, then policy, then the service", i, p, c, registered)
+	}
+
+	// The fixture the ruling is about: an installation at the release before
+	// this one, with its service on that release's image. The image is this
+	// release's in the fake source, so a run that reaches the move resolves and
+	// verifies it rather than failing the resolve and leaving the service where
+	// it was (the rig of the images kind publishes base and history only).
+	r := newConvergeRig(t, v5Node())
+	publishCredentialsImage(t, r.imagesRig, convergeRelease)
+	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	// The installation root's plan holds the service's own revision moving, and
+	// the root is applied for it (a plan that reports no changes is never
+	// applied, TF.Plan's exit code being what says so). The rig's document
+	// answers the state reads under "show -json" while the plan answers under
+	// "show@installation"; without the first, the fallback the fake documents
+	// (a script naming only "show" answers the state too) would let this stage's
+	// plan be read as the installation's state, which manages nothing.
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	// The installation's outputs carry the service this run's tfvars name, as
+	// the module's outputs.tf does: the installation stage refuses the
+	// half-carried state (a tfvars block whose outputs name no service), and
+	// this rig's repository stage reads the same document for the
+	// installation's other facts.
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+	})}
+	r.save(t)
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	// Both halves moved in ONE run: the node is this release's, and the service
+	// is on this release's image, which is the resolve's own reference and not a
+	// value the run composed.
+	if p := convergeNode(t, r); p.Version != projectpolicy.Version {
+		t.Errorf("after one fugaro update, the published node is version %d, want %d: the run replaced the credentials service without migrating the node it reads per call", p.Version, projectpolicy.Version)
+	}
+	svc := credentialsServiceEntry(t, r.imagesRig)
+	if got, want := svc["image"], r.credentialsRefAt(convergeRelease); got != want {
+		t.Errorf("after one fugaro update, credentials_service.image = %v, want %s: the installation stayed on the previous release's service, which is a release whose reader refuses the node this same run published", got, want)
+	}
+	// And the move is that one member: every other fact the previous release
+	// wrote is what the entry still holds, so the run that migrates the node
+	// rewrites nothing of the service it does not own.
+	for k, want := range map[string]any{
+		"account_id": infra.CredentialsAccountID, "service": infra.CredentialsServiceName,
+		"firebase_project": fpID, "url": credentialsServiceURL, "rtdb_url": r.db.URL,
+	} {
+		if got := svc[k]; got != want {
+			t.Errorf("credentials_service.%s = %v, want %v: the move rewrote a fact of the service it does not own", k, got, want)
+		}
+	}
+}
+
+// TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode is the failure
+// half of the same rule, and the state this branch's review reproduced: the
+// same installation — a version-4 node published, the previous release's
+// credentials service deployed — whose credentials image THIS release has not
+// published yet (the state every release is in until its images stage has
+// published it) used to reach the policy stage first, write the version-5 node,
+// and only then stop at the resolve the move needs. What it left was a node at
+// this version with the previous release's service still on the project: a
+// service that refuses every cascade and Bitbucket-proxied call until a later
+// update succeeds, which the owner's one command may not leave behind.
+//
+// The run fails with the node exactly where it was instead: the resolve is the
+// write's own precondition (credentialsResolveBeforeRaise), and the failure
+// lands at the policy stage — the credentials-service stage after it is already
+// too late, the node being at this version by then.
+func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
+	r := newConvergeRig(t, v5Node())
+	// The block an earlier release left, and no publishCredentialsImage: the
+	// release's signed "-pinned" tag is what the resolve reads, and this run
+	// has none.
+	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	// The installation's outputs name the service the tfvars carry: a block
+	// without it is the half-carried state the installation stage refuses (and
+	// the repository roots read this output to decide whether a job mounts a
+	// model credential at all).
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+	})}
+	r.save(t)
+	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("an update whose credentials image this release does not publish succeeded, want the resolve's failure:\n%s", s)
+	}
+	if stage := stoppedStage(out); stage != initflow.Policy {
+		t.Errorf("the run stopped at %q, want the %s stage: the resolve is the write's own precondition, and it may not land after the node has moved — the service the installation runs then refuses every call that reads the node\n%s", stage, initflow.Policy, s)
+	}
+	if v := nodeVersionOn(t, r.db); v != 5 {
+		t.Errorf("the published policy is version %d, want 5: the node moved without the service that reads it, so every cascade and Bitbucket-proxied call of this project is refused until a later update succeeds\n%s", v, s)
+	}
+	if got := credentialsServiceEntry(t, r.imagesRig)["image"]; got != recorded {
+		t.Errorf("credentials_service.image = %v, want the recorded %v: a run that resolved no image rewrote the installation's tfvars\n%s", got, recorded, s)
+	}
+}
+
+// TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion is the other half of the
+// same rule, and the second state the review named: the move is not the only
+// thing that can be missing when the policy stage writes. In a coding agent's
+// session on a managed project the credentials-service stage SKIPS itself ("a
+// coding agent's session deploys nothing") while the policy stage, which the
+// gate admits, would go on and raise the node — leaving exactly the state the
+// failure above leaves, without any failure at all: this release's node with the
+// previous release's service deployed on the project, refusing every cascade and
+// Bitbucket-proxied call until a later update succeeds.
+//
+// So the node stays where it is and the run says why, in the policy stage's own
+// line: the version it would raise and the sentence naming the session. The
+// credentials image is untouched too, which is what makes the two halves one
+// decision rather than two.
+func TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion(t *testing.T) {
+	r := newConvergeRig(t, v5Node())
+	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+	})}
+	r.save(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil && !strings.Contains(s, "left for you") {
+		t.Fatalf("an update in a coding agent's session failed with something other than the steps it leaves for the user: %v\n%s", err, s)
+	}
+	if v := nodeVersionOn(t, r.db); v != 5 {
+		t.Errorf("the published policy is version %d, want 5: the session raised the node in a run that replaces no service, so the previous release's service refuses every call that reads it until a later update succeeds\n%s", v, s)
+	}
+	if !strings.Contains(s, "holds it there") || !strings.Contains(s, credentialsSessionHeld) {
+		t.Errorf("the policy stage did not say it held the node where it was, and why:\n%s", s)
+	}
+	if got := credentialsServiceEntry(t, r.imagesRig)["image"]; got != recorded {
+		t.Errorf("credentials_service.image = %v, want the recorded %v: a session rewrote the installation's tfvars\n%s", got, recorded, s)
+	}
 }
 
 // converge runs the door once and checks the fixture converged. stale is the
@@ -270,6 +529,9 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	// migration, a checkout an older release pinned kept printing it).
 	if line := staleLine(pluginwire.Status(r.settings, convergeRelease, installedPlugins())); line != "" {
 		t.Errorf("after fugaro update the staleness line still fires for a checkout the run unpinned: %q", line)
+	}
+	if p := convergeNode(t, r); p.Version != projectpolicy.Version {
+		t.Errorf("after one fugaro update, the published node is version %d, want %d", p.Version, projectpolicy.Version)
 	}
 	if !strings.Contains(out, "plugin: done: installed "+convergeRelease) {
 		t.Errorf("the plugin step did not converge the install on this release's version:\n%s", out)
@@ -372,6 +634,31 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	return out
 }
 
+// TestUpdateKeepsAHandWrittenBinariesBlock is the update door's half of the
+// review finding AR0's keep exists for, and the door the probe that found it
+// ran: this release models `binaries` and no key of the operator's config
+// states it (D986), so the policy stage's publish has to carry the node's block
+// over rather than rewrite the node without it — a rewrite that takes the
+// owner's grant away in silence (the list gone, and max_bytes back at the
+// ceiling it was lowered from), where the same node was *refused* while the key
+// was unmodelled ("publishing would drop them"). Both doors build the node
+// through policyNodeForPublish, so this is the same keep the explicit door's
+// TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing pins, reached
+// through the one command the HARD RULE says the whole upgrade is.
+func TestUpdateKeepsAHandWrittenBinariesBlock(t *testing.T) {
+	node := v6Node()
+	node["binaries"] = map[string]any{"allow": []string{"brand/*.png"}, "max_bytes": 1048576}
+	r := newConvergeRig(t, node)
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	p := convergeNode(t, r)
+	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("after one fugaro update, the node's binaries.allow = %v, want %v: the run dropped the owner's grant", p.BinariesAllow(), want)
+	}
+	if got := p.BinariesMaxBytes(); got != 1048576 {
+		t.Errorf("after one fugaro update, the node's binaries.max_bytes = %d, want 1048576: the run put the cap back at the ceiling it had been lowered from", got)
+	}
+}
+
 // TestUpdateConvergesPreviousPolicy: an installation whose local project config
 // names a repo-to-image map and the bake switch — the two keys this release
 // adds to the policy node (D1901, D1906) — reaches them with `fugaro update`
@@ -385,7 +672,7 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 // file that writes them replaces what the node holds, where a machine whose
 // config is silent about them keeps it (the catalog's rule, D1140).
 func TestUpdateConvergesPreviousPolicy(t *testing.T) {
-	r := newConvergeRig(t, v4Node())
+	r := newConvergeRig(t, v5Node())
 	// The local config states both, which is all an operator does after this
 	// release: `fugaro image map set` writes the map, and the bake switch is
 	// the setup wizard's answer or `fugaro settings set bake_repos`.
@@ -396,10 +683,19 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 	// test wrote.
 	registerInstallation(t, r.initRig)
 	// The fixture is the release behind, or nothing here has to converge: the
-	// node this installation carries names neither key.
-	if p := convergeNode(t, r); p.ImageMap != nil || p.BakeRepos != nil {
-		t.Fatalf("the fixture's node already carries image_map = %v and bake_repos = %v: it is not an installation whose policy predates both",
-			p.ImageMap, p.BakeRepos)
+	// node this installation carries names neither key. It is read as raw
+	// members rather than through convergeNode, because what this half asserts
+	// is the fixture's own bytes: the node a run of the release behind leaves
+	// is one this binary now reads (ReadsVersion), so decoding it would answer
+	// and prove nothing about the state the keys are absent from.
+	raw, err := json.Marshal(r.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"image_map", "bake_repos"} {
+		if bytes.Contains(raw, []byte(`"`+key+`"`)) {
+			t.Fatalf("the fixture's node already carries %s (%s): it is not an installation whose policy predates both", key, raw)
+		}
 	}
 
 	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
@@ -432,7 +728,7 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 // image build` and a catalog edit before the next `fugaro update`.
 func TestUpdateConvergesNoCatalogDefault(t *testing.T) {
 	const entry = "tools"
-	r := newConvergeRig(t, v4Node())
+	r := newConvergeRig(t, v5Node())
 	r.appendConfig(t, "image_catalog:\n  entries:\n    - name: "+entry+"\n      tags: [node]\n      source: { kind: inline, inline: \"FROM scratch\\n\" }\n")
 	registerInstallation(t, r.initRig)
 	if p := convergeNode(t, r); p.ImageCatalog != nil {
@@ -494,7 +790,7 @@ func TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage(t *testing.T) {
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
 		"  app: { dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n" +
 		"  api: { dockerfile: .fugaro/api.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n"
-	r := newConvergeRigYAML(t, v4Node(), yaml)
+	r := newConvergeRigYAML(t, v5Node(), yaml)
 	// The two Dockerfiles the workflows name, as the repository behind had
 	// them: `fugaro validate` reads a workflow's dockerfile: as a file that is
 	// there, so a checkout without them is not the shape this test is about.
@@ -550,7 +846,7 @@ func TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage(t *testing.T) {
 // assertions are made on the raw node, because what an older reader meets is
 // the bytes and not this binary's decoded view of them.
 func TestEntryServicesOlderReaderConverges(t *testing.T) {
-	r := newConvergeRig(t, v4Node())
+	r := newConvergeRig(t, v5Node())
 	r.appendConfig(t, "image_catalog:\n  entries:\n"+
 		"    - name: app\n      tags: [node, postgres]\n      services: [postgres, redis]\n"+
 		"      source: { kind: image, image: ghcr.io/acme/app:1 }\n")
@@ -586,8 +882,17 @@ func TestEntryServicesOlderReaderConverges(t *testing.T) {
 	}
 }
 
-// convergeNode is the policy node the fixture's installation carries, decoded
-// by the reader a run of the project uses.
+// convergeNode is the policy node the fixture's installation carries, read the
+// way `fugaro update` reads it.
+//
+// Carried forward rather than through Decode alone: the fixture is an
+// installation of the release behind, and the node it carries is the version
+// this binary's own reader refuses until the update has migrated it. The tests
+// that read the node before the door runs are asking what the fixture holds —
+// whether it already carries the key under test — and the refusing reader
+// would fail them on the fixture rather than on the run. Nothing is written
+// back, and that the migration landed is what convergeOn's own
+// policy-older-than-binary check, asserted clean after the run, is for.
 func convergeNode(t *testing.T, r *convergeRig) *projectpolicy.Policy {
 	t.Helper()
 	v := r.db.Value(projectpolicy.PathShared())
@@ -599,7 +904,7 @@ func convergeNode(t *testing.T, r *convergeRig) *projectpolicy.Policy {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, found, err := projectpolicy.Decode(b)
+	p, found, err := projectpolicy.DecodeCarriedForward(b)
 	if err != nil || !found {
 		t.Fatalf("the node at %s does not decode (found=%v): %v", projectpolicy.PathShared(), found, err)
 	}
@@ -618,7 +923,7 @@ func convergeNode(t *testing.T, r *convergeRig) *projectpolicy.Policy {
 // generation's document and carry no orchestrator marker at all, which is the
 // state every installation is in until this release's update runs.
 func TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration(t *testing.T) {
-	r := newConvergeRig(t, v4Node())
+	r := newConvergeRig(t, v6Node())
 	currentRelease(t)
 	// The fixture is the previous generation, or the assertions below prove
 	// nothing: no marker, and a document this binary does not generate.
@@ -672,7 +977,7 @@ func TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration(t *testing
 // it `fugaro update` on an older binary would take the subtree out from under a
 // daemon whose own gate reads the same marker.
 func TestUpdateRefusesToRewindTheOrchestratorMarker(t *testing.T) {
-	r := newConvergeRig(t, v4Node())
+	r := newConvergeRig(t, v6Node())
 	currentRelease(t)
 	ahead := rules.OrchestratorRulesVersion + 1
 	r.db.Set(rules.PathOrchestratorRulesMarker(), ahead)
@@ -716,6 +1021,16 @@ func stoppedStage(out string) string {
 		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), markFailed+" failed"); ok {
 			return strings.TrimSpace(rest)
 		}
+		// The resume line is the run's own: "stopped at policy; fix: rerun
+		// fugaro update: it resumes at policy". The stage is what stands between
+		// the two sentences, and it is the name the loop's own stages carry.
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "stopped at ")
+		if !ok {
+			continue
+		}
+		if stage, _, ok := strings.Cut(rest, "; fix: "); ok {
+			return stage
+		}
 	}
 	return "(the summary names no failed stage)"
 }
@@ -730,61 +1045,6 @@ func doctorChecks(t *testing.T, root string) doctorOutput {
 		t.Fatalf("doctor --json: %v (err %v)\n%s\n%s", jerr, err, out, errOut)
 	}
 	return o
-}
-
-// TestUpdateConvergesImageBake: the two inputs the bake step is decided from —
-// image_map and bake_repos — reach an installation one release behind through
-// `fugaro update` alone, and they are the whole input: the definition a build
-// of an entry then composes is decided from the published node's own values,
-// so the machine that runs the build needs nothing this checkout's file has
-// (IS8b, the owner's O3 reading (b); the HARD RULE, F15).
-//
-// The image itself converges at the rebuild the catalog already has (D1148's
-// schedule, O1): `fugaro update` builds and copies no entry, so a bake arrives
-// only at a build an operator runs, and a project that never mapped anything
-// and whose checkouts name no entry keeps byte for byte what it had. What such
-// a build then writes is pinned by TestCatalogBuildBakesTheMappedReposCheckout
-// and TestCatalogBuildBakesTheEntryAWorkflowsNeedsChoose, what it leaves alone
-// by TestCatalogBuildBakesNothingWithoutTheMap, and the same bytes are what the
-// nightly rebuild reads
-// (TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt).
-func TestUpdateConvergesImageBake(t *testing.T) {
-	r := newConvergeRig(t, v4Node())
-	// What an operator of this release writes: `fugaro image map set acme/app
-	// app` (D1906) and the setup wizard's own answer to "bake your repos?"
-	// (D1901, IS7).
-	r.appendConfig(t, "image_map:\n  acme/app: app\nbake_repos: true\n")
-	registerInstallation(t, r.initRig)
-	if p := convergeNode(t, r); p.ImageMap != nil || p.BakeRepos != nil {
-		t.Fatalf("the fixture's node already carries image_map = %v and bake_repos = %v: it is not an installation whose policy predates both", p.ImageMap, p.BakeRepos)
-	}
-
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
-
-	p := convergeNode(t, r)
-	if got := p.ImageMap["acme/app"]; got != "app" {
-		t.Errorf("after one fugaro update, the published node's image_map = %v, want acme/app on app: a build decides its bake from the node every machine of the project reads, not from the file this one wrote", p.ImageMap)
-	}
-	if !p.BakesRepos() {
-		t.Error("after one fugaro update, the published node turns baking off: the switch the local config states did not reach it")
-	}
-	// The node is the whole input: the decision the next build of the entry
-	// makes is one an installation at the previous version could not make at
-	// all, and nothing about it needs a second command.
-	plan := imagebake.Decide(imagebake.Request{
-		Entry: "app",
-		Repo: imagebake.Repo{
-			Repo: "acme/app", Slug: mustSlug("github", "acme/app"),
-			URL: "https://github.com/acme/app.git", Branch: "main",
-		},
-		// The node's own switch, and what a build reads it as: a written true
-		// (the answer this test converged) and an absent one decide the same
-		// way (imagebake.Decide, Policy.BakesRepos).
-		Map: p.ImageMap, Bake: p.BakeRepos,
-	})
-	if plan.Baked == nil {
-		t.Fatalf("the converged node decides no bake (%s): the map and the switch the one update published are exactly what a build reads for it", plan.Reason)
-	}
 }
 
 // executeConsole runs the command tree with stdout and stderr on ONE writer,
@@ -818,7 +1078,7 @@ func executeConsole(t *testing.T, args ...string) (string, error) {
 // "- repositoryproject: <name>" — the stage run into the header, on no line of
 // its own.
 func TestUpdateEndsTheSpinnerLineBeforeTheProjectHeader(t *testing.T) {
-	r := newConvergeRig(t, v4Node())
+	r := newConvergeRig(t, v5Node())
 	currentRelease(t)
 	skillWarned.Store(false)
 	t.Cleanup(func() { skillWarned.Store(false) })
@@ -879,7 +1139,7 @@ func TestUpdateNeverSendsThePersonToUpdateFromInsideIt(t *testing.T) {
 		{"no claude on PATH", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_ = newConvergeRig(t, v4Node())
+			_ = newConvergeRig(t, v5Node())
 			currentRelease(t)
 			skillWarned.Store(false)
 			t.Cleanup(func() { skillWarned.Store(false) })

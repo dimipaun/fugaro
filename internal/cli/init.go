@@ -2659,8 +2659,8 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	//     installation's outputs, on the same workdir — and the keys the
 	//     run's own writers put into that document are not in the
 	//     snapshot: the credentials service's block, which the
-	//     installation stage's own pinCredentialsImage writes before this
-	//     root is planned (init_stages.go), is the one that matters.
+	//     installation stage's own ensureCredentialsService writes before
+	//     this root is planned (init_stages.go), is the one that matters.
 	//     Without it, the compute stage's first line would rebuild the
 	//     document without the block and plan the service away — a plan
 	//     the bundle container's prevent_destroy refuses, so the run would
@@ -2672,7 +2672,7 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	documents := [][]byte{wd.PrevVars, now}
 	if spec.CredentialsService == nil {
 		// The credentials service's block is written by the installation
-		// stage's own pinCredentialsImage (init_stages.go) and this spec never
+		// stage's own ensureCredentialsService (init_stages.go) and this spec never
 		// carries it: the tfvars are rewritten from the spec on every run, so
 		// an installation that has the service would lose the key here and plan
 		// its removal — a plan the bundle container's prevent_destroy refuses,
@@ -4304,9 +4304,20 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// internal/infra holds no client that could read it and Repo is a pure
 	// function of its Inputs.
 	//
-	// It is the same read planRepo makes for Readiness's D11 gate, and it is
-	// memoized, so this moves that read earlier rather than adding one. A
-	// read that FAILS is left to planRepo, which stops the run on the same
+	// It reads through repoPolicyRead and not the memoized projectPolicyRead,
+	// and that is what makes the first `fugaro update` after a version bump
+	// converge in one run: this stage runs before the policy stage, so the node
+	// it finds is still written in the version behind, and the carried read
+	// (projectpolicy.ReadCarriedForwardShapeFree) hands it over as the
+	// migration is about to write it. A strict read refuses that node, and a
+	// nil policy here is read by internal/infra as "nothing is proxied" — the
+	// repository root would drop bitbucket_proxied and its published image
+	// catalog and map, and the second `fugaro update` the HARD RULE forbids
+	// would be the one that puts them back. Below projectpolicy.ShapeFreeFloor
+	// the carry is refused with the strict read's own answer, because the node
+	// behind it needs the operator's republish.
+	//
+	// A read that FAILS is left to planRepo, which stops the run on the same
 	// error — except for a node written by an older release, which planRepo
 	// counts as present so the policy stage can migrate it: this side passes
 	// nothing then too, until that stage has migrated the node. Passing
@@ -4318,7 +4329,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// contradiction in the configuration, not a change to make, and a plan
 	// that cannot be applied is not a plan — so the refusal lands before the
 	// plan is written, in every mode.
-	p, found, err := r.policy.read(ctx, lc)
+	p, found, err := repoPolicyRead(ctx, lc)
 	in.Policy = repoPolicyInput(lc, p, found, err)
 	if err := checkRepoProject(cfg.Project, outs.ProjectName); err != nil {
 		return err
@@ -4379,6 +4390,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// operator holding one workspace or project access token stores it
 	// project-wide by hand, through the allow-list; that is the exception,
 	// not the default.)
+	//
+	// The workflow secrets record is written from the same spec and for the
+	// same reason (D2073, F33): the container each of this repository's
+	// workflow secrets is read from is the one THIS plan mounts, and `ready`
+	// is the decision MountSecretID reads back (update_workflowsecrets.go).
+	r.writeWorkflowSecrets(ctx, lc, ready, cfg)
 	versions, err := infra.SecretVersions(ctx, c, ready)
 	if err != nil {
 		return r.retireLeftover(spec, initErr(err))
@@ -4879,14 +4896,15 @@ func checkoutURL(ctx context.Context, root string) (string, error) {
 	return u, nil
 }
 
-// repoPolicyInput is infra.Inputs.Policy from the memoized node read: nil when
-// no node was read — the read failed, or the config names no database address
-// for projectPolicyRead to read (which answers not-found then, the same as a
-// project that published nothing) — and an empty node when the read succeeded
-// and the project has published no policy. Only the second refuses a local
-// entry that proxies a repository the node does not admit: an operator whose
-// config has lost budget.rtdb_url has read no node, and the node they cannot
-// reach must not be taken for one that proxies nothing.
+// repoPolicyInput is infra.Inputs.Policy from the repository stage's own node
+// read (repoPolicyRead): nil when no node was read — the read failed, or the
+// config names no database address for policyReadWith to read (which answers
+// not-found then, the same as a project that published nothing) — and an empty
+// node when the read succeeded and the project has published no policy. Only
+// the second refuses a local entry that proxies a repository the node does not
+// admit: an operator whose config has lost budget.rtdb_url has read no node,
+// and the node they cannot reach must not be taken for one that proxies
+// nothing.
 func repoPolicyInput(lc *localcfg.Config, p *projectpolicy.Policy, found bool, err error) *projectpolicy.Policy {
 	switch {
 	case err != nil, lc.Budget == nil || lc.Budget.RTDBURL == "":

@@ -35,6 +35,12 @@ variables {
   log_bucket_description = "Fugaro job logs (managed by fugaro)"
   launchers              = ["user:launcher@example.com"]
   operators              = ["user:operator@example.com"]
+  # A viewer is in the fixture on purpose (RS4 of docs/roles-scopes): the
+  # viewer's read-only role and its two reads only exist when the list is not
+  # empty, so a fixture that names none plans an installation whose viewer
+  # grant is never exercised. Every enumeration below that a viewer changes
+  # names it, and every one that a viewer must not appear in stays as it is.
+  viewers = ["user:viewer@example.com"]
   launcher_bucket_condition = {
     title      = "fugaro-launchers-runs-tokens-issues"
     expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/issues/\")"
@@ -368,6 +374,22 @@ run "roles" {
     ])
     error_message = "fugaroLauncher's permissions are wrong: fugaro secrets ls needs the project's secret list and each secret's version list (metadata only, never a value)"
   }
+  # The viewer's role (RS4 of docs/roles-scopes): the launcher's list minus
+  # run.executions.cancel and no other permission — a viewer reads a run and
+  # its execution and cannot cancel one. The launch surface itself
+  # (run.jobs.run, run.jobs.runWithOverrides) is the job runner's and is not
+  # here either.
+  assert {
+    condition = google_project_iam_custom_role.fugaro_viewer[0].permissions == toset([
+      "run.jobs.get", "run.jobs.list", "run.executions.get", "run.executions.list", "run.operations.get",
+      "secretmanager.secrets.list", "secretmanager.versions.list",
+    ])
+    error_message = "fugaroViewer's permissions are wrong: the launcher's list minus run.executions.cancel, and nothing to launch or write with"
+  }
+  assert {
+    condition     = google_project_iam_custom_role.fugaro_viewer[0].role_id == "fugaroViewer" && google_project_iam_custom_role.fugaro_viewer[0].title == "Fugaro viewer"
+    error_message = "fugaroViewer's ID is the one the project grant names and its title is its ownership mark"
+  }
   assert {
     condition     = google_project_iam_custom_role.build_submitter.permissions == toset(["cloudbuild.builds.create", "cloudbuild.builds.get"])
     error_message = "fugaroBuildSubmitter's permissions are wrong"
@@ -409,12 +431,17 @@ run "people" {
     error_message = "operators' runs bucket grants must be unconditioned objectAdmin"
   }
   assert {
-    condition     = keys(google_storage_bucket_iam_member.runs_reader) == ["user:launcher@example.com"]
-    error_message = "launchers who are not operators read the runs bucket"
+    condition     = keys(google_storage_bucket_iam_member.runs_reader) == ["user:launcher@example.com", "user:viewer@example.com"]
+    error_message = "launchers who are not operators, and the viewers, read the runs bucket"
   }
   assert {
     condition     = alltrue([for m in google_storage_bucket_iam_member.runs_reader : m.role == "roles/storage.objectViewer" && m.bucket == "fugaro-runs-proj-1234" && length(m.condition) == 0])
-    error_message = "the launchers' read grant is unconditioned objectViewer: listing needs it"
+    error_message = "the launchers' and viewers' read grant is unconditioned objectViewer: listing needs it (D683)"
+  }
+  assert {
+    condition = (keys(google_project_iam_member.viewer) == ["user:viewer@example.com"] &&
+    alltrue([for m in google_project_iam_member.viewer : m.role == "projects/proj-1234/roles/fugaroViewer" && m.project == "proj-1234"]))
+    error_message = "only the viewers get the read-only job role, and every viewer gets it"
   }
   assert {
     condition     = keys(google_storage_bucket_iam_member.runs_launcher) == ["user:launcher@example.com"]
@@ -463,8 +490,8 @@ run "launcher_who_is_an_operator" {
     error_message = "the operator keeps objectAdmin"
   }
   assert {
-    condition     = keys(google_storage_bucket_iam_member.runs_reader) == ["user:launcher@example.com"] && keys(google_storage_bucket_iam_member.runs_launcher) == ["user:launcher@example.com"]
-    error_message = "an operator who is also a launcher gets no launcher grant"
+    condition     = keys(google_storage_bucket_iam_member.runs_reader) == ["user:launcher@example.com", "user:viewer@example.com"] && keys(google_storage_bucket_iam_member.runs_launcher) == ["user:launcher@example.com"]
+    error_message = "an operator who is also a launcher gets no launcher grant, and the viewer's read is unaffected"
   }
 }
 
@@ -827,8 +854,8 @@ run "log_isolation_on" {
     error_message = "the view must be the named one, on the log bucket"
   }
   assert {
-    condition     = sort(keys(google_logging_log_view_iam_member.runs)) == tolist(["user:launcher@example.com", "user:operator@example.com"])
-    error_message = "launchers and operators must be able to read through the view"
+    condition     = sort(keys(google_logging_log_view_iam_member.runs)) == tolist(["user:launcher@example.com", "user:operator@example.com", "user:viewer@example.com"])
+    error_message = "launchers, operators and viewers must be able to read through the view (D684: a viewer reads a run's own output)"
   }
   assert {
     condition     = alltrue([for m in google_logging_log_view_iam_member.runs : m.parent == "projects/proj-1234" && m.location == "global" && m.bucket == "fugaro" && m.name == "fugaro-runs"])
@@ -2082,6 +2109,13 @@ run "same_project_resolved_iam" {
     }
   }
   override_resource {
+    target          = google_project_iam_custom_role.fugaro_viewer[0]
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroViewer"
+    }
+  }
+  override_resource {
     target          = google_project_iam_custom_role.history[0]
     override_during = plan
     values = {
@@ -2102,8 +2136,9 @@ run "same_project_resolved_iam" {
 
   assert {
     condition = (alltrue([for m in google_project_iam_member.launcher : m.role == google_project_iam_custom_role.launcher.name && !startswith(m.member, "serviceAccount:")]) &&
-    alltrue([for m in google_project_iam_member.operator_build_submitter : m.role == google_project_iam_custom_role.build_submitter.name && !startswith(m.member, "serviceAccount:")]))
-    error_message = "the installation grants people only the fugaroLauncher and fugaroBuildSubmitter custom roles on the project"
+      alltrue([for m in google_project_iam_member.operator_build_submitter : m.role == google_project_iam_custom_role.build_submitter.name && !startswith(m.member, "serviceAccount:")]) &&
+    alltrue([for m in google_project_iam_member.viewer : m.role == google_project_iam_custom_role.fugaro_viewer[0].name && !startswith(m.member, "serviceAccount:")]))
+    error_message = "the installation grants people only the fugaroLauncher, fugaroBuildSubmitter and fugaroViewer custom roles on the project"
   }
   assert {
     condition     = alltrue([for m in google_project_iam_member.operator_cloud_asset_reader : m.role == "projects/proj-1234/roles/fugaroCloudAssetReader" && !startswith(m.member, "serviceAccount:")])
@@ -2134,7 +2169,7 @@ run "same_project_resolved_iam" {
   }
   assert {
     condition = alltrue(flatten([
-      [for r in [google_project_iam_custom_role.launcher, google_project_iam_custom_role.job_runner, google_project_iam_custom_role.build_submitter, google_project_iam_custom_role.tag_mover, google_project_iam_custom_role.cloud_asset_reader, google_project_iam_custom_role.history[0]] :
+      [for r in [google_project_iam_custom_role.launcher, google_project_iam_custom_role.job_runner, google_project_iam_custom_role.build_submitter, google_project_iam_custom_role.tag_mover, google_project_iam_custom_role.cloud_asset_reader, google_project_iam_custom_role.fugaro_viewer[0], google_project_iam_custom_role.history[0]] :
       [for p in r.permissions : !can(regex("^(firebase|datastore|identitytoolkit|iam\\.|resourcemanager|serviceusage|apikeys)", p))]],
     ]))
     error_message = "no installation custom role holds a permission on the budget backend, identities or IAM"

@@ -96,17 +96,27 @@ func modelsRefuseVariant(id string) error {
 // actually reaches), so it is named here as the one key the file writes.
 const modelsRoleBackground = "background"
 
-// modelsRoleNames are the three keys agent.models has, in the order every
+// modelsRoleVision is the fourth key agent.models has, and a literal for the
+// background key's reason: no stage is the vision one either (a stage's own
+// model runs the slot only where it cannot read an image, D2000), so the slot
+// has no config.Role to be spelled with.
+const modelsRoleVision = "vision"
+
+// modelsRoleNames are the four keys agent.models has, in the order every
 // surface lists them: what `models use` may name (spec §6).
-var modelsRoleNames = []string{string(config.RoleCoder), string(config.RoleReviewer), modelsRoleBackground}
+var modelsRoleNames = []string{string(config.RoleCoder), string(config.RoleReviewer), modelsRoleBackground, modelsRoleVision}
 
 // modelsRoleModel is the model a fugaro.yaml pins for one of those keys.
 // ModelFor folds background into the coder — reading a file's own
 // agent.models.background through it would report a coder pin a second time —
-// so the background key is read directly.
+// and answers the coder's model for any role it does not know, so both of the
+// keys that are not roles are read directly.
 func modelsRoleModel(a config.Agent, role string) string {
-	if role == modelsRoleBackground {
+	switch role {
+	case modelsRoleBackground:
 		return a.Models.Background
+	case modelsRoleVision:
+		return a.VisionModel()
 	}
 	return a.ModelFor(config.Role(role))
 }
@@ -165,7 +175,7 @@ func projectCheckoutConfigs(lc *localcfg.Config) (map[string]*config.Config, []s
 }
 
 // modelsModelPinned is the repositories whose fugaro.yaml pins id in one of the
-// three roles, and the repositories this machine cannot read. `models add` reads
+// four roles, and the repositories this machine cannot read. `models add` reads
 // the first to decide whether to name `models use` as the way to use the model,
 // and `models rm` warns about both.
 func modelsModelPinned(lc *localcfg.Config, id string) (pins []modelsPin, unseen []string) {

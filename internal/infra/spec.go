@@ -1876,10 +1876,20 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 		SchedulerRegion: region,
 		Schedule:        Schedule(c.slug),
 		Paused:          true,
-		DeployJob:       true,
-		Env:             env,
-		SecretEnv:       map[string]string{gitEnv: c.gitSecret},
-		Workflows:       checked,
+		// The job's shape, and not the decision to deploy it: that is
+		// Readiness's (readiness.go), which after D1900 answers the live
+		// cloud -- a repository whose cloud holds no check job is given none
+		// (IS2), one whose cloud holds one keeps it, because the state holds
+		// its three addresses and a spec that stopped producing them would
+		// plan a retirement (retire.go), not a quiet release. True here is
+		// what keeps that fail-safe: every ungated reader -- Addresses() on
+		// the fixture specs, `fugaro update --repo --print-vars` -- still
+		// describes the job, so the only way to lose it is Readiness saying
+		// so about the cloud.
+		DeployJob: true,
+		Env:       env,
+		SecretEnv: map[string]string{gitEnv: c.gitSecret},
+		Workflows: checked,
 	}, nil
 }
 
@@ -2111,6 +2121,16 @@ func Schedule(slug string) string {
 // code where that token is. An account the list does not carry is not an entry
 // here — `fugaro validate` and the launch refuse the key — so the operator
 // hears about it rather than a job quietly appearing without the token.
+//
+// A stage key may hold an alias (docs/account-aliases, D2091), and the name
+// read here is the account it resolves to: the job set is one of the readers
+// that decide which jobs exist, and both the node the runner reads it off and
+// the task carry the account (the publish resolves, `configAccountValues`), so
+// a key read by its own alias would leave the account with no job at all while
+// the node still sends runs to it — `fugaro update` would retire the variant,
+// the executions on it included. The resolution is the one step every reader
+// takes and never a walk (config.ResolveAccountAlias); a name that is no alias
+// is read unchanged.
 func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
 	if lc == nil {
 		return nil
@@ -2118,7 +2138,7 @@ func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 	allowed := config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
 	var out []string
 	for _, stage := range config.MixedAccountStages {
-		name := lc.ClaudeAccountStages[stage].ClaudeAccount
+		name, _ := lc.ResolveAccount(lc.ClaudeAccountStages[stage].ClaudeAccount)
 		if name == "" || !slices.Contains(allowed, name) || slices.Contains(out, name) {
 			continue
 		}
@@ -2165,16 +2185,20 @@ func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 // Reading them here would refuse a job for a configuration the next commit
 // makes admissible, and build one the current branch cannot use; the run
 // refuses it where it resolves (r.mixedDefaultAccount) with the reason.
+//
+// The key is resolved through the file's aliases first, for mixedStageAccounts'
+// reason: the default may be written as an alias (D2091), and the account the
+// node and the task carry is the one it stands for.
 func mixedDefaultAccount(cfg *config.Config, lc *localcfg.Config, allowed []string) string {
 	if cfg == nil {
 		return ""
 	}
-	def := lc.DefaultClaudeAccount
+	def, _ := lc.ResolveAccount(lc.DefaultClaudeAccount)
 	if def == "" || def == config.DefaultClaudeAccount || !slices.Contains(allowed, def) {
 		return ""
 	}
 	for _, stage := range config.MixedAccountStages {
-		if name := lc.ClaudeAccountStages[stage].ClaudeAccount; name != "" && name != def {
+		if name, _ := lc.ResolveAccount(lc.ClaudeAccountStages[stage].ClaudeAccount); name != "" && name != def {
 			return ""
 		}
 	}

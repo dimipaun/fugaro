@@ -281,12 +281,25 @@ resource "google_storage_bucket_iam_member" "runs" {
 locals {
   # A launcher who is also an operator needs nothing more (H4).
   launchers_only = setsubtract(toset(var.launchers), toset(var.operators))
+  # The viewers the lists above do not already hold. A launcher reads the whole
+  # bucket through runs_reader below, and an operator reads and writes all of
+  # it, so a viewer on either list is dropped here rather than bound twice: two
+  # member resources with the same bucket, role and member would fight over one
+  # binding, which is the churn run IAM members are used to avoid. The project
+  # role above is not deduplicated this way — fugaroViewer is a role of its own,
+  # granted to the list whole.
+  viewers_only   = setsubtract(toset(var.viewers), setunion(toset(var.launchers), toset(var.operators)))
+  bucket_readers = setunion(local.launchers_only, local.viewers_only)
 }
 
-# Launchers read the whole bucket. Listing runs/ needs storage.objects.list,
-# which a condition on an object's name can't grant, so this one has none.
+# Everyone who reads the whole runs bucket: the launchers and the viewers.
+# Listing runs/ needs storage.objects.list, which a condition on an object's
+# name can't grant, so this one has none; for a viewer that is D683's answer
+# (objectViewer on the whole bucket) and it is the same grant the launchers
+# already hold — one role, one bucket, one set of bindings, and a member who
+# moves between the two lists keeps the binding they had.
 resource "google_storage_bucket_iam_member" "runs_reader" {
-  for_each = local.launchers_only
+  for_each = local.bucket_readers
 
   bucket = google_storage_bucket.runs.name
   role   = "roles/storage.objectViewer"
@@ -323,6 +336,76 @@ resource "google_storage_bucket_iam_member" "runs_launcher" {
       error_message = "launcher_bucket_condition must be runs/, tokens/ and issues/ of the runs bucket, titled fugaro-launchers-runs-tokens-issues (gcp.LauncherBucketCondition)."
     }
   }
+}
+
+# The viewer's read-only job role (RS4, roles.md §4): the launcher's role
+# minus run.executions.cancel. A viewer reads a run, its execution and its
+# operations, and the project's secret list's metadata — the launcher's own
+# two secret-list permissions, which are what `fugaro secrets ls` needs and
+# which roles.md §4 states the viewer keeps when it says the viewer reads the
+# secret list's metadata and no value — and cannot cancel a run, start one, or
+# read a secret's value.
+#
+# It is a role of its own rather than a narrowing of the launcher's, and the
+# only one of the viewer's grants that is: every other grant below and in the
+# Firebase root is a predefined role on a resource the modules already grant
+# to someone. The ID is a literal in both places, like the Cloud Asset
+# reader's, and not a names.role_ids entry: nothing outside this module names
+# it, the pin in internal/infra/tf is by the same literal ID (tf.ViewerRole),
+# and a required key of the root's tfvars would change the tfvars of every
+# installation that has no viewer at all.
+#
+# roles.md §4 pins the absence of a cancel here and of everything else a
+# viewer must not have: no job_runner (no launch), no token-minter (no claimed
+# identity), no state bucket, no secretAccessor (no secret's value), and no
+# write anywhere. A plan that gave the viewer any of those is refused by
+# internal/infra/tf (grantRules, RolePermissions).
+#
+# The role exists only while the list is non-empty, like the deployer's seven
+# conditioned roles: an installation with no viewer applies exactly the plan it
+# applied before this role existed (roles.md §8 R1), and a custom role with no
+# binding grants nobody anything anyway.
+#
+# The name is `fugaro_viewer` and not `viewer` on purpose: the secret-readers
+# guard (deploy/terraform/secret_readers_test.go) ties a grant to a custom role
+# by the last dotted token of the role string it grants, so a role named
+# `viewer` would be read as the reader behind every `roles/<something>.viewer`
+# grant in the tree — the Firebase module's database viewer among them, which
+# reads no secret at all.
+resource "google_project_iam_custom_role" "fugaro_viewer" {
+  count = length(var.viewers) > 0 ? 1 : 0
+
+  project = var.project
+  role_id = "fugaroViewer"
+  title   = "Fugaro viewer"
+  permissions = [
+    "run.jobs.get",
+    "run.jobs.list",
+    "run.executions.get",
+    "run.executions.list",
+    "run.operations.get",
+    # fugaro secrets ls: the project's secret list and each secret's
+    # versions, as for the launcher above. Metadata only.
+    "secretmanager.secrets.list",
+    "secretmanager.versions.list",
+  ]
+
+  depends_on = [google_project_service.this]
+}
+
+# Granted at the project to the viewers. The role is a literal path and not
+# the resource's name attribute, for the reason the launcher grant above
+# gives: this grant is planned by the same apply that creates the deployer's
+# eight roles, and a project grant whose role is computed cannot be told from
+# a deployer one at plan time.
+resource "google_project_iam_member" "viewer" {
+  for_each = toset(var.viewers)
+
+  project = var.project
+  role    = "projects/${var.project}/roles/fugaroViewer"
+  member  = each.value
+
+  depends_on = [google_project_iam_custom_role.fugaro_viewer]
 }
 
 # The state bucket isn't managed here (fugaro setup creates it before any

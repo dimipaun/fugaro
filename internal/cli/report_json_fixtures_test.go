@@ -464,6 +464,15 @@ var jsonCases = map[string]jsonCase{
 			return []string{"runs", "ls"}
 		},
 	},
+	"runs show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The chain rig: three runs of one chain with the budget on, which
+			// is what gives the document its limit, its spend and its layers.
+			showRig(t)
+			return []string{"runs", "show", showTip}
+		},
+	},
 	"runs stats": {
 		reads: true,
 		run: func(t *testing.T) []string {
@@ -506,6 +515,16 @@ var jsonCases = map[string]jsonCase{
 			return []string{"secrets", "set", "claude-oauth-token", "--repo", "acme/app"}
 		},
 	},
+	// The intake's two families print the intake's own answer as the document
+	// (printIntakeAnswer), so what --json carries is the service's own wire
+	// shape and no line of the human answer. The rig and the seam are
+	// secrets_intake_test.go's: intakeUserJSONCase and intakeSharedJSONCase.
+	"secrets shared ls":  intakeSharedJSONCase("ls", "", true),
+	"secrets shared rm":  intakeSharedJSONCase("rm", "", false),
+	"secrets shared set": intakeSharedJSONCase("set", intakeTestValue+"\n", false),
+	"secrets user ls":    intakeUserJSONCase("ls", "", true),
+	"secrets user rm":    intakeUserJSONCase("rm", "", false),
+	"secrets user set":   intakeUserJSONCase("set", intakeTestValue+"\n", false),
 	"security paths": {
 		reads: true,
 		run: func(t *testing.T) []string {

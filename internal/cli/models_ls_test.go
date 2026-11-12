@@ -65,9 +65,9 @@ func modelsFixture(t *testing.T) string {
 }
 
 // modelsRepoYAML is the repository file the usage read resolves: a provider
-// coder, a Claude reviewer and no background pin, so the effective background
-// (config.EffectiveBackground) is the coder's own model rather than a hidden
-// Claude haiku call.
+// coder, a Claude reviewer, a vision pin and no background pin, so the
+// effective background (config.EffectiveBackground) is the coder's own model
+// rather than a hidden Claude haiku call.
 const modelsRepoYAML = `version: 1
 project: aurora
 git: { provider: github }
@@ -76,6 +76,7 @@ agent:
   models:
     coder: deepseek/deepseek-v4-flash
     reviewer: claude-sonnet-5-5
+    vision: deepseek/deepseek-v4-pro
 workflows:
   web:
     commands: { build: go build ./..., test: go test ./... }
@@ -171,6 +172,93 @@ func TestModelsLsListsRoutesModelsAllowListsAndUsage(t *testing.T) {
 	if !strings.Contains(usage, "deepseek/deepseek-v4-flash") {
 		t.Errorf("the USAGE section does not resolve the effective background:\n%s", usage)
 	}
+}
+
+// TestModelsLsShowsTheVisionSlot: the fourth key agent.models has is a column
+// of the usage row beside the other three (V6, D2013), so a reader sees what a
+// stage whose own model cannot read an image runs, and an unset slot reads as
+// unset rather than as a model inherited from somewhere.
+func TestModelsLsShowsTheVisionSlot(t *testing.T) {
+	home := modelsFixture(t)
+	modelsCheckout(t, home, "owner/repo-a", modelsRepoYAML)
+
+	out, _, err := execute(t, "models", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := modelsUsageCell(t, out, "owner/repo-a", "VISION"); got != "deepseek/deepseek-v4-pro" {
+		t.Errorf("the USAGE row's VISION cell is %q, want the model the repository's own file sets:\n%s", got, out)
+	}
+	// The coder's cell is the coder's: the slot is its own key, and a read that
+	// answered one for the other would show a run's model as an image model.
+	if got := modelsUsageCell(t, out, "owner/repo-a", "CODER"); got != "deepseek/deepseek-v4-flash" {
+		t.Errorf("the USAGE row's CODER cell is %q, and the vision pin is not the coder's:\n%s", got, out)
+	}
+	// A repository this machine has no checkout for pins nothing, so its cells
+	// are dashes: an unknown repository is never guessed at (D793).
+	if got := modelsUsageCell(t, out, "owner/repo-b", "VISION"); got != "—" {
+		t.Errorf("the unread repository's VISION cell is %q, want a dash:\n%s", got, out)
+	}
+
+	raw, _, err := execute(t, "models", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	var doc struct {
+		Repositories []struct {
+			Name   string `json:"name"`
+			Coder  string `json:"coder"`
+			Vision string `json:"vision"`
+		} `json:"repositories"`
+	}
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	for _, r := range doc.Repositories {
+		if r.Name != "owner/repo-a" {
+			continue
+		}
+		if r.Vision != "deepseek/deepseek-v4-pro" {
+			t.Errorf("%s's vision member is %q, want the file's own pin", r.Name, r.Vision)
+		}
+		if r.Coder != "deepseek/deepseek-v4-flash" {
+			t.Errorf("%s's coder member is %q, and the vision pin is a member of its own", r.Name, r.Coder)
+		}
+		return
+	}
+	t.Errorf("the document has no row for owner/repo-a:\n%s", raw)
+}
+
+// modelsUsageCell is one cell of the USAGE table's row for repo: the value
+// under header, cut out by the header line's own column offsets, so an
+// assertion is about the column a value is in and not about how the tabwriter
+// spaced it.
+func modelsUsageCell(t *testing.T, out, repo, header string) string {
+	t.Helper()
+	lines := strings.Split(modelsSection(t, out, "USAGE"), "\n")
+	cols := strings.Fields(lines[0])
+	i := slices.Index(cols, header)
+	if i < 0 {
+		t.Fatalf("the USAGE table has no %s column:\n%s", header, lines[0])
+	}
+	starts := make([]int, len(cols))
+	at := 0
+	for j, c := range cols {
+		starts[j] = strings.Index(lines[0][at:], c) + at
+		at = starts[j] + len(c)
+	}
+	end := len(lines[0])
+	if i+1 < len(starts) {
+		end = starts[i+1]
+	}
+	for _, l := range lines[1:] {
+		if !strings.HasPrefix(l, repo+" ") {
+			continue
+		}
+		return strings.TrimSpace(l[starts[i]:min(end, len(l))])
+	}
+	t.Fatalf("the USAGE table has no row for %s:\n%s", repo, strings.Join(lines, "\n"))
+	return ""
 }
 
 // TestModelsLsRefusesAModelTheAllowListLeavesOut: budget.allowed_models is the
@@ -611,8 +699,8 @@ func TestModelsLsJSONMatchesSchema(t *testing.T) {
 
 	// The document is only worth validating while it carries the members the
 	// schema closes over: a fixture that stopped producing a catalog row, a
-	// local row or an unknown repository would leave those branches unchecked
-	// and still green.
+	// local row, a vision pin or an unknown repository would leave those
+	// branches unchecked and still green.
 	var decoded struct {
 		Version int `json:"version"`
 		Routes  []struct {
@@ -623,7 +711,8 @@ func TestModelsLsJSONMatchesSchema(t *testing.T) {
 			Source string `json:"source"`
 		} `json:"models"`
 		Repositories []struct {
-			State string `json:"state"`
+			State  string `json:"state"`
+			Vision string `json:"vision"`
 		} `json:"repositories"`
 	}
 	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
@@ -642,11 +731,18 @@ func TestModelsLsJSONMatchesSchema(t *testing.T) {
 		}
 	}
 	states := map[string]bool{}
+	visions := map[string]bool{}
 	for _, r := range decoded.Repositories {
 		states[r.State] = true
+		if r.Vision != "" {
+			visions[r.Vision] = true
+		}
 	}
 	if !states[stateUnknown] {
 		t.Errorf("the document carries no %q repository (it has %v)", stateUnknown, states)
+	}
+	if !visions["deepseek/deepseek-v4-pro"] {
+		t.Errorf("the document carries no repository pinning the fixture's vision model (it has %v)", visions)
 	}
 }
 

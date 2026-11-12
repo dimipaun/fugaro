@@ -106,6 +106,23 @@ type launchResult struct {
 	// arm has started, and Reason is why nothing was sampled when a planner
 	// was asked and declined.
 	Pair *launchPair `json:"pair,omitempty"`
+	// account is the account this launch resolved and the alias it read it
+	// through, which the launch's own line prints as ALIAS -> ACCOUNT
+	// (docs/account-aliases/spec.md §7, D2099). It is unexported on purpose:
+	// it is the launcher's own display fact, the document above is the
+	// contract a consumer reads, and the task — the record — carries the
+	// resolved account alone and no alias at all (F4).
+	account launchAccount
+}
+
+// launchAccount is the Claude account a launch resolved and the alias it read
+// it through. Alias is "" when the flag or the key named the account itself, or
+// when the name came from a place no alias lives (the committed
+// agent.oauth_token, D2090), which is what makes the launch's own line print the
+// pair only where an alias really decided it.
+type launchAccount struct {
+	Name  string
+	Alias string
 }
 
 // launchPair is launchResult's --json view of the A/B decision this launch
@@ -212,7 +229,18 @@ type runOptions struct {
 	// previous run's account when this is empty; an explicit value overrides
 	// it instead (owner ruling, 2026-10-12, task 9b review), through the
 	// same allow-list, agent.auth and version-gate checks a first run's does.
+	// Either name may be an alias of the owner's local config, and what the
+	// launch resolves it to is account below.
 	token string
+	// account is what the launch resolved its own Claude account to and the
+	// alias it read it through, set by the spec builder at the one place the
+	// resolution happens (claudeAccountChoice): the pair the launch's own
+	// line prints as ALIAS -> ACCOUNT (docs/account-aliases/spec.md §7,
+	// D2099). Alias is "" when a flag or a key named the account itself, so a
+	// launch that read no alias prints nothing new. It is the launcher's own
+	// display fact and reaches no other reader: the task is the record, and
+	// it carries the resolved account alone (F4).
+	account launchAccount
 	// planTask is --plan-task, as the task stores it: the id of one task in
 	// one plan ("setup-wizard/W1.3"), recorded so the console can join this
 	// run to a node of that plan's dependency graph (console dependency
@@ -960,6 +988,14 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// step 1, plan Review Focus 11), and the task written next names
 		// exactly the bytes that are in the bucket.
 		if err := attachUpload(ctx, env, spec, s.Prefix(), o.attach, caps); err != nil {
+			return launchResult{}, err
+		}
+		// The manifest a mode: evaluate launch leaves for its own recipe's step
+		// (A5.2), by the same rule as the attachments above: after every
+		// refusal this launcher can make and before createTask, so a refused
+		// launch stores nothing and starts nothing, and a task that names a
+		// manifest is a task whose manifest is in the bucket.
+		if err := writeRecipeManifest(ctx, env, o, slug, spec, s, warn); err != nil {
 			return launchResult{}, err
 		}
 	}
@@ -1807,7 +1843,8 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// not what built the shared one, and the other branch's is a build
 	// record a repository that adopted a sibling's image never wrote.
 	if shared {
-		if err := checkSharedImageSince(ctx, env, slug, spec, sharedSince, warn); err != nil {
+		if err := checkSharedImageSince(ctx, env, slug, spec, sharedSince,
+			"this checkout: shared workflow", "how to clone for a shared image (FUGARO_CHECKOUT)", warn); err != nil {
 			return config.Inputs{}, err
 		}
 	}
@@ -1825,6 +1862,24 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 				return config.Inputs{}, err
 			}
 		} else if err := checkImageSince(ctx, env, slug, spec, kind, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
+			return config.Inputs{}, err
+		}
+	}
+	if spec.Mode == recipe.ModeEvaluate {
+		// The mode: evaluate gate, artifactsSince's own shape: a runner
+		// older than evaluateSince refuses a task carrying mode
+		// outright ("evaluate" is not a value its task validation
+		// knows), so a judge launch must not reach such a job at all.
+		// Judged from the deployed job's build record exactly as the
+		// gates above are, and from the task's own field rather than the
+		// recipe's constructs: an evaluate recipe trips none of the
+		// parse-time gates, so this is the only gate that can refuse the
+		// launch before it is paid for.
+		if clone {
+			if err := checkCloneImageSince(env.lc, spec, evaluateSince, "a mode: evaluate recipe", "mode: evaluate", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		} else if err := checkImageSince(ctx, env, slug, spec, kind, evaluateSince, "a mode: evaluate recipe", "mode: evaluate", "", warn); err != nil {
 			return config.Inputs{}, err
 		}
 	}
@@ -1897,9 +1952,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	}
 	// The project's policy, read with the operator's own credentials
 	// before anything of this launch is written (plan task 1.5 step 4):
-	// the repository must be admitted, and the policy must not be newer
-	// than this binary. Before createTask and before the launch claim, so
-	// a refused launch leaves no task, no token and no execution behind.
+	// the repository must be admitted, the policy must not be newer than
+	// this binary, and the job image the launch would run — judged on
+	// whichever of the three checkout modes it is, the image lock included
+	// — has to be one whose runner can read the node at all
+	// (policyImageGate). Before
+	// createTask and before the launch claim, so a refused launch leaves
+	// no task, no token and no execution behind.
 	// Outside the --no-budget-check branch, which is deliberate: neither
 	// check is a budget check, so neither is an operator's to skip. After
 	// the budget pre-check, so an unreachable database is refused by the
@@ -1907,7 +1966,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// refuses it itself, with the node named, when it does not. Before the
 	// attach upload below as well, so a repository the policy does not
 	// admit never gets its inputs into the bucket either.
-	if err := launchPolicyGates(ctx, env, slug, spec); err != nil {
+	if err := launchPolicyGates(ctx, env, slug, spec, kind, clone, shared, warn); err != nil {
 		return config.Inputs{}, err
 	}
 	return caps, nil
@@ -2712,6 +2771,16 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // is available here, so --repo X --token N outside any checkout is held to the
 // same rule a checkout's own resolution would be.
 //
+// Every name this function reads out of the local config — the flag, the
+// stage key of rung 2 and the project default of rung 4 — resolves through the
+// file's aliases first (localcfg.Config.ResolveAccount, D2091, D2092), and
+// before any rule is asked of it: the account the run is given is the account
+// the alias stands for, the allow-list is asked about that account and never
+// the alias (F6), and the task carries the account rather than the name the key
+// holds (F4). A repo's own committed fugaro.yaml names an account and never an
+// alias — an alias lives in the owner's local config alone (D2090) — so rung 3
+// has nothing to resolve.
+//
 // The mix rule is judged first, for every call and whatever stage was asked
 // for (config.CheckStageAccountMix): an api-key run may name one Claude
 // account, for the senior review and the adversarial review and no other stage
@@ -2775,6 +2844,21 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // shared project job whose own credential cannot be resolved is refused
 // outright (projectJobAgentAuth) rather than judged on a guess.
 func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref string, co *config.Config) (string, error) {
+	account, _, err := claudeAccountChoice(ctx, env, repo, flag, stage, ref, co)
+	return account, err
+}
+
+// claudeAccountChoice is claudeAccountFor with the alias the account was read
+// through: "" when the name was the account's own, a committed
+// agent.oauth_token (D2090 — no alias lives outside the owner's local config)
+// or the unsuffixed default, and the alias itself when the flag, a stage key or
+// the project default named one. It is the resolution's own answer, carried out
+// of the walk rather than read again from the keys: the launch's line prints
+// the pair the account was really read through (docs/account-aliases/spec.md
+// §7, D2099), and a second reading of the same keys could name an alias the
+// walk never consulted. Callers that only need the account keep calling
+// claudeAccountFor.
+func claudeAccountChoice(ctx context.Context, env *cloudEnv, repo, flag, stage, ref string, co *config.Config) (string, string, error) {
 	a, refAuth, refAgent := agentAtRef(ctx, env, repo, ref)
 	// The auth a name is judged against, as the run resolves it: the document
 	// at the ref over the project layer when that could be read, and the
@@ -2798,7 +2882,7 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 		fmt.Fprint(launchWarn, noteLine(note))
 	}
 	if ps := config.CheckStageAccountMix(auth, declared, "stages"); len(ps) > 0 {
-		return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
+		return "", "", userErr("%s: %s", ps[0].Path, ps[0].Message)
 	}
 	// Every *declared* stage account is checked before any launch, whatever rung
 	// ends up using it: this call may not use one as the run's own credential,
@@ -2812,7 +2896,7 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// stageAccountOf) must not be the thing that skips the allow-list.
 	for _, at := range slices.Sorted(maps.Keys(declared)) {
 		if err := claudeAccountMembership(env, repo, declared[at]); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	// The project default is a name too, and it is held to this repository's
@@ -2838,7 +2922,18 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// repository whose own committed fugaro.yaml carries the value is exactly
 	// the launch that has to fail closed, so the default is checked here, where
 	// nothing else will.
-	if def := env.lc.DefaultClaudeAccount; def != "" && def != config.DefaultClaudeAccount {
+	//
+	// The default resolves once, here, and the three readers below take the
+	// resolved name: this check, the budget clause and rung 4. A key may name an
+	// alias (D2091, D2092), and every one of them is asking about the account
+	// the run holds — an alias handed to any of them would be judged as a name
+	// no account answers to, which is the state F6 exists to keep out of the
+	// launch (the allow-list is asked about the account, never the alias). The
+	// alias the key named is kept beside it for the same reason rung 4 keeps the
+	// resolved name: the line the launch prints names the pair only where rung 4
+	// is what read the key.
+	def, defAlias := env.lc.ResolveAccount(env.lc.DefaultClaudeAccount)
+	if def != "" && def != config.DefaultClaudeAccount {
 		switch auth {
 		case "api-key":
 			// The account it returns is the stage's resolution and not this
@@ -2846,8 +2941,8 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 			// raised for a stage the run has whether or not this call asked for
 			// it.
 			for _, at := range config.MixedAccountStages {
-				if _, err := mixedStageAccount(ctx, env, repo, at, auth, co); err != nil {
-					return "", err
+				if _, _, err := mixedStageAccount(ctx, env, repo, at, auth, co); err != nil {
+					return "", "", err
 				}
 			}
 		case "oauth", "vertex", config.AuthCascade:
@@ -2856,7 +2951,7 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 			// OAuth credential at all.
 		default:
 			if err := claudeAccountMembership(env, repo, def); err != nil {
-				return "", err
+				return "", "", err
 			}
 		}
 	}
@@ -2872,17 +2967,24 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// oauth launch must not spend a local default-branch git read (mixMode) and
 	// a route resolution (mixRoutes) on a clause that cannot apply to it.
 	if auth == "api-key" {
-		if ps := config.CheckMixBudget(auth, mixMode(ctx, env, repo, co), mixCoder(co), env.lc.DefaultClaudeAccount, declared, mixRoutes(env, repo, co), "budget.mode"); len(ps) > 0 {
-			return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
+		if ps := config.CheckMixBudget(auth, mixMode(ctx, env, repo, co), mixCoder(co), def, declared, mixRoutes(env, repo, co), "budget.mode"); len(ps) > 0 {
+			return "", "", userErr("%s: %s", ps[0].Path, ps[0].Message)
 		}
 	}
-	name := flag
+	// The flag is a name a person wrote (--token, or the account a follow-up
+	// inherits from its previous run), so it may name an alias exactly as a key
+	// does: it resolves before every check below, which is the same step and the
+	// same order the keys take above. alias is the alias the walk answers with,
+	// and it is set exactly where a name of the owner's local config decides the
+	// account — the flag here, a stage key or the project default below — so no
+	// other rung can leave one standing (rung 3 is a committed file's name, D2090).
+	name, alias := env.lc.ResolveAccount(flag)
 	if name == "" && stage != "" {
 		if account := stageAccountOf(env.lc, auth, stage); account != "" {
-			return account, nil
+			return account, stageAliasOf(env.lc, stage), nil
 		}
-		if account, err := mixedStageAccount(ctx, env, repo, stage, auth, co); err != nil || account != "" {
-			return account, err
+		if account, stageAccountAlias, err := mixedStageAccount(ctx, env, repo, stage, auth, co); err != nil || account != "" {
+			return account, stageAccountAlias, err
 		}
 	}
 	if name == "" {
@@ -2920,16 +3022,20 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// token, and its review stages would halt for one. It is refused here
 	// instead, where the mix is known.
 	if stage == "" {
-		mix, err := mixedRunAccount(ctx, env, repo, auth, co)
+		mix, mixAlias, err := mixedRunAccount(ctx, env, repo, auth, co)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if mix != "" && config.AxisNonAccountValue(name) {
-			return "", userErr("this launch names %s (%s) as the run's own account, and this run declares a mix: %s serves its %s stages, and those stages read the account's token out of the runner's environment, which only the account's own job mounts — the mix is the one Claude account an api-key run may hold, and this value is not an account, so the launch would start on its job, whose review stages have no token to run on. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch without --token, which is where a mixed run starts — the mix is the run's own account — or remove the account this mix names for the %s stages",
+			return "", "", userErr("this launch names %s (%s) as the run's own account, and this run declares a mix: %s serves its %s stages, and those stages read the account's token out of the runner's environment, which only the account's own job mounts — the mix is the one Claude account an api-key run may hold, and this value is not an account, so the launch would start on its job, whose review stages have no token to run on. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch without --token, which is where a mixed run starts — the mix is the run's own account — or remove the account this mix names for the %s stages",
 				nonAccountPhrase(name), name, mix, config.MixedStagePhrase(), config.MixedStagePhrase())
 		}
 		if mix != "" && (name == "" || name == config.DefaultClaudeAccount) {
-			name = mix
+			// The mix is what decided this launch's account, so the key that
+			// named it names the alias too — the flag named neither (it is empty
+			// or the sentinel here), and the mix's own alias is the other
+			// candidate for a --token that already names the mix's account.
+			name, alias = mix, mixAlias
 		}
 		if mix != "" && name == mix {
 			// The one name an api-key launch may carry: it is the account whose
@@ -2937,16 +3043,19 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 			// no secret to reach" claudeAccountAllowed refuses under api-key. A
 			// follow-up inherits it and a --token may repeat it, and both arrive
 			// here as the flag.
-			return name, nil
+			return name, alias, nil
 		}
 	}
 	if name == "" && auth == "oauth" {
-		name = env.lc.DefaultClaudeAccount
+		// Rung 4, and the same resolved name the default was checked under
+		// above: one read of the key, so the account the allow-list admitted
+		// and the account the run is given cannot be two different names.
+		name, alias = def, defAlias
 	}
 	if name == "" {
 		name = config.DefaultClaudeAccount
 	}
-	return name, claudeAccountAllowed(env, repo, name, auth)
+	return name, alias, claudeAccountAllowed(env, repo, name, auth)
 }
 
 // mixedRunAccount is the account a mixed run's launch lands on: the one Claude
@@ -2970,34 +3079,57 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 // the credential the review stage runs on the same account, and the job set
 // agrees: mixedStageAccounts (internal/infra) builds a variant for each stage
 // key and for rung 4's account, so the job this resolves always exists.
-func mixedRunAccount(ctx context.Context, env *cloudEnv, repo, auth string, co *config.Config) (string, error) {
+func mixedRunAccount(ctx context.Context, env *cloudEnv, repo, auth string, co *config.Config) (string, string, error) {
 	if auth != "api-key" {
-		return "", nil
+		return "", "", nil
 	}
 	for _, stage := range config.MixedAccountStages {
 		if account := stageAccountOf(env.lc, auth, stage); account != "" {
-			return account, nil
+			return account, stageAliasOf(env.lc, stage), nil
 		}
 	}
 	for _, stage := range config.MixedAccountStages {
-		account, err := mixedStageAccount(ctx, env, repo, stage, auth, co)
+		account, alias, err := mixedStageAccount(ctx, env, repo, stage, auth, co)
 		if err != nil || account != "" {
-			return account, err
+			return account, alias, err
 		}
 	}
-	return "", nil
+	return "", "", nil
+}
+
+// stageAliasOf is the alias the stage's own key named, "" when it named the
+// account itself or named nothing. stageAccountOf's answer cannot say which of
+// the two happened, and the launch's own line names the pair only where an
+// alias decided the account (docs/account-aliases/spec.md §7, D2099): the two
+// are read side by side so the key is resolved once per answer and not once per
+// reader.
+func stageAliasOf(lc *localcfg.Config, stage string) string {
+	if lc == nil {
+		return ""
+	}
+	_, alias := lc.ResolveAccount(lc.ClaudeAccountStages[stage].ClaudeAccount)
+	return alias
 }
 
 // stageAccountsOf is the local config's stage accounts as the rules read them:
-// the stage name to the account it names, empty values dropped.
+// the stage name to the account it names, empty values dropped, each name
+// resolved through the file's aliases (D2091, D2092).
+//
+// Resolution belongs here rather than at each caller because every one of them
+// is asking the same question — which account does this stage run on — and the
+// answers are the mix rules (CheckStageAccountMix), the launch's own allow-list
+// check and `fugaro validate`'s report (stageAccountProblems). A key left as
+// written would make an alias a stage account no account answers to: the mix
+// rules would judge a stage that names one as a stage that names nothing, and
+// validate would refuse a file the run accepts.
 func stageAccountsOf(lc *localcfg.Config) map[string]string {
 	if lc == nil || len(lc.ClaudeAccountStages) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(lc.ClaudeAccountStages))
 	for stage, choice := range lc.ClaudeAccountStages {
-		if choice.ClaudeAccount != "" {
-			out[stage] = choice.ClaudeAccount
+		if account, _ := lc.ResolveAccount(choice.ClaudeAccount); account != "" {
+			out[stage] = account
 		}
 	}
 	return out
@@ -3011,11 +3143,17 @@ func stageAccountsOf(lc *localcfg.Config) map[string]string {
 // CheckStageAccountMix, cascade's project-wide accounts are skipped before that
 // rule is asked (config.CascadeSkippedStageAccounts), and an auth the launch
 // cannot resolve yet is not judged on a guess.
+//
+// The key resolves here (D2091, D2092): rung 2's answer is the account the
+// stage runs on, whatever name the key holds, and both callers compare it with
+// another account — claudeAccountFor with the mix's, mixedStageAccount with the
+// project default — so a name left as written would read as a second account.
 func stageAccountOf(lc *localcfg.Config, auth, stage string) string {
 	if lc == nil || (auth != "oauth" && auth != "api-key") {
 		return ""
 	}
-	return lc.ClaudeAccountStages[stage].ClaudeAccount
+	account, _ := lc.ResolveAccount(lc.ClaudeAccountStages[stage].ClaudeAccount)
+	return account
 }
 
 // mixRoutes is the provider routes this repository may use, as the run resolves
@@ -3099,14 +3237,20 @@ func mixMode(ctx context.Context, env *cloudEnv, repo string, co *config.Config)
 //
 // A launch that cannot read a document (no checkout) admits nothing: the mix is
 // a fact about the run's configuration, and a guess is not one.
-func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth string, co *config.Config) (string, error) {
+func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth string, co *config.Config) (string, string, error) {
 	if auth != "api-key" || !slices.Contains(config.MixedAccountStages, stage) {
-		return "", nil
+		return "", "", nil
 	}
 	if co == nil {
-		return "", nil
+		return "", "", nil
 	}
-	def := env.lc.DefaultClaudeAccount
+	// The default resolves before anything is judged of it (D2091, D2092): the
+	// mix's account is the account the key stands for, and the comparisons
+	// below — with the other mixed stage's key and with the allow-list — are
+	// all about accounts. An alias left as written would look like a name the
+	// allow-list does not hold and like a second credential beside a stage key
+	// naming its target.
+	def, defAlias := env.lc.ResolveAccount(env.lc.DefaultClaudeAccount)
 	// "" and the unsuffixed-default sentinel (config.DefaultClaudeAccount,
 	// "default") are the same answer here: a local config may spell the key
 	// either way (localcfg's choiceRefProblem admits the sentinel), and neither
@@ -3114,18 +3258,20 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 	// for the default account, which is exactly what spec.OAuthToken's own rule
 	// says (a run whose account is the sentinel sets no token at all). So the
 	// key declares no mix, and reading it as one would invent the second
-	// credential this rule refuses below.
+	// credential this rule refuses below. An alias whose target is the sentinel
+	// resolves into this same answer, which is the ruling's own case: it names
+	// no account of its own either.
 	if def == "" || def == config.DefaultClaudeAccount {
-		return "", nil
+		return "", "", nil
 	}
 	if !isClaudeModel(mixedStageModel(co.Agent, stage)) {
-		return "", nil
+		return "", "", nil
 	}
 	if _, _, served := config.ProviderFor(mixRoutes(env, repo, co), mixCoder(co)); !served {
-		return "", nil
+		return "", "", nil
 	}
 	if mixMode(ctx, env, repo, co) != policy.ModeEnforce {
-		return "", nil
+		return "", "", nil
 	}
 	// The run holds one Claude account (docs/design/mixed-credentials.md §11,
 	// "never a second provider's key"): the other mixed stage's own key names
@@ -3138,14 +3284,14 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 			continue
 		}
 		if account := stageAccountOf(env.lc, auth, other); account != "" && account != def {
-			return "", userErr("default_claude_account is %s and stages.%s.claude_account is %s: an api-key run holds one Claude account beside the provider key the gateway holds, and %s is already this run's — the project default would be a second credential. Name %s in both keys, or remove the project default",
+			return "", "", userErr("default_claude_account is %s and stages.%s.claude_account is %s: an api-key run holds one Claude account beside the provider key the gateway holds, and %s is already this run's — the project default would be a second credential. Name %s in both keys, or remove the project default",
 				pluginwire.Printable(def), other, pluginwire.Printable(account), pluginwire.Printable(account), pluginwire.Printable(account))
 		}
 	}
 	if err := claudeAccountMembership(env, repo, def); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return def, nil
+	return def, defAlias, nil
 }
 
 // mixedStageModel is the model a review stage runs, for the mix's
@@ -3459,12 +3605,17 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	// one, and the image gate below would not fire: a silent pull request
 	// where the owner asked for a file. The conservative direction is the
 	// right one; the owner reruns when the layer is reachable.
-	if rr.Recipe.Mode == recipe.ModeArtifact {
+	//
+	// A mode: evaluate launch carries its mode the same way and for the same
+	// reason: the runner's own shape, the branch claim its identity may not
+	// carry (budgetBranch) and the whole of the run's work are decided from
+	// the spec's mode before the recipe is read.
+	if rr.Recipe.Mode == recipe.ModeArtifact || rr.Recipe.Mode == recipe.ModeEvaluate {
 		if rr.Note != "" {
-			return nil, "", userErr("recipe %s is mode: artifact, but %s; the launch is refused rather than run without the recipe's mode in its task (retry when the layer is reachable)", rr.Name, rr.Note)
+			return nil, "", userErr("recipe %s is mode: %s, but %s; the launch is refused rather than run without the recipe's mode in its task (retry when the layer is reachable)", rr.Name, rr.Recipe.Mode, rr.Note)
 		}
 		if forAttempts {
-			return nil, "", userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; --attempts launches a fresh batch of pull requests and cannot use it", rr.Name)
+			return nil, "", userErr("recipe %s is mode: %s, which opens no pull request; --attempts launches a fresh batch of pull requests and cannot use it", rr.Name, rr.Recipe.Mode)
 		}
 	}
 	// A report recipe reads this repository's own run records and writes the
@@ -3484,8 +3635,12 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	// it at the ref: then the default is carried in the task.
 	override := flag == recipe.DefaultName && (cfg == nil || cfg.Agent.Recipe != "")
 	mode := ""
-	if rr.Recipe.Mode == recipe.ModeArtifact {
-		mode = recipe.ModeArtifact
+	// The two modes whose shape the runner selects from the spec: mode:
+	// review and mode: implement are decided from the task's own fields
+	// (ReviewPRs, the recipe's steps), so neither is carried here.
+	switch rr.Recipe.Mode {
+	case recipe.ModeArtifact, recipe.ModeEvaluate:
+		mode = rr.Recipe.Mode
 	}
 	return rr.taskRecipeEmbedding(override), mode, nil
 }
@@ -4327,10 +4482,19 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 // The runs are named in their short form: the line a person reads is where a
 // short run ID belongs, and the full one is one command away (D1705). The
 // JSON above keeps them whole.
+//
+// A launch whose account came through an alias names the pair the operator's
+// own config holds, `ALIAS -> ACCOUNT` (docs/account-aliases/spec.md §7,
+// D2099): the account alone would hide which alias decided the launch, and the
+// alias alone would hide the account the job it started on mounts. A launch
+// that read no alias prints what it always printed.
 func launchWhat(res launchResult) string {
 	what := task.ShortRun(oneLine(res.Run))
 	if res.PR > 0 {
 		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, task.ShortRun(oneLine(res.PreviousRun)))
+	}
+	if res.account.Alias != "" {
+		what += fmt.Sprintf(" (account %s -> %s)", pluginwire.Printable(res.account.Alias), pluginwire.Printable(res.account.Name))
 	}
 	return what
 }
@@ -4353,6 +4517,38 @@ func launchDetail(w io.Writer, res launchResult) error {
 	return nil
 }
 
+// recordedLaunch is what a run recorded about its own launch, read without
+// writing anything: launch.json as it stands, or — when the CLI that launched
+// the run died before writing one — the launch the run's own record names,
+// result.json's execution through backend.ParseExecution, which is what
+// existingLaunch's backfill is built from. staged tells the two apart.
+//
+// It has two callers and that is the point: the "already launched" check
+// below, and the job a launch continuing this run reuses (project_job.go,
+// spec.md §8, D907). The two cannot disagree about what a run's job was, and
+// the decision — which runs before the claim is taken, where a launch may not
+// write — reads the same answer without writing it: only existingLaunch
+// backfills.
+func recordedLaunch(ctx context.Context, s *runstore.Store) (*runstore.Launch, bool, error) {
+	if l, err := s.ReadLaunch(ctx); err == nil {
+		return l, false, nil
+	} else if !errors.Is(err, runstore.ErrNotFound) {
+		return nil, false, remote(err)
+	}
+	rec, err := s.ReadRecord(ctx)
+	if errors.Is(err, runstore.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, remote(err)
+	}
+	l := &runstore.Launch{Version: 1, Execution: rec.Execution, LaunchedAt: rec.StartedAt}
+	if id, ok := backend.ParseExecution(rec.Execution); ok {
+		l.Job = id.Job
+	}
+	return l, true, nil
+}
+
 // existingLaunch is the run's launch, or nil when it has not launched. When
 // the CLI that launched died before writing launch.json, it backfills one
 // from result.json, where the runner records the same canonical execution
@@ -4367,41 +4563,35 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 		}
 		return nil
 	}
-	if l, err := s.ReadLaunch(ctx); err == nil {
+	l, staged, err := recordedLaunch(ctx, s)
+	if err != nil || l == nil {
+		return nil, err
+	}
+	if !staged {
 		if err := check(l.Execution); err != nil {
 			return nil, err
 		}
 		return l, nil
-	} else if !errors.Is(err, runstore.ErrNotFound) {
-		return nil, remote(err)
 	}
-	rec, err := s.ReadRecord(ctx)
-	if errors.Is(err, runstore.ErrNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, remote(err)
-	}
-	if rec.Execution == "" {
+	if l.Execution == "" {
 		// It ran already, with no cloud execution (a local run against this
 		// bucket): never launch it again. Nothing to backfill, and nothing
 		// is stored: a run with no launch.json has no plan task for any
 		// reader to find, the same way it has no launcher (LaunchedBy).
-		return &runstore.Launch{Version: 1, RunID: runID, LaunchedAt: rec.StartedAt}, nil
+		return &runstore.Launch{Version: 1, RunID: runID, LaunchedAt: l.LaunchedAt}, nil
 	}
-	if err := check(rec.Execution); err != nil {
+	if err := check(l.Execution); err != nil {
 		return nil, err
 	}
 	// The backend is the one this command selected, read from its codec, not
 	// the constant Cloud Run's: a backfilled launch of a run that ran
 	// elsewhere must be recorded as that backend's, or fugaro logs, cancel
 	// and diagnose read the record against the wrong platform's names
-	// (design compute-backend.md §2.5).
-	l := &runstore.Launch{Version: 1, RunID: runID, Backend: launchBackend(env.be), Execution: rec.Execution, PlanTask: spec.PlanTask, LaunchedAt: rec.StartedAt}
-	if id, ok := backend.ParseExecution(rec.Execution); ok {
-		l.Job = id.Job
-	}
-	if err := s.WriteLaunch(ctx, l); errors.Is(err, runstore.ErrExists) {
+	// (design compute-backend.md §2.5). The execution and the job are the
+	// run's own record's (recordedLaunch); the run id and the plan task are
+	// this call's, as they are for a fresh launch.
+	backfill := &runstore.Launch{Version: 1, RunID: runID, Backend: launchBackend(env.be), Execution: l.Execution, Job: l.Job, PlanTask: spec.PlanTask, LaunchedAt: l.LaunchedAt}
+	if err := s.WriteLaunch(ctx, backfill); errors.Is(err, runstore.ErrExists) {
 		if l, err = s.ReadLaunch(ctx); err != nil {
 			return nil, remote(err)
 		}
@@ -4409,7 +4599,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	} else if err != nil {
 		return nil, remote(err)
 	}
-	return l, nil
+	return backfill, nil
 }
 
 // catalogDockerAsk answers whether this run needs a Docker daemon because the
@@ -4766,7 +4956,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// this CLI cannot read costs no claim to release — and it is resolved
 	// before the mint, because it is what the token's window is measured
 	// against.
-	job, err := env.launchProjectJobFor(ctx, spec)
+	job, err := env.launchProjectJobFor(ctx, slug, spec)
 	if err != nil {
 		return res, err
 	}

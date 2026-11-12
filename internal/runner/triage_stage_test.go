@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -650,8 +651,8 @@ func TestTriageSwitchIsReadFromThePublishedNode(t *testing.T) {
 		node string
 		want int
 	}{
-		{"the node turns it off", `{"version":4,"triage":false}`, 0},
-		{"the node leaves it on", `{"version":4,"triage":true}`, 1},
+		{"the node turns it off", fmt.Sprintf(`{"version":%d,"triage":false}`, projectpolicy.Version), 0},
+		{"the node leaves it on", fmt.Sprintf(`{"version":%d,"triage":true}`, projectpolicy.Version), 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

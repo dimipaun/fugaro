@@ -39,6 +39,7 @@ module "installation" {
   launchers                 = var.launchers
   launcher_accounts         = var.launcher_accounts
   operators                 = var.operators
+  viewers                   = var.viewers
   launcher_bucket_condition = var.launcher_bucket_condition
   budget                    = var.budget
   alert_email               = var.alert_email

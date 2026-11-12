@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -76,12 +77,15 @@ func TestLaunchPolicyGatesRefusesASlugOfAnotherRepository(t *testing.T) {
 	f := newLaunchBudget(t, "off")
 	// The allow-list admits every repository, so what refuses below is the
 	// binding and not the policy.
-	publishPolicy(t, f, `{"version":4,"allow_repos":["*"]}`)
-	env := memEnv(t, f.cloudFixture)
+	publishPolicy(t, f, `{"version":6,"allow_repos":["*"]}`)
+	// fileEnv and not memEnv: the gate now judges the job image as well, from
+	// the fixture's record bucket, and a memory bucket has no build record in
+	// it — a launch would be refused as one onto an image nobody has built.
+	env := fileEnv(t, f.cloudFixture)
 	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
 
 	// The pair that agrees is admitted: the refusal below is about the slug.
-	if err := launchPolicyGates(context.Background(), env, appSlug, spec); err != nil {
+	if err := launchPolicyGates(context.Background(), env, appSlug, spec, "web", false, false, io.Discard); err != nil {
 		t.Fatalf("the repository's own slug was refused: %v", err)
 	}
 
@@ -89,7 +93,7 @@ func TestLaunchPolicyGatesRefusesASlugOfAnotherRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = launchPolicyGates(context.Background(), env, other, spec)
+	err = launchPolicyGates(context.Background(), env, other, spec, "web", false, false, io.Discard)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want the binding's own refusal", err, ExitCode(err))
 	}
@@ -123,7 +127,7 @@ func TestProviderKindsAgreeWithTheConfigsList(t *testing.T) {
 // is the only reason an operator sees it now rather than as a failed run.
 func TestRunRefusesBeforeLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":4,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":5,"allow_repos":["github/other/*"]}`)
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
@@ -147,6 +151,125 @@ func TestRunRefusesBeforeLaunch(t *testing.T) {
 	}
 	if tok := readToken(t, f.cloudFixture, budgetRun); tok != "" {
 		t.Error("the refused launch left a budget token in the bucket")
+	}
+}
+
+// TestRunRefusesAJobImageThatCannotReadThePolicyNode: the policy node's
+// version is a lockstep like every other gate's (D990): a runner older than the
+// release that introduced the node's version refuses the whole node at
+// bootstrap, so a launch of a repository the node admits onto such a job image
+// is a run that dies on its first read — after an execution and a task exist and
+// after the attempt is spent. `fugaro update` migrates the node and rebuilds the
+// checkout's own job images, but a project has one node and many repositories,
+// and update rebuilds the derived images of the checkout it runs in alone, so
+// the launcher is the place the pair is judged: the node is read here anyway,
+// and the judge is the one every *Since gate uses (checkImageSince, whose
+// remedy is `fugaro image refresh --repo X --workflow Y`).
+//
+// The two directions of the same node are what the sub-tests pin apart: the
+// node this release writes needs an image at 0.23.0 or later, and the node one
+// shape-free step behind it (a version-4 node, which this binary reads as it
+// stands) needs only the release that introduced *that* version — so the
+// tolerance and the gate are one answer rather than two.
+func TestRunRefusesAJobImageThatCannotReadThePolicyNode(t *testing.T) {
+	oldImage := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, projectpolicy.VersionSince[projectpolicy.Version], -1)
+	for _, tc := range []struct {
+		name    string
+		version int
+		base    string
+		refused bool
+	}{
+		{"this release's node on an image that predates it", projectpolicy.Version, oldImage, true},
+		{"this release's node on the image that introduced it", projectpolicy.Version, "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[projectpolicy.Version], false},
+		{"the node one shape-free step behind, read on the image that introduced that one", projectpolicy.Version - 1, "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[projectpolicy.Version-1], false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			publishPolicy(t, f, fmt.Sprintf(`{"version":%d,"allow_repos":["github/acme/*"]}`, tc.version))
+			writeBuildRecord(t, f.cloudFixture, appSlug, "web", tc.base)
+			_, _, err := runBudget(t)
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("the launch was refused: %v", err)
+				}
+				return
+			}
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v (exit %d), want a user error: the job image cannot read the node it would have to run under", err, ExitCode(err))
+			}
+			for _, want := range []string{
+				fmt.Sprintf("policy version %d", tc.version), "fugaro " + projectpolicy.VersionSince[projectpolicy.Version],
+				tc.base, "acme/app", "web", imageGateRemedy,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			// The refusal is a gate and not a failed run: nothing of the launch
+			// exists. What the operator would otherwise pay for is an execution
+			// whose bootstrap halts, and the attempt is spent either way.
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("%d executions were created for a refused launch", n)
+			}
+			if storedTask(t, f.cloudFixture) {
+				t.Error("the refused launch stored a task")
+			}
+			if tok := readToken(t, f.cloudFixture, budgetRun); tok != "" {
+				t.Error("the refused launch left a budget token in the bucket")
+			}
+		})
+	}
+}
+
+// TestLaunchPolicyGatesRefusesASharedImageThatCannotReadThePolicyNode: the
+// policy node's lockstep on the third checkout mode, whose job image is a shared
+// dependency-layer image. Nothing about that mode's image is in a per-repository
+// build record — the repository's job runs a sibling's image, placed by the
+// refresh that built it — so the judge has to be the image lock, which is what
+// `checkSharedImageSince` reads and what the sharedSince gate already uses for
+// the same job. Judging it with the derived image's branch refuses it as a
+// workflow with no build record at all: the assertion below pins that the
+// refusal is the lockstep's and not that one, and the second half of the test
+// pins that the image which introduced the node's version passes, so the gate is
+// a lockstep and not a blanket refusal of shared launches.
+func TestLaunchPolicyGatesRefusesASharedImageThatCannotReadThePolicyNode(t *testing.T) {
+	f := newLaunchBudget(t, "off")
+	publishPolicy(t, f, `{"version":6,"allow_repos":["github/acme/*"]}`)
+	// fileEnv: the lock and the policy alike live in the fixture's bucket.
+	env := fileEnv(t, f.cloudFixture)
+	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	// The lock's own key: a value of the shape the lock holds, which no launch
+	// computes here (the key is the operator's machine's fact, §2.5).
+	const key = "9f2c1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7"
+	old := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, projectpolicy.VersionSince[projectpolicy.Version], -1)
+	lockWith(t, f.cloudFixture, key, old, "acme/app", appSlug, "web")
+
+	err := launchPolicyGates(context.Background(), env, appSlug, spec, "web", false, true, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v (exit %d), want a user error: the shared image predates the release that introduced the node's version", err, ExitCode(err))
+	}
+	for _, want := range []string{
+		fmt.Sprintf("policy version %d", projectpolicy.Version),
+		"fugaro " + projectpolicy.VersionSince[projectpolicy.Version],
+		old, "acme/app workflow web", "fugaro update --base base",
+		"fugaro image refresh --repo acme/app --workflow web",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The derived image's judge reads a build record this repository never wrote,
+	// and its refusal is the one this branch must not print: "no build record" is
+	// not a lockstep and would refuse every shared launch, at any image.
+	if strings.Contains(err.Error(), "has no build record") {
+		t.Errorf("the shared launch was judged as a workflow with no build record, which is the derived image's judge: %v", err)
+	}
+
+	// The image built from the release that introduced the node's version runs
+	// it, and the launch is not refused.
+	lockWith(t, f.cloudFixture, key, "ghcr.io/dimipaun/fugaro-base:"+projectpolicy.VersionSince[projectpolicy.Version], "acme/app", appSlug, "web")
+	if err := launchPolicyGates(context.Background(), env, appSlug, spec, "web", false, true, io.Discard); err != nil {
+		t.Errorf("the shared image at the release that introduced the node's version was refused: %v", err)
 	}
 }
 
@@ -198,7 +321,7 @@ func TestRunRefusesUnderAPolicyOfThePolicyGeneration(t *testing.T) {
 // batch the policy refuses.
 func TestRunAttemptsRefusesBeforeAnyLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":4,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":5,"allow_repos":["github/other/*"]}`)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "Add a feature")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error from the policy gate", err, ExitCode(err))
@@ -297,6 +420,10 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 // directions shared one sentence until this test: the binary looked newer than
 // the node in both, so an operator whose node was simply behind was told to
 // upgrade a Fugaro that was already ahead of it.
+//
+// Version 1 is the state no migration step reaches, which is why the delete is
+// the right advice for it; the test beside this one is the state the chain does
+// carry, where the delete is not.
 func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	publishPolicy(t, f, `{"version":1,"allow_repos":["*"]}`)
@@ -326,6 +453,50 @@ func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 	}
 }
 
+// The same gate, one version higher: a node the migration chain carries forward
+// — version 4 is the one 0.14.0 through 0.21 wrote, so it is the node every
+// installation holds between the binary upgrade and `fugaro update` — must not
+// be answered with the delete. `fugaro project policy publish --delete` loses
+// what only the node holds (the clone_urls, credentials, craft_credentials,
+// craft_pools and crafts blocks a publish rebuilds from the operator's own
+// config and not from the node), which is the state the update's policy stage
+// exists to migrate in place, and the same move doctor's policy-older-than-binary
+// names for it. An operator who read the delete here would take it, and the
+// node's own members would be gone before the republish.
+//
+// The gate is where the operator meets this: it runs before any execution
+// exists, so the launch is refused with the move that keeps the node.
+func TestRunRefusesACarriedPolicyWithTheUpdateAndNotTheDelete(t *testing.T) {
+	stale := newestRefusedVersion(t)
+	f := newLaunchBudget(t, "enforce")
+	publishPolicy(t, f, fmt.Sprintf(`{"version":%d,"allow_repos":["*"]}`, stale))
+	_, _, err := runBudget(t)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
+	}
+	for _, want := range []string{
+		fmt.Sprintf("the project policy is version %d", stale),
+		fmt.Sprintf("this Fugaro understands version %d", projectpolicy.Version),
+		"fugaro update", "rewrites the node in place", "keeping the members it carries", policySince,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The three moves that are wrong advice here: the delete, which costs the
+	// node what a publish rebuilds from this machine's config; the upgrade,
+	// which is the opposite direction's remedy and changes nothing; and the
+	// rules-only update, which writes no policy node at all.
+	for _, bad := range []string{"publish --delete", "upgrade", "update --firebase-project"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("the refusal tells the operator to %q, and the node it is about is one `fugaro update` migrates in place: %v", bad, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions were created for a refused launch", n)
+	}
+}
+
 // The two directions as the sentences themselves, at the layer all three
 // callers share (launch_budget.go's policyReadErr and run_allowlist.go's
 // policySkewRefusal here, internal/runner's unreadablePolicy there, all of
@@ -335,6 +506,7 @@ func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 // internal/projectpolicy at all — one wording, one helper, three readers.
 func TestSkewSentencesSplitByDirection(t *testing.T) {
 	older := &projectpolicy.VersionError{Found: 0, Understood: projectpolicy.Version}
+	carried := &projectpolicy.VersionError{Found: projectpolicy.Version - 1, Understood: projectpolicy.Version}
 	newer := &projectpolicy.VersionError{Found: projectpolicy.Version + 1, Understood: projectpolicy.Version}
 	understood := fmt.Sprintf("version %d", projectpolicy.Version)
 	for _, tc := range []struct {
@@ -344,9 +516,14 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 		notWant []string
 	}{
 		{
-			name: "the node is older", ve: older,
+			name: "the node is older and no step reaches it", ve: older,
 			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publish it again"},
-			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "update --firebase-project"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "update --firebase-project", "rewrites the node in place"},
+		},
+		{
+			name: "the node is older and the chain carries it", ve: carried,
+			want:    []string{fmt.Sprintf("version %d", projectpolicy.Version-1), understood, "fugaro update", "rewrites the node in place", "keeping the members it carries"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "update --firebase-project", "publish --delete"},
 		},
 		{
 			name: "the node is newer", ve: newer,
@@ -374,6 +551,10 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 	gate := policySkewRefusal(older).Error()
 	if !strings.Contains(gate, "publish --delete") || strings.Contains(gate, "upgrade Fugaro") {
 		t.Errorf("policySkewRefusal(older) = %q, want the delete remark and not the upgrade one", gate)
+	}
+	carriedGate := policySkewRefusal(carried).Error()
+	if !strings.Contains(carriedGate, "fugaro update") || strings.Contains(carriedGate, "publish --delete") || strings.Contains(carriedGate, "upgrade Fugaro") {
+		t.Errorf("policySkewRefusal(carried) = %q, want the update's in-place rewrite and neither the delete nor the upgrade", carriedGate)
 	}
 	if !strings.Contains(policySkewRefusal(newer).Error(), "upgrade Fugaro") {
 		t.Errorf("policySkewRefusal(newer) = %q, want the upgrade remark", policySkewRefusal(newer))
@@ -405,12 +586,15 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 //   - a version no row names (99): the upgrade alone. Borrowing a row's release
 //     would name one that is already installed, which is the same fault one
 //     release further out;
-//   - the other direction (a version-1 node, read by this binary): unchanged,
-//     and the one place the model's own release belongs — what wrote a node of
-//     a version below projectpolicy.Version — with the delete-then-publish
-//     remedy and not the upgrade.
+//   - the other direction (a node behind this binary): unchanged, and the one
+//     place the model's own release belongs — what wrote a node of a version
+//     below projectpolicy.Version — with the remedy the migration chain decides
+//     between: `fugaro update`, which rewrites the node in place, for a version
+//     a step reaches (the version-4 node every installation holds between the
+//     upgrade and the update), and the delete-then-publish for one below the
+//     chain's first step. Neither is the upgrade.
 func TestPolicySkewRefusalNamesTheReleaseThatIntroducedTheVersion(t *testing.T) {
-	version1 := projectpolicy.Version - 1
+	behind := projectpolicy.Version - 1
 	unknown := &projectpolicy.VersionError{Found: 99, Understood: projectpolicy.Version}
 	for _, tc := range []struct {
 		name    string
@@ -443,10 +627,16 @@ func TestPolicySkewRefusalNamesTheReleaseThatIntroducedTheVersion(t *testing.T) 
 			notWant: []string{"upgrade Fugaro", "arrived in fugaro", projectpolicy.VersionSince[2]},
 		},
 		{
-			name:    "the other direction, a node behind this binary",
-			ve:      &projectpolicy.VersionError{Found: version1, Understood: projectpolicy.Version},
-			want:    []string{fmt.Sprintf("version %d", version1), "policy model is fugaro " + policySince, "publish --delete"},
-			notWant: []string{"upgrade Fugaro", "arrived in fugaro"},
+			name:    "the other direction, a node behind this binary that no step reaches",
+			ve:      &projectpolicy.VersionError{Found: 1, Understood: projectpolicy.Version},
+			want:    []string{"version 1", "policy model is fugaro " + policySince, "publish --delete"},
+			notWant: []string{"upgrade Fugaro", "arrived in fugaro", "rewrites the node in place"},
+		},
+		{
+			name:    "the other direction, a node behind this binary the chain carries",
+			ve:      &projectpolicy.VersionError{Found: behind, Understood: projectpolicy.Version},
+			want:    []string{fmt.Sprintf("version %d", behind), "policy model is fugaro " + policySince, "fugaro update", "rewrites the node in place"},
+			notWant: []string{"upgrade Fugaro", "arrived in fugaro", "publish --delete"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

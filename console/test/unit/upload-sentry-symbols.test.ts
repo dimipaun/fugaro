@@ -242,7 +242,7 @@ describe('the symbol upload with a token', () => {
     expect(recorded(record).filter((line) => line.includes('sourcemaps inject'))).toEqual([])
   })
 
-  it('reaches the CLI with the token in its environment and nowhere else', () => {
+  itHostRoute('reaches the CLI with the token in its environment and nowhere else', () => {
     const dir = scratch()
     const { env, record } = uploadEnv(dir)
     runScript(env)

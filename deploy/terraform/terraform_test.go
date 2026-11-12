@@ -1053,12 +1053,13 @@ func TestLogSinkRoutesBothPlatforms(t *testing.T) {
 			t.Errorf("%s mixes AND with OR in one group: %s\nCloud Logging binds AND loosest, so this does not group the way it reads", c.what, c.filter)
 		}
 	}
-	// Both the sink and the exclusion carry both arms; the view's IAM
-	// member still names only the launchers and operators.
+	// Both the sink and the exclusion carry both arms; the view's IAM member
+	// names the launchers, the operators and the viewers — the viewer list is
+	// RS4's, and a viewer reads a run's own output (D684).
 	for _, want := range []string{
 		"filter                 = local.fugaro_logs",
 		"filter  = \"${local.fugaro_logs} AND NOT",
-		"for_each = var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([])",
+		"for_each = var.log_isolation ? toset(concat(var.launchers, var.operators, var.viewers)) : toset([])",
 		"role     = \"roles/logging.viewAccessor\"",
 	} {
 		if !strings.Contains(src, want) {
@@ -1311,9 +1312,12 @@ func TestHistoryRunsBucketIsReadOnly(t *testing.T) {
 }
 
 // M9d: serviceusage.services.use (serviceUsageConsumer) is granted on the
-// Firebase project only, in the firebase module, to the people set (like
-// datastore.viewer) and the history account; never to job accounts, never
-// with a domain or wildcard member.
+// Firebase project only, in the firebase module, to the readers set (the
+// people and the viewer list, exactly as datastore.viewer is: the spend
+// history is one of the reads a viewer is for, and a datastore.viewer
+// without the quota project is a Firestore call that is refused) and the
+// history account; never to job accounts, never with a domain or wildcard
+// member.
 func TestUsageConsumerOnlyInFirebaseModule(t *testing.T) {
 	seen := map[string]bool{}
 	walk(t, func(path string, b []byte) {
@@ -1332,8 +1336,8 @@ func TestUsageConsumerOnlyInFirebaseModule(t *testing.T) {
 				if !strings.Contains(blk.body, "var.history_account") {
 					t.Errorf("%s: history_usage does not name the history account", path)
 				}
-			} else if blk.name != "google_project_iam_member.usage_consumer" || !strings.Contains(blk.body, "setunion(local.people, local.admins)") {
-				t.Errorf("%s: %s: only usage_consumer (people and admins) and history_usage may grant it", path, blk.name)
+			} else if blk.name != "google_project_iam_member.usage_consumer" || !strings.Contains(blk.body, "setunion(local.readers, local.admins)") {
+				t.Errorf("%s: %s: only usage_consumer (the readers and the admins, as datastore_viewer grants it) and history_usage may grant it", path, blk.name)
 			}
 		}
 	})

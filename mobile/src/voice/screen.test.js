@@ -283,6 +283,36 @@ test('one utterance at a time: two queued updates are spoken one after the other
   assert.deepEqual(h.screen.state().queued, []);
 });
 
+test('a held queue speaks nothing at any boundary, and letting it go drains it', async () => {
+  const h = await harness({ switch: INTERRUPT_SWITCH.ON });
+  h.screen.setDigest(digestOf(SEVERITY.failed));
+
+  // VS1.1's session holds the queue while it is paused or over, because the
+  // stop that pauses it cancels the utterance in flight -- and that cancel is
+  // itself an `utterance` event, so the queue's next update would otherwise be
+  // spoken into the call the pause exists for.
+  assert.deepEqual({ ...h.screen.setHeld(true) }, { ok: true, held: true });
+  h.screen.offer({ text: 'a run failed', severity: SEVERITY.failed });
+  assert.deepEqual(h.tts.spoken(), [], 'a held queue is not spoken, though the boundary is free');
+  assert.deepEqual(h.screen.state().queued, [{ text: 'a run failed', severity: 'failed' }], 'and nothing is dropped');
+
+  // No boundary drains it while it is held: the switch off and on again is the
+  // boundary that would speak it, and it speaks nothing.
+  h.screen.setSwitch(INTERRUPT_SWITCH.OFF);
+  h.screen.setSwitch(INTERRUPT_SWITCH.ON);
+  assert.deepEqual(h.tts.spoken(), [], 'and no boundary in between speaks it');
+
+  assert.deepEqual({ ...h.screen.setHeld(false) }, { ok: true, held: false });
+  assert.deepEqual(h.tts.spoken(), ['a run failed'], 'letting go is the boundary it goes out on');
+  assert.deepEqual(h.screen.state().queued, []);
+
+  // Re-stating the same value is not a refusal and says nothing new -- and a
+  // hold that is not a boolean is refused rather than stored.
+  assert.deepEqual({ ...h.screen.setHeld(false) }, { ok: true, held: false });
+  assert.deepEqual(h.tts.spoken(), ['a run failed'], 'and it is not said twice');
+  assert.deepEqual({ ...h.screen.setHeld('yes') }, { ok: false, code: 'bad-held', field: 'held' });
+});
+
 // --- the plan, sentence four -----------------------------------------------
 
 test('the plan, sentence four: the digest\'s highest severity is the only thing that interrupts', async () => {

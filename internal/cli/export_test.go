@@ -18,6 +18,7 @@ func resetExtend() {
 	registrationsSealed = false
 	launchDeclarer, launchDeclarerSet = nil, false
 	launchPlanner, launchPlannerSet = nil, false
+	recipeManifests = map[string]RecipeManifest{}
 }
 
 // setPaidNames replaces the paid-command list and returns the restore. A test

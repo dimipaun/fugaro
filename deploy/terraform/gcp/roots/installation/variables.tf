@@ -86,6 +86,12 @@ variable "launcher_accounts" {
   nullable = false
 }
 
+variable "viewers" {
+  type     = list(string)
+  default  = []
+  nullable = false
+}
+
 variable "launcher_bucket_condition" {
   type = object({
     title      = string

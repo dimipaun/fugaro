@@ -133,11 +133,11 @@ func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {
 }
 
 // projectPolicyRead is the CLI's read of the project's policy with the
-// operator's own credentials: the one read the CLI itself makes of the node
-// (Readiness's D11 gate, the launch gate, and in mintBudgetToken the decision
-// whether a run needs a budget identity at all). A project whose config
-// carries no database URL has no policy this CLI can see, and says so without
-// a call. policyReadOnce is what callers use, so one launch reads it once.
+// operator's own credentials: the read the CLI decides by (Readiness's D11
+// gate, the launch gate, and in mintBudgetToken the decision whether a run
+// needs a budget identity at all). A project whose config carries no database
+// URL has no policy this CLI can see, and says so without a call.
+// policyReadOnce is what callers use, so one launch reads it once.
 //
 // It is the read with projectpolicy's typed errors intact, not the wording
 // (policyReadErr), for the one caller that words the version skew itself —
@@ -151,6 +151,39 @@ func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {
 // rather than the error: a key nobody reads is a policy that never takes
 // effect, and the launch gate must not pass over one either.
 func projectPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
+	return policyReadWith(ctx, lc, projectpolicy.Read)
+}
+
+// repoPolicyRead is the repository stage's read of the same node, carried
+// forward from projectpolicy.ShapeFreeFloor up
+// (projectpolicy.ReadCarriedForwardShapeFree) instead of refused.
+//
+// The repository stage runs before the policy stage, and the node the first
+// `fugaro update` after a version bump reads is written in the version behind:
+// a strict read refuses it, the stage then passes no policy at all
+// (repoPolicyInput), and internal/infra reads a nil policy as "nothing is
+// proxied" — the repository root loses the bitbucket_proxied fact, the job's
+// service account regains the accessor and the mount on bitbucket-token that
+// the credentials-service proxy withholds, and the node's published image
+// catalog and image map are not enforced. That is the HARD RULE's second
+// command, so the stage reads the node the policy stage is about to write: a
+// carry in memory states exactly what the operator's own migration writes from
+// ShapeFreeFloor up (projectpolicy's doc on that floor is the argument), and
+// nothing is written back here.
+//
+// It is deliberately not the memoized read (policyReadOnce): that one is the
+// read the gates and the launch decide by, where a node no version of this
+// reader understands is a refusal rather than a document to enforce, and it is
+// shared by a dozen callers whose answer must not change. This read is the
+// repository stage's alone, so an update reads the node one more time.
+func repoPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
+	return policyReadWith(ctx, lc, projectpolicy.ReadCarriedForwardShapeFree)
+}
+
+// policyReadWith is the two reads above with the decode as its parameter: the
+// config's own answer without a call, the client, and the unknown-keys refusal
+// both of them want.
+func policyReadWith(ctx context.Context, lc *localcfg.Config, read func(context.Context, *rtdb.Client) (*projectpolicy.Policy, bool, error)) (*projectpolicy.Policy, bool, error) {
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, false, nil
 	}
@@ -158,7 +191,7 @@ func projectPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy
 	if err != nil {
 		return nil, false, err
 	}
-	p, found, err := projectpolicy.Read(ctx, db)
+	p, found, err := read(ctx, db)
 	if err != nil {
 		return nil, false, err
 	}
@@ -192,12 +225,14 @@ func policyReadErr(err error) error {
 	var me *projectpolicy.MarkerError
 	switch {
 	case errors.As(err, &ve):
-		// The remedy depends on the direction of the skew — an older node is
-		// removed with `fugaro project policy publish --delete` before this
-		// release publishes again (never a re-run of init, which writes no
-		// policy node), an older binary wants upgrading — and
+		// The remedy depends on the direction of the skew — an older binary
+		// wants upgrading, and an older node is moved by whichever of the two
+		// moves its version allows: `fugaro update`'s in-place rewrite for one
+		// the migration chain carries, `fugaro project policy publish
+		// --delete` and a fresh publish for one below the chain's first step
+		// (never a re-run of init, which writes no policy node) — and
 		// projectpolicy.SkewSentence is the one place that picks between the
-		// two sentences for this reader (the launch gate beside this file
+		// sentences for this reader (the launch gate beside this file
 		// words the same error through it, ReaderCLI, and so does the
 		// runner's own refusal, ReaderRunner).
 		return userErr("%s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderCLI))
@@ -220,13 +255,15 @@ func policyReadErr(err error) error {
 	}
 }
 
-// policyReadOnce memoizes one CLI run's read of the policy: update --repo asks
-// twice (once before the first plan, once after the builds) and must not pay
-// for it twice, and a launch asks twice on one path too — the gate before
-// anything of it exists, and the mint decision — where two reads could
-// disagree about the policy a single launch is admitted against. The answer
-// cannot change under either of them (and where it could, the run reads the
-// node itself and is the one that counts).
+// policyReadOnce memoizes one CLI run's read of the policy: a launch asks twice
+// on one path — the gate before anything of it exists, and the mint decision —
+// where two reads could disagree about the policy a single launch is admitted
+// against, and the Readiness gate planRepo reads shares that one answer with
+// every other caller of the run. The repository stage's own read is deliberately
+// not this one (repoPolicyRead carries a predecessor forward, which this read
+// must not do), so a run that converges a checkout reads the node one time more
+// than the memo alone would. The answer cannot change under any of them (and
+// where it could, the run reads the node itself and is the one that counts).
 //
 // What is memoized is the raw read, projectPolicyRead's result with
 // projectpolicy's typed errors intact, because two callers word the same error
@@ -807,8 +844,9 @@ var newSealKey = token.NewKey
 
 // budgetBranch is the branch the run's identity may push (fb, G6): the branch
 // a first run creates, or the one a follow-up continues. A review run writes
-// only comments on its pull requests and an artifact run produces files, so
-// neither pushes and neither carries a branch — the proxy admits both with no
+// only comments on its pull requests, an artifact run produces files and an
+// evaluate run works on objects the runs bucket already holds, so none of the
+// three pushes and none carries a branch — the proxy admits all three with no
 // fb and refuses every push of theirs (B1.4).
 //
 // The branch a follow-up continues is checked here rather than minted
@@ -820,7 +858,7 @@ var newSealKey = token.NewKey
 // refusal there halts the run. So the pairing is refused at the launch, where
 // nothing has been signed yet; see the arm below.
 func budgetBranch(spec *task.Spec) (string, error) {
-	if spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact {
+	if spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact || spec.Mode == recipe.ModeEvaluate {
 		return "", nil
 	}
 	if spec.Branch == "" {

@@ -68,16 +68,22 @@ func newManagedAuditRig(t *testing.T, o managedAuditOpts) *managedAuditRig {
 
 // file writes one record of the day through the writer the commands themselves
 // call, so what the check reads back is an object this program produced and not
-// one a test hand-wrote. warnings are the CONTENT rules a warned verdict
-// recorded (D1545), and they are passed only with AuditWarned: the record's own
-// writer reads its verdict off the Converge, so a test that filed a warned
-// record with no warnings would be building a state no command can reach.
+// one a test hand-wrote. warnings are the CONTENT rules a verdict carries: a
+// warned record's own findings (D1545) and, since the ruling of 2026-11-11, the
+// findings a REFUSED step raised beside the rules that stopped it. Only a
+// verdict whose writer can reach them takes them: the record's own writer reads
+// its verdict off the Converge, so a test that filed, say, an admitted record
+// with warnings would be building a state no command can reach.
 func (r *managedAuditRig) file(t *testing.T, command, doc string, verdict managedmode.AuditVerdict, at time.Time, warnings ...string) managedmode.AuditRecord {
 	t.Helper()
 	conv := managedmode.ConvergeAdmitted([]byte(doc), initflow.YesOrTyped, []string{"every key is in the registry"})
 	switch verdict {
 	case managedmode.AuditRefused:
-		conv = managedmode.ConvergeRefused([]byte(doc), initflow.YesOrTyped, []string{"the plan removes an address the owner's list does not name"})
+		rules := []string{"the plan removes an address the owner's list does not name"}
+		conv = managedmode.ConvergeRefused([]byte(doc), initflow.YesOrTyped, rules)
+		if len(warnings) > 0 {
+			conv = managedmode.ConvergeRefusedWithWarnings([]byte(doc), initflow.YesOrTyped, rules, warnings)
+		}
 	case managedmode.AuditWarned:
 		conv = managedmode.ConvergeWarned([]byte(doc), initflow.YesOrTyped,
 			[]string{"the cover of the embedded roots refused no change of this plan that its integrity rules judge — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"}, warnings)
@@ -280,6 +286,48 @@ func TestDoctorFlagsAnOutOfTableGrant(t *testing.T) {
 			t.Errorf("doctor failed an installation whose gate admitted every step it ran: a warned apply is a decision, not a fault (%+v)", o.Checks)
 		}
 	})
+}
+
+// TestDoctorDoesNotReportARefusedRecordAsAWarnedOne: since the ruling of
+// 2026-11-11 a REFUSED record can carry findings too (ConvergeRefusedWithWarnings
+// — a plan the integrity rules stopped may also have raised content ones), so
+// "the record carries findings" is no longer the same fact as "the step was
+// applied with them". The warned branch is keyed on the VERDICT for exactly
+// that reason, and this is the test of the sentence it protects: a refusal
+// reported as an apply that went ahead with warnings would tell an owner that
+// something is in their project which nothing applied.
+//
+// The refusal is still a measurement and not a finding — what it refused is on
+// the object, and its own line names the verdict — so this also pins that the
+// check did not become a second thing doctor fails on.
+func TestDoctorDoesNotReportARefusedRecordAsAWarnedOne(t *testing.T) {
+	const finding = "cover: module.installation.google_storage_bucket.runs — the cover does not announce this bucket, so the tables do not carry it"
+	r := newManagedAuditRig(t, managedAuditOpts{})
+	refused := r.file(t, "fugaro managed apply", `{"version":1}`, managedmode.AuditRefused, managedAuditTestNow.Add(-time.Hour), finding)
+
+	o := doctorJSON(t)
+	c, ok := doctorCheckByID(o.Checks, "managed-audit")
+	if !ok {
+		t.Fatalf("no managed-audit check: %+v", o.Checks)
+	}
+	if !c.OK || c.Severity != "info" {
+		t.Errorf("check = %+v, want a refusal to stay a measurement: nothing was applied, and what was refused is on the record", c)
+	}
+	if !strings.Contains(c.Problem, "refused") {
+		t.Errorf("problem = %q, want the record's own verdict", c.Problem)
+	}
+	if strings.Contains(c.Problem, finding) {
+		t.Errorf("problem = %q, want the refused record NOT reported as one applied with the finding (%q): that sentence sends an owner looking for a change nothing applied", c.Problem, finding)
+	}
+	if strings.Contains(c.Problem, "applied with findings") {
+		t.Errorf("problem = %q, want no apply-with-findings sentence about a refusal", c.Problem)
+	}
+	if !strings.Contains(c.Problem, refused.PlanDigest) {
+		t.Errorf("problem = %q, want the refused record's own digest (%q)", c.Problem, refused.PlanDigest)
+	}
+	if !o.OK {
+		t.Errorf("doctor failed on a project whose only record is a refusal: the gate refusing is the gate working (%+v)", o.Checks)
+	}
 }
 
 // TestDoctorManagedAuditNeverPassesSilentlyOnAReadThatFailed: a family that

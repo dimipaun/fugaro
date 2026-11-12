@@ -352,6 +352,11 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 	}{
 		// What the modules grant.
 		{project, "projects/proj-1/roles/fugaroLauncher", person, true},
+		// The viewer's read-only job role (RS4, roles.md §4): a person the
+		// review screen lists, and no account of Fugaro's own — the row's
+		// kinds are the whole of its condition, and
+		// TestViewerRoleIsGrantedToListedPeopleAlone reads every one of them.
+		{project, "projects/proj-1/roles/" + ViewerRole, person, true},
 		{project, "roles/datastore.viewer", person, true},
 		// The whole-project inventory's read role, on the operator who runs
 		// the managed apply that makes the read: the installation's own custom
@@ -399,6 +404,7 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{project, "roles/iam.serviceAccountUser", person, false},
 		{project, "projects/proj-1/roles/fugaroTokenMinter", person, false},
 		{project, "projects/proj-1/roles/fugaroLauncher", account, false},
+		{project, "projects/proj-1/roles/" + ViewerRole, account, false},
 		{project, "projects/proj-1/roles/fugaroJobRunner", person, false},
 		{project, "roles/datastore.user", person, false},
 		{project, "roles/cloudasset.viewer", account, false},
@@ -1815,5 +1821,89 @@ func TestCoverMCPNamesAreTheWritersNames(t *testing.T) {
 		if !tc.want.Match(b) {
 			t.Errorf("%s declares no name tf/cover.go holds the front door's account and its store by: update tf/cover.go's literal with it", tc.where)
 		}
+	}
+}
+
+// The row the viewer's project role is granted through — RS4's "cover test
+// that the new row requires its condition". The row's one condition is the
+// KIND of principal: a member the run's review screen lists, which is a person,
+// a group or a service account someone named, and nothing Fugaro creates for
+// itself. That is what keeps it from being the launcher's row, where the same
+// table takes the accounts too (toPeople | toAccounts): an installation's own
+// job, build, history, coordinator, verifier, catalog-check or front-door
+// account holds the grants its work needs, and the read of every run is not one
+// of them.
+//
+// Fails when the row is widened to the accounts or to one kind of Fugaro
+// account alone (a condition function), which is how a plan that handed an
+// agent's account the read of every run and its logs would pass unseen.
+func TestViewerRoleIsGrantedToListedPeopleAlone(t *testing.T) {
+	const (
+		project = "google_project_iam_member"
+		person  = "user:me@example.com"
+		group   = "group:ops@example.com"
+	)
+	role := "projects/proj-1/roles/" + ViewerRole
+	for _, c := range []struct {
+		what   string
+		member string
+		ok     bool
+	}{
+		{"a person the review screen lists", person, true},
+		{"a group the review screen lists", group, true},
+		{"a person the review screen does not list", "user:nobody@example.com", false},
+		{"a group the review screen does not list", "group:nobody@example.com", false},
+		{"the history account", "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com", false},
+		{"a repository's job account", "serviceAccount:fugaro-acme-0123456789abcdef@proj-1.iam.gserviceaccount.com", false},
+		{"the deployer account", "serviceAccount:" + DeployerAccount("proj-1"), false},
+		{"the credentials service's account", "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com", false},
+		{"the coordinator's writer account", "serviceAccount:" + CoordinatorAccountID + "@proj-1.iam.gserviceaccount.com", false},
+		{"the verifier account", "serviceAccount:" + VerifierAccountID + "@proj-1.iam.gserviceaccount.com", false},
+		{"the catalog check job's account", "serviceAccount:" + CatalogCheckAccountID + "@proj-1.iam.gserviceaccount.com", false},
+		{"the front door's account", "serviceAccount:" + MCPServerAccountID + "@proj-1.iam.gserviceaccount.com", false},
+		{"a service account outside Fugaro", "serviceAccount:builder@other.iam.gserviceaccount.com", false},
+	} {
+		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{grant(project, c.member, role)}}, nil)
+		if (len(got) == 0) != c.ok {
+			t.Errorf("%s (%s) granted the viewer's role: NotCovered = %q, covered want %v", c.what, c.member, got, c.ok)
+		}
+	}
+}
+
+// The viewer's read-only job role is the launcher's list minus
+// run.executions.cancel and nothing else (RS4, roles.md §4): every read a
+// launcher makes a viewer makes, and the one thing a viewer cannot do is stop
+// another person's run.
+//
+// Fails when the role narrows anything but the cancel, and — reading the
+// launcher's list too — when the launcher's role loses the cancel, which would
+// leave the viewer and the launcher holding one role and the difference the
+// viewer's role exists for gone with nothing failing.
+func TestViewerRoleHasNoCancelPermission(t *testing.T) {
+	launcher, ok := RolePermissions["fugaroLauncher"]
+	if !ok {
+		t.Fatal("RolePermissions holds no fugaroLauncher entry")
+	}
+	if !slices.Contains(launcher, "run.executions.cancel") {
+		t.Fatal("the launcher's role no longer holds run.executions.cancel: the viewer's role is defined as that list minus it")
+	}
+	var want []string
+	for _, p := range launcher {
+		if p != "run.executions.cancel" {
+			want = append(want, p)
+		}
+	}
+	viewer, ok := RolePermissions[ViewerRole]
+	if !ok {
+		t.Fatalf("RolePermissions holds no %s entry", ViewerRole)
+	}
+	if slices.Contains(viewer, "run.executions.cancel") {
+		t.Error("the viewer's role holds run.executions.cancel: a viewer could cancel another person's run")
+	}
+	if !slices.Equal(slices.Sorted(slices.Values(viewer)), slices.Sorted(slices.Values(want))) {
+		t.Errorf("the viewer's role holds %v, want the launcher's list minus run.executions.cancel: %v", viewer, want)
+	}
+	if !slices.Contains(FugaroRoles, ViewerRole) {
+		t.Errorf("FugaroRoles does not name %s, so a plan that creates it is not covered", ViewerRole)
 	}
 }

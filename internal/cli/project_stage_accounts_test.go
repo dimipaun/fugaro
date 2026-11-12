@@ -69,6 +69,43 @@ func TestPublishCarriesTheAccountChoiceKeys(t *testing.T) {
 	}
 }
 
+// aliasAccountProjectYAML is stageAccountProjectYAML with the two choice keys
+// naming an alias of the account instead of the account itself, which is what
+// the ruling exists for: one edit moves every key that names it.
+const aliasAccountProjectYAML = "claude_accounts:\n" +
+	"  acme-overflow: { allow_data_to: [acme/app] }\n" +
+	"claude_account_aliases:\n" +
+	"  reviewer: acme-overflow\n" +
+	"profiles:\n" +
+	"  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, claude_accounts: [acme-overflow], allow_repos: [\"github/acme/app\"] }\n" +
+	"default_claude_account: reviewer\n" +
+	"stages:\n" +
+	"  review:\n" +
+	"    claude_account: reviewer\n"
+
+// TestPublishResolvesAnAliasToItsAccount: the node is read by every job image,
+// and by the launcher of every teammate, none of which holds this machine's
+// aliases — so a name written into the node by its own alias would name no
+// account at all (docs/account-aliases, F4, D2090). The publish is the reader
+// that writes the node, so it writes the account the alias stands for, and the
+// node stays a node of accounts.
+func TestPublishResolvesAnAliasToItsAccount(t *testing.T) {
+	f := newProjectFixture(t, aliasAccountProjectYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if p.DefaultClaudeAccount != "acme-overflow" {
+		t.Errorf("DefaultClaudeAccount = %q, want the account the alias stands for", p.DefaultClaudeAccount)
+	}
+	if len(p.ClaudeAccountStages) != 1 || p.ClaudeAccountStages["review"] != "acme-overflow" {
+		t.Errorf("ClaudeAccountStages = %v, want review: acme-overflow", p.ClaudeAccountStages)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); strings.Contains(raw, "reviewer") {
+		t.Errorf("the node carries the alias by its own name:\n%s", raw)
+	}
+}
+
 // stageAccountProject writes a project config that holds the given accounts
 // block and account-choice keys over the budget a validate needs, and returns
 // the repository file beside it — one that names agent.auth: api-key, which is

@@ -1292,6 +1292,42 @@ func withVision(t *testing.T, cfg, model string) string {
 	return out
 }
 
+// TestGatewayStageSpecCarriesTheVisionModel (V4, D2009): the run's
+// agent.models.vision travels into the stage the gateway is told about, so the
+// image refusal a stage meets names the model the owner configured — priced as
+// any model is, and with no image rate of its own — rather than the key to set.
+// The call is still refused and the run still dies: what the slot changes here
+// is the sentence, and V7 is what makes a stage run the vision model at all.
+//
+// Mutation (drop Vision from stageSpec): the refusal names the key instead of
+// the model and this test is red.
+func TestGatewayStageSpecCarriesTheVisionModel(t *testing.T) {
+	const vision = "deepseek/deepseek-v4-vision"
+	prices := `{"` + vision + `": {"input_per_m": 1, "output_per_m": 2}}`
+	g := routeRun(t, withVision(t, providerPinned(t), vision), "enforce", "50",
+		[]string{"deepseek/*"}, prices, nil, "acme/app")
+	g.setTask(t, "Refactor the palette handling in the theme layer")
+	var refusal string
+	reads := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		status, body := postImage(t, req, deepseek)
+		refusal = body
+		if status != 400 {
+			t.Errorf("the image call is answered %d, want 400: %s", status, body)
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := g.run(t, reads)
+	if err != nil || rec.Status != runstore.StatusFailed {
+		t.Fatalf("an image the coder cannot reserve did not fail the run: rec = %+v, err = %v", rec, err)
+	}
+	if !strings.Contains(refusal, "agent.models.vision is "+vision) {
+		t.Errorf("the refusal %q does not name the model the run configured for images", refusal)
+	}
+	if !strings.Contains(refusal, "model_prices' image_tokens") {
+		t.Errorf("the refusal %q names no price lever", refusal)
+	}
+}
+
 // capScript replies to each call with $0.04 of output.
 func capScript(n int) []anthropicfake.Reply {
 	out := make([]anthropicfake.Reply, n)

@@ -32,11 +32,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/firestore"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -771,6 +773,31 @@ const syncAppKeyFlag = "--github-app-key"
 // secret (init's own words for it).
 const syncAppIDFlag = "--github-app-id"
 
+// syncBitbucketFlag takes the Bitbucket listing instead of GitHub's. Its value
+// is the workspace, and the token it needs is read from stdin or a hidden
+// prompt: the flag is named here because the refusals and the help point at it,
+// and it is the one flag on this command that names a credential's *source*
+// rather than carrying one.
+const syncBitbucketFlag = "--bitbucket"
+
+// syncBitbucketProjectFlag narrows that listing to one project of the
+// workspace.
+const syncBitbucketProjectFlag = "--bitbucket-project"
+
+// syncCheckFlag is the report-only half of the command: it prints the
+// difference and writes nothing.
+const syncCheckFlag = "--check"
+
+// The Bitbucket API root and client the listing asks are the package's own
+// seams (bitbucketAPIURL, bitbucketAPIClient, in doctor_brokering.go beside the
+// token check that asks the same API): one root for every Bitbucket read this
+// CLI makes with a person's own credential, so a test that stands a server up
+// points both at it.
+
+// providerBitbucket is the provider kind a Bitbucket repository's canonical
+// name carries, the way infra's own listing carries github's.
+const providerBitbucket = "bitbucket"
+
 // projectSyncOptions are `project sync`'s flags.
 type projectSyncOptions struct {
 	cloud cloudOptions
@@ -780,6 +807,14 @@ type projectSyncOptions struct {
 	// githubAppKey is --github-app-key: it allows the key's Secret Manager
 	// read with the operator's own credentials. Without it nothing is read.
 	githubAppKey bool
+	// bitbucket is --bitbucket <workspace>: the workspace whose repositories
+	// are listed instead of the App's installations.
+	bitbucket string
+	// bitbucketProject is --bitbucket-project <key>: one project of that
+	// workspace.
+	bitbucketProject string
+	// check is --check: print the difference and write nothing.
+	check bool
 	// yes is the flag the batch's typed confirmation used to be answered with.
 	// The policy removed that confirmation, so the flag is registered and inert
 	// until the change that removes --yes and --non-interactive together
@@ -790,27 +825,39 @@ type projectSyncOptions struct {
 func newProjectSyncCmd() *cobra.Command {
 	var o projectSyncOptions
 	cmd := &cobra.Command{
-		Use:   "sync [--github-app-id <id>] [--github-app-key] [--yes]",
-		Short: "Offer the GitHub App's installed repositories that the allow-list does not admit",
-		Long: "Ask GitHub which repositories the project's GitHub App is installed on (the\n" +
-			"App API, with the App's own credentials) and offer the ones the published\n" +
+		Use:   "sync [--bitbucket <workspace>] [--bitbucket-project <key>] [--check] [--github-app-id <id>] [--github-app-key] [--yes]",
+		Short: "Offer the provider's repositories that the allow-list does not admit",
+		Long: "Ask the provider which repositories it holds and offer the ones the published\n" +
 			"allow_repos does not admit, as one list written in one batch: nothing is\n" +
 			"asked, and what was written is printed after the write. The accepted list is\n" +
 			"written through the same ETag-guarded write `project repos add` uses; entries\n" +
 			"are only ever added, so a sync never un-enrolls a repository — including one\n" +
-			"the App is not installed on at all (another provider's, or one whose\n" +
-			"installation was removed). A repository the list already admits, a pattern\n" +
-			"included, is not offered: its runs are admitted already.\n\n" +
-			"Reading the App's private key is --github-app-key: without it, nothing is\n" +
-			"read. Under it the key is read from the project's github-app-key secret with\n" +
-			"your own credentials and held in memory only to sign the App's 9-minute JWT\n" +
-			"(never printed, never passed as an argument, never in an error), and the\n" +
-			"flag is refused in a coding agent's session. The App ID is a number, not a\n" +
-			"secret: --github-app-id, or the one this machine's config already holds.",
+			"the provider does not hold at all (another provider's, or one whose access was\n" +
+			"removed). A repository the list already admits, a pattern included, is not\n" +
+			"offered: its runs are admitted already.\n\n" +
+			"The provider is GitHub's App by default: the repositories the App is installed\n" +
+			"on, read with the App's own credentials. Reading the App's private key is\n" +
+			"--github-app-key: without it, nothing is read. Under it the key is read from\n" +
+			"the project's github-app-key secret with your own credentials and held in\n" +
+			"memory only to sign the App's 9-minute JWT (never printed, never passed as an\n" +
+			"argument, never in an error), and the flag is refused in a coding agent's\n" +
+			"session. The App ID is a number, not a secret: --github-app-id, or the one\n" +
+			"this machine's config already holds.\n\n" +
+			"--bitbucket <workspace> lists that workspace's repositories instead, through\n" +
+			"Bitbucket's own API, and --bitbucket-project narrows the listing to one\n" +
+			"project of it. The token is a workspace or project access token, read from\n" +
+			"stdin or from a hidden prompt and never from an argument — an argument is in\n" +
+			"the process's command line, where every process on the machine reads it, and\n" +
+			"in the shell's history — and it is held in memory only for the listing.\n\n" +
+			"--check prints the difference and writes nothing, whichever provider lists:\n" +
+			"the published allow-list is read and left exactly as it was.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runProjectSync(cmd, &o) },
 	}
 	f := cmd.Flags()
+	f.StringVar(&o.bitbucket, "bitbucket", "", "list this Bitbucket workspace's repositories instead of the GitHub App's, with a Bitbucket access token read from stdin or a hidden prompt (never from an argument)")
+	f.StringVar(&o.bitbucketProject, "bitbucket-project", "", "narrow --bitbucket to one project of that workspace (its project key)")
+	f.BoolVar(&o.check, "check", false, "print what would be added and write nothing")
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID (a number, not a secret); default: the one this machine's config holds")
 	f.BoolVar(&o.githubAppKey, "github-app-key", false, "read the project's GitHub App private key from Secret Manager to ask GitHub (your own credentials; refused in a coding agent's session)")
 	f.BoolVar(&o.yes, "yes", false, "accepted and does nothing: the batch is written with no confirmation")
@@ -818,8 +865,10 @@ func newProjectSyncCmd() *cobra.Command {
 	return cmd
 }
 
-// runProjectSync lists the App's installed repositories and adds the ones the
-// allow-list does not admit, in one batch.
+// runProjectSync lists the repositories the provider holds — GitHub's App by
+// default, a Bitbucket workspace behind --bitbucket — and adds the ones the
+// allow-list does not admit, in one batch; with --check it prints the same
+// difference and writes nothing.
 //
 // It is a writer of config/policy/shared, so it takes the writer's refusals
 // before it reads anything: every one runProjectReposEdit takes (the shared
@@ -838,12 +887,17 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	// refusal (refuseAppKeyReadInAgent, which guards the secret read and not
 	// the write) and before the flag's own complaint, so an agent session is told
 	// the one thing that is true of every way of running this command: the
-	// write is not its to make. And it comes before the GitHub call, so nothing
-	// of the project leaves the machine either.
+	// write is not its to make. And it comes before the GitHub or Bitbucket
+	// call, so nothing of the project leaves the machine either — and before a
+	// Bitbucket token is read, which a session's prompt refuses anyway.
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was written: fugaro project sync adds to the published allow-list, which is what admits a repository to the project, and --github-app-key reads the App's private key with your own credentials to ask GitHub which repositories the App is installed on: %s", initflow.AgentRefusal(m))
+		return userErr("nothing was written: fugaro project sync adds to the published allow-list, which is what admits a repository to the project, and it reads a credential with your own: the GitHub App's private key behind %s to ask GitHub which repositories the App is installed on, or the Bitbucket access token %s reads from stdin or a hidden prompt: %s", syncAppKeyFlag, syncBitbucketFlag, initflow.AgentRefusal(m))
 	}
-	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, "nothing was added to the allow-list")
+	declined := "nothing was added to the allow-list"
+	if o.check {
+		declined = "nothing was written"
+	}
+	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, declined)
 	if err != nil {
 		return err
 	}
@@ -851,24 +905,9 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 		return err
 	}
 	out := cmd.OutOrStdout()
-	appID := o.githubAppID
-	if appID == "" {
-		appID = anyStoredAppID(lc)
-	}
-	if appID == "" {
-		return userErr("no GitHub App ID: this machine's config holds none for its repositories; pass %s (the number on the App's settings page, not a secret)", syncAppIDFlag)
-	}
-	key, err := syncAppKey(ctx, cmd, lc, o.githubAppKey)
+	src, err := syncSourceRepos(ctx, cmd, o, lc)
 	if err != nil {
 		return err
-	}
-	installed, err := infra.InstalledRepos(ctx, infra.GitHubApp{AppID: appID, PrivateKey: key, BaseURL: githubAPIURL, HTTP: githubAPIClient})
-	var bad *github.BadCredentialsError
-	switch {
-	case errors.As(err, &bad):
-		return userErr("%v; the key read is the project's github-app-key secret: store the right App's .pem again with 'fugaro secrets set github-app-key --project-wide < PATH-TO-THE-PEM-FILE'", bad)
-	case err != nil:
-		return remote(fmt.Errorf("listing the repositories the GitHub App %s is installed on: %w", appID, err))
 	}
 	etag, exists, raw, err := readPolicyNode(ctx, db, lc)
 	if err != nil {
@@ -888,21 +927,135 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	// out: a repository a pattern already admits runs today, so adding its
 	// concrete name would change nothing and read as an enrollment the
 	// operator still had to make.
-	missing := slices.DeleteFunc(slices.Clone(installed), func(name string) bool {
+	missing := slices.DeleteFunc(slices.Clone(src.repos), func(name string) bool {
 		return projectpolicy.AdmitRepo(p.AllowRepos, name)
 	})
 	if len(missing) == 0 {
-		fmt.Fprintf(out, "the GitHub App %s is installed on %d repositories, and the allow-list of %s already admits every one of them; nothing to add\n", appID, len(installed), projectpolicy.PathShared())
+		fmt.Fprintf(out, "%s %d repositories, and the allow-list of %s already admits every one of them; nothing to add\n", src.what, len(src.repos), projectpolicy.PathShared())
 		return nil
 	}
-	fmt.Fprintf(out, "the GitHub App %s is installed on %d repositories; %s does not admit %d of them:\n", appID, len(installed), projectpolicy.PathShared(), len(missing))
+	fmt.Fprintf(out, "%s %d repositories; %s does not admit %d of them:\n", src.what, len(src.repos), projectpolicy.PathShared(), len(missing))
 	for _, r := range missing {
 		fmt.Fprintf(out, "  %s\n", r)
+	}
+	if o.check {
+		// The report half of the same read: what is printed above is exactly
+		// what a run without the flag would write, and nothing here reaches
+		// the node — putAllowRepos below is this command's only write, and the
+		// ETag read above is never spent on a --check.
+		fmt.Fprintf(out, "%s reports the difference only: nothing was written; rerun without it to add them\n", syncCheckFlag)
+		return nil
 	}
 	before := append([]string{}, nonNil(p.AllowRepos)...)
 	allow := append(nonNil(p.AllowRepos), missing...)
 	slices.Sort(allow)
 	return putAllowRepos(ctx, out, configPath, lc, db, etag, raw, before, nonNil(allow))
+}
+
+// syncSource is what a sync offers from: the repositories a provider holds,
+// as the allow-list would spell them, and the words the sentences about them
+// are built from. The two listings are one answer of that shape, so the offer,
+// the nothing-to-add line and the count are written once for both providers.
+type syncSource struct {
+	// repos are the canonical names the provider holds, sorted and
+	// deduplicated.
+	repos []string
+	// what is the subject of those sentences, without its count: "the GitHub
+	// App 12345 is installed on" or "the Bitbucket workspace acme holds".
+	what string
+}
+
+// syncSourceRepos reads the listing the flags name.
+func syncSourceRepos(ctx context.Context, cmd *cobra.Command, o *projectSyncOptions, lc *localcfg.Config) (syncSource, error) {
+	// The flag is read as written rather than by its value alone: `--bitbucket
+	// ""` is a workspace an operator's script failed to fill in, and reading it
+	// as "no Bitbucket" would list GitHub's repositories and offer them instead
+	// of saying the workspace is missing. The same reading refuses the two
+	// providers named at once: neither flag is a default the other overrides.
+	if o.bitbucket != "" || cmd.Flags().Changed("bitbucket") {
+		switch {
+		case o.bitbucket == "":
+			return syncSource{}, userErr("%s needs a workspace: write %s <workspace>, or leave the flag out to list the GitHub App's installed repositories", syncBitbucketFlag, syncBitbucketFlag)
+		case cmd.Flags().Changed("github-app-id") || cmd.Flags().Changed("github-app-key"):
+			return syncSource{}, userErr("%s lists a Bitbucket workspace's repositories and the GitHub App's flags (%s, %s) list GitHub's: name one provider; nothing was listed", syncBitbucketFlag, syncAppIDFlag, syncAppKeyFlag)
+		}
+		return syncBitbucketSource(ctx, cmd, o)
+	}
+	if o.bitbucketProject != "" {
+		return syncSource{}, userErr("%s narrows the Bitbucket listing to one project of a workspace, so it needs %s <workspace> to list; nothing was listed", syncBitbucketProjectFlag, syncBitbucketFlag)
+	}
+	appID := o.githubAppID
+	if appID == "" {
+		appID = anyStoredAppID(lc)
+	}
+	if appID == "" {
+		return syncSource{}, userErr("no GitHub App ID: this machine's config holds none for its repositories; pass %s (the number on the App's settings page, not a secret)", syncAppIDFlag)
+	}
+	key, err := syncAppKey(ctx, cmd, lc, o.githubAppKey)
+	if err != nil {
+		return syncSource{}, err
+	}
+	installed, err := infra.InstalledRepos(ctx, infra.GitHubApp{AppID: appID, PrivateKey: key, BaseURL: githubAPIURL, HTTP: githubAPIClient})
+	var bad *github.BadCredentialsError
+	switch {
+	case errors.As(err, &bad):
+		return syncSource{}, userErr("%v; the key read is the project's github-app-key secret: store the right App's .pem again with 'fugaro secrets set github-app-key --project-wide < PATH-TO-THE-PEM-FILE'", bad)
+	case err != nil:
+		return syncSource{}, remote(fmt.Errorf("listing the repositories the GitHub App %s is installed on: %w", appID, err))
+	}
+	return syncSource{repos: installed, what: fmt.Sprintf("the GitHub App %s is installed on", appID)}, nil
+}
+
+// syncBitbucketSource lists a Bitbucket workspace's — or one of its projects' —
+// repositories, and canonicalises them into the entries the allow-list would
+// hold.
+//
+// The token is the credential of this path and it never comes from an
+// argument: readSecret is the one value entry every other secret of this CLI
+// comes through, so the value is typed at a hidden prompt or piped in, and it
+// is held in memory only for the listing. Nothing printed here names it: the
+// sentences name the workspace and the project.
+//
+// A name Bitbucket answers with that is not a repository name is refused
+// rather than written: the only reader of this answer offers these names as
+// allow-list entries, and an entry the publisher would refuse is a repository
+// an operator would believe enrolled (infra.InstalledRepos' own rule).
+func syncBitbucketSource(ctx context.Context, cmd *cobra.Command, o *projectSyncOptions) (syncSource, error) {
+	// GODEBUG=http2debug makes Go print every HTTP/2 request with its headers,
+	// this token's Authorization header among them, and GODEBUG is read before
+	// main runs, so it cannot be unset in time: the same one line the App key's
+	// read prints, for the credential this path reads instead.
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s: reads the workspace's access token from stdin or a hidden prompt and holds it in memory only for the listing; GODEBUG=http2debug in your own environment would print the token's Authorization header, so unset it first\n", syncBitbucketFlag)
+	tok, err := readSecret(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), "the Bitbucket access token", false)
+	if err != nil {
+		return syncSource{}, err
+	}
+	defer clear(tok)
+	names, err := bitbucket.ListRepositories(ctx, bitbucket.ListOptions{
+		Workspace: o.bitbucket, Project: o.bitbucketProject,
+		Token: string(tok), BaseURL: bitbucketAPIURL, HTTP: bitbucketAPIClient,
+	})
+	if err != nil {
+		// The provider's answer is the one text on this path this command did
+		// not write, and a refusal carries it out verbatim: a proxy that echoes
+		// what it was sent must not be able to print the token through here.
+		msg := agent.Redact(fmt.Sprintf("listing the repositories of the Bitbucket workspace %s: %v", safetext.Field(o.bitbucket), err), []string{string(tok)})
+		return syncSource{}, remote(errors.New(msg))
+	}
+	repos := make([]string, 0, len(names))
+	for _, name := range names {
+		c, err := projectpolicy.Canonical(providerBitbucket, name)
+		if err != nil {
+			return syncSource{}, remote(fmt.Errorf("Bitbucket returned %q, which is not a repository name: %w", safetext.Field(name), err))
+		}
+		repos = append(repos, c)
+	}
+	slices.Sort(repos)
+	what := fmt.Sprintf("the Bitbucket workspace %s holds", safetext.Field(o.bitbucket))
+	if o.bitbucketProject != "" {
+		what = fmt.Sprintf("the Bitbucket project %s of workspace %s holds", safetext.Field(o.bitbucketProject), safetext.Field(o.bitbucket))
+	}
+	return syncSource{repos: slices.Compact(repos), what: what}, nil
 }
 
 // syncAppKey is the App's private key, parsed, behind --github-app-key.

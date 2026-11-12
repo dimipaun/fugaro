@@ -76,7 +76,7 @@ func TestRunRefusesSecurityOnAnOlderBaseImage(t *testing.T) {
 				"knows the security: block",
 				"fugaro " + securitySince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or remove the security: block from fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -204,7 +204,7 @@ func TestRunRefusesTheLayersSecurityOnAnOlderBaseImage(t *testing.T) {
 	for _, want := range []string{
 		"the project layer's security: block (read for acme/other)",
 		"knows the project layer's security: block",
-		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		imageGateRemedy,
 		"remove the security: block from the project layer",
 	} {
 		if !strings.Contains(err.Error(), want) {

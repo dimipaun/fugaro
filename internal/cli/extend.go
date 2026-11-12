@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -254,6 +257,77 @@ func planLaunch(ctx context.Context, env *cloudEnv, run PlannedRun) (*Pair, erro
 	return p(ctx, run)
 }
 
+// RecipeManifest is the build's manifest builder for one registered catalog
+// recipe: the objects a mode: evaluate launch leaves under its run's own prefix
+// for the recipe's registered step to read back. The pair a judge step judges
+// is decided here, on the launching machine, rather than by the step, which the
+// job's own grant keeps to a single prefix — the same division the report
+// manifest makes (digestManifest), and D550's "the plumbing is the core's, what
+// it holds is the build's".
+//
+// warn is the launch's own stderr, for the lines a builder has to say.
+type RecipeManifest func(ctx context.Context, run PlannedRun, warn io.Writer) ([]byte, error)
+
+// RegisterRecipeManifest installs the build's manifest builder for a catalog
+// recipe, by the recipe's own name. It refuses a name no registered catalog
+// recipe holds — a builder under a name nothing can launch is a manifest that
+// would never be written, and a name misspelled in ee/register would be silent
+// otherwise — and it refuses a second builder for one recipe, so nothing can
+// quietly replace what a tagged build installed (§5.5).
+func RegisterRecipeManifest(name string, b RecipeManifest) error {
+	if _, ok := recipe.CatalogText(name); !ok {
+		return fmt.Errorf("recipe %s is not a catalog recipe this build holds, and a manifest builder is registered under the recipe whose launches write it", name)
+	}
+	if b == nil {
+		return fmt.Errorf("registering the manifest builder for %s: it is nil", name)
+	}
+	if _, dup := recipeManifests[name]; dup {
+		return fmt.Errorf("registering the manifest builder for %s: it is already registered", name)
+	}
+	recipeManifests[name] = b
+	return nil
+}
+
+// writeRecipeManifest leaves the manifest a mode: evaluate launch's recipe
+// builder answers, under the run's own prefix, before its task exists. Nothing
+// is written for a launch of any other recipe, so the object stays absent the
+// way an older release left it, and a launch whose builder refuses starts
+// nothing and leaves nothing (§4 step 1 of the run design, as --attach does).
+//
+// The task is handed to the builder as a copy, through plannedRun: a builder
+// judges the launch on exactly the facts the run will start with, and it cannot
+// change the run by editing what it was handed. The size cap is the reader's
+// own (runstore.MaxRecordBytes): a manifest past it could be written here and
+// never read back by the step it was written for.
+//
+// Only a launch whose task carries a catalog recipe can write one: every
+// registered builder is a catalog recipe's (RegisterRecipeManifest), and a
+// launch whose recipe the runner chooses from the repository's own
+// fugaro.yaml carries none in its task — the launcher would be guessing at a
+// name, and a manifest under the wrong recipe's name is read by nothing.
+func writeRecipeManifest(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, s *runstore.Store, warn io.Writer) error {
+	if spec.Recipe == nil || spec.Recipe.Source != string(recipe.SourceCatalog) {
+		return nil
+	}
+	b, ok := recipeManifests[spec.Recipe.Name]
+	if !ok {
+		return nil
+	}
+	run, why := plannedRun(ctx, env, o, slug, spec)
+	if why != "" {
+		return userErr("recipe %s needs the manifest its launch writes, but %s", spec.Recipe.Name, why)
+	}
+	run.Cloud = &Cloud{env: env}
+	body, err := b(ctx, run, warn)
+	if err != nil {
+		return err
+	}
+	if len(body) > runstore.MaxRecordBytes {
+		return userErr("recipe %s's manifest is %d bytes, over the %d the reader takes, so it would be written and never read", spec.Recipe.Name, len(body), runstore.MaxRecordBytes)
+	}
+	return s.PutFile(ctx, runstore.ManifestName, body, "application/json")
+}
+
 // paidCommandNames are the command names whose code this build does not carry:
 // the commands the owner moves out of the core, and the ones that never lived
 // there — `graph` (D1362) and `ab` (D570) are ee/'s from the start. A core
@@ -405,4 +479,8 @@ var (
 	// build's state, and it means "sample nothing" (D550).
 	launchPlanner    LaunchPlanner
 	launchPlannerSet bool
+	// recipeManifests are the build's manifest builders, by catalog recipe
+	// name. Empty is the untagged build's state, and it means "no launch writes
+	// a manifest" (D550).
+	recipeManifests = map[string]RecipeManifest{}
 )

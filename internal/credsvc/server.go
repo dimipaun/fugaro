@@ -487,8 +487,26 @@ func (p RTDBPolicy) Shared(ctx context.Context) (*projectpolicy.Policy, bool, er
 	if err != nil || !found {
 		return nil, false, err
 	}
-	pol, _, err := projectpolicy.Decode(raw)
-	return pol, true, err
+	// The node is read the way a service on the far side of a Version bump must
+	// read it: `fugaro update` deploys this service with the installation's
+	// other pieces and migrates the policy in its last stage, so between the
+	// two this binary meets a node its own strict Decode refuses — and every
+	// cascade model call and every proxied Bitbucket request of a run in flight
+	// would be refused with it, which is what the update may never do to a run
+	// in flight (CLAUDE.md's HARD RULE). DecodeCarriedForwardShapeFree applies
+	// the migration the CLI would have written to the bytes in memory, for this
+	// reader alone, and writes nothing back: the node is the CLI's to migrate.
+	//
+	// It is the shape-free variant and not DecodeCarriedForward, and that is
+	// this service's own limit: it has no way to make the operator's republish
+	// and no way to write the node at all, so it may serve a carried node only
+	// where the carry states what the operator's migration would state. A
+	// version-3 node is refused for the reason that bump was a republish — its
+	// derived Bitbucket block is in no node for the carry to find
+	// (projectpolicy.ShapeFreeFloor, migrateV3ToV4's republish note) — while the
+	// CLI's own reader of the node, which is the process that migrates it for
+	// real, still carries one forward.
+	return projectpolicy.DecodeCarriedForwardShapeFree(raw)
 }
 
 func (p RTDBPolicy) Admissions(ctx context.Context, slug string) (*projectpolicy.RepoPolicy, bool, error) {
@@ -644,7 +662,7 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	for _, ra := range cfg.ReviewAccounts {
 		if ra.Email == "" || ra.Account == "" {
-			return nil, errors.New("credsvc: a review job account with no email or no Claude account binds nothing")
+			return nil, errors.New("credsvc: a review job account with no email or no value on the account axis binds nothing")
 		}
 		// Keyed by the folded email, exactly as the verifier keys its own
 		// review table: the account Verify answers with is the CONFIGURED
@@ -658,7 +676,7 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 		if prev, dup := s.review[folded]; dup {
 			if prev.Account != ra.Account {
-				return nil, errors.New("credsvc: the same review job account is bound to two Claude accounts")
+				return nil, errors.New("credsvc: the same review job account is bound to two values of the account axis")
 			}
 			continue
 		}
@@ -1028,8 +1046,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
-	cands, notAdmitted, err := s.candidates(ctx, id, canonical, b)
+	cands, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
 	if err != nil {
+		// Two refusals share this branch and they are not the same answer. A
+		// state the caller cannot fix — the admissions or the crafts could not
+		// be read — is this service's own sentence. A narrowing the crafts
+		// leave empty is the operator's configuration, and it carries its own
+		// sentence, built from the published node: the pool, the access and the
+		// switch or the path that would let it serve.
+		var refusal *poolRefusal
+		if errors.As(err, &refusal) {
+			s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, refusal.message)
+			return
+		}
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return
 	}

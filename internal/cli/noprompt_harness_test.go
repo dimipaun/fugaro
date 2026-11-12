@@ -342,8 +342,17 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro restore":             {args: []string{"proj-2", "root"}},
 	"fugaro review show":         {args: []string{"run-1"}},
 	"fugaro run":                 {args: []string{"do something"}},
+	"fugaro runs show":           {args: []string{"run-1"}},
 	"fugaro secrets rm":          {args: []string{"NAME"}},
 	"fugaro secrets set":         {args: []string{"NAME"}},
+	// The intake's two families take the same NAME as the pair above, and their
+	// bodies are reached the same way: the name is the whole of what stands
+	// between a bare run and the command's own body, which is where the
+	// refusal this world's project selection produces comes from.
+	"fugaro secrets shared rm":  {args: []string{"NAME"}},
+	"fugaro secrets shared set": {args: []string{"NAME"}},
+	"fugaro secrets user rm":    {args: []string{"NAME"}},
+	"fugaro secrets user set":   {args: []string{"NAME"}},
 	// The rigor write reaches its own edit through the layer file the seed writes:
 	// the mode it sets ranks above what the file resolves to, so the fixture is the
 	// ordinary write and not the sensitive one, and the sentence naming the key is
@@ -449,6 +458,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro orchestrator state":  "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
 	"fugaro orchestrator events": "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
 	"fugaro orchestrator patch":  "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
+	"fugaro orchestrator import": "refuses its missing -f: a dump is one patch document, and the closed stdin is no document",
 	// The login unit's three commands read this machine's own home and nothing
 	// else, and this world's home has no unit: install is refused before its
 	// typed confirmation (a unit runs code at every login, and the word install
@@ -483,6 +493,10 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro runs summary":           "prints the no-project-config refusal",
 	"fugaro secrets":                "is a name for set, ls and rm: a bare run prints its own usage and returns",
 	"fugaro secrets ls":             "prints the no-project-config refusal",
+	"fugaro secrets shared":         "is a name for set, ls and rm: a bare run prints its own usage and returns",
+	"fugaro secrets shared ls":      "prints the no-project-config refusal",
+	"fugaro secrets user":           "is a name for set, ls and rm: a bare run prints its own usage and returns",
+	"fugaro secrets user ls":        "prints the no-project-config refusal",
 	"fugaro security paths":         "refuses from inside its body: it answers only for the checkout it stands in, and this world's directory names no origin repository",
 	"fugaro settings":               "prints the registry's every row with no project selected, which is the whole of what a bare run does",
 	"fugaro seats":                  "reads the selected project's records for an advisory estimate, and this world selects no project",
