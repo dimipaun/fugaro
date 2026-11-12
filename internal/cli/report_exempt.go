@@ -259,6 +259,7 @@ var exemptAnswers = map[string]string{
 	"update-skills":          "pins the Fugaro plugin in the checkout's .claude/settings.json, and prints the pin",
 	"upgrade":                "brings checkouts up, printing its own account of each by hand rather than through the reporter",
 	"user add":               "adds one person to the installation's launchers or operators, and prints the entry",
+	"user offboard":          "takes one member off the installation — their roster grants and the secrets they stored — and prints what it dropped",
 	"user grant":             "grants one person a role at a scope in the installation's grants node, and prints the pair it stored",
 	"user revoke":            "takes one role and scope pair away from one person, and prints the pair it dropped",
 	"user rm":                "removes one person from the installation's launchers or operators, and prints what it dropped",

@@ -368,13 +368,19 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// in the world for them to take one out of. Neither may print a question
 	// here: no command waits on stdin any more (D1540, D1552, D1555), and the
 	// sentence naming the change is the proof this fixture reaches the write.
-	"fugaro rigor floor set":      {args: []string{"pro", "l2"}, reaches: "set review_floor.pro from l2, l3 to l2 in", seed: closedStdinRigorFloorSeed},
-	"fugaro rigor floor unset":    {args: []string{"pro"}, reaches: "remove review_floor.pro (l2, l3) in", seed: closedStdinRigorFloorSeed},
-	"fugaro settings get":         {args: []string{"a.b"}},
-	"fugaro stats runs":           {args: []string{"--project", "proj-1234"}},
-	"fugaro user add":             {args: []string{"someone@example.com"}},
-	"fugaro user grant":           {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
-	"fugaro user revoke":          {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
+	"fugaro rigor floor set":   {args: []string{"pro", "l2"}, reaches: "set review_floor.pro from l2, l3 to l2 in", seed: closedStdinRigorFloorSeed},
+	"fugaro rigor floor unset": {args: []string{"pro"}, reaches: "remove review_floor.pro (l2, l3) in", seed: closedStdinRigorFloorSeed},
+	"fugaro settings get":      {args: []string{"a.b"}},
+	"fugaro stats runs":        {args: []string{"--project", "proj-1234"}},
+	"fugaro user add":          {args: []string{"someone@example.com"}},
+	"fugaro user grant":        {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
+	"fugaro user revoke":       {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
+	// Offboarding takes the member's address as its argument, and the body it
+	// then reaches refuses here: this world selects no project, so there is no
+	// roster to read and no intake to call. The write and the sweep are driven
+	// by offboard_test.go's own installation rather than by this world, which
+	// holds no roster.
+	"fugaro user offboard":        {args: []string{"someone@example.com"}},
 	"fugaro user rm":              {args: []string{"someone@example.com"}},
 	"fugaro verify":               {args: []string{"build"}},
 	"fugaro workspace add":        {args: []string{"ws"}},
