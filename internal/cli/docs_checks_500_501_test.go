@@ -240,6 +240,49 @@ func TestDocsCheck501StatesWhatOnlyTheRunSettles(t *testing.T) {
 	}
 }
 
+// TestDocsLiveChecksNameEveryKnobTheyRead: a section's knob list is what the
+// owner reads before running the check, and a knob the script reads while the
+// section omits it is one they cannot look up — the omission is invisible,
+// because the check runs without it. The script is the source of truth for the
+// names: every `CHECK500_*`/`CHECK501_*` spelling it reads has to appear in its
+// own section.
+func TestDocsLiveChecksNameEveryKnobTheyRead(t *testing.T) {
+	for _, c := range issChecks {
+		t.Run("check "+c.number, func(t *testing.T) {
+			section := issSection(t, c.number)
+			knobs := liveCheckKnobs(readDoc(t, c.script), "CHECK"+c.number+"_")
+			// The scan is a regular expression over a shell script, so a list
+			// this short says the scan broke, not that the check lost its knobs.
+			if len(knobs) < 10 {
+				t.Fatalf("%s reads %d knobs, too few for the real list: the scan is broken", c.script, len(knobs))
+			}
+			for _, knob := range knobs {
+				if !strings.Contains(section, knob) {
+					t.Errorf("Check %s's section does not name %s, which %s reads: the owner cannot look up a knob the register leaves out", c.number, knob, c.script)
+				}
+			}
+		})
+	}
+}
+
+// liveCheckKnobs are the environment knob names a live check reads: the
+// `PREFIX_NAME` spellings in its text. The per-entry checkout knob is built from
+// a variable in the script (`CHECK500_CHECKOUT_$1`), so it comes out as the
+// prefix the register spells `CHECK500_CHECKOUT_<entry>`.
+func liveCheckKnobs(script, prefix string) []string {
+	re := regexp.MustCompile(`\b` + prefix + `[A-Z][A-Z_]*`)
+	seen := make(map[string]bool)
+	var knobs []string
+	for _, name := range re.FindAllString(script, -1) {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		knobs = append(knobs, name)
+	}
+	return knobs
+}
+
 // issSection is the register's text for one check, flattened and folded, in the
 // case it is written in: the pins below are the register's own tokens — a
 // decision number, a command's flag, a marker — so the case is part of the claim.
