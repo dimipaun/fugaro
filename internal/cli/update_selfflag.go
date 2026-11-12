@@ -284,6 +284,12 @@ func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 		// own marker step is what rewrites it (update_marker_version.go) — and
 		// the label below finishes what the earlier run started.
 		already = true
+		// The object this run has just read, kept for the marker step: the
+		// read above is the one answer this run has about the fact, and the
+		// step that rewrites a version-3 fact (update_marker_version.go) runs
+		// after this one, when the label is in place and the object is the
+		// only half left.
+		e.flagFactVersion = fact.Version
 	}
 	what := fmt.Sprintf("wrote gs://%s/%s: %s is a managed project", bucket, managed.MarkerObject, r.projectName)
 	switch {

@@ -767,7 +767,15 @@ func alreadyFlagged(bucket, project string, cur []byte) error {
 type FlagFact struct {
 	Ours   bool
 	Budget Budget
-	Reason string
+	// Version is the version of the object this answer is about, and it is
+	// set only when Ours. It is answered because a caller that finishes the
+	// half-written flag has read the object already, and the one thing the
+	// completion cannot do — rewrite a fact of the version that carried the
+	// image build count (D1543, ConvergeMarker) — needs to know which version
+	// it is reading. A caller that took a read of its own for that would pay a
+	// second time for an answer this one already has.
+	Version int
+	Reason  string
 }
 
 // ReadFlagFact reads the object half of gcpProject's marks in bucket, without
@@ -834,7 +842,7 @@ func readFlagFact(ctx context.Context, s *storage.Service, bucket, project strin
 			return FlagFact{Reason: fmt.Sprintf("gs://%s/%s records an image build bound this build refuses (%v)", bucket, MarkerObject, err)}, nil
 		}
 	}
-	return FlagFact{Ours: true, Budget: *m.Budget}, nil
+	return FlagFact{Ours: true, Budget: *m.Budget, Version: m.Version}, nil
 }
 
 // recordsBudget reports whether a marker version records a budget amount: 2, 3

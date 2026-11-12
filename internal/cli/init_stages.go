@@ -102,6 +102,17 @@ type initEngine struct {
 	// list to hold, outputs that could not be read — and it is cleared by the
 	// write, so a root that runs twice lands it once.
 	accessSeed *accesslib.Node
+
+	// flagFactVersion is the version the self-flag step's own read of the
+	// creation fact answered with, and 0 where that step read nothing
+	// (update_selfflag.go). The marker step asks it beside the gate's version
+	// for the one installation whose fact the gate never saw: the half-written
+	// flag, whose object write succeeded and whose label write then failed. A
+	// run that finishes that flag has read the object — the step could not
+	// complete the object otherwise — so the version the migration needs is
+	// already in hand, and taking a read of its own for it would be the second
+	// read of an object this run has answered once.
+	flagFactVersion int
 }
 
 // environment runs the environment check once (it prints the local
