@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
@@ -87,6 +88,13 @@ func newConfigPublishCmd() *cobra.Command {
 				return err
 			}
 			defer env.Close()
+			// The layer this publishes is what every repository of the project
+			// resolves and what every run of it reads, so it is a project-level
+			// surface: admin at project scope (F19), asked here, before this
+			// run's log exists — a run this turns away never began.
+			if err := settingsAccessGate(ctx, env.lc, accesslib.ActionManageProject, "", "fugaro config publish"); err != nil {
+				return err
+			}
 			// This run's account and its log (D1352): one line per unit of work
 			// with the reporter's closing line last, and the full output of a
 			// run that printed one kept beside it.

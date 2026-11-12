@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"gocloud.dev/blob"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -350,6 +351,12 @@ func newRecipesPublishCmd() *cobra.Command {
 				return err
 			}
 			defer env.Close()
+			// The project's recipes are a project-level surface (F19): this
+			// document decides the loop of every run of every repository that
+			// names it, so it takes the same role `config publish` takes.
+			if err := settingsAccessGate(ctx, env.lc, accesslib.ActionManageProject, "", "fugaro recipes publish"); err != nil {
+				return err
+			}
 			if note := projectRecipesNote(env.lc); note != "" {
 				return userErr("nothing was published: %s", note)
 			}

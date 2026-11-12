@@ -1962,6 +1962,15 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s already reads what was asked for\n", target.path, key)
 		return nil
 	}
+	// The role the write needs, asked once the document has answered that there
+	// is a write to make: the layer it lands in is the surface (a project-level
+	// one takes admin at project scope, a repository's own file takes admin at a
+	// scope covering it), and it is asked before the refusals about the
+	// document's own content, because "you may not change this" is the answer a
+	// caller needs before "this value is not one the loader reads".
+	if err := settingsAccessWrite(cmd.Context(), lc, o, target, settingsWriteCommand("set", key, value, o, target.layer)); err != nil {
+		return err
+	}
 	// A removal that leaves a sequence with no items is refused wherever it
 	// happens: the loader tells an absent key from an empty one, and the two
 	// mean different things. A map member's removal is not asked, because the
@@ -2147,6 +2156,10 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 		// turns out to be, and `changed` is one of its members.
 		fmt.Fprintf(cmd.OutOrStdout(), "nothing to unset: %s is not set in %s\n", key, target.path)
 		return nil
+	}
+	// The same role question, in the same place, as the set path above.
+	if err := settingsAccessWrite(cmd.Context(), lc, o, target, settingsWriteCommand("unset", key, "", o, target.layer)); err != nil {
+		return err
 	}
 	if err := settingsReparse(target, newData); err != nil {
 		return err
