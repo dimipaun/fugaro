@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // user_grant_test.go is RS5's own behaviour: `fugaro user grant`, `revoke` and
@@ -240,7 +241,10 @@ func TestGrantRefusesInAgentSession(t *testing.T) {
 		t.Fatalf("an agent's session granted a role:\n%s", all)
 	}
 	for _, w := range []string{
-		"fugaro user grant " + other + " --role operator --scope github/acme/*",
+		// One shell word per argument: the pattern is quoted, because an
+		// unquoted "*" is a glob the pasting shell would expand against
+		// whatever the current directory holds (holderCommand).
+		"fugaro user grant " + other + " --role operator --scope 'github/acme/*'",
 		"a coding agent's session",
 	} {
 		if !strings.Contains(all, w) {
@@ -256,7 +260,39 @@ func TestGrantRefusesInAgentSession(t *testing.T) {
 	}
 }
 
-// TestConcurrentGrantsRejudgeOnETagMismatch: the node is read with its ETag,
+// TestAgentRefusalQuotesTheCommand: the refusal's sentence is a command to be
+// copied into a shell, and it is built from the agent's own argv before any of
+// it is validated — the refusal is about who is running, so it comes first. An
+// argument holding a space, a quote or a ";" has to reach the shell as the one
+// word the agent attempted: quoted, or the person pastes a command that is not
+// the one this refusal is about (a second word the shell splits off, an option,
+// or a command of its own).
+//
+// The scope is the plausible shape of it — a person typing two patterns
+// space-separated — and the pin is the shell word, not the text: the unquoted
+// form appears nowhere in the sentence.
+func TestAgentRefusalQuotesTheCommand(t *testing.T) {
+	stubSelfCommand(t)
+	const me, other = "user:me@example.com", "user:new@example.com"
+	_, db := userPairRig(t, userPairLists{}, userStored(t, me, accesslib.RoleAdmin, "project"))
+	userPairAs(t, me)
+	agentSession(t)
+	scope := "github/acme/* github/other/*"
+	all, err := userPairRun(t, "grant", other, "operator", scope)
+	if err == nil {
+		t.Fatalf("an agent's session granted a role:\n%s", all)
+	}
+	if want := "fugaro user grant " + other + " --role operator --scope '" + scope + "'"; !strings.Contains(all, want) {
+		t.Errorf("the refusal does not hand over the command as one shell word per argument (%q):\n%s", want, all)
+	}
+	if strings.Contains(all, "--scope "+scope) {
+		t.Errorf("the refusal hands over a command a shell splits into two arguments:\n%s", all)
+	}
+	if got := userNodeLines(t, db); !slices.Equal(got, []string{me + " (admin) at project"}) {
+		t.Errorf("the refused grant wrote the node: %v\n%s", got, all)
+	}
+}
+
 // judged, and written conditionally on that ETag, so a change another admin
 // lands in between is re-read and re-judged rather than overwritten (F23). The
 // fake database holds the two requests apart, so this test lands the other
@@ -678,7 +714,93 @@ func TestUserLsEffectiveRoleInARepo(t *testing.T) {
 	}
 }
 
-// TestGrantRefusesOnUnmigratedLists is the global-constraints row for the drift
+// TestUserLsReportsARepositoryOutsideAllowRepos: the published allow_repos
+// gates the effective role before any grant is read (access.Effective), so a
+// repository it does not admit has an answer no grant can change — and the
+// roster above the answer may well hold a pair whose scope covers it. The
+// listing then says what the policy does, as its own help text promises,
+// rather than the sentence a repository nobody's scope covers gets: "no stored
+// grant covers it" would be false of exactly that pair, and a reader would go
+// looking for the grant the listing is showing them.
+func TestUserLsReportsARepositoryOutsideAllowRepos(t *testing.T) {
+	const me = "user:me@example.com"
+	_, db := userPairRig(t, userPairLists{},
+		userStored(t, me, accesslib.RoleAdmin, "project"))
+	// A published policy that admits one repository and not the one asked about.
+	// The pair above is at project scope, so it covers every repository there
+	// is: the only thing that keeps the role out of the answer is the list. The
+	// rules marker is what makes the node readable at all (projectpolicy.Read):
+	// without it an installation's rules are older than the policy nodes, and
+	// every reader answers "no policy published".
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	db.Set(projectpolicy.PathShared(), &projectpolicy.Policy{
+		Version:    projectpolicy.Version,
+		Budget:     projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5},
+		AllowRepos: []string{"github/acme/app"},
+	})
+	out, errOut, err := userCommand(t, "ls", "--repo", "github/other/repo")
+	all := accessOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("fugaro user ls --repo failed: %v\n%s", err, all)
+	}
+	if !strings.Contains(all, "does not admit github/other/repo") || !strings.Contains(all, "allow_repos") {
+		t.Errorf("a repository outside allow_repos is not reported as such:\n%s", all)
+	}
+	if strings.Contains(all, "no stored grant covers it") {
+		t.Errorf("the listing says no stored grant covers the repository while listing the project-scope pair that does:\n%s", all)
+	}
+	// The roster is still the node's, which is what makes the wrong sentence
+	// wrong: the pair is printed, and it covers the repository asked about.
+	if !strings.Contains(all, me+" (admin) at project") {
+		t.Errorf("the roster does not name the pair that covers the repository:\n%s", all)
+	}
+	// The repository the policy does admit keeps the other answer.
+	appOut, appErr, err := userCommand(t, "ls", "--repo", "github/acme/app")
+	all = accessOut(appOut, appErr, err)
+	if err != nil {
+		t.Fatalf("fugaro user ls --repo failed: %v\n%s", err, all)
+	}
+	if !strings.Contains(all, me+": admin") {
+		t.Errorf("the admitted repository does not carry the role the pair holds:\n%s", all)
+	}
+}
+
+// TestUserLsPrintsTheRosterWithNoGrantsNode: an installation that has not
+// migrated its lists into the node — every installation until its first
+// post-RS3 `fugaro update` — has its roles in this machine's two lists, and
+// those lists are what `--json` carries under run_operators and admins and
+// what a person reading the roles has to see. A sentence naming the config the
+// reader would have to open instead is not a listing.
+func TestUserLsPrintsTheRosterWithNoGrantsNode(t *testing.T) {
+	const ops, root, legacy = "user:ops@example.com", "user:root@example.com", "group:eng@example.com"
+	_, db := userPairRig(t, userPairLists{
+		operators: []string{ops, legacy},
+		admins:    []string{root},
+	})
+	if accessNode(t, db).Found {
+		t.Fatal("the rig wrote a grants node: this case is about an installation that has none")
+	}
+	out, errOut, err := userCommand(t, "ls")
+	all := accessOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("fugaro user ls failed: %v\n%s", err, all)
+	}
+	for _, w := range []string{
+		"has no grants node at " + accesslib.PathNode,
+		"operators of " + initProjectName, ops,
+		"admins of " + initProjectName, root,
+	} {
+		if !strings.Contains(all, w) {
+			t.Errorf("the listing does not say %q:\n%s", w, all)
+		}
+	}
+	// The one thing the two lists do not say is kept: a member a grant cannot
+	// hold is still marked as the legacy member F25 makes of it.
+	if !strings.Contains(all, legacy+" (operator)") || !strings.Contains(all, "legacy") {
+		t.Errorf("the listing drops the legacy marker its lists' members are owed:\n%s", all)
+	}
+}
+
 // the roles release has to refuse: an installation whose roles are still this
 // machine's two IAM lists has no grants node, and the next `fugaro update`
 // derives those lists FROM the node (RS3). A node created by this command would

@@ -221,7 +221,7 @@ func userLs(cmd *cobra.Command, o *userLsOptions) error {
 		doc.effectiveIn(lc, node.Grants, allow, repo)
 	}
 	if !o.asJSON {
-		return userLsPrint(cmd.OutOrStdout(), lc, node, doc, repo)
+		return userLsPrint(cmd.OutOrStdout(), lc, node, doc, repo, allow)
 	}
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetIndent("", "  ")
@@ -344,14 +344,30 @@ func userLsMembers(grants []accesslib.Grant, implicit []string) []string {
 }
 
 // userLsPrint prints the human listing: the grants, then the legacy members,
-// then — with --repo — the effective role in it.
-func userLsPrint(w io.Writer, lc *localcfg.Config, node accesslib.Node, doc userLsDoc, repo string) error {
+// then — with --repo — the effective role in it. allow is the published
+// allow_repos the effective role was resolved under, and it is read here
+// because a repository it does not admit is one the listing has to name as
+// such: the answer is then nobody's for a reason no grant can change, which is
+// not the sentence a repository nobody's scope covers gets.
+func userLsPrint(w io.Writer, lc *localcfg.Config, node accesslib.Node, doc userLsDoc, repo string, allow []string) error {
 	if !node.Found {
 		// An absent node is both "this installation has not migrated its lists"
 		// and "its lists name no grant" — the two are one state in the database
 		// (access.Node) — and neither is "everyone".
 		fmt.Fprintf(w, "project %s has no grants node at %s: no role is stored, so the installation's roles are what its own lists hold. Its next fugaro update migrates terraform.operators and terraform.admins into the node\n",
 			safetext.Field(lc.Name), accesslib.PathNode)
+		// The roles are then exactly these two lists, and they are what --json
+		// carries under run_operators and admins: a person reading who holds what
+		// has to see them, and a sentence naming a file they would have to open
+		// themselves is not a roster (this is the listing `fugaro user ls`
+		// printed before the node existed, and what it still prints with no
+		// backend at all). The names this machine's own lists carry that a grant
+		// cannot hold are listed again below, where they are marked as the legacy
+		// members F25 makes of them — the two lists alone do not say the CLI
+		// cannot rank one.
+		if err := printUserLists(w, lc); err != nil {
+			return err
+		}
 	} else {
 		fmt.Fprintf(w, "grants of project %s (%d), from %s:\n", safetext.Field(lc.Name), len(doc.Grants), accesslib.PathNode)
 		for _, g := range doc.Grants {
@@ -374,6 +390,16 @@ func userLsPrint(w io.Writer, lc *localcfg.Config, node accesslib.Node, doc user
 		return nil
 	}
 	fmt.Fprintf(w, "the effective role in %s:\n", repo)
+	// The published allow_repos gates this answer before any grant is read
+	// (access.Effective), so a repository it does not admit is reported as the
+	// policy's own refusal rather than as a role of nobody: a stored grant's
+	// scope may well cover it, and "no stored grant covers it" would be false of
+	// exactly that pair. It is also the one place the help text's promise — a
+	// repository outside allow_repos is reported as such — is kept.
+	if !projectpolicy.AdmitRepo(allow, repo) {
+		fmt.Fprintf(w, "  nobody holds a role in %s, and no grant can: %s\n", repo, projectpolicy.NotAdmitted(allow, repo))
+		return nil
+	}
 	if len(doc.Effective) == 0 {
 		fmt.Fprintf(w, "  nobody holds a role in %s: no stored grant covers it, and no implicit admin is named here\n", repo)
 		return nil

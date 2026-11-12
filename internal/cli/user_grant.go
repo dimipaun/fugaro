@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/shellword"
 )
 
 // fugaro user grant and revoke are the roles model's own door (docs/roles-scopes,
@@ -268,14 +269,22 @@ func userPair(cmd *cobra.Command, o *userGrantOptions, arg string, grant bool) e
 // subcommand, the member, both flags, and the project when the agent named one.
 // It is the sentence D1590 asks for — the exact command, not a description of
 // it.
+//
+// Its four values are the agent's own argv, escaped as shell words
+// (shellword.Quote, the package this program prints a pasted command with). The
+// refusal is read before any of them is validated — it is about who is running,
+// so it comes first — and it is printed to be copied into a shell: an argument
+// holding a space, a quote or a ";" would otherwise be split, unquoted or run,
+// and the command the sentence hands over would not be the command that was
+// attempted.
 func holderCommand(o *userGrantOptions, member string, grant bool) string {
 	verb := "revoke"
 	if grant {
 		verb = "grant"
 	}
-	line := fmt.Sprintf("%s user %s %s --role %s --scope %s", selfCommand(), verb, member, o.role, o.scope)
+	line := fmt.Sprintf("%s user %s %s --role %s --scope %s", selfCommand(), verb, shellword.Quote(member), shellword.Quote(o.role), shellword.Quote(o.scope))
 	if o.project != "" {
-		line += " --project " + o.project
+		line += " --project " + shellword.Quote(o.project)
 	}
 	return line
 }
