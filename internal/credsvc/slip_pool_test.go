@@ -27,6 +27,12 @@ package credsvc
 //     TestGrantRefusedForAnotherOwnersToken is that case, and its fixture
 //     publishes no pool.
 //
+// A grant that names several pools is decided one NAME at a time: a roster
+// answers for the names its pool governs and for no other pool's, so a launcher
+// served by one pool is refused the grant that also asks for another pool's
+// name (TestEachNameIsAuthorisedByThePoolThatGovernsIt). The slip's list is what
+// the run is served from, so a name admitted here is a name that run is handed.
+//
 // A per-user name (`fugaro_u_<id>_<name>`) is NOT looked up against a pool: a
 // launcher may name only its own (checkGrantedNames), so there is nothing for a
 // pool to lend — the spec's pool of one person's own tokens is that person's own
@@ -60,6 +66,11 @@ const (
 	// project-shared secret, fugaro_p_<name> (R7's mapping of a name to its
 	// per-secret name).
 	testPoolCredential = "team-token"
+	// testSecondPoolName and testSecondPoolCredential are a SECOND pool and the
+	// credential it lists, so that a grant can name two pools of two different
+	// rosters (TestEachNameIsAuthorisedByThePoolThatGovernsIt).
+	testSecondPoolName       = "other-pool"
+	testSecondPoolCredential = "other-token"
 	// testSecondLauncherAccount and testThirdLauncherAccount are two more of the
 	// installation's launchers: people the launcher class admits and the pools'
 	// rosters name or do not.
@@ -84,7 +95,10 @@ func poolPolicyDoc(t *testing.T, pools ...config.Pool) string {
 	if err != nil {
 		t.Fatalf("the test's own pools do not marshal: %v", err)
 	}
-	creds, err := json.Marshal([]config.Credential{{Name: testPoolCredential, Type: config.CredentialTypeClaudeOAuth}})
+	creds, err := json.Marshal([]config.Credential{
+		{Name: testPoolCredential, Type: config.CredentialTypeClaudeOAuth},
+		{Name: testSecondPoolCredential, Type: config.CredentialTypeClaudeOAuth},
+	})
 	if err != nil {
 		t.Fatalf("the test's own credential does not marshal: %v", err)
 	}
@@ -283,6 +297,77 @@ func TestSlipRefusedForNonMember(t *testing.T) {
 		s := poolSvc(t, pool)
 		resp, answer := s.grantAs(t, testThirdLauncherAccount, testThirdLauncherSub, body(s))
 		wantOneGrantRefusal(t, s, resp, answer, testThirdLauncherAccount, shared, testPoolCredential, testPoolName)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// The check is made per NAME, not per grant
+// ---------------------------------------------------------------------------
+
+// TestEachNameIsAuthorisedByThePoolThatGovernsIt: one grant naming two pools is
+// two questions, and neither pool's roster answers for the other's name.
+//
+// The slip's list is what the run is served from later (DS1.6), so a service
+// that read the grant as "is this launcher served by some pool of this call"
+// would write — and then serve — a name the launcher is neither the owner of nor
+// allowed by. The first two subtests are that exact grant, one way round and
+// then the other, so that a check made on the first name alone cannot pass; the
+// third is the same hole entered through the other spelling, a shared token of
+// the pool the launcher is not served by.
+//
+// The union is per NAME and never across the names of one call, which the last
+// subtest is the other half of: a launcher both rosters serve gets both names in
+// one slip.
+func TestEachNameIsAuthorisedByThePoolThatGovernsIt(t *testing.T) {
+	mine := config.Pool{
+		Name:    testPoolName,
+		Owner:   testLauncherAccount,
+		Members: []string{testPoolCredential},
+	}
+	theirs := config.Pool{
+		Name:    testSecondPoolName,
+		Owner:   testSecondLauncherAccount,
+		Members: []string{testSecondPoolCredential},
+	}
+	theirToken := mustSharedToken(t, testSecondPoolCredential)
+	pair := func(s *slips, names ...string) (*http.Response, []byte) {
+		return s.grantCall(t, grantBody(t, s.slug, s.run, testJobSA, 3600, names...))
+	}
+
+	t.Run("two pools, one of them the launcher's own", func(t *testing.T) {
+		s := poolSvc(t, mine, theirs)
+		resp, answer := pair(s, testPoolName, testSecondPoolName)
+		wantOneGrantRefusal(t, s, resp, answer, testLauncherAccount, testPoolName, testSecondPoolName)
+	})
+
+	t.Run("the same two names the other way round", func(t *testing.T) {
+		s := poolSvc(t, mine, theirs)
+		resp, answer := pair(s, testSecondPoolName, testPoolName)
+		wantOneGrantRefusal(t, s, resp, answer, testLauncherAccount, testPoolName, testSecondPoolName)
+	})
+
+	t.Run("the second name is that pool's shared token", func(t *testing.T) {
+		s := poolSvc(t, mine, theirs)
+		resp, answer := pair(s, testPoolName, theirToken)
+		wantOneGrantRefusal(t, s, resp, answer, testLauncherAccount, theirToken, testSecondPoolCredential, testSecondPoolName)
+	})
+
+	t.Run("a launcher both rosters serve is granted both names", func(t *testing.T) {
+		s := poolSvc(t, mine, config.Pool{
+			Name:         testSecondPoolName,
+			Owner:        testSecondLauncherAccount,
+			AllowedUsers: []string{testLauncherAccount},
+			Members:      []string{testSecondPoolCredential},
+		})
+		sl := s.slip(t, s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testPoolName, testSecondPoolName)).Slip)
+		for _, name := range []string{testPoolName, testSecondPoolName} {
+			if !slices.Contains(sl.Allowed, name) {
+				t.Errorf("the slip permits %v, want both names the grant asked for", sl.Allowed)
+			}
+		}
+		if sl.Pool != testPoolName {
+			t.Errorf("the slip records the pool %q, want %q: the first pool of the policy that admitted a name", sl.Pool, testPoolName)
+		}
 	})
 }
 
