@@ -23,7 +23,8 @@ import (
 )
 
 // checkoutStageName is the stage of the converge that runs the checkout's own
-// steps (fugaro upgrade's pin, plugin and cloud steps) inside `fugaro update`.
+// steps (the cloud half, the pin and the plugin having gone elsewhere: U2, U1)
+// inside `fugaro update`.
 const checkoutStageName = "checkout"
 
 // checkoutFile writes one file of a checkout fixture, creating its directory.
@@ -37,7 +38,7 @@ func checkoutFile(t *testing.T, path, data string) {
 	}
 }
 
-// noClaudeOnPath: the checkout stage runs fugaro upgrade's plugin step, which
+// noClaudeOnPath: the converge runs the plugin step, which
 // looks claude up through claudeLookPath, so a converge test that runs in a
 // checkout never runs — or fails on — the developer's own claude.
 func noClaudeOnPath(t *testing.T) {
@@ -98,8 +99,8 @@ func stageOutcome(t *testing.T, e *initEngine, st initflow.Stage) *initflow.Resu
 }
 
 // updateStages runs the stages named, in the order given, through the loop:
-// the two whose steps are `fugaro upgrade`'s are the plugin stage (the pin and
-// the plugin in Claude Code) and the checkout stage (the job images), and a
+// the two whose steps these are the plugin stage (the plugin in Claude Code,
+// which took the pin over, U1) and the checkout stage (the job images), and a
 // test that drives one alone cannot see what the other answers with — the
 // run's left-for-you accounting is the loop's, not a stage's.
 func updateStages(t *testing.T, e *initEngine, names ...string) *initflow.Result {
@@ -121,7 +122,7 @@ func updateStages(t *testing.T, e *initEngine, names ...string) *initflow.Result
 }
 
 // A checkout with a plugin to install and a repository behind this release's
-// base image: `fugaro update` runs fugaro upgrade's own steps for it, so the
+// base image: `fugaro update` runs the checkout's own steps for it, so the
 // plugin goes into Claude Code through the plugin stage (which took the step
 // over, U1) and the job images through the checkout stage's refresh. The pin an
 // older fugaro left in the checkout comes out of the same run: the merge that
@@ -332,7 +333,7 @@ func TestUpdateImageBuildNeedsItsOwnConfirmation(t *testing.T) {
 	if len(*ran) != 0 || string(convergeRead(t, settings)) != wiredAt("v0.5.0") {
 		t.Errorf("something ran without a confirmation: steps %q\n%s", *ran, out)
 	}
-	if l := res.Left[0]; l.Stage != checkoutStageName || !strings.Contains(l.Text, "upgrade") {
+	if l := res.Left[0]; l.Stage != checkoutStageName || !strings.Contains(l.Text, "update") {
 		t.Errorf("the left-for-you is %+v, want the checkout stage's own one-line route", l)
 	}
 }
@@ -412,9 +413,9 @@ func leftCommand(res *initflow.Result, stage, cmd string) bool {
 // The local steps are the ones a marker leaves alone: through the loop the
 // converge drives (never a direct Apply — the loop's own agent gate is what
 // the stages answer with LocalUnderAgent), the plugin stage installs the plugin
-// in the user's own Claude Code and leaves the checkout's files alone, exactly
-// as fugaro upgrade --local does in the same session. The cloud half is then the step this
-// session leaves for the user
+// in the user's own Claude Code and leaves the checkout's files alone — the
+// local half of the session, in the door that survives. The cloud half is then
+// the step this session leaves for the user
 // (TestUpdateAgentSessionLeavesTheCloudStepForTheUser), so the run exits 1:
 // its local half is done and the checkout is not.
 func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
@@ -439,7 +440,7 @@ func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(settings))
 	if len(res.Left) != 2 || res.ExitCode() != 1 ||
 		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
-		!leftCommand(res, checkoutStageName, selfCommand()+" upgrade --yes "+root) {
+		!leftCommand(res, checkoutStageName, selfCommand()+" update --yes --repo "+root) {
 		t.Fatalf("an agent's session reported the checkout done with the images untouched: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 }
@@ -465,7 +466,7 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(settings))
 	if len(res.Left) != 2 || res.ExitCode() != 1 ||
 		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
-		!leftCommand(res, checkoutStageName, selfCommand()+" upgrade --yes "+root) {
+		!leftCommand(res, checkoutStageName, selfCommand()+" update --yes --repo "+root) {
 		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 	// The local half really ran, so this is not a run that refused everything
@@ -626,8 +627,8 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 		t.Errorf("the left-for-you does not say where the step can be run: %q", l.Text)
 	}
 	if want := []string{
-		selfCommand() + " upgrade --yes " + root,
-		selfCommand() + " upgrade " + root,
+		selfCommand() + " update --yes --repo " + root,
+		selfCommand() + " update --repo " + root,
 	}; !slices.Equal(l.Commands, want) {
 		t.Errorf("the left-for-you names %q, want %q (the parked step's own two commands, as its refusal words them)", l.Commands, want)
 	}
@@ -666,7 +667,7 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"left_for_you"`) || !strings.Contains(string(b), selfCommand()+" upgrade --yes "+root) {
+	if !strings.Contains(string(b), `"left_for_you"`) || !strings.Contains(string(b), selfCommand()+" update --yes --repo "+root) {
 		t.Errorf("the JSON does not carry the step left for the user:\n%s", b)
 	}
 }
@@ -708,7 +709,7 @@ func TestUpdateLocalStepsRunInAgentSessionWithoutAYes(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(settings))
 	if len(res.Left) != 2 || res.ExitCode() != 1 ||
 		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
-		!leftCommand(res, checkoutStageName, selfCommand()+" upgrade --yes "+root) {
+		!leftCommand(res, checkoutStageName, selfCommand()+" update --yes --repo "+root) {
 		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 }
@@ -783,7 +784,7 @@ func TestUpdateSecondRunWritesNothing(t *testing.T) {
 
 // A checkout whose origin is not an owner/name is a failure, not a skip: the
 // refresh cannot resolve the repository, which is a real local-file error and
-// one fugaro upgrade fails on too. (A checkout with no origin at all is the
+// one the step fails on too. (A checkout with no origin at all is the
 // one the step is dropped for: TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin.)
 func TestUpdateFailsOnAnOriginItCannotRead(t *testing.T) {
 	t.Run("an origin that is not owner/name", func(t *testing.T) {
@@ -879,9 +880,9 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 }
 
 // A checkout with no origin remote has no repository for the refresh to work
-// on: the cloud step is skipped, which is where this differs from fugaro
-// upgrade, whose cloud step fails the same read because there the refresh was
-// asked for by name. The pin an older fugaro left stays in the file (U5: the
+// on: the cloud step is skipped, which is where this differs from the refresh
+// asked for by name, whose step fails the same read. The pin an older fugaro
+// left stays in the file (U5: the
 // removal rides on the same gate, and a checkout this run may not write into is
 // not one to take it out of), while the plugin in Claude Code, which is the same
 // one for every repository, is still installed: the gate is the checkout
@@ -1026,28 +1027,6 @@ func TestUpdateRecognisesACheckoutByItsFugaroYAML(t *testing.T) {
 			t.Errorf("the skip names a settings file the reader cannot see in front of them: %q", status.Detail)
 		}
 	})
-}
-
-// The steps the checkout stage calls are fugaro upgrade's own, and fugaro
-// upgrade still runs them: the stage added a caller, not a copy. Since U2 the
-// step it runs for the plugin is the machine's install, so a checkout with no
-// claude on PATH is skipped with the slash commands to type — and its settings
-// file is left exactly as it was.
-func TestUpgradeStillWorks(t *testing.T) {
-	convergeEnv(t, "0.5.2")
-	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
-	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if convergeRead(t, settings) != wiredAt("v0.5.1") {
-		t.Errorf("fugaro upgrade --local rewrote the checkout's settings:\n%s", convergeRead(t, settings))
-	}
-	for _, want := range []string{"plugin: skipped: claude is not on PATH", "  " + root + ": plugin skipped, cloud skipped, rules skipped, policy skipped"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output lacks %q:\n%s", want, out)
-		}
-	}
 }
 
 // The checkout stage's cloud half is the refresh's step 4, where a billable
@@ -1265,7 +1244,7 @@ func TestUpdateFailedBuildNamesTheRunThatRetries(t *testing.T) {
 	if !strings.Contains(res.Failed.Error, "the build of acme/app/app was refused") {
 		t.Errorf("the failure is not the step's own sentence: %+v", res.Failed)
 	}
-	if want := selfCommand() + " upgrade --yes " + root; !strings.Contains(res.Failed.Fix, want) {
+	if want := selfCommand() + " update --yes --repo " + root; !strings.Contains(res.Failed.Fix, want) {
 		t.Errorf("the fix does not name the run that offers the build again (%q): %q", want, res.Failed.Fix)
 	}
 	if strings.Contains(res.Failed.Fix, "resumes at "+checkoutStageName) {
@@ -1291,10 +1270,9 @@ func TestUpdateFailedBuildNamesTheRunThatRetries(t *testing.T) {
 
 // TestUpdateCheckoutPlanLineIsTheUpdateDoorsOwnWords: the stage's one line is
 // what `fugaro update` says it does for the checkout, and the command the
-// person is running is this one. Naming fugaro upgrade sent a reader to a
-// command they never run, and to a run of it that is not this run — the steps
-// this stage takes are the converge's, in this project, with the local config
-// this run wrote.
+// person is running is this one. The retired second command is not named there
+// (U4), and it could not be: the steps this stage takes are the converge's, in
+// this project, with the local config this run wrote.
 func TestUpdateCheckoutPlanLineIsTheUpdateDoorsOwnWords(t *testing.T) {
 	_, root := upgradeRig(t)
 	e, _ := checkoutEngine(t, &initOptions{yes: true})
