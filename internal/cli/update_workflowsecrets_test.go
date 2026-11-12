@@ -17,7 +17,12 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // workflowSecretsYAML is acme/app's fugaro.yaml with the app workflow mounting
@@ -149,4 +154,71 @@ func TestUpdateWorkflowSecretsFollowTheAllowList(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("the record's app workflow holds %v; want %v — the allow-list decides which container the job mounts, and a project-wide container that exists for a name it does not cover is not it", got, want)
 	}
+}
+
+// TestUpdateWorkflowSecretsAreTheUpgradesStepAlone: the two states the step
+// writes nothing in, each with the fixture that writes under `fugaro update` —
+// so the assertion is about the gate and not about a fixture that could never
+// have written anything.
+//
+// The door is the setup one, which converges the same installation through the
+// same engine: a project it has just created has no repository whose workflows
+// a service reads, and the record is the upgrade's. The plan is --plan-only,
+// and it is also where a coding agent's session reaches this engine (the loop
+// plans an engine stage read-only, and a session applies none): `--yes`'s help
+// promises that a session "changes nothing outside this machine", and a record
+// published out of a run that applied nothing is exactly the write that
+// promise does not have.
+func TestUpdateWorkflowSecretsAreTheUpgradesStepAlone(t *testing.T) {
+	slug := mustSlug("github", "acme/app")
+	call := func(t *testing.T, o *initOptions) *gcpfake.RTDB {
+		t.Helper()
+		db := gcpfake.NewRTDB(t)
+		db.Set(budget.PathProject, initProjectName)
+		db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "version": 1, "project": initProjectName, "gcp_project": initProject})
+		lc := &localcfg.Config{
+			Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+			Budget:    &localcfg.Budget{Mode: "enforce", PerRunUSD: 5, RTDBURL: db.URL, FirebaseProject: initProject},
+			Endpoints: localcfg.Endpoints{NoAuth: true},
+		}
+		ready := infra.RepoSpec{
+			Slug: slug, Name: "acme/app",
+			Secrets: map[string]string{"npm-token": "fugaro-acme-app-npm-token-1a2b"},
+		}
+		cfg := &config.Config{Workflows: map[string]config.Workflow{
+			"app": {Secrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}}},
+		}}
+		(&initRun{o: o, w: &strings.Builder{}}).writeWorkflowSecrets(t.Context(), &infra.Clients{}, lc, ready, cfg)
+		return db
+	}
+
+	t.Run("fugaro setup", func(t *testing.T) {
+		db := call(t, &initOptions{door: setupDoor.name})
+		if v := db.Value(creds.PathWorkflowSecrets(slug)); v != nil {
+			t.Errorf("%s exists after a `fugaro setup` run (%v): the record is the upgrade's step, and a project the setup door just created has no repository a service reads", creds.PathWorkflowSecrets(slug), v)
+		}
+	})
+	t.Run("a plan", func(t *testing.T) {
+		db := call(t, &initOptions{door: updateDoor.name, planOnly: true})
+		if v := db.Value(creds.PathWorkflowSecrets(slug)); v != nil {
+			t.Errorf("%s exists after a plan (%v): --plan-only changes nothing outside this machine, and a coding agent's session reaches this engine the same way", creds.PathWorkflowSecrets(slug), v)
+		}
+	})
+	t.Run("fugaro update, applied", func(t *testing.T) {
+		db := call(t, &initOptions{door: updateDoor.name})
+		if db.Value(creds.PathWorkflowSecrets(slug)) == nil {
+			t.Fatalf("%s is not there after an update that applied: this is the fixture the two refusals above are refusals because of", creds.PathWorkflowSecrets(slug))
+		}
+		client, err := newBudgetClient(t.Context(), db.URL, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, found, err := creds.ReadWorkflowSecrets(t.Context(), client, slug)
+		if err != nil || !found {
+			t.Fatalf("the record the update wrote does not read back: found=%v err=%v", found, err)
+		}
+		if got := rec.Workflows["app"]; len(got) != 1 || got[0].Env != "NPM_TOKEN" || got[0].ID != "fugaro-acme-app-npm-token-1a2b" {
+			t.Errorf("the record's app workflow holds %v; want the container the fixture's spec mounts", got)
+		}
+	})
 }

@@ -44,12 +44,23 @@ import (
 // — the node is new with this one — so the first `fugaro update` after it
 // writes one, with no other step and nothing asked of the person.
 //
-// A coding agent's session is NOT excluded here, unlike the three steps beside
-// it: this record is not authorization data. Every value it names is one the
-// job already mounts and the run already reads from its own environment (F4),
-// so publishing it widens nobody's reach — the route that reads it is bound to
-// the verified job account of the repository AND the workflow (G19) — and what
-// it records is the state this run's own apply just left the repository in.
+// A coding agent's session needs no gate of its own here, and what keeps this
+// step out of one is the plan-only gate above rather than a second reading of
+// the environment: a session applies no engine at all (initflow's loop plans
+// an engine stage read-only and leaves what it found to the person), so the
+// repository stage reaches this engine with planOnly set, and a plan changes
+// nothing outside this machine — which is the whole of what `--yes`'s help
+// promises there. The managed project's gate is the one case in which a
+// session IS the run that converges the installation (D1016): the loop applies
+// the stage, planOnly is clear, and the record is part of what it converges.
+//
+// What the record holds is why leaving it to that is enough rather than
+// lucky: every container it names is one the repository's job already mounts
+// and the run already reads from its own environment (F4), so publishing it
+// widens nobody's reach — the route that serves it is bound to the verified
+// job account of the repository AND the workflow (G19) — and every ID in it is
+// derived from the repository's own config and the operator's allow-list
+// rather than chosen by the caller.
 func (r *initRun) writeWorkflowSecrets(ctx context.Context, c *infra.Clients, lc *localcfg.Config, ready infra.RepoSpec, cfg *config.Config) {
 	// The door first: this is the upgrade's step, and `fugaro setup --repo`
 	// onboards a repository without converging it. --plan-only changes nothing
