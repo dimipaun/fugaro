@@ -258,10 +258,16 @@ func (s *Service) webhook(w http.ResponseWriter, r *http.Request) {
 	s.accept(w)
 }
 
-// apply is one event's effect on the store: §5.2's idempotency first, then the
-// subscription's own order, then the type. Both guards are before any mint, and
-// both are refusals to act rather than errors — a redelivery and a late event
-// are the merchant's ordinary traffic.
+// apply is one event's effect on the store: §5.2's idempotency first, then §8's
+// withdrawal where the event is one, then the subscription's own order, then the
+// type. Every guard is before any mint, and each is a refusal to act rather than
+// an error — a redelivery and a late event are the merchant's ordinary traffic.
+//
+// The withdrawal is ahead of the ordering guard and not behind it, because §5.2
+// orders the *subscription's* state and a withdrawal is not part of it: a refund
+// whose instant is older than the subscription's own — the merchant's webhook
+// arrived after a seat change moved that instant forward — would be dropped for
+// good by that guard, leaving the money returned and the key live.
 //
 // An event about a subscription the store does not hold is the one case that is
 // an error, and it is a `500` so the merchant sends it again. It is not

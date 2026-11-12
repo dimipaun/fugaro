@@ -836,6 +836,66 @@ func TestTestModeEventsMintStagingKeysOnly(t *testing.T) {
 	}
 }
 
+// TestAPurchaseMailsTheKeyAndItsRenewalSecret: D2135 and §7.3 — the mail the
+// buyer receives is the only place the renewal secret is ever written down (the
+// store keeps its digest and never the secret), and that digest is the only
+// thing a renewal can be checked against (K2.3). A purchase that mailed the key
+// alone, or that left the store no digest, hands a paying customer a licence
+// that lapses at the end of its term with nothing either side can do about it —
+// and both failures are silent: the mint succeeds and the mail still carries a
+// key that works until it expires.
+func TestAPurchaseMailsTheKeyAndItsRenewalSecret(t *testing.T) {
+	f := newFixture(t)
+	bought := f.purchase("evt-1", "acme.example", 5, 365)
+	minted := f.mintedKeys()[0]
+	claims := v1Verified(t, f, minted)
+
+	if got := len(f.mail.sent); got != 1 {
+		t.Fatalf("the purchase mailed %d message(s), want the one that carries the key", got)
+	}
+	sent := f.mail.sent[0]
+	if sent.To != buyerAddress("acme.example") || sent.Subject != keySubject {
+		t.Fatalf("the purchase mailed %+v, want the key to the buyer's own address", sent)
+	}
+	lines := strings.Split(strings.TrimRight(sent.Body, "\n"), "\n")
+	keyLine := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == minted {
+			keyLine = i
+		}
+	}
+	if keyLine < 0 {
+		t.Fatalf("the mail carries no line with the key %q, want the key text itself: %q", minted, sent.Body)
+	}
+	if keyLine+1 >= len(lines) {
+		t.Fatalf("the mail ends on the key line, want the renewal secret below it (D2135): %q", sent.Body)
+	}
+	secret := strings.TrimSpace(lines[keyLine+1])
+	if secret == "" {
+		t.Fatalf("the line below the key is empty, want the renewal secret (D2135): %q", sent.Body)
+	}
+	if got, want := claims.RenewalSecretHash, secretHash(secret); got != want {
+		t.Errorf("the key carries the renewal secret's hash %q, want the hash of the secret the mail carried, %q", got, want)
+	}
+
+	// The store keeps that digest and never the secret: what a renewal is checked
+	// against is the hash, and a store holding the secret is a list of live
+	// renewal credentials (§7.3, K2.2).
+	state, held, err := f.store.KeyState(context.Background(), bought.KeyID)
+	if err != nil || !held {
+		t.Fatalf("the store holds no key state for %s (held=%v, err=%v), and without it nothing can serve a renewal", bought.KeyID, held, err)
+	}
+	if state.KeyID != bought.KeyID {
+		t.Errorf("the key state is kept for %q, want the key %q the purchase recorded", state.KeyID, bought.KeyID)
+	}
+	if state.RenewalSecretHash != claims.RenewalSecretHash {
+		t.Errorf("the store holds the digest %q, want the one the key carries, %q: the two are the pair a renewal is checked against", state.RenewalSecretHash, claims.RenewalSecretHash)
+	}
+	if state.RenewalSecretHash == secret {
+		t.Errorf("the store holds the renewal secret itself, want its digest alone: the store is read by whoever operates the service (§7.3)")
+	}
+}
+
 // TestRefundRevokesTheKey: §8 and D2131 — a refund or a chargeback writes one
 // entry of the revocation list, for the one key the merchant names, and that is
 // the whole of the event's effect. The list is what the customer's own job and
@@ -938,6 +998,28 @@ func TestRefundRevokesTheKey(t *testing.T) {
 	}
 	if got := f.revocations(); len(got) != 2 {
 		t.Errorf("§8's list holds %d entry(ies) after the unnamed refund, want the two the merchant named", len(got))
+	}
+
+	// A refund older than the subscription's own instant lands anyway: §5.2's
+	// ordering is the *subscription's* state and §8's entry is not part of it, so
+	// a refund the merchant sends after a seat change has moved that instant
+	// forward — or one whose webhook simply arrived late — is the refund the
+	// customer is waiting for. Dropped instead, the money is back and the key the
+	// refund paid for stays live.
+	late := f.purchase("evt-6", "late.example", 2, 30)
+	f.advance(day)
+	f.event(Event{ID: "evt-7", Type: EventSeatChange, Organisation: "late.example", Seats: 4, TermDays: 30})
+	older := f.now.Add(-time.Hour)
+	f.event(Event{ID: "evt-8", Type: EventRefund, OccurredAt: older, Subscription: "sub-late.example", KeyID: late.KeyID})
+	entry, held, err = f.store.Revocation(context.Background(), late.KeyID)
+	if err != nil || !held {
+		t.Fatalf("a refund older than the subscription's own instant left no entry for %s (held=%v, err=%v), want the key it named withdrawn", late.KeyID, held, err)
+	}
+	if entry.Reason != ReasonRefund || !entry.At.Equal(older) {
+		t.Errorf("the late refund's entry is %+v, want %q at %s, the event's own instant", entry, ReasonRefund, older)
+	}
+	if got := f.revocations(); len(got) != 3 {
+		t.Errorf("§8's list holds %d entry(ies), want the three the merchant named", len(got))
 	}
 }
 
