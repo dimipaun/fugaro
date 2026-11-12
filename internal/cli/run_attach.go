@@ -598,16 +598,17 @@ func attachRouteFor(auth string) string {
 // The models are NeedsAnthropicKey's own, in its own order (coder, reviewer,
 // EffectiveBackground, the vision slot when it is set) — NOT
 // Agent.PinnedModels, whose third entry is the raw Models.Background.
-// Background is empty whenever the
-// config leaves it unset, and a run whose coder a provider claims never makes
-// an unset-background call to Anthropic at all: config.EffectiveBackground
-// substitutes the coder's own model there, so PinnedModels would print the
-// direct route for a run that makes no such call. The set never under-reports
-// either way — an unclaimed model always names the auth route — and the one
-// line D9 exists for must not name a destination the bytes cannot reach. The
-// vision slot is in the set for that line's own reason: it is a model a stage
-// runs (V7), so an attached picture's bytes reach the provider that claims it
-// exactly as the coder's do.
+// Background is empty whenever the config leaves it unset, and a run whose
+// coder a provider claims never makes an unset-background call to Anthropic at
+// all: config.EffectiveBackground substitutes the coder's own model there, so
+// PinnedModels would print the direct route for a run that makes no such call.
+// The set never under-reports either way — an unclaimed model always names the
+// auth route — and the one line D9 exists for must not name a destination the
+// bytes cannot reach. The vision slot is in the set for that line's own
+// reason: it is a model a stage runs (V7), so the bytes of an attached picture
+// may reach the provider that claims it exactly as they may reach the coder's;
+// whether a stage runs it is the task's answer (an image the task names, and a
+// coder that cannot read one) rather than this launch's.
 //
 // One case does not get that right, and it is the launcher/checkout
 // approximation the rest of this file already makes: with no checkout of the
