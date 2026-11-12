@@ -253,3 +253,45 @@ func TestPromptsCarryShortIDRule(t *testing.T) {
 		}
 	}
 }
+
+// TestFixPromptListsOnlyBlockingFindings: the fixer's brief carries one line
+// per finding it was handed and nothing else. What it is handed is the round's
+// blocking subset (T-TR7b, acceptance 2), so a finding a judge deferred — or
+// one the mode's table tolerated — is in no line of it; and a needs_owner
+// finding beside them is dropped here, as it always was (OD1): no code change
+// settles it, so handing it to the coder would spend the round on work that
+// cannot answer it.
+func TestFixPromptListsOnlyBlockingFindings(t *testing.T) {
+	got := runner.FixPrompt([]runner.Finding{
+		{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"},
+		{Summary: "the retry loop never stops"},
+		{Summary: "the licence text needs counsel's clearance", NeedsOwner: true},
+	})
+	if !strings.Contains(got, "- [blocker] internal/api/handler.go: the handler ignores the decode error\n") {
+		t.Errorf("the brief does not list the first finding with its severity and file:\n%s", got)
+	}
+	if !strings.Contains(got, "- the retry loop never stops\n") {
+		t.Errorf("the brief does not list a finding that carries neither:\n%s", got)
+	}
+	if strings.Contains(got, "counsel's clearance") {
+		t.Errorf("the brief hands the coder a finding only the owner can settle:\n%s", got)
+	}
+	if n := strings.Count(got, "\n- "); n != 2 {
+		t.Errorf("the brief lists %d findings, want the two a code change can settle:\n%s", n, got)
+	}
+}
+
+// TestFixPromptSaysTouchNothingElse: the brief says the round is these fixes
+// alone (F16), which is CLAUDE.md's "a fix round adds no functionality" stated
+// where the coder reads it. A list of fixes and nothing more reads as leave to
+// keep working, and every finding the round left open is either listed or a
+// follow-up no change here may pre-empt.
+func TestFixPromptSaysTouchNothingElse(t *testing.T) {
+	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}})
+	if !strings.Contains(got, "Touch nothing else") {
+		t.Errorf("the brief does not say to touch nothing else:\n%s", got)
+	}
+	if !strings.Contains(got, "Address each one, commit, and run `fugaro verify test` again.") {
+		t.Errorf("the brief lost the sentence that sends the coder through the tests again:\n%s", got)
+	}
+}

@@ -92,7 +92,7 @@ func TestPrompts(t *testing.T) {
 	if got := ReviewPrompt("", "", "origin/main", DiffSize{}, false); !strings.Contains(got, "correctness bugs") {
 		t.Errorf("default review prompt = %q", got)
 	}
-	fix := FixPrompt(Verdict{Verdict: "changes", Findings: []Finding{{Severity: "major", File: "a.go", Summary: "nil deref"}, {Summary: "add a test"}}})
+	fix := FixPrompt([]Finding{{Severity: "major", File: "a.go", Summary: "nil deref"}, {Summary: "add a test"}})
 	if !strings.Contains(fix, "- [major] a.go: nil deref\n- add a test\n") {
 		t.Errorf("fix prompt = %q", fix)
 	}
