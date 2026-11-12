@@ -162,7 +162,10 @@ type InstallationSpec struct {
 	// bare addresses a Google ID token's email claim holds. It is derived by
 	// launchers.go from the merged launchers list above and never written by
 	// hand, so the class and the invoker grants name the same people (F31).
-	LauncherAccounts []string `json:"launcher_accounts"`
+	// An installation whose roster names no launcher writes no key at all: the
+	// module's own default is then the empty class, which is what an
+	// installation that never had one already planned.
+	LauncherAccounts []string `json:"launcher_accounts,omitempty"`
 	// LauncherBucketCondition limits the launchers' write grant on the runs
 	// bucket to runs/, tokens/ and issues/ (gcp.LauncherBucketCondition).
 	LauncherBucketCondition Condition       `json:"launcher_bucket_condition"`

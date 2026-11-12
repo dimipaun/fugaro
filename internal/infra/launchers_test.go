@@ -72,13 +72,18 @@ func TestLaunchersVariableDerivedFromRoster(t *testing.T) {
 		t.Errorf("launcher_accounts = %v, want the user members of launchers (%v): the class and the invoker grant are made from one list, and a class that named somebody the grant does not leaves a caller IAM refuses", got.LauncherAccounts, slices.Compact(fromMembers))
 	}
 
-	// An installation that names nobody: an empty list on the wire, not null.
+	// An installation that names nobody: no key at all, so the module's own
+	// default ([]) is the class and its bytes are what they were before the
+	// class existed. An empty list written out would be the same plan with a
+	// diff in every installation's tfvars; null is the one spelling that must
+	// never appear, because the module renders the class's environment entry
+	// only when it is non-empty (fail closed).
 	raw, err = InstallationVars(InstallationSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"launcher_accounts": []`) {
-		t.Errorf("an installation whose roster names no launcher writes %s, want an empty list: the module renders the class's environment entry only when it is non-empty (fail closed), and null and [] must not be two spellings of it", strings.TrimSpace(string(raw)))
+	if strings.Contains(string(raw), "launcher_accounts") {
+		t.Errorf("an installation whose roster names no launcher writes %s, want no launcher_accounts key: the module's own default is the empty class, and the key exists only where it says something", strings.TrimSpace(string(raw)))
 	}
 }
 
