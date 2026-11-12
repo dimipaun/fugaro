@@ -926,6 +926,39 @@ func TestIntakeAccountIsItsOwnPrincipalKind(t *testing.T) {
 	}
 }
 
+// A computed role to either of the dynamic class's two accounts is refused,
+// whatever type carries it: the intake's write role is this module's own custom
+// role, so a plan that bound it as a reference to the role being created would
+// otherwise be covered WITH the name-prefix condition unread --
+// dynamicSecretsGrant reads the condition off a role it can name, and abstains
+// when it cannot -- and that is create, delete and version-add for every
+// container of the project riding the ordinary confirmation. The refusal names
+// the account, so an operator's read of it says which grant to write by name.
+//
+// Mutation (verified): the two branches in the unknown-role case removed, a
+// computed role to either account is covered by the module's own custom-role
+// row and this test fails on all six rows.
+func TestDynamicAccountsAreRefusedAComputedRole(t *testing.T) {
+	role := customRole(IntakeSecretsRole, "proj-1", []any{"secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add"})
+	for _, tc := range []struct{ name, member string }{
+		{"the intake", "serviceAccount:" + IntakeAccountID + "@proj-1.iam.gserviceaccount.com"},
+		{"the credentials service", "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"},
+	} {
+		for _, typ := range []string{"google_project_iam_member", "google_secret_manager_secret_iam_member", "google_storage_bucket_iam_member", "google_cloud_run_v2_service_iam_member"} {
+			after := map[string]any{"member": tc.member, "bucket": "fugaro-runs-proj-1", "secret_id": "fugaro_p_x"}
+			ch := rc(typ, after, map[string]any{"role": true}, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{role, ch}}, nil)
+			if len(got) == 0 {
+				t.Errorf("%s: a computed role to %s is covered: a role the plan cannot name cannot be checked against the name-prefix condition it is bound under (DS2.2)", typ, tc.name)
+				continue
+			}
+			if want := "a computed role to " + tc.name; !strings.Contains(strings.Join(got, "\n"), want) {
+				t.Errorf("%s: a computed role to %s stopped for another reason: %q, want %q", typ, tc.name, got, want)
+			}
+		}
+	}
+}
+
 // mustRoleKey is grantRules' key for a role as a module writes it, for the
 // table lookups above. It is the cover's own roleKey, so the test cannot
 // disagree with the code about which row a role lands on.

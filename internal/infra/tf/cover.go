@@ -1761,6 +1761,23 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 		if kind == toDeployer {
 			return "a computed role to the deployer account: it holds its eight roles, named, and nothing else"
 		}
+		// The dynamic class's two accounts (DS2.2) are refused a computed role
+		// as flatly as the deployer is, and for the same reason: what this
+		// file checks about their grants is the condition, and
+		// dynamicSecretsGrant reads that condition off a role it can name. The
+		// role at stake is this module's own custom role --
+		// google_project_iam_custom_role.intake_secrets -- so a plan that
+		// wrote it as a reference instead of the literal would hand the intake
+		// create, delete and version-add for every container of the project
+		// with no condition to read, under the ordinary confirmation. Both
+		// roles are therefore written as literals in the modules (intake.tf,
+		// credentials.tf), and a plan that computes one asks its owner.
+		if kind == toIntake {
+			return "a computed role to the intake's account: it holds its own two roles, named, and the name-prefix condition on the write role is the whole of what fences it to the delivery grammar (D1931, F30)"
+		}
+		if kind == toCredentials {
+			return "a computed role to the credentials service's account: it holds the bundle's accessor, the dynamic class's prefix accessor and the shared lister, named, and the prefix condition is what narrows the second (D1931, Q6)"
+		}
 		if createsDeployerRole && typ == "google_project_iam_member" {
 			// The plan is creating one of the deployer's roles, so a computed
 			// PROJECT role here could be one of the seven conditioned ones —
