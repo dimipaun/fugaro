@@ -76,9 +76,8 @@ func bitbucketPolicyFixture(t *testing.T, allow ...string) *projectFixture {
 // and it names no token: what is printed is the workspace, the difference and
 // the write.
 //
-// Mutation (verified, run and restored): take the token from a flag's value
-// instead of stdin (read it from o.bitbucket) — this test fails, the listing
-// asking with no credential at all.
+// Mutation (verified, run and restored): list with no token (drop it from the
+// listing's options) — this test fails, the listing refused before it asked.
 func TestProjectSyncBitbucketOffersUnadmitted(t *testing.T) {
 	const token = "token-not-a-real-credential-abcdef"
 	f := bitbucketPolicyFixture(t, "bitbucket/acme/app")
