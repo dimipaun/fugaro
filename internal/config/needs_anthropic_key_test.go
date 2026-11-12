@@ -77,7 +77,7 @@ func TestNeedsAnthropicKeyReadsALevelModel(t *testing.T) {
 // and one a stage runs, not only one a rule judges — a coder that cannot read
 // an image is moved onto it (V7, D2002) — so a Claude model there under
 // provider pins is a call to Anthropic this rule has to see. Without it,
-// `fugaro init` stores no key for a repository whose three role models a
+// `fugaro setup` stores no key for a repository whose three role models a
 // provider serves, and every run of it dies at implement for a key that was
 // never stored (initsecrets, infra's job spec and validate all ask this).
 func TestNeedsAnthropicKeyReadsTheVisionSlot(t *testing.T) {

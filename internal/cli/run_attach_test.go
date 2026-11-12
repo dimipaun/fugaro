@@ -1133,7 +1133,7 @@ func TestAttachNamesTheBackgroundModelTheRunWillActuallyUse(t *testing.T) {
 // and the one line D9 exists for has to name it. The same slot is what makes
 // the key rule read it: a repository whose three role models a provider serves
 // and whose vision slot is a Claude ID still sends a call to Anthropic, and
-// config.NeedsAnthropicKey has to say so before fugaro init decides not to
+// config.NeedsAnthropicKey has to say so before fugaro setup decides not to
 // store the key.
 //
 // Mutation (leave the vision slot out of either set): the provider serving it
