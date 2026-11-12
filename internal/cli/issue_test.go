@@ -568,6 +568,10 @@ func TestIssueShowShowsClosedAs(t *testing.T) {
 func TestIssueDismissRefusesResolved(t *testing.T) {
 	t.Run("a file here that says so", func(t *testing.T) {
 		store := issueState(t)
+		// The folder is a directory of records and this is what one of them
+		// says, which is what `list` and `show` print (F28's shape of input):
+		// the refusal reads the record it was handed, wherever the record came
+		// from, so a dismissal never buries the fix line the person just read.
 		fixed := savedIssue("48235", issues.StatusResolved, false)
 		fixed.ResolvedIn = "0.22.0"
 		if err := store.Save(fixed); err != nil {
