@@ -3376,6 +3376,82 @@ earlier layer's row already spends is not in force either, and it is said on
 stderr the same way (`config.SecurityIgnoredRow`, D1506): the row is what its
 author believes and the list in force is not.
 
+### 6.24 `fugaro coordinator roadmap … --json` — what became of a roadmap write
+
+**Command:** `ee/coordinator/cli/roadmap.go` `newCoordinatorRoadmapCmd`, with
+the document built as `coordinatorOutcomeDoc`. Cited by symbol, not by line, for
+§6.11's reason. It documents the coordinator's roadmap group (D2110, D2122):
+`need`, `unneed` and `releases set` queue one change to the project's roadmap
+record, and `roadmap request <id>` reads one back. The three writes are the six
+tools of the coordinator's front door over `roadmap:write`, and the front door
+holds **no database write**: it queues, and an apply job that this command never
+reaches changes the record as the coordinator's own account (D2118, D922/H3).
+
+**The document is one object, and it is the same one in both directions.**
+`need`, `unneed` and `releases set` print their request's outcome — after
+waiting up to 60 seconds for the record to answer — and `roadmap request <id>`
+prints it without waiting. There is no second shape for the later read, so a
+console that stored one of these documents can compare it with the one it reads
+next.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | integer | never | never | the document's own version, `1`. It is the front door's `mcpauth.RoadmapAnswerVersion`, the one constant both ends read, so a shape change moves both together, and a document this build does not know is refused by its number rather than read field by field: the command exits **1** and names `fugaro update`, which is the one command that brings the CLI and the installation to the same release |
+| `request` | string | never | never | the request's id, minted by the front door when it queued the write. It is the only handle on the request and the value `roadmap request` takes. Without `--json` the command prints it as soon as the door has queued the write and **before** it waits, so a person who stops the command still holds it; with `--json` nothing reaches standard output until the outcome is in, because the document is what was asked for, and the id is a field of it |
+| `kind` | string | never | never | what the request asked for: `publish_plan`, `unpublish_plan`, `move`, `need`, `unneed` or `release_set`. It is the request's own discriminator and not the tool's name, because two tools are the same act with opposite arguments |
+| `status` | string | never | never | one of `applied`, `refused`, `failed`, `pending` |
+| `reason` | string | **yes** | never | why a `refused` or a `failed` request did not happen, in the record's own words. Absent rather than empty for the two statuses that carry none |
+| `current` | string | **yes** | never | the value the record holds now, beside a refusal that is a stale `expect`: the version, the release, or the release key. Absent when the refusal is not one of those |
+
+**What the four statuses mean to a caller.** `applied` is the record changed.
+`refused` is the record not changed and is the caller's to fix — a stale
+`expect`, a plan that names a stream the record does not hold — and the command
+exits **1**. `failed` is the installation's: the apply job could not reach the
+record, and the command exits **2**. `pending` is neither a success nor a
+failure: the queue holds the request and the job has not reached it, the command
+exits **0**, and the document is the answer to "what happened" — nothing yet,
+and the same document read again later is how a caller sees it move. A `pending`
+document is the reason `roadmap request` exists as a command of its own: a write
+that runs out its 60 seconds prints this document and the id that reads it
+later.
+
+**A call the door refuses before it queues anything has no document at all.**
+A tool's own refusal travels the way MCP carries one — HTTP 200, a successful
+result, and the sentence in the content with `isError` set — and it is an
+answer about a call rather than a request that exists, so there is nothing to
+print: the command writes nothing to standard output, with or without `--json`,
+the door's sentence is the error, and the exit code is **1**. That is the shape
+of `releases set` built on a version the record has moved past, and of an
+argument the tool's schema does not hold. The version the record holds arrives
+inside that sentence rather than in a `current` field, because no request was
+queued to carry one: a console that showed a `current` beside such a refusal
+would be showing the answer to a different call. (A refusal from the protocol
+layer rather than from the tool — a name the catalogue does not hold, a store
+the door could not read or write, a method it does not serve — is a JSON-RPC
+error instead: it is the installation's and not the call's, the command exits
+**2**, and it is not this document either.)
+
+**The wait.** A write asks for its outcome immediately after queueing, and asks
+again every two seconds until the status is not `pending` or 60 seconds have
+passed. A caller that wants no wait at all calls `roadmap request` with the id
+it already holds; the read is one call and never loops.
+
+**What is not in the document.** No database path, no node, no subtree: the
+record's layout is the installation's own, and where the door or the job failed
+the sentence says the record was not read and nothing about where it lives
+(spec.md §9). No token, no code and no verifier: the credential is the
+keychain's, and the one value that reaches a terminal is the issuer.
+
+**Two more documents, and no rule of their own to state.** `fugaro coordinator
+login --json` prints `coordinatorLoginDoc` — `version`, `project`, `issuer`,
+`scopes` — which is what the person is now signed in as, and `coordinator
+logout --json` prints `coordinatorLogoutDoc` — `version`, `project`,
+`removed` — which is what the keychain no longer holds. Neither carries the
+refresh token, the access token or the client's registration: a document a
+console reads is a document a console logs, and the one credential of this flow
+that lives longer than a command is in the operating system's keychain and
+nowhere else (D2122).
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
