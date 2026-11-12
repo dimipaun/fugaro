@@ -1023,15 +1023,36 @@ func TestRunMintsAV1KeyWithNoCheckInterval(t *testing.T) {
 	}
 }
 
+// TestRunTrimsTheRenewalSecretHashV1 holds the paste: the hash is a copy of a
+// string out of the owner's store, the server compares it with the one it holds
+// character for character (D2135), and it is signed in and cannot be corrected
+// afterwards -- so the whitespace a copy brings is the same failure as an empty
+// flag, a key that can never renew. What is signed is the trimmed text.
+func TestRunTrimsTheRenewalSecretHashV1(t *testing.T) {
+	signer := newFakeSigner(t)
+	var out bytes.Buffer
+	if err := run(v1RunArgs(signer, "-renewal-secret-hash", "  a-hash-of-a-renewal-secret-and-not-the-secret\n"), &out, signingRunner(signer)); err != nil {
+		t.Fatalf("minting through the command: %v", err)
+	}
+
+	claims, _, err := licence.VerifyV1([]byte(strings.TrimSpace(out.String())), testNowV1, ringOf(t, signer), testWorkspaceV1)
+	if err != nil {
+		t.Fatalf("the verifier refused the key the command printed: %v", err)
+	}
+	if claims.RenewalSecretHash != "a-hash-of-a-renewal-secret-and-not-the-secret" {
+		t.Errorf("the key's renewal secret hash is %q, want the text without the whitespace the flag was pasted with: the server compares that hash with the one it holds", claims.RenewalSecretHash)
+	}
+}
+
 // TestRunRefusesWhatItCannotMintV1 holds the v1 command to answering nothing it
 // cannot mint: a flag it needs, a word that is not one, a seat count or a term
 // the design never admits, a term the arithmetic cannot count, a count of days
 // that cannot mean what it says, a renewing key with no secret hash, a stamp and
 // a warning window that are not what they say, a public half that is not a key,
-// and a term the verifier bounds. What the owner sees is the refusal, and stdout
-// stays empty -- except that a term the verifier bounds is refused after the
-// signature, which is the one discarded signature the tool pays for keeping the
-// ceiling in the verifier.
+// a term that has run out by the time the key is minted, and a term the verifier
+// bounds. What the owner sees is the refusal, and stdout stays empty -- except
+// that a term the verifier bounds is refused after the signature, which is the
+// one discarded signature the tool pays for keeping the ceiling in the verifier.
 func TestRunRefusesWhatItCannotMintV1(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -1075,6 +1096,14 @@ func TestRunRefusesWhatItCannotMintV1(t *testing.T) {
 		// holds with the one in the key (D2135), and the key cannot be amended.
 		{"a renewing key with no renewal secret hash", func(f *fakeSigner) []string { return v1RunArgs(f, "-renewal-secret-hash", "") }, nil, true},
 		{"a stamp that is not a time", func(f *fakeSigner) []string { return v1RunArgs(f, "-issued-at", "yesterday") }, nil, true},
+		// -issued-at moves the instant the state check is made. This claim set
+		// reads active at a stamp in 2020 because it is read there, and it has
+		// been over since 2020-01-31: the verifier reports that as a state and
+		// not as an error, so nothing past this guard catches the dead key the
+		// owner would otherwise store.
+		{"a term that has already run out", func(f *fakeSigner) []string {
+			return v1RunArgs(f, "-issued-at", "2020-01-01T00:00:00Z", "-days", "30")
+		}, nil, true},
 		{"a warning window with no colon", func(f *fakeSigner) []string { return v1RunArgs(f, "-warning", "admin") }, nil, true},
 		{"a warning window that reaches nobody", func(f *fakeSigner) []string { return v1RunArgs(f, "-warning", ":grace_start") }, nil, true},
 		{"a public half that is not a key", func(f *fakeSigner) []string { return v1RunArgs(f, "-public-key", "AA") }, nil, true},

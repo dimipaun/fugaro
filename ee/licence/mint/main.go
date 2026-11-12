@@ -42,11 +42,13 @@
 //     a workspace id the verifier will not accept are refused there. The rule is
 //     the verifier's and is not restated here, which is what keeps a hand-minted
 //     key and the service's one format. The tool's own rules are the ones no
-//     verifier catches: what it mints must read `active` at its own `issued_at`,
-//     since a claim set whose `paid_through` is before it is not a refusal but a
-//     key that has already ended; it must claim at least one seat, a number D439
-//     leaves unbounded because seats are compared and shown rather than
-//     enforced; its counts of days must mean what they say, and a renewing key
+//     verifier catches: what it mints must read `active` at its own `issued_at`
+//     and still be running when it is minted, since a claim set whose
+//     `paid_through` is before it is not a refusal but a key that has already
+//     ended, and `-issued-at` moves the instant that check is made; it must
+//     claim at least one seat, a number D439 leaves unbounded because seats are
+//     compared and shown rather than enforced; its counts of days must mean what
+//     they say, and a renewing key
 //     must carry the hash of the secret it renews with, which is signed in and
 //     cannot be added afterwards.
 //   - **The ring is the owner's, not the build's.** The compiled keyring is
@@ -223,8 +225,13 @@ func runV1(args []string, out io.Writer, runner Runner) error {
 	// the key and cannot be added to it afterwards, so an empty one on a
 	// renewing key is a key that can never renew -- the customer pays for a term
 	// and lapses at the end of it. A key whose renewal mode is `none` is
-	// air-gapped and contacts nothing, so it carries none.
-	if *renewalMode != licence.RenewalNone && strings.TrimSpace(*renewalSecretHash) == "" {
+	// air-gapped and contacts nothing, so it carries none. The text is trimmed
+	// once here and that is what is signed: it is a copy of a string out of the
+	// owner's store, it arrives with whatever the copy brought, and the server
+	// compares it with the hash it holds character for character, so the
+	// whitespace of a paste is the same failure as an empty flag.
+	secretHash := strings.TrimSpace(*renewalSecretHash)
+	if *renewalMode != licence.RenewalNone && secretHash == "" {
 		return errors.New("-renewal-secret-hash is required for a key whose renewal mode is not none: the licence server compares that hash with the one it holds, and it is signed into the key, so a key minted without one can never renew")
 	}
 
@@ -237,6 +244,17 @@ func runV1(args []string, out io.Writer, runner Runner) error {
 		issued = parsed.UTC()
 	}
 	term := time.Duration(*days) * 24 * time.Hour
+	paidThrough := issued.Add(term)
+	// The fifth, and it is the hole the first one leaves: the state MintV1 holds
+	// the key to is the state at the claim set's own `issued_at`, which
+	// `-issued-at` moves, so a stamp in the past with a term that has run out by
+	// now passes that check -- the verifier reports an ended key as a state
+	// rather than refusing it, and this tool reads the state -- and nothing past
+	// this guard catches it. The owner would be handed a key that is already
+	// dead.
+	if !paidThrough.After(time.Now()) {
+		return fmt.Errorf("-issued-at is %s with a term of %d days, so the key would end at %s and that instant has passed: a key minted now is one the owner gives out now, and a key that has already ended is one no verifier refuses and no customer can use", issued.Format(time.RFC3339), *days, paidThrough.Format(time.RFC3339))
+	}
 
 	claims := licence.ClaimsV1{
 		V:                 versionV1,
@@ -247,11 +265,11 @@ func runV1(args []string, out io.Writer, runner Runner) error {
 		Tier:              *tier,
 		Seats:             *seats,
 		IssuedAt:          issued,
-		PaidThrough:       issued.Add(term),
+		PaidThrough:       paidThrough,
 		GraceDays:         *graceDays,
 		RenewalMode:       *renewalMode,
 		RenewBeforeDays:   *renewBeforeDays,
-		RenewalSecretHash: *renewalSecretHash,
+		RenewalSecretHash: secretHash,
 		Warnings:          warnings,
 		Kind:              *kind,
 		Note:              *note,
