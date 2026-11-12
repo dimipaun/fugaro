@@ -1292,6 +1292,40 @@ func withVision(t *testing.T, cfg, model string) string {
 	return out
 }
 
+// TestACoderWithoutAnImageRateRunsTheVisionModel (V7, D2000, D2002, D2016):
+// the coder's price row carries no image rate and the run names a model for
+// images, so the coder's stage runs the vision model — the picture Claude Code
+// read into the next request is a call the gateway admits and prices, and the
+// stage's own report names the model that answered it. Without the rewrite the
+// run dies exactly as the issue reports (F1, F6): the gateway refuses the image
+// on the coder's model, the stage's work is thrown away, and what the owner
+// paid for it is gone.
+//
+// Mutation (drop the rewrite of the coder's slot): the stage runs the coder's
+// model, the image call is refused as not pinned for it, and this test is red.
+func TestACoderWithoutAnImageRateRunsTheVisionModel(t *testing.T) {
+	g := providerRun(t, withVision(t, providerPinned(t), sonnet), "enforce", "50", nil, "acme/app")
+	g.setTask(t, "Fix the console golden: docs/shot.png is out of date")
+	g.fake.Script = []anthropicfake.Reply{anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1000, Output: 500})}
+	var status int
+	var body string
+	reads := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		status, body = postImage(t, req, sonnet)
+		if status != 200 {
+			return agent.Result{}, fmt.Errorf("the image call was refused (%d): %s", status, body)
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := g.run(t, reads, review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a run whose coder cannot read an image and names a model that can did not run it: the image call was answered %d %s; rec = %+v, err = %v",
+			status, body, rec, err)
+	}
+	if len(rec.Stages) == 0 || rec.Stages[0].Model != sonnet {
+		t.Fatalf("stages = %+v, want the coder's stage on the run's vision model %s", rec.Stages, sonnet)
+	}
+}
+
 // TestGatewayStageSpecCarriesTheVisionModel (V4, D2009): the run's
 // agent.models.vision travels into the stage the gateway is told about, so the
 // image refusal a stage meets names the model the owner configured — priced as
