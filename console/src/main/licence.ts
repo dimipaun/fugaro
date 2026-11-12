@@ -577,8 +577,9 @@ export function verifyLicenceKeyV1(
   if (key === null) return refuseV1('unknown-key-id')
 
   // A signature that is not 64 bytes is a signature that does not verify, which
-  // is the answer the Go verifier gives it too; the length is checked here
-  // because Node's verifier only answers for the length it expects.
+  // is the answer the Go verifier gives it too. The length is held here rather
+  // than left to the verifier: a throw out of `edVerify` would be an exception
+  // in the main process, and this module's contract is an answer.
   if (signature.length !== 64 || !edVerify(null, payload, key, signature)) return refuseV1('signature')
 
   // Past this line the payload is the one the ring signed, so what it says is a

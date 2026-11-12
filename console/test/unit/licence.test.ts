@@ -612,6 +612,10 @@ describe('the module itself', () => {
 // would be a second contract that agrees with neither verifier. The file carries
 // the fixture's public half and signed key texts and never a private half, which
 // is what makes it a fixture a repository may hold at all.
+//
+// The older shape's vectors are replayed in `licence-vectors.test.ts` instead:
+// that file is the reader of `vectors.json`, and the two verifiers share no
+// helper, since the old one answers with a sentence and this one with a name.
 describe('the v1 key', () => {
   /** VectorKeyV1, VectorCaseV1 and VectorFileV1 are the file's own shape. Its
    * `state` and `refused` are plain strings and not this module's types on
