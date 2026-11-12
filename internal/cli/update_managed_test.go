@@ -1658,12 +1658,18 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
 				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
 			}
-			// LeftRefused and not LeftCommand: what the gate leaves the owner
-			// is D1012's refusal step (internal/initflow's stage.go answers a
-			// gate verdict with it), not a command to run — the plan this stage
-			// holds is the installation's own, and no command of the owner's
-			// rebuilds what the gate would not admit.
-			left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused)
+			// LeftCommand and not LeftRefused: what this plan is refused for is
+			// its removals and nothing else, so initflow's gate verdict is
+			// GateRefusedDelete and the step the owner is left is the
+			// producer's own command — gateDeleteLeft's, which carries
+			// --allow-delete for the addresses the plan removes and applies
+			// exactly what the refusal named. LeftRefused is the shape for a
+			// refusal no flag of the owner's reaches (the cover, the cost
+			// list, a plan whose create half is refused), which is not this
+			// plan. The two facts this arm is about are asserted either way:
+			// the stage is left rather than failed, and what it leaves names
+			// the refusal and the object.
+			left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand)
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
 			}
