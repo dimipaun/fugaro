@@ -18,6 +18,10 @@ the grace after it is the key's own `grace_days` — 30 by default (D2133) — r
 after an `expires` claim. The product's five states, the lapse, what it allows and everything below are
 unchanged.
 
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the grace this note fixes at thirty days
+after `expires` is the key's own `grace_days` (D2133), and "Free" is the no-key state (D2142).**
+
 This is subscriptions **S6.1**. It continues the licence-key note's state table and answers the four
 things that note hands it: what a lapsed installation shows and still allows, what an installation
 with no key shows, what the console 0.112.0 upgrade leaves a user in, and what a key the build cannot
