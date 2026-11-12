@@ -16,7 +16,7 @@ A citation names a file and a symbol, never a line.
 | Build secrets never in layers | Catalog D1150: BuildKit secret mounts through the workflow-secret path |
 | Nightly rebuild in Cloud Build | `deploy/terraform/gcp/modules/installation/catalogcheck.tf` (D1148) |
 | Dockerfile for a repo's own CI file | `docs/catalog-build-context/` (`context:` key; CB1 merged) |
-| Docker-needing repos on VMs | Batch code under `internal/backend/batch`, **not enabled**: `localcfg` refuses `backend: cloud-batch`, and a `docker`-tagged entry is refused on Cloud Run (`carriesDocker`, D1149) |
+| Docker-needing repos on VMs | Batch code under `internal/backend/batch`, **not enabled here**: `localcfg` accepts `backend: cloud-batch` and `fugaro doctor` fails for an installation that selects it until the backend's own checks pass — a report, and no launch reads it, so what the reading buys is being told before the run rather than after it (plan `2026-10-19-compute-backend.md` Task 10; this row was written when `localcfg` still refused the name, and its "refuses an installation" was corrected when the enable's code review read it as a fence), and a `docker`-tagged entry is refused on Cloud Run (`carriesDocker`, D1149) |
 | Skill | `plugin/skills/setup` is **per repository** and loops on a **local** image build |
 
 ## 2. Findings

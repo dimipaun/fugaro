@@ -1,12 +1,17 @@
 # A Docker-capable compute backend: workloads on Compute Engine VMs
 
 > **Not shipped, and not in 0.9.0.** `fugaro init --provision-batch` no longer
-> refuses on the 0.9.5 line (`internal/cli`'s `batchProvisionShipped` is true,
-> plan Task 9): the reaper role this backend's compute module creates is the
-> five permissions Google defines, so its provisioning can complete. But
-> `backend: cloud-batch` is still refused by `internal/localcfg` until the
-> plan's Task 10. 0.8.6's notes said the Batch backend would return in 0.9.0;
-> 0.9.0's own notes state it as a known limit instead.
+> refuses on the 0.9.5 line (`internal/cli`'s
+> `batchProvisionShipped` is true, plan Task 9): the reaper role this backend's
+> compute module creates is the five permissions Google defines, so its
+> provisioning can complete, and on that same line `backend: cloud-batch` is a
+> name `internal/localcfg` accepts since the plan's Task 10 — which is the task
+> that makes `fugaro doctor` the gate in front of it: an installation that
+> selects the backend is refused until the provisioning, IAM, logs, cost and
+> reaper checks pass. Nothing in this document has been measured on an
+> installation that selects it — Check 57b (plan Task 12, owner-run) is that
+> run. 0.8.6's notes said the Batch backend would return in 0.9.0; 0.9.0's own
+> notes state it as a known limit instead.
 
 Status: design for review (2026-10-15), written to the owner's ruling of
 2026-10-14 (restored in the generic-tool plan, PR #374): the Docker-capable
@@ -687,10 +692,13 @@ that names a budget database with budget mode on, or a published policy, a
 signer being required in both cases — and an installation
 has one backend, so such a project gets **every** launch refused, after the
 token was minted and dropped, and has to stay on `backend: cloud-run`. There is
-no per-run fallback: the refusal is at `jobs.create`'s doorstep, not in
-`fugaro validate`, and a `doctor`/`validate` check for the pair (a minting
-installation selecting `cloud-batch`) is a **Task 10 condition** rather than
-something this task builds.
+no per-run fallback: the refusal is at `jobs.create`'s doorstep, and the pair —
+a minting installation selecting `cloud-batch` — is refused early as well, by
+`fugaro validate`'s offline arm (the budget backend's own switch,
+`internal/cli/validate_batch.go`) and by `fugaro doctor`'s `batch-budget-seal`
+check, which asks `budgetMintOn` itself so a published policy counts too
+(`internal/cli/doctor_batch.go`). Both were a **Task 10 condition**, and Task
+10 — the task that enabled the name — built them.
 
 - The VM (Batch-created) runs as a service account; omit the field and it is
   the default Compute Engine service account, set it and it is the one named
@@ -1876,9 +1884,9 @@ What follows, plainly:
   only the code. `internal/backend/batch/reap.go`'s header states the same five
   and the same caveat, which is where a reviewer checks them against the code.
   The reaper reads no secret and needs no Secret Manager, storage or logging
-  grant. Task 6 creates the role and grants it; nothing selects the backend
-  before the enable task (9), so none of this is reachable in an installation
-  today. **Built** (Task 6,
+  grant. Task 6 creates the role and grants it; nothing selected the backend
+  before the enable task (9), so none of this was reachable in an installation
+  then. **Built** (Task 6,
   `deploy/terraform/gcp/modules/compute/iam.tf`): the custom role is exactly
   the five permissions above, in a `google_project_iam_custom_role` the reaper
   account and nobody else holds — never `roles/batch.jobsEditor`, never
@@ -4061,10 +4069,17 @@ Not the full plan (that is written after the owner approves this design and
 the pre-build probe, Check 57a, answers). Ordered so **each task merges
 alone**, the **first one delivers value**, and — the ordering rule that follows
 from both — **no task can be enabled before the machinery it needs exists**:
-`backend: cloud-batch` stays refused by config validation until the enable
-task, and the enable task is after logs, cost and the reaper, because a Batch
+`backend: cloud-batch` stayed refused by config validation until the enable
+task, and the enable task came after logs, cost and the reaper, because a Batch
 run without log routing leaves its output in `_Default` where every project
-viewer reads it (§1.5), and a Batch run without a reaper leaks VMs (§3.4).
+viewer reads it (§1.5), and a Batch run without a reaper leaks VMs (§3.4). That
+order is now spent rather than standing: the enable has landed (task 9's own
+**Built** note below), and what an operator has in place of the refusal is the
+`doctor` gate the same task turned on — which fails on the installation rather
+than fencing it, since `fugaro run` reads none of the checks, so the ordering
+above is now the operator's to keep and doctor is what tells them when it has
+not been (§8.1 task 9's **Built** note, `SECURITY.md`'s "The VM backend, and
+the Docker daemon it gives a run").
 
 **Task 0 is the owner's, and it is first: Check 57a** (§7.2). It needs no
 Fugaro change at all — committed job JSON and `gcloud` — and it is the
@@ -4098,7 +4113,8 @@ senior reviewer before merge, not just the normal one.
    fake to `internal/gcpfake` and an `internal/backend/batch` that passes
    `backendtest.Run` against it — including the cancel case, which is what
    makes `jobs.cancel` rather than `jobs.delete` a tested requirement (§1.4) —
-   with `backend: cloud-batch` still **refused** everywhere. The first task a
+   with `backend: cloud-batch` still **refused** everywhere — which was the
+   state of every task before the enable (9). The first task a
    contributor can do, needing no cloud and no owner step.
 3. **Cost**: the VM price table, the machine type's quantities, the boot-window
    start, the one-minute floor and the report/history source line, plus the
@@ -4132,9 +4148,10 @@ senior reviewer before merge, not just the normal one.
    the residual window this safety net exists for is bounded by the margin
    rather than by a schedule's own period. The report reaches Cloud Logging
    under the job's own `fugaro_role=reaper` labels (57b-11 measures it), and
-   `backend: cloud-batch` stays refused everywhere until the enable task
-   (Task 10), so the invocation is scheduled while no installation selects the
-   backend it sweeps.
+   `backend: cloud-batch` was refused everywhere until the enable task
+   (Task 10), so the invocation was scheduled while no installation selected
+   the backend it sweeps — and it is the thing the enable's `doctor` gate
+   refuses an installation for when the invocation is absent (§4.4, task 9).
 6. **The Batch provisioning stage in `fugaro init`** (owner-run live step):
    **the Compute and Batch APIs both enabled** (both are OFF by default, and
    enabling Compute creates the default network and the default Compute Engine
@@ -4253,8 +4270,9 @@ senior reviewer before merge, not just the normal one.
    it is the same grant the installation module makes on its own scheduler
    account. What it does not do, by design: no secret is
    handled, the installation's own root and the belong installation are never
-   touched, and nothing selects the backend — `backend: cloud-batch` stays
-   refused until the enable task (9). **The live step is the owner's**: the
+   touched, and nothing here selects the backend — `backend: cloud-batch` was
+   still refused when this task landed, and the enable task (9) is what
+   accepted it. **The live step is the owner's**: the
    code is built and tested against the fakes only, the `[review]` above
    stands, and Check 57b (task 10) is what runs it against a real project.
 7. **The job definition, `Launch` and the socket.** **[review]** The job JSON
@@ -4307,7 +4325,8 @@ senior reviewer before merge, not just the normal one.
    daemon and no VM to mount one from, so the ask fails closed there rather
    than in the middle of a stage.
 8. **Config, `validate`, `doctor`, `backends ls`** — the plumbing for §4, with
-   `cloud-batch` still refused. `doctor`'s live checks gain what Task 6 has to
+   `cloud-batch` still refused when this task landed (the enable, task 9, is
+   what accepted it). `doctor`'s live checks gain what Task 6 has to
    satisfy and 57a sharpened (§4.4): the **Compute and Batch APIs enabled**,
    the preload image **family** present, the job JSON's network/subnetwork
    named, the sink arm applied, and the IAM as the Condition writes it — and, because a
@@ -4332,6 +4351,93 @@ senior reviewer before merge, not just the normal one.
    `doctor` run against an installation whose Task 6 apply has just finished
    can see a binding that is not readable yet, so the refusal must say
    "propagating" rather than send the operator to re-provision.
+   **Built** (plan Task 10). `internal/localcfg`'s `backend` validation
+   accepts `cloud-batch` as a known name and the pin followed it, so
+   `TestCloudBatchIsRefused` is `TestCloudBatchIsAccepted` in the same file
+   with the opposite assertion, and a name that is neither that nor
+   `cloud-run` is still refused. `fugaro doctor` is the gate, and the
+   mechanism is one function: `internal/cli/doctor_batch.go`'s `batchSeverity`
+   gives a failing Batch check **no severity** — doctor's own hard failure —
+   for an installation whose project config selects the backend, and
+   `"warning"` for one that merely carries a `batch:` block while it runs on
+   Cloud Run, so the same checks are a hard failure for the installation that
+   chose the backend and a warning for the one that did not. **What doctor
+   gives either installation is a verdict and not a fence**: `fugaro run`
+   reads none of these checks, so the enable's gate is what tells the operator
+   before the first run — `_Default` holding a Batch run's output and a VM
+   nobody sweeps are what a launch on an unprovisioned installation still
+   carries (§1.5) — and `SECURITY.md`'s "The VM backend, and the Docker daemon
+   it gives a run" says the same thing where a reader of the hazard will look. An installation that
+   selects it with no `batch:` block at all is refused by name
+   (`batch-block`), and the checks are the ones Task 8 wrote: the two APIs,
+   the preload family **and the gid comparison** (`batchImageFamilyGID`: the
+   family's current generation carries the gid its build read off the builder
+   VM as `socket-gid`, and a recorded `batch.socket_gid` that differs is
+   refused by name — a recorded **zero** is not a mismatch, which is Task 7's
+   launch refusal and not this gate's), the job JSON's network and subnetwork,
+   the sink and its exclusion, the price table, the launcher's conditioned
+   `jobsEditor`, the run accounts' `serviceAccountUser`, the job account's
+   `agentReporter` and `logWriter`, and the reaper's account, its five
+   permissions and its invocation. **One check on that list is not Task 8's
+   but this task's own, and §1.6 is why**: the seal's pair —
+   `batch-budget-seal`, an installation that mints budget tokens
+   (`budgetMintOn`) and whose config selects the backend — is refused by name
+   here, because every launch of such an installation is refused at
+   `jobs.create`'s doorstep and the gate is the last place an operator can be
+   told before paying for one, and `fugaro validate`'s offline arm
+   (`batchValidateProblems`, on the budget backend's own switch) refuses the
+   half a config alone answers, without a cloud read.
+   **The propagation hazard is handled where
+   it is met**: `internal/infra/compute.go`'s `propagating` is the predicate a
+   binding read answers through, and the check's message says the binding is
+   propagating rather than sending the operator to re-provision. **The
+   published `batch:` block's reach over the installation's own resources is
+   closed by the gate rather than by the reader**, which cannot close it:
+   `ParseShared` holds `batch.service_account` to the anchor's project and
+   nothing more, so `doctorBatchAccountMembership` refuses an installation
+   whose published account is not one of the installation's own run accounts —
+   the set the `serviceAccountUser` check already reads — and a foreign
+   account in that file is then a refusal and not a run whose VMs act as an
+   account the installation gave other powers to. **Task 8's remaining paths
+   were each disposed of on the day the name became selectable** (§8.1 task
+   9's own inventory, six entries): `internal/cli/ history.go`'s `gcp.New` and
+   `gcp.JobName` stay, because what keeps a run in that sweep's registry is
+   the run's own heartbeat and not the Cloud Run execution listing, which
+   answers nothing on this backend (the residual window is §9's);
+   `internal/cli/doctor.go`'s hand-built `gcp.New` is **silent** on a backend
+   that deploys no job per workflow, because the check it feeds is about an
+   applied job's mounted references and Batch creates a single-use job per
+   run; `jobWorkflow`'s `gcp.WorkflowVariant` is kept as the derivation both
+   backends name and label a run's job from, and asserted to be;
+   `batch.secrets` is read for the installation's own ownership label
+   (`fugaro=managed`) rather than for a name, so a writer naming another
+   secret of the project is refused; `batch.image` is read for the **mode** of
+   the repository it is served from, so a `REMOTE_REPOSITORY` or a
+   `VIRTUAL_REPOSITORY` — of which the installation's own `fugaro-ghcr` is one
+   instance and not the rule — is refused wherever it appears, and a
+   `STANDARD_REPOSITORY` is what passes; and the artifact boundary is closed
+   on the **runner**, which refuses a `mode: artifact` recipe when
+   `FUGARO_BACKEND` says `cloud-batch`, before any step runs, because the
+   runner is the one place that reads the recipe the run uses at the moment it
+   clones — the launcher's ref read is defence in depth beside it and never
+   the closure, its ref being as stale as the last fetch. **And the read-side
+   preemption rule is reachable for the first time here**, which is why the
+   gate's own test is where it is asserted: `runs ls`, `fugaro diagnose RUN`
+   and `fugaro watch`'s degraded mode read a run's own objects plus the job's
+   report and show a terminal `FAILED` execution with no final record as
+   `failed (preempted)`, **derived at read time and never written back** (the
+   owner's ruling of 2026-10-21, §1.3). The live watch reads the runs bucket
+   alone and never opens the compute backend (watch-queued.md §3), so it has
+   no job report and shows no derivation; a live run is never made to look
+   failed by a job the reader could not read; and a finalized record is never
+   overridden however its job reads. This task changed none of that — the code
+   was built (the `batch-spot` change, PR #822) — and what it owes is the
+   acceptance: a Batch installation that selects the backend, a run with a
+   `launch.json` and no `result.json`, and a job terminal `FAILED` with the
+   platform's preemption in its report, read as `failed (preempted)` with its
+   reason, terminal and settled, with the bucket asserted unchanged
+   afterwards, beside the two negatives that keep it honest.
+
 10. **Check 57b, the docs, the skills and the release bullet** — the last task,
     as in every other group: the post-build acceptance run on the real backend
     (§7.2, 57b). **It also owns where Check 57 is written down**, which is the
@@ -4677,8 +4783,30 @@ not run at all are named together in §7.2 ("Still unmeasured after 57a"):
   token comes from — Check 57a step 12's metadata line. **57a-12 ran the
   signal submission and its recorded result covers the environment variables
   only**, so this half is not answered by the run and stays open.
-- Whether a workflow's Cloud Run `resources` values map cleanly onto a
-  Compute Engine machine type — a plan task (§4.4 item 3).
+- **[ANSWERED, Task 8]** Whether a workflow's Cloud Run `resources` values map
+  cleanly onto a Compute Engine machine type — a plan task (§4.4 item 3).
+  **Built: not by mapping them at all.** `internal/backend/batch`'s
+  `CheckResources` is the check, it is asked by `fugaro validate` and by the
+  launch's own gate, and what it reads is the machine type the installation
+  recorded the workflow's VM is built from; the Cloud Run limits are not
+  consulted on this backend at all.
+- **Open, and narrow: what the history sweep does with a Batch run.** The
+  sweep's liveness rule is the platform listing **or** the run's own heartbeat,
+  and `internal/cli/history.go` still builds the Cloud Run client and the Cloud
+  Run job name it was written around (Task 10's inventory, first entry). A
+  Batch execution never appears in that listing, so on this backend the rule
+  is the heartbeat alone: the runner rewrites its registry entry every
+  `HeartbeatEvery` (**15 s**, `internal/budget`'s default) and the sweep calls
+  an entry stale after `budget.DefaultStaleAfter` (**5 min**), so a live Batch
+  run is kept by twenty beats of margin, and what the listing would add — a run
+  that is alive while its heartbeat is not landing — is what this backend does
+  not have. A run in that state for five minutes is removed from the registry,
+  with an `infra_error` outcome written and its entry deleted, while its VM may
+  still be running. That is the same rule a Cloud Run run whose heartbeat fails
+  meets, except that its execution is still in the listing and keeps it. What
+  settles it is a Batch-side listing the sweep can ask; Task 10 left the rule
+  as it is rather than inventing a second one, and the fallback is asserted
+  where the rule lives (`TestHistorySweepKeepsARunTheExecutionListingDoesNotName`).
 - Cloud Run gen-2's inability to run Docker is the **owner's measurement**
   (the premise of this design, restated in the generic-tool plan's 2026-10-14
   ruling); it is not independently reproduced by this document, and it does

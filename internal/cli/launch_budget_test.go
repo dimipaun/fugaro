@@ -1455,7 +1455,8 @@ func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 // installation's own config rather than from the job — so a run there could
 // not reach the service at all, while its job no longer mounts the token.
 //
-// Batch is not selectable in this build, so the gate is called with the env a
+// The gate reads the backend out of the job's environment, which a launch
+// carries rather than a test's config, so it is called with the env a
 // launcher's own would carry (backendNamed, as checkArtifactLaunch's tests
 // do). What refuses is proxiedness and the backend together: the same gate
 // admits the same launch on the Cloud Run backend, and a repository the node
