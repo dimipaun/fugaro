@@ -41,23 +41,24 @@
 //     know, a check interval it cannot read, a term past the tier's maximum and
 //     a workspace id the verifier will not accept are refused there. The rule is
 //     the verifier's and is not restated here, which is what keeps a hand-minted
-//     key and the service's one format. Three more rules are the tool's own,
-//     because no verifier catches them: what it mints must read `active` at its
-//     own `issued_at`, since a claim set whose `paid_through` is before it is
-//     not a refusal but a key that has already ended; it must claim at least one
-//     seat, a number D439 leaves unbounded because seats are compared and shown
-//     rather than enforced; and it refuses a count of days that cannot mean what
-//     it says, which is the tool's arithmetic rather than the format's.
+//     key and the service's one format. The tool's own rules are the ones no
+//     verifier catches: what it mints must read `active` at its own `issued_at`,
+//     since a claim set whose `paid_through` is before it is not a refusal but a
+//     key that has already ended; it must claim at least one seat, a number D439
+//     leaves unbounded because seats are compared and shown rather than
+//     enforced; its counts of days must mean what they say, and a renewing key
+//     must carry the hash of the secret it renews with, which is signed in and
+//     cannot be added afterwards.
+//   - **The ring is the owner's, not the build's.** The compiled keyring is
+//     empty until S2.9 publishes the owner's production half, and the interim
+//     this tool exists for starts at S3.8, so the tool checks against the public
+//     half named on the command line.
 //
 // The key is checked against the workspace the owner names, because that is the
 // workspace it is minted for and the tool knows no other. So the check that a
 // key belongs *here* -- the `workspace_id` an installation verifies it against
 // (TN2) -- is made where the key is read rather than where it is minted, and
 // what the tool holds is that the id it names is one a verifier accepts.
-//   - **The ring is the owner's, not the build's.** The compiled keyring is
-//     empty until S2.9 publishes the owner's production half, and the interim
-//     this tool exists for starts at S3.8, so the tool checks against the public
-//     half named on the command line.
 //
 // Nothing is written anywhere but stdout: the key text is one line on stdout,
 // for the owner to store where the design says a key is kept.
