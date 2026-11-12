@@ -298,6 +298,43 @@ The account-side settings of §1 (no fallbacks, the data policy) are OpenRouter'
 
 **Unverified until Check 33:** that a vendor's own Anthropic-compatible endpoint (DeepSeek's, Moonshot's) accepts the gateway's forwarded request bodies byte for byte and reports usage the way the gateway reads it. Check 25 (§1) settles this for OpenRouter only; Check 33 of [gcp-live-checklist.md](gcp-live-checklist.md) is the equivalent for a vendor's own endpoint, and is optional and user-run.
 
+## Crafts, credentials and pools
+
+The OpenRouter key this guide is about is also one **credential**: a name and a type. A credential's type says which half of a run serves it — `openrouter` and the built-in
+`vertex` are served by the run's own gateway, `claude-oauth` and `anthropic` by the credentials
+service ([project-claude-accounts.md](project-claude-accounts.md) §12) — and **an `openrouter`
+credential's name is the provider entry's name** of §2, so the gateway serves it with the base URL,
+the prices and the `allow_data_to` that entry already has. Nothing about §2 to §6 changes: a
+credential adds a second way for a call to name that route, not a second route.
+
+Credentials group into **pools**: a name, a strategy (`failover`, the default, or `round-robin`) and
+an ordered list of members, declared with `fugaro accounts pool add <name> <member>...` and read
+with `fugaro accounts pool ls` ([project-claude-accounts.md](project-claude-accounts.md) §13). **A
+pool that mixes the two halves can fail over only where the credential is chosen again, which is a
+stage boundary** and not mid-call: a run that is served by its own gateway cannot hand one call to
+the credentials service, and the other way round.
+
+A run's four **crafts** — coder, first-line review, senior review and security review — each name a
+model and an **access**, the credential or pool their calls go out on, and the two halves inherit
+separately: the first-line review follows the coder, the security review follows the senior review
+(§"The senior reviewer on a provider route" above is that rule for the reviewer's model).
+`fugaro craft ls` prints, per craft, the model and the access it resolves to and where each came
+from — offline. A craft's access is written in the repository's own `fugaro.yaml`
+(`agent.crafts.<craft>.access`) and **only** there: a project sets a craft's model for every
+repository of it and never its access, because the access names something the owner's own config
+holds.
+
+**What this release does not do**, and a reader of §2 to §6 needs both:
+
+- **A craft's model half is not yet what a run runs.** A run still takes its models from
+  `agent.models` and `agent.levels`, exactly as §4 describes; a craft's **access** is the half a run
+  resolves today.
+- **A run is served from the published policy node's own craft members.** The credentials service
+  reads the project's crafts, credentials and pools from the published policy, and `fugaro project
+  policy publish` keeps those members as they are: no command of this release writes them from your
+  config. So a pool your installation declares changes what `fugaro craft ls` and a launch read, and
+  which member serves a call is a later release's work.
+
 ## The cascade, and the project policy switch
 
 `agent.auth: cascade` is the fourth value of the auth list (§4, and the `agent.auth` refusal in §5), and it is not a route: it is a **credential switch**. A `cascade` workflow holds no model credential of its own; its calls go job → gateway → **the credentials service**, which picks a credential from its own tiers (tier A a Claude subscription token, tier B the project's Anthropic API key, tier C reserved) and attaches it to the call. **As of 0.10.1 the launch wires it**: `fugaro run` sets `FUGARO_CREDENTIALS_SERVICE_URL` on a switched-on repository's job, so a `cascade` run's calls are served by the service rather than refused at bootstrap; see the two paragraphs on the service below for what that does not reach. It routes nothing: it names no model of its own, and the pins are the ones the configuration already answers, exactly as they are for `api-key`.
