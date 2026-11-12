@@ -1046,7 +1046,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
-	cands, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
+	cands, strategy, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
 	if err != nil {
 		// Two refusals share this branch and they are not the same answer. A
 		// state the caller cannot fix — the admissions or the crafts could not
@@ -1067,7 +1067,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// person or to the project is served only under a slip that names it.
 	binding, _ := callSlipOf(ctx)
 	cands, notAdmitted = slipOffering(binding, cands, notAdmitted)
-	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now}
+	// The strategy travels with the candidate list it was answered for
+	// (candidates, roundrobin.go; MC7): a pool asking for round-robin is served
+	// by the rotation, and every other list by the cascade's own rule. It is
+	// read once, here, for the whole call — the selector is rebuilt per call and
+	// never per attempt, so a retry inside forward rotates nothing and a run
+	// this call placed keeps what it was given (D154, D874).
+	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now, Strategy: strategy}
 	s.forward(ctx, w, cl, sel, id, b, cands, notAdmitted)
 }
 
