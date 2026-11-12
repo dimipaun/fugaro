@@ -1039,6 +1039,15 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// names no stage account publishes no member at all, so the node of such a
 	// project is byte for byte what it was before the key existed.
 	//
+	// A key may hold an alias rather than an account's own name (D2091), and
+	// what is copied is the account it resolves to: the node is read by every
+	// job image — and by the launcher of every teammate — none of which knows
+	// this machine's aliases, so an alias written there would name no account of
+	// it at all (F4, D2090). The resolution is one step and never a walk
+	// (localcfg.Config.ResolveAccount, which is config.ResolveAccountAlias), and
+	// a name that is no alias is copied unchanged, so a project that writes none
+	// publishes what it always did.
+	//
 	// A stage the release behind cannot read is held back
 	// (config.AccountStageHeldBack): the node's reader refuses the whole node
 	// over one name outside its own run, and the reader is a job image that
@@ -1059,10 +1068,11 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		if stageAccounts == nil {
 			stageAccounts = map[string]string{}
 		}
-		stageAccounts[stage] = choice.ClaudeAccount
+		stageAccounts[stage], _ = lc.ResolveAccount(choice.ClaudeAccount)
 	}
+	defaultAccount, _ := lc.ResolveAccount(lc.DefaultClaudeAccount)
 	pol := &projectpolicy.Policy{
-		DefaultClaudeAccount: lc.DefaultClaudeAccount,
+		DefaultClaudeAccount: defaultAccount,
 		ClaudeAccountStages:  stageAccounts,
 		Version:              projectpolicy.Version,
 		Budget:               projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},

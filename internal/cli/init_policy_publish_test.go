@@ -1197,6 +1197,45 @@ func accountChoiceFixture(t *testing.T) *projectFixture {
 	return f
 }
 
+// accountAliasConfigYAML is accountChoiceConfigYAML with both choice keys naming
+// an alias of the account instead of the account itself, which is the shape
+// D2091 admits and a repoint moves in one edit.
+const accountAliasConfigYAML = "claude_accounts:\n  team-b:\n    allow_data_to: [acme/app]\n" +
+	"claude_account_aliases:\n  reviewer: team-b\n" +
+	"default_claude_account: reviewer\n" +
+	"stages:\n  review:\n    claude_account: reviewer\n"
+
+// TestUpdateReportsNoDriftForAnAlias is the update stage's own comparison — the
+// one behind the `will-do` line and the publish it decides — on a file whose
+// choice keys name an alias. The comparison states the value that reaches the
+// node, which is the account and never the alias (docs/account-aliases, F4,
+// D2090), so the node the publish wrote and the file agree and the stage has
+// nothing to do.
+//
+// Red on the comparison alone: the node carries team-b because the publisher
+// resolves, while the comparison would read reviewer out of the file, and every
+// run of `fugaro update` would report a drift that is permanent and false,
+// rewriting the node to no effect (HARD RULE, CLAUDE.md).
+func TestUpdateReportsNoDriftForAnAlias(t *testing.T) {
+	f := accountChoiceFixture(t)
+	rewriteProjectConfig(t, f, accountAliasConfigYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if account, stages := accountMembersOn(t, f.db); account != "team-b" || stages["review"] != "team-b" {
+		t.Fatalf("the publish wrote %q / %v, want the account the alias stands for", account, stages)
+	}
+
+	h := newMigrationRig(t, f, &initOptions{})
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Done {
+		t.Fatalf("a node carrying the account the file's alias stands for is %s %q, want nothing to do: the comparison reads the alias, not the account it resolves to", st.State, st.Detail)
+	}
+}
+
 // TestUpdateConvergesANodeThatLacksTheAccountChoiceKeys is B7's own test and
 // the owner's rule of 2026-10-30 (HARD RULE, CLAUDE.md) at this state: the node
 // at the shared path carries no account member, this machine's file sets both
