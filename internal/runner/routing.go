@@ -178,7 +178,7 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 //
 // Whether a model can read an image is one fact about it — its price row's
 // image rate — and the rewrite is what makes that fact reach the stage. Claude
-// Code Reads the picture the task names, puts it into its next request as an
+// Code reads the picture the task names, puts it into its next request as an
 // image block, and the gateway refuses the whole call (forward.go's image
 // rule), which fails the stage and throws away what the owner paid for it; a
 // stage pinned to the vision model makes that call one the gateway admits and
@@ -213,6 +213,14 @@ func (r *run) applyVision(prices *pricing.Table) error {
 		// run such a pin would save, before any stage spends.
 		return nil
 	}
+	// A provider coder's haiku role is served by the coder's own model, not by
+	// Claude Code's built-in Anthropic one (config.EffectiveBackground), so the
+	// model that fallback answered with is read before the coder moves: a coder
+	// moved onto a model no route claims would otherwise leave the haiku role
+	// with nothing — the hidden Anthropic call no pin allows, which is the
+	// reason the fallback is there. The background is no slot of this rewrite,
+	// and where it keeps a model of its own it is left alone entirely.
+	background := r.backgroundModel()
 	for _, s := range r.visionSlots() {
 		model := s.get()
 		// A slot pinned to nothing runs Claude Code's own default, an Anthropic
@@ -223,6 +231,9 @@ func (r *run) applyVision(prices *pricing.Table) error {
 			continue
 		}
 		s.set(vision)
+	}
+	if a := &r.cfg.Agent; a.Models.Background == "" && background != "" && r.backgroundModel() == "" {
+		a.Models.Background = background
 	}
 	return nil
 }
@@ -461,8 +472,8 @@ func (r *run) routingSwitch() *config.Routing {
 	return r.projPolicy.policy.Routing
 }
 
-// pinSlot is one of the run's three pins: the model the configuration answers
-// for it, and where that answer is written. A pin is set through the field its
+// pinSlot is one of the run's pins: the model the configuration answers for
+// it, and where that answer is written. A pin is set through the field its
 // effective model came from, so an agent that names only agent.model keeps its
 // coder pin there rather than gaining an explicit one (config.Agent.ModelFor).
 type pinSlot struct {
@@ -471,16 +482,17 @@ type pinSlot struct {
 }
 
 // pinSlots are the run's pins: what the agent is given as the coder, the
-// reviewer and the background model — the three of PinnedModels' order, which
-// every rule that judges a pin reads — followed by each review level's own
-// model, which is a pin of the level's stage and of nothing else (L4.5).
+// reviewer and the background model, and the vision slot — PinnedModels'
+// order, which every rule that judges a pin reads (V1) — followed by each
+// review level's own model, which is a pin of the level's stage and of
+// nothing else (L4.5).
 func (r *run) pinSlots() []pinSlot {
 	a := &r.cfg.Agent
 	// A role reads models.<role>, else agent.model: the rewrite goes back to
 	// whichever of the two answered, so the effective model moves and nothing
 	// else about the configuration does.
 	bg := pinSlot{get: func() string { return a.Models.Background }, set: func(m string) { a.Models.Background = m }}
-	slots := []pinSlot{r.roleSlot(&a.Models.Coder, config.RoleCoder), r.roleSlot(&a.Models.Reviewer, config.RoleReviewer), bg}
+	slots := []pinSlot{r.roleSlot(&a.Models.Coder, config.RoleCoder), r.roleSlot(&a.Models.Reviewer, config.RoleReviewer), bg, r.visionSlot()}
 	for _, s := range reviewStages {
 		// A review level's own model is a pin of its own (L4.5): it is the
 		// model the level's stage runs, and a switch naming it has to move it
@@ -513,6 +525,19 @@ func (r *run) roleSlot(role *string, roleModel config.Role) pinSlot {
 			*role = m
 		},
 	}
+}
+
+// visionSlot is the run's vision slot as a pin (V1, D2007): it reads the
+// model the configuration names for images and writes it back to the same key,
+// so the routing switch rewrites it exactly as it rewrites the other pins. The
+// slot has to be here and not only in applyVision: the rewrite moves a stage
+// onto the model this key names (V7), and a model the switch would have routed
+// but never saw — a Claude ID on a project that routes Claude to a provider —
+// would send the stage's call to Anthropic instead of the route, on an ID no
+// route claims and a credential that cannot serve it (D2008).
+func (r *run) visionSlot() pinSlot {
+	a := &r.cfg.Agent
+	return pinSlot{get: func() string { return a.Models.Vision }, set: func(m string) { a.Models.Vision = m }}
 }
 
 // levelSlot is the pin slot of a review level's own model (L4.5): the model the
@@ -549,8 +574,7 @@ func (r *run) championSlot() pinSlot {
 // The reviewer's slot and levels 2 and 3 are never here (D2004), and neither
 // is the background model: no review stage runs them for the task's picture.
 func (r *run) visionSlots() []pinSlot {
-	a := &r.cfg.Agent
-	slots := []pinSlot{r.roleSlot(&a.Models.Coder, config.RoleCoder)}
+	slots := []pinSlot{r.coderSlot()}
 	for _, s := range reviewStages {
 		if s.role == config.RoleCoder {
 			slots = append(slots, r.levelSlot(s.level))
@@ -560,6 +584,20 @@ func (r *run) visionSlots() []pinSlot {
 		slots = append(slots, r.championSlot())
 	}
 	return slots
+}
+
+// coderSlot is the coder's own pin as applyVision moves it: it reads the
+// coder's effective model (models.coder, else agent.model) and writes
+// models.coder, where the routing switch's roleSlot writes agent.model back
+// when the file named no coder of its own. That difference is D2004's:
+// agent.model is the reviewer's and the background's fallback too
+// (config.Agent.ModelFor, config.EffectiveBackground), so a rewrite written
+// through it would move the reviewer — the model that judges the run's work —
+// on a run that named no reviewer, which is the one thing this rewrite is not
+// allowed to do. agent.model itself is left exactly as the file wrote it.
+func (r *run) coderSlot() pinSlot {
+	a := &r.cfg.Agent
+	return pinSlot{get: func() string { return a.ModelFor(config.RoleCoder) }, set: func(m string) { a.Models.Coder = m }}
 }
 
 // The review levels' own models (L4.5). A stage pins one of the run's role

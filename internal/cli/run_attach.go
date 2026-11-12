@@ -595,21 +595,25 @@ func attachRouteFor(auth string) string {
 //     line has to name the one the bytes reach (config.CheckProviderAuth's own
 //     reading of the four).
 //
-// The three models are NeedsAnthropicKey's own three, in its own order
-// (coder, reviewer, EffectiveBackground) — NOT Agent.PinnedModels, whose
-// third entry is the raw Models.Background. Background is empty whenever the
+// The models are NeedsAnthropicKey's own, in its own order (coder, reviewer,
+// EffectiveBackground, the vision slot when it is set) — NOT
+// Agent.PinnedModels, whose third entry is the raw Models.Background.
+// Background is empty whenever the
 // config leaves it unset, and a run whose coder a provider claims never makes
 // an unset-background call to Anthropic at all: config.EffectiveBackground
 // substitutes the coder's own model there, so PinnedModels would print the
 // direct route for a run that makes no such call. The set never under-reports
 // either way — an unclaimed model always names the auth route — and the one
-// line D9 exists for must not name a destination the bytes cannot reach.
+// line D9 exists for must not name a destination the bytes cannot reach. The
+// vision slot is in the set for that line's own reason: it is a model a stage
+// runs (V7), so an attached picture's bytes reach the provider that claims it
+// exactly as the coder's do.
 //
 // One case does not get that right, and it is the launcher/checkout
 // approximation the rest of this file already makes: with no checkout of the
 // task's repository there are no agent models to read, and attachLaunch hands
-// this function a ZERO config.Agent (run_attach.go, attachLaunch), so all
-// three models are "", the direct route is added — correctly, an unclaimable
+// this function a ZERO config.Agent (run_attach.go, attachLaunch), so every
+// model read here is "", the direct route is added — correctly, an unclaimable
 // model is a direct-path model in NeedsAnthropicKey's own rule — and that
 // route is then named vertex, the auth applyDefaults gives every config this
 // CLI reads. So a repository whose fugaro.yaml sets agent.auth api-key, and
@@ -635,6 +639,9 @@ func attachProviders(lc *localcfg.Config, ag config.Agent, repo string) []string
 	claimed := map[string]bool{}
 	direct := false
 	models := []string{ag.ModelFor(config.RoleCoder), ag.ModelFor(config.RoleReviewer), config.EffectiveBackground(ag, providers)}
+	if vision := ag.VisionModel(); vision != "" {
+		models = append(models, vision)
+	}
 	for _, model := range models {
 		name, p, ok := config.ProviderFor(providers, model)
 		if ok && p.AllowsData(repo) {

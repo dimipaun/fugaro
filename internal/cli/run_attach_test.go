@@ -1096,8 +1096,8 @@ func TestAttachAllowsAnArtifactRecipeWithNoModeStamped(t *testing.T) {
 // telling the owner their screenshot goes to Anthropic when it does not.
 //
 // Mutation (iterate ag.PinnedModels() instead of NeedsAnthropicKey's own
-// three models): the empty background pin is read as a model no provider
-// claims, the direct route is added, and this test fails on it.
+// models): the empty background pin is read as a model no provider claims,
+// the direct route is added, and this test fails on it.
 func TestAttachNamesTheBackgroundModelTheRunWillActuallyUse(t *testing.T) {
 	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
 		"acme-gw": {Models: []string{"coder-*", "reviewer-*"}},
@@ -1124,6 +1124,41 @@ func TestAttachNamesTheBackgroundModelTheRunWillActuallyUse(t *testing.T) {
 	ag.Models.Background = "bg-1"
 	if got := attachProviders(lc, ag, "acme/app"); strings.Join(got, ",") != "acme-gw,"+attachDirectAnthropic {
 		t.Fatalf("attachProviders with a pinned background = %v, want the direct route too", got)
+	}
+}
+
+// TestAttachNamesTheProviderThatServesTheVisionSlot: the vision slot is a model
+// a stage runs — the coder's, which cannot read an image with its own (V7,
+// D2002) — so an attached picture's bytes reach the provider that claims it,
+// and the one line D9 exists for has to name it. The same slot is what makes
+// the key rule read it: a repository whose three role models a provider serves
+// and whose vision slot is a Claude ID still sends a call to Anthropic, and
+// config.NeedsAnthropicKey has to say so before fugaro init decides not to
+// store the key.
+//
+// Mutation (leave the vision slot out of either set): the provider serving it
+// is missing from the line and this test fails on it, and the key rule answers
+// false for a configuration whose every run then dies at implement for a key
+// that was never stored.
+func TestAttachNamesTheProviderThatServesTheVisionSlot(t *testing.T) {
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
+		"acme-gw": {Models: []string{"coder-*", "vision-*"}},
+	}}
+	ag := config.Agent{Auth: "api-key", Models: config.ModelRoles{Coder: "coder-1", Reviewer: "coder-1", Vision: "vision-1"}}
+	if config.NeedsAnthropicKey(ag, lc.Providers, "acme/app") {
+		t.Fatal("this configuration's every model is served by the provider; the test's premise moved")
+	}
+	if got := attachProviders(lc, ag, "acme/app"); strings.Join(got, ",") != "acme-gw" {
+		t.Fatalf("attachProviders = %v, want the provider that claims the vision slot", got)
+	}
+	// The same slot on a Claude ID: the coder's stage runs it, so the run makes
+	// an Anthropic call and the direct route belongs on the line.
+	ag.Models.Vision = "claude-sonnet-5-5"
+	if !config.NeedsAnthropicKey(ag, lc.Providers, "acme/app") {
+		t.Error("NeedsAnthropicKey = false for a Claude vision slot: the coder's stage runs it, so the run needs the key")
+	}
+	if got := attachProviders(lc, ag, "acme/app"); !slices.Contains(got, attachDirectAnthropic) {
+		t.Errorf("attachProviders = %v, want the direct route for the Claude vision slot", got)
 	}
 }
 

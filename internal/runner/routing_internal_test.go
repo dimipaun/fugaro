@@ -1553,3 +1553,78 @@ func TestAShadowArmsChampionCoderMovesWithTheArm(t *testing.T) {
 		t.Errorf("the champion's coder = %q, want the vision model %q: the two arms' plans are derived from it", r.championCoder, seerModel)
 	}
 }
+
+// TestTheVisionRewriteMovesNoFallback (V7, D2004): a file that names only
+// agent.model answers for all three roles (config.Agent.ModelFor,
+// config.EffectiveBackground), so a rewrite that wrote the coder's new model
+// back into agent.model would move the reviewer's model with it — the model
+// that judges the run's work, on a run that named no reviewer — and would take
+// the haiku role's model away from the provider coder it fell back to.
+//
+// Mutation (move the coder through the switch's own roleSlot): the reviewer
+// runs the vision model and the background answers nothing, which is Claude
+// Code's built-in Anthropic model — the hidden call no pin allows.
+func TestTheVisionRewriteMovesNoFallback(t *testing.T) {
+	r := &run{
+		cfg: &config.Config{Agent: config.Agent{
+			Auth:   "api-key",
+			Model:  blindModel,
+			Models: config.ModelRoles{Vision: seerModel},
+		}},
+		spend: Spend{Mode: "enforce"},
+		d: Deps{
+			Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Providers: map[string]config.ModelProvider{
+				"openrouter": {Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+					Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/site"}},
+			},
+		},
+	}
+	if got := r.backgroundModel(); got != blindModel {
+		t.Fatalf("the fixture's background = %q, want the coder it falls back to %q (config.EffectiveBackground)", got, blindModel)
+	}
+	applyVisionOn(t, r)
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != seerModel {
+		t.Errorf("the coder = %q, want the vision model %q", got, seerModel)
+	}
+	if got := r.cfg.Agent.ModelFor(config.RoleReviewer); got != blindModel {
+		t.Errorf("the reviewer = %q, want %q: agent.model still answers for it (D2004)", got, blindModel)
+	}
+	if got := r.backgroundModel(); got != blindModel {
+		t.Errorf("the background = %q, want the model the haiku role had before the rewrite %q", got, blindModel)
+	}
+}
+
+// TestTheVisionSlotIsRoutedWithTheOtherPins (V7, D2007, D2008): the vision slot
+// is a pin, so the routing switch a project publishes rewrites it like the
+// other three — and the stage the rewrite moves onto it then runs the route's
+// own ID, on the provider's key and the route's price row. Without the slot in
+// pinSlots the switch never sees it, and a project that routes Claude to a
+// provider gets a Claude ID on a stage whose run has no Anthropic credential:
+// the call goes direct to Anthropic, where the router said it must not go
+// (D1b), or is refused for a key the run deliberately does not carry.
+func TestTheVisionSlotIsRoutedWithTheOtherPins(t *testing.T) {
+	const canonical, routed = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
+	r := routedRun(t, &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{canonical}}, blindModel, seniorModel)
+	r.cfg.Agent.Models.Vision = canonical
+	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+		t.Fatalf("applyRouting: %v", err)
+	}
+	if got := r.cfg.Agent.VisionModel(); got != routed {
+		t.Fatalf("the vision slot = %q, want the route's own ID %q: the switch rewrites it with the other pins (D2007)", got, routed)
+	}
+	applyVisionOn(t, r)
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != routed {
+		t.Errorf("the coder = %q, want the routed vision model %q", got, routed)
+	}
+	if got := r.stagePins("implement")["CLAUDE_CODE_SUBAGENT_MODEL"]; got != routed {
+		t.Errorf("the implement stage pins = %q, want the route's own ID %q: the stage runs it", got, routed)
+	}
+	routes, err := r.gatewayRoutes()
+	if err != nil {
+		t.Fatalf("gatewayRoutes: %v", err)
+	}
+	if len(routes) != 1 || routes[0].Name != "openrouter" {
+		t.Errorf("gatewayRoutes() = %+v, want the route the stage's model is charged on", routes)
+	}
+}
