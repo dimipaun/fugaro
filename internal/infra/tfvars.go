@@ -109,14 +109,6 @@ type InstallOptions struct {
 	// front door existed — including the installation that opted into the
 	// coordinator for its read-only view alone.
 	MCPServer bool
-	// ImageBuilds is M5's managed bound on image builds (the runs-bucket
-	// marker's max_image_builds), which the catalog check job's spec carries
-	// as one run's build cap: one setting, so a project that bounds a managed
-	// creation's image builds bounds the scheduled catalog check's too. Zero
-	// means the bound was not read, and the spec then writes none — the job
-	// applies M5's own default of one, which is what every installation
-	// records today (managed.WriteMarker writes it).
-	ImageBuilds int64
 	// ReportsPaused and CatalogCheckPaused are the project layer's jobs:
 	// block (R13): whether each of the installation's two scheduled jobs is
 	// stopped. nil means the layer wrote nothing — no jobs: block, no block
@@ -1265,7 +1257,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	}
 	s.ProjectReviewJobs = review
 	s.ManagedDeployerScoped = o.ManagedDeployerScoped
-	cc, err := CatalogCheck(lc, bucket, o.ImageBuilds, jobPaused(o.CatalogCheckPaused))
+	cc, err := CatalogCheck(lc, bucket, jobPaused(o.CatalogCheckPaused))
 	if err != nil {
 		return InstallationSpec{}, err
 	}

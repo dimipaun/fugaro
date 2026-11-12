@@ -9,11 +9,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
-	// internal/infra/managed is aliased because this package's own tests declare a
-	// package-level `managed` (discover_test.go's label map, which a file-block
-	// import of that name may not shadow): the bound's spellings are still read
-	// from the package that owns them rather than restated here.
-	inframanaged "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -32,7 +27,17 @@ const CatalogCheckSpecEnv = "FUGARO_CATALOG_CHECK_SPEC"
 // carries. The reader refuses a version below one, and it is what a later
 // release bumps when the document's meaning changes (a field never changes
 // meaning in place).
-const CatalogCheckSpecVersion = 1
+//
+// Version 2 is the document without max_image_builds, which D1013's count was
+// (D1543, D1554): the job's own per-run cap is a constant of its binary now
+// (internal/cli's catalogRunBuildCap), and what bounds a build's cost is the
+// lease it takes. Version 1 stays readable and the key in it is ignored —
+// which is what makes the two directions of a mixed installation work while
+// `fugaro update` moves the job's image: the reader here decodes into a struct
+// with no such key, and the release behind's job binary reads a version-2
+// document, finds no key and holds itself to the default of one build per run
+// it always did.
+const CatalogCheckSpecVersion = 2
 
 // The catalog check job's two names (D1148). The job's must start with
 // fugarochk- for CheckJobName's reason: fugaro ls and max_parallel count the
@@ -108,16 +113,11 @@ type CatalogCheckJobSpec struct {
 	// FROM it.
 	BaseImages map[string]string `json:"base_images"`
 	// MachineType and BuildRegion are Cloud Build's (the local config's build
-	// settings), not the job's own.
+	// settings), not the job's own: the machine an entry's build runs on, and
+	// the region it is submitted to, which is also what a build's lease is
+	// priced at (internal/cli's openCatalogJobLease).
 	MachineType string `json:"machine_type"`
 	BuildRegion string `json:"build_region"`
-	// MaxImageBuilds is this run's build cap: how many Cloud Builds one run of
-	// the job may submit, whatever the catalog says changed. It is M5's bound
-	// (managed.MaxImageBuilds' range), and zero is the default the reader
-	// shares with M5, so an installation that has read no bound writes no cap.
-	// It is the bound's own type rather than the int the reader declares: JSON
-	// has one number type, and the narrowing belongs nowhere in between.
-	MaxImageBuilds int64 `json:"max_image_builds,omitempty"`
 }
 
 // CatalogCheckRepoSpec is one repository's part of the assignment: the facts a
@@ -150,10 +150,14 @@ type CatalogCheckRepoSpec struct {
 // project has nothing to check: no effective catalog, no entry whose
 // repository this installation can build with, or no base image recorded for
 // the job (and the builds) to run FROM. bucket is the installation's
-// validated runs bucket, and imageBuilds is M5's managed bound — the marker's
-// max_image_builds, or zero when the installation has read none, which the job
-// then holds itself to M5's default of one build per run (the reader's own
-// default, the one an absent max_image_builds means).
+// validated runs bucket.
+//
+// Nothing here bounds how many builds one run may submit any more: D1013's
+// count is gone (D1543), the job holds itself to its own per-run cap
+// (catalogRunBuildCap, internal/cli), and what bounds each build's cost is the
+// lease it takes through the same estimator a checkout's build goes through
+// (D1554). The budget backend that lease is written into is the
+// installation's own, and the variable is set below.
 //
 // paused is the schedule's own state, already resolved: the layer's
 // jobs.catalog_check.paused, or true wherever it wrote none (InstallOptions'
@@ -165,7 +169,7 @@ type CatalogCheckRepoSpec struct {
 // build for an entry nobody pushed by hand, so the installation either deploys
 // this job (and its schedule) or leaves every entry of the project's catalog
 // exactly as it is.
-func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64, paused bool) (*CatalogCheckSpec, error) {
+func CatalogCheck(lc *localcfg.Config, bucket string, paused bool) (*CatalogCheckSpec, error) {
 	cat, repos, err := catalogCheckFor(lc)
 	if err != nil {
 		return nil, err
@@ -195,14 +199,6 @@ func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64, paused 
 	if !gcp.ValidBucketName(bucket) {
 		return nil, userErr("the runs bucket %q has a byte outside a-z, 0-9, '.', '_' and '-'", bucket)
 	}
-	if imageBuilds != 0 {
-		if err := inframanaged.CheckImageBuilds(imageBuilds); err != nil {
-			// A count outside M5's range would deploy a job whose own reader
-			// refuses it: the installation would look updated and check nothing,
-			// once a night, silently.
-			return nil, userErr("%v", err)
-		}
-	}
 	region := lc.SchedulerRegion
 	if region == "" {
 		r, err := gcp.SchedulerRegion(lc.Region)
@@ -212,18 +208,29 @@ func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64, paused 
 		region = r
 	}
 	raw, err := json.Marshal(CatalogCheckJobSpec{
-		Version:        CatalogCheckSpecVersion,
-		Catalog:        cat,
-		Repositories:   repos,
-		BaseImages:     maps.Clone(lc.BaseImages),
-		MachineType:    lc.Build.MachineType,
-		BuildRegion:    lc.BuildRegion(),
-		MaxImageBuilds: imageBuilds,
+		Version:      CatalogCheckSpecVersion,
+		Catalog:      cat,
+		Repositories: repos,
+		BaseImages:   maps.Clone(lc.BaseImages),
+		MachineType:  lc.Build.MachineType,
+		BuildRegion:  lc.BuildRegion(),
 	})
 	if err != nil {
 		return nil, err
 	}
 	env := platformEnvFor(lc, lc.Name, bucket)
+	// The budget backend, which this job leases each build's cost through: the
+	// same variable every other job of the installation carries (projectJobEnv
+	// sets it the same way), and absent on an installation that has none — the
+	// job then submits its builds under no lease and says so in one line, which
+	// is what the manifest's own header argues for rather than refusing a
+	// nightly check nobody is watching (internal/cli's openCatalogJobLease).
+	// The web API key is deliberately not here: the lease is an IAM write by the
+	// job's own service account, and no call this job makes needs a client
+	// token.
+	if b := lc.Budget; b != nil && b.RTDBURL != "" {
+		env[RTDBURLEnv] = b.RTDBURL
+	}
 	env[CatalogCheckSpecEnv] = string(raw)
 	out := &CatalogCheckSpec{
 		AccountID:       tf.CatalogCheckAccountID,
