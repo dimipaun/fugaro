@@ -4379,6 +4379,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// operator holding one workspace or project access token stores it
 	// project-wide by hand, through the allow-list; that is the exception,
 	// not the default.)
+	//
+	// The workflow secrets record is written from the same spec and for the
+	// same reason (D2073, F33): the container each of this repository's
+	// workflow secrets is read from is the one THIS plan mounts, and `ready`
+	// is the decision MountSecretID reads back (update_workflowsecrets.go).
+	r.writeWorkflowSecrets(ctx, c, lc, ready, cfg)
 	versions, err := infra.SecretVersions(ctx, c, ready)
 	if err != nil {
 		return r.retireLeftover(spec, initErr(err))
