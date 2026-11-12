@@ -28,7 +28,7 @@ func modeRank(m string) int {
 // layerName names the i-th layer: 0 is the ceiling, 1 the default branch, 2
 // the run's branch (its own fugaro.yaml) and anything after that the chain —
 // the launch's own limits, merged last of all (docs/run-limit-carry-over F4).
-// The runner merges three layers today and every name here is the layer it
+// The runner merges four layers today and every name here is the layer it
 // says: the chain layer is the fourth, and it is the only one a launch
 // argument reaches the merge through.
 func layerName(i int) string {

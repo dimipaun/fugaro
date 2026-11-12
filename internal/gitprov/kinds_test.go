@@ -70,6 +70,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/infra/projectjobs.go":            "githubProvider and sharedJobProviders, the shared jobs only GitHub has",
 	"internal/infra/spec.go":                   "GitSecret, the git user and the credential the spec mounts",
 	"internal/localcfg/select.go":              "ProviderHosts, the host each kind is reached at",
+	"internal/pluginwire/remove.go":            "the plugin wire's removal, and the source kind it refuses to take a pin out of",
 	"internal/pluginwire/status.go":            "the plugin wire's GitHub-only status form",
 	"internal/projectpolicy/bitbucket.go":      "the published policy's Bitbucket block and its canonical slug",
 	"internal/projectpolicy/profiles.go":       "the profiles' Bitbucket-only validation",

@@ -68,7 +68,8 @@ func newProjectCmd() *cobra.Command {
 		Short: "The project's policy, its allow-list and the repositories enrolled",
 		Args:  cobra.NoArgs,
 	}
-	cmd.AddCommand(newProjectPolicyCmd(), newProjectShowCmd(), newProjectReposCmd(), newProjectSyncCmd(), newProjectCloneURLCmd())
+	cmd.AddCommand(newProjectPolicyCmd(), newProjectShowCmd(), newProjectReposCmd(), newProjectSyncCmd(), newProjectCloneURLCmd(),
+		newProjectProfileCmd(), newProjectRoutingCmd())
 	return cmd
 }
 
@@ -989,6 +990,20 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedTriage = old.Triage
 	}
 	triage := lc.TriageEffective(publishedTriage)
+	// The pools' subscription switch is kept by the triage switch's rule (F22,
+	// D1636), and the cost of the other reading is that switch's: the member is
+	// what makes a pool of two or more subscriptions serve anything at all
+	// (D1622), so a publish that dropped it — from a machine whose config says
+	// nothing, which is every machine but the owner's — would take the owner's
+	// pools away from every run of the project, a run in flight while `fugaro
+	// update` republishes this node included. A written false is his own "no"
+	// and replaces what the node holds; a config and a node that both say
+	// nothing publish no member at all.
+	var publishedSpread *bool
+	if old != nil {
+		publishedSpread = old.SubscriptionSpread
+	}
+	spread := lc.SubscriptionSpreadEffective(publishedSpread)
 	// The orchestrator block is kept by the same rule (D1239, D1234), with the
 	// catalog's two spellings collapsed into one: a config that states a block
 	// replaces what the node holds — the daemon's guardrails are the owner's own
@@ -1058,6 +1073,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		BakeRepos:            bakeRepos,
 		Triage:               triage,
 		Orchestrator:         orchestrator,
+		SubscriptionSpread:   spread,
 	}
 	switch {
 	case !silent:
@@ -1124,10 +1140,23 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 // nothing, and the cascade decides which credential carries a call and never
 // where the call goes (nodeTurnsTheCascadeOn, below).
 func nodeRoutesClaude(p *projectpolicy.Policy) bool {
-	if p == nil || p.Routing == nil || p.Routing.Claude == nil {
+	if p == nil {
 		return false
 	}
-	switch p.Routing.Claude.ViaValue() {
+	return routingRoutesClaude(p.Routing)
+}
+
+// routingRoutesClaude is the switch that rule is about, stated for a routing
+// block rather than for the node that carries one: `fugaro project routing set`
+// writes the same block into the operator's config, and it asks the same two
+// questions of what it read (projectRoutingRefuseSilence) that this publish asks
+// of the node — one rule, asked twice, rather than a second copy of it in the
+// command that writes the block.
+func routingRoutesClaude(r *projectpolicy.Routing) bool {
+	if r == nil || r.Claude == nil {
+		return false
+	}
+	switch r.Claude.ViaValue() {
 	case projectpolicy.RouteOpenRouter, projectpolicy.RouteAuto:
 		return true
 	default:
@@ -1159,8 +1188,15 @@ func nodeRoutesClaude(p *projectpolicy.Policy) bool {
 // means (via: direct turns the cascade off and is an inert block, so it is kept
 // and costs nothing), or --remove-routing to drop the block itself on purpose.
 func nodeTurnsTheCascadeOn(p *projectpolicy.Policy) bool {
-	return p != nil && p.Routing != nil && p.Routing.Claude != nil &&
-		p.Routing.Claude.ViaValue() == projectpolicy.RouteCascade
+	return p != nil && routingTurnsTheCascadeOn(p.Routing)
+}
+
+// routingTurnsTheCascadeOn is that switch for a routing block rather than for
+// the node that carries one, so `fugaro project routing unset` refuses the same
+// shape this publish refuses (projectRoutingRefuseSilence): the two ask one
+// question, and neither can drift from the other about what the cascade is.
+func routingTurnsTheCascadeOn(r *projectpolicy.Routing) bool {
+	return r != nil && r.Claude != nil && r.Claude.ViaValue() == projectpolicy.RouteCascade
 }
 
 // policyProviders is the policy's providers block, built from the operator's
@@ -1240,6 +1276,7 @@ func policyPrices(lc *localcfg.Config) projectpolicy.Prices {
 			InputPerM: p.InputPerM, OutputPerM: p.OutputPerM,
 			CacheWrite5m: p.CacheWrite5m, CacheWrite1h: p.CacheWrite1h,
 			CacheRead: p.CacheRead, WebSearchPer1k: p.WebSearchPer1k,
+			ImageTokens: p.ImageTokens,
 		}
 		if t := p.LongContext; t != nil {
 			price.LongContext = &projectpolicy.PriceTier{AboveInputTokens: t.AboveInputTokens, InputPerM: t.InputPerM, OutputPerM: t.OutputPerM}
@@ -2307,10 +2344,18 @@ func priceLines(p *projectpolicy.Policy) map[string]string {
 // default" for each optional one it leaves out (which is what the run prices
 // it at — internal/pricing's Default* multipliers — so a line that omitted it
 // would not be what the node does).
+//
+// The image ceiling is named when the entry sets it, and only then: left out,
+// it is not priced at any default — the run keeps the ceiling the model's row
+// already carries — so there is no list value to print, and a publish that
+// added or removed one would otherwise print a line that read as no change.
 func priceText(p projectpolicy.Price) string {
 	parts := []string{"input_per_m " + rateText(p.InputPerM), "output_per_m " + rateText(p.OutputPerM),
 		"cache_write_5m " + rateText(p.CacheWrite5m), "cache_write_1h " + rateText(p.CacheWrite1h),
 		"cache_read " + rateText(p.CacheRead), "web_search_per_1k " + rateText(p.WebSearchPer1k)}
+	if p.ImageTokens != nil {
+		parts = append(parts, fmt.Sprintf("image_tokens %d", *p.ImageTokens))
+	}
 	if t := p.LongContext; t != nil {
 		parts = append(parts, fmt.Sprintf("long_context above_input_tokens %d: input_per_m %s, output_per_m %s",
 			t.AboveInputTokens, rateText(t.InputPerM), rateText(t.OutputPerM)))

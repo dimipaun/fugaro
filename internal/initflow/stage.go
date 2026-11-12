@@ -62,6 +62,30 @@ func NeedsBilling(name string) bool {
 	return true
 }
 
+// MachineLocal is whether a stage is only this machine's: it reads no cloud and
+// writes nothing outside the machine it runs on. Such a stage is not stopped by
+// a cloud stage that stopped in front of it (blocker), which is what lets the
+// one documented command do the local half for a reader who holds no owner's
+// role (D954, U8 of docs/plugin-user-scope/implementation-plan.md; spec §11).
+//
+// The marker is name-level for NeedsBilling's reason: the loop is handed
+// stages and knows them by name, and the invariant it carries — no cloud read,
+// no write outside this machine — is a property of the stage's own code, kept
+// by hand where that code is (Plugin, internal/cli/init_plugin_stage.go: the
+// plugin installed in the user's own Claude Code through the claude CLI, and
+// the checkout's own .claude/settings.json only where a pin an older fugaro
+// left is there to take out — a write a coding agent's session refuses, so a
+// marked session's own writes are the machine's). A stage whose local half sits
+// beside a cloud write is not one of these, whatever it also writes: Checkout
+// is the case that says so — its cloud step is a cloud write, and the loop
+// cannot tell the two halves apart.
+//
+// The tool that runs such a stage after a stop reads the managed gate before it
+// writes and refuses on the gate's zero value (the plugin stage's removal): a
+// step that now runs inside a managed project's agent session is a writing step
+// of a gated command, and the refusal is the direction that keeps it.
+func MachineLocal(name string) bool { return name == Plugin }
+
 // Names of the stages, in the order the design runs them (§3.1). A stage
 // is registered under exactly one of them.
 const (

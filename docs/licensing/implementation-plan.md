@@ -503,6 +503,10 @@ id production verifiers refuse, where each product stores the key and how the co
 the CLI it spawns. It is written against `docs/subscriptions/implementation-plan.md`, not from here.
 The number is not reused.
 
+**Superseded 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the key's format and claim set move to
+the v2 `fgk_` keys, and the note's "no revocation" limit is overturned (D2130, D2131).**
+
 - **Files:** `docs/licensing/licence-key.md` (new): D308 as a design (Ed25519 over a JSON claim
   set: licensee, features, expiry, issued; base64url; verified offline in `ee/` code with the
   public key compiled in; the signature is verified over the **raw key bytes before** any JSON is

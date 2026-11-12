@@ -158,7 +158,7 @@ func runReviewLaunch(cmd *cobra.Command, o *reviewOptions) error {
 	if err := checkReviewLaunch(ctx, env, repo, slug, o.pr, spec, cmd.ErrOrStderr()); err != nil {
 		return err
 	}
-	res, err := finishLaunch(ctx, env, o2, slug, spec, false, cmd.ErrOrStderr(), false)
+	res, err := finishLaunch(ctx, env, o2, slug, spec, false, false, cmd.ErrOrStderr(), false)
 	if err != nil {
 		return err
 	}

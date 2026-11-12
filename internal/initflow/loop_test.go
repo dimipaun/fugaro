@@ -2076,6 +2076,45 @@ left for you (secrets, prompt): run fugaro update in your terminal
 	}
 }
 
+// A stage whose writes are all on this machine is not blocked by a stage that
+// stopped ahead of it (D954, U8): the plugin stage runs although images waits
+// for you, its own line says which stop it ran past, and every stage after it
+// still waits for that stop. The marker is about what the stage reads — a
+// stage that reads no cloud is not the one a stopped cloud stage leaves in an
+// unknown state — which is why it runs past a needs-you stop and would run
+// past any other.
+func TestMachineLocalStageRunsPastAStop(t *testing.T) {
+	var log []string
+	stages := fakes(&log, Preflight, Images, Plugin, Repository)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).status = Status{State: NeedsYou, Detail: "the images need a credential only you have"}
+	res, err := Run(context.Background(), stages, yesOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := states(res); st[Images] != NeedsYou || st[Plugin] != Changed || st[Repository] != Blocked {
+		t.Fatalf("states %v, want images %s, plugin %s (the marker runs past the stop) and repository %s", st, NeedsYou, Changed, Blocked)
+	}
+	var line, after string
+	for _, r := range res.Stages {
+		switch r.Name {
+		case Plugin:
+			line = r.Detail
+		case Repository:
+			after = r.Detail
+		}
+	}
+	if want := "machine-local: ran although " + Images + " waits for you"; !strings.HasPrefix(line, want) {
+		t.Errorf("the stage that ran past the stop reads %q, want %q first", line, want)
+	}
+	if after != "waits for "+Images {
+		t.Errorf("the stage behind it reads %q, want it still waiting for %s", after, Images)
+	}
+	if res.ExitCode() != 1 {
+		t.Errorf("exit %d, want 1: the run still has a stage left for the user", res.ExitCode())
+	}
+}
+
 func TestLoopBillingStagesAreNotTicks(t *testing.T) {
 	// Billing pending is the user's to resolve and waiting for billing is a
 	// stage that cannot run until they do: neither is a green tick, a stage

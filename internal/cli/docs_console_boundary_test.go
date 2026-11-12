@@ -154,7 +154,7 @@ const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 // other half of the same claim: the registry answers a row's `sensitive` and
 // supplies the layers the narrowest-layer rule reads (the entry above), but
 // `target_layer` is settingsDefaultLayer's own answer, `owner` is the word
-// settingsFamilyCommands makes of the registry's owner token, and `writable` is
+// settingsOwnerCommands makes of the registry's owner token (D1178), and `writable` is
 // settingsWriteRow's -- the write's decision the read copies, D1102 -- and all
 // three of those live in this package. So the test that holds the fixture to
 // them (internal/cli/settings_console_fixture_test.go,

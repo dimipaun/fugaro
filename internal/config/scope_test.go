@@ -169,6 +169,10 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		// cannot read an image, set by a repository as its own or by the
 		// project for every repository of it.
 		"agent.models.vision": InProject | InRepo,
+		// The diagnose slot (D1607): the model a local diagnosis runs on, set
+		// by a repository as its own or by the project for every repository of
+		// it, as the four slots above are.
+		"agent.models.diagnose": InProject | InRepo,
 		// The four crafts (docs/model-crafts/spec.md §3). A craft's model is a
 		// project default, as agent.models.* is; its access is not, and is a
 		// repository's own choice among the credentials the owner allow-lists.

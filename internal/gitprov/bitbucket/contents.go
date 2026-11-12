@@ -17,6 +17,7 @@ import (
 )
 
 var _ gitprov.ContentsReader = (*Provider)(nil)
+var _ gitprov.PRBranchReader = (*Provider)(nil)
 
 // contentsMaxRedirects bounds a chain of same-origin redirects, the way the
 // standard client's own ten does; it is this adapter's number rather than the

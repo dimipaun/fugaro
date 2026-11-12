@@ -246,19 +246,19 @@ func TestClaimedClaudeSeniorCharge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimRates, ok := ov[claimedSenior]
+	claimOverride, ok := ov[claimedSenior]
 	if !ok {
 		t.Fatalf("the fixture's override has no row for %s: %v", claimedSenior, ov)
 	}
 	row, ok := g.deps.Spend.Prices.Lookup(claimedSenior)
-	if !ok || row.Rates != claimRates {
-		t.Fatalf("the run's table prices the claimed ID as %+v (found %v), want the owner's %+v", row.Rates, ok, claimRates)
+	if !ok || row.Rates != claimOverride.Rates {
+		t.Fatalf("the run's table prices the claimed ID as %+v (found %v), want the owner's %+v", row.Rates, ok, claimOverride.Rates)
 	}
 	direct, ok := pricing.Embedded().Lookup(sonnet)
 	if !ok {
 		t.Fatalf("the built-in table has no direct row for %s", sonnet)
 	}
-	if direct.Rates.Cost(reviewUse) == claimRates.Cost(reviewUse) {
+	if direct.Rates.Cost(reviewUse) == claimOverride.Rates.Cost(reviewUse) {
 		t.Fatalf("the direct row and the override charge the same for %+v: this test proves nothing", reviewUse)
 	}
 
@@ -279,7 +279,7 @@ func TestClaimedClaudeSeniorCharge(t *testing.T) {
 	if rec.Cost == nil {
 		t.Fatalf("the run recorded no cost: %+v", rec)
 	}
-	wantReview := pricing.WithFee(claimRates.Cost(reviewUse), 10)
+	wantReview := pricing.WithFee(claimOverride.Rates.Cost(reviewUse), 10)
 	wantDirect := pricing.WithFee(direct.Rates.Cost(reviewUse), 10)
 	if wantReview == wantDirect {
 		t.Fatal("the fee makes the two charges coincide: this test proves nothing")
@@ -861,9 +861,9 @@ func TestGatewayRoutesMatchTheConfig(t *testing.T) {
 	if err := config.ValidateModelProviders(providers); len(err) > 0 {
 		t.Fatal(err)
 	}
-	prices := map[string]pricing.Rates{}
+	prices := pricing.Overrides{}
 	for _, m := range models {
-		prices[m] = pricing.Rates{InputPerM: 1, OutputPerM: 1}
+		prices[m] = pricing.Override{Rates: pricing.Rates{InputPerM: 1, OutputPerM: 1}}
 	}
 	table, err := pricing.Embedded().With(prices)
 	if err != nil {

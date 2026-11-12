@@ -209,7 +209,7 @@
         },
         "owner": {
           "type": "string",
-          "description": "The command family that writes a key the generic path does not — `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project` — and the empty string for a key no family owns, which is the installation's own plumbing: the honest answer, and never an invented name (D1102, D1111). Display text, not an authority: it is the sentence `settings set` refuses with, and no rule reads it. Written on every row by this CLI; absent from a document an older CLI wrote, where it means the same as the empty string."
+          "description": "The command that writes the key (D1178): `fugaro settings set` for a key the generic path writes, the family that writes one it does not — `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`, `fugaro workspace`, `fugaro image map` — and, for a key no command edits, a sentence naming the command that carries its file — `fugaro setup` and `fugaro update` for the installation's own keys, `fugaro config publish` for a key the layer file states and `fugaro config init` for one a checkout's `fugaro.yaml` is opened with — rather than a bare command name a reader would take for the key's own editor. A row whose `writable` is false never spells the generic writer — the write is what decides whether it may, so the pair says a command writes a key it has just refused — and the empty string is a row no command writes, the literal `*` of a wildcard row. Display text, not an authority: where `settings set` refuses a key in a family's name it is that refusal's own words, and no rule reads it. Written on every row by this CLI; absent from a document an older CLI wrote, where it means the same as the empty string."
         },
         "target_layer": {
           "type": "string",
@@ -334,6 +334,9 @@
         },
         "agent.models.vision": {
           "default": "unset = none: a stage whose own model cannot read an image keeps it"
+        },
+        "agent.models.diagnose": {
+          "default": "unset = Fugaro's own diagnose model (config.DefaultDiagnoseModel)"
         },
         "agent.oauth_token": {
           "default": "unset = the job's own credential"
@@ -816,6 +819,9 @@
         "layer.defaults.agent.models.vision": {
           "default": "unset = none: a stage whose own model cannot read an image keeps it"
         },
+        "layer.defaults.agent.models.diagnose": {
+          "default": "unset = Fugaro's own diagnose model (config.DefaultDiagnoseModel)"
+        },
         "layer.defaults.agent.recipe": {
           "default": "unset = the built-in recipe"
         },
@@ -1088,6 +1094,9 @@
         "model_prices.*.cache_write_5m": {
           "default": "unset = the built-in price"
         },
+        "model_prices.*.image_tokens": {
+          "default": "unset = the built-in price"
+        },
         "model_prices.*.input_per_m": {
           "default": "unset = the built-in price"
         },
@@ -1265,6 +1274,9 @@
         },
         "stages.triage.claude_account": {
           "default": "unset = the project's default account"
+        },
+        "subscription_spread": {
+          "default": "unset = false: a run spreads across one subscription at a time"
         },
         "terraform.admins": {
           "default": "unset = none"

@@ -88,15 +88,17 @@ func (r *initRun) newMachineConfig(ctx context.Context, e *initEngine) error {
 // newMachineGuard refuses, for a stage that would change the cloud, to apply in
 // the run that wrote a new machine's config: that run's plan from empty
 // defaults must not be applied (newMachineNotes says so). The owner applies; a
-// rerun here, with the config in place, is the ordinary converge. The plugin
-// wiring writes a local file only (.claude/settings.json) and is not guarded:
-// the run still wires the plugin, with its own confirmation.
+// rerun here, with the config in place, is the ordinary converge. The stages
+// that are only this machine's are not guarded (initflow.MachineLocal — the
+// plugin stage): the run still installs the plugin in the reader's own Claude
+// Code, which is what the command they ran came for, and a stage that runs past
+// the cloud stop this refusal makes is one the guard must not stop either.
 func (e *initEngine) newMachineGuard(stage string) error {
-	if e.newMachine == "" || stage == initflow.Installation || stage == initflow.Plugin {
+	if e.newMachine == "" || stage == initflow.Installation || initflow.MachineLocal(stage) {
 		return nil
 	}
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: stage, Kind: initflow.LeftConsole,
-		Text:     "this run wrote this machine's local config from an existing installation and changed nothing in the cloud; it changes nothing more there from here (only the plugin wiring still writes a local .claude/settings.json): an owner applies changes (the notes above say how), then rerun this once your roles are granted",
+		Text:     "this run wrote this machine's local config from an existing installation and changed nothing in the cloud; it changes nothing more there from here: an owner applies changes (the notes above say how), then rerun this once your roles are granted",
 		Commands: []string{selfCommand() + " " + e.r.o.doorName()}}}
 }
 
