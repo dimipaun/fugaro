@@ -389,18 +389,19 @@ func TestDocsLicensingOneWording(t *testing.T) {
 	}
 }
 
-// The licence-key design note (subscriptions plan S2.1; D308 as extended by
-// D438 and as ruled on 2026-10-27 by O4, T26 and the key binding, with
-// D436/T12 for the lapse).
+// The licence-key design note (D308 as amended by the licence-key-v2
+// decisions D2130-D2146, findings F1-F18 and tensions TN1-TN5: the `fgk_` v1
+// format, the required `workspace_id`, the per-key grace and renewal secret,
+// the visible revocation job, with D436/D2142 for the lapse).
 //
 // The note is a design, so it compiles nothing and refuses nothing: every
-// verifier task that follows it -- the Go one (S2.3), the console's (S2.4),
-// the app's (S2.5), the two entry paths (S2.7, S2.8) and the key the
-// coordinator job is handed (S1.9, carried as E1.4) -- is written against what
-// this file says. That is the whole reason it is pinned here: a trust boundary
-// that three languages implement from one page is the one page whose silent
-// edit costs the most, and the plan's S2.1 entry names no test at all, so
-// nothing else in this package would read it.
+// task that builds the v1 key -- the Go verifier (K1.1), the mint tool (K1.3),
+// the console's verifier (K1.4), the project store (K3.1), the commands
+// (K3.2-K3.4) and the renewal job (K4.1, K4.2) -- is written against what this
+// file says. That is the whole reason it is pinned here: a trust boundary that
+// three languages implement from one page is the one page whose silent edit
+// costs the most, and the plan's K1.5 entry names no test but the Docs filter,
+// so nothing else in this package would read it.
 //
 // It lives in this file rather than in a `docs_licence_key_test.go` of its own
 // because the count of `internal/cli/docs_*_test.go` is pinned in
@@ -408,10 +409,12 @@ func TestDocsLicensingOneWording(t *testing.T) {
 // figure: a fifth file moves the count and edits another plan's record. This
 // file is already the licensing folder's own pin, so the note joins it.
 //
-// What is pinned is the *content* the plan's S2.1 entry lists, in the plan's
-// own order, plus the two cross-file halves a reader arrives by: L3.1 marked
-// superseded in the licensing plan and the note's row in the licensing README
-// table. Which words the note chooses is not what these tests are about:
+// What is pinned is the *content* the plan's K1.5 entry commissions -- the v1
+// text, with the old design's surviving rules and the revocation and limits
+// sections rewritten -- plus the two cross-file halves a reader arrives by:
+// L3.1 marked superseded in the licensing plan and the note's row in the
+// licensing README table. Which words the note chooses is not what these tests
+// are about:
 // flattenDoc folds the whitespace, and every phrase is read
 // case-insensitively. A missing phrase fails with the consequence of the claim
 // rather than with the spelling, because the reader who loses it is a verifier
@@ -430,12 +433,12 @@ func TestDocsLicensingOneWording(t *testing.T) {
 // parsed" out of the note -- TestDocsLicenceKeyDesign fails, naming that
 // claim; put back the rotation rule as "until the last key it signed has
 // expired" -- it fails, on a window that would refuse a key the state table
-// below reads as `grace` (an id the build does not hold is refused before the
-// payload is decoded, so an id has to outlive the grace and not only the term);
+// below reads as `grace` (an id the build does not hold is refused, so an id
+// has to outlive the grace and not only the term);
 // delete the rule that no claim is read out of an unverified payload,
 // the rule that a refusal names no claim, the rule that the signature is over
 // the bytes as they are spelled, the rule that an id the build does not hold is
-// refused before either other part is decoded, and the rule that the hand-off
+// refused, and the rule that the hand-off
 // variable is never written to a file, a log or an error message -- it fails on
 // each, which none of those five sentences did before they were pinned; put
 // back the "reaches exactly one child" claim in place of the rule that the CLI
@@ -459,13 +462,13 @@ func TestDocsLicensingOneWording(t *testing.T) {
 // condition to "after it" -- it fails on that row; and delete the note's row
 // from the licensing README's file table, leaving the note named in the
 // amendment paragraph above it -- TestDocsLicenceKeyNoteIsInTheLicensingReadme
-// fails, naming the table, which is the half no S2.1 test but these reaches.
+// fails, naming the table, which is the half no other test but these reaches.
 
 const licenceKeyNotePath = "docs/licensing/licence-key.md"
 
 // licenceKeyDesignGroups is the note's content, one group per subject the
-// plan's S2.1 entry names. Each phrase is a fact a verifier implements, not a
-// wording: the "why" is what a reader loses when the phrase is gone.
+// plan's K1.5 entry commissions. Each phrase is a fact a verifier implements,
+// not a wording: the "why" is what a reader loses when the phrase is gone.
 var licenceKeyDesignGroups = []struct {
 	subject string
 	why     string
@@ -473,37 +476,48 @@ var licenceKeyDesignGroups = []struct {
 }{
 	{
 		subject: "the key",
-		why:     "the format is what three verifiers agree on byte for byte, the claims are the licence's own terms, and the boundary rules -- the key id is what decides before anything else is decoded, the signature is over the bytes as they are spelled, a refusal names no attacker-chosen claim, and a rotated build keeps an old id until the keys it signed have passed their grace, or it refuses a key the state table reads as grace -- are where the scheme's safety and its consistency rest",
+		why:     "the format is what three verifiers agree on byte for byte, the claims are the licence's own terms -- with `workspace_id` required and checked offline against the project's own Firebase project id (TN2), and the renewal secret present only as its hash (D2135) -- and the boundary rules (the signature over the bytes as they are spelled, a refusal naming no attacker-chosen claim, an id the build does not hold refused, and a rotated build keeping an old `kid` until the keys it signed have passed their grace, or it refuses a key the state table reads as grace) are where the scheme's safety and its consistency rest",
 		phrases: []string{
 			"ed25519",
 			"base64url",
-			"<key id>.<payload>.<signature>",
+			"fgk_<payload>.<signature>",
 			"before any json is parsed",
 			"signed as it is spelled",
 			"fails the signature",
 			"key id",
-			"refused before either other part is decoded",
+			"an id the build does not hold is refused",
 			"rotate",
 			"passed its grace",
-			"and not bare `expires`",
+			"and not bare `paid_through`",
+			"| `v` |",
+			"| `key_id` |",
+			"| `workspace_id` |",
+			"the firebase project id of the workspace",
+			"required on every key",
+			"a key without the claim is refused",
+			"refused in another workspace",
 			"| `tier` | `community`, `team` or `enterprise` |",
-			"| `features` |",
 			"| `seats` |",
 			"| `organisation` |",
-			"| `issued` |",
-			"| `expires` |",
+			"| `issued_at` |",
+			"| `paid_through` |",
+			"| `renewal_secret_hash` |",
+			"| `kind` |",
 			"not to a person or a machine",
 			"no claim is read out of a payload whose signature did not verify",
 			"names the key and the part that failed, never a claim",
 		},
 	},
 	{
-		subject: "expiry only (O4)",
-		why:     "the covered-versions date D438 added named a version window that only the perpetual fallback gave a meaning to, and D436 dropped the fallback: a key that states a version window is a key the product has no rule for",
+		subject: "expiry only (O4) and the policy version",
+		why:     "the covered-versions date D438 added named a version window that only the perpetual fallback gave a meaning to, and D436 dropped the fallback: a key that states a version window is a key the product has no rule for -- while `v` is the policy version, refused with the upgrade message when it is higher than the build knows (it never falls back to Free) and the one place unknown fields are ignored, and only for a signed key (D2146)",
 		phrases: []string{
 			"expiry only",
 			"no covered-versions date",
 			"no release-date stamping",
+			"requires a newer version of fugaro",
+			"never silently falls back to free",
+			"unknown fields are ignored for a signed key only",
 		},
 	},
 	{
@@ -513,9 +527,9 @@ var licenceKeyDesignGroups = []struct {
 			"ee/register",
 			"nothing in the core",
 			"offline",
-			"no phone-home",
-			"| `valid` | `now <= expires` |",
-			"| `grace` | `expires < now <= expires + 30 days` |",
+			"no network call",
+			"| `active` | `now <= paid_through` |",
+			"| `grace` | `paid_through < now <= paid_through + grace_days` |",
 			"| `expired` | past the grace |",
 			"refused rather than given a state",
 		},
@@ -532,29 +546,32 @@ var licenceKeyDesignGroups = []struct {
 		},
 	},
 	{
-		subject: "renewal and overlap",
-		why:     "the overlap is why an issuing outage of up to 60 days is survivable, and the latest valid key is the one a verifier acts on (T26)",
+		subject: "renewal, overlap and revocation",
+		why:     "the latest valid key is the one a verifier acts on and the overlap is why an issuing outage is survivable (T26); the check itself phones home about nothing and the contact a key causes is the visible job in the customer's own project, the other contacts being commands the user runs, and an unreachable server never revokes -- only an explicit `revoked` answer does (D2131, D2140)",
 		phrases: []string{
-			"30 days before expiry",
+			"renew_before_days",
 			"two keys are simply two keys the store holds",
 			"the latest valid one",
-			"past 60 days",
+			"absorbed by the grace period",
+			"visible cloud scheduler job in the customer's own project",
+			"an unreachable server never revokes",
+			"revocation list",
 		},
 	},
 	{
 		subject: "limits",
-		why:     "these are the accepted limits, and the tier maximum is stated with what it bounds and what it does not, so a verifier author does not build the length check as a defence against a leaked signing key that it is not",
+		why:     "these are the accepted limits, and the tier maximum is stated with what it bounds and what it does not, so a verifier author does not build the length check as a defence against a leaked signing key that it is not; its per-tier number and the issue lead that number assumes are the policy table's and are marked open, because the key carries its own `renew_before_days`; revocation is advisory rather than a defence, and the project store is licence-grade rather than secret",
 		phrases: []string{
 			"maximum lifetime",
 			"not the same as bounding a leaked signing key",
-			"`issued` is the minter's to choose",
-			"a tier's maximum is its term plus the 30-day issue lead",
-			"one year and 30 days for every tier today",
+			"`issued_at` is the minter's to choose",
+			"a tier's maximum is its term plus the issue lead its renewal uses",
+			"the per-tier maxima, and the lead each assumes, are open",
 			"without a change to the key format",
 			"never in the verifier alone",
-			"no revocation",
-			"a refunded buyer keeps a working key until it expires",
-			"a clock set back extends `expires`",
+			"revocation is advisory",
+			"a refund or a chargeback revokes the key",
+			"a clock set back extends `paid_through`",
 			"the hand-off reaches one child only where the build has the check",
 			"carries no edition today",
 		},
@@ -571,9 +588,11 @@ var licenceKeyDesignGroups = []struct {
 	},
 	{
 		subject: "storage and hand-off",
-		why:     "a key that reaches a child in argv is a key every local process reads (F41), each product stores it where its own platform keeps a credential -- and for the app that is not the two-item secret store D111/D232 keep closed -- and the hand-off is one child where the build has the check: the console's allow-list is not enough on its own, because the CLI's own children -- git, the plugin install, Terraform and the runner in exec -- inherit the environment it holds when they start",
+		why:     "a key that reaches a child in argv is a key every local process reads (F41); the project keeps it in the runs bucket and the renewal job reads it there, no image carries one, each product stores it where its own platform keeps a credential -- and for the app that is not the two-item secret store D111/D232 keep closed -- and the hand-off is one child where the build has the check: the console's allow-list is not enough on its own, because the CLI's own children -- git, the plugin install, Terraform and the runner in exec -- inherit the environment it holds when they start",
 		phrases: []string{
 			"licence.key",
+			"runs bucket",
+			"the project key wins",
 			"never in argv",
 			"fugaro_licence_key",
 			"the one route to a spawned child is its **environment**",
@@ -587,13 +606,13 @@ var licenceKeyDesignGroups = []struct {
 			"secret_items",
 			"d232",
 			"secret manager",
-			"mounted into the job and never typed by a person",
+			"no image carries a key",
 			"never written to a file, a log or an error message",
 		},
 	},
 	{
 		subject: "states and minting",
-		why:     "the no-key state is a real installation rather than an error (F43), minting is the owner's and off every machine an agent reaches (R8, T13), and the coordinator's job is handed its key rather than typing one",
+		why:     "the no-key state is a real installation rather than an error and a project with no key is Free (F43, D2143), and minting is the owner's and off every machine an agent reaches (R8, T13)",
 		phrases: []string{
 			"the store being empty rather than a fourth state",
 			"minted by hand",
@@ -604,8 +623,8 @@ var licenceKeyDesignGroups = []struct {
 	},
 }
 
-// TestDocsLicenceKeyDesign: `docs/licensing/licence-key.md` is the S2.1 note,
-// and it states every subject the plan's S2.1 entry names.
+// TestDocsLicenceKeyDesign: `docs/licensing/licence-key.md` is the v1 note,
+// and it states every subject the plan's K1.5 entry commissions.
 func TestDocsLicenceKeyDesign(t *testing.T) {
 	flat := strings.ToLower(flattenDoc(readDoc(t, licenceKeyNotePath)))
 	for _, group := range licenceKeyDesignGroups {

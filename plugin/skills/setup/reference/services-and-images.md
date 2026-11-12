@@ -20,6 +20,8 @@ There is one base. Its runtimes come from `mise.toml` at the repository root (`f
 How to find the need: `docker-compose*.yml`, `compose.yaml`, Testcontainers dependencies, `services:` in a CI file, `firebase.json`, `DATABASE_URL`-style test variables, `.env.test` files (read for names only), emulator configs.
 If the tests use those services, `commands.test` starts them first with `fugaro-services start`, then runs the repository's own task with its local-services switch. The repository must have such a mode; the example below is illustrative (`TEST_SERVICES=local` and the task names are one repository's convention, not Fugaro's). Warming the Gradle caches with a task that resolves test dependencies, in `image.setup`, is usual.
 
+Services share the job's memory, `/tmp` included: count them in `resources`. And the in-run verify command is not the merge gate — CI is: make `commands.test` finish in about the verify timeout (25 to 30 minutes), leave out slow packages, `-race` runs and anything needing Docker, and say which CI job covers what you left out.
+
 ## The `image:` block (the default)
 
 | Evidence | Setting |
@@ -132,6 +134,6 @@ Use `image:` unless the evidence needs something it can't express: a toolchain `
 5. The build context holds only the repository bundle: use files from `/work/repo` after the clone rather than `COPY`.
 6. Pin every download by version and checksum. Never pipe a download into a shell; no unpinned `latest`, no remote script. Show every line you added to the user (step 6 of the skill).
 
-On Apple silicon, iterate with `fugaro image build --local --platform linux/arm64`; the cloud build, which is `linux/amd64`, is the real test.
+Every build is Cloud Build's, and it is the image the job runs: nothing is built on anyone's machine, whatever architecture that machine is (a laptop's arm64 image is not what Cloud Run runs). The user submits it in their own terminal window, not through the agent — `fugaro image build <entry>` for a catalog entry the `images` skill proposes, or `fugaro image build --workflow <name>` for the repository's own image, which is the first build setup submits from the merged checkout (step 10 of the skill). It is billable, and its cost is reserved against the project's budget caps before it is submitted.
 
-Without Docker locally, finish with `fugaro validate --json` and say that the first cloud build is the test.
+Where the project's catalog gives this workflow its image, there is nothing here to build: finish with `fugaro validate --json` and the entry check (step 7 of the skill).

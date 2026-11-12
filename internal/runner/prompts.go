@@ -671,17 +671,25 @@ func fixFindingField(s string, neutralize func(string) string) string {
 	return safetext.Clip(s, fixFindingRunes-1) + "…"
 }
 
-// FixPrompt asks the implementing session to address review findings.
+// FixPrompt asks the implementing session to address the findings a review
+// round still blocks on.
 //
-// The findings a reviewer marked needs_owner are left out (OD1): they are the
-// ones no code change can settle, and handing one to the coder would spend the
-// round on work that cannot answer it. A round whose every finding is one of
-// those never reaches this function at all — the loop stops and the run ends
-// waiting for the owner — so what is dropped here is the mixed round's.
-func FixPrompt(v Verdict) string {
+// The caller hands it the blocking subset and not the round (T-TR7b): the
+// findings a judge deferred are filed as follow-ups and are not this round's
+// work, and a round whose every finding was deferred never reaches this
+// function at all — the loop ends on it, ready. What arrives here is what the
+// table blocks after the judge was read inside the floor.
+//
+// The findings a reviewer marked needs_owner are left out beside them (OD1):
+// they are the ones no code change can settle, and handing one to the coder
+// would spend the round on work that cannot answer it. A round whose every
+// remaining finding is one of those never reaches this function either — the
+// loop stops and the run ends waiting for the owner — so what is dropped here
+// is the mixed round's.
+func FixPrompt(findings []Finding) string {
 	var b strings.Builder
 	b.WriteString("A code review of your changes asked for these fixes:\n\n")
-	for _, f := range fixableFindings(v.Findings) {
+	for _, f := range fixableFindings(findings) {
 		b.WriteString("- ")
 		if f.Severity != "" {
 			fmt.Fprintf(&b, "[%s] ", f.Severity)
@@ -692,6 +700,10 @@ func FixPrompt(v Verdict) string {
 		b.WriteString(f.Summary)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nAddress each one, commit, and run `fugaro verify test` again.")
+	// The last sentence is F16's, and it is the brief's own statement of
+	// CLAUDE.md's "a fix round adds no functionality": listing the fixes alone
+	// reads as leave to keep working, and every finding the round left open is
+	// either listed above or a follow-up no code change here may pre-empt.
+	b.WriteString("\nAddress each one, commit, and run `fugaro verify test` again. Touch nothing else: make only the changes these findings ask for.")
 	return b.String()
 }
