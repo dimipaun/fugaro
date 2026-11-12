@@ -483,6 +483,45 @@ func TestSecurityMdStatesTheMixedRunResidual(t *testing.T) {
 	}
 }
 
+// TestNoPageEnumeratesTheMixShort is the scan the review of this change asked
+// for: the allow-list is three stages (config.MixedAccountStages) and the pages
+// that state it are prose, so only a scan keeps a page a stage behind — the
+// shape that left a two-stage enumeration in the design note, in both spots of
+// the user doc and in this file's own header while §11's headline already said
+// three. Two things are read, in the six files that state the mix: each names
+// the judge, and none carries either of the two stale enumerations, because
+// that is the sentence a reader is sent to when the third stage is dropped.
+func TestNoPageEnumeratesTheMixShort(t *testing.T) {
+	for _, path := range []string{
+		"docs/design/mixed-credentials.md",
+		"docs/multi-model.md",
+		"SECURITY.md",
+		"fugaro.yaml",
+		"docs/api-key-review/reconciliation.md",
+		"docs/model-crafts/reconciliation.md",
+	} {
+		doc := flattenDoc(readDoc(t, path))
+		// The scan has to move with the pages that state the mix: a file that
+		// stopped naming the account-choice keys would pass the two assertions
+		// below without saying anything at all.
+		if !strings.Contains(doc, "claude_account") {
+			t.Errorf("%s no longer names an account-choice key: this scan has to move with the pages that state the mix", path)
+			continue
+		}
+		if !strings.Contains(doc, "triage") {
+			t.Errorf("%s states the mix and never names `triage`: the account may serve every stage of config.MixedAccountStages, and a page that leaves the judge out sends an operator to a key it believes is refused", path)
+		}
+		for _, stale := range []string{
+			"`stages.review.claude_account` or `stages.adversarial.claude_account`",
+			"`stages.<stage>.claude_account` on `review` or `adversarial`",
+		} {
+			if strings.Contains(doc, stale) {
+				t.Errorf("%s enumerates the rung-2 keys as %q: the stage's own key names the account on every stage of the allow-list (%s), and not on the first two", path, stale, config.MixedStageChoice())
+			}
+		}
+	}
+}
+
 // TestDocsMixedCredentialsRecordsWhatShipped: the note was written as a ruling
 // the tasks build against, and the tasks are built (0.19.0). Every place the
 // document says so has to say it: the status line a reader meets first, §11's
