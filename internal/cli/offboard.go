@@ -235,7 +235,7 @@ func userOffboard(cmd *cobra.Command, o cloudOptions, email string) error {
 	}
 	fmt.Fprintf(w, "the member's open slips are not ended by this command: a slip ends by the max-runtime cap the grant recorded, so a run in flight is not stopped here\n")
 
-	deleted, err := offboardSweep(ctx, o, address)
+	deleted, err := offboardSweep(ctx, lc, address)
 	if err != nil {
 		// The roster half has already landed and is printed above: the error is
 		// the intake's own refusal (userErr or remote) and is returned as it
@@ -368,8 +368,16 @@ func offboardWriteRoster(ctx context.Context, db *rtdb.Client, lc *localcfg.Conf
 // and the deletion is made by the intake's account, which is the only writer
 // that holds one under the two prefixes. Nothing here reads a value, and the
 // answer carries names and no version's payload.
-func offboardSweep(ctx context.Context, o cloudOptions, address string) ([]string, error) {
-	serviceURL, err := secretsIntakeServiceURL(ctx, o)
+//
+// It takes the config the command has already selected rather than the options
+// that would select it again: secretsIntakeServiceURL selects the project, and a
+// selection prints the project header — so reading the intake's address through
+// it here would print the header twice, once for the command and once for the
+// sweep, and the header is the one line a cloud command writes (project.go's
+// printProjectHeader). The swap itself is intakeURLOf's, which is free of config
+// reading and is what this family's client calls it for.
+func offboardSweep(ctx context.Context, lc *localcfg.Config, address string) ([]string, error) {
+	serviceURL, err := intakeURLOf(lc)
 	if err != nil {
 		return nil, err
 	}

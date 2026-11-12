@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/intake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -135,6 +136,66 @@ func rosterNames(grants []accesslib.Grant, member string) bool {
 		}
 	}
 	return false
+}
+
+// TestOffboardRefusedInAgentSession: the command is refused inside a coding
+// agent's session, inside a run's own process, and under GODEBUG=http2debug,
+// before anything is read — the three refusals every cloud write of this tree
+// makes, in the order offboardRefusal asks them, and the reason each is here
+// rather than left to the harness is that this command is the one that writes
+// the roster with the caller's own credential and deletes a person's stored
+// secrets: a session that reaches it by accident must not be able to.
+//
+// It is the intake family's own table (secrets_intake_test.go's
+// TestSetRefusedInAgentSession) for the same family of commands, and the
+// closed-stdin harness cannot stand in for it: closedStdinWorld clears the
+// markers, so the leaf it drives never meets this refusal.
+func TestOffboardRefusedInAgentSession(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  string
+		set  string
+		// refusal is the sentence the command's own refusal must carry, where
+		// the family has one to share: the agent's case is initflow's, so the
+		// words are read from there rather than copied here.
+		refusal string
+	}{
+		{name: "an agent's session", env: "CLAUDECODE", set: "1", refusal: initflow.AgentRefusal("CLAUDECODE")},
+		{name: "a run's own process", env: "FUGARO_RUN", set: "1"},
+		{name: "Go would print the request", env: "GODEBUG", set: "http2debug=2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newOffboardRig(t, offboardAdmin,
+				rosterGrant(offboardAdmin, "admin", "project"),
+				rosterGrant(offboardMemberAddress, "operator", "project"),
+			)
+			t.Setenv(tc.env, tc.set)
+			seen := fakeIntakeCalls(t, nil)
+
+			out, _, err := execute(t, "user", "offboard", offboardMemberAddress)
+			if err == nil {
+				t.Fatalf("the command ran with %s=%s set:\n%s", tc.env, tc.set, out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d (a refusal of the session, not a failure): %v", ExitCode(err), ExitUserError, err)
+			}
+			if !strings.Contains(err.Error(), tc.env) {
+				t.Errorf("the refusal does not name the marker that refused it: %v", err)
+			}
+			if tc.refusal != "" && !strings.Contains(err.Error(), tc.refusal) {
+				t.Errorf("the refusal is not the one the tree prints for a coding agent's session: %v", err)
+			}
+			if len(*seen) != 0 {
+				t.Errorf("the refused command reached the intake (%d calls): the refusal is the client's own and it comes first", len(*seen))
+			}
+			grants := r.roster(t)
+			for _, want := range []string{"user:" + offboardAdmin, "user:" + offboardMemberAddress} {
+				if !rosterNames(grants, want) {
+					t.Errorf("the refused command wrote the roster: %s is gone from it\n%v", want, grants)
+				}
+			}
+		})
+	}
 }
 
 // TestOffboardRefusesSelfOffboard: an admin does not take themselves off the
@@ -293,9 +354,16 @@ func TestOffboardDeletesPrefix(t *testing.T) {
 		*ans = intake.DeleteAnswer{Deleted: []string{"fugaro_u_4242_github-token", "fugaro_u_4242_npm-token"}}
 	})
 
-	out, _, err := execute(t, "user", "offboard", offboardMemberAddress)
+	out, errOut, err := execute(t, "user", "offboard", offboardMemberAddress)
 	if err != nil {
 		t.Fatalf("user offboard: %v\n%s", err, out)
+	}
+	// The project header is the first line every cloud command writes, and it
+	// is written once: the sweep reads the intake's address out of the config
+	// this command already selected rather than selecting the project again,
+	// which would print the header a second time.
+	if n := strings.Count(errOut, "project: aurora (GCP proj-1234)"); n != 1 {
+		t.Errorf("the project header is printed %d times, want the one line a cloud command writes:\n%s", n, errOut)
 	}
 	if len(*seen) != 1 {
 		t.Fatalf("the command made %d calls, want one (the sweep)", len(*seen))
