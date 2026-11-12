@@ -619,12 +619,25 @@ function ed25519KeyOf(pem: string): KeyObject | null {
  * the upgrade message, which is reserved for a key that says which version it
  * is.
  *
- * **One divergence from the Go verifier, and it is deliberate.** Go's decoder
- * reads one JSON value and leaves whatever follows it to the claim decode, so a
- * payload of a claim set with junk after it is refused there as `claims`; this
- * reader parses the payload whole and refuses it here, as `malformed`. Both
- * refuse it, no key a minter writes has that shape, and no vector in the shared
- * file carries one.
+ * **Two divergences from the Go verifier, both deliberate, and neither is
+ * reachable by a key anyone minted.**
+ *
+ *   1. Go's decoder reads one JSON value and leaves whatever follows it to the
+ *      claim decode, so a payload of a claim set with junk after it is refused
+ *      there as `claims`; this reader parses the payload whole and refuses it
+ *      here, as `malformed`. Both refuse the text -- the name differs, the
+ *      answer does not -- and no vector in the shared file carries one.
+ *   2. `JSON.parse` reads `1.0` and `1e0` as the number 1, where Go's decoder
+ *      refuses any number spelled with a fraction or an exponent in an integer
+ *      field (`ErrClaims`). Nothing is left of the spelling once the text is
+ *      parsed, so this reader answers the value, and a hand-written key
+ *      spelling an integer that way is refused by the CLI and read here. It is
+ *      left as it is rather than closed by reading the payload's text again
+ *      with a JSON scanner of this file's own: Go's encoder writes an integer
+ *      as `1`, the licence service is the only signer, and a scanner would be
+ *      a second parser in the main process for a shape no key has.
+ *      `test/unit/licence.test.ts` pins this reading, so it is a case rather
+ *      than a surprise.
  */
 function peekV1(payload: string | null): { readonly kid: string; readonly v: number } | null {
   if (payload === null) return null
@@ -637,12 +650,12 @@ function peekV1(payload: string | null): { readonly kid: string; readonly v: num
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
   const head = parsed as Record<string, unknown>
 
-  const kid = head['kid']
+  const kid = claimOf(head, 'kid')
   if (typeof kid !== 'string' || kid === '') return null
   // A field the payload omits or nulls is the zero value Go's decoder leaves in
   // it, which is a version this build does not read rather than a malformed
   // text.
-  const raw = head['v']
+  const raw = claimOf(head, 'v')
   const version = raw === undefined || raw === null ? 0 : raw
   if (typeof version !== 'number' || !Number.isSafeInteger(version)) return null
   return { kid, v: version }
@@ -669,23 +682,23 @@ function decodeClaimsV1(payload: string, firebaseProjectId: string): LicenceV1De
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { refusal: 'claims' }
   const claims = parsed as Record<string, unknown>
 
-  const v = integerClaim(claims['v'])
-  const kid = stringClaim(claims['kid'])
-  const keyId = stringClaim(claims['key_id'])
-  const workspaceId = stringClaim(claims['workspace_id'])
-  const organisation = stringClaim(claims['organisation'])
-  const tier = stringClaim(claims['tier'])
-  const seats = integerClaim(claims['seats'])
-  const issuedAt = stampClaim(claims['issued_at'])
-  const paidThrough = stampClaim(claims['paid_through'])
-  const graceDays = integerClaim(claims['grace_days'])
-  const renewalMode = stringClaim(claims['renewal_mode'])
-  const renewBeforeDays = integerClaim(claims['renew_before_days'])
-  const checkInterval = intervalClaim(claims['check_interval'])
-  const renewalSecretHash = stringClaim(claims['renewal_secret_hash'])
-  const warnings = warningsClaim(claims['warnings'])
-  const kind = stringClaim(claims['kind'])
-  const note = stringClaim(claims['note'])
+  const v = integerClaim(claimOf(claims, 'v'))
+  const kid = stringClaim(claimOf(claims, 'kid'))
+  const keyId = stringClaim(claimOf(claims, 'key_id'))
+  const workspaceId = stringClaim(claimOf(claims, 'workspace_id'))
+  const organisation = stringClaim(claimOf(claims, 'organisation'))
+  const tier = stringClaim(claimOf(claims, 'tier'))
+  const seats = integerClaim(claimOf(claims, 'seats'))
+  const issuedAt = stampClaim(claimOf(claims, 'issued_at'))
+  const paidThrough = stampClaim(claimOf(claims, 'paid_through'))
+  const graceDays = integerClaim(claimOf(claims, 'grace_days'))
+  const renewalMode = stringClaim(claimOf(claims, 'renewal_mode'))
+  const renewBeforeDays = integerClaim(claimOf(claims, 'renew_before_days'))
+  const checkInterval = intervalClaim(claimOf(claims, 'check_interval'))
+  const renewalSecretHash = stringClaim(claimOf(claims, 'renewal_secret_hash'))
+  const warnings = warningsClaim(claimOf(claims, 'warnings'))
+  const kind = stringClaim(claimOf(claims, 'kind'))
+  const note = stringClaim(claimOf(claims, 'note'))
 
   // One condition rather than seventeen: every field of the claim set, so that a
   // claim added to this format is a field this line is missing and not a field
@@ -752,6 +765,28 @@ function decodeClaimsV1(payload: string, firebaseProjectId: string): LicenceV1De
   }
 }
 
+/** claimOf reads one claim the way Go's decoder reads it: the name is matched
+ * case-insensitively, and where a payload spells it more than once -- under two
+ * cases, or twice exactly -- the last spelling is the value that survives, so it
+ * is the value this verifier reads. `JSON.parse` folds an exact duplicate by
+ * itself; two cases of a name are two keys, and the order they are read back in
+ * is the order the payload spells them in.
+ *
+ * The tolerance is Go's and not a convenience here: a signed key that says
+ * `"tier":"team"` and later `"Tier":"enterprise"` is an enterprise key to the
+ * CLI, and a console that read `team` would draw a tier the key does not grant.
+ */
+function claimOf(claims: Record<string, unknown>, name: string): unknown {
+  let found: unknown
+  let spellings = 0
+  for (const key of Object.keys(claims)) {
+    if (key.toLowerCase() !== name) continue
+    found = claims[key]
+    spellings += 1
+  }
+  return spellings === 0 ? undefined : found
+}
+
 /** stringClaim, integerClaim, stampClaim and intervalClaim read one claim the way
  * Go's decoder leaves it: a field the payload omits or nulls is the field's zero
  * value -- an empty string, 0, no stamp -- and a field of another type is a
@@ -771,15 +806,64 @@ function integerClaim(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) ? value : null
 }
 
-/** RFC3339 is the stamp shape the format writes its two times in. It is checked
- * as well as parsed because `Date.parse` reads spellings the format does not
- * write -- a date with no time, a time with no zone -- and a key whose term is
- * read from a stamp the minter did not write is a key whose state is a guess. */
-const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
+/** RFC3339 is the stamp shape the format writes its two times in: its fields are
+ * captured, because the shape is not enough. `Date.parse` reads spellings the
+ * format does not write -- a date with no time, a time with no zone -- and it
+ * also *rolls over* a stamp that names a day or an hour that does not exist,
+ * which is the worse half: `2026-02-31`, a 29 February of a common year and
+ * `24:00:00` are all a day the calendar does not have, and V8 answers with the
+ * next day rather than with nothing. Go's `time.Parse` -- what decodes every key
+ * the CLI reads -- refuses each of them, so a key whose `paid_through` is one of
+ * them would be a state here and a refusal there. */
+const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+
+/** stampInstantOf reads a stamp's own fields into an instant in milliseconds, or
+ * `null` for one the format does not write -- the fields of the instant read
+ * back out and held to the fields spelled, which is what closes the rollover
+ * above.
+ *
+ * The instant is built on the year 2000 and moved to its own year afterwards:
+ * `Date.UTC` reads a year below 100 as a year of the 1900s, and 2000 is a leap
+ * year whether the stamp's own year is or not -- one where a `February 29` can
+ * be built at all, and then moved to the year spelled, which is what holds that
+ * day to it. Every field is refused by that comparison and none by a range check
+ * of its own: `Date` has no invalid field, only fields that carry into the next
+ * day, and carrying is what the read-back catches. */
+function stampInstantOf(stamp: string): number | null {
+  const fields = RFC3339.exec(stamp)
+  if (fields === null) return null
+  const year = Number(fields[1])
+  const month = Number(fields[2])
+  const day = Number(fields[3])
+  const hour = Number(fields[4])
+  const minute = Number(fields[5])
+  const second = Number(fields[6])
+  const zone = fields[7] ?? ''
+  // Go's parser bounds the offset as it bounds the hour ("time zone offset hour
+  // out of range"), so `+25:00` is not a stamp either verifier reads.
+  const offsetHours = zone === 'Z' ? 0 : Number(zone.slice(1, 3))
+  const offsetMinutes = zone === 'Z' ? 0 : Number(zone.slice(4, 6))
+  if (offsetHours > 23 || offsetMinutes > 59) return null
+
+  const probe = new Date(Date.UTC(2000, month - 1, day, hour, minute, second))
+  probe.setUTCFullYear(year)
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day ||
+    probe.getUTCHours() !== hour ||
+    probe.getUTCMinutes() !== minute ||
+    probe.getUTCSeconds() !== second
+  ) {
+    return null
+  }
+  const offset = zone.startsWith('-') ? -1 : 1
+  return probe.getTime() - offset * (offsetHours * 60 + offsetMinutes) * 60_000
+}
 
 function stampClaim(value: unknown): string | null {
   if (value === undefined || value === null) return ''
-  if (typeof value !== 'string' || !RFC3339.test(value) || Number.isNaN(Date.parse(value))) return null
+  if (typeof value !== 'string' || stampInstantOf(value) === null) return null
   return value
 }
 
@@ -789,9 +873,11 @@ function intervalClaim(value: unknown): string | null | undefined {
 }
 
 /** stampInstant is a claim's stamp as an instant in milliseconds; a stamp the
- * payload omitted is Go's zero time, which is what `stampClaim` left there. */
+ * payload omitted is Go's zero time, which is what `stampClaim` left there --
+ * and a stamp it refused is that same zero, since no read of a refused payload
+ * reaches here. */
 function stampInstant(stamp: string): number {
-  return stamp === '' ? ZERO_INSTANT_MS : Date.parse(stamp)
+  return stampInstantOf(stamp) ?? ZERO_INSTANT_MS
 }
 
 /** warningsClaim reads the warnings list, and rolesClaim one window's roles.
@@ -805,8 +891,8 @@ function warningsClaim(value: unknown): readonly LicenceV1Warning[] | null {
   for (const item of value) {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) return null
     const window = item as Record<string, unknown>
-    const roles = rolesClaim(window['roles'])
-    const from = stringClaim(window['from'])
+    const roles = rolesClaim(claimOf(window, 'roles'))
+    const from = stringClaim(claimOf(window, 'from'))
     if (roles === null || from === null) return null
     warnings.push({ roles, from })
   }

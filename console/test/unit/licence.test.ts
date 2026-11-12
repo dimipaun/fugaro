@@ -731,9 +731,16 @@ describe('the v1 key', () => {
   }
 
   /** mintV1 signs one v1 payload as the format spells it: the prefix, the
-   * payload's bytes, a dot, and the signature over exactly those bytes. */
-  function mintV1(one: Signer, claims: Record<string, unknown>): string {
-    const payload = Buffer.from(JSON.stringify(claims), 'utf8')
+   * payload's bytes, a dot, and the signature over exactly those bytes.
+   * `payloadText` exists so a case can spell a payload its claim set cannot say
+   * -- a number written with a fraction is the number without it once
+   * `JSON.stringify` has it. */
+  function mintV1(
+    one: Signer,
+    claims: Record<string, unknown>,
+    payloadText = JSON.stringify(claims),
+  ): string {
+    const payload = Buffer.from(payloadText, 'utf8')
     return `${V1_PREFIX}${payload.toString('base64url')}.${edSign(
       null,
       payload,
@@ -816,7 +823,7 @@ describe('the v1 key', () => {
     }
   })
 
-  it('a known field of the wrong type is refused: the claim set the format declares is the one that reads', () => {
+  it('a claim the format does not read is refused: the claim set the format declares is the one that reads', () => {
     // The vectors carry no key with an unknown `renewal_mode`, `kind` or warning
     // whose signature verifies, and none with a known field of the wrong type
     // that gets that far either: the vector that spells a second `seats` as text
@@ -841,6 +848,17 @@ describe('the v1 key', () => {
       ['warnings that are not a list', { warnings: {} }],
       ['a warning whose roles are not roles', { warnings: [{ roles: [7], from: 'P7D' }] }],
       ['a check interval that is not a duration', { check_interval: 5 }],
+      // A stamp the calendar does not have is refused as a claim rather than
+      // read as a state: V8 rolls each of these over into the next day, so
+      // without the field check the console would read `active` where the CLI
+      // refuses the key -- the direction that matters, since that is a licence
+      // the console would grant and the CLI would not.
+      ['a paid term on a day the calendar does not have', { paid_through: '2026-02-31T00:00:00Z' }],
+      ['a paid term on a 29 February of a common year', { paid_through: '2026-02-29T00:00:00Z' }],
+      ['a paid term at an hour the day does not have', { paid_through: '2026-11-12T24:00:00Z' }],
+      ['an issue time at an hour the day does not have', { issued_at: '2026-11-12T25:00:00Z' }],
+      ['a paid term with an offset no day has', { paid_through: '2026-11-12T00:00:00+25:00' }],
+      ['a paid term with no zone', { paid_through: '2026-11-12T00:00:00' }],
     ] as const) {
       expect(
         verifyLicenceKeyV1(
@@ -852,6 +870,51 @@ describe('the v1 key', () => {
         what,
       ).toEqual({ ok: false, refusal: 'claims', reason: expect.any(String) })
     }
+  })
+
+  it('a name spelled twice is read as the CLI reads it: the last spelling of a claim is the claim', () => {
+    const one = signer('a key this test minted')
+    const sound = teamClaimsV1()
+    sound['kid'] = one.id
+
+    // Go's decoder matches a field name case-insensitively and leaves the last
+    // spelling it meets in the field, so this payload is an enterprise key to
+    // the CLI. A console that read `tier` and stopped there would draw a tier
+    // the key does not grant.
+    const read = verifiedV1(
+      verifyLicenceKeyV1(
+        mintV1(one, { ...sound, Tier: 'enterprise' }),
+        now,
+        file.firebase_project_id,
+        one.keyring,
+      ),
+      'a claim spelled twice under two cases',
+    )
+    expect(read.claims.tier).toBe('enterprise')
+  })
+
+  it('a number spelled with a fraction is read as its value: the divergence this file pins', () => {
+    // Go's decoder refuses `5.0` in an integer field, and `JSON.parse` leaves
+    // nothing of the spelling behind to check it against -- the one divergence
+    // `peekV1` documents and keeps rather than closes with a JSON scanner of
+    // this console's own. It is pinned here so that a change to it is a failure
+    // and not a surprise.
+    const one = signer('a key this test minted')
+    const sound = teamClaimsV1()
+    sound['kid'] = one.id
+    const spelled = JSON.stringify(sound).replace('"seats":5', '"seats":5.0')
+    expect(spelled, 'the claim set no longer spells its seat count as 5').toContain('"seats":5.0')
+
+    const read = verifiedV1(
+      verifyLicenceKeyV1(
+        mintV1(one, sound, spelled),
+        now,
+        file.firebase_project_id,
+        one.keyring,
+      ),
+      'a seat count spelled with a fraction',
+    )
+    expect(read.claims.seats).toBe(5)
   })
 
   it('the workspace binds the key: a caller with no project id accepts nothing', () => {
