@@ -84,7 +84,7 @@ func doctorVisionChecks(ctx context.Context, root string, lc *localcfg.Config, r
 	if len(files) == 0 {
 		return []doctorCheck{doctorVisionNoImages(coder)}
 	}
-	return []doctorCheck{doctorVisionFinding(coder, vision, ref, files, repo)}
+	return []doctorCheck{doctorVisionFinding(coder, ref, files, repo)}
 }
 
 // doctorVisionSlot is the slot as a sentence names it: the key, and the model
@@ -145,8 +145,10 @@ func doctorVisionNoImages(coder string) doctorCheck {
 // doctorVisionFinding is the state D2011's warning is for: a coder that cannot
 // read an image, no slot, and a repository that tracks one. The stage pays for
 // its work and the gateway refuses the request that carries the picture, which
-// is the failure the whole work exists to prevent.
-func doctorVisionFinding(coder, vision, ref string, files []string, repo string) doctorCheck {
+// is the failure the whole work exists to prevent. The slot is said through
+// doctorVisionSlot's empty answer rather than by this function's own words, so
+// the state reads the same wherever doctor names it.
+func doctorVisionFinding(coder, ref string, files []string, repo string) doctorCheck {
 	names := make([]string, len(files))
 	for i, f := range files {
 		names[i] = pluginwire.Printable(f)
@@ -155,7 +157,7 @@ func doctorVisionFinding(coder, vision, ref string, files []string, repo string)
 		ID:       doctorVisionID,
 		Severity: "warning",
 		Problem: fmt.Sprintf("the coder model %s is priced without an image rate, %s, and %s tracks %s: a stage that reads one is refused by the gateway mid-run, after its work is paid for",
-			pluginwire.Printable(coder), doctorVisionSlot(vision), pluginwire.Printable(ref), strings.Join(names, ", ")),
+			pluginwire.Printable(coder), doctorVisionSlot(""), pluginwire.Printable(ref), strings.Join(names, ", ")),
 		Fix: fmt.Sprintf("set agent.models.vision to a model that can read images (%s models use %s vision <id>), and price that model's images with model_prices' image_tokens (0 refuses an image)",
 			selfCommand(), pluginwire.Printable(repo)),
 	}
