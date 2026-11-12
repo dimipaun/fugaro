@@ -242,9 +242,13 @@ type Progress struct {
 // age thresholds belong to the caller (the escalation ladder's per-mode
 // table), so the rule knows no hours of its own and takes no clock.
 type TriageInput struct {
-	// Record is the run's own record. The job's service account can write it,
-	// so it is the least trusted of the three inputs and is read through
-	// ChangedFiles.Bounded.
+	// Record is the run's own record. The job's service account writes it, so
+	// the paths in it are the run's own account of what it changed and the
+	// weakest input here: ChangedFiles.Bounded bounds how many paths there are
+	// and how long they are, never whether they are the diff. Corroborating
+	// them — the provider's changed files at the judged head — is a read the
+	// caller makes before the merge is wired (O14b), and a rule that opened the
+	// repository to make it would not be this one.
 	Record *runstore.Record
 	// PR is the pull request as the provider answered it: the rule reads
 	// whether it is a draft. nil is no pull request, which is never a merge.
@@ -374,6 +378,14 @@ func triageRecommendOnly(in TriageInput) (TriageOutcome, bool) {
 // routine allowlist, and no critical finding or high one in a security path.
 // A finished run that reached here has no progress left to make, so its
 // stall, if it ever had one, is not a restart's (D1244).
+//
+// The path set it classifies is the record's own account of the diff, and
+// D1245's premise that a diff cannot be described away is not enforced here:
+// the classifier is asked about a set the run wrote, and Bounded bounds that
+// set's size rather than its truth, so a record that left a sensitive path out
+// is a merge this gate takes. The corroborating read is the tick's before this
+// gate is wired to a merge (O14b), and it is reported as such rather than
+// assumed away.
 //
 // It re-checks the inputs' readability rather than trusting the order it is
 // tried in: the order is what the rule is, and a merge gate that fails closed

@@ -313,6 +313,9 @@ func TestTriageEscalatesOnACriticalFinding(t *testing.T) {
 
 // TestTriageRestartsOnNoCommits: a long run that pushed nothing has nothing to
 // land, and D1246's answer is smaller work rather than the same spec again.
+// The fixture clears both halves of the signal at once — no pushed head and no
+// changed path — so each half is pinned on its own by
+// TestTriageRestartsOnEitherHalfOfNoCommits.
 func TestTriageRestartsOnNoCommits(t *testing.T) {
 	in := mergeable()
 	in.Record.PushedHead = ""
@@ -557,10 +560,11 @@ func TestTriageNeverCancelsOnAnUnreadableFindingsFile(t *testing.T) {
 	}
 }
 
-// TestTriageBlocksTheMergeOnASensitiveChangedPath: the diff is the one input
-// the run cannot describe away, and the CI that judges it is a file it can
-// write, so one path outside the routine allowlist is no merge however green
-// the CI (D1245, F25).
+// TestTriageBlocksTheMergeOnASensitiveChangedPath: the classifier is asked
+// about every path the record carries, so one path outside the routine
+// allowlist is no merge however green the CI (D1245, F25). The set is the
+// run's own account and is bounded rather than corroborated, which is the
+// merge gate's own doc and not a property this test proves.
 func TestTriageBlocksTheMergeOnASensitiveChangedPath(t *testing.T) {
 	for _, p := range []string{".github/workflows/ci.yml", "internal/creds/store.go", "CLAUDE.md", "internal/runner/runner.go"} {
 		in := mergeable()
@@ -695,9 +699,11 @@ func TestTriagePrefersEscalateOverEveryOtherOutcome(t *testing.T) {
 }
 
 // TestTriageMergesAFinishedStalledRunRatherThanRestartingIt: the overlap the
-// fixed order decides. A finished run has no progress left to make, so the
-// no-progress signal is read only while the run is in flight and this one is
-// merged (D1244, D1245).
+// fixed order decides. This pins the order and not the restart's in-flight
+// guard: the merge is tried before restart and answers first, so the mutation
+// that drops the guard leaves this fixture green.
+// TestTriageReadsAStallOnlyWhileTheRunIsInFlight is the guard's own test
+// (D1244, D1245).
 func TestTriageMergesAFinishedStalledRunRatherThanRestartingIt(t *testing.T) {
 	in := mergeable()
 	in.Progress = &orchestrator.Progress{Stage: in.Record.Stage, Head: in.Record.HeadSHA, PushedHead: in.Record.PushedHead}
@@ -705,6 +711,127 @@ func TestTriageMergesAFinishedStalledRunRatherThanRestartingIt(t *testing.T) {
 	got := orchestrator.Triage(in)
 	if got.Kind != orchestrator.MergeAsIs {
 		t.Fatalf("a finished run whose record stopped moving answered %q: %+v", got.Kind, got)
+	}
+}
+
+// TestTriageNeverEscalatesOnFindingsItCouldNotRead: escalate acts on a finding
+// the rule did read, so a read it could not make is recommend-only's even when
+// the list it was handed carries a critical finding. That list is the case
+// that makes the refusal load-bearing — a readable one with the same critical
+// finding escalates — and the merge gate is asked after it, so an escalate
+// that fired here would also be a cancel (D1247).
+func TestTriageNeverEscalatesOnFindingsItCouldNotRead(t *testing.T) {
+	critical := orchestrator.Finding{Severity: orchestrator.SeverityCritical, Path: ".github/workflows/ci.yml", Key: "k-critical"}
+
+	for _, tc := range []struct {
+		name   string
+		read   orchestrator.FindingsRead
+		list   []orchestrator.Finding
+		reason orchestrator.TriageReason
+	}{
+		{
+			name:   "a critical finding beside one the rule cannot score",
+			read:   orchestrator.FindingsReadable,
+			list:   []orchestrator.Finding{critical, {Severity: "urgent", Path: triageRoutine, Key: "k-unknown"}},
+			reason: orchestrator.ReasonUnknownSeverity,
+		},
+		{
+			name:   "a list handed beside a read state that says there is no file",
+			read:   orchestrator.FindingsAbsent,
+			list:   []orchestrator.Finding{critical},
+			reason: orchestrator.ReasonFindingsAbsent,
+		},
+		{
+			name:   "a read state this release does not know",
+			read:   "half-read",
+			list:   []orchestrator.Finding{critical},
+			reason: orchestrator.ReasonFindingsUnreadable,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := mergeable()
+			in.Findings = orchestrator.Findings{Read: tc.read, List: tc.list}
+
+			got := orchestrator.Triage(in)
+			if got.Kind != orchestrator.RecommendOnly {
+				t.Fatalf("findings the rule could not read answered %q: %+v", got.Kind, got)
+			}
+			if !slices.Contains(got.Reasons, tc.reason) {
+				t.Errorf("the reasons do not name the read: %v, want %s", got.Reasons, tc.reason)
+			}
+			if got.Unreadable != orchestrator.InputFindings {
+				t.Errorf("the outcome names %q as the unreadable input, want %q", got.Unreadable, orchestrator.InputFindings)
+			}
+		})
+	}
+}
+
+// TestTriageReadsAStallOnlyWhileTheRunIsInFlight: the no-progress signal is
+// the one a stopped run cannot have, so the same stalled record is a restart
+// while the run is going and never one once it has finished — the gate's
+// refusal is what a stopped run's answer is. The CI is red because the merge
+// is tried before restart: with the whole of D1245's evidence in place the
+// merge answers first and restart is never asked, which is what left the guard
+// unpinned (D1244, D1246).
+func TestTriageReadsAStallOnlyWhileTheRunIsInFlight(t *testing.T) {
+	in := mergeable()
+	in.CI = gitprov.CIRed
+	in.Progress = &orchestrator.Progress{Stage: in.Record.Stage, Head: in.Record.HeadSHA, PushedHead: in.Record.PushedHead}
+
+	in.Record.Status = runstore.StatusRunning
+	got := orchestrator.Triage(in)
+	if got.Kind != orchestrator.Restart || !slices.Contains(got.Reasons, orchestrator.ReasonNoProgress) {
+		t.Fatalf("a stalled run in flight answered %q (%v), want restart %s", got.Kind, got.Reasons, orchestrator.ReasonNoProgress)
+	}
+	if !got.WithoutAPerson {
+		t.Errorf("a restart cancels the run without asking: %+v", got)
+	}
+
+	in.Record.Status = runstore.StatusSucceeded
+	got = orchestrator.Triage(in)
+	if got.Kind == orchestrator.Restart {
+		t.Errorf("a stalled run that is over was restarted: %+v", got)
+	}
+	if !slices.Contains(got.Reasons, orchestrator.ReasonMergeRefused) {
+		t.Errorf("a run the gate refuses answers %v, want %s", got.Reasons, orchestrator.ReasonMergeRefused)
+	}
+}
+
+// TestTriageRestartsOnEitherHalfOfNoCommits: the no-commits signal has two
+// halves, and the fixture that clears both at once pins neither, so each is
+// broken here on its own: a record that pushed nothing, and one whose changed
+// path set is empty. Either is a run whose work is not in the repository, so
+// the gate that lands work refuses it and restart is what answers — the pair
+// is why the merged-as-is gate is asked after this one's reasons (D1245,
+// D1246).
+func TestTriageRestartsOnEitherHalfOfNoCommits(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		break_ func(in *orchestrator.TriageInput)
+	}{
+		{
+			name:   "no pushed head",
+			break_: func(in *orchestrator.TriageInput) { in.Record.PushedHead = "" },
+		},
+		{
+			name: "no changed path",
+			break_: func(in *orchestrator.TriageInput) {
+				in.Record.ChangedFiles = &runstore.ChangedFiles{Paths: []string{}, Total: 0}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := mergeable()
+			tc.break_(&in)
+
+			got := orchestrator.Triage(in)
+			if got.Kind != orchestrator.Restart {
+				t.Fatalf("a run that committed nothing answered %q: %+v", got.Kind, got)
+			}
+			if !slices.Contains(got.Reasons, orchestrator.ReasonNoCommits) {
+				t.Errorf("the reason does not name the commits: %v", got.Reasons)
+			}
+		})
 	}
 }
 
