@@ -146,6 +146,14 @@ var settingsGenericKeys = map[string]bool{
 	"stages.review.claude_account":       true,
 	"stages.review_first.claude_account": true,
 	"stages.triage.claude_account":       true,
+	// The ladder's per-mode override table (E3). A mode's own member is the one
+	// spelling of the block that carries a varying segment, so it is named here
+	// the way the stage account's pattern is: the registry carries the row and
+	// settingsWriteLookup reaches a wildcard row only through this list.
+	"escalation.modes.*.r2_after_hours":    true,
+	"escalation.modes.*.r2_after_attempts": true,
+	"escalation.modes.*.r3_after_hours":    true,
+	"escalation.modes.*.r2_coder":          true,
 	// A repository's workflows.* (37 rows) and the project layer's profiles.*
 	// (36), in the registry's own order.
 	"workflows.*.profile":                            true,
@@ -267,6 +275,11 @@ var settingsGenericPrefixes = []string{
 	"agent.", "git.", "followup.", "governance.", "watch.",
 	"layer.defaults.", "layer.governance.",
 	"credentials.", "clone_urls.",
+	// The ladder's own block (E3). It is §4.4's list's successor in shape and
+	// not in origin: the keys are T-E3's, and the generic path is their one
+	// door — which is what puts the owner's own hand (the typed form below) and
+	// the coding agent's session in front of them at all.
+	"escalation.",
 }
 
 // settingsGenericKey reports whether spec §4.4 gives the generic path the key.
@@ -1626,6 +1639,66 @@ func settingsLoosens(key, oldValue, newValue string) bool {
 	return true
 }
 
+// settingsEscalationLoosens is the outer loop's ladder read as a direction
+// (E3, D846): the three threshold keys whose *smaller* figure is the wider one,
+// and the cost ceiling beside them, whose larger figure is. It is not
+// settingsCeilingKey's list, and that is the whole reason it exists: on the
+// ladder a lower figure takes an item off its normal recipe sooner, or merges
+// it under the gate on a shorter clock, which is more of the owner's authority
+// handed to the daemon and not less.
+//
+// `unset` is deliberately not the typed form here, though it is on a ceiling: a
+// ceiling removed hands the decision to a looser layer, where a threshold
+// removed hands it back to the shipped table — a figure the owner did not
+// choose, and one neither looser nor tighter than the figure it replaces. The
+// directions that are provably a loosening are the ones worth the owner's own
+// hand; the rest are an ordinary edit to a local file.
+//
+// A grade is not here either: naming a stronger grade is the tightening
+// direction, and naming a weaker one is a model choice the project layer owns
+// rather than a ladder threshold (G11, D2039).
+func settingsEscalationLoosens(key, oldValue, newValue, mode string) (string, bool) {
+	if mode != "set" && mode != "add-entry" {
+		return "", false
+	}
+	// A mode's own member is the same key one segment deeper, so the two
+	// spellings are one rule rather than two.
+	name := key
+	if strings.HasPrefix(key, "escalation.modes.") {
+		name = "escalation." + key[strings.LastIndex(key, ".")+1:]
+	}
+	switch name {
+	case "escalation.r2_after_hours", "escalation.r2_after_attempts":
+		if settingsLowersFigure(oldValue, newValue) {
+			return "this escalates sooner: rung 2 then runs on a lower figure than the one this file holds", true
+		}
+	case "escalation.r3_after_hours":
+		if settingsLowersFigure(oldValue, newValue) {
+			return "this lowers the ladder's ceiling: an item is then merged under the gate on a shorter clock than the one this file holds", true
+		}
+	case "escalation.cost_ceiling":
+		if settingsLoosens(key, oldValue, newValue) {
+			return "this raises the ladder's cost ceiling: an item may then spend more before the ceiling stops it", true
+		}
+	}
+	return "", false
+}
+
+// settingsLowersFigure reports whether newValue is a smaller number than
+// oldValue. A key no file sets has nothing to lower, so a first write is never
+// the typed form — settingsLoosens' rule over one figure rather than a cap.
+func settingsLowersFigure(oldValue, newValue string) bool {
+	if oldValue == "" {
+		return false
+	}
+	oldN, oldErr := strconv.ParseFloat(oldValue, 64)
+	newN, newErr := strconv.ParseFloat(newValue, 64)
+	if oldErr != nil || newErr != nil {
+		return false
+	}
+	return newN < oldN
+}
+
 // settingsListSubset reports whether every member of a appears in b.
 func settingsListSubset(a, b string) bool {
 	in := map[string]bool{}
@@ -1763,6 +1836,11 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 			// turned on names neither the list nor the account.
 			return true, followupAddWhy
 		}
+	}
+	// The ladder's own block (E3), whose directions are its own for the reason
+	// settingsEscalationLoosens states.
+	if why, typed := settingsEscalationLoosens(key, oldValue, newValue, mode); typed {
+		return true, why
 	}
 	// A row's own sensitive direction: turning the key on is the act D846
 	// reserves, and the row carries the sentence saying why.
